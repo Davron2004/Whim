@@ -1,0 +1,25 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "types": ["jest"],
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      // Mini-app bundles + the SDK-inject entry import `vc-sdk` by name. At type time it
+      // resolves here; at build time esbuild marks it external (H1b → host-injected global).
+      "vc-sdk": ["./src/sdk"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": [
+    "**/node_modules",
+    "**/Pods",
+    "**/build/generated",
+    "**/src/runtime/generated",
+    // Adversarial pen-test fixtures: esbuild-only inputs that DELIBERATELY reach for
+    // document/window/off-allowlist modules to attack the sandbox. Not app code; never
+    // type-checked against the app lib (they would, and should, fail tsc).
+    "fixtures/adversarial",
+    "invariants"
+  ]
+}

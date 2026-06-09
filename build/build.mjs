@@ -1,0 +1,203 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Whim build — the LOCAL stand-in for the future server build (design D8).
+// ─────────────────────────────────────────────────────────────────────────────
+// Produces, with esbuild:
+//   1. the react/react-dom INJECT IIFE (one shared instance on window — D3/4.1);
+//   2. the vc-sdk INJECT IIFE (react external → window.React; H1b);
+//   3. each app bundle as a single IIFE (classic JSX → React.createElement, vc-sdk/react/
+//      react-dom external) + an EXTERNAL source map with sourcesContent (D4/3.6);
+// then assembles:
+//   • src/runtime/generated/runtime-html.ts  — the RN app's RUNTIME_HTML (channel b, tip
+//     splitter, diagnostics on) the WebView loads;
+//   • src/runtime/generated/runtime-artifacts.json — { parts, bundles } for the invariant
+//     suite to generate scenario pages against THIS runtime (task 7.1);
+//   • build/generated/<app>.app.js (+ .map) — the emitted bundles (reference + map check).
+// Warm transpile+bundle is a few ms (negligible vs the future model latency).
+import * as esbuild from 'esbuild';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, relative } from 'node:path';
+import { buildSrcdoc, buildOuterHtml } from './assemble.mjs';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const r = (...p) => join(ROOT, ...p);
+const read = (p) => readFile(r(p), 'utf8');
+
+// ── esbuild bundlers ─────────────────────────────────────────────────────────
+async function bundleInjectReact() {
+  const out = await esbuild.build({
+    entryPoints: [r('build/react-inject.js')],
+    bundle: true, format: 'iife', platform: 'browser', target: 'es2019',
+    minify: true, define: { 'process.env.NODE_ENV': '"production"' },
+    write: false, logLevel: 'warning',
+  });
+  return out.outputFiles[0].text;
+}
+
+async function bundleInjectSdk() {
+  const out = await esbuild.build({
+    entryPoints: [r('build/vc-sdk-inject.ts')],
+    bundle: true, format: 'iife', platform: 'browser', target: 'es2019',
+    external: ['react', 'react-dom', 'react-dom/client'], // resolved at runtime via H1b → window.React
+    minify: false, write: false, logLevel: 'warning',
+  });
+  return out.outputFiles[0].text;
+}
+
+// One app bundle → { js, map }. globalName installs the module namespace (with `.default`,
+// the AppSpec) on the global the loader reads. The map is EXTERNAL with sourcesContent so a
+// thrown error / static finding maps back to the agent's ORIGINAL .tsx line (D4 / gates §8.1).
+async function bundleApp(entryRelPath) {
+  const out = await esbuild.build({
+    entryPoints: [r(entryRelPath)],
+    bundle: true, format: 'iife', globalName: '__WHIM_APP_MODULE__',
+    platform: 'browser', target: 'es2019',
+    // CLASSIC JSX → React.createElement (the H1b contract). Isolate from the project
+    // tsconfig (jsx:"react-jsx"), which esbuild auto-discovers and would otherwise use to
+    // emit the AUTOMATIC runtime (`require("react/jsx-runtime")` — an off-allowlist specifier
+    // the H1b resolver rejects at runtime). tsconfigRaw:'{}' makes these esbuild flags win.
+    tsconfigRaw: '{}',
+    jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
+    inject: [r('build/react-inject-shim.ts')],
+    external: ['vc-sdk', 'react', 'react-dom', 'react-dom/client'],
+    sourcemap: 'external', sourcesContent: true,
+    outdir: r('build/generated'), // needed for the external-map path even with write:false
+    minify: false, write: false, logLevel: 'warning',
+  });
+  let js = '', map = '';
+  for (const f of out.outputFiles) (f.path.endsWith('.map') ? (map = f.text) : (js = f.text));
+  return { js, map };
+}
+
+// ── minimal source-map consumer (verify the D4 round-trip without a heavy dep) ──
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+function decodeVlq(segment) {
+  const out = []; let shift = 0, value = 0;
+  for (const ch of segment) {
+    const d = B64.indexOf(ch); if (d < 0) continue;
+    const cont = d & 32, digit = d & 31;
+    value += digit << shift;
+    if (cont) { shift += 5; } else {
+      const neg = value & 1; value >>= 1; out.push(neg ? -value : value); value = 0; shift = 0;
+    }
+  }
+  return out;
+}
+// Map a generated 0-based line → the original {source, line} of its first segment.
+function originForGeneratedLine(map, genLine) {
+  const groups = map.mappings.split(';');
+  let srcIdx = 0, srcLine = 0;
+  for (let gl = 0; gl < groups.length; gl++) {
+    const segs = groups[gl].split(',').filter(Boolean);
+    let gcol = 0;
+    for (const seg of segs) {
+      const f = decodeVlq(seg);
+      gcol += f[0] || 0;
+      if (f.length >= 4) { srcIdx += f[1]; srcLine += f[2]; if (gl === genLine) return { source: map.sources[srcIdx], line: srcLine + 1 }; }
+    }
+  }
+  return null;
+}
+
+async function verifySourceMap(appName, js, mapText, originalRelPath, needle) {
+  const map = JSON.parse(mapText);
+  const original = await read(originalRelPath);
+  const okVersion = map.version === 3;
+  const okSources = (map.sources || []).some((s) => s.includes('tip-splitter') || s.includes(appName));
+  const okContent = Array.isArray(map.sourcesContent) && map.sourcesContent.some((c) => c && c.includes(needle));
+  // Find a generated line containing the needle and map it back to the original .tsx line.
+  const genLines = js.split('\n');
+  const genLine = genLines.findIndex((l) => l.includes(needle));
+  let mappedLine = null, mappedSource = null;
+  if (genLine >= 0) {
+    const origin = originForGeneratedLine(map, genLine);
+    if (origin) { mappedLine = origin.line; mappedSource = origin.source; }
+  }
+  const origNeedleLine = original.split('\n').findIndex((l) => l.includes(needle)) + 1;
+  const roundTrips =
+    mappedLine != null && mappedSource && mappedSource.includes('tip-splitter') &&
+    Math.abs(mappedLine - origNeedleLine) <= 1; // ±1 tolerance for transform line shifts
+  return { okVersion, okSources, okContent, genLine: genLine + 1, mappedLine, origNeedleLine, roundTrips };
+}
+
+// ── orchestrate ────────────────────────────────────────────────────────────────
+async function main() {
+  console.log('Whim build: transpiling runtime + bundles with esbuild…');
+
+  const [neutralize, resolver, probes, loader] = await Promise.all([
+    read('src/runtime/web/neutralize.js'),
+    read('src/runtime/web/resolver.js'),
+    read('src/runtime/web/probes.js'),
+    read('src/runtime/web/loader.js'),
+  ]);
+  const reactInject = await bundleInjectReact();
+  const sdkInject = await bundleInjectSdk();
+  const parts = { neutralize, reactInject, resolver, sdkInject, probes, loader };
+
+  // App bundles. tip-splitter is the app; the adversarial ones feed the invariant suite.
+  const APPS = {
+    'tip-splitter': 'fixtures/tip-splitter.app.tsx',
+    evil: 'fixtures/adversarial/evil.app.tsx',
+    poison: 'fixtures/adversarial/poison.app.tsx',
+    victim: 'fixtures/adversarial/victim.app.tsx',
+  };
+  const bundles = {};
+  const maps = {};
+  for (const [name, entry] of Object.entries(APPS)) {
+    const { js, map } = await bundleApp(entry);
+    bundles[name] = js;
+    maps[name] = map;
+    console.log(`  bundled ${name} (${(js.length / 1024).toFixed(1)} KiB IIFE)`);
+  }
+
+  // D4 / task 3.6 — source-map round-trip for the tip splitter.
+  const smap = await verifySourceMap('tip-splitter', bundles['tip-splitter'], maps['tip-splitter'], 'fixtures/tip-splitter.app.tsx', 'const money =');
+  console.log(
+    `  source-map: v3=${smap.okVersion} sources✓=${smap.okSources} sourcesContent✓=${smap.okContent} ` +
+    `round-trip=${smap.roundTrips} (generated L${smap.genLine} → original L${smap.mappedLine}, expected ~L${smap.origNeedleLine})`,
+  );
+  if (!(smap.okVersion && smap.okSources && smap.okContent && smap.roundTrips)) {
+    throw new Error('source-map round-trip verification FAILED (D4) — see values above');
+  }
+
+  // Emit the tip-splitter bundle + map (reference + the §8.1 repair-loop seam).
+  await mkdir(r('build/generated'), { recursive: true });
+  await writeFile(r('build/generated/tip-splitter.app.js'), bundles['tip-splitter']);
+  await writeFile(r('build/generated/tip-splitter.app.js.map'), maps['tip-splitter']);
+
+  // Assemble the RN app's RUNTIME_HTML — channel b, tip splitter, diagnostics on (the v0.1
+  // on-device acceptance build renders the full probe JSON on-screen; logcat truncates ~4KB).
+  const srcdocB = buildSrcdoc({ parts, channel: 'b' });
+  const RUNTIME_HTML = buildOuterHtml({
+    srcdoc: srcdocB,
+    // tip-splitter is auto-delivered; `evil` is available for the on-device F4 negative
+    // control (a native button calls window.__whimControl.deliver('evil')) — task 8.3.
+    bundles: { 'tip-splitter': bundles['tip-splitter'], evil: bundles['evil'] },
+    initial: 'tip-splitter',
+    channel: 'b',
+    showDiagnostics: true,
+    autostart: true,
+  });
+  await mkdir(r('src/runtime/generated'), { recursive: true });
+  await writeFile(
+    r('src/runtime/generated/runtime-html.ts'),
+    '// AUTO-GENERATED by build/build.mjs — do not edit. Run `npm run build` to regenerate.\n' +
+    '// The self-contained WebView document: a cross-origin sandboxed iframe under the locked\n' +
+    '// #35 CSP, channel-(b) delivery of the tip-splitter bundle, on-screen probe diagnostics.\n' +
+    '/* eslint-disable */\n' +
+    'export const RUNTIME_HTML = ' + JSON.stringify(RUNTIME_HTML) + ';\n',
+  );
+
+  // Artifacts for the invariant suite (it generates scenario pages against THIS runtime).
+  await writeFile(
+    r('src/runtime/generated/runtime-artifacts.json'),
+    JSON.stringify({ parts, bundles }, null, 0),
+  );
+
+  console.log(
+    `  RUNTIME_HTML ${(RUNTIME_HTML.length / 1024).toFixed(0)} KiB → src/runtime/generated/runtime-html.ts`,
+  );
+  console.log('Whim build: done.');
+}
+
+main().catch((e) => { console.error('BUILD FAILED:', e); process.exit(1); });

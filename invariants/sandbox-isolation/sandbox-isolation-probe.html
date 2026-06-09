@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<!--
+  Whim — sandbox-isolation invariant probe  (preserved from Spike 1)
+  ==================================================================
+  This is the durable artifact of `spike-sandbox-runtime`: the forbidden-globals +
+  escape probe checklist that proved H1 containment on the real Android System
+  WebView. It is the seed of the spec §16.2 network/native-isolation invariant and
+  the Spike 6 headless CI suite — "the most important assertion in the codebase."
+
+  HOW TO USE AS A NEVER-REGRESS CHECK
+  -----------------------------------
+  Load this page in the target WebView (Android System WebView via react-native-
+  webview, or any headless Chromium for a fast pre-check). It builds the SAME
+  contained context the real runtime uses — a sandboxed <iframe sandbox="allow-
+  scripts"> with NO allow-same-origin, a CSP `script-src` WITHOUT 'unsafe-eval',
+  and the forbidden globals neutralized — then runs every probe as a pass/fail
+  assertion. It reports the verdict three ways:
+     • document.title         → "WHIM_CONTAINED:true" | "WHIM_CONTAINED:false"
+     • console.log            → "WHIM_CONTAINMENT <json>"   (scrape from logcat)
+     • visible on the page    → green CONTAINED / red LEAK
+
+  CI asserts: title === "WHIM_CONTAINED:true". Anything else fails the build.
+
+  Containment here is rendering-independent (no React), so this stays a lean check.
+  Spike-1 result on Android API 36 / react-native-webview 13.16: contained=true,
+  all probes pass, negative control fires. See docs/decisions.md (#31) + DEVLOG.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WHIM_CONTAINED:pending</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 0; padding: 16px; }
+  #verdict { font-weight: 700; font-size: 18px; }
+  .ok { color: #15803d } .bad { color: #b91c1c }
+  pre { font-size: 11px; color: #374151; white-space: pre-wrap; word-break: break-all }
+</style>
+</head>
+<body>
+<div id="verdict">running…</div>
+<pre id="out"></pre>
+<script>
+// The contained context. CSP is the engine-level half of containment:
+//   • no 'unsafe-eval'  → eval()/Function()/constructor-walk codegen all throw
+//   • default-src 'none' + connect-src 'none' → no network can ever leave
+//   • 'unsafe-inline'   → our own inline probe script still runs
+var CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+          "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; " +
+          "child-src 'none'; worker-src 'none'";
+
+// Everything below runs INSIDE the sandboxed iframe (assembled as srcdoc text).
+function innerScript() {
+  'use strict';
+
+  // ── neutralize forbidden globals (value replacement; eval/Function are left to CSP) ──
+  function throwingFn(n){ return function(){ throw new TypeError(n + ' is disabled in the Whim sandbox'); }; }
+  function inertStore(n){ try { return new Proxy(function(){}, {
+    get:function(){ throw new TypeError(n+' is disabled'); },
+    apply:function(){ throw new TypeError(n+' is disabled'); } }); } catch(e){ return undefined; } }
+  function neutralize(name, repl){
+    try { delete window[name]; } catch(e){}
+    try { Object.defineProperty(window, name, {value:repl, writable:false, configurable:false}); return 'redefined'; } catch(e){}
+    try { window[name] = repl; return 'assigned'; } catch(e){}
+    return 'non-configurable';
+  }
+  var tech = {};
+  ['fetch','XMLHttpRequest','WebSocket','EventSource','RTCPeerConnection','Worker','SharedWorker']
+    .forEach(function(n){ tech[n] = neutralize(n, throwingFn(n)); });
+  ['localStorage','sessionStorage','indexedDB','caches']
+    .forEach(function(n){ tech[n] = neutralize(n, inertStore(n)); });
+  try { if (navigator && 'sendBeacon' in navigator)
+    Object.defineProperty(navigator,'sendBeacon',{value:throwingFn('sendBeacon'),writable:false,configurable:false}); } catch(e){}
+  tech.eval = tech.Function = "csp (script-src has no unsafe-eval)";
+
+  // A stub SDK + resolver so module-isolation probes have something to resolve.
+  var SDK = { Button: function(){} };
+  function require(name){ if (name === '@whim/sdk') return SDK;
+    throw new Error("Cannot find module '" + name + "'"); }
+
+  // ── run the probes inside a shadowed scope (value globals shadowed lexically) ──
+  function run(){
+    var fetch, XMLHttpRequest, WebSocket, EventSource, Worker, SharedWorker,
+        localStorage, sessionStorage, indexedDB, caches, RTCPeerConnection;
+    void [fetch,XMLHttpRequest,WebSocket,EventSource,Worker,SharedWorker,localStorage,sessionStorage,indexedDB,caches,RTCPeerConnection];
+
+    var results = [];
+    function rec(c,n,ok,d){ results.push({category:c,name:n,ok:ok,detail:d}); }
+    function expectThrow(c,n,fn){ try { var v=fn(); rec(c,n,false,'DID NOT THROW → '+String(v).slice(0,60)); }
+      catch(e){ rec(c,n,true,'threw '+(e&&e.name)); } }
+    function expectUnreachable(c,n,fn){ try { var v=fn();
+      if (v===null||v===undefined) rec(c,n,true,'unreachable → '+String(v));
+      else rec(c,n,false,'REACHED → '+String(v).slice(0,60)); }
+      catch(e){ rec(c,n,true,'blocked: '+(e&&e.name)); } }
+
+    expectThrow('network','fetch',function(){ return fetch('https://example.com'); });
+    expectThrow('network','XMLHttpRequest',function(){ return new XMLHttpRequest(); });
+    expectThrow('network','WebSocket',function(){ return new WebSocket('wss://x'); });
+    expectThrow('network','window.fetch(stub)',function(){ return window.fetch('https://x'); });
+    expectThrow('network','navigator.sendBeacon',function(){ return navigator.sendBeacon('https://x','y'); });
+    expectThrow('codegen','eval',function(){ return eval('1+1'); });
+    expectThrow('codegen','new Function',function(){ return new Function('return 1')(); });
+    expectThrow('ambient','localStorage',function(){ return localStorage.setItem('a','b'); });
+    expectThrow('ambient','sessionStorage',function(){ return sessionStorage.setItem('a','b'); });
+    expectThrow('ambient','indexedDB',function(){ return indexedDB.open('x'); });
+    expectThrow('ambient','Worker',function(){ return new Worker('data:application/javascript,1'); });
+    expectThrow('escape','({}).constructor.constructor',function(){ return ({}).constructor.constructor('return this')(); });
+    expectThrow('escape','[].constructor.constructor',function(){ return [].constructor.constructor('return globalThis')(); });
+    expectThrow('escape','function.constructor',function(){ return (function(){}).constructor('return 1')(); });
+    expectUnreachable('reach','window.frameElement',function(){ return window.frameElement; });
+    expectUnreachable('reach','window.parent.document',function(){ return window.parent.document; });
+    expectUnreachable('reach','window.top.document',function(){ return window.top.document; });
+    expectUnreachable('reach','window.parent.location.href',function(){ return window.parent.location.href; });
+    expectUnreachable('reach','window.parent.ReactNativeWebView',function(){ return window.parent.ReactNativeWebView; });
+    expectThrow('module',"require('react')",function(){ return require('react'); });
+    expectThrow('module',"require('fs')",function(){ return require('fs'); });
+    expectUnreachable('module','ambient module/exports/process',function(){
+      return (typeof module!=='undefined'?module:null) || (typeof process!=='undefined'?process:null) || null; });
+
+    // Negative control: the suite must FLAG a real breach (fail loudly).
+    window.__leak__ = function(){ return 'breach'; };
+    var i = results.length;
+    expectThrow('negative-control','planted leak',function(){ return window.__leak__(); });
+    var caught = results[i].ok === false;
+    try { delete window.__leak__; } catch(e){}
+
+    // Async dynamic import() must reject, then post the verdict.
+    function finish(){
+      var real = results.filter(function(r){ return r.category!=='negative-control'; });
+      var failed = real.filter(function(r){ return !r.ok; });
+      parent.postMessage(JSON.stringify({
+        contained: failed.length===0 && caught,
+        passed: real.length-failed.length, total: real.length,
+        negativeControlCaughtBreach: caught,
+        failures: failed, technique: tech, probes: results
+      }), '*');
+    }
+    var p; try { p = import('data:text/javascript,export default 1'); } catch(e){ rec('codegen','import()',true,'sync throw'); return finish(); }
+    Promise.resolve(p).then(
+      function(){ rec('codegen','import()',false,'RESOLVED'); finish(); },
+      function(e){ rec('codegen','import()',true,'rejected: '+(e&&e.name)); finish(); });
+  }
+  run();
+}
+
+var inner = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+  '<meta http-equiv="Content-Security-Policy" content="' + CSP + '">' +
+  '</head><body><script>(' + innerScript.toString() + ')();<\/script></body></html>';
+
+window.addEventListener('message', function(ev){
+  var r; try { r = JSON.parse(ev.data); } catch(e){ return; }
+  document.title = 'WHIM_CONTAINED:' + r.contained;
+  try { console.log('WHIM_CONTAINMENT ' + ev.data); } catch(e){}
+  var v = document.getElementById('verdict');
+  v.textContent = (r.contained ? 'CONTAINED ✓ ' : 'LEAK ✗ ') + r.passed + '/' + r.total + ' probes pass';
+  v.className = r.contained ? 'ok' : 'bad';
+  document.getElementById('out').textContent =
+    'negativeControlCaughtBreach=' + r.negativeControlCaughtBreach +
+    (r.failures.length ? '\nFAILURES: ' + JSON.stringify(r.failures) : '') +
+    '\n\n' + JSON.stringify(r.probes, null, 1);
+});
+
+var f = document.createElement('iframe');
+f.setAttribute('sandbox', 'allow-scripts');   // deliberately NO allow-same-origin
+f.style.display = 'none';
+f.srcdoc = inner;
+document.body.appendChild(f);
+</script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Whim §16.2 isolation invariants — the BLOCKING CI gate (Spike-6 seed).
+# ─────────────────────────────────────────────────────────────────────────────
+# This guards THE most important assertion in the codebase: a mini-app bundle cannot reach
+# the network or any native capability except through the SDK (sandbox-isolation), and the
+# render path holds (sandbox-rendering). If it goes red, it blocks everything.
+#
+# This is the DESKTOP fast filter (headless Chromium enforces the #35 CSP + the iframe
+# sandbox). It is NOT the acceptance — the authoritative pass is on-device on the Android
+# System WebView (§8 / docs/decisions.md #35), which runs on a slower cadence.
+#
+# Invariants are authored here and by the runtime owners — NEVER by a feature-implementing
+# agent (§16.4). Treat a diff to src/runtime/web/probes.js or this gate as security-critical.
+name: invariants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  isolation-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22   # pinned per the DEVLOG build-env gotcha
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build the retained runtime + bundles
+        run: npm run build
+      - name: Run the §16.2 isolation suite (blocks on red)
+        run: npm run invariants

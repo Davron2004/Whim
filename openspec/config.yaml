@@ -1,0 +1,34 @@
+schema: spec-driven
+
+# Project context — shown to AI when creating artifacts (propose/design/specs/tasks).
+context: |
+  Source of truth for "how does X work / what did we decide" lives in docs/: decisions.md
+  (numbered decision log), spec.md, spike2-findings.md, and DEVLOG.md (raw lessons). SPIKES
+  RECORD THEIR FINDINGS IN docs/, NOT IN CODE — spike scaffolds are deleted once the lesson is
+  captured. Before proposing or designing any runtime / sandbox / bundle-execution / storage /
+  harness work, READ THE RELEVANT DECISION FIRST; don't re-litigate settled spikes.
+
+  De-risking already DONE (consume these as input):
+  - #35 spike-sandbox-runtime → the CONTAINER: cross-origin sandboxed iframe + CSP with
+    script-src 'unsafe-inline' WITHOUT 'unsafe-eval' + window-level global strip. Never-regress
+    isolation suite: invariants/sandbox-isolation/.
+  - #36 spike-git-versioning → on-device git (isomorphic-git under Hermes); change:
+    on-device-snapshot-store.
+  - #37 spike-bundle-contract → the BUNDLE-EXECUTION CONTRACT that webview-sandbox-runtime
+    builds. Decided, confirmed ON-DEVICE, and pen-tested (T1-T8 + F4): emit one TS file
+    importing only 'vc-sdk' (export default defineApp({...})) → esbuild → IIFE; delivery =
+    channel (b) DOM-inserted inline <script> (fallback (a) srcdoc-inline; blob: refused —
+    never widen the CSP); modules = H1b host-injected externals {vc-sdk, react, react-dom}
+    only. **REQUIRED READING: docs/spike2-findings.md** — the contract + security model + FIVE
+    load-bearing constraints the runtime MUST honor. Runnable regression suite (Spike-6 CI
+    seed): invariants/sandbox-isolation/spike2-bundle-contract/.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

@@ -1,0 +1,12 @@
+{
+  "name": "whim-spike2-adversarial-suite",
+  "private": true,
+  "type": "module",
+  "description": "Preserved Spike-2 adversarial sandbox suite (T1-T7 + F4). Headless containment invariants — the Spike-6 CI seed.",
+  "scripts": {
+    "test": "node runner.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.50.0"
+  }
+}
