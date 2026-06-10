@@ -1,3 +1,5 @@
+# On-device Snapshot Store Design
+
 ## Context
 
 Versioning/rollback is first-class (Decision #23, spec §11) and happens far more often in vibe-coding than in normal coding, so it must be prominent and trustworthy. Decisions #33/#34 put the **device as the system of record** — a mini-app's source, manifest, and version history live on the phone — so versioning runs **on-device**. This change builds the **retained** on-device snapshot store: snapshot-per-generation, non-destructive rollback, pin, fork, history, and diff, all surfaced as product verbs with git never shown.
@@ -9,6 +11,7 @@ It is not exploratory. `spike-git-versioning` (Decision #36) already de-risked i
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Build the retained, host-side **per-mini-app version store** over on-device `isomorphic-git`, following the #36 recipe (FS shim + the Hermes polyfill set), driven entirely programmatically — git never surfaced.
 - Surface the **product verbs** — snapshot (every generation), undo/rollback (non-destructive), pin known-good, fork (independent lineage), history, diff — satisfying the `mini-app-versioning` and `mini-app-forking` specs.
 - Enforce the **code/data split**: the repo tracks code artifacts only (bundle source, manifest, `LEARNED.md`, prompt — plus any future declared-`schema` file, tracked like any other file); **rollback swaps code, never the user's data.**
@@ -16,6 +19,7 @@ It is not exploratory. `spike-git-versioning` (Decision #36) already de-risked i
 - Keep forks as **permanently independent lineages** (no merge), per #36.
 
 **Non-Goals:**
+
 - **No runtime user-data / database persistence, and no schema-drift resolution.** There is no data store yet (storage-as-syscall-#1 is v0.2, §15.2); this change never reads or writes the user's data. Drift handling (migrating old-code-meets-new-data) is deferred to the v0.2 storage layer.
 - **No server-side git** (H1 fallback only), no harness/LLM wiring — the store is exercised programmatically by a fixture; the generation loop wires in later.
 - **No running git inside the WebView sandbox** — versioning is an RN-**host** concern (the sandbox change, `webview-sandbox-runtime`, owns the other side).
@@ -37,7 +41,7 @@ The version repo holds the app's **code artifacts** — bundle source, `manifest
 A thin host-side API exposes only product verbs; the `isomorphic-git` vocabulary stays internal (a hard spec requirement — no terms, commands, or hashes ever reach the surface). The mapping (consume #36 D3):
 
 | Product verb | Mechanism |
-|---|---|
+| --- | --- |
 | snapshot (every generation) | `commit` (message = the structured prompt) |
 | undo / rollback | `checkout` an earlier commit |
 | pin known-good | `tag` |
@@ -87,5 +91,5 @@ This is the first **retained** versioning code (the spike was doc-only), so ther
 - **Does persistent backing land in *this* change or a follow-up?** Leaning *this change* — a version store that doesn't survive restart isn't really a store (D4). (User's "worry about persistence later" was about *user-data/database* persistence, which is out of scope regardless; confirm the version-store persistence stays in.)
 - **Compaction trigger threshold** — at what loose-object count (or generations-since-last-pack) does compaction fire? Pick a default from #36's ~4-objects/gen curve; make it tunable.
 - **Pin = lightweight vs annotated tag** — annotated can carry "user marked this good" + a timestamp; lightweight is simpler and the prompt already lives in the commit. Lean lightweight unless the pin needs its own metadata.
-- **Who owns drift-resolution when the `schema` artifact arrives?** Deferred to the v0.2 storage layer; named here so the seam isn't forgotten.
+- **Who owns drift-resolution when the `schema` artifact arrives?** ~~Deferred to the v0.2 storage layer; named here so the seam isn't forgotten.~~ **Resolved — decision #38:** the v0.2 storage *engine* owns it, and mostly by making drift impossible rather than resolving it: additive-only schema evolution with burned field IDs (physical keys are IDs, never names), unknown-field retention at the syscall handler, and — when first needed — a closed catalog of invertible, engine-executed transforms. No agent-written migrations; no DB snapshots. Nothing changes in this change: the schema artifact stays a plain tracked file (D6).
 - **Diff/history UX depth** — what "diff" means to a non-coder (a code diff is meaningless to most users). Rich presentation is deferred with the launcher UI; this change exposes the diff *data* via the verb API.

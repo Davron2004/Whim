@@ -305,3 +305,48 @@ suite correctly flags red (proving it isn't vacuously green). Source-map round-t
 (generated line → original `tip-splitter.app.tsx` line, D4). This is the §16.2 blocking CI
 gate seed (`.github/workflows/invariants.yml`); desktop is the fast filter, on-device is the
 acceptance.
+
+---
+
+## v0.2 — `on-device-snapshot-store` (the retained version store)
+
+**Result:** built from the #36 recipe and **accepted on-device** (Pixel_9_Pro_XL arm64, RN
+0.85.3 / Hermes, offline release bundle): full lifecycle (snapshot ×N, history, diff,
+rollback, pin, fork) + compaction + **MMKV cross-restart**, `pass:true`, 0 failures across
+three kill+relaunch cycles. Node core suite (`npm run vstore:test`) 43/43 is the cheap
+checkpoint; the Android run is the acceptance (D7). Full write-up: `docs/decisions.md` #39.
+Evidence: `docs/vstore-android-{inmemory,mmkv-restart}.png`.
+
+### The dead-ends (wired ≠ works, again)
+1. **The "keep MMKV out of the bundle" trick worked too well.** To let the in-memory core
+   build with zero native modules, I assembled the module name at runtime
+   (`['react','native','mmkv'].join('-')`) so Metro wouldn't statically pull
+   react-native-mmkv into the graph. It didn't — and then, once I *wanted* it, the native
+   C++ lib loaded fine (`Successfully loaded NitroMmkv`) but the JS side threw **"Requiring
+   unknown module react-native-mmkv"**: Metro only ships modules it statically saw. Lesson:
+   a literal `require('react-native-mmkv')` is correct *once it's a real dependency* —
+   anti-static-analysis is for genuinely-optional deps, and it cuts both ways.
+2. **react-native-mmkv v4 is not `new MMKV()`.** v4 (nitro) dropped the class: `MMKV` is now
+   a **type-only** export. Runtime is `createMMKV({ id })`, and delete is **`remove(key)`**,
+   not `delete`. First MMKV run: *"undefined cannot be used as a constructor"* (the class was
+   gone), then I adapted the backend (`createMMKV` + `remove`→`delete` shim). The KVBackend
+   interface absorbed it in one wrapper — the engine never knew.
+3. **`packObjects` writes the pack but not the `.idx`.** Dropping loose objects after packing
+   made reads fail until I added `git.indexPack` — isomorphic-git can't read a packfile
+   without its index. And `indexPack`'s `filepath` resolves relative to **`dir`**, not
+   `gitdir`, so it's `.git/objects/pack/<name>` (a null-slice crash pointed the way). De-risked
+   in a scratch Node probe *before* building the compaction module — cheap and worth it.
+
+### What the spike handed forward, now closed
+- **Cross-restart persistence (D4):** MMKV round-tripped clean — `restartVerified:true`,
+  generations accumulating 1→2→3 across real process kills, 0 corruption. The native-FS
+  fallback was **not** needed.
+- **DIY compaction (D5):** pack-then-drop-loose collapsed **48 loose objects → 0** on-device
+  with every verb still resolving against the pack. Trigger is loose-object **count**
+  (default 80), not bytes — each loose object is a KV key, the real cost driver.
+
+### On-device numbers (offline release, headless software-GL — conservative)
+snapshot ~45–86 ms · history ~10–29 ms · diff ~8–16 ms · rollback ~58–183 ms · pin ~1 ms ·
+fork ~37–68 ms · compact (pack 48) ~530–590 ms. All sub-second; `history`/`rollback` are the
+depth-scaling ops (cap/paginate, as #36 said). ~4 loose objects + ~650 B per generation —
+matches the spike's curve. Toggle the run with `RUN_VSTORE_PROBE` in `App.tsx`.
