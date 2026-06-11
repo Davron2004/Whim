@@ -23,6 +23,8 @@
     "invariants",
     // Node-only acceptance runner for the version store (run via esbuild, not shipped
     // in the app; uses `process`/dynamic import). Validated by running it, not by tsc.
-    "src/host/version-store/test"
+    "src/host/version-store/test",
+    // Same idiom for the storage engine's Node acceptance suite (node:fs/os/path).
+    "src/host/storage-engine/test"
   ]
 }

@@ -27,6 +27,14 @@ jobs:
         with:
           node-version: 22   # pinned per the DEVLOG build-env gotcha
       - run: npm ci
+      # ── Storage-engine injection invariant (Decision #40, D5a/D7) ──────────────
+      # The §C block of storage:test is a never-regress security invariant on par with
+      # sandbox containment (§16.4): caller text is bound or rejected, never interpolated
+      # into SQL. Cheap (node:sqlite, no browser, sub-second), so the whole suite is gated —
+      # no fragile "just the injection tests" carve-out. Runs before the browser steps so it
+      # fails fast.
+      - name: Run the storage-engine acceptance + injection invariant (blocks on red)
+        run: npm run storage:test
       - run: npx playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
