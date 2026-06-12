@@ -59,12 +59,15 @@ export function wrapBundle(bundleSrc, callAfter) {
 
 /**
  * @param {object} o
- * @param {{neutralize:string,reactInject:string,resolver:string,sdkInject:string,probes:string,loader:string}} o.parts
+ * @param {{neutralize:string,reactInject:string,resolver:string,sdkInject:string,probes:string,syscall:string,loader:string}} o.parts
  * @param {'a'|'b'|'c'} o.channel
  * @param {string} [o.bakedBundle] channel (a) only: the bundle source baked into the srcdoc
  */
 export function buildSrcdoc({ parts, channel, bakedBundle }) {
-  const scripts = [parts.neutralize, parts.reactInject, parts.resolver, parts.sdkInject, parts.probes, parts.loader];
+  // syscall.js (the capability-bridge marshaller) sits just before the loader: its message
+  // listener must be live before the loader posts `hello` (the host replies with the init
+  // frame carrying the generation this realm stamps onto syscalls).
+  const scripts = [parts.neutralize, parts.reactInject, parts.resolver, parts.sdkInject, parts.probes, parts.syscall, parts.loader];
   let body = '<div id="whim-root"></div>\n';
   for (const s of scripts) body += inlineScript(s) + '\n';
   if (channel === 'a' && bakedBundle) {
@@ -91,10 +94,24 @@ function orchestrationScript(cfg) {
     '  var BUNDLES = ' + jsLiteral(cfg.bundles) + ';\n' +
     '  var INITIAL = ' + jsLiteral(cfg.initial) + ';\n' +
     '  var SHOW_DIAG = ' + jsLiteral(cfg.showDiagnostics) + ';\n' +
+    // capability-bridge: where syscall frames go. "rn" → relay to the RN host (it dispatches
+    // and injects __whimRelaySysret back); "exposed" → call a Playwright-exposed Node host
+    // shim (the invariant suite, a real dispatcher over a :memory: engine). The relay holds NO
+    // new authority — it only forwards event.source-verified, JSON-string frames (design risk).
+    '  var SYSCALL_SINK = ' + jsLiteral(cfg.syscallSink || 'rn') + ';\n' +
+    // GEN is the generation the host bound this realm at; it travels in the init frame and the
+    // iframe stamps it onto every syscall (the host is the generation-fence authority, D3).
+    '  var GEN = 1;\n' +
     '  var nonce = null, iframe = null, deliveredName = null, pendingDeliver = ' +
       (cfg.autostart ? 'INITIAL' : 'null') + ';\n' +
     "  function rnd(){ try{ var a=new Uint8Array(16); (window.crypto||window.msCrypto).getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ var t=''; for(var j=0;j<32;j++) t+=((j*7+13)%16).toString(16); return t+String((window.performance&&performance.now?performance.now():0)); } }\n" +
     '  function toRN(obj){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj)); }catch(e){} }\n' +
+    // Relay a sysret string from the host back INTO the iframe (host→iframe; ev.source there is
+    // window.parent, which the marshaller requires). Exposed as a global so the RN host can
+    // inject it. Holds no authority beyond the postMessage pipe it already had.
+    '  function relaySysret(json){ try{ if(iframe&&iframe.contentWindow) iframe.contentWindow.postMessage(String(json),"*"); }catch(e){} }\n' +
+    '  function relaySyscall(raw, m){ if(SYSCALL_SINK==="exposed" && typeof window.whimHostDispatch==="function"){ try{ window.whimHostDispatch(raw).then(function(s){ if(s) relaySysret(s); }); }catch(e){ rnLog("dispatch failed: "+(e&&e.name)); } } else { toRN({kind:"syscall",trusted:false,payload:m}); } }\n' +
+    '  window.__whimRelaySysret = relaySysret;\n' +
     "  function rnLog(line){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({__whimHostLog:true,line:line})); }catch(e){} try{ console.error('WHIM '+line); }catch(e){} }\n" +
     "  function setStatus(t,c){ if(!SHOW_DIAG) return; var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=c||'wait'; } }\n" +
     '  function setDiag(id,t){ if(!SHOW_DIAG) return; var e=document.getElementById(id); if(e) e.textContent=t; }\n' +
@@ -102,8 +119,11 @@ function orchestrationScript(cfg) {
     '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:#fff;display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=SRCDOC; }\n' +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
-    "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ iframe.contentWindow.postMessage(JSON.stringify({__whimHostInit:true,nonce:nonce}),'*'); }catch(e){} return; }\n" +
+    "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ iframe.contentWindow.postMessage(JSON.stringify({__whimHostInit:true,nonce:nonce,gen:GEN}),'*'); }catch(e){} return; }\n" +
     "    if(m.__whimUiEvent===true){ toRN({kind:'ui-event',trusted:false,payload:m}); rnLog('UI-EVENT '+(m.type||'?')+' '+(m.label||'')); return; }\n" +
+    // capability-bridge: a syscall from the bundle. event.source-verify it came from OUR iframe
+    // (D2: the relay forwards only its own iframe's frames), then route to the host sink.
+    "    if(m.whim==='syscall'){ if(ev.source!==(iframe&&iframe.contentWindow)) return; relaySyscall(ev.data, m); return; }\n" +
     '    if(m.__whimHarness!==true) return;\n' +
     '    var authentic = (!!nonce && m.nonce===nonce);\n' +
     "    if(!authentic){ setDiag('delivery','REJECTED unauthenticated frame (kind='+m.kind+') — forged control message ignored (constraint #4)'); toRN({kind:'rejected-forgery',trusted:false,forgedKind:m.kind,payload:m.payload||null}); rnLog('REJECTED-FORGERY kind='+m.kind); return; }\n" +
@@ -115,8 +135,9 @@ function orchestrationScript(cfg) {
     '    toRN({kind:m.kind, trusted:true, payload:m.payload||null});\n' +
     '  });\n' +
     '  window.__whimControl = {\n' +
-    '    reinject: function(opts){ opts=opts||{}; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
+    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation===\"number\") GEN=opts.generation; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
     '    deliver: function(name, opts){ deliver(name, opts||{}); },\n' +
+    '    setGeneration: function(g){ if(typeof g===\"number\") GEN=g; },\n' +
     '    listBundles: function(){ return Object.keys(BUNDLES); }\n' +
     '  };\n' +
     '  makeIframe();\n' +
@@ -132,8 +153,10 @@ function orchestrationScript(cfg) {
  * @param {'a'|'b'|'c'} o.channel
  * @param {boolean} [o.showDiagnostics=true] render the on-screen status + probe JSON
  * @param {boolean} [o.autostart=true] deliver `initial` automatically when the iframe is ready
+ * @param {'rn'|'exposed'} [o.syscallSink='rn'] where bundle syscalls go: the RN host, or a
+ *        Playwright-exposed Node host shim (the capability-bridge invariant suite)
  */
-export function buildOuterHtml({ srcdoc, bundles, initial, channel, showDiagnostics = true, autostart = true }) {
+export function buildOuterHtml({ srcdoc, bundles, initial, channel, showDiagnostics = true, autostart = true, syscallSink = 'rn' }) {
   const diagMarkup = showDiagnostics
     ? '<div id="status" class="wait">starting…</div>\n' +
       '<div id="app"></div>\n' +
@@ -155,7 +178,7 @@ export function buildOuterHtml({ srcdoc, bundles, initial, channel, showDiagnost
     '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">\n' +
     '<title>WHIM:pending</title>\n<style>' + style + '</style>\n</head><body>\n' +
     diagMarkup +
-    inlineScript(orchestrationScript({ srcdoc, bundles, initial, channel, showDiagnostics, autostart })) +
+    inlineScript(orchestrationScript({ srcdoc, bundles, initial, channel, showDiagnostics, autostart, syscallSink })) +
     '\n</body></html>'
   );
 }

@@ -25,6 +25,8 @@
     // in the app; uses `process`/dynamic import). Validated by running it, not by tsc.
     "src/host/version-store/test",
     // Same idiom for the storage engine's Node acceptance suite (node:fs/os/path).
-    "src/host/storage-engine/test"
+    "src/host/storage-engine/test",
+    // And the capability-bridge Node suite (node:sqlite via the engine binding).
+    "src/host/bridge/test"
   ]
 }
