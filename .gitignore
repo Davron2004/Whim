@@ -78,6 +78,7 @@ yarn-error.log
 # (build/*.mjs scripts are SOURCE and tracked; only build/generated/ is output)
 /build/generated/
 invariants/sandbox-isolation/.build-pages/
+src/host/launcher/test/.deliver-pages/
 src/runtime/generated/
 .obsidian/
 .claude/settings.local.json

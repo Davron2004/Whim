@@ -13,6 +13,8 @@
     "vstore:test": "node src/host/version-store/test/run.mjs",
     "storage:test": "node src/host/storage-engine/test/run.mjs",
     "bridge:test": "node src/host/bridge/test/run.mjs",
+    "launcher:test": "node src/host/launcher/test/run.mjs",
+    "launcher:deliver-verify": "node src/host/launcher/test/deliver-by-source.desktop.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
     "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
     "invariants:spike2": "node invariants/sandbox-isolation/spike2-bundle-contract/runner.mjs"

@@ -119,6 +119,7 @@ delivered to the user privately, never committed**.
 **emulator acceptance done** (Pixel_9_Pro_XL arm64, offline release): pour-over delivered, the
 `interval` countdown ticks at 1 Hz, **get-ready + stage-transition cues fire** (8 syscalls, all
 `ok`), pause/resume work, **containment held 42/42** throughout; the Kotlin `WhimTone` TurboModule
+
 - codegen compile and install. **Pending:** the runtime-owner invariants (INV-TIMER, INV-CUEGATE —
 authored in a separate session, §16.4) and the *felt* cue check on real hardware. Not yet archived.
 **Contract notes (durable — Lane A #3/#4 share `src/sdk`):** `vc-sdk` now exports `delay(ms)` and
@@ -179,20 +180,19 @@ styling; sensible empty/overflow behavior; SVG-or-DOM rendering choice made in d
 
 #### 5. `launcher-shell` — Size M–L · Deps: none hard
 
-**Status:** proposed 2026-06-12 (`openspec/changes/launcher-shell/` — proposal/design/specs/tasks)
-**Contract notes:**
-
-- New specs `app-launcher`/`mini-app-back-navigation`. Record store resolved: thin **MMKV index**
-  (`launcher/app-index.ts`, `InstalledApp` = id/name/example/`AppRecord`(#41)/lineageId/optional
-  storeId) over **version-store-held bundles**; forks share the original's repo via lineages.
-- `launcher/store-access.ts` is the ONLY sanctioned VersionStore path (switchLineage + delete
-  refcounting) — #6 reads through it. Additive store verb **`remove(appId)`** for delete.
-- ⚠️ #3↔#5 nav seam defined HERE: SDK→host `nav-depth` control frame (unauthenticated hint,
-  generation-stamped, F4) · host→realm `nav-back`; guaranteed-exit is host-owned policy.
-- Delivery: `reinject({bundleSource})` — outer page only, iframe contract byte-identical; baked
-  `BUNDLES` stays for dev/probes; build also emits `src/runtime/generated/app-bundles.ts`.
-- `WebViewHost` → `useMiniAppHost` hook (#7 reuses it) + `DevProbeScreen`; new blocking suite
-  `npm run launcher:test`. No deviations from the brief.
+**Status:** implemented 2026-06-12 (branch `launcher-shell`, off `dev/v1`) — desktop gates green
+(build · invariants 42/42 (7 scenarios) · lint (no new errors) · vstore 52 · storage 131 ·
+bridge 63 · launcher 433 · tsc clean · by-source desktop parity); **on-device acceptance
+(task 7.2) PENDING** (offline release APK walk per `acceptance.spec.md`). As-built: decisions #43.
+**Contract notes (as-built, for #3 — the nav-depth seam):** the SDK↔host back-navigation seam
+is declared in `src/host/bridge/contract.ts` (`NavDepthFrame`/`NavBackFrame`, added to
+`classifyFrame` as control-family) with the anchor comment #3 implements against; the iframe-side
+TODO anchor is in `src/runtime/web/loader.js`. #3's SDK half emits
+`{__whimNavDepth:true, depth, generation}` on every nav-stack change (the outer page source-checks
+- stamps the generation, relays as `kind:'nav-depth'`) and listens for `{__whimNavBack:true}`
+(posted by the host's `__whimControl.navBack()` on system back when depth>0) to pop one screen and
+re-emit depth. The host guaranteed-exit policy (`src/host/launcher/back-policy.ts`) is independent
+of any SDK cooperation. In #5, depth is always 0 (no SDK nav) → back exits at root.
 **Why:** the host is currently a probe screen; this is the product shell.
 **In:** installed-apps record store (id, name, manifest, schema, bundle ref — design decides
 MMKV record vs version-store-backed); home grid + full-screen launch through the existing

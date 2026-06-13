@@ -568,3 +568,55 @@ buzz/tone on real hardware (emulator can't show it) and the two runtime-owner in
    is purely the two RN↔WebView crossings, not the cue. The 10 s marshaller timeout (`syscall.js`
    `TIMEOUT_MS`) has ~600× headroom; with cues being fire-and-forget there's even less reason to
    tighten it. Left as-is pending real-hardware numbers (D8 tuning).
+
+---
+
+## `launcher-shell` (= roadmap #5) — the product shell
+
+**Result:** the host is a product, not a probe screen — home grid, full-screen launch by
+record/source, system-back + floating-affordance exit, fork/delete, first-run seeding. Desktop
+gates all green (launcher:test 433, vstore 52 with `remove`, invariants still 42/42, tsc clean,
+by-source desktop parity); on-device acceptance (task 7.2) is the remaining step. Write-up in
+`docs/decisions.md` #43.
+
+### Lessons / sharp edges (launcher-shell)
+
+1. **A fresh worktree off `dev/v1` did NOT contain the change's own OpenSpec dir.** The
+   `openspec/changes/launcher-shell/` artifacts were *untracked* in the main repo, so a clean
+   worktree checkout of the `dev/v1` commit omitted them — `tasks.md` literally didn't exist in
+   the worktree. Had to copy the dir in before I could tick boxes. Lesson: when worktree-ing to
+   implement an OpenSpec change, the proposal artifacts have to be tracked (or copied) or they
+   vanish from the isolated checkout.
+
+2. **The fork's two-id split is the whole ballgame, and it's the ENGINE id that's load-bearing.**
+   A fork shares the original's version-store repo (`storeId` + a `fork-N` lineage) for shared
+   history, but its runtime **engine appId is its own launcher id** — so its SQLite user data is
+   independent. Get this backwards and a fork writes into the original's data. The realm is
+   therefore launched with the launcher id (not the store id) as `createStorageEngine`'s appId;
+   the manifest/schema come from the (shared) record. One optional `storeId` field, paid only by
+   forks; every other consumer treats `storeId ?? id` as the repo.
+
+3. **The back-policy double-back falls out of `awaitingPop` alone; the 400 ms timer is for the
+   *patient* user.** If a forwarded `nav-back` is still unacknowledged when the next press
+   arrives, that press exits — that already covers the impatient double-tap with no timer. The
+   timeout only matters for the user who presses once, waits, and presses again: it converts a
+   lingering `awaitingPop` into an armed escape. The non-obvious case is the *slow-but-honest*
+   app — a genuine depth DECREASE that arrives after the timeout must DISARM the escape, or you'd
+   exit out from under an app that was simply slow to pop. Pure reducer, so all of this is
+   Node-TDD'd without a device.
+
+4. **Delivery-by-source is byte-identical to baked delivery — the only delta is one lookup.** The
+   outer page already posted the full bundle source in the deliver frame; the launcher path just
+   feeds `opts.source` where the baked path read `BUNDLES[name]`. Nothing iframe-side changed (CSP/
+   sandbox/loader untouched), which is why containment held 42/42 with zero invariant edits. The
+   desktop verify proves it the strong way: build the page with an **empty** baked map and deliver
+   by source — a rendered, contained tip-splitter then *could only* have come from the host string.
+
+5. **`remove(appId)` leaves the shared root-dir scaffolding, and that's correct.** Removing an
+   app prefix-deletes its repo keys but `/whim` + `/whim/apps` survive (other apps share them) —
+   so "zero keys" assertions must be repo-scoped, not `map.size === 0`. The first test got this
+   wrong and flagged 2 leftover keys that were never repo data.
+
+6. **The RN tsconfig excludes the Node-only acceptance dirs** (they use `process`, run via
+   esbuild) — had to add `src/host/launcher/test` to the exclude list, same idiom as the
+   vstore/storage/bridge suites. The launcher *modules* stay type-checked; only the runner is out.

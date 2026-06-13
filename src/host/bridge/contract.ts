@@ -58,13 +58,65 @@ export function classifyFrame(frame: unknown): FrameFamily {
     f.__whimHarness === true ||
     f.__whimHostInit === true ||
     f.__whimDeliver === true ||
-    f.__whimUiEvent === true
+    f.__whimUiEvent === true ||
+    // nav seam (launcher-shell / #5 D4): the nav-depth hint (iframe→host) and the nav-back
+    // request (host→iframe) are control-family. They are NOT nonce-authenticated — like
+    // ui-events, the legitimate sender is the untrusted bundle (via the SDK), so there is no
+    // honest-sender property; authority lives entirely in the host back-policy (F4).
+    f.__whimNavDepth === true ||
+    f.__whimNavBack === true
   ) {
     return 'control';
   }
   if (f.whim === 'syscall') return 'syscall';
   if (f.whim === 'sysret') return 'sysret';
   return 'unknown';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The nav-depth seam (launcher-shell / #5 D4) — the #3↔#5 coordination contract
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// THIS change (#5, launcher-shell) ships the HOST half: the outer-page relay, the system-back
+// wiring, and the pure guaranteed-exit policy (`src/host/launcher/back-policy.ts`). The SDK
+// half is implemented by `sdk-design-system` (#3) against the frames declared here — this is
+// the TODO anchor #3's author looks for. In this change no SDK nav exists, so depth is always
+// 0 and back exits at the root; the round-trip below is wired but only exercised once #3 lands.
+//
+//   • SDK → host  (hint):  whenever the mini-app's nav-stack depth changes, the SDK runtime
+//     posts `{ __whimNavDepth: true, depth, generation }` over the same one-way transport that
+//     carries ui-events (`window.parent.postMessage`). The outer page source-verifies it came
+//     from its own iframe, STAMPS the generation it authoritatively bound the realm at, and
+//     relays it to RN as `{ kind: 'nav-depth', payload: { depth, generation } }`. Untrusted: a
+//     bundle can forge or inflate it — but it could equally "forge" depth by calling nav.push()
+//     for real, so authentication buys nothing. The host treats it as a HINT, never authority.
+//   • host → realm (request):  on system back with last-hinted depth > 0, the host calls the
+//     outer page's `__whimControl.navBack()`, which posts `{ __whimNavBack: true }` into the
+//     iframe. The SDK (#3) listens for it, pops its stack, and emits a fresh nav-depth.
+//
+// Generation stamping (#41 D3 fencing, mirrored): a nav-depth report whose generation is not
+// the current realm's is ignored — a fresh realm starts at depth 0. The back-policy owns this.
+
+/** SDK→host nav-depth hint (control family, unauthenticated). The SDK (#3) emits it; the
+ *  outer page relays it; the host back-policy consumes it as a hint, never as authority. */
+export interface NavDepthFrame {
+  __whimNavDepth: true;
+  /** The mini-app's current nav-stack depth. 0 means "at the root" (or no nav). */
+  depth: number;
+  /** The realm generation this report is stamped with (the host fences stale gens, D3). */
+  generation: number;
+}
+
+/** host→realm nav-back request (control family). The host posts it on system back when the
+ *  last-hinted depth > 0; the SDK (#3) pops one screen and re-emits nav-depth. */
+export interface NavBackFrame {
+  __whimNavBack: true;
+}
+
+/** Build the host→realm nav-back request frame. The host posts this (JSON-stringified) into
+ *  the iframe via the outer page's `__whimControl.navBack()`. */
+export function navBackFrame(): NavBackFrame {
+  return { __whimNavBack: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

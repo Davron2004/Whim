@@ -364,6 +364,19 @@ export class VersionStore {
     return this.snapshotContent(gitdir, oid);
   }
 
+  /**
+   * remove(appId) → drop an app's entire version history (additive product verb; launcher-shell
+   * / #5 D2). The launcher calls this when no installed entry references the repo any longer.
+   * KvBackedFs deletes by key prefix, so this collapses every KV key for the repo (one repo ==
+   * one prefix). Idempotent: removing an unknown app is a clean no-op. No git vocabulary crosses
+   * the surface — the return is a plain product-verb shape.
+   */
+  async remove(appId: string): Promise<{ removed: boolean }> {
+    const { dir } = this.paths(appId);
+    const removed = this.backend.removeTree(dir);
+    return { removed: removed > 0 };
+  }
+
   /** Manually compact a repo (Section 4); also runs automatically past the threshold. */
   async compact(appId: string): Promise<CompactionResult> {
     const { dir, gitdir } = this.paths(appId);
