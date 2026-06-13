@@ -111,7 +111,27 @@ delivered to the user privately, never committed**.
 ### Lane A — runtime/SDK (device) — serialize within lane (shared `src/sdk`)
 
 #### 2. `effects-and-cues` (= v0.3) — Size M · Deps: capability-bridge (done)
-**Status:** unproposed
+**Status:** implemented 2026-06-12 — desktop suites green (`bridge:test` 91 checks incl. the new
+§G cues; effects E1–E4 in headless Chromium; `invariants` 7/non-vacuous; build + lint clean) and
+**emulator acceptance done** (Pixel_9_Pro_XL arm64, offline release): pour-over delivered, the
+`interval` countdown ticks at 1 Hz, **get-ready + stage-transition cues fire** (8 syscalls, all
+`ok`), pause/resume work, **containment held 42/42** throughout; the Kotlin `WhimTone` TurboModule
++ codegen compile and install. **Pending:** the runtime-owner invariants (INV-TIMER, INV-CUEGATE —
+authored in a separate session, §16.4) and the *felt* cue check on real hardware. Not yet archived.
+**Contract notes (durable — Lane A #3/#4 share `src/sdk`):** `vc-sdk` now exports `delay(ms)` and
+`interval(cb, ms, { running })` (web-resident wrapped timers — **no** syscall, no capability, hook
+auto-cleanup on unmount, `running` pauses) and a `cues` facade `cues.haptic(kind)` /
+`cues.sound(name)` (syscalls **#2/#3** under ONE `cues` capability). Closed token sets, single
+source `src/host/bridge/contract.ts` (`HAPTIC_KINDS = tap|double|heavy`, `SOUND_NAMES =
+tick|chime|alarm`); the host owns token→pattern/tone, the bundle expresses only tokens. Cues are
+fire-and-forget + at-most-once (the dispatcher's existing dedup). Bridge diff was **rows + types +
+the registry factory only** (`createDefaultRegistry({ cueBackend })`) — transport/dispatcher/gate
+untouched, so the #41 append-only readiness test PASSED. RN side: `src/host/cue-backend.ts`
+(`Vibration`) + the in-repo `WhimTone` `ToneGenerator` TurboModule; `android.permission.VIBRATE`
+added. SDK export budget after this change: **14** runtime value exports (this change added
+exactly `delay` + `interval` + the `cues` facade — the "2 effects + 2 cues" — well under #1's
+~42 ceiling). No CSP / sandbox-attribute / module-allowlist line changed anywhere in the diff
+(locked #35/#37 intact; `src/runtime/web/` + `build/assemble.mjs` untouched — no D9 red flag).
 **Why:** the §15.2 v0.3 rung: web-resident effects + the bridge's append-only readiness test.
 **In:** `delay`/`interval` in `vc-sdk` — **web-side** wrapped timers (no bridge) with
 unmount/teardown cleanup the host can force (realm reset cancels everything); haptics as

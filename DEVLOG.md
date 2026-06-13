@@ -512,3 +512,59 @@ The **full WebView path** (deliver buttons) ran 111 syscalls end-to-end, the wat
    acceptance headlessly worked because the sandboxed iframe's rendered `Text` shows up in the
    native view dump — so assertions like "INJECTIONS LANDED: 0" and "denied: undeclared_capability"
    are greppable without OCR. Handy for scripting an on-device UI acceptance.
+
+---
+
+## v0.3 — effects-and-cues (`effects-and-cues`, decisions #43)
+
+**Result:** time + physical feedback shipped. Desktop suites green (`bridge:test` **91 checks**
+incl. the new §G cues; effects E1–E4 in headless Chromium; `invariants` 7/non-vacuous; build +
+lint clean) and **emulator acceptance done** (Pixel_9_Pro_XL arm64, offline release): pour-over
+delivered, `interval` ticked at 1 Hz through Bloom, get-ready + stage-transition **cues fired**
+(`syscalls: 8 · last: cues.sound → ok`), pause froze the countdown, **containment held 42/42**.
+The `WhimTone` `ToneGenerator` TurboModule + codegen compiled and installed. Pending: the *felt*
+buzz/tone on real hardware (emulator can't show it) and the two runtime-owner invariants (§16.4).
+
+### Lessons
+
+1. **The `interval`-as-hook bet paid off — the leak class is gone by construction.** Making
+   `interval` a hook (not a handle-returning `start()`) means there's no cleanup for the agent
+   to forget: unmount cancels via the effect's return, and `running:false` re-runs the effect to
+   a no-op. The desktop check proved E3/E4 mechanically; on-device, tapping Pause froze the
+   countdown at the same `1:18` across two screencaps — exactly the "paused interval does not
+   tick" property, end-to-end. Cost: the `use*` lint convention can't see `interval` is a hook,
+   so `react-hooks/rules-of-hooks` fires; a scoped `eslint-disable` (not a rename) keeps the
+   spec-fixed name. Accepted per design D1.
+
+2. **Cues needed ZERO new `BridgeErrorKind`.** The missing-backend case (a host with no device
+   wired) just throws a plain `Error`; the dispatcher's existing generic `catch` shapes it into
+   `handler_error` with a hint. So the cue rows are *purely* additive — `dispatcher.ts`/`gate.ts`
+   never changed. The #41 readiness test ("capability #N+1 is one row + one stub") held literally:
+   the bridge diff is contract types + two rows + the `cueBackend` factory option, nothing else.
+
+3. **`ToneGenerator` was the right "no dependency" call — codegen compiled first try.** The new-
+   arch TurboModule shape that worked on RN 0.85: a `Native*.ts` spec under a `codegenConfig.
+   jsSrcsDir`, the Kotlin module extending the generated `Native<Name>Spec`, and a
+   `BaseReactPackage` with a `ReactModuleInfoProvider` (6-arg `ReactModuleInfo` ending
+   `isTurboModule=true`), added to `MainApplication`'s package list (in-app modules don't
+   autolink). `:app:compileReleaseKotlin` ran codegen and produced
+   `app/build/generated/source/codegen/java/com/whim/tone/NativeWhimToneSpec.java`. The
+   "No modules to process in combine-js-to-schema-cli" line during the JS-bundle step is the
+   *library* autolink combine — benign; the *app* codegen is a separate task that did find the
+   spec. `react-native-sound` (the pre-named fallback) was never needed.
+
+4. **Building an RN app from a git WORKTREE needs a real `node_modules` IN the worktree.** Node
+   resolves up the tree (so the esbuild/playwright JS suites worked against the parent repo's
+   `node_modules`), but **Gradle's `settings.gradle` resolves `node_modules/@react-native/
+   gradle-plugin` literally** and doesn't walk up — and a *symlinked* `node_modules` then breaks
+   **Metro's** resolver (`Unable to resolve @babel/runtime/helpers/interopRequireDefault`), which
+   both the JS bundle AND `generateCodegenSchemaFromJavaScript` rely on. Fix: `npm install` in the
+   worktree (≈6 s with a warm cache — the lockfile matches; my only package.json change was
+   `codegenConfig`, no new deps). Don't symlink for native builds.
+
+5. **Cue round-trip is the same transport-bound hop as every verb (~16–17 ms median, the v0.2
+   number), and fire-and-forget makes the latency uncritical.** The handler is *cheaper* than
+   storage (no engine — it just calls `Vibration`/`ToneGenerator` and returns `{}`), so the cost
+   is purely the two RN↔WebView crossings, not the cue. The 10 s marshaller timeout (`syscall.js`
+   `TIMEOUT_MS`) has ~600× headroom; with cues being fire-and-forget there's even less reason to
+   tighten it. Left as-is pending real-hardware numbers (D8 tuning).

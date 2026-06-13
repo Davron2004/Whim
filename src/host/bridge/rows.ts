@@ -11,11 +11,16 @@
  */
 
 import {
+  CueBackend,
+  HAPTIC_KINDS,
+  HapticKind,
   JsonValue,
   ListQuery,
   ParamsValidator,
   RealmRecord,
   RegistryRow,
+  SOUND_NAMES,
+  SoundName,
 } from './contract';
 import { CapabilityRegistry } from './registry';
 import { storageError } from '../storage-engine/contract';
@@ -149,5 +154,60 @@ export function registerDiagRows(registry: CapabilityRegistry): void {
     capability: 'diag',
     paramsSchema: (p) => (isObject(p) ? null : 'params must be an object'),
     handler: (p) => ({ echo: (p as { payload?: JsonValue }).payload ?? null }),
+  });
+}
+
+// ── cue rows (effects-and-cues D5/D7) — syscall #2/#3 ───────────────────────────
+// The append-only readiness test (#41): haptics + sound land as exactly two rows + their two
+// SDK stubs, with ZERO transport/dispatcher edits. Each row is a thin binding onto the injected
+// `CueBackend` (D5) — it touches no realm engine, derives everything from `(params, backend)`.
+// Off-set tokens are rejected with a hint that ENUMERATES the closed set straight from the
+// contract's token arrays (D4 / §8.1 self-repair). Fire-and-forget (D7): the handler triggers
+// the cue and returns `{}` immediately — completion/duration/device-state stay unobservable.
+
+/** A closed-token validator whose reject reason lists the valid members (the §8.1 fix-hint). */
+function vToken(key: string, set: readonly string[]): ParamsValidator {
+  return (p) => {
+    if (!isObject(p)) return 'params must be an object';
+    return typeof p[key] === 'string' && set.includes(p[key] as string)
+      ? null
+      : `"${key}" must be one of: ${set.join(', ')}`;
+  };
+}
+
+/** A missing backend is a STRUCTURED handler error (D5), never an unshaped throw the dispatcher
+ *  can't shape: the generic `catch` turns this Error into a `handler_error` sysret with a hint,
+ *  so a backend-less host (e.g. the gate-denial Node tests, or a future non-cue platform) still
+ *  answers the bundle with a rejected promise rather than crashing. */
+function cueBackendOf(backend: CueBackend | null | undefined): CueBackend {
+  if (!backend) {
+    throw new Error('cue backend unavailable on this host — no haptic/sound device is wired here');
+  }
+  return backend;
+}
+
+/**
+ * Register the cue rows (syscall #2/#3) bound to an injected backend (D5). Called UNCONDITIONALLY
+ * by `createDefaultRegistry` (even with `backend == null`) so gate denials stay testable with no
+ * device wired; an actually-declared cue with no backend surfaces the structured handler error
+ * above. The RN `Vibration`/ToneGenerator implementation is `src/host/cue-backend.ts` — never
+ * imported here, so this module stays loadable under Node (the bridge suites).
+ */
+export function registerCueRows(registry: CapabilityRegistry, backend?: CueBackend | null): void {
+  registry.register('cues.haptic', {
+    capability: 'cues',
+    paramsSchema: vToken('kind', HAPTIC_KINDS),
+    handler: (p) => {
+      cueBackendOf(backend).haptic(p.kind as HapticKind);
+      return {};
+    },
+  });
+  registry.register('cues.sound', {
+    capability: 'cues',
+    paramsSchema: vToken('name', SOUND_NAMES),
+    handler: (p) => {
+      cueBackendOf(backend).sound(p.name as SoundName);
+      return {};
+    },
   });
 }

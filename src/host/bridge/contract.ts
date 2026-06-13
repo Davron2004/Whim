@@ -157,6 +157,39 @@ export interface RegistryRow {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Cues (effects-and-cues D3/D4/D5) — the syscall-#2/#3 contract, pure types
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Physical cues (vibration, short sound) cross the bridge under ONE `cues` capability (D3),
+// as the closed token sets below (D4 — tokens-not-values, §5.3 extended to cues). The host
+// owns the token→pattern/tone mapping; no duration, pattern, asset, or raw value is expressible
+// from the bundle. The token arrays are the single source of truth: the row validators reject
+// off-set tokens and the denial hint enumerates them straight from these (the §8.1 self-repair
+// shape). Closed-set substitution is allowed for on-device feel; OPENING a type is not.
+//
+// Keep these RN-free: `rows.ts` (imported by the Node bridge suites) binds onto a `CueBackend`
+// the host injects; the RN `Vibration`/ToneGenerator implementation lives host-side
+// (`src/host/cue-backend.ts`), never here (D5 — the dumb-rows discipline).
+
+export const HAPTIC_KINDS = ['tap', 'double', 'heavy'] as const;
+export type HapticKind = (typeof HAPTIC_KINDS)[number];
+
+export const SOUND_NAMES = ['tick', 'chime', 'alarm'] as const;
+export type SoundName = (typeof SOUND_NAMES)[number];
+
+/**
+ * The injected cue backend (D5). Pure interface — the bridge rows derive their effect from this,
+ * so `bridge/` stays importable under Node. Fire-and-forget (D7): each method returns void and
+ * the row resolves `{}` as soon as the cue is triggered; completion/duration/device-state are
+ * deliberately unobservable (cues add zero sensing surface). The host implementation maps each
+ * token to a vibration pattern / tone; a Node test injects a recording fake.
+ */
+export interface CueBackend {
+  haptic(kind: HapticKind): void;
+  sound(name: SoundName): void;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // D2 — host-held app record + the per-realm record bound at creation
 // ─────────────────────────────────────────────────────────────────────────────
 
