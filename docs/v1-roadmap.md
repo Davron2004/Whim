@@ -153,7 +153,19 @@ styling; sensible empty/overflow behavior; SVG-or-DOM rendering choice made in d
 ### Lane B — host product UX (device) — serialize within lane (shared `src/host`)
 
 #### 5. `launcher-shell` — Size M–L · Deps: none hard
-**Status:** unproposed
+**Status:** implemented 2026-06-12 (branch `launcher-shell`, off `dev/v1`) — desktop gates green
+(build · invariants 42/42 (7 scenarios) · lint (no new errors) · vstore 52 · storage 131 ·
+bridge 63 · launcher 433 · tsc clean · by-source desktop parity); **on-device acceptance
+(task 7.2) PENDING** (offline release APK walk per `acceptance.spec.md`). As-built: decisions #43.
+**Contract notes (as-built, for #3 — the nav-depth seam):** the SDK↔host back-navigation seam
+is declared in `src/host/bridge/contract.ts` (`NavDepthFrame`/`NavBackFrame`, added to
+`classifyFrame` as control-family) with the anchor comment #3 implements against; the iframe-side
+TODO anchor is in `src/runtime/web/loader.js`. #3's SDK half emits
+`{__whimNavDepth:true, depth, generation}` on every nav-stack change (the outer page source-checks
++ stamps the generation, relays as `kind:'nav-depth'`) and listens for `{__whimNavBack:true}`
+(posted by the host's `__whimControl.navBack()` on system back when depth>0) to pop one screen and
+re-emit depth. The host guaranteed-exit policy (`src/host/launcher/back-policy.ts`) is independent
+of any SDK cooperation. In #5, depth is always 0 (no SDK nav) → back exits at root.
 **Why:** the host is currently a probe screen; this is the product shell.
 **In:** installed-apps record store (id, name, manifest, schema, bundle ref — design decides
 MMKV record vs version-store-backed); home grid + full-screen launch through the existing

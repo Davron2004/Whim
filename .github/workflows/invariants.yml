@@ -40,6 +40,11 @@ jobs:
       # generation fences, append-only registry, channel-derived identity. Fails fast.
       - name: Run the capability-bridge host-core suite (blocks on red)
         run: npm run bridge:test
+      # ── launcher core (launcher-shell / #5 D8) ──────────────────────────────────
+      # Pure host-side logic (back-policy state machine, the installed-apps index, the
+      # version-store access wrapper over MemoryFs). Fast and device-free; fails fast.
+      - name: Run the launcher core suite (blocks on red)
+        run: npm run launcher:test
       - run: npx playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
