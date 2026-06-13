@@ -1,0 +1,40 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "build/assemble.mjs",
+    "build/react-inject.js",
+    "build/react-inject-shim.ts",
+    "build/vc-sdk-inject.ts",
+    "src/sdk/index.tsx!",
+    "src/host/bridge/index.ts!",
+    "src/host/storage-engine/index.ts!",
+    "src/host/version-store/index.ts!",
+    "src/host/**/test/**",
+    "src/host/**/device-acceptance.ts",
+    "invariants/**/*.mjs",
+    "fixtures/**/*.app.tsx"
+  ],
+  "project": [
+    "App.tsx",
+    "src/**/*.{ts,tsx,js}",
+    "build/**/*.{ts,mjs,js}",
+    "invariants/**/*.{mjs,js}",
+    "fixtures/**/*.tsx"
+  ],
+  "ignore": [
+    "src/runtime/web/**",
+    "invariants/**/reference/**"
+  ],
+  "ignoreDependencies": [
+    "buffer",
+    "crc-32",
+    "pako",
+    "sha.js",
+    "@babel/preset-env",
+    "@babel/runtime",
+    "@react-native/new-app-screen",
+    "react-test-renderer",
+    "@types/react-test-renderer"
+  ],
+  "ignoreExportsUsedInFile": true
+}

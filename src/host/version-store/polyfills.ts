@@ -37,7 +37,6 @@ export function installHermesPolyfills(): void {
 
   // Hermes has TextEncoder but not TextDecoder. text-encoding-polyfill installs both.
   if (typeof g.TextDecoder === 'undefined') {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('text-encoding-polyfill');
   }
 }

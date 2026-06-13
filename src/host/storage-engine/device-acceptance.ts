@@ -242,7 +242,6 @@ export function runStorageDeviceAcceptance(): StorageVerdict {
   };
 
   // logcat (truncates ~4 KB → the screen renders the full object too).
-  // eslint-disable-next-line no-console
   console.error('[whim-storage] verdict ' + JSON.stringify(verdict));
   return verdict;
 }

@@ -28,7 +28,6 @@ function tryMmkv(): KVBackend | undefined {
     const { createMmkvBackend } = require('./version-store/fs/mmkv-backend');
     return createMmkvBackend();
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('[whim-vstore] MMKV unavailable: ' + (err as Error).message);
     return undefined;
   }
@@ -45,7 +44,6 @@ export default function VersionStoreProbeScreen() {
       } catch (err) {
         const msg = (err as Error).stack || (err as Error).message;
         setError(msg);
-        // eslint-disable-next-line no-console
         console.error('[whim-vstore] FATAL ' + msg);
       }
     })();

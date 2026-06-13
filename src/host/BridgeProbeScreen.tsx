@@ -24,7 +24,6 @@ export default function BridgeProbeScreen() {
         .catch((err) => {
           const msg = (err as Error).stack || (err as Error).message;
           setError(msg);
-          // eslint-disable-next-line no-console
           console.error('[whim-bridge] FATAL ' + msg);
         });
     }, 0);

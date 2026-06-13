@@ -111,7 +111,19 @@ delivered to the user privately, never committed**.
 ### Lane A — runtime/SDK (device) — serialize within lane (shared `src/sdk`)
 
 #### 2. `effects-and-cues` (= v0.3) — Size M · Deps: capability-bridge (done)
-**Status:** unproposed
+**Status:** proposed 2026-06-12 (`openspec/changes/effects-and-cues/` — proposal/design/specs/tasks)
+**Contract notes:**
+- SDK exports (2+2, inside #1's 42): `delay(ms)` Promise · `interval(cb, ms, {running})` — a
+  **React hook**, auto-cleans on unmount · `haptic(kind)` · `sound(name)`. `setTimeout` stays
+  unstripped; steering generated code to SDK timers is #9's SDK lint.
+- **One `cues` capability**: `cues.haptic {kind: tap|double|heavy}` · `cues.sound {name:
+  tick|chime|alarm}` — closed token sets (off-set → `invalid_params` hint listing valid
+  tokens); fire-and-forget, at-most-once per id; token→pattern/tone maps live host-side only.
+- Rows bind an injected `CueBackend` via `createDefaultRegistry({cueBackend})` (RN impl
+  `src/host/cue-backend.ts`; Node suites stay RN-free). Audio = in-repo `ToneGenerator`
+  TurboModule, zero external dep (fallback `react-native-sound`); haptics = RN `Vibration`.
+- New specs `mini-app-effects`/`mini-app-cues`; `src/runtime/web/` untouched; invariants =
+  tasks 7.x, deferred to a runtime-owner session (§16.4). No deviations from the brief.
 **Why:** the §15.2 v0.3 rung: web-resident effects + the bridge's append-only readiness test.
 **In:** `delay`/`interval` in `vc-sdk` — **web-side** wrapped timers (no bridge) with
 unmount/teardown cleanup the host can force (realm reset cancels everything); haptics as
@@ -153,7 +165,19 @@ styling; sensible empty/overflow behavior; SVG-or-DOM rendering choice made in d
 ### Lane B — host product UX (device) — serialize within lane (shared `src/host`)
 
 #### 5. `launcher-shell` — Size M–L · Deps: none hard
-**Status:** unproposed
+**Status:** proposed 2026-06-12 (`openspec/changes/launcher-shell/` — proposal/design/specs/tasks)
+**Contract notes:**
+- New specs `app-launcher`/`mini-app-back-navigation`. Record store resolved: thin **MMKV index**
+  (`launcher/app-index.ts`, `InstalledApp` = id/name/example/`AppRecord`(#41)/lineageId/optional
+  storeId) over **version-store-held bundles**; forks share the original's repo via lineages.
+- `launcher/store-access.ts` is the ONLY sanctioned VersionStore path (switchLineage + delete
+  refcounting) — #6 reads through it. Additive store verb **`remove(appId)`** for delete.
+- ⚠️ #3↔#5 nav seam defined HERE: SDK→host `nav-depth` control frame (unauthenticated hint,
+  generation-stamped, F4) · host→realm `nav-back`; guaranteed-exit is host-owned policy.
+- Delivery: `reinject({bundleSource})` — outer page only, iframe contract byte-identical; baked
+  `BUNDLES` stays for dev/probes; build also emits `src/runtime/generated/app-bundles.ts`.
+- `WebViewHost` → `useMiniAppHost` hook (#7 reuses it) + `DevProbeScreen`; new blocking suite
+  `npm run launcher:test`. No deviations from the brief.
 **Why:** the host is currently a probe screen; this is the product shell.
 **In:** installed-apps record store (id, name, manifest, schema, bundle ref — design decides
 MMKV record vs version-store-backed); home grid + full-screen launch through the existing
@@ -191,7 +215,20 @@ re-prompt entry on an existing app (edit flow).
 ### Lane C — server/harness (new `server/` + `contract/` workspaces)
 
 #### 8. `harness-server-skeleton` — Size M · Deps: none
-**Status:** unproposed
+**Status:** proposed 2026-06-12 (`openspec/changes/harness-server-skeleton/` — proposal/design/specs/tasks)
+**Contract notes:**
+- New specs `generation-contract`/`generation-server`. Workspaces `contract/`+`server/` (`@whim/
+  contract` zod-only TS-source; `@whim/server` = **Hono**; RN app stays root pkg). Blocking gates:
+  `npm run server:test` (+tsc both pkgs), `npm run guard:metro` (RN bundle still resolves);
+  `server:dev` = 0.0.0.0:`WHIM_SERVER_PORT` (8787). `/v1/*` need header **`x-whim-device`** (UUID)
+  else 400: `POST /v1/generate` (SSE **over POST**; no EventSource) · `POST /v1/rewrite` ·
+  `GET /v1/usage`; `GET /healthz` open. `GenerationEvent`: stage(plan|generate|check|run ×
+  start|done)/token/diagnostic/usage/result/failure — one terminal event, always last.
+- `Diagnostic {kind,symbol?,line?,hint}`, `kind` open — #9 narrows it in `@whim/contract`.
+  `WireAppRecord {name,source,bundle,sourceMap?,manifest,schema}`, install-state-free (#5 owns the
+  stored record). Stub behind `Pipeline` iface (`[[fail]]` → failure path); #11 swaps the impl,
+  route/schema unchanged. Metering = `node:sqlite` under `WHIM_DATA_DIR` (the only server state).
+  OpenRouter wrapper unmounted; model id always a param.
 **In:** monorepo workspaces (`server/`, shared `contract/` with zod schemas for generation
 request / SSE event stream / diagnostics / app record) — design must keep Metro away from
 workspace resolution issues; SSE generation endpoint over a **stub pipeline** (canned stage
@@ -204,7 +241,20 @@ decided in design.
 **Done when:** phone-shaped client can open SSE, stream canned stages, get metered.
 
 #### 9. `static-check-pipeline` — Size M–L · Deps: none (pure lib; TDD per §16.2)
-**Status:** unproposed
+**Status:** proposed 2026-06-12 (`openspec/changes/static-check-pipeline/` — proposal/design/specs/tasks)
+**Contract notes:**
+- Top-level **`checks/`** (workspace-ified once #8's exist). `runStaticChecks(source,
+  {appliedSchema?, filename?}) → {ok, diagnostics, manifest?}` — pure, AST-only, **never
+  executes** the candidate. Suite `npm run checks:test`, blocking CI.
+- Diagnostics: closed kind union + required `hint` in dependency-free `checks/contract.ts`,
+  surfaced in `@whim/contract` as the narrowing of #8's open wire `kind` (wired by whichever
+  is *implemented* second); adds `severity` (§8.2 — shown to the agent) + `message`; `ok` ⇔
+  zero diagnostics of ANY severity; kinds reuse runtime names (`undeclared_capability`).
+- `extractAppManifest` (literal-only `defineApp`) feeds #11's record; schema check = #40's
+  `validateArtifact`/`diffSchemas`, `appliedSchema` caller-supplied (device ships it on edits).
+  ⚠️ #3: nav-target check is table-driven on #1's `useNavigation`/`useRoute` — finalizing
+  against #3's as-built API is a data edit. New specs `static-checks`/`harness-diagnostics`
+  (#10 extends additively); hostile bypass corpus = separate §16.4 session. No brief deviations.
 **In:** a pure TS library (usable by server, evals, and tests): TS parse gate; import
 allowlist (only `vc-sdk`); **forbidden-global AST walk that closes T8** — direct refs,
 prototype-walk patterns, `globalThis`/alias indirection, `Object.prototype` pollution

@@ -64,13 +64,15 @@ function Home() {
     };
   }, []);
 
-  const add = async () => {
-    const next = total + 1;
+  const add = async (count: number) => {
+    const next = total + count;
     setTotal(next); // optimistic; the syscall persists it
     try {
       await storage.kv.set('total', next);
-      await storage.records.append('Drinks', { at: Date.now() });
-      setHistory((h) => h + 1);
+      for (let i = 0; i < count; i++) {
+        await storage.records.append('Drinks', { at: Date.now() });
+      }
+      setHistory((h) => h + count);
       setStatus('saved');
     } catch (e) {
       setStatus('save failed: ' + hintOf(e));
@@ -92,7 +94,8 @@ function Home() {
           <Text>{String(history)}</Text>
         </Row>
 
-        <Button label="+1 glass" onPress={add} />
+        <Button label="+1 glass" onPress={() => add(1)} />
+        <Button label="+2 glasses" onPress={() => add(2)} />
       </Stack>
     </Screen>
   );

@@ -12,6 +12,18 @@ Architecture/decisions live in `docs/decisions.md` (numbered decision log), `doc
 
 Changes follow the OpenSpec workflow: live specs in `openspec/specs/`, proposals in `openspec/changes/` (archived to `openspec/changes/archive/` when done).
 
+## Build harness (Opus dispatches, Sonnet implements, exit codes decide)
+
+This repo runs the agentic harness in `docs/harness-build-guide.md`. Roles: a **researcher** subagent crawls code and returns a bounded digest; the **proposer** (this main thread, during `/opsx:*`) writes proposal/design/tasks/chains from digests; the **dispatcher** (`/dispatch <change-id>`) feeds one context chain at a time to **implementer** subagents and adjudicates; a **reviewer** audits diffs against reports; a **critic** (`/critic-run`) files a daily problems report. The mechanical definition of done is `./scripts/gate.sh` (typecheck + lint + knip + the real Node/Chromium suites + `openspec validate` + scaffolding tripwires) — agents cannot edit the gate or its config (`.claude/hooks/protect-harness.sh` blocks `scripts/gate.sh`, `.claude/**`, `package.json`, `tsconfig*.json`, `.eslintrc*`, `.eslintignore`, `knip.json`). Those are human-edited in an editor. Information flows through files in the change folder (`research.md` → proposal artifacts → `chains.md` → `handoff/*.md` → `progress.md`), never through context.
+
+## Exploration policy
+- The main thread NEVER crawls the codebase. If orienting requires reading more than 3 files, dispatch the `researcher` subagent and work from its digest. This applies with full force to all /opsx:* planning phases.
+- Always read docs/capabilities.md first and pull only the specs it points to.
+- During /opsx proposal/design: save the researcher digest to openspec/changes/<id>/research.md and cite it in design.md.
+
+## Chain planning
+After tasks.md is written, produce chains.md in the change folder: group tasks into context chains per the rules in any existing chains.md or, failing that: 3–7 tasks per chain, grouped by shared files/layer, sequential, each chain readable from spec excerpts + declared contracts only. Declare a writes-contract for every chain whose outputs a later chain consumes. A contract (`handoff/*.md`) is an interface — signatures, shared types verbatim, invariants, error surface — hard-capped at 60 lines, never a diary of how the chain did its work.
+
 ## Commands
 
 ```sh
