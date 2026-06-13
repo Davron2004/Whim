@@ -28,13 +28,16 @@ import {
   type RealmRecord,
 } from './bridge';
 import { createStorageEngine } from './storage-engine';
+import { createCueBackend } from './cue-backend';
 
-// The append-only capability table (storage + diag), built once for the host (D5).
-const REGISTRY = createDefaultRegistry();
+// The append-only capability table (storage + diag + cues), built once for the host (D5). The
+// cue backend (RN Vibration + the WhimTone ToneGenerator module) is injected here — the only
+// place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
+const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
 // The bridge apps the host can deliver on-device (each has a host-held record extracted at
 // build time). tip-splitter is the Tier-0 default the runtime autostarts.
-const DELIVERABLE = ['water-counter', 'latency-probe', 'sql-injector', 'cap-intruder', 'evil'] as const;
+const DELIVERABLE = ['water-counter', 'latency-probe', 'pour-over-timer', 'sql-injector', 'cap-intruder', 'evil'] as const;
 
 interface HostState {
   contained: boolean | null;

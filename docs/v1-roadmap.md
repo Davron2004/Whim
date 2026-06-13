@@ -84,9 +84,11 @@ gates green + on-device acceptance done; syscall round-trip ≈16–17 ms median
 ### Lane 0 — groundwork
 
 #### 1. `tier0-corpus-and-sdk-gap` — Size S · Deps: none
+
 **Status:** DONE 2026-06-12 — executed inline as a working session with the user (analysis
 only, no code; OpenSpec ceremony skipped by agreement). Deliverable: **`docs/sdk-gap.md`**.
 **Contract notes:**
+
 - v1 SDK surface = **~42 exports** (ceiling held); every export traces to a corpus app.
 - **Navigation does not exist yet** — built in #3 (`useNavigation`/`useRoute`). ⚠️ #3↔#5
   coordination: system back needs a nav-depth seam; first proposal to land defines it.
@@ -111,19 +113,28 @@ delivered to the user privately, never committed**.
 ### Lane A — runtime/SDK (device) — serialize within lane (shared `src/sdk`)
 
 #### 2. `effects-and-cues` (= v0.3) — Size M · Deps: capability-bridge (done)
-**Status:** proposed 2026-06-12 (`openspec/changes/effects-and-cues/` — proposal/design/specs/tasks)
-**Contract notes:**
-- SDK exports (2+2, inside #1's 42): `delay(ms)` Promise · `interval(cb, ms, {running})` — a
-  **React hook**, auto-cleans on unmount · `haptic(kind)` · `sound(name)`. `setTimeout` stays
-  unstripped; steering generated code to SDK timers is #9's SDK lint.
-- **One `cues` capability**: `cues.haptic {kind: tap|double|heavy}` · `cues.sound {name:
-  tick|chime|alarm}` — closed token sets (off-set → `invalid_params` hint listing valid
-  tokens); fire-and-forget, at-most-once per id; token→pattern/tone maps live host-side only.
-- Rows bind an injected `CueBackend` via `createDefaultRegistry({cueBackend})` (RN impl
-  `src/host/cue-backend.ts`; Node suites stay RN-free). Audio = in-repo `ToneGenerator`
-  TurboModule, zero external dep (fallback `react-native-sound`); haptics = RN `Vibration`.
-- New specs `mini-app-effects`/`mini-app-cues`; `src/runtime/web/` untouched; invariants =
-  tasks 7.x, deferred to a runtime-owner session (§16.4). No deviations from the brief.
+
+**Status:** implemented 2026-06-12 — desktop suites green (`bridge:test` 91 checks incl. the new
+§G cues; effects E1–E4 in headless Chromium; `invariants` 7/non-vacuous; build + lint clean) and
+**emulator acceptance done** (Pixel_9_Pro_XL arm64, offline release): pour-over delivered, the
+`interval` countdown ticks at 1 Hz, **get-ready + stage-transition cues fire** (8 syscalls, all
+`ok`), pause/resume work, **containment held 42/42** throughout; the Kotlin `WhimTone` TurboModule
+- codegen compile and install. **Pending:** the runtime-owner invariants (INV-TIMER, INV-CUEGATE —
+authored in a separate session, §16.4) and the *felt* cue check on real hardware. Not yet archived.
+**Contract notes (durable — Lane A #3/#4 share `src/sdk`):** `vc-sdk` now exports `delay(ms)` and
+`interval(cb, ms, { running })` (web-resident wrapped timers — **no** syscall, no capability, hook
+auto-cleanup on unmount, `running` pauses) and a `cues` facade `cues.haptic(kind)` /
+`cues.sound(name)` (syscalls **#2/#3** under ONE `cues` capability). Closed token sets, single
+source `src/host/bridge/contract.ts` (`HAPTIC_KINDS = tap|double|heavy`, `SOUND_NAMES =
+tick|chime|alarm`); the host owns token→pattern/tone, the bundle expresses only tokens. Cues are
+fire-and-forget + at-most-once (the dispatcher's existing dedup). Bridge diff was **rows + types +
+the registry factory only** (`createDefaultRegistry({ cueBackend })`) — transport/dispatcher/gate
+untouched, so the #41 append-only readiness test PASSED. RN side: `src/host/cue-backend.ts`
+(`Vibration`) + the in-repo `WhimTone` `ToneGenerator` TurboModule; `android.permission.VIBRATE`
+added. SDK export budget after this change: **14** runtime value exports (this change added
+exactly `delay` + `interval` + the `cues` facade — the "2 effects + 2 cues" — well under #1's
+~42 ceiling). No CSP / sandbox-attribute / module-allowlist line changed anywhere in the diff
+(locked #35/#37 intact; `src/runtime/web/` + `build/assemble.mjs` untouched — no D9 red flag).
 **Why:** the §15.2 v0.3 rung: web-resident effects + the bridge's append-only readiness test.
 **In:** `delay`/`interval` in `vc-sdk` — **web-side** wrapped timers (no bridge) with
 unmount/teardown cleanup the host can force (realm reset cancels everything); haptics as
@@ -137,6 +148,7 @@ manifest-gated) — *invariants authored in a separate runtime-owner session*.
 transport/dispatcher edits; suites green.
 
 #### 3. `sdk-design-system` — Size L · Deps: #1; after #2 (file overlap)
+
 **Status:** unproposed
 **Why:** the SDK is currently "exactly what the fixtures use"; the corpus needs the real set,
 and the reference doc *is* the future system prompt.
@@ -154,6 +166,7 @@ export must be justified by a corpus app.
 every export.
 
 #### 4. `sdk-charts` — Size M · Deps: #1 · Parallelizable with late #3 (new `src/sdk/charts/` module)
+
 **Status:** unproposed
 **Why:** corpus demands charts (spending graph, streak heatmap); big enough surface to own a
 change (user's call, decision #42).
@@ -165,8 +178,10 @@ styling; sensible empty/overflow behavior; SVG-or-DOM rendering choice made in d
 ### Lane B — host product UX (device) — serialize within lane (shared `src/host`)
 
 #### 5. `launcher-shell` — Size M–L · Deps: none hard
+
 **Status:** proposed 2026-06-12 (`openspec/changes/launcher-shell/` — proposal/design/specs/tasks)
 **Contract notes:**
+
 - New specs `app-launcher`/`mini-app-back-navigation`. Record store resolved: thin **MMKV index**
   (`launcher/app-index.ts`, `InstalledApp` = id/name/example/`AppRecord`(#41)/lineageId/optional
   storeId) over **version-store-held bundles**; forks share the original's repo via lineages.
@@ -192,6 +207,7 @@ plus the draggable auto-dimming floating extra.
 **Done when:** seeded launcher → tap app → runs → system back exits → delete/fork work, on-device.
 
 #### 6. `version-history-ux` — Size M · Deps: #5
+
 **Status:** unproposed
 **In:** per-app history screen over the version store's product verbs (paginate/cap — history
 and rollback are the depth-scaling ops, #39); prominent rollback (§11: rollbacks are ~10×
@@ -202,6 +218,7 @@ verbs only, no git vocabulary).
 **Read first:** `src/host/version-store/index.ts`, specs `mini-app-versioning`/`mini-app-forking`, decisions #39.
 
 #### 7. `prompt-flow-ux` — Size M–L · Deps: contract types from #8 (mockable before it)
+
 **Status:** unproposed
 **In:** prompt screen (text input + OS-dictation affordance — no in-app STT); the **two-stage
 flow**: casual prompt → server rewrite → **preview screen** where the user reviews/edits
@@ -215,8 +232,10 @@ re-prompt entry on an existing app (edit flow).
 ### Lane C — server/harness (new `server/` + `contract/` workspaces)
 
 #### 8. `harness-server-skeleton` — Size M · Deps: none
+
 **Status:** proposed 2026-06-12 (`openspec/changes/harness-server-skeleton/` — proposal/design/specs/tasks)
 **Contract notes:**
+
 - New specs `generation-contract`/`generation-server`. Workspaces `contract/`+`server/` (`@whim/
   contract` zod-only TS-source; `@whim/server` = **Hono**; RN app stays root pkg). Blocking gates:
   `npm run server:test` (+tsc both pkgs), `npm run guard:metro` (RN bundle still resolves);
@@ -241,8 +260,10 @@ decided in design.
 **Done when:** phone-shaped client can open SSE, stream canned stages, get metered.
 
 #### 9. `static-check-pipeline` — Size M–L · Deps: none (pure lib; TDD per §16.2)
+
 **Status:** proposed 2026-06-12 (`openspec/changes/static-check-pipeline/` — proposal/design/specs/tasks)
 **Contract notes:**
+
 - Top-level **`checks/`** (workspace-ified once #8's exist). `runStaticChecks(source,
   {appliedSchema?, filename?}) → {ok, diagnostics, manifest?}` — pure, AST-only, **never
   executes** the candidate. Suite `npm run checks:test`, blocking CI.
@@ -269,6 +290,7 @@ implementing session).
 **Read first:** `docs/spike2-findings.md`, spec §8.1–8.2, `build/build.mjs` (esbuild gotchas), `src/host/storage-engine/contract.ts`.
 
 #### 10. `synthetic-run-harness` — Size M · Deps: none hard (lib-first; #8 to mount it)
+
 **Status:** unproposed
 **Why:** productionizes Spike 3 — the loop's "run + observe" stage.
 **In:** boot a candidate bundle in the **real runtime page** (reuse `build/assemble.mjs`
@@ -282,6 +304,7 @@ diagnostics catalog.
 **Read first:** `invariants/sandbox-isolation/`, `build/assemble.mjs`, decisions #35/#37/#41, spec §8.1 step 4–5.
 
 #### 11. `generation-loop` — Size L · Deps: #8, #9, #10, SDK reference from #3 (+#4)
+
 **Status:** unproposed
 **In:** the orchestrated pipeline — **rewrite stage** (small model: casual → detailed prompt,
 returned for device-side preview; approved text feeds the engineer model) → **plan** (structured
@@ -295,6 +318,7 @@ states; token metering per device.
 **Read first:** spec §8 entire, §10.1, #42 model strategy, #9/#10 contract notes.
 
 #### 12. `eval-harness` — Size M · Deps: #1, #9; full value after #11
+
 **Status:** unproposed
 **In:** corpus runner CLI (on-demand, not CI — cost): **Tier A** deterministic gate (= #9 + #10
 pass/fail); **Tier B** behavioral specs per corpus app, English-first then encoded; **Tier C**
@@ -309,6 +333,7 @@ open model choice.
 ### Lane D — integration
 
 #### 13. `v1-end-to-end` — Size M · Deps: all of the above
+
 **Status:** unproposed
 **In:** device↔server on a real network — **fresh-AVD spike** (non-Play image so `adb root`
 works; retry `adb reverse` for plain HTTP/SSE — the Metro failure may have been dev-server-
@@ -339,8 +364,8 @@ not all 13 up front: later proposals should see earlier changes' as-built contra
 (meal-plan generator, journal summary, fridge-to-recipe). 3. **Tier 2 — notifications/schedules**
 (meal-plan alarm, full pour-over, med/plant reminders). 4. Control modes (§10.1) + examples
 library / per-app `LEARNED.md` (§9). 5. **Tier 3a — curated HTTP** (weather day-picker).
-6. Direct provider API + prompt caching for the chosen model. 7. Canvas/games (Tier 5).
-8. Sharing track; iOS.
+2. Direct provider API + prompt caching for the chosen model. 7. Canvas/games (Tier 5).
+3. Sharing track; iOS.
 
 ## Open deltas
 
