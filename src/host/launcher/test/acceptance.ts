@@ -16,7 +16,6 @@ import { runProductVerbsTests } from './product-verbs.test';
 
 const h = new Harness();
 
-// eslint-disable-next-line no-console
 console.log('\nlauncher acceptance — back-policy + app-index + store-access + seed + product-verbs\n');
 
 await runBackPolicyTests(h);
@@ -25,12 +24,9 @@ await runStoreAccessTests(h);
 await runSeedTests(h);
 await runProductVerbsTests(h);
 
-// eslint-disable-next-line no-console
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
-  // eslint-disable-next-line no-console
   console.error('\nFAILURES:\n' + h.failures.map(f => '  - ' + f).join('\n'));
   process.exit(1);
 }
-// eslint-disable-next-line no-console
 console.log('✅ launcher acceptance green.\n');

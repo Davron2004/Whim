@@ -8,8 +8,8 @@
  * @format
  */
 import React from 'react';
-import { StatusBar } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import LauncherRoot from './src/host/launcher/LauncherRoot';
 import VersionStoreProbeScreen from './src/host/VersionStoreProbeScreen';
 import StorageProbeScreen from './src/host/StorageProbeScreen';
@@ -36,8 +36,14 @@ export default function App() {
       ) : RUN_VSTORE_PROBE ? (
         <VersionStoreProbeScreen />
       ) : (
-        <LauncherRoot />
+        <SafeAreaView edges={['top']} style={styles.launcher}>
+          <LauncherRoot />
+        </SafeAreaView>
       )}
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  launcher: { flex: 1, backgroundColor: '#0b1020' },
+});

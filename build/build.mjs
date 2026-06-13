@@ -255,7 +255,7 @@ async function main() {
     },
     initial: 'tip-splitter',
     channel: 'b',
-    showDiagnostics: true,
+    showDiagnostics: false,
     autostart: true,
   });
   await mkdir(r('src/runtime/generated'), { recursive: true });

@@ -13,7 +13,6 @@ export class Harness {
       this.passed++;
     } else {
       this.failures.push(msg);
-      // eslint-disable-next-line no-console
       console.error('  ✗ ' + msg);
     }
   }
@@ -28,11 +27,9 @@ export class Harness {
   async test(name: string, fn: () => void | Promise<void>): Promise<void> {
     try {
       await fn();
-      // eslint-disable-next-line no-console
       console.log('• ' + name);
     } catch (err) {
       this.failures.push(`${name}: threw ${(err as Error).message}`);
-      // eslint-disable-next-line no-console
       console.error(`  ✗ ${name} THREW: ${(err as Error).stack}`);
     }
   }

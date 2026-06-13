@@ -359,6 +359,9 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
       color: color('text'),
       width: '100%',
       boxSizing: 'border-box',
+      outline: 'none',
+      WebkitAppearance: 'none',
+      MozAppearance: 'textfield',
     },
   });
   if (!label) return field;

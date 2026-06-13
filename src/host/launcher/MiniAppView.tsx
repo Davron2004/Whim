@@ -6,8 +6,9 @@
 // byte-identical to the baked path. The floating affordance (D5) and Android system back (D4)
 // both exit to the launcher; the realm can reach neither. LauncherRoot keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useEffect } from 'react';
+import React, { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import { useMiniAppHost } from './useMiniAppHost';
@@ -23,21 +24,24 @@ export interface MiniAppViewProps {
 
 export default function MiniAppView({ record, bundleSource, engineAppId, onExit }: MiniAppViewProps) {
   const host = useMiniAppHost({ onExit });
+  const insets = useSafeAreaInsets();
 
-  // Deliver once on mount (the component is keyed by launcher id, so each app is a fresh mount).
-  useEffect(() => {
+  // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1).
+  // The component is keyed by launcher id, so each app is a fresh mount and onLoadEnd fires once.
+  const handleLoadEnd = useCallback(() => {
     host.deliverBySource(record, bundleSource, engineAppId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <WebView
         ref={host.webRef}
         style={styles.web}
         originWhitelist={['*']}
         source={{ html: host.runtimeHtml }}
         onMessage={(e) => host.onMessage(e.nativeEvent.data)}
+        onLoadEnd={handleLoadEnd}
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}

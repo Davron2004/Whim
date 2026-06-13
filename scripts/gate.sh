@@ -29,6 +29,8 @@ check "invariants"        npm run -s invariants
 check "version-store"     npm run -s vstore:test
 check "storage-engine"    npm run -s storage:test
 check "capability-bridge" npm run -s bridge:test
+check "launcher"          npm run -s launcher:test
+check "deliver-by-source" npm run -s launcher:deliver-verify
 check "openspec"          openspec validate --all --strict
 
 # Scaffolding tripwires: cheap greps for the garbage class you've already met. This is the

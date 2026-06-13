@@ -9,6 +9,7 @@
     "src/host/bridge/index.ts!",
     "src/host/storage-engine/index.ts!",
     "src/host/version-store/index.ts!",
+    "src/host/launcher/index.ts!",
     "src/host/**/test/**",
     "src/host/**/device-acceptance.ts",
     "invariants/**/*.mjs",
