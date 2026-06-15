@@ -12,3 +12,5 @@
 | storage-schema-evolution | Schema-declared storage with burned IDs as the physical keys; a rename is a display change needing no DDL | openspec/specs/storage-schema-evolution/spec.md |
 | mini-app-versioning | Every generation is an immutable snapshot tagged with the structured prompt that produced it | openspec/specs/mini-app-versioning/spec.md |
 | mini-app-forking | A mini-app can be forked from any snapshot into an independent lineage that diverges without touching the original | openspec/specs/mini-app-forking/spec.md |
+| app-launcher | The product shell: installed-apps grid, correct card→app routing, status-bar-safe insets, no dev diagnostics in shipping builds | openspec/specs/app-launcher/spec.md |
+| mini-app-back-navigation | System back inside a mini-app is handled with a guaranteed exit-to-home, never a crash or trap | openspec/specs/mini-app-back-navigation/spec.md |
