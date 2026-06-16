@@ -24,4 +24,4 @@
 <!-- Anything not confirmed. Say "I did not verify X" explicitly. -->
 
 ## Open questions for the planner
-<!-- Max 5, only if genuinely undecidable from code. -->
+<!-- Only if genuinely undecidable from code. -->

@@ -18,12 +18,30 @@ import { createNodeSqlExecutor } from '../../../src/host/storage-engine/bindings
 import {
   AppRecord,
   CapabilityRegistry,
+  CueBackend,
   createDefaultRegistry,
   Dispatcher,
+  HapticKind,
   launchApp,
   RealmRecord,
   resetRealmGeneration,
+  SoundName,
 } from '../../../src/host/bridge';
+
+/** A recording-fake CueBackend (effects-and-cues INV-CUEGATE): it logs every cue it is asked to
+ *  perform but produces no device effect. The cue-gate invariant asserts this log stays EMPTY when
+ *  a hostile bundle is denied — a fired cue would mean the gate let an attack through. */
+export interface RecordingCueBackend extends CueBackend {
+  readonly log: string[];
+}
+export function recordingCueBackend(): RecordingCueBackend {
+  const log: string[] = [];
+  return {
+    log,
+    haptic(kind: HapticKind): void { log.push('haptic:' + kind); },
+    sound(name: SoundName): void { log.push('sound:' + name); },
+  };
+}
 
 export interface Host {
   realm: RealmRecord;
@@ -31,12 +49,16 @@ export interface Host {
   dispatch: (frameString: string) => Promise<string | null>;
   /** Bump the realm generation (a realm reset) — fresh dispatcher, fresh dedup + id space. */
   bumpGeneration: () => void;
+  /** The recording cue backend wired into this host's registry (INV-CUEGATE asserts log==[]). */
+  cueLog: string[];
 }
 
 /** Build a host over one app record. `manifestOverride` lets the negative control deliberately
- *  MISCONFIGURE the gate (grant a capability the bundle never declared). */
+ *  MISCONFIGURE the gate (grant a capability the bundle never declared). A recording-fake cue
+ *  backend is always wired in so the cue-gate invariant can assert ZERO device invocations. */
 export function makeHost(app: AppRecord, manifestOverride?: string[]): Host {
-  const registry: CapabilityRegistry = createDefaultRegistry();
+  const cueBackend = recordingCueBackend();
+  const registry: CapabilityRegistry = createDefaultRegistry({ cueBackend });
   const effective: AppRecord = manifestOverride
     ? { ...app, manifest: { capabilities: manifestOverride }, schemaArtifact: app.schemaArtifact ?? defaultSchema() }
     : app;
@@ -56,6 +78,7 @@ export function makeHost(app: AppRecord, manifestOverride?: string[]): Host {
       resetRealmGeneration(realm);
       dispatcher = Dispatcher.forRealm(realm, registry); // new generation → empty dedup, fresh id space
     },
+    cueLog: cueBackend.log,
   };
 }
 
