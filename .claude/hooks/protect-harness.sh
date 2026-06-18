@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# PreToolUse(Edit|Write) hook. The anti-reward-hacking layer: an agent that can't pass the
-# checks must never be able to edit the checks. Blocks even in permissive modes.
+# PreToolUse(Edit|Write) hook. Anti-reward-hacking layer.
 #
-# package.json is included because `npm run` is broadly allowed — an agent must not be able to
-# redefine what `npm run typecheck` means. .eslintignore is included because it defines the
-# lint scope (Whim-specific: it mirrors tsconfig's excludes; widening it would silence real
-# findings). Script or dependency changes are class-B deviations: the agent stops, the human
-# edits these in an editor. Requires `jq`.
+# Policy:
+#   - Autonomous SUBAGENTS (implementer, etc.) can NEVER edit harness/verification config →
+#     hard block (exit 2), report as a class-B deviation. (Guarantee unchanged.)
+#   - The interactive MAIN thread is routed to the normal CLI approval prompt
+#     (permissionDecision:"ask") so you can approve legit config edits in-session.
+#
+# The subagent-vs-main signal is `agent_id`, which Claude Code fills in and the agent
+# cannot forge — present only inside a subagent. Requires `jq`.
 INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
 
-# Exemption: the global memory store (~/.claude/projects/<slug>/memory/) lives under a
-# .claude/ dir but is NOT harness config — it is Claude Code's per-project memory. Let it
-# through, or the broad */.claude/* rule below would silently break memory persistence.
+# Exemption: per-project memory store lives under .claude/ but is not harness config.
 case "$FILE" in
   */.claude/projects/*/memory/*) exit 0 ;;
 esac
@@ -24,8 +25,20 @@ case "$FILE" in
   */knip.json|knip.json|*/knip.config.*|knip.config.*|\
   */tsconfig*.json|tsconfig*.json|\
   */package.json|package.json|*/package-lock.json|package-lock.json)
-    echo "BLOCKED: harness and verification config are human-edited only. If a config change is genuinely required, report it as a class-B deviation." >&2
-    exit 2
+    if [ -n "$AGENT_ID" ]; then
+      echo "BLOCKED: harness/verification config is human-approved only. Subagents cannot edit it — report as a class-B deviation." >&2
+      exit 2
+    fi
+    cat <<'JSON'
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "Protected harness/verification config — review the diff before approving."
+  }
+}
+JSON
+    exit 0
     ;;
 esac
 exit 0
