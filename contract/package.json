@@ -1,0 +1,15 @@
+{
+  "name": "@whim/contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared wire contract (zod schemas) between the Whim device and the harness server. TS-source-only; no build step, no dist/.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

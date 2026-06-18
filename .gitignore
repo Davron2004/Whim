@@ -83,3 +83,7 @@ src/runtime/generated/
 .obsidian/
 .claude/settings.local.json
 
+# Harness server: durable per-device token counter (the only server state) + local secrets
+server/.data/
+.env
+

@@ -30,6 +30,11 @@
     "src/host/bridge/test",
     // And the launcher Node suite (back-policy / app-index / store-access / seed; uses
     // `process`, run via esbuild). The launcher MODULES themselves stay type-checked.
-    "src/host/launcher/test"
+    "src/host/launcher/test",
+    // The server-lane workspaces are Node-flavored (their own tsconfigs, moduleResolution
+    // bundler, node types). They are type-checked by `npm run server:test` (tsc --noEmit over
+    // both), NOT by the RN root config — which would mis-apply react-jsx/RN lib settings.
+    "contract",
+    "server"
   ]
 }
