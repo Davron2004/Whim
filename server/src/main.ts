@@ -11,8 +11,10 @@ import { NodeSqliteUsageStore } from './usage-store';
 
 const port = Number(process.env.WHIM_SERVER_PORT ?? '8787');
 
-// Durable usage store under WHIM_DATA_DIR (default: server/.data/)
-const dataDir = process.env.WHIM_DATA_DIR ?? path.join(import.meta.dirname, '..', '.data');
+// Durable usage store under WHIM_DATA_DIR (default: server/.data/). Resolve from cwd — `npm run
+// server:dev` pins cwd to the repo root — NOT from import.meta.dirname: dev.mjs bundles this file
+// to server/.dev-server.*.tmp.mjs, so a dirname-relative path would land one level too high.
+const dataDir = process.env.WHIM_DATA_DIR ?? path.join(process.cwd(), 'server', '.data');
 fs.mkdirSync(dataDir, { recursive: true });
 const usageStore = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'));
 
