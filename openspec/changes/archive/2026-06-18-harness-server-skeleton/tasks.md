@@ -72,7 +72,7 @@
 
 - [x] 8.1 Add `server:test` (including `tsc --noEmit` over `contract/` + `server/`) and
       `guard:metro` as blocking CI gates; existing `build`/`invariants` jobs untouched.
-- [ ] 8.2 LAN acceptance: `server:dev` on the dev machine; from a phone-shaped client on the
+- [x] 8.2 LAN acceptance: `server:dev` on the dev machine; from a phone-shaped client on the
       LAN (curl/node on another box is fine), hit `/healthz`, run one stub generation
       end-to-end over SSE, read back `/v1/usage`.
 - [x] 8.3 Update `docs/v1-roadmap.md` #8 status to implemented-state per protocol; record any

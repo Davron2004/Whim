@@ -16,3 +16,5 @@
 | mini-app-forking | A mini-app can be forked from any snapshot into an independent lineage that diverges without touching the original | openspec/specs/mini-app-forking/spec.md |
 | app-launcher | The product shell: installed-apps grid, correct card→app routing, status-bar-safe insets, no dev diagnostics in shipping builds | openspec/specs/app-launcher/spec.md |
 | mini-app-back-navigation | System back inside a mini-app is handled with a guaranteed exit-to-home, never a crash or trap | openspec/specs/mini-app-back-navigation/spec.md |
+| generation-contract | The shared device↔server wire contract: zod schemas for generation/rewrite requests, the SSE event stream, diagnostics envelope, wire app record, and usage — zod-only, TS-source-only, Metro-safe | openspec/specs/generation-contract/spec.md |
+| generation-server | The harness server skeleton (Hono): SSE generation over a stub pipeline, canned rewrite, device-UUID identity, durable token metering + usage readback, and the unmounted OpenRouter client wrapper | openspec/specs/generation-server/spec.md |
