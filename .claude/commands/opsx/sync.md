@@ -66,11 +66,16 @@ This is an **agent-driven** operation - you will read delta specs and directly e
       - Add Purpose section (can be brief, mark as TBD)
       - Add Requirements section with the ADDED requirements
 
+   e. **Update the capability index** if this created a NEW capability (3d
+   ran) or materially shifted an existing capability's scope: add/update one
+   line in `docs/capabilities.md`, matching the table format —
+   `| <cap> | <one-line "what it covers"> | openspec/specs/<cap>/spec.md |`.
 4. **Show summary**
 
    After applying all changes, summarize:
    - Which capabilities were updated
    - What changes were made (requirements added/modified/removed/renamed)
+   - Whether `docs/capabilities.md` was updated (how many lines) or "no change needed"
 
 **Delta Spec Format Reference**
 
@@ -104,6 +109,7 @@ The system SHALL do something new.
 **Key Principle: Intelligent Merging**
 
 Unlike programmatic merging, you can apply **partial updates**:
+
 - To add a scenario, just include that scenario under MODIFIED - don't copy existing scenarios
 - The delta represents *intent*, not a wholesale replacement
 - Use your judgment to merge changes sensibly
@@ -127,6 +133,7 @@ Main specs are now updated. The change remains active - archive when implementat
 ```
 
 **Guardrails**
+
 - Read both delta and main specs before making changes
 - Preserve existing content not mentioned in delta
 - If something is unclear, ask for clarification
