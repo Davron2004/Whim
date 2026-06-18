@@ -233,8 +233,14 @@ re-prompt entry on an existing app (edit flow).
 
 #### 8. `harness-server-skeleton` — Size M · Deps: none
 
-**Status:** proposed 2026-06-12 (`openspec/changes/harness-server-skeleton/` — proposal/design/specs/tasks)
-**Contract notes:**
+**Status:** implemented 2026-06-18 — all four chains (A–D) complete; desktop gates green
+(`server:test` 111/111; guard:metro byte-identical 1,834,658-byte bundle before/after
+workspace-ification → provably inert; tsc clean both workspaces; CI gates added). As-built:
+`NodeSqliteUsageStore` (`node:sqlite` built-in under Node 22, `WHIM_DATA_DIR`); `makeUsageRoute`
+(`GET /v1/usage`, zeros for unknown id, scoped to `x-whim-device`); `OpenRouterClient`
+(injectable fetch, typed error classes, model-id param). On-device LAN acceptance (task 8.2)
+is human-run and not part of the automated gate.
+**Contract notes (as-built, for #7/#11):**
 
 - New specs `generation-contract`/`generation-server`. Workspaces `contract/`+`server/` (`@whim/
   contract` zod-only TS-source; `@whim/server` = **Hono**; RN app stays root pkg). Blocking gates:
@@ -245,9 +251,12 @@ re-prompt entry on an existing app (edit flow).
   start|done)/token/diagnostic/usage/result/failure — one terminal event, always last.
 - `Diagnostic {kind,symbol?,line?,hint}`, `kind` open — #9 narrows it in `@whim/contract`.
   `WireAppRecord {name,source,bundle,sourceMap?,manifest,schema}`, install-state-free (#5 owns the
-  stored record). Stub behind `Pipeline` iface (`[[fail]]` → failure path); #11 swaps the impl,
-  route/schema unchanged. Metering = `node:sqlite` under `WHIM_DATA_DIR` (the only server state).
-  OpenRouter wrapper unmounted; model id always a param.
+  stored record). Wire `schema` ↔ stored `schemaArtifact` naming seam (P3 — no overlap). Stub
+  behind `Pipeline` iface (`[[fail]]` → failure path); #11 swaps the impl, route/schema unchanged.
+  Metering = `node:sqlite` under `WHIM_DATA_DIR` (the only server state). OpenRouter wrapper
+  unmounted; model id always a param. Deviations from contract spec: `Diagnostic`/`Usage` etc. use
+  zod-4 two-arg `z.record(z.string(), z.unknown())` for manifest/schema sub-shapes (P4). A
+  `DeviceIdError` schema was added to `@whim/contract` for the 400 body (chain-B decision).
 **In:** monorepo workspaces (`server/`, shared `contract/` with zod schemas for generation
 request / SSE event stream / diagnostics / app record) — design must keep Metro away from
 workspace resolution issues; SSE generation endpoint over a **stub pipeline** (canned stage

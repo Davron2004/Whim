@@ -4,12 +4,12 @@
      3–7 tasks/chain, grouped by shared files/layer, sequential A→B→C→D. See research.md for the
      task→file map and the proposer notes (P1–P6) that drive these boundaries. -->
 
-## chain-A: foundation-workspaces (HUMAN-BOOTSTRAP — not dispatchable)
+## chain-A: foundation-workspaces (MAIN-THREAD-AUTHORED — not implementer-dispatchable)
 - tasks: 2.1, 2.2, 2.3
 - rationale: stands up the npm workspaces (`contract/`, `server/`) and the `guard:metro` script every later chain assumes; one `npm install` cycle. All other tasks require these dirs + package names to exist.
 - reads: specs/generation-contract/spec.md §"Shared wire-contract package", §"Metro-safe device consumption"; specs/generation-server/spec.md §"Server workspace and runtime"; handoff: none
 - writes-contract: handoff/workspace.md
-- note: **DO NOT DISPATCH (research.md P1).** Every file this chain writes — root `package.json` `workspaces`+scripts, `contract/package.json`, `contract/tsconfig.json`, `server/package.json`, `server/tsconfig.json` — is hook-blocked by `protect-harness.sh` (`*/package.json`, `*/tsconfig*.json`). The **human** authors these in an editor, runs `npm install`, then dispatches B onward. Implementer-allowed slivers (`.gitignore`, `server/guard-metro.mjs`) may ride the same human commit. 2.3 is read-only gate verification.
+- note: **NOT IMPLEMENTER-DISPATCHABLE (research.md P1).** Every file this chain writes — root `package.json` `workspaces`+scripts, `contract/package.json`, `contract/tsconfig.json`, `server/package.json`, `server/tsconfig.json` — is hook-protected by `protect-harness.sh` (`*/package.json`, `*/tsconfig*.json`). The hook hard-blocks **subagents** (exit 2, class-B deviation) but routes the **main thread** to a CLI approval prompt, so the main thread (dispatcher / `opsx:apply`) authors these files directly — the user reviews and approves each protected-config edit — then runs `npm install` before B onward. Implementer-allowed slivers (`.gitignore`, `server/guard-metro.mjs`) ride the same step. 2.3 is read-only gate verification.
 
 ## chain-B: contract-package (1.1, 3.1, 3.2)
 - tasks: 1.1, 3.1, 3.2

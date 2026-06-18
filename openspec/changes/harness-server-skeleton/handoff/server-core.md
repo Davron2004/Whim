@@ -10,19 +10,27 @@ interface Pipeline {
 }
 // stubPipeline: Pipeline — canned stage→token→usage→result sequence;
 // prompt containing the magic token `[[fail]]` yields the `failure` terminal instead.
+// createStubPipeline(delayMs?: number): Pipeline — injectable delay (0 in tests, 200 in dev).
 ```
 The `/v1/generate` route is constructed with an injected `Pipeline` (stub in tests/dev) and an
 injected `UsageStore` (below). It credits usage BEFORE emitting the terminal event.
 
-## UsageStore injection point (defined by D in server/src/usage-store.ts)
-The generate route already calls this interface; D supplies the impl:
+## UsageStore (server/src/usage-store.ts)
+Chain-C defines the interface and ships `InMemoryUsageStore` for tests/dev:
 ```typescript
 interface UsageStore {
   credit(deviceId: string, usage: Usage): Promise<void>;
   read(deviceId: string): Promise<Usage>;   // zeros for unknown IDs (not an error)
 }
+class InMemoryUsageStore implements UsageStore { /* in-memory, non-durable */ }
 ```
-Test wiring uses `:memory:`; dev uses `node:sqlite` under `WHIM_DATA_DIR`.
+Chain-D adds: `NodeSqliteUsageStore` (writing under `WHIM_DATA_DIR`) and mounts `/v1/usage`.
+
+## App factory (server/src/app.ts)
+```typescript
+function createApp(options: { pipeline, usageStore, keepaliveMs? }): Hono
+```
+Routes: `GET /healthz` (exempt from middleware), `POST /v1/generate`, `POST /v1/rewrite`.
 
 ## Device-identity middleware
 - Header `x-whim-device` (UUID) is required on all `/v1/*`; `/healthz` is exempt.
@@ -30,9 +38,11 @@ Test wiring uses `:memory:`; dev uses `node:sqlite` under `WHIM_DATA_DIR`.
 ```
 { "error": "missing_device_id" | "invalid_device_id", "hint": "<non-empty fix hint>" }
 ```
-- The validated device id is available to handlers (e.g. via Hono context `c.get('deviceId')`).
+- UUID pattern: `/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`
+- The validated device id is available to handlers via `c.get('deviceId')`.
 
 ## Invariants for D
 - D adds routes (`/v1/usage`) and the metering credit; it must NOT change the SSE framing, the
   one-terminal-event rule, or the middleware error shape.
 - `/v1/usage` is scoped to the calling `x-whim-device`; unknown id → zeroed `Usage`, HTTP 200.
+- Chain-D mounts `/v1/usage` by calling `app.route('/v1/usage', makeUsageRoute(usageStore))`.

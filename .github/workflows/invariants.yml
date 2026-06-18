@@ -27,6 +27,18 @@ jobs:
         with:
           node-version: 22   # pinned per the DEVLOG build-env gotcha
       - run: npm ci
+      # ── Server + contract suite (harness-server-skeleton, #8) ───────────────────
+      # Type-checks both workspaces (contract/ + server/), then runs the full
+      # in-process acceptance suite (metering, SSE framing, stub pipeline, OpenRouter
+      # wrapper). Pure Node — no browser, no network; fast fail-fast gate.
+      - name: Run the server + contract acceptance suite (blocks on red)
+        run: npm run server:test
+      # ── Metro bundle guard (harness-server-skeleton, #8) ────────────────────────
+      # Verifies the root RN package still resolves cleanly after workspace-ification.
+      # No Android SDK required — Metro runs in server mode and exits; result is a
+      # byte count assertion only (no APK produced).
+      - name: Run the Metro bundle guard (blocks on red)
+        run: npm run guard:metro
       # ── Storage-engine injection invariant (Decision #40, D5a/D7) ──────────────
       # The §C block of storage:test is a never-regress security invariant on par with
       # sandbox containment (§16.4): caller text is bound or rejected, never interpolated

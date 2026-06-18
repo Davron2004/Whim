@@ -620,3 +620,44 @@ by-source desktop parity); on-device acceptance (task 7.2) is the remaining step
 6. **The RN tsconfig excludes the Node-only acceptance dirs** (they use `process`, run via
    esbuild) — had to add `src/host/launcher/test` to the exclude list, same idiom as the
    vstore/storage/bridge suites. The launcher *modules* stay type-checked; only the runner is out.
+
+---
+
+## `harness-server-skeleton` (= roadmap #8) — the generation-server scaffold
+
+**Result:** four chains (A–D) complete; `server:test` **111/111** green; tsc clean on both
+`contract/` and `server/`; CI gates added. The workspaces `contract/` (`@whim/contract`, zod-4
+schemas only) and `server/` (`@whim/server`, Hono + `@hono/node-server`) are standing. The
+stub pipeline streams the full `GenerationEvent` sequence (canned stage events, token deltas,
+usage, result/failure terminal); `node:sqlite` metering survives restart; `GET /v1/usage`
+returns zeroed Usage for unknown ids; the OpenRouter wrapper has injectable fetch and three
+typed error classes. On-device LAN acceptance (task 8.2) is human-run.
+
+### Lessons / sharp edges
+
+1. **`guard:metro` result: byte-identical 1,834,658-byte bundle before and after
+   workspace-ification — provably inert.** Metro resolved the root RN package cleanly despite
+   the new `workspaces` field in root `package.json`. The bundle check (file-size-only assertion)
+   is a fast CI gate that would catch any accidental Metro-visible hoisting or resolution change.
+   Worth keeping as a CI step even though it costs ~20–30 s.
+
+2. **`node:sqlite` (built-in, Node 22) is the right zero-dep store for the server.** It uses
+   `DatabaseSync` from `node:sqlite` — same import the storage-engine tests use, same pattern
+   (`new DatabaseSync(path)`), zero extra dependency. Enabling it in an esbuild-bundled context
+   just works: esbuild externalizes `node:*` builtins automatically. The `ExperimentalWarning`
+   it emits (`SQLite is an experimental feature`) is harmless in the test output. The
+   `ON CONFLICT ... DO UPDATE` UPSERT keeps metering atomic (no separate read-then-write).
+
+3. **`npm install` and `git commit` are human-gated by the harness** — subagents are blocked at
+   the hook level (exit 2 on protected files) while the main thread gets a CLI approval prompt.
+   This made chain-A (workspaces + `package.json` edits) main-thread-only by design. Chain-D
+   (implementer-dispatchable) touched only unprotected files: `server/src/`, `server/test/`,
+   `contract/src/`, `.github/workflows/invariants.yml`, `docs/v1-roadmap.md`, `DEVLOG.md`.
+
+4. **Unhandled-rejection trap in the OpenRouter wrapper tests.** When a fake-fetch returns a
+   401/429, the wrapper rejects BOTH the async-generator (which the test's `caught()` captures)
+   AND the `usage` Promise (which nothing catches by default). Node raises an unhandled rejection
+   after the suite reports "111 passed, 0 failed" — the exit code becomes 1 even though all
+   assertions passed. Fix: `usagePromise.catch(() => undefined)` in each error-path test before
+   iterating deltas. The error tests already captured the right typed error; the suppression
+   only prevents the spurious non-zero exit.

@@ -11,8 +11,10 @@ re-derive paths or script names from context.
 
 ## Directory + tsconfig roots
 - `contract/src/index.ts` — the single contract entry (all schemas + `z.infer` exports).
-- `contract/tsconfig.json`, `server/tsconfig.json` — extend the root tsconfig; `strict` on,
-  `noEmit` (the suite typechecks, esbuild bundles).
+- `contract/tsconfig.json`, `server/tsconfig.json` — standalone Node-flavored (per design D7,
+  NOT the RN root): `module`/`moduleResolution` = `bundler`, `strict` on, `noEmit`; `server` adds
+  node types. Both dirs are excluded from the RN root tsconfig; `server:test` typechecks them
+  (`tsc --noEmit` over each), esbuild bundles.
 - `server/src/**` — service source. `server/test/**` — suite. `server/.data/` — gitignored.
 
 ## Root npm scripts (added in chain-A)

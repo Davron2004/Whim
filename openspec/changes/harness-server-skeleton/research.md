@@ -38,9 +38,9 @@ existing `src/**`, `build/`, `invariants/`, or `android/` files change. Neither 
 
 ## 3. Chain seams (proposer's final boundaries — see chains.md)
 
-Four sequential clusters A→B→C→D. Chain A is the workspace bootstrap and is **human-edited**
-(its package.json/tsconfig writes are hook-blocked — see Proposer notes). B/C/D are
-implementer-dispatchable.
+Four sequential clusters A→B→C→D. Chain A is the workspace bootstrap and is **main-thread-authored**
+(its package.json/tsconfig writes are hook-protected: subagents hard-blocked, main thread
+approval-gated — see Proposer notes). B/C/D are implementer-dispatchable.
 
 - **A — Foundation** (2.1, 2.2, 2.3): workspace layout + Metro guard + gate verification.
 - **B — Contract** (1.1, 3.1, 3.2): English spec, `@whim/contract` schemas, test skeleton.
@@ -120,13 +120,15 @@ implementer-dispatchable.
 
 ## Proposer notes (retrofit decisions — read before dispatching)
 
-**P1 — Chain A is human-bootstrap, NOT dispatchable.** `protect-harness.sh` blocks Edit/Write to
-`*/package.json` and `*/tsconfig*.json` (every package.json, not just root). Task 2.1 creates
-root `workspaces` + `contract/`+`server/` `package.json`/`tsconfig.json`, and 2.2 adds root
-scripts — all hook-blocked. So **Chain A must be done by the human in an editor** (a class-B
-setup step), then `npm install` re-run, before B/C/D are dispatched. The implementer-allowed
-slivers of A (`.gitignore`, `server/guard-metro.mjs`) can ride with the human commit or be picked
-up in B. chains.md flags this.
+**P1 — Chain A is main-thread-authored, NOT implementer-dispatchable.** `protect-harness.sh`
+guards Edit/Write to `*/package.json` and `*/tsconfig*.json` (every package.json, not just root).
+Task 2.1 creates root `workspaces` + `contract/`+`server/` `package.json`/`tsconfig.json`, and 2.2
+adds root scripts — all hook-protected. The hook now keys on `agent_id`: it *hard-blocks subagents*
+(exit 2, class-B deviation) but routes the *main thread* to a CLI approval prompt. So **Chain A is
+authored by the main thread (dispatcher / `opsx:apply`), with the user approving each
+protected-config edit**, then `npm install` re-run, before B/C/D are dispatched to implementers.
+The implementer-allowed slivers of A (`.gitignore`, `server/guard-metro.mjs`) ride along. chains.md
+flags this.
 
 **P2 — Task 8.1 (CI yml) IS dispatchable.** `.github/workflows/` is not in the hook set, so an
 implementer may edit `invariants.yml`. It sits at the end of Chain D (gate closure).

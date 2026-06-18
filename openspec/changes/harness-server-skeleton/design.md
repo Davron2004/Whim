@@ -3,8 +3,7 @@
 ## Context
 
 There is no server. `build/build.mjs` is the documented local stand-in for the future
-server-side harness build, and every harness-lane change (#9/#10/#11) needs a service to mount
-into, while #7 (prompt-flow-ux) needs a wire contract immediately. Decisions already locked:
+server-side harness build, and every harness-lane change (#9/#10/#11) needs a service to mount into, while #7 (prompt-flow-ux) needs a wire contract immediately. Decisions already locked:
 TypeScript backend on **Node 22** (#31 + #42), **REST + SSE, zod schemas in a shared
 `contract/` package, monorepo `server/` workspace** (#42), **stateless server / device is
 system of record — only an anon device ID + token counter persist** (§4.7 Model 1, #33),
