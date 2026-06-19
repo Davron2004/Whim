@@ -14,8 +14,14 @@ FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
 
 # Exemption: per-project memory store lives under .claude/ but is not harness config.
+# Same for ephemeral fix worktrees (isolation:'worktree' lands them under .claude/worktrees/):
+# they hold ordinary repo files, NOT harness config — so allow edits to those. A worktree's own
+# nested .claude/ config (a checked-out copy of these very hooks) falls through to the block-list
+# below, so it stays protected (defense in depth).
 case "$FILE" in
   */.claude/projects/*/memory/*) exit 0 ;;
+  */.claude/worktrees/*/.claude/*) ;;
+  */.claude/worktrees/*) exit 0 ;;
 esac
 
 case "$FILE" in
