@@ -317,6 +317,44 @@ await test('§remove is idempotent — removing an unknown app is a clean no-op'
   eq(res, { removed: false }, 'removing an absent app reports removed:false, does not throw');
 });
 
+// --- §4 C1: auto-compaction failure must not reject a durable snapshot -------
+
+await test('§4 C1: snapshot() resolves even when auto-compaction throws', async () => {
+  // A BrokenPackFs subclass that throws when git tries to write the packfile,
+  // simulating a compactRepo failure AFTER the commit+tag are already durable.
+  const { MemoryFs: MFs } = await import('../fs/memory-fs');
+  class BrokenPackFs extends MFs {
+    override async writeFile(path: string, data: Uint8Array | string, opts?: { mode?: number; encoding?: string } | string): Promise<void> {
+      if (path.endsWith('.pack')) throw new Error('simulated pack failure');
+      return super.writeFile(path, data, opts);
+    }
+  }
+
+  const { VersionStore: VS } = await import('../engine');
+  const brokenBackend = new BrokenPackFs();
+  // threshold:0 ensures the autoCompact branch always fires (loose count > 0 after commit)
+  const store = new VS({ backend: brokenBackend, config: { autoCompact: true, compactionThreshold: 0 } });
+
+  let snap: { id: string; prompt: string; createdAt: number } | undefined;
+  let threw = false;
+  try {
+    snap = await store.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'test compact fail');
+  } catch {
+    threw = true;
+  }
+
+  // (1) Promise resolves — not rejects — despite the compaction throw
+  ok(!threw, 'snapshot() resolves even when auto-compaction throws');
+  // (2) the resolved Snapshot has an id starting with 'g'
+  ok(!!snap && snap.id.startsWith('g'), 'resolved Snapshot has a valid id');
+  // (3) history() lists the snapshot
+  const hist = await store.history('app');
+  eq(hist.length, 1, 'history() lists the new snapshot after compaction failure');
+  ok(!!snap && hist[0].id === snap.id, 'history entry matches the returned snapshot id');
+  // (4) loose objects not zeroed — compaction was swallowed, not completed
+  ok(store.looseObjectCount('app') > 0, 'looseObjectCount > 0 (compaction did not complete)');
+});
+
 // --- summary ---------------------------------------------------------------
 
 // eslint-disable-next-line no-console
