@@ -20,6 +20,7 @@ import { createEngine } from '../engine';
 import { createNodeSqlExecutor } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
 import { SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
+import { validateArtifact } from '../schema';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 
@@ -462,6 +463,94 @@ test('§C every executed statement is a fixed host-authored template (full verb 
   eq(offenders.map(e => e.sql), [], 'the executed-statement set is exactly the fixed host-authored templates');
   const badDdl = rec.log.map(e => e.sql).filter(s => /^(CREATE|ALTER)/.test(s)).filter(s => !/^CREATE TABLE/.test(s) && !/^ALTER TABLE/.test(s));
   eq(badDdl, [], 'only CREATE TABLE / ALTER TABLE ADD COLUMN DDL forms are ever observed');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §D  D1 reserved-name guard — field/collection display name 'id' is rejected
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§D validateArtifact rejects a field with display name "id"', () => {
+  // Action 1: validateArtifact must return a non-empty error array with kind invalid_artifact
+  const artifact: unknown = {
+    schemaVersion: 1,
+    collections: {
+      Items: {
+        id: 'c1',
+        tombstones: [],
+        fields: {
+          id: { id: 'f1', type: 'int' },
+        },
+      },
+    },
+  };
+  const errs = validateArtifact(artifact);
+  ok(errs.length > 0, 'validateArtifact returns at least one error for a field named "id"');
+  ok(errs.some(e => e.kind === 'invalid_artifact'), 'the error kind is invalid_artifact');
+});
+
+test('§D engine.open() throws StorageEngineError for a field with display name "id"', () => {
+  // Action 2: engine.open() must throw a StorageEngineError for the reserved-name artifact
+  const { store } = memEngine();
+  const artifact: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: {
+      Items: {
+        id: 'c1',
+        tombstones: [],
+        fields: {
+          id: { id: 'f1', type: 'int' },
+        },
+      },
+    },
+  };
+  expectError('invalid_artifact', () => store.open(artifact));
+});
+
+test('§D list() primary-key integrity: .id always holds the engine-assigned integer key', () => {
+  // Action 3: on a valid schema (no field named 'id'), list() must return records where
+  // .id is the positive integer assigned by append(), never overwritten by a user value.
+  const { store } = memEngine();
+  const validSchema: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: {
+      Items: {
+        id: 'c1',
+        tombstones: [],
+        fields: {
+          amount: { id: 'f1', type: 'int' },
+        },
+      },
+    },
+  };
+  store.open(validSchema);
+  const r1 = store.records.append('Items', { amount: 42 });
+  const r2 = store.records.append('Items', { amount: 99 });
+  const rows = store.records.list('Items');
+  ok(rows.length === 2, 'two rows returned');
+  ok(typeof rows[0].id === 'number' && rows[0].id > 0, 'first row .id is a positive integer');
+  ok(typeof rows[1].id === 'number' && rows[1].id > 0, 'second row .id is a positive integer');
+  ok(rows[0].id === r1.id, 'first row .id matches the id returned by append()');
+  ok(rows[1].id === r2.id, 'second row .id matches the id returned by append()');
+  ok(rows[0].amount === 42 && rows[1].amount === 99, 'user field values are correct');
+});
+
+test('§D validateArtifact rejects a collection with display name "id"', () => {
+  // collection display name 'id' must also be rejected
+  const artifact: unknown = {
+    schemaVersion: 1,
+    collections: {
+      id: {
+        id: 'c1',
+        tombstones: [],
+        fields: {
+          amount: { id: 'f1', type: 'int' },
+        },
+      },
+    },
+  };
+  const errs = validateArtifact(artifact);
+  ok(errs.length > 0, 'validateArtifact returns at least one error for a collection named "id"');
+  ok(errs.some(e => e.kind === 'invalid_artifact'), 'the error kind is invalid_artifact');
 });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
