@@ -24,7 +24,10 @@ case "$FILE" in
   */eslint.config.*|eslint.config.*|*/.eslintrc*|.eslintrc*|*/.eslintignore|.eslintignore|\
   */knip.json|knip.json|*/knip.config.*|knip.config.*|\
   */tsconfig*.json|tsconfig*.json|\
-  */package.json|package.json|*/package-lock.json|package-lock.json)
+  */package.json|package.json|*/package-lock.json|package-lock.json|\
+  */babel.config.js|babel.config.js|\
+  */metro.config.js|metro.config.js)
+
     if [ -n "$AGENT_ID" ]; then
       echo "BLOCKED: harness/verification config is human-approved only. Subagents cannot edit it — report as a class-B deviation." >&2
       exit 2

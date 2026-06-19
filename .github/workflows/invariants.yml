@@ -19,13 +19,38 @@ on:
   pull_request:
 
 jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+      - name: Lint (eslint --max-warnings 0)
+        run: npm run lint -- --max-warnings 0
+      - name: Dead code (knip)
+        run: npx knip
+      # openspec resolves from node_modules/.bin via the @fission-ai/openspec devDep + the npm ci above.
+      - name: OpenSpec validate
+        run: npx openspec validate --all --strict
+      # Mirror of the gate.sh scaffolding tripwire; `! grep` fails the step on any match.
+      - name: Scaffolding tripwires
+        run: |
+          ! grep -rn --include='*.ts' --include='*.tsx' \
+            -e 'TEMP:' -e 'HACK:' -e 'isImplemented' -e 'IS_IMPLEMENTED' \
+            -e 'console\.log(.*debug' \
+            src/ 2>/dev/null
+
   isolation-suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22   # pinned per the DEVLOG build-env gotcha
+          node-version: 22 # pinned per the DEVLOG build-env gotcha
       - run: npm ci
       # ── Server + contract suite (harness-server-skeleton, #8) ───────────────────
       # Type-checks both workspaces (contract/ + server/), then runs the full

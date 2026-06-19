@@ -48,6 +48,10 @@ function __whimRunProbes() {
   expectThrow('network', 'fetch', function () { return fetch('https://example.com/whim-probe'); });
   expectThrow('network', 'XMLHttpRequest', function () { return new XMLHttpRequest(); });
   expectThrow('network', 'WebSocket', function () { return new WebSocket('wss://example.com'); });
+  // RTCPeerConnection is load-bearing: WebRTC bypasses connect-src 'none', so the value-strip is
+  // the ONLY thing that closes this vector — CSP does not help here (see neutralize.js).
+  expectThrow('network', 'RTCPeerConnection', function () { return new RTCPeerConnection(); });
+  expectThrow('network', 'EventSource', function () { return new EventSource('https://evil.example'); });
   expectThrow('network', 'window.fetch (stub)', function () { return window.fetch('https://example.com'); });
   expectThrow('network', 'navigator.sendBeacon', function () { return navigator.sendBeacon('https://example.com', 'x'); });
 
@@ -60,6 +64,8 @@ function __whimRunProbes() {
   expectThrow('ambient', 'localStorage', function () { return localStorage.setItem('a', 'b'); });
   expectThrow('ambient', 'sessionStorage', function () { return sessionStorage.setItem('a', 'b'); });
   expectThrow('ambient', 'indexedDB', function () { return indexedDB.open('whim'); });
+  expectThrow('ambient', 'caches.open', function () { return caches.open('test'); });
+  expectThrow('ambient', 'SharedWorker', function () { return new SharedWorker('data:application/javascript,1'); });
   expectThrow('ambient', 'Worker', function () { return new Worker('data:application/javascript,1'); });
 
   // 4. prototype-walk codegen (CSP is the ONLY thing that closes this)
@@ -109,6 +115,7 @@ function __whimRunProbes() {
       'try{new XMLHttpRequest();o.xhr="DID-NOT-THROW";}catch(e){o.xhr="threw:"+e.name;}' +
       'try{new WebSocket("wss://evil.example");o.ws="DID-NOT-THROW";}catch(e){o.ws="threw:"+e.name;}' +
       'try{localStorage.setItem("x","y");o.ls="DID-NOT-THROW";}catch(e){o.ls="threw:"+e.name;}' +
+      'try{new RTCPeerConnection();o.rtc="DID-NOT-THROW";}catch(e){o.rtc="threw:"+e.name;}' +
       'try{eval("1+1");o.eval="DID-NOT-THROW";}catch(e){o.eval="threw:"+e.name;}' +
       'return o;})();';
     var t1s = document.createElement('script');
@@ -120,10 +127,12 @@ function __whimRunProbes() {
       record('pentest-T1', 'self-injected fresh <script> (did NOT execute)', true, 'fresh inline script blocked from running — no escape');
     } else {
       var t1blocked = /^threw:/.test(t1.fetch) && /^threw:/.test(t1.xhr) &&
-        /^threw:/.test(t1.ws) && /^threw:/.test(t1.ls) && /^threw:/.test(t1.eval);
+        /^threw:/.test(t1.ws) && /^threw:/.test(t1.ls) &&
+        /^threw:/.test(t1.rtc) && /^threw:/.test(t1.eval);
       record('pentest-T1', 'self-injected fresh <script> reclaim globals', t1blocked,
         (t1blocked ? 'ALL blocked in fresh scope → ' : 'ESCAPE → ') +
-        'fetch=' + t1.fetch + ' xhr=' + t1.xhr + ' ws=' + t1.ws + ' ls=' + t1.ls + ' eval=' + t1.eval);
+        'fetch=' + t1.fetch + ' xhr=' + t1.xhr + ' ws=' + t1.ws +
+        ' ls=' + t1.ls + ' rtc=' + t1.rtc + ' eval=' + t1.eval);
     }
     try { delete window.__WHIM_T1; } catch (e) {}
   } catch (e) {
