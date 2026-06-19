@@ -1,0 +1,6 @@
+# Inlined-runtime sandbox test fixtures. Each is ~260 KB and almost entirely a
+# minified JS bundle embedded in an iframe `srcdoc` — the opaque-origin sandbox
+# can't fetch resources, so the runtime must be inlined. Linguist would count
+# these as hand-written HTML and bury the actual TypeScript. Mark them generated
+# so they drop out of the language stats and collapse in diffs.
+invariants/**/*.html linguist-generated=true

@@ -114,6 +114,13 @@
     try { msg = JSON.parse(data); } catch (e) { return; }
     if (!msg) return;
 
+    // Host-channel-only acceptance (A1 — mirrors syscall.js's ev.source guard): a frame posted by a
+    // bundle sharing this realm has ev.source === window, not window.parent. Drop it. Without this, a
+    // delivered bundle could self-post __whimDeliver on a later tick to forge a delivery — bumping
+    // __whimGeneration, injecting its payload, and posting a host frame carrying the closure-captured
+    // real nonce (indistinguishable to the host) — corrupting the host's generation state machine.
+    if (ev.source !== window.parent) return;
+
     // Host init: the FIRST one wins and is locked in. It arrives before any bundle is
     // delivered, so a later (untrusted) bundle cannot re-set or read this nonce.
     if (msg.__whimHostInit === true && hostNonce === null) {
