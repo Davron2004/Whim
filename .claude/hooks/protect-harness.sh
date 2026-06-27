@@ -25,7 +25,7 @@ case "$FILE" in
 esac
 
 case "$FILE" in
-  */scripts/gate.sh|scripts/gate.sh|\
+  */scripts/gate.sh|scripts/gate.sh|*/scripts/gate-full.sh|scripts/gate-full.sh|\
   */.claude/*|.claude/*|\
   */eslint.config.*|eslint.config.*|*/.eslintrc*|.eslintrc*|*/.eslintignore|.eslintignore|\
   */knip.json|knip.json|*/knip.config.*|knip.config.*|\

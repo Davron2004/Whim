@@ -1,41 +1,36 @@
 #!/usr/bin/env bash
-# Verification gate. Exit 0 = "done" is allowed to mean done.
+# FAST verification gate — inner loop. Exit 0 = the fast checks pass.
 #
-# The single source of truth: implementers must pass it before finishing, the SubagentStop
-# hook enforces it, and the dispatcher trusts its exit code over any prose report.
+# Runs on every fixer attempt, in the fixer's worktree: build (≈0.3s — writes the gitignored
+# src/runtime/generated/* a fresh worktree lacks) + typecheck + lint + the Node acceptance
+# suites + scaffolding tripwires. NO Metro, NO headless Chromium — those live in gate-full.sh,
+# which the orchestrator runs once per fix before merge. See docs/parallel-fix-loop.md §4.3.
 #
-# Adapted for Whim (harness-build-guide.md §2). The three generic names in the guide map to:
-#   typecheck -> tsc --noEmit          lint -> eslint (.eslintignore scopes it to tsc's set)
-#   tests     -> the real never-regress suites (CLAUDE.md): build feeds the headless-Chromium
-#               invariants suite, so it runs first; then the Node acceptance suites.
-# This file is human-edited only (protect-harness.sh blocks agents). Keep it under ~2 minutes;
-# the current clean-tree run is ~15s.
+# Still the single source of truth for "fast done": implementers must pass it before finishing,
+# and the dispatcher trusts its exit code over any prose report.
+# This file is human-edited only (protect-harness.sh blocks agents).
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
-# Tamper tripwire (Layer 2 — the anti-reward-hacking capstone). Refuse to run if any
-# verification-config file differs from committed HEAD. The whole point of doctoring these is a
-# green gate; legit config changes are a deliberate human commit, never an uncommitted edit — so
-# a tampered config can never reach a green run, no matter which tool (Edit, Bash, anything) wrote
-# it. This doesn't depend on catching every write path; it bottoms out at `git commit`. To make a
-# legit change: edit, commit it, then run the gate.
-#
-# H2 (critic 2026-06-18): .claude/settings.local.json is intentionally NOT listed below. It is
-# gitignored, so it can never be committed — this git-diff tripwire only sees tracked files — and
-# protect-harness.sh already blocks in-session subagent writes to .claude/**. The residual risk (a
-# locally-tampered, never-committed allow-list) is accepted; closing it would require a hash baseline.
-if ! git diff --quiet HEAD -- \
-      package.json package-lock.json tsconfig*.json \
-      eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
-      .claude/hooks .claude/settings.json \
-      babel.config.js metro.config.js 2>/dev/null; then
-  echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from committed HEAD."
-  echo "These are human-edited and must be committed deliberately before the gate will run:"
-  git --no-pager diff --name-only HEAD -- \
-      package.json package-lock.json tsconfig*.json \
-      eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
-      .claude/hooks .claude/settings.json \
-      babel.config.js metro.config.js 2>/dev/null
+# Tamper tripwire (anti-reward-hacking capstone), now pinned to a BASE commit instead of HEAD.
+# Refuse to run if any verification-config file differs from the trusted baseline. GATE_BASE is
+# the worktree's recorded base SHA (exported by the orchestrator); it falls back to HEAD for a
+# plain main-tree run. Pinning to a recorded SHA — not HEAD — is what survives agents having
+# commit rights: a `git commit` can move HEAD, but it cannot move a recorded SHA (objects are
+# content-addressed), so a tampered config can never reach a green run. To make a legit change:
+# a human edits the file and commits it deliberately (which advances the baseline).
+BASE="${GATE_BASE:-HEAD}"
+CONFIG_SET=(
+  package.json package-lock.json tsconfig*.json
+  eslint.config.* .eslintrc* .eslintignore knip.json knip.config.*
+  scripts/gate.sh scripts/gate-full.sh
+  .claude/hooks .claude/settings.json .claude/agents .claude/commands
+  babel.config.js metro.config.js
+)
+if ! git diff --quiet "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null; then
+  echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from baseline ($BASE)."
+  echo "These are human-edited and must be a deliberate human change before the gate will run:"
+  git --no-pager diff --name-only "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null
   exit 2
 fi
 
@@ -48,26 +43,21 @@ check() {
   if "$@"; then echo "PASS: $name"; else echo "FAIL: $name"; FAILED+=("$name"); fi
 }
 
+# build first: ≈0.3s (esbuild), and it writes the gitignored src/runtime/generated/* that
+# typecheck imports (useMiniAppHost / LauncherRoot / DevProbeScreen) and that Metro + the
+# invariants read. A fresh worktree has none of these. Cheap enough to rerun every attempt,
+# which also keeps generated current with the fix.
+check "build"             npm run -s build
 check "typecheck"         npm run -s typecheck
 check "lint"              npm run -s lint -- --max-warnings 0
-check "dead code (knip)"  npx knip
-check "build"             npm run -s build
-check "metro-guard"       npm run -s guard:metro
-check "invariants"        npm run -s invariants
-check "bridge-invariants" npm run -s bridge:invariants
 check "version-store"     npm run -s vstore:test
 check "storage-engine"    npm run -s storage:test
 check "capability-bridge" npm run -s bridge:test
 check "launcher"          npm run -s launcher:test
-check "deliver-by-source" npm run -s launcher:deliver-verify
 check "server"            npm run -s server:test
-# openspec is a required GLOBAL CLI (Homebrew, v1.3.1) — NOT an npm package. Fail clearly if absent.
-command -v openspec >/dev/null 2>&1 || { echo "GATE: 'openspec' CLI not found on PATH — install it (e.g. brew install openspec)"; exit 2; }
-check "openspec"          npx openspec validate --all --strict
 
-# Scaffolding tripwires: cheap greps for the garbage class you've already met. This is the
-# "encode corrections once" slot — every new garbage pattern the critic/reviewer finds gets a
-# grep line here. Curate it; don't let stale patterns block legitimate code.
+# Scaffolding tripwires: cheap greps for the garbage class you've already met. Every new garbage
+# pattern the critic/reviewer finds gets a grep line here. Curate it; don't let stale patterns block.
 section "scaffolding tripwires"
 TRIPWIRE=$(grep -rn --include='*.ts' --include='*.tsx' \
   -e 'TEMP:' -e 'HACK:' -e 'isImplemented' -e 'IS_IMPLEMENTED' \
@@ -82,8 +72,8 @@ else
 fi
 
 if [ ${#FAILED[@]} -gt 0 ]; then
-  printf '\nGATE FAILED: %s\n' "${FAILED[*]}"
+  printf '\nFAST GATE FAILED: %s\n' "${FAILED[*]}"
   exit 1
 fi
-printf '\nGATE PASSED\n'
+printf '\nFAST GATE PASSED\n'
 exit 0
