@@ -11,7 +11,7 @@
 # Subcommands:
 #   integrity <branch> [allowlist-file]            exit 0 clean | 3 protected-touch | 4 scope-violation
 #   redcheck  <branch> <test-cmd...> -- <prod>...  exit 0 RED (good) | 5 GREEN (vacuous) | 2 error
-#   gatefull  <branch>                             run gate-full in a FRESH checkout (passthrough exit)
+#   gatefull  <branch>                             run gate-full from the branch's committed tip in the MAIN tree (passthrough exit)
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity, print the merge command, remove worktree
 #   status                                         list fix/* and wip/* branches + worktrees
@@ -108,24 +108,33 @@ case "$cmd" in
   gatefull)
     branch="${1:?usage: gatefull <branch>}"
     base="$(base_of "$branch")"
-    # Run the FULL gate in a FRESH checkout of the committed branch tip — NOT the fixer's worktree.
-    # The fixer's tree can carry untracked / gitignored files (poisoned src/runtime/generated/* or
-    # build/ output, a shadowing .npmrc, etc.) that `git diff <BASE>` cannot see but the gate WOULD
-    # execute against — "test against X, ship Y". A clean checkout holds exactly the tracked content,
-    # so what we verified (the diff) and what we tested (the tree) are identical. (Limit: this shares
-    # the repo's node_modules — repo-root dependency tampering is Threat C, the OS sandbox's job.)
-    wt="$ROOT/.claude/worktrees/gatefull-$$"
-    git worktree add --detach "$wt" "$branch" >&2 2>&1 || die "worktree add failed"
+    # Run the FULL gate from the branch's COMMITTED tip, checked out into the MAIN tree — NOT a
+    # worktree. Why not a worktree: a fresh worktree has no node_modules (gitignored) and Metro
+    # (guard:metro) does NOT walk up to the repo-root copy the way Node does, so it cannot resolve the
+    # RN dependency graph there (Unable to resolve @babel/runtime/...). The main tree has the real
+    # node_modules. We check out the branch's committed OBJECTS here (detached, NOT the fixer's worktree
+    # directory), so untracked/gitignored poison in the fixer's worktree never reaches the gate — the
+    # §4.7 "verified == tested" property holds. (Residual Threat-C: shared node_modules tampering — the
+    # OS sandbox's job, and this whole command runs unsandboxed anyway for Chromium + checkout.)
+    # SAFETY: refuse on a dirty main tree; record the starting ref; ALWAYS restore it (trap).
+    if ! { git diff --quiet && git diff --cached --quiet; }; then
+      die "main tree is dirty — commit or stash before 'gatefull' (it checks the branch out in the main tree)"
+    fi
+    start_ref="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
     # shellcheck disable=SC2064
-    trap "git worktree remove --force '$wt' >/dev/null 2>&1; git worktree prune >/dev/null 2>&1" EXIT
-    # gate-full runs gate.sh first, which builds (writes the gitignored generated/*) before any check;
-    # GATE_BASE pins the gate's own tamper tripwire to the recorded BASE so a tampered config can't pass.
-    ( cd "$wt" && GATE_BASE="$base" ./scripts/gate-full.sh ) >&2
+    trap "git checkout --quiet --force '$start_ref' >/dev/null 2>&1" EXIT
+    # --detach checks out the branch's COMMIT (allowed even while the branch ref is checked out in the
+    # fixer's worktree); gate.sh builds first (regenerates the gitignored generated/*); GATE_BASE pins
+    # the gate's own tamper tripwire to the recorded BASE.
+    git checkout --quiet --detach "$branch" >/dev/null 2>&1 || die "checkout of $branch into the main tree failed"
+    GATE_BASE="$base" ./scripts/gate-full.sh >&2
     rc=$?
+    git checkout --quiet --force "$start_ref" >/dev/null 2>&1 || die "FAILED TO RESTORE main tree to $start_ref — fix by hand before continuing"
+    trap - EXIT
     if [ "$rc" -eq 0 ]; then
-      echo "FULL GATE PASSED — fresh checkout of $branch (base $base)"
+      echo "FULL GATE PASSED — main-tree checkout of $branch (base $base); restored to $start_ref"
     else
-      echo "FULL GATE FAILED (exit $rc) — fresh checkout of $branch (base $base)"
+      echo "FULL GATE FAILED (exit $rc) — main-tree checkout of $branch (base $base); restored to $start_ref"
     fi
     exit "$rc"
     ;;

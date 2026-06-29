@@ -25,7 +25,7 @@
       "npm run bridge:invariants",
       "npm run launcher:deliver-verify",
       "./scripts/gate-full.sh",
-      "scripts/fixloop.sh gatefull"
+      "scripts/fixloop.sh"
     ]
   },
   "worktree": {
