@@ -7,6 +7,7 @@ import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
+import { buildSseStream } from '../src/sse';
 import type { GenerationEvent } from '@whim/contract';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
@@ -289,5 +290,71 @@ export async function runServerCoreTests(): Promise<void> {
     eq('invalid rewrite body → 400', res.status, 400);
     const ct = res.headers.get('content-type') ?? '';
     check('invalid rewrite body → JSON', ct.includes('application/json'));
+  }
+
+  section('SSE cancel() clears keepalive interval (F1)');
+
+  // F1 — cancel() on client disconnect must clear the keepalive interval immediately
+  {
+    const realSetInterval = global.setInterval;
+    const realClearInterval = global.clearInterval;
+
+    // stub state
+    let intervalCb: (() => void) | null = null;
+    let capturedHandle: ReturnType<typeof setInterval> | null = null;
+
+    // Unique object so we can test identity in clearInterval
+    const stubHandle = {} as ReturnType<typeof setInterval>;
+
+    (global as unknown as Record<string, unknown>).setInterval = (
+      cb: () => void,
+      _ms: number,
+    ): ReturnType<typeof setInterval> => {
+      intervalCb = cb;
+      capturedHandle = stubHandle;
+      return stubHandle;
+    };
+
+    (global as unknown as Record<string, unknown>).clearInterval = (
+      handle: ReturnType<typeof setInterval>,
+    ): void => {
+      if (handle === capturedHandle) intervalCb = null;
+    };
+
+    try {
+      // Given: a source that never yields (simulates long-running generation)
+      async function* neverYields(): AsyncGenerator<GenerationEvent> {
+        await new Promise<void>(() => {});
+      }
+
+      const stream = buildSseStream(neverYields(), 50);
+
+      // start() runs synchronously as part of stream construction — the interval should be
+      // registered by the time getReader() returns (Node ReadableStream calls start() eagerly).
+      // Allow one microtask tick for the async start() preamble to reach setInterval.
+      await Promise.resolve();
+
+      // Non-vacuity guard: interval must have been registered before we cancel
+      check('non-vacuity: interval registered before cancel', intervalCb !== null);
+
+      // When: client disconnects
+      await stream.getReader().cancel();
+
+      // Then: interval cleared within the same tick
+      check('interval cleared by cancel', intervalCb === null);
+
+      // Drive the callback 3 more times to confirm it's no longer referenced
+      let firesAfterCancel = 0;
+      for (let i = 0; i < 3; i++) {
+        if (intervalCb !== null) {
+          firesAfterCancel++;
+          (intervalCb as () => void)();
+        }
+      }
+      eq('keepalive fires 0 times after cancel', firesAfterCancel, 0);
+    } finally {
+      (global as unknown as Record<string, unknown>).setInterval = realSetInterval;
+      (global as unknown as Record<string, unknown>).clearInterval = realClearInterval;
+    }
   }
 }
