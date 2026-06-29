@@ -123,6 +123,15 @@ For a batch of findings, the main-thread orchestrator:
 7. **Full gate** — orchestrator runs `scripts/gate-full.sh` against the worktree (serialized).
 8. **Approve & merge** — low/med + all green ⇒ orchestrator merges `fix/<id>` → dev/v1 (serialized). High or any protected touch ⇒ human ratifies. Then `git worktree remove` + delete branch. On any wall: salvage per §4.4/§4.6.
 
+### 5.1 Implementation — built + validated 2026-06-27
+
+The driver is three files plus hardened hooks:
+- **`scripts/fixloop.sh`** — deterministic toolkit the orchestrator runs: `integrity <branch> [allowlist]` (exit 0 ok / 3 protected-touch / 4 scope-violation), `redcheck <branch> <test> -- <prod>` (exit 0 RED / 5 vacuous-GREEN; reverts modified files via `git checkout BASE --`, new files via delete), `park`, `finish` (prints the human-gated merge — never executes it), `status`. Recovers BASE via `git merge-base <branch> dev/v1`. **Git inside it runs UNHOOKED**, so it is orchestrator-only: bash-policy denies subagents invoking it, and both hooks protect it from edits. Every subcommand exit code unit-tested.
+- **`.claude/agents/fix-worker.md`** — the fixer: runs in its isolation worktree, builds first, writes the smallest fix + a non-vacuous test, self-gates with `./scripts/gate.sh`, commits, and reports `TEST` + `PROD FILES` so the orchestrator can red-check.
+- **`.claude/commands/fix-loop.md`** — the orchestrator runbook (`/fix-loop`), wiring planner → fix-worker (async, resumable via SendMessage) → redcheck → integrity → reviewer → gate-full → serialized merge, with PARK + caps.
+
+Next: a real-finding shakeout (one of the ~47 mechanical fix-fest findings) before scaling (§7 item 6).
+
 ---
 
 ## 6. Proposed harness changes (a human applies these — they are human-committed)
