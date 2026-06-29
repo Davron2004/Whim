@@ -22,7 +22,7 @@ Per finding:
 
 5. VERIFY. Dispatch the `reviewer` on `git diff <worktreeBranch>` against its merge-base (`git merge-base <worktreeBranch> dev/v1`) + the DONE spec + the red-check result — NOT the worker's reasoning. Default-reject. Reject → `SendMessage` the worker the critique (revision cap = 2), then re-run from step 3. Cap hit → PARK.
 
-6. FULL GATE (deterministic). Run the full gate in the worker's worktree: `( cd <worktreePath> && ./scripts/gate-full.sh )` (slower — Metro + Chromium). FAIL → SendMessage the worker (one extended attempt), else PARK.
+6. FULL GATE (deterministic). `scripts/fixloop.sh gatefull <worktreeBranch>` (slower — Metro + Chromium). This runs `gate-full.sh` in a **fresh checkout of the committed branch tip**, NOT the worker's worktree: the worker's tree can hold untracked/gitignored files (poisoned `src/runtime/generated/*` or `build/` output) that the integrity diff can't see but the gate would execute against — so gating there could go green on code that isn't what you reviewed. The fresh checkout makes "what you verified" == "what you tested". FAIL → SendMessage the worker (one extended attempt), else PARK. (Do NOT fall back to `cd <worktreePath> && ./scripts/gate-full.sh` — that re-introduces the poisoning gap.)
 
 7. APPROVE. low/med + everything green → you may merge. high severity, or any escalation from step 4 → get the user's explicit OK first.
 
@@ -32,4 +32,6 @@ On ANY terminal wall (verifier cap, unfixable-vacuous, scope/protected you won't
 
 Caps (bounded autonomy, then escalate — never silent-drop): the worker self-gates in its own loop; verifier revisions ≤ 2; one extended attempt on a gate cap-hit; then PARK. Protected-file touches and high-severity merges ALWAYS go to the user.
 
-Keep a running progress note (finding → verdict → merge/park, with reasons). At the end, give the user a summary: what merged, what parked and why, and what awaits their ratification — not the diffs.
+MEMORY (end of run, human-gated). Subagents never write the memory store directly — collect any `MEMORY:` proposals from their reports as you go. After the batch, dedupe them and apply the worthwhile ones yourself with the Write/Edit tool (each prompts you with the full diff — approve or skip). Follow the memory rules in CLAUDE.md (one fact per file + a one-line MEMORY.md index pointer). If running unattended (no human to approve), do NOT apply — list the proposals in the summary for the user to ratify. Never let a subagent's proposal land unreviewed.
+
+Keep a running progress note (finding → verdict → merge/park, with reasons). At the end, give the user a summary: what merged, what parked and why, the memory proposals applied/pending, and what awaits their ratification — not the diffs.

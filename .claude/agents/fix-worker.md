@@ -19,7 +19,8 @@ Whim ground rules (docs/ is the source of truth — never re-litigate a spike): 
 
 Hard rules:
 - Smallest diff. No drive-by refactors. Touch only allowlisted files.
-- NEVER touch `scripts/**`, `.claude/**`, `package.json`, `package-lock.json`, `tsconfig*.json`, eslint/knip config, `babel.config.js`, `metro.config.js` (hook-blocked; a needed change is a class-B stop).
+- NEVER touch `scripts/**`, `.claude/**`, `build/**` (the build harness — executed by `npm run build`), `package.json`, `package-lock.json`, `tsconfig*.json`, eslint/knip config, `babel.config.js`, `metro.config.js` (hook-blocked; a needed change is a class-B stop). Never regenerate by hand-editing `src/runtime/generated/*` or `build/generated/*` — run `npm run build`.
+- NEVER write the memory store (`~/.claude/projects/*/memory/*`) directly — it is hook-blocked. If your work surfaced a durable, load-bearing fact worth remembering, put it in the report's `MEMORY:` section; the orchestrator applies it (human-gated).
 - No new dependencies (`npm install` is denied) — class-B stop if one is needed.
 - One shell command per call. Leave no scaffolding: no TODO for your own work, no temp flags, no commented-out code, no debug logging.
 
@@ -39,3 +40,4 @@ COMMIT: <short SHA> | none
 FILES TOUCHED: paths only
 DEVIATIONS: none | [A|B|C] what, why, where (one line each)
 NOTES: ≤5 lines, only what changes the orchestrator's next decision
+MEMORY: none | a durable, load-bearing fact worth remembering (one proposal, ≤3 lines): the fact + which memory file/slug it belongs in. The orchestrator applies it human-gated; do NOT write the store yourself.

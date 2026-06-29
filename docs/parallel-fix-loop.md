@@ -48,7 +48,7 @@ The orchestrator records `BASE = git rev-parse dev/v1` when it creates the workt
 - **Tamper catch (any time, incl. uncommitted):** `git -C <wt> diff <BASE> -- <PROTECTED>` must be **empty**. `git diff <commit>` compares the *working tree* to that commit, so it folds in committed + staged + unstaged in one shot — no staging needed. (This is the "straight diff" we want; commit-to-commit `<BASE>..HEAD` would *miss* uncommitted edits.)
 - **Merge scope (what actually lands):** `git -C <wt> diff --name-only <BASE>..HEAD` ⊆ the fix's declared **allowlist**.
 
-`PROTECTED` = `scripts/gate.sh scripts/gate-full.sh .claude/hooks .claude/settings.json .claude/agents .claude/commands package.json package-lock.json tsconfig*.json eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* babel.config.js metro.config.js invariants/` (the invariants suite is owner-authored — feature agents never touch it).
+`PROTECTED` = `scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh .claude/hooks .claude/settings.json .claude/agents .claude/commands package.json package-lock.json tsconfig*.json eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* babel.config.js metro.config.js invariants/ build/` (the invariants suite is owner-authored — feature agents never touch it; `build/` is the build harness, executed by the auto-allowed `npm run build`, so tampering there runs arbitrary code inside the gate — protected across the integrity check, both hooks, and the gate's own tamper tripwire).
 
 The **orchestrator's** check (against the BASE *it* recorded) is authoritative. A copy inside the gate (§6.2, via `GATE_BASE`) is only the fixer's self-check.
 
@@ -108,6 +108,18 @@ One rule everywhere: **bounded autonomy, then escalate — never silent-drop.** 
 
 Caps (knobs): extended-attempt = 1, revision = 2, per-finding total-spend ceiling. **Merges are serialized** — a single writer to `dev/v1`, so two fixes never race the branch.
 
+### 4.7 Hermetic full-gate (fresh checkout, not the fixer's worktree)
+
+The pinned-BASE integrity check (§4.1) attests only to **tracked** content — `git diff <BASE>` shows neither **untracked** nor **gitignored** files. But the gate *executes* against the whole worktree filesystem. That gap is exploitable: a fixer can leave poisoned **gitignored** generated files (`src/runtime/generated/*`, `build/generated/*`) or untracked artifacts (a shadowing `.npmrc`, a local config the toolchain walks up to) that make a bad gate go green while the diff you review stays clean — classic "test against X, ship Y."
+
+So the orchestrator runs `gate-full` in a **fresh checkout of the committed branch tip**, never the fixer's worktree: `scripts/fixloop.sh gatefull <branch>` adds a clean detached worktree at the branch, exports `GATE_BASE` = recorded BASE, and runs `gate-full.sh` there (which builds the gitignored generated files itself). The clean tree holds exactly the tracked content, so **what you verified (the diff) == what you tested (the tree)**. This is the same reason CI never trusts a developer's working dir.
+
+**Limit (scopes the claim):** a fresh checkout still resolves the *shared* repo-root `node_modules` (that's what makes the toolchain resolve at all). So it does **not** defend against repo-root dependency tampering — that's Threat C (arbitrary execution), which only the OS sandbox closes. The fresh checkout closes the **worktree-local** untracked/ignored gap (Threat B); the sandbox closes the shared-resource gap (Threat C). Complementary, not redundant.
+
+### 4.8 Memory handoff (subagents propose, orchestrator applies — human-gated)
+
+The per-project memory store (`~/.claude/projects/*/memory/`) is a **shared, cross-session, single-writer** resource. Letting N parallel fixers write it directly would (a) race the single `MEMORY.md` index and (b) mutate persistent state with no review. So fixers **never write the store** — `protect-harness.sh` hard-denies subagent writes to it. Instead a fixer puts any durable, load-bearing fact in its report's `MEMORY:` section; the orchestrator collects proposals across the batch, dedupes, and applies the worthwhile ones itself with the Write/Edit tool — which prompts the human with the full diff (Write/Edit bypass the OS sandbox, so the **permission prompt**, not the sandbox, is the gate on memory). Unattended runs don't apply — they list proposals for the human to ratify. This is the propose-only/ledger pattern (decision #42) applied to memory; the report is the ledger channel (no stray files in the worktree to pollute the integrity diff).
+
 ---
 
 ## 5. Orchestrator procedure (the loop)
@@ -120,13 +132,13 @@ For a batch of findings, the main-thread orchestrator:
 4. **Red-check** — a **separate context** on `fix/<id>` (ideally its own fresh worktree on the same branch so it doesn't disturb the fixer): `git checkout <BASE> -- <prod-file(s)>` (keep the test), run the test, assert **RED**. Green ⇒ vacuous-test reject.
 5. **Integrity check (authoritative)** — §4.1: protected untouched vs BASE; changed files ⊆ allowlist. Protected touch ⇒ escalate; out-of-allowlist ⇒ scope wall (§4.6).
 6. **Verify** — read-only adversarial `reviewer`: sees the diff + gate result + red-proof, **not** the fixer's reasoning; default-reject.
-7. **Full gate** — orchestrator runs `scripts/gate-full.sh` against the worktree (serialized).
+7. **Full gate** — orchestrator runs `scripts/fixloop.sh gatefull <branch>` (serialized): `gate-full.sh` in a **fresh checkout** of the committed branch, not the fixer's worktree (§4.7).
 8. **Approve & merge** — low/med + all green ⇒ orchestrator merges `fix/<id>` → dev/v1 (serialized). High or any protected touch ⇒ human ratifies. Then `git worktree remove` + delete branch. On any wall: salvage per §4.4/§4.6.
 
 ### 5.1 Implementation — built + validated 2026-06-27
 
 The driver is three files plus hardened hooks:
-- **`scripts/fixloop.sh`** — deterministic toolkit the orchestrator runs: `integrity <branch> [allowlist]` (exit 0 ok / 3 protected-touch / 4 scope-violation), `redcheck <branch> <test> -- <prod>` (exit 0 RED / 5 vacuous-GREEN; reverts modified files via `git checkout BASE --`, new files via delete), `park`, `finish` (prints the human-gated merge — never executes it), `status`. Recovers BASE via `git merge-base <branch> dev/v1`. **Git inside it runs UNHOOKED**, so it is orchestrator-only: bash-policy denies subagents invoking it, and both hooks protect it from edits. Every subcommand exit code unit-tested.
+- **`scripts/fixloop.sh`** — deterministic toolkit the orchestrator runs: `integrity <branch> [allowlist]` (exit 0 ok / 3 protected-touch / 4 scope-violation), `redcheck <branch> <test> -- <prod>` (exit 0 RED / 5 vacuous-GREEN; reverts modified files via `git checkout BASE --`, new files via delete), `gatefull <branch>` (runs `gate-full.sh` in a fresh detached checkout of the branch — §4.7 — passing through its exit code), `park`, `finish` (prints the human-gated merge — never executes it), `status`. Recovers BASE via `git merge-base <branch> dev/v1`. **Git inside it runs UNHOOKED**, so it is orchestrator-only: bash-policy denies subagents invoking it, and both hooks protect it from edits. Every subcommand exit code unit-tested.
 - **`.claude/agents/fix-worker.md`** — the fixer: runs in its isolation worktree, builds first, writes the smallest fix + a non-vacuous test, self-gates with `./scripts/gate.sh`, commits, and reports `TEST` + `PROD FILES` so the orchestrator can red-check.
 - **`.claude/commands/fix-loop.md`** — the orchestrator runbook (`/fix-loop`), wiring planner → fix-worker (async, resumable via SendMessage) → redcheck → integrity → reviewer → gate-full → serialized merge, with PARK + caps.
 
@@ -178,6 +190,17 @@ The `.claude/worktrees/` carve-out already exists (committed `b0fb25f`). Confirm
 ### 6.5 `.claude/settings.json` — set the worktree base ref (REQUIRED, human-applied)
 
 **TODO (human):** add `{ "worktree": { "baseRef": "head" } }`. Confirmed by docs + the 2026-06-26 dry run: the Agent tool's `isolation:'worktree'` branches from `origin/<default-branch>` by default — here a **stale `origin/main` (`8826e0b`)** — so a fixer's worktree came up on ancient code with no `scripts/gate.sh` (gate ran exit 127). `baseRef: head` branches from local HEAD (dev/v1) instead. This is **load-bearing**: subagents can reach a worktree *only* via isolation (no `cd` — not auto-allowed; no cwd param on the Agent tool), so without this the entire fixer flow runs on the wrong base. (Claude can't write `settings.json` — the auto-mode classifier blocks self-modification of the permissions block — so apply it by hand.) **CONFIRMED (2026-06-26):** after `baseRef: head` was applied + committed, a re-test isolation subagent came up on dev/v1's tip (`0834592`), scoped-git `add`/`commit` worked, and `./scripts/gate.sh` → **FAST GATE PASSED** inside the subagent's own worktree.
+
+### 6.6 Threat-B hardening — DONE (2026-06-29)
+
+Two gaps from the security review (handoff §6.2), both closed:
+
+- **`build/` is now PROTECTED.** It is subagent-writable *and* executed via the auto-allowed `npm run build`, so a tampered `build/build.mjs` runs arbitrary code inside the gate. Added to: `fixloop.sh` integrity set, `gate.sh`'s tamper tripwire (the gate now refuses to run — and refuses to *execute* the build — when `build/` differs from BASE), `bash-policy.sh`'s protected-write regex, and `protect-harness.sh`'s block-list (with a carve-out so it stays protected even inside a fixer's worktree). `build/generated/*` is gitignored output, untouched by these.
+- **Full gate runs in a fresh checkout** (§4.7), via `fixloop.sh gatefull` — closes the untracked/gitignored poisoning gap. Caveat: shared `node_modules` (Threat C) remains the sandbox's job.
+
+Also folded in: **memory handoff** (§4.8) — `protect-harness.sh` now hard-denies subagent writes to `~/.claude/projects/*/memory/*` and routes main-thread memory writes to `ask`; fixers propose via the report `MEMORY:` field. (Correction to handoff §6.1: Write/Edit **bypass** the OS sandbox — only Bash is sandboxed — so memory writes via the tools are never broken by `sandbox.enabled` and need no allow-list; the permission prompt is the gate.)
+
+> **Still pending the human:** the sandbox decision itself (handoff §6.1, `sandbox.enabled: true`) — settings self-mod is agent-blocked, so it's human-applied. Closing Threat C (arbitrary execution / shared-resource tampering) still needs it.
 
 ---
 

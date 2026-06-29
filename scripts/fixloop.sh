@@ -11,6 +11,7 @@
 # Subcommands:
 #   integrity <branch> [allowlist-file]            exit 0 clean | 3 protected-touch | 4 scope-violation
 #   redcheck  <branch> <test-cmd...> -- <prod>...  exit 0 RED (good) | 5 GREEN (vacuous) | 2 error
+#   gatefull  <branch>                             run gate-full in a FRESH checkout (passthrough exit)
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity, print the merge command, remove worktree
 #   status                                         list fix/* and wip/* branches + worktrees
@@ -28,6 +29,7 @@ PROTECTED=(
   package.json package-lock.json 'tsconfig*.json'
   'eslint.config.*' '.eslintrc*' .eslintignore knip.json 'knip.config.*'
   babel.config.js metro.config.js invariants
+  build   # the build harness (build.mjs/assemble.mjs) is executed by `npm run build` — tampering here runs arbitrary code in the gate
 )
 
 die() { echo "fixloop: $*" >&2; exit 2; }
@@ -103,6 +105,31 @@ case "$cmd" in
     fi
     ;;
 
+  gatefull)
+    branch="${1:?usage: gatefull <branch>}"
+    base="$(base_of "$branch")"
+    # Run the FULL gate in a FRESH checkout of the committed branch tip — NOT the fixer's worktree.
+    # The fixer's tree can carry untracked / gitignored files (poisoned src/runtime/generated/* or
+    # build/ output, a shadowing .npmrc, etc.) that `git diff <BASE>` cannot see but the gate WOULD
+    # execute against — "test against X, ship Y". A clean checkout holds exactly the tracked content,
+    # so what we verified (the diff) and what we tested (the tree) are identical. (Limit: this shares
+    # the repo's node_modules — repo-root dependency tampering is Threat C, the OS sandbox's job.)
+    wt="$ROOT/.claude/worktrees/gatefull-$$"
+    git worktree add --detach "$wt" "$branch" >&2 2>&1 || die "worktree add failed"
+    # shellcheck disable=SC2064
+    trap "git worktree remove --force '$wt' >/dev/null 2>&1; git worktree prune >/dev/null 2>&1" EXIT
+    # gate-full runs gate.sh first, which builds (writes the gitignored generated/*) before any check;
+    # GATE_BASE pins the gate's own tamper tripwire to the recorded BASE so a tampered config can't pass.
+    ( cd "$wt" && GATE_BASE="$base" ./scripts/gate-full.sh ) >&2
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      echo "FULL GATE PASSED — fresh checkout of $branch (base $base)"
+    else
+      echo "FULL GATE FAILED (exit $rc) — fresh checkout of $branch (base $base)"
+    fi
+    exit "$rc"
+    ;;
+
   park)
     branch="${1:?usage: park <branch> <reason...>}"; shift; reason="${*:-no reason given}"
     case "$branch" in fix/*) : ;; *) die "park expects a fix/* branch, got '$branch'";; esac
@@ -141,6 +168,6 @@ case "$cmd" in
     ;;
 
   *)
-    die "unknown subcommand '$cmd' — one of: integrity redcheck park finish status"
+    die "unknown subcommand '$cmd' — one of: integrity redcheck gatefull park finish status"
     ;;
 esac
