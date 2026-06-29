@@ -120,6 +120,26 @@ So the orchestrator runs `gate-full` in a **fresh checkout of the committed bran
 
 The per-project memory store (`~/.claude/projects/*/memory/`) is a **shared, cross-session, single-writer** resource. Letting N parallel fixers write it directly would (a) race the single `MEMORY.md` index and (b) mutate persistent state with no review. So fixers **never write the store** — `protect-harness.sh` hard-denies subagent writes to it. Instead a fixer puts any durable, load-bearing fact in its report's `MEMORY:` section; the orchestrator collects proposals across the batch, dedupes, and applies the worthwhile ones itself with the Write/Edit tool — which prompts the human with the full diff (Write/Edit bypass the OS sandbox, so the **permission prompt**, not the sandbox, is the gate on memory). Unattended runs don't apply — they list proposals for the human to ratify. This is the propose-only/ledger pattern (decision #42) applied to memory; the report is the ledger channel (no stray files in the worktree to pollute the integrity diff).
 
+### 4.9 Protected-file classes & the scoped-grant model (design ratified 2026-06-29; build DEFERRED)
+
+The PROTECTED set is not monolithic — it splits into two classes by **blast radius**:
+
+- **Class 1 — project config the agent owns:** `package.json`, `package-lock.json`, `tsconfig*.json`, `eslint.*`, `knip.json`, `babel.config.js`, `metro.config.js`. A bad edit is *bounded*: it breaks the build (the gate catches it) or is visibly wrong (the reviewer catches it). Nothing's trust derives from these.
+- **Class 2 — the integrity & control plane:** `scripts/gate*.sh`, `scripts/fixloop.sh`, `.claude/**` (hooks, settings, agents, commands), `invariants/`, `build/`. These ARE the harness that judges the work; a bad edit makes every *other* green check lie — *unbounded* blast radius. The line: **Class 2 is the thing doing the verifying; Class 1 is the thing being verified.**
+
+**Class 2 is NEVER grantable to a subagent.** Hitting it is a class-B stop; the human (or main thread) makes that change. Letting an agent author its own gate/hooks/invariants would mean "gate-full passed" at final review carries no information — the one review you can't shortcut.
+
+**Class 1 is grantable per-task — but the mechanism is DEFERRED** to the build-loop generalization (§8); for the mechanical-fix loop it stays a class-B stop (mechanical fixes shouldn't need protected edits). The model, recorded so we don't re-derive it — it removes mid-flight human prompts while keeping the human as final ratifier, because **the control point is the *merge*, not the edit** (a Class-1 change in a worktree is harmless until merged: visible in `diff BASE`, gated, ratified):
+
+1. **Plan declares it** — the planner's allowlist includes the Class-1 file (= declared protected scope); the orchestrator approving the plan approves the scope, *once, upfront, no per-edit prompt*.
+2. **Orchestrator writes an unforgeable grant** — a manifest keyed by worktree (e.g. `.claude/fixloop/grants/<wt-id>`, agent-unwritable since `.claude/**` is hook-blocked) listing the granted Class-1 globs.
+3. **Hook honors the grant** — `protect-harness` allows a subagent's Class-1 edit iff it matches the grant (Class-2 never; ungranted → block). The agent never stalls, never prompts you mid-flight.
+4. **Integrity distinguishes** — `fixloop integrity`: a protected change ∈ the declared allowlist → *sanctioned* (flag "needs ratification"); ∉ allowlist → exit-3 *tamper*.
+5. **Automated scrutiny** — the reviewer specifically audits the protected change; the orchestrator's "proper solution?" adjudication is the pre-pass.
+6. **Human ratifies the whole lane at merge** — all protected changes + code, approve/disapprove. The *only* touchpoint.
+
+**Dependency adds are a separate, higher bar even after grants exist:** they also need `npm install` (network + lockfile regen), which we deny for supply-chain safety. Keep those human-in-the-loop (or a dedicated, audited "install one package" grant) — a Class-1 *file* grant alone can't make a dependency add work.
+
 ---
 
 ## 5. Orchestrator procedure (the loop)
@@ -227,5 +247,6 @@ This loop is the **particular** (mechanical fixes). The **general** build loop (
 - **Scoped git for subagents** (cwd-based) lets implementers commit per-chain and enables the red-check.
 - **Salvage/PARK + bounded-autonomy-then-escalate** apply unchanged to chains.
 - **Main-thread async-Agent orchestration** (not Workflow) for resumable implementer revise loops.
+- **Scoped protected-file grants (§4.9) — built HERE.** Class-1 config (package.json, tsconfig, eslint, knip, babel, metro) becomes grantable per-chain via an orchestrator-written, agent-unforgeable grant manifest + a `protect-harness` grant check + a sanctioned-vs-tamper split in `fixloop integrity` — so a chain that legitimately touches Class-1 config proceeds autonomously and the human ratifies the lane at merge (never mid-flight). Class-2 (gate/fixloop/`.claude/**`/invariants/`build/`) stays human-authored, full stop. Dependency adds remain a separate higher-bar case (they also need `npm install`).
 
 Source material for that agent: this doc, [`coding-harness-diagram.md`](./coding-harness-diagram.md), [`harness-build-guide.md`](./harness-build-guide.md) (the intended roles), and [`fix-fest-handoff.md`](./fix-fest-handoff.md) (the failure catalog these changes close).
