@@ -594,6 +594,32 @@ test('§E (c) records.list surfaces corrupt_storage on a json field with invalid
   expectError('corrupt_storage', () => store.records.list('Notes'));
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// §F  D7 — dead executeSync ternary removed; startup assertion present
+//
+//     Reverting the prod files to the unfixed state (with `typeof db.executeSync`)
+//     makes these assertions fail. Non-vacuous by construction.
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§F (D7) op-sqlite binding has no typeof-executeSync ternary and has startup assertion', () => {
+  const opSqliteSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/bindings/op-sqlite.ts'),
+    'utf8',
+  );
+  // The dead ternary used `=== 'function'`; the replacement startup assertion uses `!== 'function'`.
+  // Checking for the ternary-specific form makes the test non-vacuous without triggering on the guard.
+  ok(!opSqliteSrc.includes("typeof db.executeSync === 'function'"), 'op-sqlite.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+  ok(opSqliteSrc.includes('executeSync not available'), 'op-sqlite.ts must contain startup assertion "executeSync not available"');
+});
+
+test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', () => {
+  const deviceAcceptSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/device-acceptance.ts'),
+    'utf8',
+  );
+  ok(!deviceAcceptSrc.includes("typeof db.executeSync === 'function'"), 'device-acceptance.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+});
+
 // ── verdict ──────────────────────────────────────────────────────────────────
 
 fs.rmSync(TMP, { recursive: true, force: true });
