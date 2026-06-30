@@ -129,7 +129,9 @@ export default function LauncherRoot() {
       onOpen={onOpen}
       onFork={onFork}
       onDelete={onDelete}
-      onCreate={() => {}}
+      onCreate={() => {
+        // TODO(#7 prompt-flow-ux): navigate to the prompt screen (not yet implemented).
+      }}
       onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
     />
   );
