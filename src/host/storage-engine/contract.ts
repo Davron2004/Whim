@@ -161,7 +161,8 @@ export type StorageErrorKind =
   | 'unknown_record'
   | 'type_mismatch'
   | 'kv_too_large'
-  | 'not_open';
+  | 'not_open'
+  | 'corrupt_storage';
 
 export interface StorageError {
   kind: StorageErrorKind;

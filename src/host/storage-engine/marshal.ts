@@ -16,7 +16,7 @@
  * ships TextEncoder; the version-store polyfills note it lacks only TextDecoder).
  */
 
-import { FieldType, JsonValue } from './contract';
+import { FieldType, JsonValue, storageError } from './contract';
 
 /** node:sqlite / op-sqlite both accept these as bind parameters. */
 export type SqlBindValue = null | number | bigint | string | Uint8Array;
@@ -92,7 +92,11 @@ export function fromStorage(type: FieldType, raw: unknown): JsonValue {
     case 'bool':
       return Number(raw) !== 0;
     case 'json':
-      return JSON.parse(String(raw)) as JsonValue;
+      try {
+        return JSON.parse(String(raw)) as JsonValue;
+      } catch {
+        throw storageError({ kind: 'corrupt_storage', hint: `Stored JSON field value is not valid JSON; the stored data is corrupt.` });
+      }
   }
 }
 
