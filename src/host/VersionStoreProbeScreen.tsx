@@ -5,10 +5,9 @@
  * gotcha) and a PASS/FAIL banner. The CORE acceptance runs over the in-memory shim
  * (zero native modules), so this builds and runs on the existing toolchain.
  *
- * Cross-restart persistence (5.2/5.3) needs a persistent KV backend. Set USE_MMKV to
- * true AFTER installing react-native-mmkv and rebuilding native; relaunch the app to
- * see `persistence.restartVerified` flip from "n/a" to true once a prior launch's
- * snapshots/pins/forks are confirmed to have survived the kill.
+ * Cross-restart persistence (5.2/5.3) needs a persistent KV backend (the MMKV backend
+ * below); relaunch the app to see `persistence.restartVerified` flip from "n/a" to true
+ * once a prior launch's snapshots/pins/forks are confirmed to have survived the kill.
  *
  * Not in the default app path — App.tsx renders this only when RUN_VSTORE_PROBE is on.
  */
@@ -18,13 +17,9 @@ import { ScrollView, Text, View, StyleSheet, ActivityIndicator } from 'react-nat
 import { runDeviceAcceptance, DeviceVerdict } from './version-store/device-acceptance';
 import type { KVBackend } from './version-store/fs/kv-fs';
 
-// Flip to true once react-native-mmkv is installed + native is rebuilt (enables 5.2/5.3).
-const USE_MMKV = true;
-
+// MMKV backend is wired; required lazily so the bundle doesn't pull react-native-mmkv unless used.
 function tryMmkv(): KVBackend | undefined {
-  if (!USE_MMKV) return undefined;
   try {
-    // Imported lazily so the bundle does not require react-native-mmkv unless USE_MMKV.
     const { createMmkvBackend } = require('./version-store/fs/mmkv-backend');
     return createMmkvBackend();
   } catch (err) {
