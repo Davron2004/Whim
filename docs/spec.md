@@ -140,6 +140,7 @@ export default defineApp({
 });
 
 // UI primitives — the ONLY way to render
+// Only 'vc-sdk' is an allowed import specifier — subpaths like 'vc-sdk/ui' are rejected by the resolver allowlist.
 import {
   Screen, View, Stack, Row, Spacer, ScrollView, SafeArea,           // layout
   Text, Heading,                                                     // typography
@@ -148,7 +149,15 @@ import {
   Card, List, ListItem, Image, Icon, Divider, Badge, ProgressBar,    // display
   Avatar, EmptyState, Skeleton,
   Modal, Sheet, Toast, Alert, Menu,                                  // overlay
-} from 'vc-sdk/ui';
+  useState, useEffect, useMemo, useCallback, useReducer,             // state
+  useNavigation, useRoute,                                           // navigation — nav.push/back/replace
+  http,                                                               // net — get/post; routed through egress filter
+  storage,                                                            // storage — namespaced KV, schemaless JSON
+  delay, interval,                                                    // effects — timers that the host can pause/cancel
+  location, motion, camera, notifications,
+  share, clipboard, haptics, audio,                                   // capabilities — each requires manifest + consent
+  ai,                                                                  // ai.complete(prompt,{schema}); ai.classify
+} from 'vc-sdk';
 
 // Theme tokens — the ONLY accepted style values
 //   Color:    primary secondary accent success warning danger neutral
@@ -158,17 +167,6 @@ import {
 //   TextSize: caption body subtitle title heading display
 //   Weight:   regular medium bold
 // Components accept tokens, never raw hex/px.  <Button radius="md" /> ✓   radius={17.3} ✗
-
-import { useState, useEffect, useMemo, useCallback, useReducer } from 'vc-sdk/state';
-import { useNavigation, useRoute } from 'vc-sdk/navigation';   // nav.push/back/replace
-import { http } from 'vc-sdk/net';                              // get/post; routed through egress filter
-import { storage } from 'vc-sdk/storage';                       // namespaced KV, schemaless JSON
-import { delay, interval } from 'vc-sdk/effects';               // timers that the host can pause/cancel
-import {
-  location, motion, camera, notifications,
-  share, clipboard, haptics, audio,
-} from 'vc-sdk/capabilities';                                   // each requires manifest + consent
-import { ai } from 'vc-sdk/ai';                                 // ai.complete(prompt,{schema}); ai.classify
 ```
 
 ### 5.3 The UI line: tokens, not values [DECIDED]
