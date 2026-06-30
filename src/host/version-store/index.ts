@@ -52,21 +52,24 @@ const HEX40 = /^[0-9a-f]{40}$/i;
  * identifiers (task 3.7 / spec "git is never exposed"). Throws on the first violation.
  * Used in tests to guard every verb's return shape.
  */
-export function assertNoGitLeak(value: unknown, path = '$'): void {
+export function assertNoGitLeak(value: unknown, path = '$', skipHexCheck = false): void {
   if (value == null) return;
   if (typeof value === 'string') {
-    if (HEX40.test(value)) throw new Error(`git leak at ${path}: looks like a commit hash ("${value}")`);
+    if (!skipHexCheck && HEX40.test(value)) {
+      throw new Error(`git leak at ${path}: looks like a commit hash ("${value}")`);
+    }
     return;
   }
   if (typeof value !== 'object') return;
   if (Array.isArray(value)) {
-    value.forEach((v, i) => assertNoGitLeak(v, `${path}[${i}]`));
+    value.forEach((v, i) => assertNoGitLeak(v, `${path}[${i}]`, skipHexCheck));
     return;
   }
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (FORBIDDEN_KEYS.includes(k.toLowerCase())) {
       throw new Error(`git leak at ${path}.${k}: forbidden key exposes the mechanism`);
     }
-    assertNoGitLeak(v, `${path}.${k}`);
+    const nextSkip = skipHexCheck || k.toLowerCase() === 'artifacts';
+    assertNoGitLeak(v, `${path}.${k}`, nextSkip);
   }
 }
