@@ -5,6 +5,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { check, eq, section } from './harness';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
@@ -90,6 +91,33 @@ export async function runMeteringTests(): Promise<void> {
     // Table has no text-content columns — verified by the store's CREATE TABLE (device_id TEXT, 3 INTEGER cols only)
     check('nothing but counter: no extra keys on Usage', !('prompt' in usage) && !('source' in usage) && !('bundle' in usage));
     store.close();
+  }
+
+  // §6.2 — schema guard: the usage table itself has exactly the four documented columns
+  // (Object.keys on the read() result above only checks the JS shape, not CREATE TABLE —
+  // an extra column like prompt_text wouldn't show up there.)
+  {
+    const tmpFile = path.join(os.tmpdir(), `whim-usage-schema-test-${process.pid}.db`);
+    try {
+      const store = new NodeSqliteUsageStore(tmpFile);
+      await store.credit(DEVICE_A, { promptTokens: 7, completionTokens: 3, totalTokens: 10 });
+      store.close();
+
+      // Second connection to inspect the on-disk schema directly via PRAGMA.
+      const db = new DatabaseSync(tmpFile);
+      const columns = db.prepare('PRAGMA table_info(usage)').all() as { name: string }[];
+      const columnNames = columns.map((c) => c.name);
+      db.close();
+
+      eq('usage table schema: exact columns', columnNames, [
+        'device_id',
+        'prompt_tokens',
+        'completion_tokens',
+        'total_tokens',
+      ]);
+    } finally {
+      fs.rmSync(tmpFile, { force: true });
+    }
   }
 
   // §6 zeros for unknown id
