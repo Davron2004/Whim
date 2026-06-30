@@ -12,6 +12,7 @@
 
 import { SqlBindValue } from '../marshal';
 import { runInTransaction, SqlExecutor, SqlResult, SqlRow } from '../sql-executor';
+import { assertExecuteSyncAvailable } from './assert-executesync';
 
 const TXN_CONTROL = /^\s*(BEGIN|COMMIT|ROLLBACK)/i;
 
@@ -29,9 +30,10 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
       ? open({ name: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
-  if (typeof db.executeSync !== 'function') {
-    throw new Error('op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build');
-  }
+  // Guard: throws "op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build"
+  // when the native module's executeSync is missing. Extracted to assertExecuteSyncAvailable
+  // so it is Node-testable (this file requires the native module and can't load under Node).
+  assertExecuteSyncAvailable(db);
 
   // op-sqlite v16+ JSI build: executeSync is always present and synchronous.
   const runOne = (sql: string, params: SqlBindValue[]): SqlResult => {

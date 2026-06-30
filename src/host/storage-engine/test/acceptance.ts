@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createEngine } from '../engine';
+import { assertExecuteSyncAvailable } from '../bindings/assert-executesync';
 import { createNodeSqlExecutor } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
 import { SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
@@ -628,6 +629,42 @@ test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', ()
     'utf8',
   );
   ok(!deviceAcceptSrc.includes("typeof db.executeSync === 'function'"), 'device-acceptance.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+});
+
+test('§F (D7) assertExecuteSyncAvailable throws iff executeSync is not a function', () => {
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({});
+        return false;
+      } catch (e) {
+        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
+      }
+    })(),
+    'assertExecuteSyncAvailable must throw with the expected message when executeSync is missing',
+  );
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({ executeSync: 123 });
+        return false;
+      } catch (e) {
+        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
+      }
+    })(),
+    'assertExecuteSyncAvailable must throw when executeSync is present but not a function',
+  );
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({ executeSync: () => ({ rows: [] }) });
+        return true;
+      } catch {
+        return false;
+      }
+    })(),
+    'assertExecuteSyncAvailable must not throw when executeSync is a function',
+  );
 });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
