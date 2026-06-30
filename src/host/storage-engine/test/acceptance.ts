@@ -599,28 +599,46 @@ test('§E (c) records.list surfaces corrupt_storage on a json field with invalid
 // §F  source-integrity checks (D3, D7)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('§F (D3) engine.ts must not define a local BURNED_ID_RE — it must import from ./contract', () => {
+test('§F (D3) the burned-ID injection regex has a single source of truth in ./contract', () => {
   const enginePath = path.join(process.cwd(), 'src', 'host', 'storage-engine', 'engine.ts');
   const engineSrc = fs.readFileSync(enginePath, 'utf8');
+  // Standing invariant (independent of any one diff): the SQL-identifier backstop
+  // regex lives ONLY in contract.ts. engine.ts must not inline the pattern literal
+  // (under ANY name), must not declare its own copy, and must USE the imported
+  // binding — two copies could silently drift and weaken the injection guard.
   ok(
-    !engineSrc.includes('const BURNED_ID_RE'),
-    'engine.ts must not contain "const BURNED_ID_RE" — the regex must come from ./contract to prevent silent drift',
+    !/\/\^\[a-z\]\[0-9\]\+\$\//.test(engineSrc),
+    'engine.ts must not inline the burned-ID regex literal /^[a-z][0-9]+$/ — it must come from ./contract',
   );
   ok(
-    /import\s*\{[^}]*BURNED_ID_RE[^}]*\}\s*from\s*'\.\/contract'/.test(engineSrc),
+    !engineSrc.includes('const BURNED_ID_RE'),
+    'engine.ts must not declare a local BURNED_ID_RE',
+  );
+  ok(
+    /import\s*\{[^}]*\bBURNED_ID_RE\b[^}]*\}\s*from\s*'\.\/contract'/.test(engineSrc),
     'engine.ts must import BURNED_ID_RE from "./contract"',
+  );
+  ok(
+    /\bBURNED_ID_RE\.test\s*\(/.test(engineSrc),
+    'engine.ts must USE the imported BURNED_ID_RE (its .test backstop in quoteIdent), not merely import it',
   );
 });
 
-test('§F (D7) op-sqlite binding has no typeof-executeSync ternary and has startup assertion', () => {
+test('§F (D7) op-sqlite binding: no executeSync ternary, guard wired to the helper', () => {
   const opSqliteSrc = fs.readFileSync(
     path.resolve(process.cwd(), 'src/host/storage-engine/bindings/op-sqlite.ts'),
     'utf8',
   );
-  // The dead ternary used `=== 'function'`; the replacement startup assertion uses `!== 'function'`.
-  // Checking for the ternary-specific form makes the test non-vacuous without triggering on the guard.
+  // No dead ternary fallback (the pinned v16 JSI build always has executeSync).
   ok(!opSqliteSrc.includes("typeof db.executeSync === 'function'"), 'op-sqlite.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
-  ok(opSqliteSrc.includes('executeSync not available'), 'op-sqlite.ts must contain startup assertion "executeSync not available"');
+  // The guard's THROW behavior lives in (and is behaviorally tested via) the
+  // assertExecuteSyncAvailable helper — see the §F test below. Here we only assert
+  // the binding actually WIRES that guard in. (No source-grep of the assertion
+  // text: that broke the moment the guard was extracted, and a comment could fake it.)
+  ok(
+    /\bassertExecuteSyncAvailable\s*\(\s*db\s*\)/.test(opSqliteSrc),
+    'op-sqlite.ts must call assertExecuteSyncAvailable(db) to guard executeSync availability',
+  );
 });
 
 test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', () => {

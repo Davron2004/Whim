@@ -30,9 +30,9 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
       ? open({ name: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
-  // Guard: throws "op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build"
-  // when the native module's executeSync is missing. Extracted to assertExecuteSyncAvailable
-  // so it is Node-testable (this file requires the native module and can't load under Node).
+  // Guard that the op-sqlite v16+ JSI build's executeSync is present. Extracted to
+  // assertExecuteSyncAvailable so its throw is unit-testable under Node — this file
+  // can't load outside React Native (it imports the native module).
   assertExecuteSyncAvailable(db);
 
   // op-sqlite v16+ JSI build: executeSync is always present and synchronous.
