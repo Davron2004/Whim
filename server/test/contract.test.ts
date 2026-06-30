@@ -35,6 +35,9 @@ export function runContractTests(): void {
       label: 'stage generate/done +attempt',
       value: { type: 'stage', stage: 'generate', status: 'done', attempt: 2 },
     },
+    { label: 'stage check/start', value: { type: 'stage', stage: 'check', status: 'start' } },
+    { label: 'stage run/done', value: { type: 'stage', stage: 'run', status: 'done' } },
+    { label: 'stage repair/start', value: { type: 'stage', stage: 'repair', status: 'start' } },
     { label: 'token', value: { type: 'token', text: 'hello' } },
     {
       label: 'diagnostic',
