@@ -29,9 +29,13 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
       ? open({ name: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
-  // op-sqlite exposes synchronous JSI execution; prefer executeSync where present.
+  if (typeof db.executeSync !== 'function') {
+    throw new Error('op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build');
+  }
+
+  // op-sqlite v16+ JSI build: executeSync is always present and synchronous.
   const runOne = (sql: string, params: SqlBindValue[]): SqlResult => {
-    const res = typeof db.executeSync === 'function' ? db.executeSync(sql, params) : db.execute(sql, params);
+    const res = db.executeSync(sql, params);
     const raw = res?.rows;
     const rows: SqlRow[] = Array.isArray(raw) ? raw : (raw?._array ?? []);
     return {

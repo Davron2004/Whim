@@ -595,7 +595,7 @@ test('§E (c) records.list surfaces corrupt_storage on a json field with invalid
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// §F  source-integrity: no local duplicate of contract exports (D3 non-drift)
+// §F  source-integrity checks (D3, D7)
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('§F (D3) engine.ts must not define a local BURNED_ID_RE — it must import from ./contract', () => {
@@ -609,6 +609,25 @@ test('§F (D3) engine.ts must not define a local BURNED_ID_RE — it must import
     /import\s*\{[^}]*BURNED_ID_RE[^}]*\}\s*from\s*'\.\/contract'/.test(engineSrc),
     'engine.ts must import BURNED_ID_RE from "./contract"',
   );
+});
+
+test('§F (D7) op-sqlite binding has no typeof-executeSync ternary and has startup assertion', () => {
+  const opSqliteSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/bindings/op-sqlite.ts'),
+    'utf8',
+  );
+  // The dead ternary used `=== 'function'`; the replacement startup assertion uses `!== 'function'`.
+  // Checking for the ternary-specific form makes the test non-vacuous without triggering on the guard.
+  ok(!opSqliteSrc.includes("typeof db.executeSync === 'function'"), 'op-sqlite.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+  ok(opSqliteSrc.includes('executeSync not available'), 'op-sqlite.ts must contain startup assertion "executeSync not available"');
+});
+
+test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', () => {
+  const deviceAcceptSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/device-acceptance.ts'),
+    'utf8',
+  );
+  ok(!deviceAcceptSrc.includes("typeof db.executeSync === 'function'"), 'device-acceptance.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
 });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
