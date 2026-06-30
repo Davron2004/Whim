@@ -48,7 +48,6 @@ function b64decode(s: string): Uint8Array {
 
 export class KvBackedFs extends MemoryFs {
   private kv: KVBackend;
-  private ready = false;
 
   constructor(kv: KVBackend) {
     super();
@@ -78,7 +77,6 @@ export class KvBackedFs extends MemoryFs {
       maxIno = Math.max(maxIno, ino);
     }
     this.inoCounter = maxIno + 1;
-    this.ready = true;
   }
 
   protected onWrite(path: string, node: FsNode): void {
