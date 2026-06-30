@@ -67,13 +67,16 @@ export const useEffect = React.useEffect;
 // #5) cancels everything structurally — no SDK-level registry, none needed (design D2).
 
 /** Resolve after at least `ms` — one-shot sequencing inside handlers/effects (`await delay(800)`).
+ *  `ms` must be finite and non-negative; `0` resolves on the next tick. A non-finite
+ *  (`Infinity`/`NaN`) or negative `ms` returns a promise that NEVER resolves — cancelled only by
+ *  realm teardown, mirroring `interval`'s `!Number.isFinite(ms) || ms < 0` bail.
  *  Deliberately NOT component-scoped: an in-flight `delay` across an unmount resolves harmlessly
  *  (callers update state via React, which no-ops on unmounted trees in 18+); a realm teardown
  *  cancels it structurally (D2). */
 export function delay(ms: number): Promise<void> {
-  const d = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  if (!Number.isFinite(ms) || ms < 0) return new Promise(() => {});
   return new Promise((resolve) => {
-    setTimeout(resolve, d);
+    setTimeout(resolve, ms);
   });
 }
 
