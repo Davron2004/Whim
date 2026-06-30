@@ -293,7 +293,7 @@ export class VersionStore {
   async pin(appId: string, snapshotId: string, label: string): Promise<Pin> {
     const { gitdir } = this.paths(appId);
     const oid = await this.resolveSnap(gitdir, snapshotId);
-    if (!/^[A-Za-z0-9 ._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
+    if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
     await git.tag({ fs: this.client, gitdir, ref: PIN_TAG(label), object: oid, force: true });
     return { label, snapshotId };
   }

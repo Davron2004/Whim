@@ -160,6 +160,25 @@ await test('§3.5 pin survives later generations (spec)', async () => {
   assertNoGitLeak(await s.listPins('app'), 'pins');
 });
 
+await test('§3.5 pin label rejects spaces (ref name must be portable to real git)', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+
+  let threw = false;
+  try {
+    await s.pin('app', 'g1', 'known good');
+  } catch (err) {
+    threw = /invalid pin label/.test((err as Error).message);
+  }
+  ok(threw, 'pin() rejects a label containing a space');
+
+  const dashPin = await s.pin('app', 'g1', 'known-good');
+  eq(dashPin.label, 'known-good', 'pin() accepts a label with a dash');
+
+  const underscorePin = await s.pin('app', 'g1', 'known_good');
+  eq(underscorePin.label, 'known_good', 'pin() accepts a label with an underscore');
+});
+
 await test('§3.6 fork is independent (spec: fork advances, original unchanged)', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
