@@ -15,6 +15,7 @@ export interface ParsedSseEvent {
 export interface SseReadResult {
   events: ParsedSseEvent[];
   keepaliveCount: number;
+  skippedFrames: number;
 }
 
 /**
@@ -43,6 +44,7 @@ export async function readSseResponse(response: Response): Promise<SseReadResult
 function parseSseText(text: string): SseReadResult {
   const events: ParsedSseEvent[] = [];
   let keepaliveCount = 0;
+  let skippedFrames = 0;
 
   // Split into blocks by double newline
   const blocks = text.split(/\n\n+/);
@@ -76,6 +78,7 @@ function parseSseText(text: string): SseReadResult {
 
     if (eventType === undefined || dataStr === undefined || idStr === undefined) {
       // Incomplete frame — skip
+      skippedFrames++;
       continue;
     }
 
@@ -85,5 +88,5 @@ function parseSseText(text: string): SseReadResult {
     events.push({ id, event: eventType, data: parsedData });
   }
 
-  return { events, keepaliveCount };
+  return { events, keepaliveCount, skippedFrames };
 }
