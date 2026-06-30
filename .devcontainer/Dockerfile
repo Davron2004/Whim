@@ -60,3 +60,9 @@ RUN mkdir -p /etc/claude-code \
 
 USER node
 WORKDIR /workspace
+
+# Pre-trust the bind-mounted /workspace so headless runs don't stall on (and
+# don't ignore .claude/settings.json because of) the first-run trust dialog.
+# Key/path are exactly what Claude Code's untrusted-workspace warning names.
+RUN printf '{ "projects": { "/workspace": { "hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true } } }\n' \
+      > /home/node/.claude.json
