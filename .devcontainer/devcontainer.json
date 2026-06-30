@@ -1,0 +1,49 @@
+{
+  "name": "whim-fixloop",
+  "build": { "dockerfile": "Dockerfile" },
+
+  // NET_ADMIN + NET_RAW: required by init-firewall.sh (iptables/ipset) to lock
+  // egress to Anthropic only. This is the Threat-C boundary.
+  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+
+  // The host repo is BIND-MOUNTED (the default workspaceMount does this), so
+  // worktrees under .claude/worktrees/ and merges to dev/v1 land on the host FS
+  // immediately — no git push needed (push stays denied).
+  //
+  // node_modules is a SEPARATE named volume, NOT the bind mount:
+  //   - macOS bind-mounted node_modules is pathologically slow; a volume isn't.
+  //   - For UNATTENDED runs, .devcontainer/run-loop.sh mounts this volume :ro,
+  //     which replaces the old sandbox `denyWrite:["./node_modules"]` rule
+  //     (the one node_modules-poison guard we'd otherwise lose with sandbox off).
+  //   - In THIS interactive devcontainer it's RW for convenience (you're attended);
+  //     `npm install` is still hook-denied, so nothing legit writes it anyway.
+  "mounts": [
+    "source=whim-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume"
+  ],
+
+  "remoteUser": "node",
+  "containerEnv": { "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright" },
+
+  // Runs ONCE on create, BEFORE the firewall — so npm has full network here.
+  // Populates the node_modules volume (incl. workspaces: contract, server) and
+  // downloads the Chromium binary into PLAYWRIGHT_BROWSERS_PATH.
+  "postCreateCommand": "npm ci && npx playwright install chromium",
+
+  // Runs on EVERY start (iptables don't persist) — locks egress to Anthropic.
+  // Ordering on first create: postCreate (npm ci, full net) THEN postStart (lock).
+  "postStartCommand": "sudo .devcontainer/init-firewall.sh",
+
+  // The OS sandbox is disabled inside the container via managed settings baked
+  // into the image (/etc/claude-code/managed-settings.json — see Dockerfile),
+  // which outrank the bind-mounted project settings without editing them. This
+  // is NOT a regression: Threat A (hooks) + Threat B (integrity/redcheck/
+  // fresh-gate/reviewer) still run; only Threat C moves from Seatbelt to the
+  // egress firewall. With sandbox off, `git worktree add` writing .claude/ just
+  // works — the dangerouslyDisableSandbox override dance disappears entirely.
+  //
+  // Permission prompts still fire in this INTERACTIVE devcontainer (you're
+  // attended). The UNATTENDED path is .devcontainer/run-loop.sh, which adds
+  // --dangerously-skip-permissions — safe there precisely because the container
+  // bounds Threat C.
+  "remoteEnv": { "DEVCONTAINER": "true" }
+}

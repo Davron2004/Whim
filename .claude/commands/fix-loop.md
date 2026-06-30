@@ -9,6 +9,7 @@ You MAY run several findings in parallel — launch the fixers async and process
 Per finding:
 
 1. PLAN (read-only). Dispatch a read-only agent (`researcher` or `Plan`) to produce the DONE spec: the fix sketch, the **file allowlist** (glob patterns, one per line — save to a temp file), the **test** it must add, the expected red-without-fix, and **severity** (low/med/high). The orchestrator never explores the code itself.
+   - **First, RECONCILE the finding against HEAD — findings lists go stale.** The planner must confirm the defect still exists at the current tip by reading the cited code (and, where the finding cites a fix-shaped change, `git merge-base --is-ancestor <fix-commit> dev/v1`). If it's already fixed, the planner returns `ALREADY-FIXED: <evidence>` and you SKIP steps 2–8 for that finding (record it, do not dispatch a fixer). This is cheap here — no worktree is created — so always do it before the FIX step.
 
 2. FIX. Launch a `fix-worker` subagent with `isolation: worktree` and the DONE spec. It comes up on a fresh worktree at dev/v1's tip (because of `baseRef: head`), builds, fixes, writes the test, self-runs `./scripts/gate.sh` until green, commits, and reports. The completion notification gives you its `worktreeBranch` and `worktreePath`.
    - STATUS blocked (B/C) → adjudicate from the spec, or `SendMessage` the worker a corrected spec, or escalate to the user. Never improvise the fix yourself.
@@ -16,6 +17,7 @@ Per finding:
 3. RED-CHECK (deterministic, the crown jewel). From the report's TEST + PROD FILES:
    `scripts/fixloop.sh redcheck <worktreeBranch> <TEST...> -- <PROD FILES...>`
    exit 0 = RED (test fails without the fix → non-vacuous, good). exit 5 = GREEN = vacuous test → `SendMessage` the worker to write a real test (revision cap), else PARK.
+   - **New-module caveat (the RED can be a false signal).** If the fix ADDS a new file that the test imports, reverting it to BASE deletes the module, so the test fails to *build* ("Could not resolve …") rather than *assert* — a coarse RED that proves nothing about the assertions. Re-run redcheck reverting ONLY the pre-existing prod file(s) so the suite still builds and the real assertion fails cleanly. A behavioral test exercising a brand-new helper can't be revert-red-checked at all (the helper vanishes) — note it and have the VERIFY reviewer judge that test's non-vacuity by inspection.
 
 4. INTEGRITY (deterministic). `scripts/fixloop.sh integrity <worktreeBranch> <allowlist-file>`
    exit 0 = clean. exit 3 = protected file touched → **ESCALATE to the user** (never self-approve). exit 4 = scope violation → re-plan with a corrected allowlist if it stays same-subsystem & non-protected (§4.6), else escalate.
