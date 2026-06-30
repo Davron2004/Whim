@@ -118,6 +118,11 @@ test('§A the verb surface accepts no app/store-addressing parameter', () => {
   // another store. (The TypeScript contract makes this a compile-time guarantee too.)
 });
 
+test('§A records verb before open() throws "not_open"', () => {
+  const { store } = memEngine();
+  expectError('not_open', () => store.records.append('Whatever', { x: 1 }));
+});
+
 test('§A verbs: append returns an id, list/update/remove round-trip', () => {
   const { store } = memEngine();
   store.open(expensesV1);
