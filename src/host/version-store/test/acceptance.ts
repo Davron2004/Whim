@@ -13,6 +13,7 @@ import * as git from 'isomorphic-git';
 import {
   createMemoryStore,
   createPersistentStore,
+  KvBackedFs,
   MapKVBackend,
   MemoryFs,
   VersionStore,
@@ -263,6 +264,21 @@ await test('§5 repeated commit/checkout + restart cycles do not corrupt the rep
   }
   const s = createPersistentStore(new MapKVBackend(map), { autoCompact: false });
   eq((await s.history('app')).length, 5, 'all 5 cross-restart snapshots intact, no corruption');
+});
+
+await test('§5 auto-compaction on a KV-backed store reduces real KV key count (not just MemoryFs)', async () => {
+  const backend = new KvBackedFs(new MapKVBackend());
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: true, compactionThreshold: 12 } });
+
+  for (let v = 1; v <= 3; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`); // loose stays <=12, no compaction
+  const before = backend.kvKeyCount();
+
+  await s.snapshot('app', { 'bundle.js': BUNDLE(4) }, 'p4'); // loose crosses >12, auto-compaction fires inside this call
+  const after = backend.kvKeyCount();
+
+  ok(after < before, `auto-compaction shrank the real KV key count (${before} -> ${after})`);
+  eq(s.looseObjectCount('app'), 0, 'loose objects packed away on the KV-backed store too');
+  eq((await s.history('app')).length, 4, 'history intact after KV-backed auto-compaction');
 });
 
 // --- §6 forward seams: content-agnostic + multi-file lockstep --------------
