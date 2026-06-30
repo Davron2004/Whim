@@ -238,11 +238,15 @@ export class VersionStore {
       return []; // unborn HEAD (repo exists, no commits)
     }
     const map = await this.oidToId(gitdir);
-    return commits.map(c => ({
-      id: map.get(c.oid) ?? '',
-      prompt: stripTrailingNewline(c.commit.message),
-      createdAt: c.commit.author.timestamp * 1000,
-    }));
+    return commits.map(c => {
+      const id = map.get(c.oid);
+      if (id === undefined) throw new Error(`invariant: commit ${c.oid} has no snap tag`);
+      return {
+        id,
+        prompt: stripTrailingNewline(c.commit.message),
+        createdAt: c.commit.author.timestamp * 1000,
+      };
+    });
   }
 
   /** diff(appId, a, b) → walk + compare, per-file change (task 3.3). */
@@ -408,7 +412,8 @@ export class VersionStore {
   private async snapshotContent(gitdir: string, oid: string, knownId?: string): Promise<SnapshotContent> {
     const artifacts = await this.readContentAt(gitdir, oid);
     const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
-    const id = knownId ?? (await this.oidToId(gitdir)).get(oid) ?? '';
+    const id = knownId ?? (await this.oidToId(gitdir)).get(oid);
+    if (id === undefined) throw new Error(`invariant: commit ${oid} has no snap tag`);
     return {
       id,
       prompt: stripTrailingNewline(commit.message),

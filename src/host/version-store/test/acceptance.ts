@@ -9,6 +9,7 @@
  * mini-app-versioning / mini-app-forking spec scenario (§7.4).
  */
 
+import * as git from 'isomorphic-git';
 import {
   createMemoryStore,
   createPersistentStore,
@@ -398,6 +399,59 @@ await test('§assertNoGitLeak: HEX40 artifact content does not false-positive', 
     threw3 = true;
   }
   ok(threw3, 'top-level HEX40 value under non-forbidden key still throws');
+});
+
+// --- C8: an untagged commit (no whim/snap/* tag) must throw loudly, never --
+//        silently surface as id:'' ----------------------------------------
+
+await test('§C8: history() throws an invariant error on an untagged commit', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // creates repo/branch/HEAD + one tagged commit
+
+  // Advance HEAD with a commit that has NO snap tag — the legitimate way the engine
+  // itself would never produce, but a corrupted/partial repo could.
+  await git.commit({
+    fs: { promises: backend },
+    dir,
+    gitdir,
+    message: 'untagged',
+    author: { name: 't', email: 't' },
+  });
+
+  let threw = false;
+  try {
+    await s.history('app');
+  } catch (err) {
+    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
+  }
+  ok(threw, 'history() throws an invariant error instead of returning id:""');
+});
+
+await test('§C8: active() throws an invariant error on an untagged commit', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+
+  await git.commit({
+    fs: { promises: backend },
+    dir,
+    gitdir,
+    message: 'untagged',
+    author: { name: 't', email: 't' },
+  });
+
+  let threw = false;
+  try {
+    await s.active('app');
+  } catch (err) {
+    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
+  }
+  ok(threw, 'active() throws an invariant error instead of returning id:""');
 });
 
 // --- summary ---------------------------------------------------------------
