@@ -117,8 +117,9 @@ export async function runServerCoreTests(): Promise<void> {
     const ct = res.headers.get('content-type') ?? '';
     check('happy path content-type is event-stream', ct.includes('text/event-stream'));
 
-    const { events } = await readSseResponse(res);
+    const { events, skippedFrames } = await readSseResponse(res);
     check('events is non-empty', events.length > 0);
+    eq('happy path generate → 0 skipped frames', skippedFrames, 0);
 
     // §4.2 — strictly increasing ids
     let lastId = 0;
@@ -159,8 +160,9 @@ export async function runServerCoreTests(): Promise<void> {
       keepaliveMs: 0,
     });
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
-    const { keepaliveCount } = await readSseResponse(res);
+    const { keepaliveCount, skippedFrames } = await readSseResponse(res);
     eq('keepalive off → 0 keepalives', keepaliveCount, 0);
+    eq('keepalive off → 0 skipped frames', skippedFrames, 0);
   }
 
   // §4.3 — keepalive on against a deliberately delayed source → ≥1 keepalive
@@ -172,8 +174,9 @@ export async function runServerCoreTests(): Promise<void> {
       keepaliveMs: 20,
     });
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
-    const { keepaliveCount } = await readSseResponse(res);
+    const { keepaliveCount, skippedFrames } = await readSseResponse(res);
     check('keepalive on → ≥1 keepalive', keepaliveCount >= 1, `got ${keepaliveCount}`);
+    eq('keepalive on → 0 skipped frames', skippedFrames, 0);
   }
 
   section('Stub pipeline + endpoints (SPEC §5)');
@@ -182,8 +185,9 @@ export async function runServerCoreTests(): Promise<void> {
   {
     const app = testApp();
     const res = await post(app, '/v1/generate', { prompt: 'build me a counter' }, DEVICE_HEADER);
-    const { events } = await readSseResponse(res);
+    const { events, skippedFrames } = await readSseResponse(res);
     const types = events.map((e) => e.data.type);
+    eq('happy path stub pipeline → 0 skipped frames', skippedFrames, 0);
 
     // Each stage: start before done
     const orderedStages = checkStageOrder(events.map((e) => e.data));
@@ -222,8 +226,9 @@ export async function runServerCoreTests(): Promise<void> {
       { prompt: 'do something [[fail]] please' },
       DEVICE_HEADER,
     );
-    const { events } = await readSseResponse(res);
+    const { events, skippedFrames } = await readSseResponse(res);
     const types = events.map((e) => e.data.type);
+    eq('failure path → 0 skipped frames', skippedFrames, 0);
 
     const terminalCount = events.filter(
       (e) => e.data.type === 'result' || e.data.type === 'failure',
