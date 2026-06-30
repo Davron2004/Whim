@@ -81,6 +81,10 @@ export async function compactRepo(
   const reachable = await collectReachable(client, gitdir);
   if (reachable.size === 0) return { before, after: before, packed: 0 };
 
+  // Capture the OLD pack set BEFORE writing the new one — the fresh pack/.idx don't exist
+  // yet at this point, so they can't be self-deleted by the cleanup loop below.
+  const staleObsolete = backend.listPackFiles(gitdir);
+
   const { filename } = await git.packObjects({ fs: client, dir, gitdir, oids: [...reachable], write: true });
   // indexPack resolves `filepath` relative to `dir`; the pack lives under .git/objects/pack.
   const packRel = `${gitdir.slice(dir.length).replace(/^\//, '')}/objects/pack/${filename}`;
@@ -92,6 +96,9 @@ export async function compactRepo(
       await backend.unlink(`${gitdir}/objects/${oid.slice(0, 2)}/${oid.slice(2)}`);
     }
   }
+
+  // Drop the now-superseded pack/.idx files from the PREVIOUS compaction.
+  for (const path of staleObsolete) await backend.unlink(path);
 
   return { before, after: backend.countLooseObjects(gitdir), packed: reachable.size };
 }

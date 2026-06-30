@@ -329,6 +329,22 @@ export class MemoryFs implements FsBackend {
     return out;
   }
 
+  /** List pack/.idx file paths under `${gitdir}/objects/pack` (full paths, not basenames). */
+  listPackFiles(gitdir: string): string[] {
+    const base = normalizePath(gitdir + '/objects');
+    const out: string[] = [];
+    for (const key of this.entries.keys()) {
+      const node = this.entries.get(key)!;
+      if (node.type !== 'file') continue;
+      const parent = dirnameOf(key);
+      if (dirnameOf(parent) !== base) continue; // must be objects/<shard>/<file>
+      const shard = basenameOf(parent);
+      if (shard !== 'pack') continue;
+      out.push(key);
+    }
+    return out;
+  }
+
   /** Total number of stored paths (rough proxy for KV key pressure). */
   size(): number {
     return this.entries.size;

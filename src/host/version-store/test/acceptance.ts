@@ -13,6 +13,7 @@ import {
   createMemoryStore,
   createPersistentStore,
   MapKVBackend,
+  MemoryFs,
   VersionStore,
   assertNoGitLeak,
 } from '../index';
@@ -212,6 +213,20 @@ await test('§4.2 auto-compaction fires on the loose-object threshold', async ()
   for (let v = 1; v <= 12; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
   ok(s.looseObjectCount('app') <= 12, 'auto-compaction kept loose count bounded');
   eq((await s.history('app')).length, 12, 'history intact after auto-compaction');
+});
+
+await test('§4 compaction removes the PREVIOUS pack instead of accumulating stale pack files', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const gitdir = '/whim/apps/app/.git';
+
+  for (let v = 1; v <= 5; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
+  await s.compact('app');
+  eq(backend.listPackFiles(gitdir).length, 2, 'one .pack + one .idx after first compaction');
+
+  for (let v = 6; v <= 10; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
+  await s.compact('app');
+  eq(backend.listPackFiles(gitdir).length, 2, 'still one .pack + one .idx after second compaction (no stale pack accumulation)');
 });
 
 // --- §5 persistence: KV serialize round-trip + restart (logic, in Node) ----
