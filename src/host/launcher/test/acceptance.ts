@@ -14,6 +14,7 @@ import { runStoreAccessTests } from './store-access.test';
 import { runSeedTests } from './seed.test';
 import { runProductVerbsTests } from './product-verbs.test';
 import { runDevProbeBackButtonTests } from './dev-probe-back-button.test';
+import { runUnmountTeardownTests } from './unmount-teardown.test';
 
 const h = new Harness();
 
@@ -25,6 +26,7 @@ await runStoreAccessTests(h);
 await runSeedTests(h);
 await runProductVerbsTests(h);
 await runDevProbeBackButtonTests(h);
+await runUnmountTeardownTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
