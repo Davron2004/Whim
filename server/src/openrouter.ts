@@ -206,6 +206,18 @@ export class OpenRouterClient {
                     totalTokens: Number(u.total_tokens ?? 0),
                   };
                 }
+
+                // Extract text delta from choices[0].delta.content
+                const choices = parsed.choices;
+                if (Array.isArray(choices) && choices.length > 0) {
+                  const delta = (choices[0] as Record<string, unknown>).delta;
+                  if (delta && typeof delta === 'object') {
+                    const content = (delta as Record<string, unknown>).content;
+                    if (typeof content === 'string' && content.length > 0) {
+                      yield content;
+                    }
+                  }
+                }
               } catch {
                 // ignore malformed trailing data
               }
