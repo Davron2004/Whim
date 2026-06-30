@@ -27,6 +27,7 @@ import { createStorageEngine } from '../storage-engine';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
+import { tearDownLiveRealm } from './teardown';
 
 // The append-only capability table (storage + diag + cues), built once for the host (#41 D5). The
 // cue backend (RN Vibration + the WhimTone ToneGenerator module) is injected here — the only
@@ -220,12 +221,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   }, [control]);
 
   const exit = useCallback(() => {
-    if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
-    if (live.current) {
-      tearDownRealm(live.current.realm);
-      try { live.current.realm.engine?.close(); } catch { /* best effort */ }
-      live.current = null;
-    }
+    tearDownLiveRealm(live, popTimer);
     onExitRef.current?.();
   }, []);
 
@@ -250,6 +246,12 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
     };
   }, [control, exit]);
+
+  // ── Unmount teardown (E2 — self-enforcing realm cleanup) ─────────────────────
+  // Runs ONLY on unmount (empty deps). Reads `live` and `popTimer` as refs so the closure is
+  // never stale. Does NOT call onExit — unmount already means leaving; onExit is the exit()-path
+  // caller's responsibility (explicit user-initiated leave only).
+  useEffect(() => () => { tearDownLiveRealm(live, popTimer); }, []);
 
   return {
     runtimeHtml: RUNTIME_HTML,
