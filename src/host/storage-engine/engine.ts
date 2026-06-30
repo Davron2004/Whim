@@ -13,6 +13,7 @@
  */
 
 import {
+  BURNED_ID_RE,
   CollectionSpec,
   FieldSpec,
   FieldType,
@@ -41,7 +42,6 @@ const META_TABLE = '_meta';
 const KV_TABLE = 'kv';
 const APPLIED_KEY = 'applied_schema';
 const RECORD_ID = 'id'; // the engine-assigned primary key; never a burned field ID (no digits)
-const BURNED_ID_RE = /^[a-z][0-9]+$/;
 const RANGE_OPS = { gt: '>', gte: '>=', lt: '<', lte: '<=' } as const;
 
 /** Construct an engine over an already-opened executor (the binding picks the file). */

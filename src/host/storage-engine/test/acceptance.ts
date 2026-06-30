@@ -594,6 +594,23 @@ test('§E (c) records.list surfaces corrupt_storage on a json field with invalid
   expectError('corrupt_storage', () => store.records.list('Notes'));
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// §F  source-integrity: no local duplicate of contract exports (D3 non-drift)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§F (D3) engine.ts must not define a local BURNED_ID_RE — it must import from ./contract', () => {
+  const enginePath = path.join(process.cwd(), 'src', 'host', 'storage-engine', 'engine.ts');
+  const engineSrc = fs.readFileSync(enginePath, 'utf8');
+  ok(
+    !engineSrc.includes('const BURNED_ID_RE'),
+    'engine.ts must not contain "const BURNED_ID_RE" — the regex must come from ./contract to prevent silent drift',
+  );
+  ok(
+    /import\s*\{[^}]*BURNED_ID_RE[^}]*\}\s*from\s*'\.\/contract'/.test(engineSrc),
+    'engine.ts must import BURNED_ID_RE from "./contract"',
+  );
+});
+
 // ── verdict ──────────────────────────────────────────────────────────────────
 
 fs.rmSync(TMP, { recursive: true, force: true });
