@@ -103,6 +103,27 @@ export async function runOpenRouterTests(): Promise<void> {
     eq('deltas: exactly 3 deltas', collected.length, 3);
   }
 
+  // §7.1b — final SSE frame with NO trailing newline (left in buffer by the main
+  // loop) still yields its content delta via the post-loop flush
+  {
+    const NO_TRAILING_NEWLINE_FRAMES = [
+      'data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"openai/gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"lead"},"finish_reason":null}]}\n\n',
+      'data: {"id":"chatcmpl-2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"X"}}]}',
+    ];
+    const client = new OpenRouterClient(makeSseFetch(NO_TRAILING_NEWLINE_FRAMES));
+    const { deltas } = client.stream({
+      model: MODEL_ID,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    const collected: string[] = [];
+    for await (const delta of deltas) {
+      collected.push(delta);
+    }
+
+    check('flush: trailing no-newline final delta is not dropped', collected.includes('X'));
+  }
+
   // §7.2 — usage capture validates as contract Usage
   {
     const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES));
