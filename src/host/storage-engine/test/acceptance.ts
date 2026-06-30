@@ -197,6 +197,49 @@ test('§A persistence: data survives reopening the same file (restart simulated)
   second.store.close();
 });
 
+const mixedSchema: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {
+    Mixed: {
+      id: 'c1',
+      tombstones: [],
+      fields: {
+        flag: { id: 'f1', type: 'bool' },
+        amount: { id: 'f2', type: 'float' },
+        payload: { id: 'f3', type: 'json' },
+      },
+    },
+  },
+};
+
+test('§A field-types: bool/float/json values round-trip through their marshal forms (not their SQL storage class)', () => {
+  const { store } = memEngine();
+  store.open(mixedSchema);
+
+  const trueId = store.records.append('Mixed', { flag: true, amount: 0, payload: null }).id;
+  const trueRow = store.records.list('Mixed').find(r => r.id === trueId)!;
+  ok(trueRow.flag === true && typeof trueRow.flag === 'boolean', 'bool true reads back as the boolean true, not 1/0 (got ' + JSON.stringify(trueRow.flag) + ' typeof ' + typeof trueRow.flag + ')');
+
+  const falseId = store.records.append('Mixed', { flag: false, amount: 0, payload: null }).id;
+  const falseRow = store.records.list('Mixed').find(r => r.id === falseId)!;
+  ok(falseRow.flag === false && typeof falseRow.flag === 'boolean', 'bool false reads back as the boolean false, not 1/0 (got ' + JSON.stringify(falseRow.flag) + ' typeof ' + typeof falseRow.flag + ')');
+
+  const amountId = store.records.append('Mixed', { flag: true, amount: 3.14, payload: null }).id;
+  const amountRow = store.records.list('Mixed').find(r => r.id === amountId)!;
+  eq(amountRow.amount, 3.14, 'float value round-trips exactly');
+
+  const payloadValue = { a: 1, b: [1, 'x', { c: true }] };
+  const payloadId = store.records.append('Mixed', { flag: true, amount: 0, payload: payloadValue }).id;
+  const payloadRow = store.records.list('Mixed').find(r => r.id === payloadId)!;
+  eq(JSON.stringify(payloadRow.payload), JSON.stringify(payloadValue), 'json value deep round-trips (object/array/nested-object all preserved)');
+
+  const nullId = store.records.append('Mixed', { flag: null, amount: null, payload: null }).id;
+  const nullRow = store.records.list('Mixed').find(r => r.id === nullId)!;
+  ok(nullRow.flag === null, 'a null bool reads back as null, not false');
+  ok(nullRow.amount === null, 'a null float reads back as null, not 0');
+  ok(nullRow.payload === null, 'a null json reads back as null');
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §B  storage-schema-evolution spec scenarios
 // ═══════════════════════════════════════════════════════════════════════════
