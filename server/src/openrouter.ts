@@ -229,14 +229,6 @@ export class OpenRouterClient {
           capturedUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         );
       } catch (err) {
-        if (
-          err instanceof OpenRouterAuthError ||
-          err instanceof OpenRouterRateLimitError ||
-          err instanceof OpenRouterNetworkError
-        ) {
-          rejectUsage(err);
-          throw err;
-        }
         const netErr = new OpenRouterNetworkError('stream read failed', err);
         rejectUsage(netErr);
         throw netErr;
