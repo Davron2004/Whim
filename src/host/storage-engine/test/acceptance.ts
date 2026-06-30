@@ -553,6 +553,47 @@ test('§D validateArtifact rejects a collection with display name "id"', () => {
   ok(errs.some(e => e.kind === 'invalid_artifact'), 'the error kind is invalid_artifact');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// §E  corrupt stored JSON
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§E (a) kv.get throws corrupt_storage when stored JSON is invalid', () => {
+  const { store, rec } = memEngine();
+  rec.execute('INSERT OR REPLACE INTO "kv"(k, v) VALUES (?, ?)', ['bad', 'not json{']);
+  expectError('corrupt_storage', () => store.kv.get('bad'));
+});
+
+test('§E (b) Engine constructor recovers on corrupt _meta; open() rebuilds DDL', () => {
+  // Write a corrupt applied_schema row via first engine, then close it
+  const a = engineAt(dbPath('corrupt-meta'));
+  a.rec.execute('INSERT OR REPLACE INTO "_meta"(k, v) VALUES (?, ?)', ['applied_schema', 'not json{']);
+  a.store.close();
+
+  // Construct a second engine on the same file — must NOT throw even with corrupt _meta row
+  const b = engineAt(dbPath('corrupt-meta'));
+  const mark = b.rec.mark();
+  b.store.open(expensesV1);
+  const creates = b.rec.log.slice(mark).map(e => e.sql).filter(s => /^CREATE TABLE "c1"/.test(s));
+  ok(creates.length > 0, 'corrupt _meta → emptyApplied → CREATE TABLE "c1" issued on open()');
+  eq(b.store.records.list('Expenses'), [], 'fresh table has no rows after DDL rebuild');
+  b.store.close();
+});
+
+test('§E (c) records.list surfaces corrupt_storage on a json field with invalid stored JSON', () => {
+  const notesSchema: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: {
+      Notes: { id: 'c1', tombstones: [], fields: { data: { id: 'f1', type: 'json' } } },
+    },
+  };
+  const { store, rec } = memEngine();
+  store.open(notesSchema);
+  const { id } = store.records.append('Notes', { data: { ok: true } });
+  // Bypass marshalling to inject non-JSON into the stored column
+  rec.execute('UPDATE "c1" SET "f1" = ? WHERE "id" = ?', ['not json{', id]);
+  expectError('corrupt_storage', () => store.records.list('Notes'));
+});
+
 // ── verdict ──────────────────────────────────────────────────────────────────
 
 fs.rmSync(TMP, { recursive: true, force: true });

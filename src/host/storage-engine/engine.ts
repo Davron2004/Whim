@@ -89,7 +89,11 @@ class Engine implements StorageEngine {
     get: (key: string): JsonValue | undefined => {
       const res = this.sql.execute(`SELECT v FROM "${KV_TABLE}" WHERE k = ?`, [key]);
       if (!res.rows.length) return undefined;
-      return JSON.parse(String(res.rows[0].v)) as JsonValue;
+      try {
+        return JSON.parse(String(res.rows[0].v)) as JsonValue;
+      } catch {
+        throw storageError({ kind: 'corrupt_storage', hint: `KV value for key "${key}" is not valid JSON; the stored data is corrupt.` });
+      }
     },
     set: (key: string, value: JsonValue): void => {
       const size = byteLen(value);
@@ -195,7 +199,11 @@ class Engine implements StorageEngine {
   private loadApplied(): AppliedSchema {
     const res = this.sql.execute(`SELECT v FROM "${META_TABLE}" WHERE k = ?`, [APPLIED_KEY]);
     if (!res.rows.length) return emptyApplied();
-    return JSON.parse(String(res.rows[0].v)) as AppliedSchema;
+    try {
+      return JSON.parse(String(res.rows[0].v)) as AppliedSchema;
+    } catch {
+      return emptyApplied();
+    }
   }
 
   private persistApplied(applied: AppliedSchema): void {
