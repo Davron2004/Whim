@@ -331,6 +331,34 @@ test('§B tombstone + display-name reuse: a fresh id, old column retained, no re
   expectError('tombstone_violation', () => store.open(violation));
 });
 
+test('§B re-declaring a tombstoned field with the same id+type resurrects the retired column with zero DDL', () => {
+  const { store, rec } = memEngine();
+  store.open(expensesV1);
+  const { id } = store.records.append('Expenses', { amount: 1, note: 'keepme', spentAt: 5 });
+
+  // gen N+1 tombstones f2 (note): the column is retired, its data retained, not dropped.
+  const tombstoned: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c1', tombstones: ['f2'], fields: { amount: { id: 'f1', type: 'int' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  store.open(tombstoned);
+
+  // gen N+2 (a rollback-shaped re-declaration) re-declares "note" with the SAME id f2 and the
+  // SAME type — schema.ts:228-236's resurrection path: the column already exists physically,
+  // so it just moves retired→active. No default is supplied (none is needed: this is not the
+  // "truly new field" branch).
+  const resurrected: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c1', tombstones: [], fields: { amount: { id: 'f1', type: 'int' }, note: { id: 'f2', type: 'text' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  const mark = rec.mark();
+  store.open(resurrected); // must not throw
+  const ddl = rec.log.slice(mark).filter(e => /^(CREATE|ALTER)/.test(e.sql));
+  eq(ddl.length, 0, 'resurrecting a retired id+type emits zero DDL — the column already exists');
+  const row = store.records.list('Expenses')[0];
+  eq([row.id, row.note], [id, 'keepme'], 'the retired column\'s data survives the round trip through retired and back to active');
+});
+
 test('§B rollback then roll-forward loses no data (older code preserves a newer field)', () => {
   const file = dbPath('rollfwd');
   const { store } = engineAt(file);
