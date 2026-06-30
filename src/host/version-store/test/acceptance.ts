@@ -355,6 +355,36 @@ await test('§4 C1: snapshot() resolves even when auto-compaction throws', async
   ok(store.looseObjectCount('app') > 0, 'looseObjectCount > 0 (compaction did not complete)');
 });
 
+// --- C9: assertNoGitLeak's HEX40 value-scan must not false-positive on -----
+//        opaque mini-app artifact content nested under an "artifacts" key,
+//        while FORBIDDEN_KEYS key-checking still fires everywhere -----------
+
+await test('§assertNoGitLeak: HEX40 artifact content does not false-positive', async () => {
+  let threw1 = false;
+  try {
+    assertNoGitLeak({ artifacts: { 'bundle.js': 'a'.repeat(40) } }, 'snap');
+  } catch {
+    threw1 = true;
+  }
+  ok(!threw1, 'HEX40 string inside artifacts does not throw');
+
+  let threw2 = false;
+  try {
+    assertNoGitLeak({ oid: 'a'.repeat(40) }, 'snap');
+  } catch {
+    threw2 = true;
+  }
+  ok(threw2, 'forbidden key oid still throws');
+
+  let threw3 = false;
+  try {
+    assertNoGitLeak({ id: 'a'.repeat(40) }, 'snap');
+  } catch {
+    threw3 = true;
+  }
+  ok(threw3, 'top-level HEX40 value under non-forbidden key still throws');
+});
+
 // --- summary ---------------------------------------------------------------
 
 // eslint-disable-next-line no-console
