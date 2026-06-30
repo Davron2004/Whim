@@ -8,7 +8,8 @@
  *
  * No route imports this module in this change (#8); it is wired in #11.
  */
-import type { Usage } from '@whim/contract';
+import { Usage } from '@whim/contract';
+export { Usage };
 
 // ─── Typed error classes ─────────────────────────────────────────────────────
 
