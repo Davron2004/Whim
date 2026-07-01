@@ -52,11 +52,18 @@ import type { HapticKind, SoundName } from '../host/bridge/contract';
 export type { HapticKind, SoundName };
 
 // ── State (design D6 / task 3.3) ─────────────────────────────────────────────
-// In-memory, web-side, no bridge: this is literally React's useState/useEffect, surfaced
+// In-memory, web-side, no bridge: this is literally React's useState/useEffect/useRef, surfaced
 // through the SDK so the bundle never has to import `react` itself (the SDK stays the only
 // import surface for app authors, even though `react` is also a resolvable runtime external).
+// `useRef` is a pure fiber-memory cell — it carries NO ambient authority (no network/storage/
+// native, nothing the containment legs govern), it is just a stable mutable `{current}` box that
+// (a) does not re-render on write and (b) is readable LIVE from inside an async closure, unlike a
+// `useState` value which freezes at the value it had when the closure was created. That async-live
+// read is what lets a coroutine (e.g. pour-over-timer's `start()`) observe a cancellation set
+// after it has already begun awaiting — the same staleness class the `interval` note below calls out.
 export const useState = React.useState;
 export const useEffect = React.useEffect;
+export const useRef = React.useRef;
 
 // ── Timed effects (effects-and-cues D1) ──────────────────────────────────────
 // Web-resident wrapped timers — the mini-app's ONLY taught path to time. They emit NO syscall
