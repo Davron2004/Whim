@@ -28,8 +28,9 @@ the real v0.1 bundle-execution mechanism must honor. Canonical detail: `docs/dec
   global (tiny ~4.5 KiB bundles → fewer per-generation loose objects, the #36 win). **react /
   react-dom are ALWAYS external** (host-injected as one shared instance — mixed React instances
   break hooks across the trusted-runner/bundle boundary). The **resolvable runtime surface is
-  exactly `{vc-sdk, react, react-dom}`**; everything else (incl. `react-dom/server`, `fs`,
-  `child_process`, any 3rd-party) must throw.
+  exactly `{vc-sdk, react, react-dom}`**; everything else (incl. `react-dom/server`,
+  `react-dom/client`, `fs`, `child_process`, any 3rd-party) must throw — bundles mount through the
+  injected `react-dom` global (which carries `createRoot`), so the `/client` subpath is never needed.
 - **Diagnostics (D4):** the esbuild source map round-trips — a thrown error / static-check
   finding maps to the agent's **original** TS line. This gates the §8.1 repair loop; keep it.
 

@@ -92,6 +92,7 @@ function __whimRunProbes() {
   expectResolves('module', "require('react')  [host runtime]", function () { return require('react'); });
   expectResolves('module', "require('react-dom')  [host runtime]", function () { return require('react-dom'); });
   expectThrow('module', "require('react-dom/server')  [NOT exposed]", function () { return require('react-dom/server'); });
+  expectThrow('module', "require('react-dom/client')  [subpath NOT exposed]", function () { return require('react-dom/client'); });
   expectThrow('module', "require('react-native')", function () { return require('react-native'); });
   expectThrow('module', "require('fs')", function () { return require('fs'); });
   expectThrow('module', "require('child_process')", function () { return require('child_process'); });
