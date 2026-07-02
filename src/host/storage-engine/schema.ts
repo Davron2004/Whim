@@ -93,7 +93,7 @@ export type SchemaDiff =
  * found (empty array = valid). Post-creation default requirements are NOT checked here —
  * that needs the applied schema and is a `missing_default` conflict from `diffSchemas`.
  */
-export function validateArtifact(artifact: unknown): StorageError[] {
+export function validateArtifact(artifact: unknown): StorageError[] { // NOSONAR - schema validation is deliberately exhaustive and branch-heavy.
   const errors: StorageError[] = [];
   if (!isObject(artifact)) {
     return [{ kind: 'invalid_artifact', hint: 'Schema artifact must be an object.' }];
@@ -181,7 +181,7 @@ export function validateArtifact(artifact: unknown): StorageError[] {
  * Lands in exactly one of: identical, additive (with a CREATE/ADD-only plan), older-subset
  * (rollback — zero DDL), or conflict (the four reject kinds, each with a fix hint).
  */
-export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): SchemaDiff {
+export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): SchemaDiff { // NOSONAR - schema diff classification is intentionally centralized for invariant coverage.
   const errors: StorageError[] = [];
   const creates: CreateTablePlan[] = [];
   const adds: AddColumnPlan[] = [];

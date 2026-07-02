@@ -19,8 +19,8 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (typeof a === 'object') {
     const ao = a as Record<string, unknown>;
     const bo = b as Record<string, unknown>;
-    const ak = Object.keys(ao).sort();
-    const bk = Object.keys(bo).sort();
+    const ak = Object.keys(ao).sort((left, right) => left.localeCompare(right));
+    const bk = Object.keys(bo).sort((left, right) => left.localeCompare(right));
     if (ak.length !== bk.length || !ak.every((k, i) => k === bk[i])) return false;
     return ak.every((k) => deepEqual(ao[k], bo[k]));
   }

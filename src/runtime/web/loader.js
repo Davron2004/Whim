@@ -107,6 +107,74 @@
 
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
   var deliveryBusy = false;
+  function wrappedBundleSource(bundle) {
+    // Wrap the bundle so (a) its externalized `require` resolves through the H1b resolver,
+    // (b) it gets a benign CommonJS {exports} shim, and (c) the value-type forbidden globals
+    // are lexically shadowed in its scope (task 2.5 — belt-and-suspenders ONLY; the
+    // window-level strip is the real defense and is what the probes/T1 exercise). eval/
+    // Function are NOT shadowed: `eval` is a reserved binding in strict mode and `Function`
+    // is reachable via constructor-walk regardless — the CSP neutralizes those.
+    return (
+      '(function(){ "use strict";\n' +
+      '  var fetch=void 0, XMLHttpRequest=void 0, WebSocket=void 0, EventSource=void 0,\n' +
+      '      Worker=void 0, SharedWorker=void 0, localStorage=void 0, sessionStorage=void 0,\n' +
+      '      indexedDB=void 0, caches=void 0, RTCPeerConnection=void 0, importScripts=void 0;\n' +
+      '  void [fetch,XMLHttpRequest,WebSocket,EventSource,Worker,SharedWorker,localStorage,\n' +
+      '        sessionStorage,indexedDB,caches,RTCPeerConnection,importScripts];\n' +
+      '  var require = window.__whimRequire;\n' +
+      '  var module = { exports: {} }, exports = module.exports;\n' +
+      bundle + '\n' +
+      '  if (typeof __WHIM_APP_MODULE__ !== "undefined") window.__WHIM_APP_MODULE__ = __WHIM_APP_MODULE__;\n' +
+      '})();\n' +
+      'window.__whimAfterBundle && window.__whimAfterBundle();'
+    );
+  }
+
+  function deliverBlob(wrapped) {
+    // Channel (c) REFUSAL invariant (task 4.5): a blob:/data: <script src> must stay
+    // REFUSED under the locked CSP (`script-src 'unsafe-inline'` has no `blob:`). We try
+    // it on purpose; it must NOT execute. Never widen script-src to make this "work" — an
+    // attacker who can mint a same-origin blob would gain a script surface.
+    var blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
+    var bs = document.createElement('script');
+    bs.src = blobUrl;
+    (document.head || document.documentElement).appendChild(bs);
+    window.setTimeout(function () {
+      var ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
+      post('delivery', {
+        accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
+        note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
+      });
+      try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+      deliveryBusy = false;
+    }, 60);
+  }
+
+  function deliverInline(wrapped) {
+    var s = document.createElement('script');
+    s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
+    (document.head || document.documentElement).appendChild(s);
+    post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
+    deliveryBusy = false; // re-injection ready (a new generation in the SAME realm)
+  }
+
+  function deliverBundle(msg) {
+    deliveryBusy = true;
+    window.__whimGeneration = (window.__whimGeneration || 0) + 1;
+    try {
+      var wrapped = wrappedBundleSource(msg.bundle);
+      if (msg.viaBlob === true) {
+        deliverBlob(wrapped);
+        return;
+      }
+      deliverInline(wrapped);
+    } catch (e) {
+      post('delivery', { accepted: false, generation: window.__whimGeneration, name: e && e.name, message: e && String(e.message) });
+      post('error', { where: 'deliver', name: e && e.name, message: e && String(e.message) });
+      deliveryBusy = false;
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     var data = ev.data;
     if (typeof data !== 'string') return;
@@ -139,57 +207,7 @@
     }
 
     if (msg.__whimDeliver !== true || deliveryBusy) return;
-    deliveryBusy = true;
-    window.__whimGeneration = (window.__whimGeneration || 0) + 1;
-    try {
-      // Wrap the bundle so (a) its externalized `require` resolves through the H1b resolver,
-      // (b) it gets a benign CommonJS {exports} shim, and (c) the value-type forbidden globals
-      // are lexically shadowed in its scope (task 2.5 — belt-and-suspenders ONLY; the
-      // window-level strip is the real defense and is what the probes/T1 exercise). eval/
-      // Function are NOT shadowed: `eval` is a reserved binding in strict mode and `Function`
-      // is reachable via constructor-walk regardless — the CSP neutralizes those.
-      var wrapped =
-        '(function(){ "use strict";\n' +
-        '  var fetch=void 0, XMLHttpRequest=void 0, WebSocket=void 0, EventSource=void 0,\n' +
-        '      Worker=void 0, SharedWorker=void 0, localStorage=void 0, sessionStorage=void 0,\n' +
-        '      indexedDB=void 0, caches=void 0, RTCPeerConnection=void 0, importScripts=void 0;\n' +
-        '  void [fetch,XMLHttpRequest,WebSocket,EventSource,Worker,SharedWorker,localStorage,\n' +
-        '        sessionStorage,indexedDB,caches,RTCPeerConnection,importScripts];\n' +
-        '  var require = window.__whimRequire;\n' +
-        '  var module = { exports: {} }, exports = module.exports;\n' +
-        msg.bundle + '\n' +
-        '  if (typeof __WHIM_APP_MODULE__ !== "undefined") window.__WHIM_APP_MODULE__ = __WHIM_APP_MODULE__;\n' +
-        '})();\n' +
-        'window.__whimAfterBundle && window.__whimAfterBundle();';
-      if (msg.viaBlob === true) {
-        // Channel (c) REFUSAL invariant (task 4.5): a blob:/data: <script src> must stay
-        // REFUSED under the locked CSP (`script-src 'unsafe-inline'` has no `blob:`). We try
-        // it on purpose; it must NOT execute. Never widen script-src to make this "work" — an
-        // attacker who can mint a same-origin blob would gain a script surface.
-        var blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
-        var bs = document.createElement('script');
-        bs.src = blobUrl;
-        (document.head || document.documentElement).appendChild(bs);
-        window.setTimeout(function () {
-          var ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
-          post('delivery', {
-            accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
-            note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
-          });
-          try { URL.revokeObjectURL(blobUrl); } catch (e) {}
-          deliveryBusy = false;
-        }, 60);
-        return; // do not fall through to the inline path
-      }
-      var s = document.createElement('script');
-      s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
-      (document.head || document.documentElement).appendChild(s);
-      post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
-    } catch (e) {
-      post('delivery', { accepted: false, generation: window.__whimGeneration, name: e && e.name, message: e && String(e.message) });
-      post('error', { where: 'deliver', name: e && e.name, message: e && String(e.message) });
-    }
-    deliveryBusy = false; // re-injection ready (a new generation in the SAME realm)
+    deliverBundle(msg);
   });
 
   // Announce liveness so the host sends the init nonce, then the bundle.

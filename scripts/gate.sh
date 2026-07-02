@@ -72,7 +72,7 @@ else
   echo "PASS: scaffolding tripwires"
 fi
 
-if [ ${#FAILED[@]} -gt 0 ]; then
+if [[ ${#FAILED[@]} -gt 0 ]]; then
   printf '\nFAST GATE FAILED: %s\n' "${FAILED[*]}"
   exit 1
 fi

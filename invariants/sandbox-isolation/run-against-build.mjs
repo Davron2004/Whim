@@ -157,8 +157,8 @@ const browser = await chromium.launch();
   const genBefore = f ? await f.evaluate(() => window.__whimGeneration) : null;
   // ATTACK: from bundle/iframe scope (ev.source === window) self-post a forged delivery + host-init.
   if (f) await f.evaluate(() => {
-    window.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'window.__WHIM_SELFPOST_RAN=true;' }), '*');
-    window.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*');
+    window.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'window.__WHIM_SELFPOST_RAN=true;' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
+    window.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
   });
   await page.waitForTimeout(300);
   f = await appFrame();

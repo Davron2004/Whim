@@ -97,6 +97,7 @@ fi
 case "$CMD" in
   *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
     exit 0 ;;
+  *) ;; # simple command: continue to the scoped policies below
 esac
 
 # ---- git policy (simple commands only — compound already fell through) ----------------------
@@ -119,7 +120,10 @@ case "$CMD" in
             "git "*add*|"git "*commit*|"git "*checkout*|"git "*switch*|"git "*restore*|\
             "git "*stash*|"git "*branch*|"git "*"rev-parse"*)
               allow ;;
+            *)
+              deny "subagent git command is not in the allowlist for its owned worktree (class-B deviation)" ;;
           esac ;;
+        *) ;;
       esac
       deny "subagent git is permitted only inside its own .claude/worktrees/<id> (add/commit/checkout/switch/restore/stash/branch/rev-parse). This command or location is not allowed (class-B deviation)."
     fi
