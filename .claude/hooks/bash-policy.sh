@@ -129,6 +129,7 @@ case "$CMD" in
     fi
     # Main thread: route mutating git to the approval prompt.
     ask "git command needs your approval — review it before allowing (this is the history the gate's BASE-diff trusts)" ;;
+  *) ;;
 esac
 
 # fix-worker entering an orchestrator-created worktree (§6.9). cd is side-effect-free —

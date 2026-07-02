@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     try { reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) }); } catch { threw = true; }
     ok(threw, 'registering an existing method must throw');
     ok(reg.has('storage.records.append'), 'rows are registered');
-    eq(reg.methods().filter(m => m.startsWith('storage.')).sort(), [
+    eq(reg.methods().filter(m => m.startsWith('storage.')).sort((a, b) => a.localeCompare(b)), [
       'storage.kv.get', 'storage.kv.remove', 'storage.kv.set',
       'storage.records.append', 'storage.records.list', 'storage.records.remove', 'storage.records.update',
     ], 'the storage rows are exactly the seven verbs');
@@ -253,7 +253,7 @@ async function main(): Promise<void> {
   await test('§D the SyscallFrame surface carries no app addressing field', async () => {
     // A compile-time guarantee (SyscallFrame = {whim,v,id,gen,method,params}) restated at runtime:
     const f = frame('storage.kv.get', { key: 'k' });
-    eq(Object.keys(f).sort(), ['gen', 'id', 'method', 'params', 'v', 'whim'], 'the envelope has no appId/store/realm field');
+    eq(Object.keys(f).sort((a, b) => a.localeCompare(b)), ['gen', 'id', 'method', 'params', 'v', 'whim'], 'the envelope has no appId/store/realm field');
   });
 
   // ── §E storage round-trip + the second-capability proof ─────────────────────
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     const { backend } = recordingBackend();
     const reg = createDefaultRegistry({ cueBackend: backend });
     ok(reg.has('cues.haptic') && reg.has('cues.sound'), 'both cue rows registered');
-    eq(reg.methods().filter((m) => m.startsWith('cues.')).sort(), ['cues.haptic', 'cues.sound'], 'exactly the two cue rows, nothing else new');
+    eq(reg.methods().filter((m) => m.startsWith('cues.')).sort((a, b) => a.localeCompare(b)), ['cues.haptic', 'cues.sound'], 'exactly the two cue rows, nothing else new');
     let threw = false;
     try { reg.register('cues.haptic', { capability: 'cues', paramsSchema: () => null, handler: () => ({}) }); } catch { threw = true; }
     ok(threw, 'a duplicate cue registration throws at startup (append-only — no override)');

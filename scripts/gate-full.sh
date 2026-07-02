@@ -36,7 +36,7 @@ check "deliver-by-source" npm run -s launcher:deliver-verify
 command -v openspec >/dev/null 2>&1 || { echo "GATE: 'openspec' CLI not found on PATH — install it (e.g. brew install openspec)"; exit 2; }
 check "openspec"          npx openspec validate --all --strict
 
-if [ ${#FAILED[@]} -gt 0 ]; then
+if [[ ${#FAILED[@]} -gt 0 ]]; then
   printf '\nFULL GATE FAILED: %s\n' "${FAILED[*]}"
   exit 1
 fi

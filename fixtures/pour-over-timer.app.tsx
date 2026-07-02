@@ -42,7 +42,7 @@ function mmss(total: number): string {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-function Brew() {
+function Brew() { // NOSONAR - fixture UI state machine is intentionally compact for the generated app corpus.
   const [phase, setPhase] = useState<Phase>('idle');
   const [stageIdx, setStageIdx] = useState(0);
   const [remaining, setRemaining] = useState(0);

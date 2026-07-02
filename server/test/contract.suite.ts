@@ -130,7 +130,7 @@ export function runContractTests(): void {
     const pkg = JSON.parse(readFileSync(path.join(root, rel), 'utf8')) as {
       dependencies?: Record<string, string>;
     };
-    return Object.keys(pkg.dependencies ?? {}).sort();
+    return Object.keys(pkg.dependencies ?? {}).sort((a, b) => a.localeCompare(b));
   };
   const isReactAdjacent = (dep: string): boolean => /^react($|[-/])|^@react/.test(dep);
 
