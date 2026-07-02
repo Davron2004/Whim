@@ -52,7 +52,7 @@ function checkStageOrder(events: GenerationEvent[]): boolean {
   return true;
 }
 
-export async function runServerCoreTests(): Promise<void> {
+async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
   // §3.3 — /healthz is exempt (no device header needed)
@@ -107,6 +107,9 @@ export async function runServerCoreTests(): Promise<void> {
     eq('missing device on rewrite error code', body.error, 'missing_device_id');
   }
 
+}
+
+async function testSseFraming(): Promise<void> {
   section('SSE framing (SPEC §4)');
 
   // §4.1/4.2/4.4 — frame shape, monotonic ids, exactly one terminal last
@@ -179,6 +182,9 @@ export async function runServerCoreTests(): Promise<void> {
     eq('keepalive on → 0 skipped frames', skippedFrames, 0);
   }
 
+}
+
+async function testStubPipelineEndpoints(): Promise<void> {
   section('Stub pipeline + endpoints (SPEC §5)');
 
   // §5.1 — happy path event order
@@ -297,6 +303,9 @@ export async function runServerCoreTests(): Promise<void> {
     check('invalid rewrite body → JSON', ct.includes('application/json'));
   }
 
+}
+
+async function testSseCancelClearsKeepalive(): Promise<void> {
   section('SSE cancel() clears keepalive interval (F1)');
 
   // F1 — cancel() on client disconnect must clear the keepalive interval immediately
@@ -362,4 +371,11 @@ export async function runServerCoreTests(): Promise<void> {
       (global as unknown as Record<string, unknown>).clearInterval = realClearInterval;
     }
   }
+}
+
+export async function runServerCoreTests(): Promise<void> {
+  await testDeviceIdentity();
+  await testSseFraming();
+  await testStubPipelineEndpoints();
+  await testSseCancelClearsKeepalive();
 }

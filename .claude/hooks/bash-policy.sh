@@ -151,6 +151,7 @@ case "$CMD" in
         if owners_claim "$cd_root" "$cd_id"; then allow; fi
         deny "worktree .claude/worktrees/$cd_id is bound to a different agent — cd refused (class-B deviation)" ;;
     esac ;;
+  *) ;;
 esac
 
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
@@ -159,6 +160,7 @@ case "$CMD" in
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*|\
   "ls"*|"cat "*|"head "*|"tail "*|"grep "*|"rg "*|"wc "*|"mkdir "*)
     allow ;;
+  *) ;;
 esac
 
 # Unknown: no decision -> normal permission flow.
