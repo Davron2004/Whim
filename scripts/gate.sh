@@ -37,7 +37,7 @@ fi
 
 FAILED=()
 
-section() { printf '\n== %s\n' "$1"; }
+section() { local name="$1"; printf '\n== %s\n' "$name"; return 0; }
 check() {
   local name="$1"; shift
   section "$name"

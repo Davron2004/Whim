@@ -22,6 +22,19 @@ import { FieldType, JsonValue, storageError } from './contract';
 export type SqlBindValue = null | number | bigint | string | Uint8Array;
 
 const enc = new TextEncoder();
+const dec = new TextDecoder();
+const FIELD_VALIDATORS: Record<FieldType, (value: JsonValue) => string | null> = {
+  text: (value) => typeof value === 'string' ? null : 'expected a string',
+  int: (value) => typeof value === 'number' && Number.isSafeInteger(value)
+    ? null
+    : 'expected a whole number within the JS safe-integer range',
+  float: (value) => typeof value === 'number' && Number.isFinite(value) ? null : 'expected a finite number',
+  bool: (value) => typeof value === 'boolean' ? null : 'expected a boolean',
+  date: (value) => typeof value === 'number' && Number.isSafeInteger(value)
+    ? null
+    : 'expected an epoch-millisecond integer',
+  json: jsonValueError,
+};
 
 /** UTF-8 byte length of a value's JSON serialization (the KV size-cap metric). */
 export function byteLen(value: JsonValue): number {
@@ -40,30 +53,16 @@ export function checkValue(type: FieldType, value: JsonValue): string | null {
 }
 
 function checkTypedValue(type: FieldType, value: JsonValue): string | null {
-  switch (type) {
-    case 'text':
-      return typeof value === 'string' ? null : 'expected a string';
-    case 'int':
-      return typeof value === 'number' && Number.isSafeInteger(value)
-        ? null
-        : 'expected a whole number within the JS safe-integer range';
-    case 'float':
-      return typeof value === 'number' && Number.isFinite(value) ? null : 'expected a finite number';
-    case 'bool':
-      return typeof value === 'boolean' ? null : 'expected a boolean';
-    case 'date':
-      return typeof value === 'number' && Number.isSafeInteger(value)
-        ? null
-        : 'expected an epoch-millisecond integer';
-    case 'json':
-      try {
-        JSON.stringify(value);
-        return null;
-      } catch {
-        return 'expected a JSON-serializable value';
-      }
-    default:
-      return `unknown field type "${String(type)}"`;
+  const validator = FIELD_VALIDATORS[type];
+  return validator ? validator(value) : `unknown field type "${String(type)}"`;
+}
+
+function jsonValueError(value: JsonValue): string | null {
+  try {
+    JSON.stringify(value);
+    return null;
+  } catch {
+    return 'expected a JSON-serializable value';
   }
 }
 
@@ -89,7 +88,7 @@ export function fromStorage(type: FieldType, raw: unknown): JsonValue {
   if (raw === null || raw === undefined) return null;
   switch (type) {
     case 'text':
-      return typeof raw === 'string' ? raw : (JSON.stringify(raw) ?? String(raw));
+      return rawText(raw);
     case 'int':
     case 'float':
     case 'date':
@@ -103,6 +102,13 @@ export function fromStorage(type: FieldType, raw: unknown): JsonValue {
         throw storageError({ kind: 'corrupt_storage', hint: `Stored JSON field value is not valid JSON; the stored data is corrupt.` });
       }
   }
+}
+
+function rawText(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'bigint') return raw.toString();
+  if (raw instanceof Uint8Array) return dec.decode(raw);
+  return JSON.stringify(raw) ?? '';
 }
 
 /** The SQLite storage class for a declared field type (used to build CREATE/ALTER DDL). */

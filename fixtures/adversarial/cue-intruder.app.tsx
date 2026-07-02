@@ -62,7 +62,7 @@ function Home() {
       w.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id: 770001, ok: true, result: {} }), '*');
       push('forged self sysret', '↩ posted to self (host-channel-only acceptance → inert)');
     } catch (e: any) {
-      push('forged self sysret', 'post threw (' + (e && e.name) + ')');
+      push('forged self sysret', 'post threw (' + e?.name + ')');
     }
   }, []);
 

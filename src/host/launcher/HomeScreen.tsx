@@ -38,7 +38,7 @@ export interface HomeScreenProps {
   onOpenDevProbe?: () => void;
 }
 
-export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, onOpenDevProbe }: HomeScreenProps) {
+export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, onOpenDevProbe }: Readonly<HomeScreenProps>) {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
 
   const confirmDelete = (app: InstalledApp) => {

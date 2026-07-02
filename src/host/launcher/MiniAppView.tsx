@@ -22,7 +22,7 @@ export interface MiniAppViewProps {
   onExit: () => void;
 }
 
-export default function MiniAppView({ record, bundleSource, engineAppId, onExit }: MiniAppViewProps) {
+export default function MiniAppView({ record, bundleSource, engineAppId, onExit }: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
 

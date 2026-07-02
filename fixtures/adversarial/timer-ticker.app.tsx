@@ -39,7 +39,7 @@ function emitTick(n: number): void {
       rnww.postMessage(JSON.stringify({ __whimUiEvent: true, type: 'press', label: 'timertick:' + n }));
     }
   } catch (e) {
-    /* one-way, best-effort */
+    void e; // one-way, best-effort
   }
 }
 

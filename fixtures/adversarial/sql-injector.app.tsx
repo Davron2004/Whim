@@ -37,7 +37,7 @@ interface Line { label: string; ok: boolean; detail: string; }
 type AddLine = (label: string, ok: boolean, detail: string) => void;
 
 function errorKind(e: any): string | undefined {
-  return e && e.detail && e.detail.kind;
+  return e?.detail?.kind;
 }
 
 async function runValueRoundTrips(add: AddLine): Promise<void> {
@@ -135,9 +135,9 @@ function Home() {
     <Screen padding="lg">
       <Stack gap="sm">
         <Heading size="title">SQL INJECTOR — through-bridge pen test</Heading>
-        <Text size="caption" color={summary.indexOf('0 ✓') !== -1 ? 'primary' : 'text-muted'}>{summary}</Text>
-        {lines.map((l, i) => (
-          <Text key={i} size="caption">{(l.ok ? '✓ ' : '✗ ') + l.label + ': ' + l.detail}</Text>
+        <Text size="caption" color={summary.indexOf('0 ✓') === -1 ? 'text-muted' : 'primary'}>{summary}</Text>
+        {lines.map((l) => (
+          <Text key={l.label} size="caption">{(l.ok ? '✓ ' : '✗ ') + l.label + ': ' + l.detail}</Text>
         ))}
       </Stack>
     </Screen>
