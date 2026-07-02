@@ -262,6 +262,7 @@ case "$cmd" in
     echo "then clean up:"
     echo "  git worktree remove --force .claude/worktrees/${branch#fix/}  # if a named worktree exists"
     echo "  git branch -d $branch"
+    echo "  rm -f .claude/fixloop/owners/${branch#fix/}  # release the agent<->worktree binding (also required before re-dispatching a parked worktree to a NEW agent)"
     exit 0
     ;;
 

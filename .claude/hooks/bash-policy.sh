@@ -24,12 +24,31 @@ ask() {
   exit 0
 }
 
+# owners_claim <repo-root> <wt-id>: agent↔worktree binding (critic 2026-07-02 — a fixer could reach a
+# SIBLING's worktree because cwd-scoped git only checked "under .claude/worktrees/", not "under MINE").
+# 0 iff THIS agent owns <wt-id>, claiming it atomically (noclobber) on first use if unclaimed. The
+# marker (.claude/fixloop/owners/<wt-id>) is agent-unwritable via any other path — PROTECTED regex
+# below + protect-harness's .claude/* block — the same trust model as the Class-1 grants. The
+# orchestrator (main thread, no AGENT_ID) is never ownership-checked; it removes the marker at
+# teardown (`finish` prints the rm) and MUST remove it before re-dispatching a parked worktree to a
+# NEW agent, or the replacement worker is refused.
+owners_claim() {
+  local of="$1/.claude/fixloop/owners/$2"
+  mkdir -p "$1/.claude/fixloop/owners" 2>/dev/null
+  if [ -f "$of" ]; then [ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]; return; fi
+  ( set -C; printf '%s\n' "$AGENT_ID" > "$of" ) 2>/dev/null || true
+  [ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]
+}
+
 # The fix-loop toolkit runs git UNHOOKED (commands inside a script don't re-trigger this hook), so it
-# is an orchestrator-only tool. Subagents must never invoke it; the main thread falls through to `ask`.
-case "$CMD" in
-  *"scripts/fixloop.sh"*)
-    [ -n "$AGENT_ID" ] && deny "scripts/fixloop.sh is orchestrator-only (it runs git unhooked); subagents must not invoke it (class-B deviation)" ;;
-esac
+# is an orchestrator-only tool. Subagents must never INVOKE it; the main thread falls through to `ask`.
+# Invocation shapes only — direct exec at a command-segment start, or via an interpreter — NOT reads:
+# the old match-anywhere substring denied `git diff`/`cat` on the file and even report text that merely
+# quoted its path (critic 2026-07-02). Env-prefixed invocation (`VAR=x <script>`) slips this matcher;
+# the guard is anti-accident — the durable backstops stay the pinned-BASE diff + the orchestrator review.
+if [ -n "$AGENT_ID" ] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([^[:space:];&|]*/)?scripts/fixloop\.sh|(^|[[:space:]])(bash|sh|zsh|source|\.)[[:space:]]+([^;&|]*[[:space:]])?[^[:space:];&|]*scripts/fixloop\.sh'; then
+  deny "the fix-loop toolkit script is orchestrator-only (it runs git unhooked); subagents must not invoke it (class-B deviation)"
+fi
 
 # Hard denies first — match anywhere in the command, including chained segments.
 case "$CMD" in
@@ -56,12 +75,17 @@ esac
 # .claude/ is narrowed to the real config dirs so it does not false-positive on fix worktrees
 # under .claude/worktrees/. Pairs with the gate's pinned-BASE tripwire, which is the real backstop.
 # Write-VERBS (sed/tee/cp/mv/ln/install/dd/truncate) are anchored at a command boundary — start,
-# whitespace, or a shell operator ;&| via BND — so a substring like "dd" in `git add` or "tee" in
-# "committee" cannot false-deny a legit command (this bit real `git add build/…` calls before).
+# whitespace, a shell operator ;&|, or an opening subshell paren ( via BND — so a substring like "dd"
+# in `git add` or "tee" in "committee" cannot false-deny a legit command (this bit real `git add
+# build/…` calls before), while `(cp x package.json)` cannot slip the anchor (a bare `(` is neither
+# whitespace nor a listed operator, and isn't in the compound-command indicator list below either —
+# critic 2026-07-02).
 # .claude/fixloop/grants is the scoped-grant manifest dir (docs/parallel-fix-loop.md §4.9): a subagent
-# must never write it, or it could forge its own Class-1 grant. Keep it as write-protected as the hooks.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|\.claude/(hooks|settings|agents|commands|fixloop/grants)|build/'
-BND='(^|[[:space:]&;|])'
+# must never write it, or it could forge its own Class-1 grant. Same for fixloop/owners (the
+# agent↔worktree binding markers) — forging one would let a fixer claim a sibling's worktree.
+# invariants/ is the never-regress suite (owner-authored) — write-protected like the gate it feeds.
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|build/|invariants/'
+BND='(^|[[:space:]&;|(])'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi
@@ -83,9 +107,14 @@ case "$CMD" in
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*) : ;;  # read-only
   git|"git "*)
     if [ -n "$AGENT_ID" ]; then
-      # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree.
+      # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree — and only
+      # inside the worktree THIS agent owns (owners_claim binds on first use; critic 2026-07-02).
       case "$CWD" in
         */.claude/worktrees/*)
+          wt_root="${CWD%%/.claude/worktrees/*}"; wt_rest="${CWD#*/.claude/worktrees/}"; wt_id="${wt_rest%%/*}"
+          if ! owners_claim "$wt_root" "$wt_id"; then
+            deny "worktree .claude/worktrees/$wt_id is bound to a different agent — a fixer may touch only its own worktree (class-B deviation)"
+          fi
           case "$CMD" in
             "git "*add*|"git "*commit*|"git "*checkout*|"git "*switch*|"git "*restore*|\
             "git "*stash*|"git "*branch*|"git "*"rev-parse"*)
@@ -99,10 +128,24 @@ case "$CMD" in
 esac
 
 # fix-worker entering an orchestrator-created worktree (§6.9). cd is side-effect-free —
-# the cwd-keyed git scoping above is re-checked on every later call. No `..` traversal.
+# the cwd-keyed git scoping above is re-checked on every later call. No `..` traversal, and a
+# subagent may only cd into the worktree it OWNS (owners_claim binds on first use — without this,
+# a worker could cd into a SIBLING's worktree and the cwd-keyed vocabulary would follow it there).
 case "$CMD" in
   "cd "*".claude/worktrees/"*)
-    case "$CMD" in *".."*) : ;; *) allow ;; esac ;;
+    case "$CMD" in
+      *".."*) : ;;
+      *)
+        [ -z "$AGENT_ID" ] && allow   # main thread: unchanged
+        cd_tgt="${CMD#cd }"; cd_tgt="${cd_tgt#\"}"; cd_tgt="${cd_tgt%\"}"; cd_tgt="${cd_tgt#\'}"; cd_tgt="${cd_tgt%\'}"
+        cd_rest="${cd_tgt#*.claude/worktrees/}"; cd_id="${cd_rest%%/*}"
+        case "$cd_tgt" in
+          /*) cd_root="${cd_tgt%%/.claude/worktrees/*}" ;;
+          *)  cd_root="$CWD" ;;
+        esac
+        if owners_claim "$cd_root" "$cd_id"; then allow; fi
+        deny "worktree .claude/worktrees/$cd_id is bound to a different agent — cd refused (class-B deviation)" ;;
+    esac ;;
 esac
 
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
