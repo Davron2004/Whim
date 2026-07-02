@@ -92,5 +92,8 @@ itself was deleted:
 - `sdk.js` — the fake one-function SDK (`{ Button }`)
 - `bundle.js` — the hand-written ~20-line mini-app
 - `spike1-android-result.png` — the on-device result (26/26 pass, `contained=true`,
-  paint 11.8 ms) captured on the Android API 36 emulator
+  paint 11.8 ms) captured on the Android API 36 emulator. NOTE: 26/26 is the frozen
+  Spike-1 baseline, predating the T1–T7 adversarial probes; the promoted suite now runs
+  42/42 (the `b-tip` line above) — this screenshot is a historical artifact, not the
+  current probe count.
 

@@ -86,6 +86,17 @@
     else p.reject(decorate(msg.error, msg.id));
   });
 
-  // The single thing left on window: a function that posts a string. Nothing stronger.
-  window.__whimSyscall = { call: call };
+  // The single thing left on window: a function that posts a string. Nothing stronger. Installed
+  // non-writable + non-configurable (A6 — mirrors neutralize.js's technique for security-relevant
+  // globals) so a bundle sharing this realm cannot swap the marshaller for a shim that captures the
+  // params/results flowing through it. A realm reset recreates the iframe (a fresh realm reinstalls
+  // this cleanly), so nothing legitimately reassigns it within a generation.
+  var api = { call: call };
+  try {
+    Object.defineProperty(window, '__whimSyscall', {
+      value: api, writable: false, configurable: false, enumerable: false,
+    });
+  } catch (e) {
+    window.__whimSyscall = api; // defensive: never leave the transport uninstalled
+  }
 })();

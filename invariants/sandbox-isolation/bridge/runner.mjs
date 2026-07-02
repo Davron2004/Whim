@@ -150,6 +150,32 @@ const chromiumBrowser = await chromium.launch();
   record(ok, 'stub-authority (no escalation beyond the transport)', JSON.stringify(e));
 }
 
+// 3b. A6 — the transport is installed NON-WRITABLE + NON-CONFIGURABLE (syscall.js, mirroring
+//     neutralize.js), so a bundle sharing the realm cannot swap __whimSyscall for a shim that
+//     captures the params/results flowing through it. We assert the descriptor flags AND that a
+//     reassignment attempt leaves it unchanged (CDP's evaluate is sloppy-mode, so the write is a
+//     silent no-op rather than a throw — `unchanged` is the robust signal, not `threw`).
+{
+  const r = await scenario('syscall-immutable', 'water-counter', {
+    evaluate: async (page) => {
+      const f = await appFrame(page);
+      return f ? f.evaluate(() => {
+        const before = window.__whimSyscall;
+        const d = Object.getOwnPropertyDescriptor(window, '__whimSyscall') || {};
+        let threw = false;
+        try { window.__whimSyscall = { call: function () { return Promise.resolve('HIJACKED'); } }; }
+        catch (err) { threw = true; }
+        const unchanged = window.__whimSyscall === before && typeof window.__whimSyscall.call === 'function';
+        return { nonWritable: d.writable === false, nonConfigurable: d.configurable === false, unchanged, threw };
+      }) : null;
+    },
+  });
+  const a = r.extra || {};
+  const ok = a.nonWritable === true && a.nonConfigurable === true && a.unchanged === true;
+  record(ok, 'A6 (__whimSyscall non-writable/non-configurable)',
+    `writable:false=${a.nonWritable} configurable:false=${a.nonConfigurable} reassignInert=${a.unchanged} (threw=${a.threw}, sloppy CDP → false OK)`);
+}
+
 // 4. FORGED-SYSRET INERTNESS — a sysret the bundle posts to its OWN window cannot resolve a
 //    stub promise; the real host answer wins (host-channel-only acceptance, ev.source check).
 {

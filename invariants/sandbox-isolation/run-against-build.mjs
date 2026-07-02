@@ -127,7 +127,7 @@ const browser = await chromium.launch();
   const rejectedForgery = r.console.some((l) => /REJECTED-FORGERY kind=probes/.test(l));
   const rejectedSpoof = r.console.some((l) => /REJECTED-FORGERY kind=spoof-probe/.test(l));
   const honestBlocked = !/DID-NOT-THROW/.test(r.iframeText); // the app's own honest report shows attacks blocked
-  const ok = contained === 'true' && rejectedForgery && honestBlocked && !r.errors.length;
+  const ok = contained === 'true' && rejectedForgery && rejectedSpoof && honestBlocked && !r.errors.length;
   record(ok, 'b-evil (F4 verdict-spoof)', `trusted-verdict contained=${contained} forgedProbesRejected=${rejectedForgery} forgedSpoofRejected=${rejectedSpoof} honestReportBlocked=${honestBlocked}`);
 }
 
@@ -182,10 +182,15 @@ const browser = await chromium.launch();
 {
   const r = await run(browser, files['b-reinject'], {
     drive: async (page) => {
-      await page.waitForFunction(() => /gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
+      // G6 (deterministic reset-seam sync): wait for the PRE-reset (poison) verdict to land, snapshot
+      // the PARENT-owned verdict counter, then reset+reinject the victim and wait for a NEW verdict —
+      // the victim's own post-reset probes. verdictSeq lives in the outer page so it survives the
+      // iframe recreation; the realm-local "gen N" display resets to 1 and can't distinguish pre- from
+      // post-reset (why the old `/gen 1/` wait + fixed 1200ms sleep were an ambiguous race). No sleep now.
+      await page.waitForFunction(() => window.__whimControl && window.__whimControl.verdictSeq >= 1, { timeout: 8000 }).catch(() => {});
+      const v0 = await page.evaluate(() => (window.__whimControl && window.__whimControl.verdictSeq) || 0);
       await page.evaluate(() => window.__whimControl.reinject({ reset: true, bundle: 'victim' }));
-      await page.waitForFunction(() => /gen 1/.test((document.getElementById('status') || {}).textContent || '') && /victim/i.test(document.title + '') === false, { timeout: 8000 }).catch(() => {});
-      await page.waitForTimeout(1200);
+      await page.waitForFunction((n) => window.__whimControl && window.__whimControl.verdictSeq > n, { timeout: 8000 }, v0).catch(() => {});
     },
   });
   const anyPoison = pick(r.dom.probes, /anyPoison=(true|false)/);
@@ -236,7 +241,7 @@ async function runTimerTeardown(reset) {
   page.on('console', (m) => { const mm = TICK.exec(m.text() || ''); if (mm) ticks.push({ n: Number(mm[1]), t: Date.now() }); });
   await page.goto(pathToFileURL(files['b-timer']).href, { waitUntil: 'load', timeout: 20000 });
   // Let the gen-1 ticker run (40 ms interval → ~10 ticks in 450 ms).
-  await page.waitForFunction(() => /Timer Ticker|gen 1/.test((document.getElementById('status') || {}).textContent || '') || true, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => /Timer Ticker|gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(500);
   const boundary = Date.now();
   const before = ticks.filter((x) => x.t <= boundary).length;
