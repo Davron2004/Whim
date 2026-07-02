@@ -338,6 +338,7 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
     try {
       // Given: a source that never yields (simulates long-running generation)
       async function* neverYields(): AsyncGenerator<GenerationEvent> {
+        if (false) yield { type: 'token', text: '' };
         await new Promise<void>(() => {});
       }
 

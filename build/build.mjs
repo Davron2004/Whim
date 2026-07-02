@@ -158,7 +158,8 @@ async function verifySourceMap(appName, js, mapText, originalRelPath, needle) {
   let mappedLine = null, mappedSource = null;
   if (genLine >= 0) {
     const origin = originForGeneratedLine(map, genLine);
-    if (origin) { mappedLine = origin.line; mappedSource = origin.source; }
+    mappedLine = origin?.line ?? mappedLine;
+    mappedSource = origin?.source ?? mappedSource;
   }
   const origNeedleLine = original.split('\n').findIndex((l) => l.includes(needle)) + 1;
   const roundTrips =

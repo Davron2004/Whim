@@ -123,7 +123,7 @@ function orchestrationScript(cfg) {
     // launcher's host-record path, #5 D3). Either way the iframe-bound frame is identical:
     // {__whimDeliver:true, bundle:<src>} over channel b. A by-source delivery carries a display
     // name only for diagnostics; the bytes come from opts.source.
-    '  function deliver(name, opts){ opts=opts||{}; var bySource=(typeof opts.source===\"string\"); var src=bySource?opts.source:BUNDLES[name]; if(src==null){ rnLog("deliver: unknown bundle "+name); return; } deliveredName=name||deliveredName; var f={__whimDeliver:true, bundle:src}; if(opts.viaBlob) f.viaBlob=true; try{ iframe.contentWindow.postMessage(JSON.stringify(f),"*"); }catch(e){ rnLog("deliver failed: "+(e&&e.name)); } setDiag("delivery", "delivering \\""+(name||"(by source)")+"\\""+(opts.viaBlob?" via blob (must be refused)":(bySource?" by source (host record)":" over channel-b transport"))+"…"); }\n' +
+    '  function deliver(name, opts){ opts=opts||{}; var bySource=(typeof opts.source==="string"); var src=bySource?opts.source:BUNDLES[name]; if(src==null){ rnLog("deliver: unknown bundle "+name); return; } deliveredName=name||deliveredName; var f={__whimDeliver:true, bundle:src}; if(opts.viaBlob) f.viaBlob=true; try{ iframe.contentWindow.postMessage(JSON.stringify(f),"*"); }catch(e){ rnLog("deliver failed: "+(e&&e.name)); } setDiag("delivery", "delivering \\""+(name||"(by source)")+"\\""+(opts.viaBlob?" via blob (must be refused)":(bySource?" by source (host record)":" over channel-b transport"))+"…"); }\n' +
     '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:#fff;display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=SRCDOC; }\n' +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
@@ -156,10 +156,10 @@ function orchestrationScript(cfg) {
     '    verdictSeq: 0,\n' +
     '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
     '    deliver: function(name, opts){ deliver(name, opts||{}); },\n' +
-    '    setGeneration: function(g){ if(typeof g===\"number\") GEN=g; },\n' +
+    '    setGeneration: function(g){ if(typeof g==="number") GEN=g; },\n' +
     // nav seam (launcher-shell / #5 D4): post a host→realm nav-back request into the iframe.
     // The host calls this on system back when the last-hinted depth > 0; #3's SDK pops a screen.
-    '    navBack: function(){ try{ if(iframe&&iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({__whimNavBack:true}),\"*\"); }catch(e){} },\n' +
+    '    navBack: function(){ try{ if(iframe&&iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({__whimNavBack:true}),"*"); }catch(e){} },\n' +
     '    listBundles: function(){ return Object.keys(BUNDLES); }\n' +
     '  };\n' +
     '  makeIframe();\n' +

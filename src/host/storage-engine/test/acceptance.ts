@@ -453,15 +453,15 @@ function isHostAuthored(sql: string): boolean {
   const patterns: RegExp[] = [
     /^(BEGIN|COMMIT|ROLLBACK)$/,
     /^CREATE TABLE IF NOT EXISTS "(_meta|kv)" \(k TEXT PRIMARY KEY, v TEXT\)$/,
-    new RegExp(`^CREATE TABLE ${ID} \\("id" INTEGER PRIMARY KEY(, ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?)*\\)$`),
-    new RegExp(`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
+    new RegExp(String.raw`^CREATE TABLE ${ID} \("id" INTEGER PRIMARY KEY(, ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?)*\)$`),
+    new RegExp(String.raw`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
     /^SELECT v FROM "(_meta|kv)" WHERE k = \?$/,
     /^INSERT OR REPLACE INTO "(_meta|kv)"\(k, v\) VALUES \(\?, \?\)$/,
     /^DELETE FROM "kv" WHERE k = \?$/,
-    new RegExp(`^INSERT INTO ${ID} \\(${ID}(, ${ID})*\\) VALUES \\(\\?(, \\?)*\\)$`),
+    new RegExp(String.raw`^INSERT INTO ${ID} \(${ID}(, ${ID})*\) VALUES \(\?(, \?)*\)$`),
     new RegExp(`^INSERT INTO ${ID} DEFAULT VALUES$`),
-    new RegExp(`^UPDATE ${ID} SET ${ID} = \\?(, ${ID} = \\?)* WHERE "id" = \\?$`),
-    new RegExp(`^DELETE FROM ${ID} WHERE "id" = \\?$`),
+    new RegExp(String.raw`^UPDATE ${ID} SET ${ID} = \?(, ${ID} = \?)* WHERE "id" = \?$`),
+    new RegExp(String.raw`^DELETE FROM ${ID} WHERE "id" = \?$`),
   ];
   if (patterns.some(p => p.test(sql))) return true;
   return isSelectListTemplate(sql);
@@ -559,7 +559,7 @@ test('§C every executed statement is a fixed host-authored template (full verb 
   }
   const offenders = rec.log.filter(e => !isHostAuthored(e.sql));
   eq(offenders.map(e => e.sql), [], 'the executed-statement set is exactly the fixed host-authored templates');
-  const badDdl = rec.log.map(e => e.sql).filter(s => /^(CREATE|ALTER)/.test(s)).filter(s => !/^CREATE TABLE/.test(s) && !/^ALTER TABLE/.test(s));
+  const badDdl = rec.log.map(e => e.sql).filter(s => s.startsWith('CREATE') || s.startsWith('ALTER')).filter(s => !s.startsWith('CREATE TABLE') && !s.startsWith('ALTER TABLE'));
   eq(badDdl, [], 'only CREATE TABLE / ALTER TABLE ADD COLUMN DDL forms are ever observed');
 });
 

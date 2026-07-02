@@ -65,7 +65,9 @@ function decodeUtf8(bytes: Uint8Array): string {
 }
 
 function stripTrailingNewline(s: string): string {
-  return s.replace(/\n+$/, '');
+  let out = s;
+  while (out.endsWith('\n')) out = out.slice(0, -1);
+  return out;
 }
 
 export interface VersionStoreOptions {

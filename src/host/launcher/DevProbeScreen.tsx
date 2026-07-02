@@ -51,7 +51,7 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
         </Text>
         <Text style={styles.meta}>
           last tap: {s.lastTap ?? '—'} · forged rejected: {s.rejectedForgeries}
-          {s.t7AnyPoison != null ? ` · T7: ${s.t7AnyPoison}` : ''}
+          {s.t7AnyPoison == null ? '' : ` · T7: ${s.t7AnyPoison}`}
           {s.lastError ? ` · err: ${s.lastError}` : ''}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>

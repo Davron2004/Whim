@@ -102,18 +102,16 @@ function frame(method: string, params: Record<string, unknown>, gen = 1, id?: nu
 async function send(d: Dispatcher, f: SyscallFrame | object): Promise<SysretFrame | null> {
   return d.handle(f);
 }
-async function callOk(d: Dispatcher, method: string, params: Record<string, unknown>): Promise<JsonValueLike> {
+async function callOk(d: Dispatcher, method: string, params: Record<string, unknown>): Promise<any> {
   const s = await send(d, frame(method, params));
   if (!s?.ok) throw new Error(`expected ok sysret for ${method}, got ${JSON.stringify(s)}`);
-  return s.result as JsonValueLike;
+  return s.result as any;
 }
 async function callErr(d: Dispatcher, method: string, params: Record<string, unknown>): Promise<SyscallError> {
   const s = await send(d, frame(method, params));
   if (!s || s.ok) throw new Error(`expected error sysret for ${method}, got ${JSON.stringify(s)}`);
   return s.error as SyscallError;
 }
-type JsonValueLike = any;
-
 // ═══════════════════════════════════════════════════════════════════════════
 async function main(): Promise<void> {
   // ── §A registry append-only (D5) ───────────────────────────────────────────
@@ -266,7 +264,7 @@ async function main(): Promise<void> {
     const appended = await callOk(d, 'storage.records.append', { collection: 'Notes', record: { body: 'hi', n: 2 } });
     ok(typeof appended.id === 'number' && appended.id > 0, 'append returns an id');
     const listed = await callOk(d, 'storage.records.list', { collection: 'Notes' });
-    eq(listed.records.map((r: JsonValueLike) => r.body), ['hi'], 'list round-trip');
+    eq(listed.records.map((r: any) => r.body), ['hi'], 'list round-trip');
   });
 
   await test('§E a second capability is one row + one stub — diag.echo is callable through the same pipe', async () => {
