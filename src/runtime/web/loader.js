@@ -162,7 +162,7 @@
     deliveryBusy = true;
     window.__whimGeneration = (window.__whimGeneration || 0) + 1;
     try {
-      var wrapped = wrappedBundleSource(msg.bundle);
+      const wrapped = wrappedBundleSource(msg.bundle);
       if (msg.viaBlob === true) {
         deliverBlob(wrapped);
         return;

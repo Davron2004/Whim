@@ -38,8 +38,8 @@ function emitTick(n: number): void {
     if (rnww && typeof rnww.postMessage === 'function') {
       rnww.postMessage(JSON.stringify({ __whimUiEvent: true, type: 'press', label: 'timertick:' + n }));
     }
-  } catch (e) {
-    void e; // one-way, best-effort
+  } catch {
+    return; // one-way, best-effort
   }
 }
 
