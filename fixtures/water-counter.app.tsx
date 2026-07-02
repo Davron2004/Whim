@@ -65,16 +65,21 @@ function Home() {
   }, []);
 
   const add = async (count: number) => {
-    const next = total + count;
+    const previous = total;
+    const next = previous + count;
     setTotal(next); // optimistic; the syscall persists it
+    let landed = 0;
     try {
       await storage.kv.set('total', next);
       for (let i = 0; i < count; i++) {
         await storage.records.append('Drinks', { at: Date.now() });
+        landed++;
       }
-      setHistory((h) => h + count);
+      setHistory((h) => h + landed);
       setStatus('saved');
     } catch (e) {
+      setTotal(previous); // roll back the optimistic update on failure
+      if (landed > 0) setHistory((h) => h + landed);
       setStatus('save failed: ' + hintOf(e));
     }
   };
