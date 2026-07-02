@@ -406,6 +406,56 @@ await test('§4 C1: snapshot() resolves even when auto-compaction throws', async
   ok(store.looseObjectCount('app') > 0, 'looseObjectCount > 0 (compaction did not complete)');
 });
 
+// --- ST-3: history()'s catch around git.log must only swallow the unborn- --
+//     HEAD case (repo exists, no commits) — any other git.log failure must --
+//     reject, not silently surface as an empty history -----------------------
+
+await test('§ST-3: history() still resolves [] for the unborn-HEAD case (repo exists, no commits)', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  // Mirror what ensureRepo() does on first use, WITHOUT ever committing —
+  // HEAD exists (points at refs/heads/main) but that ref has no commits.
+  await backend.mkdir('/whim');
+  await backend.mkdir('/whim/apps');
+  await backend.mkdir(dir);
+  await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
+
+  eq(await s.history('app'), [], 'unborn HEAD (repo exists, no commits) still resolves to []');
+});
+
+await test('§ST-3: history() REJECTS on a generic git.log failure instead of returning []', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const gitdir = '/whim/apps/app/.git';
+
+  // A real snapshot exists first, so the HEAD-exists precheck passes and
+  // git.log() actually reaches a real, tracked commit object.
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+
+  // Corrupt the tip commit's loose-object bytes in place. isomorphic-git's own
+  // fs.read() wrapper swallows EVERY readFile-level error (ENOENT or otherwise)
+  // into a uniform NotFoundError — the only way to produce a git.log failure
+  // that is NOT the unborn-HEAD case is to make a read SUCCEED but the object
+  // it returns be unparseable (a corrupted/bit-rotted store), which throws a
+  // real decompress/parse error straight out of git.log(), never wrapped.
+  const oid = await git.resolveRef({ fs: { promises: backend }, gitdir, ref: 'HEAD' });
+  const objPath = `${gitdir}/objects/${oid.slice(0, 2)}/${oid.slice(2)}`;
+  await backend.writeFile(objPath, new Uint8Array([1, 2, 3, 4, 5]));
+
+  let threw = false;
+  let isNotFoundError = false;
+  try {
+    await s.history('app');
+  } catch (err) {
+    threw = true;
+    isNotFoundError = err instanceof git.Errors.NotFoundError;
+  }
+  ok(threw, 'history() rejects instead of resolving to [] on a non-unborn-HEAD git.log failure');
+  ok(!isNotFoundError, 'the rejection is a genuine failure, not the unborn-HEAD NotFoundError case');
+});
+
 // --- C9: assertNoGitLeak's HEX40 value-scan must not false-positive on -----
 //        opaque mini-app artifact content nested under an "artifacts" key,
 //        while FORBIDDEN_KEYS key-checking still fires everywhere -----------

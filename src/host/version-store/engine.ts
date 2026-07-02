@@ -234,8 +234,9 @@ export class VersionStore {
     let commits: Awaited<ReturnType<typeof git.log>>;
     try {
       commits = await git.log({ fs: this.client, gitdir, ref: 'HEAD', depth: limit });
-    } catch {
-      return []; // unborn HEAD (repo exists, no commits)
+    } catch (err) {
+      if (err instanceof git.Errors.NotFoundError) return []; // unborn HEAD (repo exists, no commits)
+      throw err;
     }
     const map = await this.oidToId(gitdir);
     return commits.map(c => {
