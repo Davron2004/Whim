@@ -141,7 +141,7 @@ const chromiumBrowser = await chromium.launch();
           }
         })(storage, 'storage', 0);
         const verbsAreFns = typeof storage.kv.get === 'function' && typeof storage.records.append === 'function';
-        return { storageType: typeof storage, syscallKeys: Object.keys(sys).sort(), verbsAreFns, leak };
+        return { storageType: typeof storage, syscallKeys: Object.keys(sys).sort((a, b) => a.localeCompare(b)), verbsAreFns, leak };
       }) : null;
     },
   });

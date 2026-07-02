@@ -64,7 +64,7 @@ TRIPWIRE=$(grep -rn --include='*.ts' --include='*.tsx' \
   -e 'TEMP:' -e 'HACK:' -e 'isImplemented' -e 'IS_IMPLEMENTED' \
   -e 'console\.log(.*debug' \
   src/ 2>/dev/null || true)
-if [ -n "$TRIPWIRE" ]; then
+if [[ -n "$TRIPWIRE" ]]; then
   echo "$TRIPWIRE"
   echo "FAIL: scaffolding tripwires"
   FAILED+=("scaffolding tripwires")

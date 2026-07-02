@@ -36,6 +36,10 @@ export function byteLen(value: JsonValue): number {
 export function checkValue(type: FieldType, value: JsonValue): string | null {
   if (value === undefined) return 'value is undefined; use null for "no value"';
   if (value === null) return null;
+  return checkTypedValue(type, value);
+}
+
+function checkTypedValue(type: FieldType, value: JsonValue): string | null {
   switch (type) {
     case 'text':
       return typeof value === 'string' ? null : 'expected a string';
