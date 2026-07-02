@@ -60,8 +60,8 @@ function Home() {
       <Stack gap="sm">
         <Heading size="title">CAP INTRUDER — bridge pen test</Heading>
         <Text size="caption" color="text-muted">declares no capabilities; ✓ = attack denied/inert</Text>
-        {lines.map((l, i) => (
-          <Text key={i} size="caption">{l.label}: {l.result}</Text>
+        {lines.map((l) => (
+          <Text key={l.label} size="caption">{l.label}: {l.result}</Text>
         ))}
       </Stack>
     </Screen>

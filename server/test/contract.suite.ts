@@ -62,7 +62,7 @@ export function runContractTests(): void {
     },
   ];
   for (const { label, value } of samples) {
-    const parsed = GenerationEvent.parse(JSON.parse(JSON.stringify(value)));
+    const parsed = GenerationEvent.parse(structuredClone(value));
     eq(`round-trip ${label}`, parsed, value);
   }
 

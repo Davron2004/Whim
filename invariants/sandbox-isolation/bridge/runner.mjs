@@ -49,7 +49,7 @@ async function writePage(name, html) {
 }
 async function appFrame(page) {
   for (const f of page.frames()) {
-    try { if (await f.evaluate(() => typeof window.__WHIM_VC_SDK__ !== 'undefined')) return f; } catch {}
+    try { if (await f.evaluate(() => globalThis.__WHIM_VC_SDK__ !== undefined)) return f; } catch {}
   }
   return null;
 }
@@ -118,9 +118,9 @@ const chromiumBrowser = await chromium.launch();
     evaluate: async (page) => {
       const f = await appFrame(page);
       return f ? f.evaluate(() => {
-        const sdk = window.__WHIM_VC_SDK__ || {};
+        const sdk = globalThis.__WHIM_VC_SDK__ || {};
         const storage = sdk.storage;
-        const sys = window.__whimSyscall || {};
+        const sys = globalThis.__whimSyscall || {};
         // Walk own-property closure of the facade + the transport; flag anything that smells
         // like an escalation (an engine handle, a host object, a native bridge, a raw window).
         const SUSPECT = /engine|^host$|native|sqlite|ReactNativeWebView|contentWindow|require|process/i;
@@ -135,8 +135,8 @@ const chromiumBrowser = await chromium.launch();
           for (const k of Object.getOwnPropertyNames(obj)) {
             if (SUSPECT.test(k)) { leak = path + '.' + k; return; }
             let v;
-            try { v = obj[k]; } catch (e) { continue; }
-            if (v === window || v === window.parent || v === window.top) { leak = path + '.' + k + ' (window ref)'; return; }
+            try { v = obj[k]; } catch { continue; }
+            if (v === globalThis || v === globalThis.parent || v === globalThis.top) { leak = path + '.' + k + ' (window ref)'; return; }
             walk(v, path + '.' + k, depth + 1);
           }
         })(storage, 'storage', 0);
@@ -160,12 +160,12 @@ const chromiumBrowser = await chromium.launch();
     evaluate: async (page) => {
       const f = await appFrame(page);
       return f ? f.evaluate(() => {
-        const before = window.__whimSyscall;
-        const d = Object.getOwnPropertyDescriptor(window, '__whimSyscall') || {};
+        const before = globalThis.__whimSyscall;
+        const d = Object.getOwnPropertyDescriptor(globalThis, '__whimSyscall') || {};
         let threw = false;
-        try { window.__whimSyscall = { call: function () { return Promise.resolve('HIJACKED'); } }; }
-        catch (err) { threw = true; }
-        const unchanged = window.__whimSyscall === before && typeof window.__whimSyscall.call === 'function';
+        try { globalThis.__whimSyscall = { call: function () { return Promise.resolve('HIJACKED'); } }; }
+        catch { threw = true; }
+        const unchanged = globalThis.__whimSyscall === before && typeof globalThis.__whimSyscall.call === 'function';
         return { nonWritable: d.writable === false, nonConfigurable: d.configurable === false, unchanged, threw };
       }) : null;
     },

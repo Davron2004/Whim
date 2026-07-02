@@ -69,7 +69,7 @@ export interface SchemaArtifact {
 /** Burned IDs are engine-minted from a `[a-z][0-9]+` alphabet (D3, D5a) — one lowercase
  *  letter followed by one or more digits. Structurally incapable of carrying a SQL
  *  metacharacter, which is what lets a resolved identifier be interpolated safely. */
-export const BURNED_ID_RE = /^[a-z][0-9]+$/;
+export const BURNED_ID_RE = /^[a-z]\d+$/;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Filter grammar (D5) — closed; AND-composed; equality + range only

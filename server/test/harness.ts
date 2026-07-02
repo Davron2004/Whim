@@ -33,7 +33,8 @@ export function check(name: string, cond: boolean, detail?: string): void {
     console.log(`  ok  ${name}`);
   } else {
     failed++;
-    const line = `  XX  ${name}${detail ? ` — ${detail}` : ''}`;
+    const detailText = detail ? ` — ${detail}` : '';
+    const line = `  XX  ${name}${detailText}`;
     failures.push(line);
     console.error(line);
   }

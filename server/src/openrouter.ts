@@ -82,8 +82,8 @@ function requestBody(options: OpenRouterOptions): string {
     model: options.model,
     messages: options.messages,
     stream: true,
-    ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     stream_options: { include_usage: true },
   });
 }

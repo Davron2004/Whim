@@ -310,8 +310,8 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
 
   // F1 — cancel() on client disconnect must clear the keepalive interval immediately
   {
-    const realSetInterval = global.setInterval;
-    const realClearInterval = global.clearInterval;
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
 
     // stub state
     let intervalCb: (() => void) | null = null;
@@ -320,7 +320,7 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
     // Unique object so we can test identity in clearInterval
     const stubHandle = {} as ReturnType<typeof setInterval>;
 
-    (global as unknown as Record<string, unknown>).setInterval = (
+    (globalThis as unknown as Record<string, unknown>).setInterval = (
       cb: () => void,
       _ms: number,
     ): ReturnType<typeof setInterval> => {
@@ -329,7 +329,7 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
       return stubHandle;
     };
 
-    (global as unknown as Record<string, unknown>).clearInterval = (
+    (globalThis as unknown as Record<string, unknown>).clearInterval = (
       handle: ReturnType<typeof setInterval>,
     ): void => {
       if (handle === capturedHandle) intervalCb = null;
@@ -367,8 +367,8 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
       }
       eq('keepalive fires 0 times after cancel', firesAfterCancel, 0);
     } finally {
-      (global as unknown as Record<string, unknown>).setInterval = realSetInterval;
-      (global as unknown as Record<string, unknown>).clearInterval = realClearInterval;
+      (globalThis as unknown as Record<string, unknown>).setInterval = realSetInterval;
+      (globalThis as unknown as Record<string, unknown>).clearInterval = realClearInterval;
     }
   }
 }

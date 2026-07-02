@@ -38,7 +38,7 @@ async function writePage(name, html) {
 async function run(browser, file, drive) {
   const page = await browser.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(String((e && e.message) || e)));
+  page.on('pageerror', (e) => errors.push(String(e?.message || e)));
   await page.goto(pathToFileURL(file).href, { waitUntil: 'load', timeout: 20000 });
   if (drive) await drive(page);
   await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
@@ -75,12 +75,12 @@ const nonDefaultPage = await writePage('non-default-source', buildOuterHtml({
 const browser = await chromium.launch();
 const baked = await run(browser, bakedPage);
 const bySource = await run(browser, sourcePage, async (page) => {
-  await page.evaluate((src) => window.__whimControl.reinject({ reset: true, bundle: 'tip-splitter', bundleSource: src, generation: 2 }), SRC);
+  await page.evaluate((src) => globalThis.__whimControl.reinject({ reset: true, bundle: 'tip-splitter', bundleSource: src, generation: 2 }), SRC);
 });
 // Inject water-counter by source into a page whose initial/baked map defaults to tip-splitter.
 // The rendered iframe MUST show Water Counter, not Tip Splitter (B1 regression guard).
 const nonDefault = await run(browser, nonDefaultPage, async (page) => {
-  await page.evaluate((src) => window.__whimControl.reinject({ reset: true, bundle: 'water-counter', bundleSource: src, generation: 2 }), WATER_SRC);
+  await page.evaluate((src) => globalThis.__whimControl.reinject({ reset: true, bundle: 'water-counter', bundleSource: src, generation: 2 }), WATER_SRC);
 });
 await browser.close();
 

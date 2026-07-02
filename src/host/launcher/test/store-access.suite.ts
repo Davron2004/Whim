@@ -98,10 +98,8 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     await access.remove(fork); // now last reference → repo removed
     h.eq((await store.history('wc')).length, 0, 'repo removed once the last reference is deleted');
     h.eq(index.list().length, 0, 'index empty');
-    h.eq(
-      deleted.sort((a, b) => a.localeCompare(b)),
-      ['wc', fork.id].sort((a, b) => a.localeCompare(b)),
-      'both user-data dbs dropped by their own ids',
-    );
+    const sortedDeleted = deleted.sort((a, b) => a.localeCompare(b));
+    const expectedDeleted = ['wc', fork.id].sort((a, b) => a.localeCompare(b));
+    h.eq(sortedDeleted, expectedDeleted, 'both user-data dbs dropped by their own ids');
   });
 }

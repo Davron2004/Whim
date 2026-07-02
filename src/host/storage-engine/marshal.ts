@@ -89,7 +89,7 @@ export function fromStorage(type: FieldType, raw: unknown): JsonValue {
   if (raw === null || raw === undefined) return null;
   switch (type) {
     case 'text':
-      return String(raw);
+      return typeof raw === 'string' ? raw : (JSON.stringify(raw) ?? String(raw));
     case 'int':
     case 'float':
     case 'date':

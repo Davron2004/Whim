@@ -82,7 +82,7 @@ function parseSseText(text: string): SseReadResult {
       continue;
     }
 
-    const id = parseInt(idStr, 10);
+    const id = Number.parseInt(idStr, 10);
     const parsedData = GenerationEvent.parse(JSON.parse(dataStr));
 
     events.push({ id, event: eventType, data: parsedData });

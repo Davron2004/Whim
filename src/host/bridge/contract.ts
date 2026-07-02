@@ -291,7 +291,7 @@ export function validateSyscall(frame: unknown): { ok: true; frame: SyscallFrame
   const f = frame as Record<string, unknown>;
   if (f.whim !== 'syscall') return { ok: false, id: null, reason: 'not a syscall frame' };
   const id = typeof f.id === 'number' && Number.isFinite(f.id) ? (f.id as number) : null;
-  if (f.v !== SYSCALL_VERSION) return { ok: false, id, reason: `unsupported envelope version ${String(f.v)}` };
+  if (f.v !== SYSCALL_VERSION) return { ok: false, id, reason: `unsupported envelope version ${JSON.stringify(f.v)}` };
   if (id === null) return { ok: false, id: null, reason: 'missing/invalid request id' };
   if (typeof f.gen !== 'number' || !Number.isFinite(f.gen)) return { ok: false, id, reason: 'missing/invalid generation' };
   if (typeof f.method !== 'string' || !f.method) return { ok: false, id, reason: 'missing method' };

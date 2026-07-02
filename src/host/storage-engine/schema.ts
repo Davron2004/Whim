@@ -226,13 +226,13 @@ export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): S
         }
         // same id + same type, possibly a different display name = rename → no DDL.
       } else if (retiredCol) {
-        if (retiredCol.type !== f.type) {
-          errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
-        } else {
+        if (retiredCol.type === f.type) {
           // Rollback across a tombstone: the SAME field re-appears (same id, same type).
           // The column exists — no DDL — and it returns to active.
           moveColumn(nextColl, 'retired', 'active', f.id);
           changed = true;
+        } else {
+          errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
         }
       } else {
         // Truly new field on an existing collection → a default is required (forgiving reads).

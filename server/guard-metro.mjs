@@ -21,15 +21,15 @@ import os from 'node:os';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(os.tmpdir(), `whim-guard-metro.${process.pid}.jsbundle`);
+const reactNativeBin = path.join(repoRoot, 'node_modules', '.bin', 'react-native');
 
 // A real RN release bundle is >1MB; a "successful" run that produced a near-empty file means
 // resolution silently degraded. Baseline at authoring time was ~1.83MB.
 const MIN_BYTES = 500_000;
 
 const result = spawnSync(
-  'npx',
+  reactNativeBin,
   [
-    'react-native',
     'bundle',
     '--platform',
     'android',

@@ -143,31 +143,31 @@ const browser = await chromium.launch();
 {
   const page = await browser.newPage();
   const aerr = [];
-  page.on('pageerror', (e) => aerr.push(String((e && e.message) || e)));
+  page.on('pageerror', (e) => aerr.push(String(e?.message || e)));
   await page.goto(pathToFileURL(files['b-tip']).href, { waitUntil: 'load', timeout: 20000 });
   await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
   // The sandboxed app frame runs the loader → it is the frame exposing window.__whimGeneration.
   const appFrame = async () => {
     for (const fr of page.frames()) {
-      try { if (await fr.evaluate(() => typeof window.__whimGeneration === 'number')) return fr; } catch {}
+      try { if (await fr.evaluate(() => typeof globalThis.__whimGeneration === 'number')) return fr; } catch {}
     }
     return null;
   };
   let f = await appFrame();
-  const genBefore = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  const genBefore = f ? await f.evaluate(() => globalThis.__whimGeneration) : null;
   // ATTACK: from bundle/iframe scope (ev.source === window) self-post a forged delivery + host-init.
   if (f) await f.evaluate(() => {
-    window.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'window.__WHIM_SELFPOST_RAN=true;' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
-    window.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
+    globalThis.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'globalThis.__WHIM_SELFPOST_RAN=true;' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
+    globalThis.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
   });
   await page.waitForTimeout(300);
   f = await appFrame();
-  const after = f ? await f.evaluate(() => ({ gen: window.__whimGeneration, ran: !!window.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
+  const after = f ? await f.evaluate(() => ({ gen: globalThis.__whimGeneration, ran: !!globalThis.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
   // CONTROL: a real host re-injection (parent → ev.source === parent) must still bump the generation.
-  await page.evaluate(() => window.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
+  await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
   await page.waitForTimeout(400);
   f = await appFrame();
-  const genAfterLegit = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  const genAfterLegit = f ? await f.evaluate(() => globalThis.__whimGeneration) : null;
   await page.close();
 
   const selfPostBlocked = genBefore !== null && after.gen === genBefore && after.ran === false;
@@ -187,10 +187,10 @@ const browser = await chromium.launch();
       // the victim's own post-reset probes. verdictSeq lives in the outer page so it survives the
       // iframe recreation; the realm-local "gen N" display resets to 1 and can't distinguish pre- from
       // post-reset (why the old `/gen 1/` wait + fixed 1200ms sleep were an ambiguous race). No sleep now.
-      await page.waitForFunction(() => window.__whimControl && window.__whimControl.verdictSeq >= 1, { timeout: 8000 }).catch(() => {});
-      const v0 = await page.evaluate(() => (window.__whimControl && window.__whimControl.verdictSeq) || 0);
-      await page.evaluate(() => window.__whimControl.reinject({ reset: true, bundle: 'victim' }));
-      await page.waitForFunction((n) => window.__whimControl && window.__whimControl.verdictSeq > n, { timeout: 8000 }, v0).catch(() => {});
+      await page.waitForFunction(() => globalThis.__whimControl && globalThis.__whimControl.verdictSeq >= 1, { timeout: 8000 }).catch(() => {});
+      const v0 = await page.evaluate(() => (globalThis.__whimControl && globalThis.__whimControl.verdictSeq) || 0);
+      await page.evaluate(() => globalThis.__whimControl.reinject({ reset: true, bundle: 'victim' }));
+      await page.waitForFunction((n) => globalThis.__whimControl && globalThis.__whimControl.verdictSeq > n, { timeout: 8000 }, v0).catch(() => {});
     },
   });
   const anyPoison = pick(r.dom.probes, /anyPoison=(true|false)/);
@@ -209,7 +209,7 @@ const browser = await chromium.launch();
   const r = await run(browser, files['b-reinject'], {
     drive: async (page) => {
       await page.waitForFunction(() => /gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
-      await page.evaluate(() => window.__whimControl.reinject({ reset: false, bundle: 'victim' }));
+      await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'victim' }));
       await page.waitForFunction(() => /gen 2/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
       await page.waitForTimeout(400);
     },
@@ -247,7 +247,7 @@ async function runTimerTeardown(reset) {
   const before = ticks.filter((x) => x.t <= boundary).length;
   // RESET → recreate the iframe, deliver the SILENT victim as gen-2 (the invariant case).
   // NO-RESET → re-inject the SAME ticker into the SAME realm (the non-vacuity control: ticks go on).
-  await page.evaluate((doReset) => window.__whimControl.reinject(doReset
+  await page.evaluate((doReset) => globalThis.__whimControl.reinject(doReset
     ? { reset: true, generation: 2, bundle: 'victim' }
     : { reset: false, bundle: 'timer-ticker' }), reset);
   // Give a surviving gen-1 timer ample time to fire (it must not, in the reset case).

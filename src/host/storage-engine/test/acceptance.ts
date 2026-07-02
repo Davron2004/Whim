@@ -325,9 +325,9 @@ test('§B additive diff emits exactly one CREATE TABLE and one ALTER TABLE ADD C
   const mark = rec.mark();
   store.open(additive);
   const ddl = rec.log.slice(mark).map(e => e.sql).filter(s => /^(CREATE|ALTER)/.test(s));
-  eq(ddl.filter(s => /^CREATE TABLE/.test(s)).length, 1, 'exactly one CREATE TABLE');
-  eq(ddl.filter(s => /^ALTER TABLE/.test(s)).length, 1, 'exactly one ALTER TABLE ADD COLUMN');
-  ok(/ADD COLUMN "f4" TEXT DEFAULT 'uncategorized'/.test(ddl.find(s => /^ALTER/.test(s))!), 'the ADD COLUMN carries the declared default');
+  eq(ddl.filter(s => s.startsWith('CREATE TABLE')).length, 1, 'exactly one CREATE TABLE');
+  eq(ddl.filter(s => s.startsWith('ALTER TABLE')).length, 1, 'exactly one ALTER TABLE ADD COLUMN');
+  ok(/ADD COLUMN "f4" TEXT DEFAULT 'uncategorized'/.test(ddl.find(s => s.startsWith('ALTER'))!), 'the ADD COLUMN carries the declared default');
   // the default backfills existing rows (SQLite semantics): a pre-existing row reads the default.
   const eng2 = memEngine();
   eng2.store.open(expensesV1);
@@ -469,11 +469,11 @@ function isHostAuthored(sql: string): boolean {
 
 /** SELECT "id"(, "fX")* FROM "cX" [WHERE <preds>] [ORDER BY "fX" ASC|DESC] [LIMIT ?[ OFFSET ?]] */
 function isSelectListTemplate(sql: string): boolean {
-  const m = /^SELECT "id"(?:, "[a-z][0-9]+")* FROM "[a-z][0-9]+"( WHERE .+?)?( ORDER BY "[a-z][0-9]+" (?:ASC|DESC))?( LIMIT \?(?: OFFSET \?)?)?$/.exec(sql);
+  const m = /^SELECT "id"(?:, "[a-z]\d+")* FROM "[a-z]\d+"( WHERE .+?)?( ORDER BY "[a-z]\d+" (?:ASC|DESC))?( LIMIT \?(?: OFFSET \?)?)?$/.exec(sql);
   if (!m) return false;
   if (m[1]) {
     const preds = m[1].replace(/^ WHERE /, '').split(' AND ');
-    const predRe = /^"[a-z][0-9]+" (?:=|<|<=|>|>=) \?$|^"[a-z][0-9]+" IS NULL$/;
+    const predRe = /^"[a-z]\d+" (?:=|<|<=|>|>=) \?$|^"[a-z]\d+" IS NULL$/;
     if (!preds.every(p => predRe.test(p))) return false;
   }
   return true;
@@ -671,7 +671,7 @@ test('§E (b) Engine constructor recovers on corrupt _meta; open() rebuilds DDL'
   const b = engineAt(dbPath('corrupt-meta'));
   const mark = b.rec.mark();
   b.store.open(expensesV1);
-  const creates = b.rec.log.slice(mark).map(e => e.sql).filter(s => /^CREATE TABLE "c1"/.test(s));
+  const creates = b.rec.log.slice(mark).map(e => e.sql).filter(s => s.startsWith('CREATE TABLE "c1"'));
   ok(creates.length > 0, 'corrupt _meta → emptyApplied → CREATE TABLE "c1" issued on open()');
   eq(b.store.records.list('Expenses'), [], 'fresh table has no rows after DDL rebuild');
   b.store.close();

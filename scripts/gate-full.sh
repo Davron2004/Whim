@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.." || exit 2
 ./scripts/gate.sh || exit $?
 
 FAILED=()
-section() { printf '\n== %s\n' "$1"; }
+section() { printf '\n== %s\n' "$1"; return 0; }
 check() {
   local name="$1"; shift
   section "$name"

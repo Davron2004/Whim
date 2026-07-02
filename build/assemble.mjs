@@ -154,7 +154,7 @@ function orchestrationScript(cfg) {
     // pre-reset from a post-reset verdict apart. The invariant suite reads it to wait for a NEW
     // post-reset verdict deterministically (G6), replacing a fixed sleep. Diagnostic-only; no authority.
     '    verdictSeq: 0,\n' +
-    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation===\"number\") GEN=opts.generation; pendingSource = (typeof opts.bundleSource===\"string\") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
+    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
     '    deliver: function(name, opts){ deliver(name, opts||{}); },\n' +
     '    setGeneration: function(g){ if(typeof g===\"number\") GEN=g; },\n' +
     // nav seam (launcher-shell / #5 D4): post a host→realm nav-back request into the iframe.

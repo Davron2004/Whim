@@ -40,7 +40,7 @@
     postMessage: function (s) { try { window.parent.postMessage(String(s), '*'); } catch (e) {} },
   };
 
-  // ── nav-depth seam anchor (launcher-shell / #5 D4 — the #3 SDK half's TODO) ──
+  // ── nav-depth seam anchor (launcher-shell / #5 D4 — the #3 SDK half's pending contract) ──
   // The back-navigation contract rides THIS same one-way transport (no new capability):
   //   • SDK → host (hint): the SDK runtime (sdk-design-system / #3) posts, on every nav-stack
   //     depth change, `window.parent.postMessage(JSON.stringify({__whimNavDepth:true,

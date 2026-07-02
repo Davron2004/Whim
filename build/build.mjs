@@ -77,7 +77,7 @@ async function bundleApp(entryRelPath) {
 const REACT_STUB =
   'export const createElement=function(){return null;};' +
   "export const Fragment='Fragment';" +
-  'export const useState=function(v){return [typeof v===\"function\"?v():v,function(){}];};' +
+  'export const useState=function(v){return [typeof v==="function"?v():v,function(){}];};' +
   'export const useEffect=function(){};' +
   'export default {createElement:createElement,Fragment:Fragment,useState:useState,useEffect:useEffect};';
 

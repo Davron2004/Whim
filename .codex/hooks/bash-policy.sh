@@ -12,16 +12,21 @@ AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')   # present ONLY for suba
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')             # always present; the real working dir
 
 deny() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
+  local reason="$1"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
   exit 0
+  return 0
 }
 allow() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"harness bash policy"}}\n'
   exit 0
+  return 0
 }
 ask() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$1"
+  local reason="$1"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"%s"}}\n' "$reason"
   exit 0
+  return 0
 }
 
 # owners_claim <repo-root> <wt-id>: agent↔worktree binding (critic 2026-07-02 — a fixer could reach a

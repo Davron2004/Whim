@@ -289,7 +289,7 @@ export class MemoryFs implements FsBackend {
     const np = normalizePath(path);
     const prefix = np === '/' ? '/' : np + '/';
     let removed = 0;
-    for (const key of [...this.entries.keys()]) {
+    for (const key of this.entries.keys()) {
       if (key === np || key.startsWith(prefix)) {
         this.entries.delete(key);
         this.onDelete(key);

@@ -44,7 +44,7 @@ export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
         </View>
         <View style={styles.statusRow}>
           <Text style={[styles.badge, { color: verdictColor }]}>{verdictText} {s.probesFrac}</Text>
-          <Text style={styles.meta}>paint {s.paintMs != null ? s.paintMs + 'ms' : '—'} · gen {s.generation ?? '—'}</Text>
+          <Text style={styles.meta}>paint {s.paintMs == null ? '—' : s.paintMs + 'ms'} · gen {s.generation ?? '—'}</Text>
         </View>
         <Text style={styles.meta}>
           app: {s.currentApp} · syscalls: {s.syscalls}{s.lastSyscall ? ` · last: ${s.lastSyscall}` : ''}
