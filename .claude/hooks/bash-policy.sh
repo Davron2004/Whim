@@ -98,6 +98,13 @@ case "$CMD" in
     ask "git command needs your approval — review it before allowing (this is the history the gate's BASE-diff trusts)" ;;
 esac
 
+# fix-worker entering an orchestrator-created worktree (§6.9). cd is side-effect-free —
+# the cwd-keyed git scoping above is re-checked on every later call. No `..` traversal.
+case "$CMD" in
+  "cd "*".claude/worktrees/"*)
+    case "$CMD" in *".."*) : ;; *) allow ;; esac ;;
+esac
+
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
 case "$CMD" in
   "./scripts/gate.sh"*|"./scripts/gate-full.sh"*|"npm run "*|"npm test"*|"npx tsc"*|"npx eslint"*|"npx knip"*|"npx openspec"*|"openspec "*|\

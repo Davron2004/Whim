@@ -13,6 +13,9 @@
 #                                                    ratification) | 3 tamper (Class-2, or ungranted Class-1)
 #                                                    | 4 scope-violation (non-protected file outside allowlist)
 #   redcheck  <branch> <test-cmd...> -- <prod>...  exit 0 RED (good) | 5 GREEN (vacuous) | 2 error
+#   stale     <evidence-file>                       exit 0 evidence present at HEAD (finding live) | 7 missing
+#                                                    (likely ALREADY FIXED — do not dispatch). Format:
+#                                                    "## <repo-relative-path>" headers, then verbatim source lines.
 #   gatefull  <branch>                             run gate-full from the branch's committed tip in the MAIN tree (passthrough exit)
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity (0/6 print the human-gated merge; 6 flags
@@ -196,6 +199,36 @@ case "$cmd" in
     exit "$rc"
     ;;
 
+  stale)
+    # Deterministic staleness tripwire (mechanizes the PLAN reconcile — findings lists go stale).
+    # The planner quotes the buggy lines verbatim in the DONE spec's EVIDENCE block; this checks each
+    # quoted line still exists at HEAD (trimmed fixed-string match). All present → finding live (0).
+    # Any missing (or the file gone) → likely already fixed → exit 7: record stale-skip, do NOT dispatch.
+    evfile="${1:?usage: stale <evidence-file>   (lines: '## <repo-relative-path>' then verbatim source lines)}"
+    [ -f "$evfile" ] || die "evidence file not found: $evfile"
+    file=""; missing=""; checked=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        '## '*) file="${line#\#\# }"; continue;;
+      esac
+      t="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      [ -z "$t" ] && continue
+      [ -n "$file" ] || die "evidence line before any '## <path>' header in $evfile"
+      checked=$((checked+1))
+      if ! git show "HEAD:$file" 2>/dev/null | grep -qF -- "$t"; then
+        missing+="$file: $t"$'\n'
+      fi
+    done < "$evfile"
+    [ "$checked" -gt 0 ] || die "no evidence lines in $evfile"
+    if [ -n "$missing" ]; then
+      echo "EVIDENCE MISSING at HEAD — likely ALREADY FIXED (or moved); re-verify, do NOT dispatch:"
+      printf '%s' "$missing" | sed 's/^/  /'
+      exit 7
+    fi
+    echo "EVIDENCE PRESENT at HEAD ($checked lines) — finding still live"
+    exit 0
+    ;;
+
   park)
     branch="${1:?usage: park <branch> <reason...>}"; shift; reason="${*:-no reason given}"
     case "$branch" in fix/*) : ;; *) die "park expects a fix/* branch, got '$branch'";; esac
@@ -223,7 +256,10 @@ case "$cmd" in
     [ -n "$ratify" ] && { echo "$ratify"; echo; }
     echo "INTEGRITY OK — ready to merge (human-gated, run explicitly):"
     echo "  git switch dev/v1 && git merge --no-ff $branch -m \"fix: ${branch#fix/}\""
-    echo "after merge, clean up:"
+    echo "after merge, REGATE the merged tip BEFORE the next merge (catches two individually-green"
+    echo "fixes that break each other — a semantic conflict surfaces at the merge that caused it):"
+    echo "  ./scripts/gate.sh   # on FAIL: git revert --no-edit -m 1 HEAD, then park the branch"
+    echo "then clean up:"
     echo "  git worktree remove --force .claude/worktrees/${branch#fix/}  # if a named worktree exists"
     echo "  git branch -d $branch"
     exit 0
@@ -240,6 +276,6 @@ case "$cmd" in
     ;;
 
   *)
-    die "unknown subcommand '$cmd' — one of: integrity redcheck gatefull park finish status"
+    die "unknown subcommand '$cmd' — one of: integrity redcheck stale gatefull park finish status"
     ;;
 esac
