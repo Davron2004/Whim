@@ -7,7 +7,7 @@ AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // empty')
 SESSION=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
 
 # Only gate the implementer.
-[ "$AGENT_TYPE" = "implementer" ] || exit 0
+[[ "$AGENT_TYPE" = "implementer" ]] || exit 0
 
 # Nothing changed -> nothing to verify (also exempts read-only agents defensively).
 if git diff --quiet && git diff --cached --quiet; then exit 0; fi
@@ -16,13 +16,13 @@ if git diff --quiet && git diff --cached --quiet; then exit 0; fi
 # dispatcher handles it. Prevents infinite loops.
 COUNT_FILE="/tmp/gate-attempts-${SESSION}"
 COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
-if [ "$COUNT" -ge 2 ]; then rm -f "$COUNT_FILE"; exit 0; fi
+if [[ "$COUNT" -ge 2 ]]; then rm -f "$COUNT_FILE"; exit 0; fi
 
 # Resolve gate.sh by project root (CLAUDE_PROJECT_DIR), falling back to this hook's own location
 # (.claude/hooks → repo root is two levels up) so it works regardless of the hook's cwd.
 ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 OUT=$("$ROOT/scripts/gate.sh" 2>&1)
-if [ $? -eq 0 ]; then
+if [[ $? -eq 0 ]]; then
   rm -f "$COUNT_FILE"
   exit 0
 fi
