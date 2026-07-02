@@ -96,6 +96,12 @@ class Engine implements StorageEngine {
       }
     },
     set: (key: string, value: JsonValue): void => {
+      if (value === undefined) {
+        throw storageError({
+          kind: 'type_mismatch',
+          hint: `Value for "${key}" is undefined; use null for "no value".`,
+        });
+      }
       const size = byteLen(value);
       if (size > this.kvCap) {
         throw storageError({

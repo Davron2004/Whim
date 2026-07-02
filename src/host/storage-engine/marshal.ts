@@ -34,6 +34,7 @@ export function byteLen(value: JsonValue): number {
  * "no value"). Used for both write-time field validation and default type-checking.
  */
 export function checkValue(type: FieldType, value: JsonValue): string | null {
+  if (value === undefined) return 'value is undefined; use null for "no value"';
   if (value === null) return null;
   switch (type) {
     case 'text':
