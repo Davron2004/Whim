@@ -34,6 +34,76 @@ const ADVERSARIAL: string[] = [
 
 interface Line { label: string; ok: boolean; detail: string; }
 
+type AddLine = (label: string, ok: boolean, detail: string) => void;
+
+function errorKind(e: any): string | undefined {
+  return e && e.detail && e.detail.kind;
+}
+
+async function runValueRoundTrips(add: AddLine): Promise<void> {
+  for (const evil of ADVERSARIAL) {
+    try {
+      const { id } = await storage.records.append('Notes', { body: evil, n: 1 });
+      const back = await storage.records.list('Notes', { where: { body: evil } });
+      const exact = back.length === 1 && back[0].body === evil;
+      add('value round-trip ' + JSON.stringify(evil).slice(0, 18), exact, exact ? 'inert literal' : 'MUTATED/!=');
+      await storage.records.remove('Notes', id);
+    } catch (e: any) {
+      add('value round-trip', false, 'threw ' + errorKind(e));
+    }
+  }
+}
+
+async function runKvRoundTrips(add: AddLine): Promise<void> {
+  for (const evil of ADVERSARIAL) {
+    try {
+      await storage.kv.set(evil, evil);
+      const got = await storage.kv.get(evil);
+      add('kv round-trip ' + JSON.stringify(evil).slice(0, 14), got === evil, got === evil ? 'inert' : 'MUTATED');
+      await storage.kv.remove(evil);
+    } catch (e: any) {
+      add('kv round-trip', false, 'threw ' + errorKind(e));
+    }
+  }
+}
+
+async function expectRejection(label: string, expectedKind: string, action: () => Promise<unknown>, add: AddLine): Promise<void> {
+  try {
+    await action();
+    add(label, false, '⚠ NOT rejected');
+  } catch (e: any) {
+    const kind = errorKind(e);
+    add(label, kind === expectedKind, 'rejected: ' + kind);
+  }
+}
+
+async function runIdentifierRejections(add: AddLine): Promise<void> {
+  await expectRejection(
+    'crafted collection',
+    'unknown_collection',
+    () => storage.records.append(ADVERSARIAL[0], { body: 'x' }),
+    add,
+  );
+  await expectRejection(
+    'crafted append field',
+    'unknown_field',
+    () => storage.records.append('Notes', { [ADVERSARIAL[1]]: 1 } as any),
+    add,
+  );
+  await expectRejection(
+    'crafted where field',
+    'unknown_field',
+    () => storage.records.list('Notes', { where: { [ADVERSARIAL[2]]: 1 } as any }),
+    add,
+  );
+  await expectRejection(
+    'crafted orderBy field',
+    'unknown_field',
+    () => storage.records.list('Notes', { orderBy: { field: ADVERSARIAL[3], direction: 'asc' } }),
+    add,
+  );
+}
+
 function Home() {
   const [lines, setLines] = useState<Line[]>([]);
   const [summary, setSummary] = useState('running…');
@@ -48,61 +118,13 @@ function Home() {
 
     (async () => {
       // (a) metacharacter VALUES round-trip byte-identical (bound parameters).
-      for (const evil of ADVERSARIAL) {
-        try {
-          const { id } = await storage.records.append('Notes', { body: evil, n: 1 });
-          const back = await storage.records.list('Notes', { where: { body: evil } });
-          const exact = back.length === 1 && back[0].body === evil;
-          add('value round-trip ' + JSON.stringify(evil).slice(0, 18), exact, exact ? 'inert literal' : 'MUTATED/!=');
-          await storage.records.remove('Notes', id);
-        } catch (e: any) {
-          add('value round-trip', false, 'threw ' + (e && e.detail && e.detail.kind));
-        }
-      }
+      await runValueRoundTrips(add);
 
       // (b) adversarial kv key+value round-trip.
-      for (const evil of ADVERSARIAL) {
-        try {
-          await storage.kv.set(evil, evil);
-          const got = await storage.kv.get(evil);
-          add('kv round-trip ' + JSON.stringify(evil).slice(0, 14), got === evil, got === evil ? 'inert' : 'MUTATED');
-          await storage.kv.remove(evil);
-        } catch (e: any) {
-          add('kv round-trip', false, 'threw ' + (e && e.detail && e.detail.kind));
-        }
-      }
+      await runKvRoundTrips(add);
 
-      // (c) crafted COLLECTION name → structured unknown_collection (no SQL built).
-      try {
-        await storage.records.append(ADVERSARIAL[0], { body: 'x' });
-        add('crafted collection', false, '⚠ NOT rejected');
-      } catch (e: any) {
-        const k = e && e.detail && e.detail.kind;
-        add('crafted collection', k === 'unknown_collection', 'rejected: ' + k);
-      }
-
-      // (d) crafted FIELD names (append + where + orderBy) → structured unknown_field.
-      try {
-        await storage.records.append('Notes', { [ADVERSARIAL[1]]: 1 } as any);
-        add('crafted append field', false, '⚠ NOT rejected');
-      } catch (e: any) {
-        const k = e && e.detail && e.detail.kind;
-        add('crafted append field', k === 'unknown_field', 'rejected: ' + k);
-      }
-      try {
-        await storage.records.list('Notes', { where: { [ADVERSARIAL[2]]: 1 } as any });
-        add('crafted where field', false, '⚠ NOT rejected');
-      } catch (e: any) {
-        const k = e && e.detail && e.detail.kind;
-        add('crafted where field', k === 'unknown_field', 'rejected: ' + k);
-      }
-      try {
-        await storage.records.list('Notes', { orderBy: { field: ADVERSARIAL[3], direction: 'asc' } });
-        add('crafted orderBy field', false, '⚠ NOT rejected');
-      } catch (e: any) {
-        const k = e && e.detail && e.detail.kind;
-        add('crafted orderBy field', k === 'unknown_field', 'rejected: ' + k);
-      }
+      // (c/d) crafted COLLECTION/FIELD identifiers are mapped or refused, never concatenated.
+      await runIdentifierRejections(add);
 
       setLines(out);
       setSummary(landed === 0 ? 'INJECTIONS LANDED: 0 ✓ (values inert, identifiers rejected)' : 'INJECTIONS LANDED: ' + landed + ' ✗');

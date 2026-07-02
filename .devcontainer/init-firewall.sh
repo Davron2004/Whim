@@ -48,19 +48,19 @@ resolved_any=0
 for domain in "${ALLOWED_DOMAINS[@]}"; do
   echo "[firewall] resolving $domain…"
   ips="$(dig +short A "$domain" | grep -E '^[0-9.]+$' || true)"
-  if [ -z "$ips" ]; then
+  if [[ -z "$ips" ]]; then
     echo "[firewall] WARNING: could not resolve $domain (skipping)" >&2
     continue
   fi
   while read -r ip; do
-    [ -z "$ip" ] && continue
+    [[ -z "$ip" ]] && continue
     net="${ip%.*}.0/24"                       # widen to the containing /24
     ipset add anthropic "$net" 2>/dev/null || true
     echo "[firewall]   + $ip → $net"
     resolved_any=1
   done <<< "$ips"
 done
-if [ "$resolved_any" -eq 0 ]; then
+if [[ "$resolved_any" -eq 0 ]]; then
   echo "[firewall] FATAL: resolved no Anthropic IPs — Claude Code cannot reach the API" >&2
   exit 1
 fi

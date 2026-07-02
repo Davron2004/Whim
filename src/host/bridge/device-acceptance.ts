@@ -63,6 +63,10 @@ function frame(method: string, params: Record<string, unknown>, gen = 1, id?: nu
   return { whim: 'syscall', v: 1, id: id ?? ++SEQ, gen, method, params } as unknown as SyscallFrame;
 }
 
+function isErr(s: SysretFrame | null, kind: string): boolean {
+  return !!s && !s.ok && (s.error as SyscallError)?.kind === kind;
+}
+
 function resetAppDb(appId: string): void {
   try {
     const { open } = require('@op-engineering/op-sqlite');
@@ -79,6 +83,37 @@ function resetAppDb(appId: string): void {
   }
 }
 
+async function runInjectionChecks(
+  d: Dispatcher,
+  check: (cond: boolean, msg: string) => boolean,
+): Promise<{ valuesInert: boolean; identifiersRejected: boolean }> {
+  let valuesInert = true;
+  for (const evil of ADVERSARIAL) {
+    const a = await d.handle(frame('storage.records.append', { collection: 'Notes', record: { body: evil, n: 1 } }));
+    const aid = (a?.result as { id?: number })?.id ?? 0;
+    const back = await d.handle(frame('storage.records.list', { collection: 'Notes', query: { where: { body: evil } } }));
+    const rows = (back?.result as { records?: { body?: string }[] })?.records ?? [];
+    if (rows.length !== 1 || rows[0].body !== evil) valuesInert = false;
+    if (aid) await d.handle(frame('storage.records.remove', { collection: 'Notes', id: aid }));
+  }
+  check(valuesInert, 'adversarial values did not round-trip byte-identical');
+
+  let identifiersRejected = true;
+  for (const evil of ADVERSARIAL) {
+    const rejectedCollection = isErr(
+      await d.handle(frame('storage.records.append', { collection: evil, record: { body: 'x' } })),
+      'unknown_collection',
+    );
+    const rejectedField = isErr(
+      await d.handle(frame('storage.records.list', { collection: 'Notes', query: { where: { [evil]: 1 } } })),
+      'unknown_field',
+    );
+    identifiersRejected = identifiersRejected && rejectedCollection && rejectedField;
+  }
+  check(identifiersRejected, 'crafted identifiers not rejected');
+  return { valuesInert, identifiersRejected };
+}
+
 export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
   const failures: string[] = [];
   const latencyMs: Record<string, number> = {};
@@ -86,7 +121,6 @@ export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
     if (!cond) failures.push(msg);
     return cond;
   };
-  const isErr = (s: SysretFrame | null, kind: string): boolean => !!s && !s.ok && (s.error as SyscallError)?.kind === kind;
 
   async function timeN(into: string, n: number, fn: () => Promise<unknown>): Promise<void> {
     const t0 = Date.now();
@@ -135,22 +169,7 @@ export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
   const recordsRoundTrip = check(apId > 0 && ((ls?.result as { records?: unknown[] })?.records?.length ?? 0) === 1, 'records round-trip failed');
 
   // ── end-to-end injection through the dispatcher (over op-sqlite) ─────────────
-  let valuesInert = true;
-  for (const evil of ADVERSARIAL) {
-    const a = await d.handle(frame('storage.records.append', { collection: 'Notes', record: { body: evil, n: 1 } }));
-    const aid = (a?.result as { id?: number })?.id ?? 0;
-    const back = await d.handle(frame('storage.records.list', { collection: 'Notes', query: { where: { body: evil } } }));
-    const rows = (back?.result as { records?: { body?: string }[] })?.records ?? [];
-    if (rows.length !== 1 || rows[0].body !== evil) valuesInert = false;
-    if (aid) await d.handle(frame('storage.records.remove', { collection: 'Notes', id: aid }));
-  }
-  check(valuesInert, 'adversarial values did not round-trip byte-identical');
-  let identifiersRejected = true;
-  for (const evil of ADVERSARIAL) {
-    if (!isErr(await d.handle(frame('storage.records.append', { collection: evil, record: { body: 'x' } })), 'unknown_collection')) identifiersRejected = false;
-    if (!isErr(await d.handle(frame('storage.records.list', { collection: 'Notes', query: { where: { [evil]: 1 } } })), 'unknown_field')) identifiersRejected = false;
-  }
-  check(identifiersRejected, 'crafted identifiers not rejected');
+  const { valuesInert, identifiersRejected } = await runInjectionChecks(d, check);
 
   // ── registry append-only ──────────────────────────────────────────────────────
   let appendOnly = false;
