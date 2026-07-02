@@ -9,6 +9,7 @@
  * Middleware on /v1/* enforces the x-whim-device UUID header; missing/malformed → 400 JSON.
  */
 import { Hono } from 'hono';
+import type { DeviceIdError } from '@whim/contract';
 import type { Pipeline } from './pipeline';
 import type { UsageStore } from './usage-store';
 import { makeGenerateRoute } from './routes/generate';
@@ -44,7 +45,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
         {
           error: 'missing_device_id',
           hint: 'Include a UUID in the x-whim-device request header.',
-        },
+        } satisfies DeviceIdError,
         400,
       );
     }
@@ -54,7 +55,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
         {
           error: 'invalid_device_id',
           hint: 'The x-whim-device header must be a valid UUID (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).',
-        },
+        } satisfies DeviceIdError,
         400,
       );
     }
