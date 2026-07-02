@@ -127,7 +127,7 @@ function __whimRunProbes() {
     if (!t1) {
       record('pentest-T1', 'self-injected fresh <script> (did NOT execute)', true, 'fresh inline script blocked from running — no escape');
     } else {
-      var t1blocked = t1.fetch.startsWith('threw:') && t1.xhr.startsWith('threw:') &&
+      const t1blocked = t1.fetch.startsWith('threw:') && t1.xhr.startsWith('threw:') &&
         t1.ws.startsWith('threw:') && t1.ls.startsWith('threw:') &&
         t1.rtc.startsWith('threw:') && t1.eval.startsWith('threw:');
       record('pentest-T1', 'self-injected fresh <script> reclaim globals', t1blocked,

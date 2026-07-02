@@ -64,14 +64,6 @@
     return e;
   }
 
-  function fromHostChannel(ev) {
-    if (ev.source !== window.parent) return false;
-    // The production transport is parent <-> sandboxed srcdoc, so the legitimate origin is
-    // opaque ("null"). The equality branch keeps same-origin invariant harnesses working
-    // without making origin the authority source; the exact parent window remains required.
-    return ev.origin === 'null' || ev.origin === window.location.origin;
-  }
-
   function parseFrame(data) {
     try {
       return JSON.parse(data);
@@ -83,7 +75,11 @@
 
   window.addEventListener('message', function (ev) {
     // Host-channel-only acceptance (D3): forged in-iframe frames have ev.source === window.
-    if (!fromHostChannel(ev)) return;
+    if (ev.source !== window.parent) return;
+    // The production transport is parent <-> sandboxed srcdoc, so the legitimate origin is
+    // opaque ("null"). The equality branch keeps same-origin invariant harnesses working
+    // without making origin the authority source; the exact parent window remains required.
+    if (ev.origin !== 'null' && ev.origin !== window.location.origin) return;
     const data = ev.data;
     if (typeof data !== 'string') return;
     const msg = parseFrame(data);
