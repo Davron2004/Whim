@@ -75,11 +75,11 @@
 
   window.addEventListener('message', function (ev) {
     // Host-channel-only acceptance (D3): forged in-iframe frames have ev.source === window.
-    if (ev.source !== window.parent) return;
+    if (ev.source !== globalThis.parent) return;
     // The production transport is parent <-> sandboxed srcdoc, so the legitimate origin is
     // opaque ("null"). The equality branch keeps same-origin invariant harnesses working
     // without making origin the authority source; the exact parent window remains required.
-    if (ev.origin !== 'null' && ev.origin !== window.location.origin) return;
+    if (ev.origin !== 'null' && ev.origin !== globalThis.location.origin) return;
     const data = ev.data;
     if (typeof data !== 'string') return;
     const msg = parseFrame(data);

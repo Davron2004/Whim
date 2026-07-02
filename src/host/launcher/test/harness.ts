@@ -8,8 +8,8 @@ export class Harness {
   passed = 0;
   failures: string[] = [];
 
-  ok(cond: boolean, msg: string): void {
-    if (cond) {
+  ok(passedCheck: boolean, msg: string): void {
+    if (passedCheck) {
       this.passed++;
     } else {
       this.failures.push(msg);

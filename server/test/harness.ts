@@ -27,8 +27,8 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-export function check(name: string, cond: boolean, detail?: string): void {
-  if (cond) {
+export function check(name: string, passedCheck: boolean, detail?: string): void {
+  if (passedCheck) {
     passed++;
     console.log(`  ok  ${name}`);
   } else {

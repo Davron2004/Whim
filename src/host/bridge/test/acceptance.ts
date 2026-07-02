@@ -38,8 +38,8 @@ import {
 let passed = 0;
 const failures: string[] = [];
 
-function ok(cond: boolean, msg: string): void {
-  if (cond) passed++;
+function ok(passedCheck: boolean, msg: string): void {
+  if (passedCheck) passed++;
   else {
     failures.push(msg);
     console.error('  ✗ ' + msg);

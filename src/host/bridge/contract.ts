@@ -78,7 +78,7 @@ export function classifyFrame(frame: unknown): FrameFamily {
 // THIS change (#5, launcher-shell) ships the HOST half: the outer-page relay, the system-back
 // wiring, and the pure guaranteed-exit policy (`src/host/launcher/back-policy.ts`). The SDK
 // half is implemented by `sdk-design-system` (#3) against the frames declared here — this is
-// the TODO anchor #3's author looks for. In this change no SDK nav exists, so depth is always
+// the anchor #3's author looks for. In this change no SDK nav exists, so depth is always
 // 0 and back exits at the root; the round-trip below is wired but only exercised once #3 lands.
 //
 //   • SDK → host  (hint):  whenever the mini-app's nav-stack depth changes, the SDK runtime

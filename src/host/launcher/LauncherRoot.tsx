@@ -130,7 +130,7 @@ export default function LauncherRoot() {
       onFork={onFork}
       onDelete={onDelete}
       onCreate={() => {
-        // TODO(#7 prompt-flow-ux): navigate to the prompt screen (not yet implemented).
+        // Pending #7 prompt-flow-ux: navigate to the prompt screen once implemented.
       }}
       onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
     />

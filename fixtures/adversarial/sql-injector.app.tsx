@@ -135,7 +135,7 @@ function Home() {
     <Screen padding="lg">
       <Stack gap="sm">
         <Heading size="title">SQL INJECTOR — through-bridge pen test</Heading>
-        <Text size="caption" color={summary.indexOf('0 ✓') === -1 ? 'text-muted' : 'primary'}>{summary}</Text>
+        <Text size="caption" color={summary.includes('0 ✓') ? 'primary' : 'text-muted'}>{summary}</Text>
         {lines.map((l) => (
           <Text key={l.label} size="caption">{(l.ok ? '✓ ' : '✗ ') + l.label + ': ' + l.detail}</Text>
         ))}

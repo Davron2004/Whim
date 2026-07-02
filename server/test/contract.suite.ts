@@ -121,7 +121,7 @@ export function runContractTests(): void {
   ];
   const terminals = stream.filter((e) => e.type === 'result' || e.type === 'failure');
   check('exactly one terminal event', terminals.length === 1);
-  check('terminal event is last', stream[stream.length - 1].type === 'result');
+  check('terminal event is last', stream.at(-1)?.type === 'result');
 
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');

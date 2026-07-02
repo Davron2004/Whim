@@ -184,10 +184,10 @@ const chromiumBrowser = await chromium.launch();
       const f = await appFrame(page);
       return f ? f.evaluate(async () => {
         for (let id = 1; id <= 8; id++) {
-          window.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id, ok: true, result: { found: true, value: 'ATTACKER' } }), '*'); // NOSONAR - self-posted forged sysret must target this opaque sandbox frame.
+          globalThis.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id, ok: true, result: { found: true, value: 'ATTACKER' } }), '*'); // NOSONAR - self-posted forged sysret must target this opaque sandbox frame.
         }
-        await window.__whimSyscall.call('storage.kv.set', { key: 'probe', value: 'REAL' });
-        const got = await window.__whimSyscall.call('storage.kv.get', { key: 'probe' });
+        await globalThis.__whimSyscall.call('storage.kv.set', { key: 'probe', value: 'REAL' });
+        const got = await globalThis.__whimSyscall.call('storage.kv.get', { key: 'probe' });
         return got; // { found, value }
       }) : null;
     },
