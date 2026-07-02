@@ -160,6 +160,15 @@ test('§A reads filter/order/bound: a date-bucketed query returns only the bucke
   eq(offsetGot.map(r => r.note), ['b', 'c'], 'offset + limit page through in order');
 });
 
+test('§A json guard leaves scalar equality and range filters unaffected', () => {
+  const { store } = memEngine();
+  store.open(expensesV1);
+  const a = store.records.append('Expenses', { amount: 10, note: 'alpha', spentAt: 100 }).id;
+  store.records.append('Expenses', { amount: 20, note: 'beta', spentAt: 200 });
+  eq(store.records.list('Expenses', { where: { note: 'alpha' } }).map(r => r.id), [a], 'scalar equality filter still matches');
+  eq(store.records.list('Expenses', { where: { spentAt: { gte: 150 } } }).map(r => r.note), ['beta'], 'scalar range filter still matches');
+});
+
 test('§A kv: scalars round-trip; oversized writes are rejected with a records-pointing hint', () => {
   const { store } = memEngine(64); // tiny cap to exercise rejection
   store.kv.set('theme', 'dark');
@@ -264,6 +273,27 @@ test('§A (ST-1) undefined values are rejected as a structured StorageEngineErro
   // kv.set(key, undefined) must throw structured, not silently succeed or bind-crash.
   expectError('type_mismatch', () => store.kv.set('undef-key', undefined as unknown as JsonValue));
   ok(store.kv.get('undef-key') === undefined, 'a rejected kv.set must not have written anything');
+});
+
+test('§A json fields are opaque: a where condition naming a json field is refused, never misread as a range filter', () => {
+  const { store, rec } = memEngine();
+  store.open(mixedSchema);
+  store.records.append('Mixed', { flag: true, amount: 1, payload: { gt: 5, lt: 10 } });
+  const mark = rec.mark();
+  const err = expectError('unqueryable_field', () => store.records.list('Mixed', { where: { payload: { gt: 5 } } }));
+  eq([err.detail.collection, err.detail.field], ['Mixed', 'payload'], 'error names the collection and json field');
+  eq(rec.log.length, mark, 'a refused where field executes no SQL');
+  eq(store.records.list('Mixed').length, 1, 'storage is unchanged by the refused query');
+});
+
+test('§A json fields are opaque: orderBy naming a json field is refused', () => {
+  const { store, rec } = memEngine();
+  store.open(mixedSchema);
+  store.records.append('Mixed', { flag: true, amount: 1, payload: { x: 1 } });
+  const mark = rec.mark();
+  expectError('unqueryable_field', () => store.records.list('Mixed', { orderBy: { field: 'payload', direction: 'asc' } }));
+  eq(rec.log.length, mark, 'a refused orderBy field executes no SQL');
+  eq(store.records.list('Mixed').length, 1, 'storage is unchanged by the refused query');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
