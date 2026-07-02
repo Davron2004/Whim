@@ -25,12 +25,12 @@ grant_allows() {
   root="${f%%/.claude/worktrees/*}"
   rest="${f#*/.claude/worktrees/}"; wtid="${rest%%/*}"; rel="${rest#*/}"
   gf="$root/.claude/fixloop/grants/$wtid"
-  [ -f "$gf" ] || return 1
+  [[ -f "$gf" ]] || return 1
   while IFS= read -r pat; do
-    [ -z "$pat" ] && continue
-    case "$pat" in \#*) continue;; esac
+    [[ -z "$pat" ]] && continue
+    case "$pat" in \#*) continue;; *) ;; esac
     # shellcheck disable=SC2254
-    case "$rel" in $pat) return 0;; esac
+    case "$rel" in $pat) return 0;; *) ;; esac
   done < "$gf"
   return 1
 }
@@ -42,7 +42,7 @@ grant_allows() {
 # (Write/Edit bypass the OS sandbox, so this prompt — not the sandbox — is the gate on memory).
 case "$FILE" in
   */.claude/projects/*/memory/*)
-    if [ -n "$AGENT_ID" ]; then
+    if [[ -n "$AGENT_ID" ]]; then
       echo "BLOCKED: the shared cross-session memory store is single-writer and human-reviewed. Subagents must NOT write it directly — propose your edit in the report's MEMORY: section and the orchestrator applies it (human-gated). Report as a class-B deviation." >&2
       exit 2
     fi
@@ -56,6 +56,7 @@ case "$FILE" in
 }
 JSON
     exit 0 ;;
+  *) ;;
 esac
 
 # Ephemeral fix worktrees (isolation:'worktree' → under .claude/worktrees/<id>/) hold ordinary repo
@@ -77,7 +78,7 @@ case "$FILE" in
   */.claude/worktrees/*/build/*|\
   */.claude/worktrees/*/scripts/gate.sh|*/.claude/worktrees/*/scripts/gate-full.sh|*/.claude/worktrees/*/scripts/fixloop.sh|\
   */.claude/worktrees/*/invariants/*)
-    if [ -n "$AGENT_ID" ]; then
+    if [[ -n "$AGENT_ID" ]]; then
       echo "BLOCKED: '$FILE' is Class-2 control-plane config (the harness that verifies the work). It is NEVER editable by a subagent — even inside a worktree, even under a grant. Report as a class-B deviation." >&2
       exit 2
     fi ;;
@@ -87,13 +88,14 @@ case "$FILE" in
   */.claude/worktrees/*/eslint.config.*|*/.claude/worktrees/*/.eslintrc*|*/.claude/worktrees/*/.eslintignore|\
   */.claude/worktrees/*/knip.json|*/.claude/worktrees/*/knip.config.*|\
   */.claude/worktrees/*/babel.config.js|*/.claude/worktrees/*/metro.config.js)
-    if [ -n "$AGENT_ID" ]; then
+    if [[ -n "$AGENT_ID" ]]; then
       if grant_allows "$FILE"; then exit 0; fi
       echo "BLOCKED: '$FILE' is Class-1 protected config. A subagent may edit it only under a per-worktree grant (.claude/fixloop/grants/<id>) written by the orchestrator; none covers this file. Report as a class-B deviation (or the orchestrator declares it in the plan allowlist and writes the grant)." >&2
       exit 2
     fi ;;
   # Any other file inside a worktree → free (the carve-out's actual purpose).
   */.claude/worktrees/*) exit 0 ;;
+  *) ;;
 esac
 
 case "$FILE" in
@@ -108,7 +110,7 @@ case "$FILE" in
   */build/*|build/*|\
   */invariants/*|invariants/*)
 
-    if [ -n "$AGENT_ID" ]; then
+    if [[ -n "$AGENT_ID" ]]; then
       echo "BLOCKED: harness/verification config is human-approved only. Subagents cannot edit it — report as a class-B deviation." >&2
       exit 2
     fi
@@ -123,5 +125,6 @@ case "$FILE" in
 JSON
     exit 0
     ;;
+  *) ;;
 esac
 exit 0

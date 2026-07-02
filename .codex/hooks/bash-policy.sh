@@ -35,9 +35,9 @@ ask() {
 owners_claim() {
   local of="$1/.claude/fixloop/owners/$2"
   mkdir -p "$1/.claude/fixloop/owners" 2>/dev/null
-  if [ -f "$of" ]; then [ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]; return; fi
+  if [[ -f "$of" ]]; then [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]; return; fi
   ( set -C; printf '%s\n' "$AGENT_ID" > "$of" ) 2>/dev/null || true
-  [ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]
+  [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]
 }
 
 # The fix-loop toolkit runs git UNHOOKED (commands inside a script don't re-trigger this hook), so it
@@ -46,7 +46,7 @@ owners_claim() {
 # the old match-anywhere substring denied `git diff`/`cat` on the file and even report text that merely
 # quoted its path (critic 2026-07-02). Env-prefixed invocation (`VAR=x <script>`) slips this matcher;
 # the guard is anti-accident — the durable backstops stay the pinned-BASE diff + the orchestrator review.
-if [ -n "$AGENT_ID" ] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([^[:space:];&|]*/)?scripts/fixloop\.sh|(^|[[:space:]])(bash|sh|zsh|source|\.)[[:space:]]+([^;&|]*[[:space:]])?[^[:space:];&|]*scripts/fixloop\.sh'; then
+if [[ -n "$AGENT_ID" ]] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(])[[:space:]]*([^[:space:];&|]*/)?scripts/fixloop\.sh|(^|[[:space:]])(bash|sh|zsh|source|\.)[[:space:]]+([^;&|]*[[:space:]])?[^[:space:];&|]*scripts/fixloop\.sh'; then
   deny "the fix-loop toolkit script is orchestrator-only (it runs git unhooked); subagents must not invoke it (class-B deviation)"
 fi
 
@@ -106,7 +106,7 @@ esac
 case "$CMD" in
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*) : ;;  # read-only
   git|"git "*)
-    if [ -n "$AGENT_ID" ]; then
+    if [[ -n "$AGENT_ID" ]]; then
       # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree — and only
       # inside the worktree THIS agent owns (owners_claim binds on first use; critic 2026-07-02).
       case "$CWD" in
@@ -125,6 +125,7 @@ case "$CMD" in
     fi
     # Main thread: route mutating git to the approval prompt.
     ask "git command needs your approval — review it before allowing (this is the history the gate's BASE-diff trusts)" ;;
+  *) ;;
 esac
 
 # fix-worker entering an orchestrator-created worktree (§6.9). cd is side-effect-free —
@@ -136,7 +137,7 @@ case "$CMD" in
     case "$CMD" in
       *".."*) : ;;
       *)
-        [ -z "$AGENT_ID" ] && allow   # main thread: unchanged
+        [[ -z "$AGENT_ID" ]] && allow   # main thread: unchanged
         cd_tgt="${CMD#cd }"; cd_tgt="${cd_tgt#\"}"; cd_tgt="${cd_tgt%\"}"; cd_tgt="${cd_tgt#\'}"; cd_tgt="${cd_tgt%\'}"
         cd_rest="${cd_tgt#*.claude/worktrees/}"; cd_id="${cd_rest%%/*}"
         case "$cd_tgt" in

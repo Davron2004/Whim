@@ -111,8 +111,8 @@ test('§A isolation: two apps with the same collection cannot see each other; se
 
 test('§A the verb surface accepts no app/store-addressing parameter', () => {
   const { store } = memEngine();
-  eq(Object.keys(store.kv).sort(), ['get', 'remove', 'set'], 'kv surface is exactly get/set/remove');
-  eq(Object.keys(store.records).sort(), ['append', 'list', 'remove', 'update'], 'records surface is exactly append/list/update/remove');
+  eq(Object.keys(store.kv).sort((a, b) => a.localeCompare(b)), ['get', 'remove', 'set'], 'kv surface is exactly get/set/remove');
+  eq(Object.keys(store.records).sort((a, b) => a.localeCompare(b)), ['append', 'list', 'remove', 'update'], 'records surface is exactly append/list/update/remove');
   // No verb takes an app id / db path: collection name is the only addressing argument, and
   // the engine holds exactly one handle (bound at construction) — there is no way to name
   // another store. (The TypeScript contract makes this a compile-time guarantee too.)
