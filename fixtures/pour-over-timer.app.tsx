@@ -126,6 +126,23 @@ function Brew() { // NOSONAR - fixture UI state machine is intentionally compact
   else if (phase === 'ready') caption = 'Get ready…';
   else if (phase === 'done') caption = 'Enjoy your coffee';
 
+  let controls = (
+    <Stack gap="sm">
+      <Button label="Pause" onPress={pause} />
+      <Button label="Reset" onPress={reset} />
+    </Stack>
+  );
+  if (phase === 'idle' || phase === 'done') {
+    controls = <Button label={phase === 'done' ? 'Brew again' : 'Brew'} onPress={phase === 'done' ? () => { reset(); start(); } : start} />;
+  } else if (phase === 'paused') {
+    controls = (
+      <Stack gap="sm">
+        <Button label="Resume" onPress={resume} />
+        <Button label="Reset" onPress={reset} />
+      </Stack>
+    );
+  }
+
   return (
     <Screen padding="lg">
       <Stack gap="lg">
@@ -137,19 +154,7 @@ function Brew() { // NOSONAR - fixture UI state machine is intentionally compact
           <Text size="display" color="primary">{big}</Text>
         </Row>
 
-        {phase === 'idle' || phase === 'done' ? (
-          <Button label={phase === 'done' ? 'Brew again' : 'Brew'} onPress={phase === 'done' ? () => { reset(); start(); } : start} />
-        ) : phase === 'paused' ? (
-          <Stack gap="sm">
-            <Button label="Resume" onPress={resume} />
-            <Button label="Reset" onPress={reset} />
-          </Stack>
-        ) : (
-          <Stack gap="sm">
-            <Button label="Pause" onPress={pause} />
-            <Button label="Reset" onPress={reset} />
-          </Stack>
-        )}
+        {controls}
       </Stack>
     </Screen>
   );

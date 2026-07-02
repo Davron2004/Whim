@@ -48,7 +48,7 @@
       } catch (e) {
         globalThis.clearTimeout(timer);
         delete pending[id];
-        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host: ' + (e && e.name ? e.name : 'postMessage failed') + '.'), id));
+        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host: ' + (e?.name ? e.name : 'postMessage failed') + '.'), id));
       }
     });
   }
@@ -105,10 +105,14 @@
   // this cleanly), so nothing legitimately reassigns it within a generation.
   const api = { call: call };
   try {
-    Object.defineProperty(window, '__whimSyscall', {
+    Object.defineProperty(globalThis, '__whimSyscall', {
       value: api, writable: false, configurable: false, enumerable: false,
     });
   } catch (e) {
-    window.__whimSyscall = api; // defensive: never leave the transport uninstalled
+    if (e instanceof TypeError) {
+      globalThis.__whimSyscall = api; // defensive: never leave the transport uninstalled
+      return;
+    }
+    throw e;
   }
 })();

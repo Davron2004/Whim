@@ -42,6 +42,7 @@ check() {
   local name="$1"; shift
   section "$name"
   if "$@"; then echo "PASS: $name"; else echo "FAIL: $name"; FAILED+=("$name"); fi
+  return 0
 }
 
 # build first: ≈0.3s (esbuild), and it writes the gitignored src/runtime/generated/* that

@@ -26,20 +26,19 @@ const RUN_STORAGE_PROBE = false;
 const RUN_BRIDGE_PROBE = false;
 
 export default function App() {
+  let content = (
+    <SafeAreaView edges={['top']} style={styles.launcher}>
+      <LauncherRoot />
+    </SafeAreaView>
+  );
+  if (RUN_BRIDGE_PROBE) content = <BridgeProbeScreen />;
+  else if (RUN_STORAGE_PROBE) content = <StorageProbeScreen />;
+  else if (RUN_VSTORE_PROBE) content = <VersionStoreProbeScreen />;
+
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#0b1020" />
-      {RUN_BRIDGE_PROBE ? (
-        <BridgeProbeScreen />
-      ) : RUN_STORAGE_PROBE ? (
-        <StorageProbeScreen />
-      ) : RUN_VSTORE_PROBE ? (
-        <VersionStoreProbeScreen />
-      ) : (
-        <SafeAreaView edges={['top']} style={styles.launcher}>
-          <LauncherRoot />
-        </SafeAreaView>
-      )}
+      {content}
     </SafeAreaProvider>
   );
 }

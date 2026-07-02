@@ -80,8 +80,8 @@ function Home() {
       <Stack gap="sm">
         <Heading size="title">Latency Probe</Heading>
         <Text size="caption" color="text-muted">syscall round-trip over the real transport</Text>
-        {lines.map((l, i) => (
-          <Text key={i} size="caption">{l}</Text>
+        {lines.map((l) => (
+          <Text key={l} size="caption">{l}</Text>
         ))}
       </Stack>
     </Screen>
