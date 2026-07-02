@@ -15,14 +15,12 @@
 
 import type {
   JsonValue,
-  ListQuery,
   SchemaArtifact,
   StorageEngine,
   StorageError,
-  StorageRecord,
 } from '../storage-engine/contract';
 
-export type { JsonValue, ListQuery, SchemaArtifact, StorageRecord, StorageError };
+export type { JsonValue, ListQuery, SchemaArtifact, StorageRecord, StorageError } from '../storage-engine/contract';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D1 — two frame families, classified by a single discriminator rule
@@ -302,7 +300,7 @@ export function validateSyscall(frame: unknown): { ok: true; frame: SyscallFrame
 }
 
 export function okSysret(id: number, result: JsonValue | undefined): SysretFrame {
-  return { whim: 'sysret', v: SYSCALL_VERSION, id, ok: true, result: result === undefined ? null : result };
+  return { whim: 'sysret', v: SYSCALL_VERSION, id, ok: true, result: result ?? null };
 }
 
 export function errSysret(id: number, error: SyscallError): SysretFrame {

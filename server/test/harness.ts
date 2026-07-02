@@ -50,7 +50,7 @@ export function eq(name: string, actual: unknown, expected: unknown): void {
 }
 
 /** Run `fn`, returning the thrown error (or `undefined` if it did not throw) for type inspection. */
-export async function caught(fn: () => unknown | Promise<unknown>): Promise<unknown> {
+export async function caught(fn: () => void | Promise<void>): Promise<unknown> {
   try {
     await fn();
     return undefined;

@@ -36,7 +36,7 @@
         whim: 'syscall', v: 1, id: id, gen: hostGen, method: String(method),
         params: (params && typeof params === 'object') ? params : {},
       };
-      const timer = window.setTimeout(function () {
+      const timer = globalThis.setTimeout(function () {
         if (pending[id]) {
           delete pending[id];
           reject(decorate(err('syscall_timeout', method, 'No host response within ' + TIMEOUT_MS + 'ms.'), id));
@@ -46,9 +46,9 @@
       try {
         window.parent.postMessage(JSON.stringify(frame), '*'); // NOSONAR - sandboxed srcdoc iframe posts to an opaque parent channel.
       } catch (e) {
-        window.clearTimeout(timer);
+        globalThis.clearTimeout(timer);
         delete pending[id];
-        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host.'), id));
+        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host: ' + (e && e.name ? e.name : 'postMessage failed') + '.'), id));
       }
     });
   }
@@ -72,13 +72,21 @@
     return ev.origin === 'null' || ev.origin === window.location.origin;
   }
 
+  function parseFrame(data) {
+    try {
+      return JSON.parse(data);
+    } catch (e) {
+      if (e instanceof SyntaxError) return null;
+      throw e;
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     // Host-channel-only acceptance (D3): forged in-iframe frames have ev.source === window.
     if (!fromHostChannel(ev)) return;
     const data = ev.data;
     if (typeof data !== 'string') return;
-    let msg;
-    try { msg = JSON.parse(data); } catch (e) { return; }
+    const msg = parseFrame(data);
     if (!msg || typeof msg !== 'object') return;
 
     // The host init frame carries the generation this realm stamps (the fence authority, D3).
@@ -88,7 +96,7 @@
     if (msg.whim !== 'sysret') return;
     const p = pending[msg.id];
     if (!p) return; // unknown / forged / already-settled id → inert
-    window.clearTimeout(p.timer);
+    globalThis.clearTimeout(p.timer);
     delete pending[msg.id];
     if (msg.ok) p.resolve(msg.result);
     else p.reject(decorate(msg.error, msg.id));

@@ -116,16 +116,15 @@ function Brew() { // NOSONAR - fixture UI state machine is intentionally compact
   };
 
   const stage = STAGES[stageIdx];
-  const big =
-    phase === 'ready' ? String(count) :
-    phase === 'done' ? 'Done' :
-    phase === 'idle' ? `${STAGES.length} stages` :
-    mmss(remaining);
-  const caption =
-    phase === 'idle' ? 'Tap brew to start' :
-    phase === 'ready' ? 'Get ready…' :
-    phase === 'done' ? 'Enjoy your coffee' :
-    `${stage.name}  ·  stage ${stageIdx + 1}/${STAGES.length}${phase === 'paused' ? '  ·  paused' : ''}`;
+  let big = mmss(remaining);
+  if (phase === 'ready') big = String(count);
+  else if (phase === 'done') big = 'Done';
+  else if (phase === 'idle') big = `${STAGES.length} stages`;
+
+  let caption = `${stage.name}  ·  stage ${stageIdx + 1}/${STAGES.length}${phase === 'paused' ? '  ·  paused' : ''}`;
+  if (phase === 'idle') caption = 'Tap brew to start';
+  else if (phase === 'ready') caption = 'Get ready…';
+  else if (phase === 'done') caption = 'Enjoy your coffee';
 
   return (
     <Screen padding="lg">

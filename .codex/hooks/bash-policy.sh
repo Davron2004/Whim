@@ -38,8 +38,10 @@ ask() {
 # teardown (`finish` prints the rm) and MUST remove it before re-dispatching a parked worktree to a
 # NEW agent, or the replacement worker is refused.
 owners_claim() {
-  local of="$1/.claude/fixloop/owners/$2"
-  mkdir -p "$1/.claude/fixloop/owners" 2>/dev/null
+  local root="$1"
+  local wt_id="$2"
+  local of="$root/.claude/fixloop/owners/$wt_id"
+  mkdir -p "$root/.claude/fixloop/owners" 2>/dev/null
   if [[ -f "$of" ]]; then [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]; return; fi
   ( set -C; printf '%s\n' "$AGENT_ID" > "$of" ) 2>/dev/null || true
   [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]

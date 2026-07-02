@@ -21,7 +21,7 @@ export const TILE_COLORS = [
 function hash(s: string): number {
   let h = 5381;
   // eslint-disable-next-line no-bitwise
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + (s.codePointAt(i) ?? 0)) >>> 0;
   return h;
 }
 

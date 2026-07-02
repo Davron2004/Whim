@@ -30,7 +30,7 @@ function Home() {
     // 1. undeclared-capability storage call.
     storage.kv.set('intrude', 'should-be-denied').then(
       () => push('storage.kv.set (no cap declared)', '⚠ NOT DENIED — wrote without declaring storage!'),
-      (e: any) => push('storage.kv.set (no cap declared)', '✓ denied: ' + (e && e.detail && e.detail.kind ? e.detail.kind : 'rejected')),
+      (e: any) => push('storage.kv.set (no cap declared)', '✓ denied: ' + (e?.detail?.kind ? e.detail.kind : 'rejected')),
     );
 
     // 2. raw forged syscall with cross-app addressing fields — must have no effect.
@@ -43,7 +43,7 @@ function Home() {
       }), '*');
       push('forged cross-app frame', '↗ posted (host ignores appId/dbPath; gated as cap-intruder → still no storage cap)');
     } catch (e: any) {
-      push('forged cross-app frame', 'post threw (' + (e && e.name) + ')');
+      push('forged cross-app frame', 'post threw (' + e?.name + ')');
     }
 
     // 3. forged sysret into our OWN window — inert (ev.source !== window.parent).
@@ -51,7 +51,7 @@ function Home() {
       w.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id: 990001, ok: true, result: { value: 'attacker' } }), '*');
       push('forged self sysret', '↩ posted to self (host-channel-only acceptance → inert)');
     } catch (e: any) {
-      push('forged self sysret', 'post threw (' + (e && e.name) + ')');
+      push('forged self sysret', 'post threw (' + e?.name + ')');
     }
   }, []);
 

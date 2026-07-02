@@ -104,7 +104,7 @@ async function send(d: Dispatcher, f: SyscallFrame | object): Promise<SysretFram
 }
 async function callOk(d: Dispatcher, method: string, params: Record<string, unknown>): Promise<JsonValueLike> {
   const s = await send(d, frame(method, params));
-  if (!s || !s.ok) throw new Error(`expected ok sysret for ${method}, got ${JSON.stringify(s)}`);
+  if (!s?.ok) throw new Error(`expected ok sysret for ${method}, got ${JSON.stringify(s)}`);
   return s.result as JsonValueLike;
 }
 async function callErr(d: Dispatcher, method: string, params: Record<string, unknown>): Promise<SyscallError> {

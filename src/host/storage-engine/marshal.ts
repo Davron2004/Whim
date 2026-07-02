@@ -97,7 +97,7 @@ export function fromStorage(type: FieldType, raw: unknown): JsonValue {
       return Number(raw) !== 0;
     case 'json':
       try {
-        return JSON.parse(String(raw)) as JsonValue;
+        return JSON.parse(rawText(raw)) as JsonValue;
       } catch {
         throw storageError({ kind: 'corrupt_storage', hint: `Stored JSON field value is not valid JSON; the stored data is corrupt.` });
       }
@@ -152,5 +152,5 @@ export function defaultSqlLiteral(type: FieldType, value: JsonValue): string {
 }
 
 function quote(s: string): string {
-  return `'${s.replace(/'/g, "''")}'`;
+  return `'${s.replaceAll("'", "''")}'`;
 }

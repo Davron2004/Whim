@@ -141,7 +141,7 @@ async function testSseFraming(): Promise<void> {
       (e) => e.data.type === 'result' || e.data.type === 'failure',
     );
     eq('exactly one terminal event', terminals.length, 1);
-    const lastEvent = events[events.length - 1];
+    const lastEvent = events.at(-1);
     check(
       'terminal event is last',
       lastEvent !== undefined &&
@@ -212,11 +212,11 @@ async function testStubPipelineEndpoints(): Promise<void> {
     );
 
     // result is last
-    const lastType = types[types.length - 1];
+    const lastType = types.at(-1);
     eq('result is last event', lastType, 'result');
 
     // result carries a WireAppRecord with expected fields
-    const resultEvent = events[events.length - 1].data;
+    const resultEvent = events.at(-1)!.data;
     check(
       'result event has app field',
       resultEvent.type === 'result' && typeof resultEvent.app === 'object',
@@ -241,10 +241,10 @@ async function testStubPipelineEndpoints(): Promise<void> {
     ).length;
     eq('failure path: exactly one terminal', terminalCount, 1);
 
-    const lastType = types[types.length - 1];
+    const lastType = types.at(-1);
     eq('failure path: terminal is failure', lastType, 'failure');
 
-    const failEvent = events[events.length - 1].data;
+    const failEvent = events.at(-1)!.data;
     if (failEvent.type === 'failure') {
       check(
         'failure has non-empty reason',

@@ -234,14 +234,12 @@ export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): S
         } else {
           errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
         }
-      } else {
+      } else if (f.default === undefined) {
         // Truly new field on an existing collection → a default is required (forgiving reads).
-        if (f.default === undefined) {
-          errors.push({ kind: 'missing_default', collection: collName, field: fieldName, hint: `New field "${fieldName}" in "${collName}" needs a default so existing rows can be read.` });
-        } else {
-          adds.push({ collectionId: coll.id, column: { id: f.id, type: f.type, default: f.default } });
-          nextColl.active.push({ id: f.id, type: f.type });
-        }
+        errors.push({ kind: 'missing_default', collection: collName, field: fieldName, hint: `New field "${fieldName}" in "${collName}" needs a default so existing rows can be read.` });
+      } else {
+        adds.push({ collectionId: coll.id, column: { id: f.id, type: f.type, default: f.default } });
+        nextColl.active.push({ id: f.id, type: f.type });
       }
     }
 

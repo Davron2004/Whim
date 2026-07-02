@@ -100,7 +100,7 @@ function resetAppDb(appId: string): void {
       return Array.isArray(res?.rows) ? res.rows : (res?.rows?._array ?? []);
     };
     const tables = exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'`);
-    for (const t of tables) exec(`DROP TABLE IF EXISTS "${String(t.name)}"`);
+    for (const t of tables) exec(`DROP TABLE IF EXISTS "${typeof t.name === 'string' ? t.name : JSON.stringify(t.name)}"`);
     db.close();
   } catch {
     /* first run: nothing to reset */

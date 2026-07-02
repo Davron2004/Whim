@@ -25,12 +25,12 @@ export interface DevProbeScreenProps {
   onExit: () => void;
 }
 
-export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
+export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>) {
   const host = useMiniAppHost({ onExit });
   const s = host.state;
 
-  const verdictColor = s.contained === null ? '#94a3b8' : s.contained ? '#16a34a' : '#dc2626';
-  const verdictText = s.contained === null ? 'running…' : s.contained ? 'CONTAINED ✓' : 'LEAK ✗';
+  const verdictColor = verdictValue(s.contained, '#94a3b8', '#16a34a', '#dc2626');
+  const verdictText = verdictValue(s.contained, 'running…', 'CONTAINED ✓', 'LEAK ✗');
   const buttons = useMemo(() => DELIVERABLE, []);
 
   return (
@@ -75,6 +75,11 @@ export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
       />
     </SafeAreaView>
   );
+}
+
+function verdictValue<T>(contained: boolean | null, running: T, containedValue: T, leakValue: T): T {
+  if (contained === null) return running;
+  return contained ? containedValue : leakValue;
 }
 
 const styles = StyleSheet.create({

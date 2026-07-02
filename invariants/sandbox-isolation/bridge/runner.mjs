@@ -192,7 +192,7 @@ const chromiumBrowser = await chromium.launch();
       }) : null;
     },
   });
-  const value = r.extra && r.extra.value;
+  const value = r.extra?.value;
   const ok = value === 'REAL';
   record(ok, 'forged sysret is inert (host answer wins)', `resolved value=${JSON.stringify(value)} (want "REAL", not "ATTACKER")`);
 }
@@ -204,7 +204,7 @@ const chromiumBrowser = await chromium.launch();
     evaluate: async (page) => page.evaluate(async () => {
       const stale = JSON.stringify({ whim: 'syscall', v: 1, id: 9101, gen: 0, method: 'storage.kv.get', params: { key: 'total' } });
       const fresh = JSON.stringify({ whim: 'syscall', v: 1, id: 9102, gen: 1, method: 'storage.kv.get', params: { key: 'total' } });
-      return { stale: await window.whimHostDispatch(stale), fresh: await window.whimHostDispatch(fresh) };
+      return { stale: await globalThis.whimHostDispatch(stale), fresh: await globalThis.whimHostDispatch(fresh) };
     }),
   });
   const e = r.extra || {};

@@ -45,9 +45,9 @@ async function run(browser, file, drive) {
   await page.waitForTimeout(400);
   const dom = await page.evaluate(() => ({
     title: document.title || '',
-    probes: (document.getElementById('probes') || {}).textContent || '',
-    delivery: (document.getElementById('delivery') || {}).textContent || '',
-    paint: (document.getElementById('paint') || {}).textContent || '',
+    probes: document.getElementById('probes')?.textContent || '',
+    delivery: document.getElementById('delivery')?.textContent || '',
+    paint: document.getElementById('paint')?.textContent || '',
   }));
   let iframeText = '';
   for (const f of page.frames()) {
