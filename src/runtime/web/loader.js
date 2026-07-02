@@ -40,6 +40,19 @@
     postMessage: function (s) { try { window.parent.postMessage(String(s), '*'); } catch (e) {} },
   };
 
+  // ── nav-depth seam anchor (launcher-shell / #5 D4 — the #3 SDK half's pending contract) ──
+  // The back-navigation contract rides THIS same one-way transport (no new capability):
+  //   • SDK → host (hint): the SDK runtime (sdk-design-system / #3) posts, on every nav-stack
+  //     depth change, `window.parent.postMessage(JSON.stringify({__whimNavDepth:true,
+  //     depth:<n>, generation: window.__whimGeneration}), '*')`. The outer page source-verifies
+  //     and relays it to RN as kind:'nav-depth'. Unauthenticated by design (F4): a hint, never
+  //     authority — the host back-policy owns whether the user can leave.
+  //   • host → realm (request): the host posts `{__whimNavBack:true}` into this iframe on
+  //     system back when depth>0; #3's SDK message listener pops one screen and re-emits
+  //     nav-depth. (No SDK nav exists yet, so nothing emits/consumes these in this change;
+  //     depth is always 0 and back exits at the root. This block is the contract anchor only —
+  //     it adds NO runtime behavior, keeping the iframe loader byte-stable for containment.)
+
   // Genuine, authenticated loader→host control frame (carries the secret nonce).
   function post(kind, payload) {
     try {
@@ -94,12 +107,87 @@
 
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
   var deliveryBusy = false;
+  function wrappedBundleSource(bundle) {
+    // Wrap the bundle so (a) its externalized `require` resolves through the H1b resolver,
+    // (b) it gets a benign CommonJS {exports} shim, and (c) the value-type forbidden globals
+    // are lexically shadowed in its scope (task 2.5 — belt-and-suspenders ONLY; the
+    // window-level strip is the real defense and is what the probes/T1 exercise). eval/
+    // Function are NOT shadowed: `eval` is a reserved binding in strict mode and `Function`
+    // is reachable via constructor-walk regardless — the CSP neutralizes those.
+    return (
+      '(function(){ "use strict";\n' +
+      '  var fetch=void 0, XMLHttpRequest=void 0, WebSocket=void 0, EventSource=void 0,\n' +
+      '      Worker=void 0, SharedWorker=void 0, localStorage=void 0, sessionStorage=void 0,\n' +
+      '      indexedDB=void 0, caches=void 0, RTCPeerConnection=void 0, importScripts=void 0;\n' +
+      '  void [fetch,XMLHttpRequest,WebSocket,EventSource,Worker,SharedWorker,localStorage,\n' +
+      '        sessionStorage,indexedDB,caches,RTCPeerConnection,importScripts];\n' +
+      '  var require = window.__whimRequire;\n' +
+      '  var module = { exports: {} }, exports = module.exports;\n' +
+      bundle + '\n' +
+      '  if (typeof __WHIM_APP_MODULE__ !== "undefined") window.__WHIM_APP_MODULE__ = __WHIM_APP_MODULE__;\n' +
+      '})();\n' +
+      'window.__whimAfterBundle && window.__whimAfterBundle();'
+    );
+  }
+
+  function deliverBlob(wrapped) {
+    // Channel (c) REFUSAL invariant (task 4.5): a blob:/data: <script src> must stay
+    // REFUSED under the locked CSP (`script-src 'unsafe-inline'` has no `blob:`). We try
+    // it on purpose; it must NOT execute. Never widen script-src to make this "work" — an
+    // attacker who can mint a same-origin blob would gain a script surface.
+    var blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
+    var bs = document.createElement('script');
+    bs.src = blobUrl;
+    (document.head || document.documentElement).appendChild(bs);
+    window.setTimeout(function () {
+      var ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
+      post('delivery', {
+        accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
+        note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
+      });
+      try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+      deliveryBusy = false;
+    }, 60);
+  }
+
+  function deliverInline(wrapped) {
+    var s = document.createElement('script');
+    s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
+    (document.head || document.documentElement).appendChild(s);
+    post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
+    deliveryBusy = false; // re-injection ready (a new generation in the SAME realm)
+  }
+
+  function deliverBundle(msg) {
+    deliveryBusy = true;
+    window.__whimGeneration = (window.__whimGeneration || 0) + 1;
+    try {
+      const wrapped = wrappedBundleSource(msg.bundle);
+      if (msg.viaBlob === true) {
+        deliverBlob(wrapped);
+        return;
+      }
+      deliverInline(wrapped);
+    } catch (e) {
+      post('delivery', { accepted: false, generation: window.__whimGeneration, name: e && e.name, message: e && String(e.message) });
+      post('error', { where: 'deliver', name: e && e.name, message: e && String(e.message) });
+      deliveryBusy = false;
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     var data = ev.data;
     if (typeof data !== 'string') return;
     var msg;
     try { msg = JSON.parse(data); } catch (e) { return; }
     if (!msg) return;
+
+    // Host-channel-only acceptance (A1 — mirrors syscall.js's ev.source guard): a frame posted by a
+    // bundle sharing this realm has ev.source === window, not window.parent. Drop it. Without this, a
+    // delivered bundle could self-post __whimDeliver on a later tick to forge a delivery — bumping
+    // __whimGeneration, injecting its payload, and posting a host frame carrying the closure-captured
+    // real nonce (indistinguishable to the host) — corrupting the host's generation state machine.
+    if (ev.source !== window.parent) return;
 
     // Host init: the FIRST one wins and is locked in. It arrives before any bundle is
     // delivered, so a later (untrusted) bundle cannot re-set or read this nonce.
@@ -119,57 +207,7 @@
     }
 
     if (msg.__whimDeliver !== true || deliveryBusy) return;
-    deliveryBusy = true;
-    window.__whimGeneration = (window.__whimGeneration || 0) + 1;
-    try {
-      // Wrap the bundle so (a) its externalized `require` resolves through the H1b resolver,
-      // (b) it gets a benign CommonJS {exports} shim, and (c) the value-type forbidden globals
-      // are lexically shadowed in its scope (task 2.5 — belt-and-suspenders ONLY; the
-      // window-level strip is the real defense and is what the probes/T1 exercise). eval/
-      // Function are NOT shadowed: `eval` is a reserved binding in strict mode and `Function`
-      // is reachable via constructor-walk regardless — the CSP neutralizes those.
-      var wrapped =
-        '(function(){ "use strict";\n' +
-        '  var fetch=void 0, XMLHttpRequest=void 0, WebSocket=void 0, EventSource=void 0,\n' +
-        '      Worker=void 0, SharedWorker=void 0, localStorage=void 0, sessionStorage=void 0,\n' +
-        '      indexedDB=void 0, caches=void 0, RTCPeerConnection=void 0, importScripts=void 0;\n' +
-        '  void [fetch,XMLHttpRequest,WebSocket,EventSource,Worker,SharedWorker,localStorage,\n' +
-        '        sessionStorage,indexedDB,caches,RTCPeerConnection,importScripts];\n' +
-        '  var require = window.__whimRequire;\n' +
-        '  var module = { exports: {} }, exports = module.exports;\n' +
-        msg.bundle + '\n' +
-        '  if (typeof __WHIM_APP_MODULE__ !== "undefined") window.__WHIM_APP_MODULE__ = __WHIM_APP_MODULE__;\n' +
-        '})();\n' +
-        'window.__whimAfterBundle && window.__whimAfterBundle();';
-      if (msg.viaBlob === true) {
-        // Channel (c) REFUSAL invariant (task 4.5): a blob:/data: <script src> must stay
-        // REFUSED under the locked CSP (`script-src 'unsafe-inline'` has no `blob:`). We try
-        // it on purpose; it must NOT execute. Never widen script-src to make this "work" — an
-        // attacker who can mint a same-origin blob would gain a script surface.
-        var blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
-        var bs = document.createElement('script');
-        bs.src = blobUrl;
-        (document.head || document.documentElement).appendChild(bs);
-        window.setTimeout(function () {
-          var ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
-          post('delivery', {
-            accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
-            note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
-          });
-          try { URL.revokeObjectURL(blobUrl); } catch (e) {}
-          deliveryBusy = false;
-        }, 60);
-        return; // do not fall through to the inline path
-      }
-      var s = document.createElement('script');
-      s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
-      (document.head || document.documentElement).appendChild(s);
-      post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
-    } catch (e) {
-      post('delivery', { accepted: false, generation: window.__whimGeneration, name: e && e.name, message: e && String(e.message) });
-      post('error', { where: 'deliver', name: e && e.name, message: e && String(e.message) });
-    }
-    deliveryBusy = false; // re-injection ready (a new generation in the SAME realm)
+    deliverBundle(msg);
   });
 
   // Announce liveness so the host sends the init nonce, then the bundle.

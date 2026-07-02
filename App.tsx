@@ -1,24 +1,48 @@
 /**
- * Whim v0.1 — the retained RN shell. One full-screen WebView running the contained
- * mini-app runtime (sandbox-isolation + sandbox-rendering). See src/host/WebViewHost.tsx.
+ * Whim — the retained RN shell. Default surface is the LAUNCHER (launcher-shell / #5): the home
+ * grid of installed mini-apps, full-screen launch over the contained runtime, system-back +
+ * floating-affordance exit, fork/delete, first-run seeding. The on-device acceptance harnesses
+ * (version store / storage engine / capability bridge) remain reachable via the flips below; the
+ * containment/bridge probe surface lives behind LauncherRoot's __DEV__ entry (DevProbeScreen).
  *
  * @format
  */
 import React from 'react';
-import { StatusBar } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import WebViewHost from './src/host/WebViewHost';
+import { StatusBar, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import LauncherRoot from './src/host/launcher/LauncherRoot';
 import VersionStoreProbeScreen from './src/host/VersionStoreProbeScreen';
+import StorageProbeScreen from './src/host/StorageProbeScreen';
+import BridgeProbeScreen from './src/host/BridgeProbeScreen';
 
-// Flip to true to run the version-store on-device acceptance instead of the WebView
-// host (tasks 1.3, 5.2, 5.3, 7.2, 7.3). Default false keeps the normal app path.
+// Flip to true to run the version-store on-device acceptance instead of the launcher.
 const RUN_VSTORE_PROBE = false;
 
+// Flip to true to run the storage-engine on-device acceptance (Decision #40). Default false.
+const RUN_STORAGE_PROBE = false;
+
+// Flip to true to run the capability-bridge on-device acceptance (Decision #41). Default false.
+// The WebView round-trip is also exercised by the launcher's __DEV__ probe (DevProbeScreen).
+const RUN_BRIDGE_PROBE = false;
+
 export default function App() {
+  let content = (
+    <SafeAreaView edges={['top']} style={styles.launcher}>
+      <LauncherRoot />
+    </SafeAreaView>
+  );
+  if (RUN_BRIDGE_PROBE) content = <BridgeProbeScreen />;
+  else if (RUN_STORAGE_PROBE) content = <StorageProbeScreen />;
+  else if (RUN_VSTORE_PROBE) content = <VersionStoreProbeScreen />;
+
   return (
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#0b1020" />
-      {RUN_VSTORE_PROBE ? <VersionStoreProbeScreen /> : <WebViewHost />}
+      {content}
     </SafeAreaProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  launcher: { flex: 1, backgroundColor: '#0b1020' },
+});

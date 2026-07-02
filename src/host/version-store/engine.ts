@@ -65,7 +65,9 @@ function decodeUtf8(bytes: Uint8Array): string {
 }
 
 function stripTrailingNewline(s: string): string {
-  return s.replace(/\n+$/, '');
+  let out = s;
+  while (out.endsWith('\n')) out = out.slice(0, -1);
+  return out;
 }
 
 export interface VersionStoreOptions {
@@ -216,7 +218,12 @@ export class VersionStore {
     await git.tag({ fs: this.client, gitdir, ref: SNAP_TAG(id), object: oid });
 
     if (this.config.autoCompact && this.backend.countLooseObjects(gitdir) > this.config.compactionThreshold) {
-      await compactRepo(this.client, this.backend, dir, gitdir);
+      try {
+        await compactRepo(this.client, this.backend, dir, gitdir);
+      } catch {
+        // Auto-compaction is best-effort. The snapshot (commit + tag) is already
+        // durable; a compaction failure must NOT surface to the caller as a rejection.
+      }
     }
     return { id, prompt, createdAt: ts * 1000 };
   }
@@ -229,15 +236,20 @@ export class VersionStore {
     let commits: Awaited<ReturnType<typeof git.log>>;
     try {
       commits = await git.log({ fs: this.client, gitdir, ref: 'HEAD', depth: limit });
-    } catch {
-      return []; // unborn HEAD (repo exists, no commits)
+    } catch (err) {
+      if (err instanceof git.Errors.NotFoundError) return []; // unborn HEAD (repo exists, no commits)
+      throw err;
     }
     const map = await this.oidToId(gitdir);
-    return commits.map(c => ({
-      id: map.get(c.oid) ?? '',
-      prompt: stripTrailingNewline(c.commit.message),
-      createdAt: c.commit.author.timestamp * 1000,
-    }));
+    return commits.map(c => {
+      const id = map.get(c.oid);
+      if (id === undefined) throw new Error(`invariant: commit ${c.oid} has no snap tag`);
+      return {
+        id,
+        prompt: stripTrailingNewline(c.commit.message),
+        createdAt: c.commit.author.timestamp * 1000,
+      };
+    });
   }
 
   /** diff(appId, a, b) → walk + compare, per-file change (task 3.3). */
@@ -284,7 +296,7 @@ export class VersionStore {
   async pin(appId: string, snapshotId: string, label: string): Promise<Pin> {
     const { gitdir } = this.paths(appId);
     const oid = await this.resolveSnap(gitdir, snapshotId);
-    if (!/^[A-Za-z0-9 ._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
+    if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
     await git.tag({ fs: this.client, gitdir, ref: PIN_TAG(label), object: oid, force: true });
     return { label, snapshotId };
   }
@@ -364,6 +376,19 @@ export class VersionStore {
     return this.snapshotContent(gitdir, oid);
   }
 
+  /**
+   * remove(appId) → drop an app's entire version history (additive product verb; launcher-shell
+   * / #5 D2). The launcher calls this when no installed entry references the repo any longer.
+   * KvBackedFs deletes by key prefix, so this collapses every KV key for the repo (one repo ==
+   * one prefix). Idempotent: removing an unknown app is a clean no-op. No git vocabulary crosses
+   * the surface — the return is a plain product-verb shape.
+   */
+  async remove(appId: string): Promise<{ removed: boolean }> {
+    const { dir } = this.paths(appId);
+    const removed = this.backend.removeTree(dir);
+    return { removed: removed > 0 };
+  }
+
   /** Manually compact a repo (Section 4); also runs automatically past the threshold. */
   async compact(appId: string): Promise<CompactionResult> {
     const { dir, gitdir } = this.paths(appId);
@@ -390,7 +415,8 @@ export class VersionStore {
   private async snapshotContent(gitdir: string, oid: string, knownId?: string): Promise<SnapshotContent> {
     const artifacts = await this.readContentAt(gitdir, oid);
     const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
-    const id = knownId ?? (await this.oidToId(gitdir)).get(oid) ?? '';
+    const id = knownId ?? (await this.oidToId(gitdir)).get(oid);
+    if (id === undefined) throw new Error(`invariant: commit ${oid} has no snap tag`);
     return {
       id,
       prompt: stripTrailingNewline(commit.message),

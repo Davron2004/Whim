@@ -19,16 +19,80 @@ on:
   pull_request:
 
 jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Build generated runtime modules
+        run: npm run build
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+      - name: Lint (eslint --max-warnings 0)
+        run: npm run lint -- --max-warnings 0
+      - name: Dead code (knip)
+        run: npx knip
+      # openspec resolves from node_modules/.bin via the @fission-ai/openspec devDep + the npm ci above.
+      - name: OpenSpec validate
+        run: npx openspec validate --all --strict
+      # Mirror of the gate.sh scaffolding tripwire; `! grep` fails the step on any match.
+      - name: Scaffolding tripwires
+        run: |
+          ! grep -rn --include='*.ts' --include='*.tsx' \
+            -e 'TEMP:' -e 'HACK:' -e 'isImplemented' -e 'IS_IMPLEMENTED' \
+            -e 'console\.log(.*debug' \
+            src/ 2>/dev/null
+
   isolation-suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22   # pinned per the DEVLOG build-env gotcha
+          node-version: 22 # pinned per the DEVLOG build-env gotcha
       - run: npm ci
+      - name: Build generated runtime modules
+        run: npm run build
+      # ── Server + contract suite (harness-server-skeleton, #8) ───────────────────
+      # Type-checks both workspaces (contract/ + server/), then runs the full
+      # in-process acceptance suite (metering, SSE framing, stub pipeline, OpenRouter
+      # wrapper). Pure Node — no browser, no network; fast fail-fast gate.
+      - name: Run the server + contract acceptance suite (blocks on red)
+        run: npm run server:test
+      # ── Metro bundle guard (harness-server-skeleton, #8) ────────────────────────
+      # Verifies the root RN package still resolves cleanly after workspace-ification.
+      # No Android SDK required — Metro runs in server mode and exits; result is a
+      # byte count assertion only (no APK produced).
+      - name: Run the Metro bundle guard (blocks on red)
+        run: npm run guard:metro
+      # ── Storage-engine injection invariant (Decision #40, D5a/D7) ──────────────
+      # The §C block of storage:test is a never-regress security invariant on par with
+      # sandbox containment (§16.4): caller text is bound or rejected, never interpolated
+      # into SQL. Cheap (node:sqlite, no browser, sub-second), so the whole suite is gated —
+      # no fragile "just the injection tests" carve-out. Runs before the browser steps so it
+      # fails fast.
+      - name: Run the storage-engine acceptance + injection invariant (blocks on red)
+        run: npm run storage:test
+      # ── capability-bridge gate/dispatcher core (Decision #41, D8) ───────────────
+      # Pure host-side logic (node:sqlite, sub-second): gate order + every denial kind, dedup,
+      # generation fences, append-only registry, channel-derived identity. Fails fast.
+      - name: Run the capability-bridge host-core suite (blocks on red)
+        run: npm run bridge:test
+      # ── launcher core (launcher-shell / #5 D8) ──────────────────────────────────
+      # Pure host-side logic (back-policy state machine, the installed-apps index, the
+      # version-store access wrapper over MemoryFs). Fast and device-free; fails fast.
+      - name: Run the launcher core suite (blocks on red)
+        run: npm run launcher:test
       - run: npx playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
       - name: Run the §16.2 isolation suite (blocks on red)
         run: npm run invariants
+      # ── capability-bridge security invariants over the real sandbox→syscall path ──
+      # Undeclared-capability denial, stub-authority, forged-sysret inertness, stale-generation
+      # drop, end-to-end SQL-injection — plus a negative control proving the suite isn't vacuous.
+      - name: Run the capability-bridge invariant suite (blocks on red)
+        run: npm run bridge:invariants

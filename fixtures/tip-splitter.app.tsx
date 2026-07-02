@@ -46,9 +46,9 @@ function Home() {
           label="Reset"
           radius="md"
           onPress={() => {
-            setBill(0);
+            setBill(100);
             setTipPct(20);
-            setPeople(1);
+            setPeople(4);
           }}
         />
       </Stack>

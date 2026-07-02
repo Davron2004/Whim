@@ -1,0 +1,15 @@
+{
+  "name": "@whim/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Whim harness server skeleton (Hono): SSE generation over a stub pipeline, device identity, token metering, OpenRouter wrapper. LAN dev only.",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0",
+    "@whim/contract": "*"
+  }
+}

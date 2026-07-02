@@ -1,0 +1,95 @@
+name: whim-fixloop
+version: 1
+description: >-
+  Whim parallel fix-loop workflow - findings → plan → dispositions. Lightweight
+  bookkeeping for a /fix-loop batch (docs/parallel-fix-loop.md): mechanical,
+  independently-fixable findings run in parallel worktrees by fix-worker
+  subagents. Deliberately no proposal/design/specs — a fix that changes
+  spec-visible behavior needs a delta spec and belongs in a whim-harness change.
+artifacts:
+  - id: findings
+    generates: findings.md
+    description: The triaged findings this batch will fix, copied from the source report
+    template: findings.md
+    instruction: >
+      Record the findings this fix-loop batch will work, one section per
+      finding, copied VERBATIM from the triage source (e.g. a critic report) —
+      do not re-triage or reword here; cite the source path at the top.
+
+
+      Mechanical lane only. A finding belongs in this batch ONLY if it is:
+
+      - independently fixable (no cross-finding dependency),
+
+      - decision-free (no product/design judgment needed),
+
+      - spec-silent (does not change behavior a spec in openspec/specs/
+      describes — that needs a delta spec, i.e. a whim-harness change),
+
+      - outside Class-2 territory (gate scripts, .claude/**, invariants/,
+      build/ are human-only; a finding needing them is escalated, not batched).
+
+
+      Give every finding a stable id (the source report's id where it has one)
+      — plan.md and dispositions.md key on it.
+    requires: []
+  - id: plan
+    generates: plan.md
+    description: Per-finding DONE specs (planner output) + the tracked batch checklist
+    template: plan.md
+    instruction: >
+      Produce one DONE spec per finding via a read-only planner subagent
+      (researcher/Plan) — the orchestrator never explores code itself.
+      .claude/commands/fix-loop.md step 1 defines the planning rules; this
+      file is where the planner's output lands.
+
+
+      Every DONE spec must carry: the reconcile verdict (does the defect still
+      exist at HEAD?), a fenced EVIDENCE block ("## <repo-relative-path>"
+      header lines followed by verbatim buggy lines as they read at HEAD —
+      consumed by `scripts/fixloop.sh stale` for the deterministic staleness
+      check), the fix sketch, the file allowlist (glob per line), the
+      test-class per docs/parallel-fix-loop.md §6.7 (behavioral |
+      structural-no-test | invariant), the test + expected red-without
+      (behavioral only), severity, and the Class-1 grant declaration (or
+      none; Class-2 is never declarable).
+
+
+      Also maintain the Checklist section at the top: one `- [ ] <finding-id>`
+      box per finding. This is what `openspec status` tracks — tick a box only
+      when the finding reaches a TERMINAL ledger event in dispositions.md
+      (merged / parked / escalated / skipped), never when a worker merely
+      reports done.
+    requires:
+      - findings
+  - id: dispositions
+    generates: dispositions.md
+    description: Append-only run ledger — the durable record of every disposition
+    template: dispositions.md
+    instruction: >
+      Initialize the ledger (title + Ledger heading) BEFORE any worker is
+      dispatched. During the run the orchestrator appends one line per event
+      AS IT HAPPENS — never batched at the end, never rewritten (correct by
+      appending). This file plus the fix/* and wip/* branches are the resume
+      state if the orchestrator's context dies mid-batch.
+
+
+      Required events per finding: the stale-check verdict, worktree-created
+      (branch, pinned BASE sha, worktree path), the deterministic check
+      results (redcheck / integrity exit / gatefull), the verify verdict, and
+      exactly one terminal event: merged (merge sha + post-merge regate
+      result) | parked (reason, wip/ branch) | escalated (why) | skipped
+      (why).
+    requires:
+      - plan
+apply:
+  requires:
+    - findings
+    - plan
+    - dispositions
+  tracks: plan.md
+  instruction: |
+    Run the /fix-loop orchestration (.claude/commands/fix-loop.md) over plan.md.
+    Append every disposition to dispositions.md as it happens; tick a finding's
+    checkbox in plan.md only at its terminal ledger event; archive the change
+    (openspec archive) once every finding is terminal.

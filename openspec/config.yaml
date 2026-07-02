@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: whim-harness
 
 # Project context — shown to AI when creating artifacts (propose/design/specs/tasks).
 context: |

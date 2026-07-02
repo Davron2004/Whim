@@ -2,18 +2,31 @@
   "name": "Whim",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "contract",
+    "server"
+  ],
   "scripts": {
     "android": "react-native run-android",
     "android:release": "react-native run-android --mode release --active-arch-only",
     "start": "react-native start",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "build": "node build/build.mjs",
     "vstore:test": "node src/host/version-store/test/run.mjs",
+    "storage:test": "node src/host/storage-engine/test/run.mjs",
+    "bridge:test": "node src/host/bridge/test/run.mjs",
+    "launcher:test": "node src/host/launcher/test/run.mjs",
+    "launcher:deliver-verify": "node src/host/launcher/test/deliver-by-source.desktop.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
-    "invariants:spike2": "node invariants/sandbox-isolation/spike2-bundle-contract/runner.mjs"
+    "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
+    "server:dev": "node server/dev.mjs",
+    "server:test": "node server/test/run.mjs",
+    "guard:metro": "node server/guard-metro.mjs"
   },
   "dependencies": {
+    "@op-engineering/op-sqlite": "^16.2.0",
     "@react-native/new-app-screen": "0.85.3",
     "buffer": "^6.0.3",
     "crc-32": "^1.2.2",
@@ -32,6 +45,7 @@
     "@babel/core": "^7.25.2",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
+    "@fission-ai/openspec": "^1.4.1",
     "@react-native-community/cli": "20.1.0",
     "@react-native-community/cli-platform-android": "20.1.0",
     "@react-native/babel-preset": "0.85.3",
@@ -45,6 +59,7 @@
     "esbuild": "^0.25.0",
     "eslint": "^8.19.0",
     "jest": "^29.6.3",
+    "knip": "^6.16.1",
     "playwright": "^1.49.0",
     "prettier": "2.8.8",
     "react-dom": "19.2.3",
@@ -53,5 +68,13 @@
   },
   "engines": {
     "node": ">= 22.11.0"
+  },
+  "codegenConfig": {
+    "name": "WhimAppSpecs",
+    "type": "modules",
+    "jsSrcsDir": "src/native",
+    "android": {
+      "javaPackageName": "com.whim.tone"
+    }
   }
 }

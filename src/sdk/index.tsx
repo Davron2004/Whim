@@ -31,21 +31,113 @@ import {
   type WeightToken,
 } from './tokens';
 
-// ── State (design D6 / task 3.3) ─────────────────────────────────────────────
-// In-memory, web-side, no bridge: this is literally React's useState, surfaced through the
-// SDK so the bundle never has to import `react` itself (the SDK stays the only import
-// surface for app authors, even though `react` is also a resolvable runtime external).
-export const useState = React.useState;
+// The storage verb/param types are the `mini-app-storage-engine` D8 inter-change seam,
+// re-exported here so a mini-app author types its `schema` and storage calls against the
+// SAME contract the host gates with. Type-only: nothing from the engine is bundled into the
+// SDK (the facade below holds only the one-way transport — carry-forward constraint #2).
+import type {
+  JsonValue,
+  StorageRecord,
+  ListQuery,
+  SchemaArtifact,
+} from '../host/storage-engine/contract';
+export type { JsonValue, StorageRecord, ListQuery, SchemaArtifact, FieldType } from '../host/storage-engine/contract';
 
-// ── App descriptor (design D6 / task 3.1) ────────────────────────────────────
+// The closed cue token sets (effects-and-cues D4) — type-only, so NOTHING from the bridge is
+// bundled into the SDK (the facade still holds only the one-way transport — constraint #2). A
+// mini-app types its `cues.haptic`/`cues.sound` calls against the SAME tokens the host gate
+// validates, so an off-set token is a compile error in the app, not just a runtime denial.
+import type { HapticKind, SoundName } from '../host/bridge/contract';
+export type { HapticKind, SoundName };
+
+// ── State (design D6 / task 3.3) ─────────────────────────────────────────────
+// In-memory, web-side, no bridge: this is literally React's useState/useEffect/useRef, surfaced
+// through the SDK so the bundle never has to import `react` itself (the SDK stays the only
+// import surface for app authors, even though `react` is also a resolvable runtime external).
+// `useRef` is a pure fiber-memory cell — it carries NO ambient authority (no network/storage/
+// native, nothing the containment legs govern), it is just a stable mutable `{current}` box that
+// (a) does not re-render on write and (b) is readable LIVE from inside an async closure, unlike a
+// `useState` value which freezes at the value it had when the closure was created. That async-live
+// read is what lets a coroutine (e.g. pour-over-timer's `start()`) observe a cancellation set
+// after it has already begun awaiting — the same staleness class the `interval` note below calls out.
+export const useState = React.useState;
+export const useEffect = React.useEffect;
+export const useRef = React.useRef;
+
+// ── Timed effects (effects-and-cues D1) ──────────────────────────────────────
+// Web-resident wrapped timers — the mini-app's ONLY taught path to time. They emit NO syscall
+// frame, need no capability, and cross no gate: this is pure in-iframe setTimeout/setInterval,
+// which the sandbox deliberately does NOT strip (#35 — strip capabilities, not time; React's
+// scheduler and the syscall marshaller need it). Cleanup the author cannot forget: `interval`
+// is a hook so unmount cancels it; a host-forced realm reset (iframe recreation, carry-forward
+// #5) cancels everything structurally — no SDK-level registry, none needed (design D2).
+
+/** Resolve after at least `ms` — one-shot sequencing inside handlers/effects (`await delay(800)`).
+ *  `ms` must be finite and non-negative; `0` resolves on the next tick. A non-finite
+ *  (`Infinity`/`NaN`) or negative `ms` returns a promise that NEVER resolves — cancelled only by
+ *  realm teardown, mirroring `interval`'s `!Number.isFinite(ms) || ms < 0` bail.
+ *  Deliberately NOT component-scoped: an in-flight `delay` across an unmount resolves harmlessly
+ *  (callers update state via React, which no-ops on unmounted trees in 18+); a realm teardown
+ *  cancels it structurally (D2). */
+export function delay(ms: number): Promise<void> {
+  if (!Number.isFinite(ms) || ms < 0) return new Promise(() => {});
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export interface IntervalOptions {
+  /** Pause/resume WITHOUT tearing the hook down: while `false`, the callback does not fire; it
+   *  resumes when `true` again. (The pour-over fixture's start/pause/reset rides this.) */
+  running?: boolean;
+}
+
+/**
+ * A repeating timer as a HOOK (design D1). There is no handle to forget and no cleanup for the
+ * author to omit: unmounting the mounting component cancels the timer by construction, which
+ * deletes the §5.5 "interval without cleanup" leak class instead of detecting it. `running:false`
+ * pauses without unmounting.
+ *
+ * `interval` genuinely follows the Rules of Hooks; the `use*` naming the linter keys on can't
+ * see that through the spec-fixed name (design D1 / Risks). Aliasing to `useInterval` stays
+ * additive if hook-rule TOOLING ever becomes load-bearing — hence the scoped disable below,
+ * a rename would break the agent-facing vocabulary #1 already fixed.
+ */
+/* eslint-disable react-hooks/rules-of-hooks */
+export function interval(callback: () => void, ms: number, opts?: IntervalOptions): void {
+  // Keep the latest callback in a ref so changing it does not restart the timer (the canonical
+  // useInterval shape) — only `running`/`ms` changes re-arm it.
+  const saved = React.useRef(callback);
+  React.useEffect(() => {
+    saved.current = callback;
+  }, [callback]);
+
+  const running = opts?.running ?? true;
+  React.useEffect(() => {
+    if (!running || !Number.isFinite(ms) || ms < 0) return undefined;
+    const id = setInterval(() => {
+      saved.current();
+    }, ms);
+    return () => clearInterval(id); // unmount / pause / ms-change → cancel (the un-forgettable cleanup)
+  }, [running, ms]);
+}
+/* eslint-enable react-hooks/rules-of-hooks */
+
+// ── App descriptor (design D6 / tasks 2.4 / 3.1) ─────────────────────────────
 export type ScreenComponent = React.ComponentType<Record<string, unknown>>;
 
 export interface AppSpec {
   name: string;
   initial: string;
   screens: Record<string, ScreenComponent>;
-  /** v0.1 tip splitter is Tier-0: zero syscalls. The bridge/capability gate is v0.2. */
+  /** The capabilities this app declares (the manifest the host gate enforces). Tier-0 apps
+   *  (tip splitter) declare `[]` and never pass the gate's threshold — they never syscall. */
   capabilities: string[];
+  /** The storage schema artifact, REQUIRED when `capabilities` includes `'storage'`. The build
+   *  step extracts this (and `capabilities`) into the host-side app record — single source of
+   *  truth, so a fixture cannot drift from its own declaration. The runtime gate reads only the
+   *  host-held copy (design D6); this in-bundle declaration is what the build extracts. */
+  schema?: SchemaArtifact;
 }
 
 /**
@@ -74,6 +166,81 @@ function emitUiEvent(type: string, label?: string): void {
     /* one-way, best-effort: never let telemetry break the render */
   }
 }
+
+// ── Storage facade (capability-bridge D6 / task 2.3) ──────────────────────────
+// Typed client stubs over the engine's contract verbs. Each call builds a syscall envelope and
+// awaits a correlated `sysret` through `window.__whimSyscall` — the iframe-side marshaller the
+// runtime installs (src/runtime/web/syscall.js), whose ONLY capability is the same one-way
+// `parent.postMessage` transport the loader already holds (constraint #2). The facade caches
+// nothing, validates nothing beyond types, holds no engine handle and no host reference — the
+// host is the sole interpreter of effects (§5.6). Enumerating anything reachable from `storage`
+// yields at most the ability to post a string (the stub-authority invariant).
+interface SyscallTransport {
+  call(method: string, params: Record<string, JsonValue>): Promise<JsonValue>;
+}
+
+function syscall<T>(method: string, params: Record<string, JsonValue>): Promise<T> {
+  const t = (globalThis as { __whimSyscall?: SyscallTransport }).__whimSyscall;
+  if (!t || typeof t.call !== 'function') {
+    return Promise.reject(
+      new Error('vc-sdk: no syscall transport available (capabilities are unreachable in this context)'),
+    );
+  }
+  return t.call(method, params) as Promise<T>;
+}
+
+export const storage = {
+  kv: {
+    /** Read a KV scalar; resolves to `undefined` when the key is absent. */
+    get(key: string): Promise<JsonValue | undefined> {
+      return syscall<{ found: boolean; value: JsonValue }>('storage.kv.get', { key }).then((r) =>
+        r.found ? r.value : undefined,
+      );
+    },
+    set(key: string, value: JsonValue): Promise<void> {
+      return syscall<unknown>('storage.kv.set', { key, value }).then(() => undefined);
+    },
+    remove(key: string): Promise<void> {
+      return syscall<unknown>('storage.kv.remove', { key }).then(() => undefined);
+    },
+  },
+  records: {
+    append(collection: string, record: { [field: string]: JsonValue }): Promise<{ id: number }> {
+      return syscall<{ id: number }>('storage.records.append', { collection, record });
+    },
+    list(collection: string, query?: ListQuery): Promise<StorageRecord[]> {
+      return syscall<{ records: StorageRecord[] }>('storage.records.list', {
+        collection,
+        ...(query ? { query: query as unknown as JsonValue } : {}),
+      }).then((r) => r.records);
+    },
+    update(collection: string, id: number, patch: { [field: string]: JsonValue }): Promise<void> {
+      return syscall<unknown>('storage.records.update', { collection, id, patch }).then(() => undefined);
+    },
+    remove(collection: string, id: number): Promise<void> {
+      return syscall<unknown>('storage.records.remove', { collection, id }).then(() => undefined);
+    },
+  },
+};
+
+// ── Cues facade (effects-and-cues D7) ────────────────────────────────────────
+// Gated physical cues (haptic, short sound) as syscalls #2/#3, riding the SAME one-way
+// `__whimSyscall` transport as `storage` — nothing stronger (constraint #2). Fire-and-forget:
+// each resolves as soon as the host triggers the cue (the sysret is `{}`); completion, duration,
+// and device state are deliberately UNOBSERVABLE — cues add zero sensing surface (D7). Tokens,
+// not values (D4): the closed `HapticKind`/`SoundName` sets are the only expressible vocabulary,
+// and the host owns the token→pattern/tone mapping. Requires `capabilities: ['cues']`; an
+// undeclared call rejects with a structured `undeclared_capability` (the gate, not the stub).
+export const cues = {
+  /** Buzz the device with a named haptic. Resolves once triggered; observes nothing back. */
+  haptic(kind: HapticKind): Promise<void> {
+    return syscall<unknown>('cues.haptic', { kind }).then(() => undefined);
+  },
+  /** Play a named short sound. Resolves once triggered; observes nothing back. */
+  sound(name: SoundName): Promise<void> {
+    return syscall<unknown>('cues.sound', { name }).then(() => undefined);
+  },
+};
 
 // ── Components (design D6 / task 3.2) ─────────────────────────────────────────
 // Each takes tokens and resolves them to CSS internally. The bundle never sees a raw value.
@@ -201,6 +368,9 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
       color: color('text'),
       width: '100%',
       boxSizing: 'border-box',
+      outline: 'none',
+      WebkitAppearance: 'none',
+      MozAppearance: 'textfield',
     },
   });
   if (!label) return field;

@@ -35,14 +35,14 @@
   // delete-then-redefine, falling back to plain assignment. Returns the technique that
   // actually stuck, so the probe report can show HOW each global was neutralized.
   function neutralize(name, replacement) {
-    try { delete window[name]; } catch (e) {}
+    try { delete window[name]; } catch (e) { }
     try {
       Object.defineProperty(window, name, {
         value: replacement, writable: false, configurable: false, enumerable: false,
       });
       return 'redefined';
-    } catch (e) {}
-    try { window[name] = replacement; return 'assigned'; } catch (e) {}
+    } catch (e) { }
+    try { window[name] = replacement; return 'assigned'; } catch (e) { }
     return 'non-configurable'; // could not touch it on window → loader.js lexically shadows it
   }
 
@@ -53,7 +53,7 @@
       set: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
       apply: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
     };
-    try { return new Proxy(function () {}, handler); } catch (e) { return undefined; }
+    try { return new Proxy(function () { }, handler); } catch (e) { return undefined; }
   }
 
   var report = {};
