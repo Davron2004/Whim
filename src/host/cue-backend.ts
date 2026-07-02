@@ -2,7 +2,7 @@
 // cue-backend — the RN host implementation of the bridge `CueBackend` (effects-and-cues D5/D6).
 // ─────────────────────────────────────────────────────────────────────────────
 // This is the ONE place React Native APIs meet the cue contract. It is imported only host-side
-// (WebViewHost injects it into `createDefaultRegistry`), NEVER by `src/host/bridge/*` — the
+// (`useMiniAppHost` injects it into `createDefaultRegistry`), NEVER by `src/host/bridge/*` — the
 // bridge rows bind to the pure `CueBackend` interface so they stay loadable under Node (the
 // deterministic suites). The token→pattern (haptics) and token→tone (sound) mappings live here
 // (and, for sound, in the Kotlin module): the syscall contract exposes only the closed tokens,

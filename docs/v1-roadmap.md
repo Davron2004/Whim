@@ -197,14 +197,14 @@ of any SDK cooperation. In #5, depth is always 0 (no SDK nav) → back exits at 
 **Why:** the host is currently a probe screen; this is the product shell.
 **In:** installed-apps record store (id, name, manifest, schema, bundle ref — design decides
 MMKV record vs version-store-backed); home grid + full-screen launch through the existing
-`WebViewHost` (one WebView == one realm == one app — #41 D2: "the launcher era is a loop, not
+`useMiniAppHost`/`MiniAppView` (one WebView == one realm == one app — #41 D2: "the launcher era is a loop, not
 a redesign"); delete + fork entry points; first-run seeding (tip splitter + water counter
 fixtures as pre-installed, example-labeled records); **back navigation as task 1** (the spec's
 own "prototype early" flag): system back pops the mini-app nav stack then exits at root —
 needs an SDK-nav↔host coordination design (e.g., a control frame or host-mirrored nav depth) —
 plus the draggable auto-dimming floating extra.
 **Out:** prompt screen (#7), history UX (#6), any server talk.
-**Read first:** decisions #41/#42, `src/host/WebViewHost.tsx`, spec §10.
+**Read first:** decisions #41/#42, `src/host/launcher/useMiniAppHost.ts`, spec §10.
 **Done when:** seeded launcher → tap app → runs → system back exits → delete/fork work, on-device.
 
 #### 6. `version-history-ux` — Size M · Deps: #5
