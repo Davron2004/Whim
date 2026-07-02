@@ -65,16 +65,26 @@ function Home() {
   }, []);
 
   const add = async (count: number) => {
-    const next = total + count;
+    const previous = total;
+    const next = previous + count;
     setTotal(next); // optimistic; the syscall persists it
+    let kvSaved = false;
+    let landed = 0;
     try {
       await storage.kv.set('total', next);
+      kvSaved = true;
       for (let i = 0; i < count; i++) {
         await storage.records.append('Drinks', { at: Date.now() });
+        landed++;
       }
-      setHistory((h) => h + count);
+      setHistory((h) => h + landed);
       setStatus('saved');
     } catch (e) {
+      // kv.set already landed → `next` is the durable truth, so keep it displayed (reverting
+      // here would diverge from what a reload shows). Only undo the optimistic bump if the kv
+      // write itself never made it to storage.
+      if (!kvSaved) setTotal(previous);
+      if (landed > 0) setHistory((h) => h + landed);
       setStatus('save failed: ' + hintOf(e));
     }
   };
