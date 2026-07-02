@@ -83,7 +83,10 @@ export interface RangeFilter {
 }
 
 /** A `where` clause: per-field equality (`value`) or a range (`{gt|gte|lt|lte}`),
- *  AND-composed across fields. No OR, no joins, no aggregates, no expressions. */
+ *  AND-composed across fields. No OR, no joins, no aggregates, no expressions.
+ *  `json`-typed fields are opaque payloads and are NOT accepted here — naming one is
+ *  refused with `unqueryable_field`, never silently reinterpreted (a json value that
+ *  happens to carry `gt`/`gte`/`lt`/`lte` keys is not a range filter). */
 export type WhereClause = { [displayField: string]: JsonValue | RangeFilter };
 
 export interface OrderBy {
@@ -91,6 +94,7 @@ export interface OrderBy {
   direction: 'asc' | 'desc';
 }
 
+/** `orderBy.field` also excludes `json`-typed fields — same `unqueryable_field` refusal. */
 export interface ListQuery {
   where?: WhereClause;
   orderBy?: OrderBy;
@@ -160,6 +164,7 @@ export type StorageErrorKind =
   | 'unknown_field'
   | 'unknown_record'
   | 'type_mismatch'
+  | 'unqueryable_field'
   | 'kv_too_large'
   | 'not_open'
   | 'corrupt_storage';
