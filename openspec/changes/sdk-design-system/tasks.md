@@ -2,9 +2,9 @@
 
 ## 1. Theme core (SDK)
 
-- [ ] 1.1 Create `src/sdk/theme.ts`: `WhimTheme`/`ThemePref`/`ThemeShape` types, the 6 presets, 10 accent pairs, shape→radius scales, `resolveTheme`, `sanitizeTheme`, frozen `DEFAULT_THEME` — values verbatim from design.md "The theme model".
-- [ ] 1.2 Rework `src/sdk/tokens.ts`: resolvers read the active theme (`globalThis.__WHIM_THEME__` sanitized once, cached, fallback `DEFAULT_THEME`); `ColorToken` gains `positive`/`warning`; radius resolves through the theme's shape scale; add a `FONT` stack constant and use it where fonts were hardcoded.
-- [ ] 1.3 Re-export theme types (`WhimTheme`, `ThemeShape`) type-only from `src/sdk/index.tsx`; keep every existing export intact; `npm run build && npm run typecheck` green.
+- [x] 1.1 Create `src/sdk/theme.ts`: `WhimTheme`/`ThemePref`/`ThemeShape` types, the 6 presets, 10 accent pairs, shape→radius scales, `resolveTheme`, `sanitizeTheme`, frozen `DEFAULT_THEME` — values verbatim from design.md "The theme model".
+- [x] 1.2 Rework `src/sdk/tokens.ts`: resolvers read the active theme (`globalThis.__WHIM_THEME__` sanitized once, cached, fallback `DEFAULT_THEME`); `ColorToken` gains `positive`/`warning`; radius resolves through the theme's shape scale; add a `FONT` stack constant and use it where fonts were hardcoded.
+- [x] 1.3 Re-export theme types (`WhimTheme`, `ThemeShape`) type-only from `src/sdk/index.tsx`; keep every existing export intact; `npm run build && npm run typecheck` green.
 
 ## 2. SDK controls
 
@@ -20,9 +20,9 @@
 
 ## 4. Runtime theme delivery
 
-- [ ] 4.1 `src/runtime/web/loader.js`: on the `__whimHostInit` frame, if a `theme` field is present, install it as `globalThis.__WHIM_THEME__` (Object.freeze) before any bundle mount; absent field = no global, zero behavior change.
-- [ ] 4.2 `src/host/launcher/deliver.ts`: `deliverBySourceJs(record, source, generation, theme?)` — serialize a validated theme into the `reinject` options; extend `deliver.suite.ts` (theme present/absent, serialization safety).
-- [ ] 4.3 `src/host/launcher/useMiniAppHost.ts`: thread an optional theme through `deliverBySource`.
+- [x] 4.1 `src/runtime/web/loader.js`: on the `__whimHostInit` frame, if a `theme` field is present, install it as `globalThis.__WHIM_THEME__` (Object.freeze) before any bundle mount; absent field = no global, zero behavior change.
+- [x] 4.2 `src/host/launcher/deliver.ts`: `deliverBySourceJs(record, source, generation, theme?)` — serialize a validated theme into the `reinject` options; extend `deliver.suite.ts` (theme present/absent, serialization safety).
+- [x] 4.3 `src/host/launcher/useMiniAppHost.ts`: thread an optional theme through `deliverBySource`.
 - [ ] 4.4 MAIN THREAD ONLY: `build/assemble.mjs` — outer page carries `reinject` opts `theme` into the `__whimHostInit` frame; `build/build.mjs` — register `style-gallery` in `APPS` + `bundles`.
 
 ## 5. Launcher theme state
@@ -37,7 +37,7 @@
 - [ ] 6.2 `LauncherRoot.tsx`: provide theme context, persist on change, add `{kind:'settings'}` to the `Screen` union, pass the resolved theme into `MiniAppView` → `deliverBySource`.
 - [ ] 6.3 Restyle `HomeScreen.tsx` from `shellPalette`: header (wordmark + settings affordance), themed tiles/cards/CTA; kill inlined hex.
 - [ ] 6.4 Theme `MiniAppView`/`App.tsx` backgrounds + StatusBar style from `theme.dark`; all new strings through `copy.ts`.
-- [ ] 6.5 `seed.ts`: `SEED_VERSION = 2`, add `style-gallery` seed; update `seed.suite.ts`.
+- [ ] 6.5 (runs in chain-G — needs the gallery registered and built first) `seed.ts`: `SEED_VERSION = 2`, add `style-gallery` seed; update `seed.suite.ts`.
 
 ## 7. Gallery, docs, close-out
 

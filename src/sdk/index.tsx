@@ -24,12 +24,17 @@ import {
   color,
   weight,
   textSize,
+  FONT,
   type SpaceToken,
   type RadiusToken,
   type ColorToken,
   type TextSizeToken,
   type WeightToken,
 } from './tokens';
+
+// The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
+// crosses this seam beyond the resolvers above, which already read the active theme.
+export type { WhimTheme, ThemeShape } from './theme';
 
 // The storage verb/param types are the `mini-app-storage-engine` D8 inter-change seam,
 // re-exported here so a mini-app author types its `schema` and storage calls against the
@@ -259,7 +264,7 @@ export function Screen({ padding = 'lg', children }: ScreenProps) {
         padding: space(padding),
         background: color('bg'),
         color: color('text'),
-        font: '16px system-ui, -apple-system, sans-serif',
+        font: `16px ${FONT}`,
       },
     },
     children,
@@ -400,7 +405,7 @@ export function Button({ label, radius: radiusToken = 'md', onPress }: ButtonPro
         if (onPress) onPress();
       },
       style: {
-        font: '600 17px system-ui, sans-serif',
+        font: `600 17px ${FONT}`,
         padding: `${space('md')} ${space('lg')}`,
         borderRadius: radius(radiusToken),
         border: 'none',

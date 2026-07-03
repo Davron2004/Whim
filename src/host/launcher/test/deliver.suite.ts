@@ -54,4 +54,38 @@ export async function runDeliverTests(h: Harness): Promise<void> {
       globalThis.TextEncoder = saved;
     }
   });
+
+  // (4) theme present → serialized options carry the JSON-stringified theme under `theme:`.
+  await h.test('deliver with a theme includes the JSON-stringified theme under the theme key', async () => {
+    const theme = { name: 'paper', dark: false, shape: 'soft' };
+    const r = deliverBySourceJs({ name: 'x', source: 'a', generation: 1, theme });
+    h.ok(r.includes(',theme:' + JSON.stringify(theme)), 'output contains the theme field serialized like the other fields');
+  });
+
+  // (5) theme absent → output is byte-identical to the pre-theme form (no "theme" substring).
+  await h.test('deliver without a theme is byte-identical to the pre-theme output', async () => {
+    const r = deliverBySourceJs({ name: 'x', source: 'a', generation: 1 });
+    h.ok(!r.includes('theme'), 'output has no theme field when theme is omitted');
+    h.eq(
+      r,
+      'window.__whimControl.reinject({reset:true,bundle:"x",bundleSource:"a",generation:1})',
+      'omitted theme reproduces exactly the pre-theme injectJavaScript string',
+    );
+  });
+
+  // (6) a theme value containing quotes/</script> can't break out of the enclosing JS string —
+  // JSON.stringify's escaping (backslash-escaped quotes) holds inside the reinject(...) call.
+  await h.test('deliver theme with quotes and </script> stays inside the JS string', async () => {
+    const theme = { name: 'a"b</script>c\\d' };
+    const r = deliverBySourceJs({ name: 'x', source: 'a', generation: 1, theme });
+    h.ok(r.includes(',theme:' + JSON.stringify(theme)), 'theme is embedded via the same JSON.stringify escaping as every other field');
+    // Extract exactly the theme value's own serialized text (the tail of the call, after the
+    // trailing `})`) and re-parse it as JSON: if the embedded quote had broken out of the JS
+    // string unescaped, this slice would either fail to parse or parse to something other than
+    // the original theme object.
+    const idx = r.indexOf(',theme:');
+    h.ok(idx !== -1, 'theme field is present to slice out');
+    const themeSlice = r.slice(idx + ',theme:'.length, -2); // strip the trailing '})'
+    h.eq(JSON.parse(themeSlice), theme, 'the escaped theme round-trips back to the original object');
+  });
 }

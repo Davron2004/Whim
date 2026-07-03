@@ -34,14 +34,14 @@ Rules honored: 3–7 tasks per chain, grouped by files/layer; each chain complet
 - writes-contract: handoff/launcher-theme.md (context value shape, useTheme, shellPalette output keys, pref key + load/save signatures).
 
 ## chain-F: launcher-ui
-- tasks: 6.1, 6.2, 6.3, 6.4, 6.5
+- tasks: 6.1, 6.2, 6.3, 6.4
 - rationale: all visible shell changes in one pass so the restyle is coherent.
 - reads: design.md D3, D7, D8; handoff/launcher-theme.md; handoff/delivery.md.
 - writes-contract: none.
 
 ## chain-G: gallery-and-docs
-- tasks: 7.1, 7.2 (agent); 7.3 (MAIN THREAD).
-- rationale: needs the full kit (B, C) and build registration (4.4) in place; doubles as end-to-end verification.
+- tasks: 7.1 (agent) → 4.4 build.mjs registration (MAIN THREAD, mid-chain) → 6.5, 7.2 (agent); 7.3 (MAIN THREAD).
+- rationale: needs the full kit (B, C); the seed task (6.5) depends on the generated APP_RECORDS entry existing, so it follows the main-thread registration; doubles as end-to-end verification.
 - reads: design.md D6, D9; docs/sdk-reference.md structure free; fixtures/tip-splitter.app.tsx as the fixture template.
 - writes-contract: none.
 

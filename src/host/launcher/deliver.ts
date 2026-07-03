@@ -37,6 +37,12 @@ export interface DeliverBySourceArgs {
   source: string;
   /** The realm generation the host bound this delivery at (stamped into the init frame). */
   generation: number;
+  /** Optional resolved theme (sdk-design-system D1/D8), forwarded opaquely into the reinject
+   *  options and on into the `__whimHostInit` frame. This module does not import `vc-sdk` and
+   *  does not validate the shape — the caller passes an already-resolved theme, and the
+   *  iframe-side SDK (`sanitizeTheme`) is the trust boundary. Absent → the emitted JS is
+   *  byte-identical to the no-theme form. */
+  theme?: object;
 }
 
 /**
@@ -55,6 +61,7 @@ export function deliverBySourceJs(args: DeliverBySourceArgs): string {
     JSON.stringify(args.source) +
     ',generation:' +
     String(args.generation) +
+    (args.theme !== undefined ? ',theme:' + JSON.stringify(args.theme) : '') +
     '})'
   );
 }
