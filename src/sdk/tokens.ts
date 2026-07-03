@@ -12,7 +12,7 @@
 // `globalThis.__WHIM_THEME__` becomes a trusted `WhimTheme`. `space()`/`weight()`/
 // `textSize()` are theme-independent and behave exactly as before.
 
-import { sanitizeTheme, DEFAULT_THEME, RADIUS_SCALE, type WhimTheme } from './theme';
+import { sanitizeTheme, RADIUS_SCALE, type WhimTheme } from './theme';
 
 export type SpaceToken = 'none' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type RadiusToken = 'none' | 'sm' | 'md' | 'lg' | 'full';
@@ -43,15 +43,6 @@ export const SPACE: Record<SpaceToken, string> = {
   lg: '20px',
   xl: '32px',
 };
-
-/** The `paper`-preset (soft-shape) radius scale, kept as a static export for existing
- *  consumers. The resolver `radius()` below maps through the ACTIVE theme's shape scale
- *  instead of this fixed table. */
-export const RADIUS: Record<RadiusToken, string> = RADIUS_SCALE.soft;
-
-/** The `paper`-preset color table, kept as a static export for existing consumers. The
- *  resolver `color()` below reads the ACTIVE theme instead of this fixed table. */
-export const COLOR: Record<ColorToken, string> = DEFAULT_THEME.colors;
 
 // font-size paired with a sensible default weight + line-height per size token.
 export const TEXT_SIZE: Record<TextSizeToken, { size: string; weight: WeightToken; line: string }> = {
