@@ -325,6 +325,16 @@ plan: screens/state/capabilities/storage keys; validated against the request, §
 (SDK reference + token vocab + hand-curated few-shot examples); SSE stage events wired to #7's
 states; token metering per device.
 **Out:** agent memory/`LEARNED.md` (§9, post-v1), control modes, multi-model serving.
+**Carryover (from `server-cancellation`):** the client-disconnect abort path already landed — both
+`ReadableStream.cancel()` and `Request.signal` wire to one per-request `AbortController`, threaded
+through `Pipeline.run(request, signal?)`, and the OpenRouter wrapper now accepts a `signal` and
+captures the generation `id` from the first SSE chunk (`StreamResult.id`). Two things are left for
+this change: (a) **LAN acceptance** — kill the device app mid-generation and confirm the server log
+shows the abort, verifying `@hono/node-server` fires `Request.signal` on a real TCP disconnect (only
+the `cancel()` surface is covered by deterministic tests today); (b) **usage reconciliation** — on
+abort, poll `GET /api/v1/generation?id=<StreamResult.id>` for authoritative post-abort token counts
+(retry until the record resolves). Cancellation stops upstream billing only on supported providers —
+factor that into provider selection.
 **Read first:** spec §8 entire, §10.1, #42 model strategy, #9/#10 contract notes.
 
 #### 12. `eval-harness` — Size M · Deps: #1, #9; full value after #11

@@ -9,9 +9,12 @@
  *   - The generation stream rides a POST response (`fetch` + readable stream), NOT `EventSource`
  *     (GET-only); the request carries a body. RN's fetch streams responses, which is the only
  *     first-party client.
- *   - A `GenerationEvent` stream carries EXACTLY ONE terminal event (`result` | `failure`), always
- *     last. That is a stream-level invariant enforced by the emitter — it is not (and cannot be)
- *     expressed in the per-event schema below.
+ *   - A `GenerationEvent` stream that runs to completion carries EXACTLY ONE terminal event
+ *     (`result` | `failure`), always last. That is a stream-level invariant enforced by the
+ *     emitter — it is not (and cannot be) expressed in the per-event schema below. A stream
+ *     aborted by the client (disconnect or cancellation) ends without a terminal event; the
+ *     invariant applies only to streams the server runs to completion, and a truncated stream
+ *     is not a conformance violation.
  *   - Schemas evolve additively under `/v1` (storage lane's additive-only discipline, #38).
  */
 import { z } from 'zod';
