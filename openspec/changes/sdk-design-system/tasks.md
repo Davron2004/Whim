@@ -23,7 +23,7 @@
 - [x] 4.1 `src/runtime/web/loader.js`: on the `__whimHostInit` frame, if a `theme` field is present, install it as `globalThis.__WHIM_THEME__` (Object.freeze) before any bundle mount; absent field = no global, zero behavior change.
 - [x] 4.2 `src/host/launcher/deliver.ts`: `deliverBySourceJs(record, source, generation, theme?)` — serialize a validated theme into the `reinject` options; extend `deliver.suite.ts` (theme present/absent, serialization safety).
 - [x] 4.3 `src/host/launcher/useMiniAppHost.ts`: thread an optional theme through `deliverBySource`.
-- [ ] 4.4 MAIN THREAD ONLY: `build/assemble.mjs` — outer page carries `reinject` opts `theme` into the `__whimHostInit` frame; `build/build.mjs` — register `style-gallery` in `APPS` + `bundles`.
+- [x] 4.4 MAIN THREAD ONLY: `build/assemble.mjs` — outer page carries `reinject` opts `theme` into the `__whimHostInit` frame; `build/build.mjs` — register `style-gallery` in `APPS` + `bundles`.
 
 ## 5. Launcher theme state
 
@@ -43,4 +43,4 @@
 
 - [x] 7.1 Create `fixtures/style-gallery.app.tsx`: one screen exercising every new component (Cards per section, live Switch/Slider/Segmented state, Modal demo, Badge/Progress/List/EmptyState).
 - [x] 7.2 Write `docs/sdk-reference.md`: prompt-ready reference — every export, props, tokens, theme note.
-- [ ] 7.3 MAIN THREAD: roadmap ledger note (launcher-theme scope beyond #5), decision log entry, `progress.md`, full gate.
+- [x] 7.3 MAIN THREAD: roadmap ledger note (launcher-theme scope beyond #5), decision log entry, `progress.md`, full gate.

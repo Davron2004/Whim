@@ -15,6 +15,11 @@
 - chain-F (launcher-ui): COMPLETE — full gate.sh PASS. Deviations accepted: corner-pill toggle clears the shape override (no 4th pill); dev-only probe screens lose shared StatusBar styling (cosmetic, flag-gated).
 - chain-G (gallery-and-docs): 7.1 COMPLETE (fixture, every new export exercised); 6.5 + 7.2 dispatched after main-thread registration.
 
+## Review
+
+- Reviewer audit (full main...HEAD diff): no containment or trust-boundary issues; loader/assemble diffs confirmed exactly the additive D1/D8 forwarding; sanitize/caching semantics verified non-vacuously; preset tables verbatim; seams clean. Three minor findings, all fixed post-review: stale 4.4/7.3 checkboxes; sticky `pendingTheme` in assemble.mjs (now cleared on every reinject without a theme, matching D8); design D8 reworded to describe the actual structural host-side validity + iframe-side sanitize mechanism.
+- gate-full.sh: FULL GATE PASSED (exit 0) — rerun again after the post-review assemble.mjs fix.
+
 ## Close-out
 
 - decisions.md #45 appended; v1-roadmap Open deltas note added.
