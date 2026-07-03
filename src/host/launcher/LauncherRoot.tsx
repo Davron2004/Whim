@@ -41,6 +41,7 @@ function defaultSeeds(): SeedSpec[] {
   const seeds: Array<{ id: string; name: string; prompt: string }> = [
     { id: 'tip-splitter', name: 'Tip Splitter', prompt: 'Example: split a bill with tip' },
     { id: 'water-counter', name: 'Water Counter', prompt: 'Example: track glasses of water' },
+    { id: 'style-gallery', name: 'Style Gallery', prompt: 'Example: every SDK component in one screen' },
   ];
   return seeds
     .filter(s => APP_RECORDS[s.id] && APP_BUNDLES[s.id])

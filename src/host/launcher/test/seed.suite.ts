@@ -16,6 +16,17 @@ const SEEDS: SeedSpec[] = [
   { id: 'tip-splitter', name: 'Tip Splitter', prompt: 'Example: split a bill with tip', record: REC('tip-splitter'), bundleSource: 'TIP_SRC' },
   { id: 'water-counter', name: 'Water Counter', prompt: 'Example: track glasses of water', record: REC('water-counter'), bundleSource: 'WATER_SRC' },
 ];
+// The v2 seed set (sdk-design-system D9): the original two plus the style-gallery example.
+const SEEDS3: SeedSpec[] = [
+  ...SEEDS,
+  {
+    id: 'style-gallery',
+    name: 'Style Gallery',
+    prompt: 'Example: every SDK component in one screen',
+    record: REC('style-gallery'),
+    bundleSource: 'GALLERY_SRC',
+  },
+];
 
 function rig() {
   const store = createMemoryStore({ autoCompact: false });
@@ -60,5 +71,34 @@ export async function runSeedTests(h: Harness): Promise<void> {
     await seedFirstRun(index2, access2, SEEDS);
     h.eq(index2.get('water-counter'), null, 'deleted example does NOT reappear (marker gates it)');
     h.eq(index2.list().map(a => a.id), ['tip-splitter'], 'only the un-deleted example remains');
+  });
+
+  await h.test('seed: seeding at SEED_VERSION 2 installs all three examples, gallery included + labeled', async () => {
+    const { store, index, access } = rig();
+    await seedFirstRun(index, access, SEEDS3);
+    h.eq(index.list().map(a => a.id), ['tip-splitter', 'water-counter', 'style-gallery'], 'all three examples installed');
+    h.eq(index.get('style-gallery')?.example, true, 'gallery labeled as an example');
+    h.eq((await store.history('style-gallery')).length, 1, 'gallery has snapshot #1');
+    h.eq(index.seedVersion(), SEED_VERSION, 'marker recorded at version 2');
+  });
+
+  await h.test('seed: an install already seeded at version 1 gains style-gallery on re-run, no duplicates', async () => {
+    const { index, access, store, map } = rig();
+    await seedFirstRun(index, access, SEEDS, 1); // simulate a prior install seeded under the v1 set
+    h.eq(index.list().map(a => a.id), ['tip-splitter', 'water-counter'], 'v1 install has the original two');
+    h.eq(index.seedVersion(), 1, 'marker recorded at version 1');
+
+    // simulate a restart on the upgraded (v2) seed set — the per-id has() skip must leave the
+    // already-installed originals untouched and only add the gallery.
+    const index2 = new AppIndex(new MapKVBackend(map));
+    const access2 = new StoreAccess({ store, index: index2 });
+    await seedFirstRun(index2, access2, SEEDS3);
+    h.eq(
+      index2.list().map(a => a.id),
+      ['tip-splitter', 'water-counter', 'style-gallery'],
+      'gallery added, originals not duplicated',
+    );
+    h.eq((await store.history('tip-splitter')).length, 1, 'original not re-snapshotted');
+    h.eq(index2.seedVersion(), SEED_VERSION, 'marker advances to version 2');
   });
 }
