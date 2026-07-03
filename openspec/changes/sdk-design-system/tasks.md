@@ -14,9 +14,9 @@
 
 ## 3. SDK surfaces
 
-- [ ] 3.1 Create `src/sdk/surfaces.tsx`: `Card`, `Divider`, `Badge`, `ProgressBar`, `List`/`ListItem`, `Spacer`, `EmptyState`, `Modal`, `Grid` per D6.
-- [ ] 3.2 Add `align` to `Text`, `align`/`justify` to `Row` (existing defaults unchanged).
-- [ ] 3.3 Re-export surfaces from `index.tsx`; build + typecheck + lint green.
+- [x] 3.1 Create `src/sdk/surfaces.tsx`: `Card`, `Divider`, `Badge`, `ProgressBar`, `List`/`ListItem`, `Spacer`, `EmptyState`, `Modal`, `Grid` per D6.
+- [x] 3.2 Add `align` to `Text`, `align`/`justify` to `Row` (existing defaults unchanged).
+- [x] 3.3 Re-export surfaces from `index.tsx`; build + typecheck + lint green.
 
 ## 4. Runtime theme delivery
 

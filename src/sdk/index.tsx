@@ -31,6 +31,7 @@ import {
   type TextSizeToken,
   type WeightToken,
 } from './tokens';
+import { emitUiEvent } from './events';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
 // crosses this seam beyond the resolvers above, which already read the active theme.
@@ -155,22 +156,8 @@ export function defineApp(spec: AppSpec): AppSpec {
 }
 
 // ── The one-way UI-event transport (constraint #2) ───────────────────────────
-// A press is surfaced to the RN host as a one-way string on the §5.6 transport — the same
-// pipe that later carries the syscall RPC envelope. It grants the app NOTHING (fire-and-
-// forget, no return value, no native handle); it only lets a user interaction reach the host
-// (sandbox-rendering: "a tap reaches the host"). If the transport stub is absent (e.g. a
-// plain desktop preview with no host), this is a no-op.
-function emitUiEvent(type: string, label?: string): void {
-  try {
-    const rnww = (globalThis as { ReactNativeWebView?: { postMessage(s: string): void } })
-      .ReactNativeWebView;
-    if (rnww && typeof rnww.postMessage === 'function') {
-      rnww.postMessage(JSON.stringify({ __whimUiEvent: true, type, label }));
-    }
-  } catch {
-    /* one-way, best-effort: never let telemetry break the render */
-  }
-}
+// Shared with `controls.tsx`/`surfaces.tsx` (design D5) via `events.ts` (imported at top) —
+// see that file for the full rationale; kept as a single, non-duplicated definition.
 
 // ── Storage facade (capability-bridge D6 / task 2.3) ──────────────────────────
 // Typed client stubs over the engine's contract verbs. Each call builds a syscall envelope and
@@ -283,15 +270,33 @@ export function Stack({ gap = 'md', children }: StackProps) {
   );
 }
 
-export function Row({ gap = 'md', children }: StackProps) {
+export interface RowProps extends StackProps {
+  /** Cross-axis alignment (`alignItems`). Absent = today's `'baseline'` default, unchanged. */
+  align?: 'start' | 'center' | 'end';
+  /** Main-axis distribution (`justifyContent`). Absent = today's `'space-between'` default,
+   *  unchanged; `'between'` maps to `'space-between'`. */
+  justify?: 'start' | 'center' | 'end' | 'between';
+}
+const ALIGN_ITEMS: Record<NonNullable<RowProps['align']>, string> = {
+  start: 'flex-start',
+  center: 'center',
+  end: 'flex-end',
+};
+const JUSTIFY_CONTENT: Record<NonNullable<RowProps['justify']>, string> = {
+  start: 'flex-start',
+  center: 'center',
+  end: 'flex-end',
+  between: 'space-between',
+};
+export function Row({ gap = 'md', align, justify, children }: RowProps) {
   return React.createElement(
     'div',
     {
       style: {
         display: 'flex',
         flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
+        alignItems: align ? ALIGN_ITEMS[align] : 'baseline',
+        justifyContent: justify ? JUSTIFY_CONTENT[justify] : 'space-between',
         gap: space(gap),
       },
     },
@@ -303,9 +308,17 @@ export interface TextProps {
   size?: TextSizeToken;
   color?: ColorToken;
   weight?: WeightToken;
+  /** Text alignment (`textAlign`). Absent = today's behavior (no `textAlign` set). */
+  align?: 'start' | 'center' | 'end';
   children?: React.ReactNode;
 }
-export function Text({ size = 'body', color: colorToken = 'text', weight: weightToken, children }: TextProps) {
+export function Text({
+  size = 'body',
+  color: colorToken = 'text',
+  weight: weightToken,
+  align,
+  children,
+}: TextProps) {
   const t = textSize(size);
   return React.createElement(
     'span',
@@ -315,6 +328,7 @@ export function Text({ size = 'body', color: colorToken = 'text', weight: weight
         lineHeight: t.line,
         fontWeight: weight(weightToken ?? t.weight),
         color: color(colorToken),
+        ...(align ? { textAlign: align } : {}),
       },
     },
     children,
@@ -390,17 +404,45 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
 export interface ButtonProps {
   label: string;
   radius?: RadiusToken;
+  /** `'primary'` (default) renders byte-identical to the pre-D6 Button. */
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  disabled?: boolean;
   onPress?: () => void;
 }
-export function Button({ label, radius: radiusToken = 'md', onPress }: ButtonProps) {
+// Per-variant chrome (design D6): secondary = surface bg + 1px border + text; ghost =
+// transparent + no border + primary text; danger = danger bg + on-primary text. Computed inside
+// the component (not module scope) so it re-resolves through the render-time `color()` call,
+// matching how every other component here reads the active theme.
+function buttonVariantStyle(variant: NonNullable<ButtonProps['variant']>) {
+  switch (variant) {
+    case 'secondary':
+      return { background: color('surface'), border: `1px solid ${color('border')}`, color: color('text') };
+    case 'ghost':
+      return { background: 'transparent', border: 'none', color: color('primary') };
+    case 'danger':
+      return { background: color('danger'), border: 'none', color: color('on-primary') };
+    case 'primary':
+    default:
+      return { background: color('primary'), border: 'none', color: color('on-primary') };
+  }
+}
+export function Button({
+  label,
+  radius: radiusToken = 'md',
+  variant = 'primary',
+  disabled = false,
+  onPress,
+}: ButtonProps) {
   return React.createElement(
     'button',
     {
       type: 'button',
+      disabled,
       onClick: () => {
         // (b) surface the tap to the host over the one-way transport (constraint #2), then
         // (a) run the app's own handler. Order is intentional: the host observes the event
-        // even if the app handler throws.
+        // even if the app handler throws. Disabled buttons suppress both.
+        if (disabled) return;
         emitUiEvent('press', label);
         if (onPress) onPress();
       },
@@ -408,19 +450,51 @@ export function Button({ label, radius: radiusToken = 'md', onPress }: ButtonPro
         font: `600 17px ${FONT}`,
         padding: `${space('md')} ${space('lg')}`,
         borderRadius: radius(radiusToken),
-        border: 'none',
-        color: color('on-primary'),
-        background: color('primary'),
         width: '100%',
-        cursor: 'pointer',
+        cursor: disabled ? 'default' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        ...buttonVariantStyle(variant),
       },
     },
     label,
   );
 }
 
-// NOTE (design Open Question — "Slider or SegmentedControl?"): the tip-splitter fixture uses
-// `NumberInput` for all three numeric inputs (bill / tip% / people), so neither Slider nor
-// SegmentedControl is needed for v0.1. Resolved by NOT shipping unexercised components in
-// this security-critical change ("implement only what it uses"); the chosen control is a
-// deferred call for the SDK design-system change, made with the real component surface in hand.
+// ── Controls (design D5/D6) ───────────────────────────────────────────────────
+// Interactive form controls live in `controls.tsx` (their own review lens, shared event/
+// appearance discipline) and are re-exported here so `vc-sdk` stays the single import surface.
+export { TextInput, Switch, Checkbox, Slider, SegmentedControl } from './controls';
+export type {
+  TextInputProps,
+  SwitchProps,
+  CheckboxProps,
+  SliderProps,
+  SegmentedControlProps,
+} from './controls';
+
+// ── Surfaces (design D5/D6) ───────────────────────────────────────────────────
+// Layout/display surfaces live in `surfaces.tsx` (own review lens) and are re-exported here so
+// `vc-sdk` stays the single import surface.
+export {
+  Card,
+  Divider,
+  Spacer,
+  Grid,
+  Badge,
+  ProgressBar,
+  List,
+  ListItem,
+  EmptyState,
+  Modal,
+} from './surfaces';
+export type {
+  CardProps,
+  GridProps,
+  BadgeTone,
+  BadgeProps,
+  ProgressBarProps,
+  ListProps,
+  ListItemProps,
+  EmptyStateProps,
+  ModalProps,
+} from './surfaces';
