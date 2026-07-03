@@ -25,6 +25,7 @@
 - Verified on-device: live preset switching (paper→neon) restyles shell + status bar; theme rides into the sandboxed gallery (fuchsia primaries, dark cards); slider drag (pointer capture) works in the real WebView; modal, list, badges, grid all render as designed; Tip Splitter regression-free under paper.
 - Device-driven fixes (supplemental polish pass, gate.sh green): custom Slider (native track glared white on dark), custom Checkbox (native unchecked square clashed; radius follows theme shape, ✓ glyph carries semantics), Button width:'100%' removed (clipped in Rows; flex stretch keeps Stack behavior), Row wraps on overflow, Modal bottom padding clears the gesture-nav pill. design.md D6 updated to match.
 - accent-color is no longer load-bearing anywhere (both native-control consumers replaced).
+- Round 2 (user-reported, verified with held motionevents — invisible to tap-then-screenshot): Android WebView's -webkit-tap-highlight-color painted a holo-blue flash over the full border box of anything clickable (worst on Switch's full-width row). Suppressed via a shared TAP_RESET fragment on every interactive element; Button/Card/ListItem (no intrinsic state change) gained pressed feedback sized to the visual element (opacity dip / bg tint) via a shared usePressed() hook (src/sdk/press.ts). Long-press text selection on labels also suppressed (userSelect none at Screen root, re-enabled on text inputs). Native RN screens were never affected.
 
 ## Close-out
 

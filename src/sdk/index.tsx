@@ -32,6 +32,7 @@ import {
   type WeightToken,
 } from './tokens';
 import { emitUiEvent } from './events';
+import { TAP_RESET, usePressed } from './press';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
 // crosses this seam beyond the resolvers above, which already read the active theme.
@@ -252,6 +253,11 @@ export function Screen({ padding = 'lg', children }: ScreenProps) {
         background: color('bg'),
         color: color('text'),
         font: `16px ${FONT}`,
+        // Mini-apps are apps, not documents: long-press must not start text selection
+        // (Android WebView otherwise selects e.g. a Button's label). Editable inputs
+        // re-enable selection on their own elements.
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
       },
     },
     children,
@@ -391,6 +397,9 @@ export function NumberInput({ label, value, min, max, step, onChange }: NumberIn
       outline: 'none',
       WebkitAppearance: 'none',
       MozAppearance: 'textfield',
+      userSelect: 'text',
+      WebkitUserSelect: 'text',
+      ...TAP_RESET,
     },
   });
   if (!label) return field;
@@ -434,6 +443,11 @@ export function Button({
   disabled = false,
   onPress,
 }: ButtonProps) {
+  // Button has no intrinsic visual response to a press (unlike Switch/Checkbox's own state
+  // change), so it gets a deliberate opacity dip instead of relying on Android's system tap
+  // highlight (which TAP_RESET below suppresses). Disabled buttons keep their existing 0.5
+  // opacity and never attach the pointer handlers — nothing to dip.
+  const { pressed, pressHandlers } = usePressed();
   return React.createElement(
     'button',
     {
@@ -447,12 +461,15 @@ export function Button({
         emitUiEvent('press', label);
         if (onPress) onPress();
       },
+      ...(disabled ? {} : pressHandlers),
       style: {
         font: `600 17px ${FONT}`,
         padding: `${space('md')} ${space('lg')}`,
         borderRadius: radius(radiusToken),
         cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
+        transition: 'opacity 80ms',
+        ...TAP_RESET,
         ...buttonVariantStyle(variant),
       },
     },

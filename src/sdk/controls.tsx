@@ -9,6 +9,7 @@
 import * as React from 'react';
 import { space, radius, color, weight, textSize, FONT } from './tokens';
 import { emitUiEvent } from './events';
+import { TAP_RESET } from './press';
 
 // Shared small-print label — mirrors `Text({size:'caption', color:'text-muted'})` from
 // index.tsx exactly (same style keys/values) without importing the barrel back into this
@@ -59,6 +60,9 @@ export function TextInput({ label, value, placeholder, onChange }: TextInputProp
       outline: 'none',
       WebkitAppearance: 'none',
       MozAppearance: 'none',
+      userSelect: 'text',
+      WebkitUserSelect: 'text',
+      ...TAP_RESET,
     },
   });
   if (!label) return field;
@@ -132,6 +136,7 @@ export function Switch({ label, value, onChange }: SwitchProps) {
         cursor: 'pointer',
         font: `16px ${FONT}`,
         color: color('text'),
+        ...TAP_RESET,
       },
     },
     ...(label ? [React.createElement(FieldLabel, { key: 'label' }, label)] : []),
@@ -199,6 +204,7 @@ export function Checkbox({ label, checked, onChange }: CheckboxProps) {
         cursor: 'pointer',
         font: `16px ${FONT}`,
         color: color('text'),
+        ...TAP_RESET,
       },
     },
     box,
@@ -268,6 +274,7 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
         paddingTop: space('sm'),
         paddingBottom: space('sm'),
         touchAction: 'none',
+        ...TAP_RESET,
       },
       onPointerDown: (e: SliderPointerEvent) => {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -400,6 +407,7 @@ export function SegmentedControl({ options, value, onChange }: SegmentedControlP
             background: selected ? color('primary') : 'transparent',
             color: selected ? color('on-primary') : color('text'),
             cursor: 'pointer',
+            ...TAP_RESET,
           },
         },
         option,

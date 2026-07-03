@@ -10,6 +10,7 @@
 import * as React from 'react';
 import { space, radius, color, weight, textSize, type SpaceToken, type RadiusToken } from './tokens';
 import { emitUiEvent } from './events';
+import { TAP_RESET, usePressed } from './press';
 
 // ── Card ──────────────────────────────────────────────────────────────────────
 // Surface bg + 1px border, no native button semantics (a generic container, not nested invalid
@@ -23,6 +24,9 @@ export interface CardProps {
   children?: React.ReactNode;
 }
 export function Card({ padding = 'lg', radius: radiusToken = 'lg', onPress, children }: CardProps) {
+  // Like Button, a pressable Card has no intrinsic visual response of its own, so it gets the
+  // same deliberate opacity dip in place of Android's suppressed system tap highlight.
+  const { pressed, pressHandlers } = usePressed();
   return React.createElement(
     'div',
     {
@@ -32,6 +36,7 @@ export function Card({ padding = 'lg', radius: radiusToken = 'lg', onPress, chil
             onPress();
           }
         : undefined,
+      ...(onPress ? pressHandlers : {}),
       style: {
         boxSizing: 'border-box',
         padding: space(padding),
@@ -39,6 +44,9 @@ export function Card({ padding = 'lg', radius: radiusToken = 'lg', onPress, chil
         background: color('surface'),
         border: `1px solid ${color('border')}`,
         cursor: onPress ? 'pointer' : undefined,
+        opacity: onPress && pressed ? 0.8 : 1,
+        transition: 'opacity 80ms',
+        ...(onPress ? TAP_RESET : {}),
       },
     },
     children,
@@ -191,6 +199,10 @@ export interface ListItemProps {
   onPress?: () => void;
 }
 export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) {
+  // `List` (the parent container) already paints `surface` as its own background, so a
+  // pressed ListItem tinting to `surface` would be invisible against it — `bg` is the token
+  // that actually reads as a distinct tint there (every preset's `bg`/`surface` pair differs).
+  const { pressed, pressHandlers } = usePressed();
   return React.createElement(
     'div',
     {
@@ -200,6 +212,7 @@ export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) 
             onPress();
           }
         : undefined,
+      ...(onPress ? pressHandlers : {}),
       style: {
         boxSizing: 'border-box',
         display: 'flex',
@@ -209,6 +222,8 @@ export function ListItem({ title, subtitle, trailing, onPress }: ListItemProps) 
         gap: space('md'),
         padding: `${space('md')} ${space('lg')}`,
         cursor: onPress ? 'pointer' : undefined,
+        background: onPress && pressed ? color('bg') : undefined,
+        ...(onPress ? TAP_RESET : {}),
       },
     },
     React.createElement(
@@ -346,6 +361,7 @@ export function Modal({ visible, title, onClose, children }: ModalProps) {
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'flex-end',
+        ...TAP_RESET,
       },
     },
     React.createElement(
@@ -358,6 +374,7 @@ export function Modal({ visible, title, onClose, children }: ModalProps) {
           background: color('bg'),
           borderTopLeftRadius: radius('lg'),
           borderTopRightRadius: radius('lg'),
+          ...TAP_RESET,
           paddingTop: space('lg'),
           paddingRight: space('lg'),
           // Extra clearance so the sheet's content/close affordance doesn't sit flush against
