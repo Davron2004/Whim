@@ -8,9 +8,9 @@
 
 ## 2. SDK controls
 
-- [ ] 2.1 Create `src/sdk/controls.tsx`: `TextInput`, `Switch`, `Checkbox`, `Slider`, `SegmentedControl` per design D6 (inline styles, tokens only, `emitUiEvent` on interaction, NumberInput-grade appearance resets).
-- [ ] 2.2 Upgrade `Button` in `src/sdk/index.tsx`: `variant` + `disabled` per D6, default behavior byte-compatible (`variant='primary'`).
-- [ ] 2.3 Re-export controls from `index.tsx`; build + typecheck + lint green.
+- [x] 2.1 Create `src/sdk/controls.tsx`: `TextInput`, `Switch`, `Checkbox`, `Slider`, `SegmentedControl` per design D6 (inline styles, tokens only, `emitUiEvent` on interaction, NumberInput-grade appearance resets).
+- [x] 2.2 Upgrade `Button` in `src/sdk/index.tsx`: `variant` + `disabled` per D6, default behavior byte-compatible (`variant='primary'`).
+- [x] 2.3 Re-export controls from `index.tsx`; build + typecheck + lint green.
 
 ## 3. SDK surfaces
 
@@ -27,9 +27,9 @@
 
 ## 5. Launcher theme state
 
-- [ ] 5.1 Create `src/host/launcher/theme.ts`: `loadThemePref`/`saveThemePref` over `KVBackend` (key `whim.theme:v1`, tolerant parse), `shellPalette(theme)` mapping `WhimTheme` → the shell's named RN colors.
-- [ ] 5.2 Create theme context (`ThemeContext`/`useTheme`) with `{theme, pref, setPref}`.
-- [ ] 5.3 New `theme.suite.ts` in launcher tests: resolveTheme matrix (preset × accent × shape), sanitizeTheme rejection paths, pref persistence round-trip on `MapKVBackend`, garbage tolerance; wire into `acceptance.ts`.
+- [x] 5.1 Create `src/host/launcher/theme.ts`: `loadThemePref`/`saveThemePref` over `KVBackend` (key `whim.theme:v1`, tolerant parse), `shellPalette(theme)` mapping `WhimTheme` → the shell's named RN colors.
+- [x] 5.2 Create theme context (`ThemeContext`/`useTheme`) with `{theme, pref, setPref}`.
+- [x] 5.3 New `theme.suite.ts` in launcher tests: resolveTheme matrix (preset × accent × shape), sanitizeTheme rejection paths, pref persistence round-trip on `MapKVBackend`, garbage tolerance; wire into `acceptance.ts`.
 
 ## 6. Launcher UI
 
