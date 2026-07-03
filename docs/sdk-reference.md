@@ -50,7 +50,7 @@ Every prop below takes a **token**, never a raw color/pixel value.
 |---|---|---|---|---|
 | `Screen` | `padding` | `SpaceToken` | `'lg'` | Outer page padding; sets bg/text color from the theme. |
 | `Stack` | `gap` | `SpaceToken` | `'md'` | Vertical flex column with `gap`. |
-| `Row` | `gap` | `SpaceToken` | `'md'` | Horizontal flex row with `gap`. |
+| `Row` | `gap` | `SpaceToken` | `'md'` | Horizontal flex row with `gap`; wraps to a new line when content overflows. |
 | `Row` | `align` | `'start' \| 'center' \| 'end'` | baseline (unset) | Cross-axis alignment. |
 | `Row` | `justify` | `'start' \| 'center' \| 'end' \| 'between'` | space-between (unset) | Main-axis distribution. |
 | `Text` | `size` | `TextSizeToken` | `'body'` | Font size/line-height/weight from the size scale. |
@@ -85,7 +85,7 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `Checkbox` | `onChange` | `(b: boolean) => void` | — | Fires on toggle. |
 | `Slider` | `label` | `string?` | — | Optional caption + live numeric readout. |
 | `Slider` | `value` | `number` (required) | — | Current value. |
-| `Slider` | `min` / `max` / `step` | `number` | `0` / `100` / `1` | Native `<input type="range">` bounds. |
+| `Slider` | `min` / `max` / `step` | `number` | `0` / `100` / `1` | Bounds for the custom pointer-driven track. |
 | `Slider` | `onChange` | `(n: number) => void` | — | Fires while dragging. |
 | `SegmentedControl` | `options` | `string[]` (required) | — | The segment labels (also the values). |
 | `SegmentedControl` | `value` | `string` (required) | — | Currently selected option. |

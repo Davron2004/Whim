@@ -20,6 +20,12 @@
 - Reviewer audit (full main...HEAD diff): no containment or trust-boundary issues; loader/assemble diffs confirmed exactly the additive D1/D8 forwarding; sanitize/caching semantics verified non-vacuously; preset tables verbatim; seams clean. Three minor findings, all fixed post-review: stale 4.4/7.3 checkboxes; sticky `pendingTheme` in assemble.mjs (now cleared on every reinject without a theme, matching D8); design D8 reworded to describe the actual structural host-side validity + iframe-side sanitize mechanism.
 - gate-full.sh: FULL GATE PASSED (exit 0) — rerun again after the post-review assemble.mjs fix.
 
+## Device review (emulator, Pixel 10 Pro XL AVD, release APK)
+
+- Verified on-device: live preset switching (paper→neon) restyles shell + status bar; theme rides into the sandboxed gallery (fuchsia primaries, dark cards); slider drag (pointer capture) works in the real WebView; modal, list, badges, grid all render as designed; Tip Splitter regression-free under paper.
+- Device-driven fixes (supplemental polish pass, gate.sh green): custom Slider (native track glared white on dark), custom Checkbox (native unchecked square clashed; radius follows theme shape, ✓ glyph carries semantics), Button width:'100%' removed (clipped in Rows; flex stretch keeps Stack behavior), Row wraps on overflow, Modal bottom padding clears the gesture-nav pill. design.md D6 updated to match.
+- accent-color is no longer load-bearing anywhere (both native-control consumers replaced).
+
 ## Close-out
 
 - decisions.md #45 appended; v1-roadmap Open deltas note added.

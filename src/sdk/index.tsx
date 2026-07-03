@@ -295,6 +295,7 @@ export function Row({ gap = 'md', align, justify, children }: RowProps) {
       style: {
         display: 'flex',
         flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: align ? ALIGN_ITEMS[align] : 'baseline',
         justifyContent: justify ? JUSTIFY_CONTENT[justify] : 'space-between',
         gap: space(gap),
@@ -450,7 +451,6 @@ export function Button({
         font: `600 17px ${FONT}`,
         padding: `${space('md')} ${space('lg')}`,
         borderRadius: radius(radiusToken),
-        width: '100%',
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.5 : 1,
         ...buttonVariantStyle(variant),

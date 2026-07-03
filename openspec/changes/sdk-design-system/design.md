@@ -79,8 +79,8 @@ export interface ThemePref { preset: string; accent?: string; shape?: ThemeShape
 **D6 — Component kit scope** (props are the whole contract; implementation is inline styles, `emitUiEvent` on every interaction, following existing patterns):
 - `TextInput { label?, value, placeholder?, onChange?(s: string) }` — same chrome discipline as NumberInput (appearance/outline reset).
 - `Switch { label?, value: boolean, onChange?(b) }` — custom div track+knob (no native checkbox chrome), animated via CSS transition on transform.
-- `Checkbox { label, checked, onChange?(b) }` — native input + `accentColor: color('primary')`.
-- `Slider { label?, value, min?=0, max?=100, step?=1, onChange?(n) }` — native range input + `accentColor` (pseudo-element styling is impossible with inline styles; `accent-color` is the sanctioned lever).
+- `Checkbox { label, checked, onChange?(b) }` — custom box + check glyph matching Switch's visual language (device review: the native unchecked square glared white on dark themes).
+- `Slider { label?, value, min?=0, max?=100, step?=1, onChange?(n) }` — custom pointer-capture track/fill/thumb (device review: the native range's unfilled track renders glaring white on dark themes; `accent-color` can't reach it and pseudo-elements are unreachable from inline styles).
 - `SegmentedControl { options: string[], value, onChange?(s) }` — surface container, selected segment `primary`/`on-primary`.
 - `Button` gains `variant?: 'primary'|'secondary'|'ghost'|'danger'` and `disabled?: boolean` (secondary = surface bg + border + text; ghost = transparent + primary text; disabled = 0.5 opacity, callbacks suppressed).
 - `Card { padding?='lg', radius?='lg', onPress?, children }` — surface bg + 1px border; with onPress renders as a button-semantics element.
@@ -89,8 +89,9 @@ export interface ThemePref { preset: string; accent?: string; shape?: ThemeShape
 - `ProgressBar { value /* 0..1, clamped */, tone?='primary' }` — 8px track (surface + border), filled span, radius full.
 - `List { children }` / `ListItem { title, subtitle?, trailing?, onPress? }` — List draws hairline dividers between children; ListItem is the record-row workhorse.
 - `EmptyState { title, hint? }` — centered muted stack.
-- `Modal { visible, title?, onClose, children }` — fixed full overlay, dimmed backdrop (tap → onClose), bottom-sheet card with top radius `lg`. Renders `null` when hidden.
-- `Text` gains `align?: 'start'|'center'|'end'`; `Row` gains `align?` (items) and `justify?: 'start'|'center'|'end'|'between'`.
+- `Modal { visible, title?, onClose, children }` — fixed full overlay, dimmed backdrop (tap → onClose), bottom-sheet card with top radius `lg` and extra bottom padding clearing Android's gesture-nav pill. Renders `null` when hidden.
+- `Text` gains `align?: 'start'|'center'|'end'`; `Row` gains `align?` (items) and `justify?: 'start'|'center'|'end'|'between'`, and wraps on overflow (device review: unwrapped rows clipped at phone width).
+- `Button` is stretch-sized by its container, not `width:'100%'` (full-width in a Stack via flex stretch, content-sized in a Row — the fixed width overflowed rows on device).
 Export count lands ≈35 — under the #42 ceiling. Search/filter stays app logic (TextInput + list state), not a List prop.
 
 **D7 — Launcher theming.** `ThemePref` persisted as JSON under fixed key `whim.theme:v1` in the existing `whim.launcher` MMKV `KVBackend` (same seam as `SEED_KEY`). `LauncherRoot` resolves it, provides `{theme, pref, setPref}` via React context (`useTheme()`), re-persists on change — settings apply live. New `Screen` union member `{kind:'settings'}`; SettingsScreen registers its own `hardwareBackPress` → home (BackPolicy untouched — it only ever binds inside `useMiniAppHost`). MiniAppView/DevProbeScreen/App.tsx backgrounds + StatusBar style derive from the theme.

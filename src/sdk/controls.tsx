@@ -140,18 +140,57 @@ export function Switch({ label, value, onChange }: SwitchProps) {
 }
 
 // ── Checkbox ──────────────────────────────────────────────────────────────────
-// Native `input type="checkbox"` + `accentColor: color('primary')`; the whole row is a native
-// `<label>` wrapping the input, so clicking the label text toggles it too (no manual handler
-// needed for "row clickable").
+// Custom div box (native `input type="checkbox"` renders a bright white unchecked square that
+// clashes on dark themes) speaking the same visual language as `Switch` above: the whole row is
+// the ONLY click target (no handler on the box itself), so label + box always toggle together
+// from a single event.
 export interface CheckboxProps {
   label: string;
   checked: boolean;
   onChange?: (b: boolean) => void;
 }
 export function Checkbox({ label, checked, onChange }: CheckboxProps) {
-  return React.createElement(
-    'label',
+  const box = React.createElement(
+    'div',
     {
+      style: {
+        boxSizing: 'border-box',
+        width: '22px',
+        height: '22px',
+        borderRadius: radius('sm'),
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        background: checked ? color('primary') : 'transparent',
+        border: `2px solid ${checked ? color('primary') : color('border')}`,
+        transition: 'background 120ms ease, border 120ms ease',
+      },
+    },
+    checked
+      ? React.createElement(
+          'span',
+          {
+            style: {
+              fontSize: '14px',
+              fontWeight: weight('bold'),
+              lineHeight: '1',
+              color: color('on-primary'),
+            },
+          },
+          '✓',
+        )
+      : null,
+  );
+  return React.createElement(
+    'div',
+    {
+      role: 'checkbox',
+      'aria-checked': checked,
+      onClick: () => {
+        emitUiEvent('press', label);
+        if (onChange) onChange(!checked);
+      },
       style: {
         display: 'flex',
         flexDirection: 'row',
@@ -162,28 +201,30 @@ export function Checkbox({ label, checked, onChange }: CheckboxProps) {
         color: color('text'),
       },
     },
-    React.createElement('input', {
-      type: 'checkbox',
-      checked,
-      onChange: (e: { target: { checked: boolean } }) => {
-        emitUiEvent('press', label);
-        if (onChange) onChange(e.target.checked);
-      },
-      style: {
-        accentColor: color('primary'),
-        width: '18px',
-        height: '18px',
-        cursor: 'pointer',
-        margin: 0,
-      },
-    }),
+    box,
     label,
   );
 }
 
 // ── Slider ────────────────────────────────────────────────────────────────────
-// Native `input type="range"` + `accentColor` — pseudo-element thumb styling is impossible with
-// inline styles, so `accent-color` is the sanctioned lever (design D6).
+// Custom pointer-driven track — the native `input type="range"` renders a glaring white
+// unfilled track on dark themes and its thumb is not stylable with inline styles, so this is a
+// plain div track/fill/thumb driven by Pointer Events instead of `accent-color`. The touch
+// region is a taller, invisible container around a slim visual track (so the draggable area
+// stays comfortable while the rendered track stays thin); pointer capture on that container
+// keeps the drag live even once the pointer leaves the track's own bounds.
+interface SliderTrackEl {
+  getBoundingClientRect(): { left: number; width: number };
+}
+type SliderPointerEvent = {
+  clientX: number;
+  pointerId: number;
+  currentTarget: {
+    setPointerCapture(pointerId: number): void;
+    releasePointerCapture(pointerId: number): void;
+  };
+};
+
 export interface SliderProps {
   label?: string;
   value: number;
@@ -193,24 +234,104 @@ export interface SliderProps {
   onChange?: (n: number) => void;
 }
 export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }: SliderProps) {
-  const field = React.createElement('input', {
-    type: 'range',
-    value: Number.isFinite(value) ? value : 0,
-    min,
-    max,
-    step,
-    onChange: (e: { target: { value: string } }) => {
-      const n = parseFloat(e.target.value);
-      emitUiEvent('press', label ?? 'slider');
-      if (onChange) onChange(Number.isNaN(n) ? 0 : n);
+  const trackRef = React.useRef<SliderTrackEl | null>(null);
+  const draggingRef = React.useRef(false);
+  const safeValue = Number.isFinite(value) ? value : min;
+  const lastEmittedRef = React.useRef(safeValue);
+
+  // Raw pointer position -> quantized value; only calls `onChange` when the quantized result
+  // actually moves (keeps the last emitted value in `lastEmittedRef` so a sub-step jitter
+  // doesn't spam identical onChange calls).
+  const commit = (clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const pct = rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0;
+    const raw = min + pct * (max - min);
+    const stepped = Math.round((raw - min) / step) * step + min;
+    const next = Math.min(max, Math.max(min, stepped));
+    if (next !== lastEmittedRef.current) {
+      lastEmittedRef.current = next;
+      if (onChange) onChange(next);
+    }
+  };
+
+  const clampedValue = Math.min(max, Math.max(min, safeValue));
+  const pct = max > min ? ((clampedValue - min) / (max - min)) * 100 : 0;
+
+  const touchArea = React.createElement(
+    'div',
+    {
+      style: {
+        boxSizing: 'border-box',
+        width: '100%',
+        paddingTop: space('sm'),
+        paddingBottom: space('sm'),
+        touchAction: 'none',
+      },
+      onPointerDown: (e: SliderPointerEvent) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        draggingRef.current = true;
+        commit(e.clientX);
+      },
+      onPointerMove: (e: SliderPointerEvent) => {
+        if (!draggingRef.current) return;
+        commit(e.clientX);
+      },
+      onPointerUp: (e: SliderPointerEvent) => {
+        if (!draggingRef.current) return;
+        draggingRef.current = false;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        emitUiEvent('press', label ?? 'slider');
+      },
+      onPointerCancel: (e: SliderPointerEvent) => {
+        if (!draggingRef.current) return;
+        draggingRef.current = false;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        emitUiEvent('press', label ?? 'slider');
+      },
     },
-    style: {
-      accentColor: color('primary'),
-      width: '100%',
-      boxSizing: 'border-box',
-    },
-  });
-  if (!label) return field;
+    React.createElement(
+      'div',
+      {
+        ref: trackRef,
+        style: {
+          position: 'relative',
+          height: '8px',
+          borderRadius: radius('full'),
+          background: color('surface'),
+          border: `1px solid ${color('border')}`,
+          overflow: 'visible',
+        },
+      },
+      React.createElement('div', {
+        style: {
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: `${pct}%`,
+          background: color('primary'),
+          borderRadius: radius('full'),
+        },
+      }),
+      React.createElement('div', {
+        style: {
+          position: 'absolute',
+          width: '22px',
+          height: '22px',
+          borderRadius: radius('full'),
+          background: color('primary'),
+          border: `2px solid ${color('on-primary')}`,
+          left: `calc(${pct}% - 11px)`,
+          top: '50%',
+          transform: 'translateY(-50%)',
+        },
+      }),
+    ),
+  );
+
+  if (!label) return touchArea;
   return React.createElement(
     'div',
     { style: { display: 'flex', flexDirection: 'column', gap: space('xs') } },
@@ -231,7 +352,7 @@ export function Slider({ label, value, min = 0, max = 100, step = 1, onChange }:
         String(value),
       ),
     ),
-    field,
+    touchArea,
   );
 }
 

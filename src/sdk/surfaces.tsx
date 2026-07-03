@@ -358,7 +358,12 @@ export function Modal({ visible, title, onClose, children }: ModalProps) {
           background: color('bg'),
           borderTopLeftRadius: radius('lg'),
           borderTopRightRadius: radius('lg'),
-          padding: space('lg'),
+          paddingTop: space('lg'),
+          paddingRight: space('lg'),
+          // Extra clearance so the sheet's content/close affordance doesn't sit flush against
+          // Android's gesture-nav pill.
+          paddingBottom: space('xl'),
+          paddingLeft: space('lg'),
           display: 'flex',
           flexDirection: 'column',
           gap: space('md'),
