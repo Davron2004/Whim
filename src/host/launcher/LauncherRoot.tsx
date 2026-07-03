@@ -1,20 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // LauncherRoot — the product shell's top-level screen switch (launcher-shell / #5 D6).
 // ─────────────────────────────────────────────────────────────────────────────
-// Plain RN state, no navigation library (two screens + a dev flip don't justify the dep): home
+// Plain RN state, no navigation library (three screens + a dev flip don't justify the dep): home
 // grid → full-screen mini-app → back to home; a __DEV__ entry reaches the containment/bridge
-// probe. This is also the host wiring: the MMKV-backed installed-apps index, the persistent
-// version store, the sanctioned StoreAccess path (with the device user-data delete), first-run
-// seeding (D7), and the fork/delete flows (D2). One WebView == one realm == one app: launching
-// reads the active bundle source from the record and hands it to MiniAppView (keyed by launcher
-// id, so each launch is a fresh realm).
+// probe; a settings entry reaches the theme picker. This is also the host wiring: the MMKV-backed
+// installed-apps index, the persistent version store, the sanctioned StoreAccess path (with the
+// device user-data delete), first-run seeding (D7), the fork/delete flows (D2), and the theme
+// state (design sdk-design-system D7) — the pref is loaded once from the same `whim.launcher`
+// KVBackend the installed-apps index uses, resolved + re-persisted live via `ThemeProvider`. One
+// WebView == one realm == one app: launching reads the active bundle source from the record and
+// hands it to MiniAppView (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, StatusBar, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import type { AppRecord } from '../bridge';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
+import type { KVBackend } from '../version-store/fs/kv-fs';
 import { deleteStorage } from '../storage-engine';
 import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
@@ -22,11 +26,15 @@ import { seedFirstRun, SeedSpec } from './seed';
 import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
+import SettingsScreen from './SettingsScreen';
+import { loadThemePref, saveThemePref, shellPalette } from './theme';
+import { ThemeProvider, useTheme } from './theme-context';
 
 type Screen =
   | { kind: 'home' }
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
-  | { kind: 'dev' };
+  | { kind: 'dev' }
+  | { kind: 'settings' };
 
 /** The first-run example set, built from the generated host records + bundle sources (D7). */
 function defaultSeeds(): SeedSpec[] {
@@ -41,12 +49,28 @@ function defaultSeeds(): SeedSpec[] {
 
 export default function LauncherRoot() {
   // Construct the persistent host services once (device native modules — lazy under the hood).
-  const { index, access } = useMemo(() => {
-    const idx = new AppIndex(createMmkvBackend('whim.launcher'));
+  // The theme pref reads from the SAME `whim.launcher` KVBackend instance the installed-apps
+  // index uses (design D7 — one MMKV instance, two consumers).
+  const { index, access, kv } = useMemo(() => {
+    const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
+    const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({ store, index: idx, deleteStorage: (appId) => deleteStorage({ appId }) });
-    return { index: idx, access: acc };
+    return { index: idx, access: acc, kv: launcherKv };
   }, []);
+
+  const initialThemePref = useMemo(() => loadThemePref(kv), [kv]);
+
+  return (
+    <ThemeProvider initialPref={initialThemePref} onPrefChange={(pref) => saveThemePref(kv, pref)}>
+      <LauncherShell index={index} access={access} />
+    </ThemeProvider>
+  );
+}
+
+function LauncherShell({ index, access }: Readonly<{ index: AppIndex; access: StoreAccess }>) {
+  const { theme } = useTheme();
+  const palette = shellPalette(theme);
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [apps, setApps] = useState<InstalledApp[]>([]);
@@ -99,44 +123,60 @@ export default function LauncherRoot() {
     setScreen({ kind: 'home' });
   };
 
+  const statusBarStyle = theme.dark ? 'light-content' : 'dark-content';
+
   if (!ready) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator color="#93c5fd" />
-      </View>
+      <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
+        <StatusBar barStyle={statusBarStyle} />
+        <View style={styles.loading}>
+          <ActivityIndicator color={palette.accent} />
+        </View>
+      </SafeAreaView>
     );
   }
 
+  let content: React.ReactNode;
   if (screen.kind === 'app') {
-    return (
+    content = (
       <MiniAppView
         key={screen.app.id}
         record={screen.record}
         bundleSource={screen.source}
         engineAppId={screen.engineAppId}
+        theme={theme}
         onExit={goHome}
+      />
+    );
+  } else if (screen.kind === 'dev') {
+    content = <DevProbeScreen onExit={goHome} />;
+  } else if (screen.kind === 'settings') {
+    content = <SettingsScreen onBack={goHome} />;
+  } else {
+    content = (
+      <HomeScreen
+        apps={apps}
+        onOpen={onOpen}
+        onFork={onFork}
+        onDelete={onDelete}
+        onCreate={() => {
+          // Pending #7 prompt-flow-ux: navigate to the prompt screen once implemented.
+        }}
+        onSettings={() => setScreen({ kind: 'settings' })}
+        onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
       />
     );
   }
 
-  if (screen.kind === 'dev') {
-    return <DevProbeScreen onExit={goHome} />;
-  }
-
   return (
-    <HomeScreen
-      apps={apps}
-      onOpen={onOpen}
-      onFork={onFork}
-      onDelete={onDelete}
-      onCreate={() => {
-        // Pending #7 prompt-flow-ux: navigate to the prompt screen once implemented.
-      }}
-      onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
-    />
+    <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
+      <StatusBar barStyle={statusBarStyle} />
+      {content}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b1020' },
+  root: { flex: 1 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

@@ -5,7 +5,9 @@
 // badge, fork provenance) + a "make your first app" CTA tile. Tap a tile to launch full-screen;
 // long-press for the action sheet (Open / Fork / Delete-with-confirmation). Every visible string
 // comes from `copy.ts` and passes the product-verbs guard (#5 spec). A long-press on the title
-// opens the __DEV__ probe surface (D6).
+// opens the __DEV__ probe surface (D6). Every color comes from `shellPalette(theme)` (design
+// sdk-design-system D4/D7) — the per-app tile identity colors (`tiles.ts` TILE_COLORS) are the
+// one deliberate exception, since they are app identity, not shell chrome.
 import React, { useState } from 'react';
 import {
   Alert,
@@ -21,6 +23,8 @@ import {
 import { InstalledApp } from './app-index';
 import { monogram, tileColor } from './tiles';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
+import { shellPalette } from './theme';
+import { useTheme } from './theme-context';
 
 const { width } = Dimensions.get('window');
 const COLS = 3;
@@ -34,12 +38,16 @@ export interface HomeScreenProps {
   onFork: (app: InstalledApp) => void;
   onDelete: (app: InstalledApp) => void;
   onCreate: () => void;
+  /** Opens the theme picker (design sdk-design-system D7). */
+  onSettings: () => void;
   /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
   onOpenDevProbe?: () => void;
 }
 
-export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, onOpenDevProbe }: Readonly<HomeScreenProps>) {
+export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
+  const { theme } = useTheme();
+  const p = shellPalette(theme);
 
   const confirmDelete = (app: InstalledApp) => {
     setSelected(null);
@@ -55,19 +63,28 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
   };
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.header}>
-        <Text style={styles.title} onLongPress={onOpenDevProbe} suppressHighlighting>
-          {COPY.homeTitle}
-        </Text>
-        <Text style={styles.subtitle}>{COPY.homeSubtitle}</Text>
+        <View style={styles.headerText}>
+          <Text style={[styles.title, { color: p.text }]} onLongPress={onOpenDevProbe} suppressHighlighting>
+            {COPY.homeTitle}
+          </Text>
+          <Text style={[styles.subtitle, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
+        </View>
+        <TouchableOpacity
+          onPress={onSettings}
+          accessibilityLabel={COPY.settingsTitle}
+          style={[styles.settingsBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙'}</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.grid}>
         {apps.length === 0 && (
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>{COPY.emptyTitle}</Text>
-            <Text style={styles.emptyBody}>{COPY.emptyBody}</Text>
+            <Text style={[styles.emptyTitle, { color: p.text }]}>{COPY.emptyTitle}</Text>
+            <Text style={[styles.emptyBody, { color: p.textMuted }]}>{COPY.emptyBody}</Text>
           </View>
         )}
 
@@ -86,31 +103,35 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
                 </View>
               )}
             </TouchableOpacity>
-            <Text style={styles.tileName} numberOfLines={1}>{app.name}</Text>
+            <Text style={[styles.tileName, { color: p.text }]} numberOfLines={1}>{app.name}</Text>
             {app.forkedFrom && (
-              <Text style={styles.tileSub} numberOfLines={1}>{forkedFromLabel(app.forkedFrom.name)}</Text>
+              <Text style={[styles.tileSub, { color: p.textMuted }]} numberOfLines={1}>{forkedFromLabel(app.forkedFrom.name)}</Text>
             )}
           </View>
         ))}
 
         {/* "make your first app" CTA tile (destination is #7's prompt screen). */}
         <View style={styles.cell}>
-          <TouchableOpacity activeOpacity={0.85} style={[styles.tile, styles.createTile]} onPress={showCreate}>
-            <Text style={styles.createPlus}>＋</Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={[styles.tile, styles.createTile, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+            onPress={showCreate}
+          >
+            <Text style={[styles.createPlus, { color: p.accent }]}>＋</Text>
           </TouchableOpacity>
-          <Text style={styles.tileName} numberOfLines={2}>{COPY.createTileLabel}</Text>
+          <Text style={[styles.tileName, { color: p.text }]} numberOfLines={2}>{COPY.createTileLabel}</Text>
         </View>
       </ScrollView>
 
       {/* Action sheet (long-press): Open / Fork / Delete. */}
       <Modal visible={selected != null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.sheetScrim} onPress={() => setSelected(null)}>
-          <Pressable style={styles.sheet}>
-            <Text style={styles.sheetTitle} numberOfLines={1}>{selected?.name}</Text>
-            <SheetRow label={COPY.actionOpen} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
-            <SheetRow label={COPY.actionFork} onPress={() => { const a = selected!; setSelected(null); onFork(a); }} />
-            <SheetRow label={COPY.actionDelete} destructive onPress={() => confirmDelete(selected!)} />
-            <SheetRow label={COPY.cancel} muted onPress={() => setSelected(null)} />
+          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
+            <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
+            <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
+            <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onFork(a); }} />
+            <SheetRow label={COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} onPress={() => confirmDelete(selected!)} />
+            <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
           </Pressable>
         </Pressable>
       </Modal>
@@ -118,19 +139,22 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
   );
 }
 
-function SheetRow({ label, onPress, destructive, muted }: Readonly<{ label: string; onPress: () => void; destructive?: boolean; muted?: boolean }>) {
+function SheetRow({ label, onPress, color, borderColor }: Readonly<{ label: string; onPress: () => void; color: string; borderColor: string }>) {
   return (
-    <TouchableOpacity style={styles.sheetRow} onPress={onPress}>
-      <Text style={[styles.sheetRowText, destructive && styles.sheetDestructive, muted && styles.sheetMuted]}>{label}</Text>
+    <TouchableOpacity style={[styles.sheetRow, { borderTopColor: borderColor }]} onPress={onPress}>
+      <Text style={[styles.sheetRowText, { color }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1020' },
-  header: { paddingHorizontal: PAD, paddingTop: 8, paddingBottom: 12 },
-  title: { color: '#e5e7eb', fontWeight: '800', fontSize: 28 },
-  subtitle: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
+  root: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: PAD, paddingTop: 8, paddingBottom: 12 },
+  headerText: { flexShrink: 1 },
+  title: { fontWeight: '800', fontSize: 28 },
+  subtitle: { fontSize: 13, marginTop: 2 },
+  settingsBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  settingsGlyph: { fontSize: 17 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: PAD, gap: GAP, paddingBottom: 40, flexGrow: 1, alignContent: 'flex-start' },
   cell: { width: TILE, alignSelf: 'flex-start' },
   tile: {
@@ -141,21 +165,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  monogram: { color: '#fff', fontSize: 30, fontWeight: '800' },
+  monogram: { color: 'white', fontSize: 30, fontWeight: '800' },
   badge: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 },
-  badgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  tileName: { color: '#e5e7eb', fontSize: 12, marginTop: 6, fontWeight: '600' },
-  tileSub: { color: '#64748b', fontSize: 10, marginTop: 1 },
-  createTile: { backgroundColor: '#111a2e', borderWidth: 1, borderColor: '#334155', borderStyle: 'dashed' },
-  createPlus: { color: '#93c5fd', fontSize: 34, fontWeight: '300' },
+  badgeText: { color: 'white', fontSize: 9, fontWeight: '700' },
+  tileName: { fontSize: 12, marginTop: 6, fontWeight: '600' },
+  tileSub: { fontSize: 10, marginTop: 1 },
+  createTile: { borderWidth: 1, borderStyle: 'dashed' },
+  createPlus: { fontSize: 34, fontWeight: '300' },
   empty: { width: '100%', alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { color: '#e5e7eb', fontSize: 16, fontWeight: '700' },
-  emptyBody: { color: '#94a3b8', fontSize: 13, marginTop: 4 },
+  emptyTitle: { fontSize: 16, fontWeight: '700' },
+  emptyBody: { fontSize: 13, marginTop: 4 },
   sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#0f172a', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 8, paddingBottom: 28 },
-  sheetTitle: { color: '#94a3b8', fontSize: 13, fontWeight: '700', textAlign: 'center', paddingVertical: 10 },
-  sheetRow: { paddingVertical: 15, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#1e293b' },
-  sheetRowText: { color: '#bfdbfe', fontSize: 16, fontWeight: '600' },
-  sheetDestructive: { color: '#f87171' },
-  sheetMuted: { color: '#64748b' },
+  sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 8, paddingBottom: 28 },
+  sheetTitle: { fontSize: 13, fontWeight: '700', textAlign: 'center', paddingVertical: 10 },
+  sheetRow: { paddingVertical: 15, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
+  sheetRowText: { fontSize: 16, fontWeight: '600' },
 });

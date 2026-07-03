@@ -33,14 +33,14 @@
 
 ## 6. Launcher UI
 
-- [ ] 6.1 `SettingsScreen.tsx` (new): preset cards (name + palette dots, selected ring), accent swatch row (incl. "preset default"), shape segmented control; changes apply live via `setPref`; own `hardwareBackPress` → home.
-- [ ] 6.2 `LauncherRoot.tsx`: provide theme context, persist on change, add `{kind:'settings'}` to the `Screen` union, pass the resolved theme into `MiniAppView` → `deliverBySource`.
-- [ ] 6.3 Restyle `HomeScreen.tsx` from `shellPalette`: header (wordmark + settings affordance), themed tiles/cards/CTA; kill inlined hex.
-- [ ] 6.4 Theme `MiniAppView`/`App.tsx` backgrounds + StatusBar style from `theme.dark`; all new strings through `copy.ts`.
+- [x] 6.1 `SettingsScreen.tsx` (new): preset cards (name + palette dots, selected ring), accent swatch row (incl. "preset default"), shape segmented control; changes apply live via `setPref`; own `hardwareBackPress` → home.
+- [x] 6.2 `LauncherRoot.tsx`: provide theme context, persist on change, add `{kind:'settings'}` to the `Screen` union, pass the resolved theme into `MiniAppView` → `deliverBySource`.
+- [x] 6.3 Restyle `HomeScreen.tsx` from `shellPalette`: header (wordmark + settings affordance), themed tiles/cards/CTA; kill inlined hex.
+- [x] 6.4 Theme `MiniAppView`/`App.tsx` backgrounds + StatusBar style from `theme.dark`; all new strings through `copy.ts`.
 - [ ] 6.5 (runs in chain-G — needs the gallery registered and built first) `seed.ts`: `SEED_VERSION = 2`, add `style-gallery` seed; update `seed.suite.ts`.
 
 ## 7. Gallery, docs, close-out
 
-- [ ] 7.1 Create `fixtures/style-gallery.app.tsx`: one screen exercising every new component (Cards per section, live Switch/Slider/Segmented state, Modal demo, Badge/Progress/List/EmptyState).
+- [x] 7.1 Create `fixtures/style-gallery.app.tsx`: one screen exercising every new component (Cards per section, live Switch/Slider/Segmented state, Modal demo, Badge/Progress/List/EmptyState).
 - [ ] 7.2 Write `docs/sdk-reference.md`: prompt-ready reference — every export, props, tokens, theme note.
 - [ ] 7.3 MAIN THREAD: roadmap ledger note (launcher-theme scope beyond #5), decision log entry, `progress.md`, full gate.

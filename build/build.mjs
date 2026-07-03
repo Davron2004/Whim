@@ -188,6 +188,9 @@ async function main() {
   const APPS = {
     'tip-splitter': 'fixtures/tip-splitter.app.tsx',
     'water-counter': 'fixtures/water-counter.app.tsx',
+    // sdk-design-system D9: the component-kit showcase; seeded as example #3, launched by-source
+    // like any installed app (deliberately NOT in the baked RUNTIME_HTML bundles map).
+    'style-gallery': 'fixtures/style-gallery.app.tsx',
     'latency-probe': 'fixtures/latency-probe.app.tsx',
     'pour-over-timer': 'fixtures/pour-over-timer.app.tsx',
     evil: 'fixtures/adversarial/evil.app.tsx',
