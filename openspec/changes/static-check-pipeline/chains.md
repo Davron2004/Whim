@@ -6,15 +6,21 @@
 
 ## chain-A: bootstrap (HUMAN-BOOTSTRAP — not dispatchable)
 - tasks: 3.1 (hook-blocked slivers only)
-- rationale: the two config lines every later chain assumes — the `checks:test` script and the
-  `checks/test` tsconfig exclude — are the only hook-blocked edits in the change.
+- rationale: the four config edits every later chain assumes — `checks:test` script, tsconfig
+  exclude, `gate.sh` suite line, knip coverage — are the only hook-blocked edits in the change.
 - reads: specs/static-checks/spec.md §"Pure execution-free library"; handoff: none
 - writes-contract: none (the bootstrap facts live in handoff/contract.md §test-harness)
-- note: **DO NOT DISPATCH (research.md P1).** `protect-harness.sh` blocks `*/package.json` and
-  `tsconfig*.json`. The **human** (a) adds `"checks:test": "node checks/test/run.mjs"` to root
-  `package.json` and (b) adds `"checks/test"` to root `tsconfig.json` `exclude` (so the gate's
-  `tsc --noEmit` skips the Node runner, matching `src/host/*/test`). NO `checks/tsconfig.json`
-  (P2). Make both edits in an editor, then dispatch B. The dispatchable scaffold of 3.1
+- note: **DO NOT DISPATCH (research.md P1).** `protect-harness.sh` blocks `*/package.json`,
+  `tsconfig*.json`, `scripts/gate*.sh`, and `knip.json`. The **human** (a) adds
+  `"checks:test": "node checks/test/run.mjs"` to root `package.json`; (b) adds `"checks/test"`
+  to root `tsconfig.json` `exclude` (so the gate's `tsc --noEmit` skips the Node runner,
+  matching `src/host/*/test`); (c) adds a `check "checks:test" npm run -s checks:test` line to
+  `scripts/gate.sh` (suites are enumerated explicitly — without it the harness DONE gate never
+  runs the suite; `gate-full.sh` inherits); (d) extends `knip.json`'s `"."` workspace with
+  `checks/**` (entry `checks/test/run.mjs`, project `checks/**/*.ts` — knip's workspace map is
+  explicit and would otherwise silently skip the dir). NO `checks/tsconfig.json` (P2); no
+  `.eslintignore` edit (opt-out model — `checks/` lints by default, which is wanted). Make all
+  four edits in an editor, then dispatch B. The dispatchable scaffold of 3.1
   (`checks/test/run.mjs` + `acceptance.ts`) rides in Chain B.
 
 ## chain-B: spec-and-contract (1.1, 1.2, 1.3, 2.1, 2.2, + 3.1 scaffold)
@@ -32,7 +38,8 @@
   `type_change`, `id_reuse`, `tombstone_violation`, `missing_default`). 1.3 is the prose bypass
   handoff consumed ONLY by the separate §16.4 session (Chain F) — keep checker internals out of
   it (P6). Do NOT hard-code a closed wire enum that conflicts with #8's open `Diagnostic.kind`
-  (P7).
+  (P7) — #8 is as-built and its zod `kind` stays open; B only authors the union in
+  `checks/contract.ts`, the `@whim/contract` wiring is Chain G's.
 
 ## chain-C: parse-import-scope (3.2, 3.3, 4.1, 4.2, 4.3)
 - tasks: 3.2, 3.3, 4.1, 4.2, 4.3
@@ -60,10 +67,13 @@
   handoff/checker-internals.md
 - writes-contract: none
 - note: 6.2 imports `validateArtifact`/`diffSchemas`/`emptyApplied` from
-  `src/host/storage-engine/schema.ts` by relative path and MUST surface diff conflict classes
-  under the engine's own kind names (P4). 5.1 puts the extracted manifest in the report even on
-  failure (req 5). Capability + screen-graph + nav shapes are table-driven (reqs 6/7); the tables
-  come from handoff/contract.md.
+  `src/host/storage-engine/schema.ts` by relative path (`AppliedSchema` also lives there, not in
+  contract.ts) and MUST surface engine kinds verbatim (P4 — validate:
+  `invalid_artifact`/`malformed_id`/`id_reuse`/`bad_field_type`/`bad_default`; diff:
+  `type_change`/`tombstone_violation`/`missing_default`). 5.1 puts the extracted manifest in the
+  report even on failure (req 5). Capability + screen-graph + nav shapes are table-driven
+  (reqs 6/7) — the nav table is EMPTY as-built (no #3 nav API; 5.3 proves the mechanism via a
+  test-injected row); the tables come from handoff/contract.md.
 
 ## chain-E: assembly-fixtures-ci (7.1, 7.2, 7.3)
 - tasks: 7.1, 7.2, 7.3
@@ -73,10 +83,13 @@
 - reads: specs/static-checks/spec.md §"Pure execution-free library" (determinism); handoff:
   handoff/contract.md, handoff/checker-internals.md
 - writes-contract: none
-- note: `runStaticChecks` is deterministic (same input → identical report); 7.2's 4
-  `fixtures/*.app.tsx` must each yield zero diagnostics (P5 — a tripping honest fixture is a bug
+- note: `runStaticChecks` is deterministic (same input → identical report); 7.2's honest set is
+  FOUR of five fixtures (`tip-splitter`, `water-counter`, `pour-over-timer`, `style-gallery`) —
+  zero diagnostics each; `latency-probe` is pinned expected-flagged (raw `__whimSyscall` +
+  facade-less `diag`), never added to the honest set (P5 — a tripping honest fixture is a bug
   to fix, never suppressed). 7.3 edits `.github/workflows/invariants.yml` — NOT hook-blocked,
-  dispatchable (P3); add `checks:test` as a blocking step, leave existing steps untouched.
+  dispatchable (P3); add `checks:test` to the `isolation-suite` job as a blocking step, leave
+  existing steps untouched.
 
 ## chain-F: hostile-bypass-corpus (8.1, 8.2) — SEPARATE §16.4 SESSION (not dispatchable here)
 - tasks: 8.1, 8.2
@@ -94,11 +107,16 @@
 
 ## chain-G: close-out (9.1)
 - tasks: 9.1
-- rationale: ledger update + the #8 `Diagnostic.kind` narrowing-seam re-verification — runs last,
-  after the hostile corpus (F) confirms T8 coverage and after the checker is complete.
+- rationale: wires the `@whim/contract` narrowing (#8 landed 2026-06-18, so this change is
+  second and the re-export is ours — P7 resolved) + ledger update — runs last, after the
+  hostile corpus (F) confirms T8 coverage and after the checker is complete.
 - reads: handoff/contract.md (the #8 seam); docs/v1-roadmap.md #9 entry; handoff: none
 - writes-contract: none
-- note: edits `docs/v1-roadmap.md` (not hook-blocked, dispatchable). If #8 (harness-server-
-  skeleton) has NOT landed, record the deferred `@whim/contract` re-export in the ledger rather
-  than attempting it (P7). Also add the two new capabilities (`static-checks`,
-  `harness-diagnostics`) to `docs/capabilities.md` if that hasn't happened at sync time.
+- note: edits `contract/src/index.ts` (dispatchable — `contract/` is not hook-blocked): re-export
+  the closed kind union from `checks/contract.ts` (TS-source relative import); the zod wire
+  `kind` STAYS an open `z.string()` (the stub's `BUILD_FAILURE` must keep validating);
+  `severity`/`message` join the wire as OPTIONAL fields; `server:test` must be green after.
+  Also edits `docs/v1-roadmap.md` (not hook-blocked): record the plain-dir deviation from
+  "(workspace-ified once #8's exist)" and repoint the nav-table note from #3 to the future nav
+  change. `docs/capabilities.md` already indexes `static-checks` + `harness-diagnostics` as
+  proposal-stage rows — pointers flip to `openspec/specs/` at sync/archive; nothing to add.

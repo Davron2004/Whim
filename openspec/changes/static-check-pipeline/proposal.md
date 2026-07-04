@@ -10,6 +10,8 @@ the model" — spec §8.1). It also closes the one open pen-test finding: **T8**
 follow-up) showed the spike's token-scan static check **misses `Object.prototype` /
 `globalThis`-alias pollution** — the real checker must be an AST/dataflow walk, not a token
 grep. Roadmap change #9, Lane C; no dependencies (pure library), so it is a Wave-1 window.
+*(Refreshed 2026-07-03: #8 landed 2026-06-18 and #3 landed with no navigation API — the
+seam-ordering hedges below are resolved accordingly; see design.md Context.)*
 
 ## What Changes
 
@@ -42,10 +44,11 @@ grep. Roadmap change #9, Lane C; no dependencies (pure library), so it is a Wave
      capability the app never touches; §5.4 disclosure honesty) — driven by a data table
      mapping SDK exports → required capability (today: `storage`, `cues`), one row per
      capability (#41's append-only discipline extends here).
-  6. **Screen-graph resolution** — `initial` resolves to a screen; navigation push targets
-     resolve to declared screens (nav API shape per #1's contract notes — `useNavigation` /
-     `useRoute` — finalized against #3's as-built API; the check is table-driven so #3
-     landing is a data update, not a rewrite).
+  6. **Screen-graph resolution** — `initial` resolves to a screen. Navigation-target
+     resolution is table-driven, and **#3 landed with no SDK navigation API** (only
+     bridge-level nav-depth/back frames, invisible to mini-app source), so the nav-shapes
+     table ships **empty** — `initial ∈ screens` is the whole check today; a future nav
+     change adds shape rows as a data update, not a rewrite.
   7. **SDK lint** — the steering rules the runtime deliberately does not enforce: raw
      `setTimeout`/`setInterval` → `delay`/`interval` (the #2 contract note: "raw `setTimeout`
      stays unstripped; steering = #9's SDK lint"), plus the §5.5 cleanup-discipline class.
@@ -58,9 +61,13 @@ grep. Roadmap change #9, Lane C; no dependencies (pure library), so it is a Wave
   kinds, severity per §8.2 (severity orders work, never excuses it; zero-warning steady
   state; every diagnostic carries a fix hint shaped like the right SDK answer). Authored in
   a **dependency-free contract module** (the storage-engine `contract.ts` precedent) and
-  surfaced in `@whim/contract` as the narrowing of #8's open wire `Diagnostic.kind` (per
-  #8's contract notes, which landed first); `severity`/`message` are this change's additive
-  refinement of that wire shape.
+  surfaced in `@whim/contract` as the narrowing of #8's open wire `Diagnostic.kind`. #8 is
+  now as-built (landed 2026-06-18) — its `kind` is an open `z.string()` with a comment
+  reserving the narrowing for this change — so wiring the re-export is **in-scope here**
+  (task 9.1): the wire schema's `kind` stays open (the stub pipeline's `BUILD_FAILURE` and
+  future runtime kinds must keep validating); the narrowing is the exported closed union
+  type. `severity`/`message` are this change's additive (optional-on-the-wire) refinement
+  of that wire shape.
 - **Node test suite** (`npm run checks:test`, the house esbuild-bundle-then-run idiom),
   TDD per §16.2 — pure logic with unambiguous right answers — blocking in CI.
 - **Adversarial bypass corpus authored in a separate session** (§16.4): the implementing
@@ -96,7 +103,12 @@ a finding to surface, not a delta to write here.)*
 ## Impact
 
 - **New:** `checks/` (library + its dependency-free `contract.ts` + `test/` suite);
-  `checks:test` script in `package.json`; a blocking CI step alongside the existing suites.
+  `checks:test` script in `package.json`, a `checks:test` line in `scripts/gate.sh`, and
+  `knip.json` coverage (all three hook-blocked — human-edited, chain-A); a blocking step in
+  the CI `isolation-suite` job.
+- **Edits:** `contract/src/index.ts` — the kind-union re-export plus optional
+  `severity`/`message` wire fields (task 9.1; #8 landed first, so the narrowing seam is
+  this change's to wire; dispatchable, not hook-blocked).
 - **Reads (no edits):** `src/host/storage-engine/schema.ts` (`validateArtifact`,
   `diffSchemas`, `emptyApplied`, `AppliedSchema`) and `src/host/storage-engine/contract.ts`
   (`SchemaArtifact`) — both already pure/dependency-free by design.
@@ -106,6 +118,8 @@ a finding to surface, not a delta to write here.)*
 - **Dependencies:** none new at runtime — the TS compiler API (`typescript` ^5.8, already a
   devDependency) is the parser; Node 22.
 - **Seams created:** the closed diagnostic-kind union (narrows `@whim/contract`'s open wire
-  `kind` — #8's seam, wired by whichever change is implemented second);
-  the SDK-export→capability table and nav-call-shape table (data updates when #2/#3 land);
-  `extractAppManifest` (consumed by #11's harness-validated app record).
+  `kind` — #8 landed first, so this change wires the re-export); the SDK-export→capability
+  table (`storage`, `cues` rows; `diag` deliberately has no row — host-probe capability
+  with no SDK facade) and the nav-call-shape table (ships empty — no nav API in the
+  as-built SDK; a future nav change adds rows); `extractAppManifest` (consumed by #11's
+  harness-validated app record).

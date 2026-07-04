@@ -134,17 +134,20 @@ The export→capability mapping SHALL be a data table such that a new capability
 
 ### Requirement: Screen graph resolves statically
 
-The pipeline SHALL verify that `initial` names a key of `screens`, and that every
-navigation push/replace target expressed as a string literal names a declared screen.
-Navigation targets that are not string literals SHALL produce an error diagnostic (the
-same conservative policy as computed global access: the static answer to an undecidable
-target is "don't write that"). The recognized navigation call shapes SHALL be table-driven
-data so the as-built #3 SDK API is a data update, not a checker change.
+The pipeline SHALL verify that `initial` names a key of `screens`. Navigation-target
+resolution SHALL be table-driven data: for every recognized navigation call shape, a
+string-literal target must name a declared screen, and a target that is not a string
+literal SHALL produce an error diagnostic (the same conservative policy as computed global
+access: the static answer to an undecidable target is "don't write that"). The as-built
+SDK (#3, landed) has no navigation API, so the shipped shapes table is empty and
+`initial`-resolution is the whole check today; a future navigation change adds shape rows
+as a data update, not a checker change.
 
 #### Scenario: Dangling nav target
 
-- **WHEN** a screen calls the navigation push with `'Settings'` and `screens` has no
-  `Settings` key
+- **WHEN** the shapes table recognizes a navigation call shape (as-built: via a
+  test-injected row, the shipped table being empty) and a matching call's `'Settings'`
+  target names no `screens` key
 - **THEN** the report contains an error diagnostic naming the unresolved target and listing
   the declared screens in its hint
 
@@ -170,12 +173,13 @@ defined globally in the catalog (no per-app suppression, §8.2).
 ### Requirement: The schema check reuses the storage engine's pure functions
 
 The pipeline SHALL validate an extracted `schema` literal with the storage engine's
-exported `validateArtifact`, and — when the caller supplies the app's applied schema (the
-edit flow; the server is stateless, the device ships it) — SHALL run the exported
-`diffSchemas` and surface the conflict classes (`type_change`, `id_reuse`,
-`tombstone_violation`, `missing_default`) as error diagnostics preserving the engine's kind
-names and hints. With no applied schema supplied, the diff baseline SHALL be the empty
-applied schema.
+exported `validateArtifact` (surfacing its kinds verbatim: `invalid_artifact`,
+`malformed_id`, `id_reuse`, `bad_field_type`, `bad_default`), and — when the caller
+supplies the app's applied schema (the edit flow; the server is stateless, the device
+ships it) — SHALL run the exported `diffSchemas` and surface its conflict classes
+(`type_change`, `tombstone_violation`, `missing_default`) as error diagnostics preserving
+the engine's kind names and hints. With no applied schema supplied, the diff baseline
+SHALL be the empty applied schema.
 
 #### Scenario: Generation-time conflict caught before any run
 
@@ -192,7 +196,10 @@ applied schema.
 ### Requirement: Honest code produces zero diagnostics
 
 The check suite SHALL maintain a population of honest, corpus-shaped fixture sources
-(including the repo's real `fixtures/*.app.tsx`) that produce **zero** diagnostics, and a
+(including the repo's real `fixtures/*.app.tsx`, except `latency-probe.app.tsx` — it
+bypasses the SDK via raw `globalThis.__whimSyscall` to reach the facade-less `diag`
+capability, SHALL NOT be in the honest set, and SHALL instead be pinned as an
+expected-flagged sample) that produce **zero** diagnostics, and a
 hostile population (authored in a separate session per §16.4) that each produce their
 expected diagnostic. Both populations gate CI: the honest set is the false-positive
 regression gate (§8.2 — a check that fires on working code is a bug in the check), and the
