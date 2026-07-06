@@ -12,6 +12,7 @@
  *   §D  channel-derived identity — the API admits no cross-app expression (D2)
  *   §E  storage round-trip + the "second capability is one row" proof
  *   §F  ★ END-TO-END INJECTION ★ — adversarial input over the bridge stays inert (D8; §16.4)
+ *   §G  cues — syscall #2/#3 gated, fire-and-forget, at-most-once (effects-and-cues D5/D7)
  */
 
 import { createEngine } from '../../storage-engine/engine';
@@ -21,6 +22,7 @@ import {
   AppRecord,
   CapabilityRegistry,
   createDefaultRegistry,
+  CueBackend,
   Dispatcher,
   launchApp,
   RealmRecord,
@@ -77,6 +79,20 @@ function bring(app: AppRecord, registry: CapabilityRegistry, permissionHook?: Pa
   const launched = launchApp(app, memFactory);
   if (!launched.ok) throw new Error('launch refused: ' + launched.error.hint);
   return { realm: launched.realm, d: Dispatcher.forRealm(launched.realm, registry, permissionHook) };
+}
+
+/** A recording fake `CueBackend` (effects-and-cues D5/D9): every cue the host triggers is
+ *  logged as `"<method>:<token>"`, so the deterministic suite asserts WHEN the backend is (and
+ *  is not) invoked — no React Native loaded, no real device. */
+function recordingBackend(): { backend: CueBackend; log: string[] } {
+  const log: string[] = [];
+  return {
+    log,
+    backend: {
+      haptic: (kind) => { log.push('haptic:' + kind); },
+      sound: (name) => { log.push('sound:' + name); },
+    },
+  };
 }
 
 let SEQ = 0;
@@ -302,6 +318,94 @@ async function main(): Promise<void> {
       eq((await callErr(d, 'storage.records.list', { collection: 'Notes', query: { orderBy: { field: evil, direction: 'asc' } } })).kind, 'unknown_field', 'crafted orderBy field');
     }
   });
+
+  // ── §G cues — syscall #2/#3 against a recording fake (effects-and-cues D5/D7/D9) ──
+  // The append-only readiness test: haptics + sound are two rows + two stubs, gate-denied like
+  // any capability, fire-and-forget, at-most-once. Maps 1:1 to test-spec.md §1 (G1–G9).
+
+  await test('§G1 cue rows are exactly two appended rows; registry stays append-only', () => {
+    const { backend } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    ok(reg.has('cues.haptic') && reg.has('cues.sound'), 'both cue rows registered');
+    eq(reg.methods().filter((m) => m.startsWith('cues.')).sort(), ['cues.haptic', 'cues.sound'], 'exactly the two cue rows, nothing else new');
+    let threw = false;
+    try { reg.register('cues.haptic', { capability: 'cues', paramsSchema: () => null, handler: () => ({}) }); } catch { threw = true; }
+    ok(threw, 'a duplicate cue registration throws at startup (append-only — no override)');
+  });
+
+  await test('§G2 an undeclared `cues` is denied with a fix hint; the backend never fires', async () => {
+    const { backend, log } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    const { d } = bring(storageApp('a', []), reg); // declares no cues
+    const e = await callErr(d, 'cues.haptic', { kind: 'double' });
+    eq(e.kind, 'undeclared_capability', 'kind');
+    eq((e as { capability?: string }).capability, 'cues', 'names the missing capability');
+    ok(/defineApp/.test(e.hint), 'hint points at the defineApp declaration');
+    eq(log.length, 0, 'a denied cue never reaches the backend');
+  });
+
+  await test('§G3 an off-set token → invalid_params whose hint enumerates the valid tokens', async () => {
+    const { backend, log } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    const { d } = bring(storageApp('a', ['cues']), reg);
+    const eSound = await callErr(d, 'cues.sound', { name: 'boom' });
+    eq(eSound.kind, 'invalid_params', 'an off-set sound name is invalid_params');
+    for (const tok of ['tick', 'chime', 'alarm']) ok(eSound.hint.includes(tok), `the sound hint lists "${tok}"`);
+    const eHaptic = await callErr(d, 'cues.haptic', { kind: 'wiggle' });
+    eq(eHaptic.kind, 'invalid_params', 'an off-set haptic kind is invalid_params');
+    for (const tok of ['tap', 'double', 'heavy']) ok(eHaptic.hint.includes(tok), `the haptic hint lists "${tok}"`);
+    const eMissing = await callErr(d, 'cues.haptic', {});
+    eq(eMissing.kind, 'invalid_params', 'a missing token is invalid_params too');
+    eq(log.length, 0, 'no backend call on invalid params');
+  });
+
+  await test('§G4 a valid cue invokes the backend exactly once and resolves {} (fire-and-forget)', async () => {
+    const { backend, log } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    const { d } = bring(storageApp('a', ['cues']), reg);
+    eq(await callOk(d, 'cues.haptic', { kind: 'double' }), {}, 'haptic resolves an empty result — nothing observable');
+    eq(await callOk(d, 'cues.sound', { name: 'chime' }), {}, 'sound resolves an empty result');
+    eq(log, ['haptic:double', 'sound:chime'], 'the backend was invoked once each, with the requested tokens');
+  });
+
+  await test('§G5 a deduped retry does not double-buzz (backend invoked exactly once)', async () => {
+    const { backend, log } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    const { d } = bring(storageApp('a', ['cues']), reg);
+    const f = frame('cues.haptic', { kind: 'heavy' }, 1, 8800);
+    const s1 = await send(d, f);
+    const s2 = await send(d, f); // same id+gen
+    eq(s1, s2, 'both deliveries observe the identical recorded outcome');
+    eq(log, ['haptic:heavy'], 'the cue fired exactly once across the retry (at-most-once per request id)');
+  });
+
+  await test('§G6 a stale-generation cue frame is dropped and fires nothing', async () => {
+    const { backend, log } = recordingBackend();
+    const reg = createDefaultRegistry({ cueBackend: backend });
+    const { d } = bring(storageApp('a', ['cues']), reg); // realm.generation = 1
+    const s = await send(d, frame('cues.sound', { name: 'alarm' }, 0)); // gen 0 ≠ 1
+    eq(s, null, 'a cue stamped with a prior generation is dropped');
+    eq(log.length, 0, 'a cue from a torn-down/old realm never reaches the device');
+  });
+
+  await test('§G7 a declared cue with NO backend → structured handler_error, not a crash', async () => {
+    const reg = createDefaultRegistry(); // no cueBackend injected
+    ok(reg.has('cues.haptic'), 'cue rows register even backend-less (so denials stay testable)');
+    const { d } = bring(storageApp('a', ['cues']), reg);
+    const e = await callErr(d, 'cues.haptic', { kind: 'tap' });
+    eq(e.kind, 'handler_error', 'a missing backend is a structured handler error, never an unshaped throw');
+    ok(/backend|unavailable/i.test(e.hint), 'the hint explains the cue backend is unavailable');
+  });
+
+  await test('§G8 gate ORDER holds: an unregistered cue-ish method reports unknown_method first', async () => {
+    const reg = createDefaultRegistry();
+    const { d } = bring(storageApp('a', []), reg); // no cues declared
+    const e = await callErr(d, 'cues.flash', {}); // not a registered method
+    eq(e.kind, 'unknown_method', 'registration is checked before capability, same fixed order as storage');
+  });
+
+  // §G9 (the #41 review rule — cues touch only contract.ts + rows.ts + index.ts, never
+  // dispatcher/gate/registry/launch) is a review/`git diff` assertion, recorded in close-out 9.2.
 
   // ── verdict ────────────────────────────────────────────────────────────────
   console.log('');

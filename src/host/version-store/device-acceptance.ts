@@ -201,7 +201,6 @@ export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): P
   };
 
   // logcat (truncates ~4 KB → the screen renders the full object too).
-  // eslint-disable-next-line no-console
   console.error('[whim-vstore] verdict ' + JSON.stringify(verdict));
   return verdict;
 }

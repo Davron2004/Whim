@@ -44,12 +44,75 @@ import type {
 } from '../host/storage-engine/contract';
 export type { JsonValue, StorageRecord, ListQuery, SchemaArtifact, FieldType };
 
+// The closed cue token sets (effects-and-cues D4) — type-only, so NOTHING from the bridge is
+// bundled into the SDK (the facade still holds only the one-way transport — constraint #2). A
+// mini-app types its `cues.haptic`/`cues.sound` calls against the SAME tokens the host gate
+// validates, so an off-set token is a compile error in the app, not just a runtime denial.
+import type { HapticKind, SoundName } from '../host/bridge/contract';
+export type { HapticKind, SoundName };
+
 // ── State (design D6 / task 3.3) ─────────────────────────────────────────────
 // In-memory, web-side, no bridge: this is literally React's useState/useEffect, surfaced
 // through the SDK so the bundle never has to import `react` itself (the SDK stays the only
 // import surface for app authors, even though `react` is also a resolvable runtime external).
 export const useState = React.useState;
 export const useEffect = React.useEffect;
+
+// ── Timed effects (effects-and-cues D1) ──────────────────────────────────────
+// Web-resident wrapped timers — the mini-app's ONLY taught path to time. They emit NO syscall
+// frame, need no capability, and cross no gate: this is pure in-iframe setTimeout/setInterval,
+// which the sandbox deliberately does NOT strip (#35 — strip capabilities, not time; React's
+// scheduler and the syscall marshaller need it). Cleanup the author cannot forget: `interval`
+// is a hook so unmount cancels it; a host-forced realm reset (iframe recreation, carry-forward
+// #5) cancels everything structurally — no SDK-level registry, none needed (design D2).
+
+/** Resolve after at least `ms` — one-shot sequencing inside handlers/effects (`await delay(800)`).
+ *  Deliberately NOT component-scoped: an in-flight `delay` across an unmount resolves harmlessly
+ *  (callers update state via React, which no-ops on unmounted trees in 18+); a realm teardown
+ *  cancels it structurally (D2). */
+export function delay(ms: number): Promise<void> {
+  const d = Number.isFinite(ms) && ms > 0 ? ms : 0;
+  return new Promise((resolve) => {
+    setTimeout(resolve, d);
+  });
+}
+
+export interface IntervalOptions {
+  /** Pause/resume WITHOUT tearing the hook down: while `false`, the callback does not fire; it
+   *  resumes when `true` again. (The pour-over fixture's start/pause/reset rides this.) */
+  running?: boolean;
+}
+
+/**
+ * A repeating timer as a HOOK (design D1). There is no handle to forget and no cleanup for the
+ * author to omit: unmounting the mounting component cancels the timer by construction, which
+ * deletes the §5.5 "interval without cleanup" leak class instead of detecting it. `running:false`
+ * pauses without unmounting.
+ *
+ * `interval` genuinely follows the Rules of Hooks; the `use*` naming the linter keys on can't
+ * see that through the spec-fixed name (design D1 / Risks). Aliasing to `useInterval` stays
+ * additive if hook-rule TOOLING ever becomes load-bearing — hence the scoped disable below,
+ * a rename would break the agent-facing vocabulary #1 already fixed.
+ */
+/* eslint-disable react-hooks/rules-of-hooks */
+export function interval(callback: () => void, ms: number, opts?: IntervalOptions): void {
+  // Keep the latest callback in a ref so changing it does not restart the timer (the canonical
+  // useInterval shape) — only `running`/`ms` changes re-arm it.
+  const saved = React.useRef(callback);
+  React.useEffect(() => {
+    saved.current = callback;
+  }, [callback]);
+
+  const running = opts?.running ?? true;
+  React.useEffect(() => {
+    if (!running || !Number.isFinite(ms) || ms < 0) return undefined;
+    const id = setInterval(() => {
+      saved.current();
+    }, ms);
+    return () => clearInterval(id); // unmount / pause / ms-change → cancel (the un-forgettable cleanup)
+  }, [running, ms]);
+}
+/* eslint-enable react-hooks/rules-of-hooks */
 
 // ── App descriptor (design D6 / tasks 2.4 / 3.1) ─────────────────────────────
 export type ScreenComponent = React.ComponentType<Record<string, unknown>>;
@@ -111,7 +174,7 @@ function syscall<T>(method: string, params: Record<string, JsonValue>): Promise<
   const t = (globalThis as { __whimSyscall?: SyscallTransport }).__whimSyscall;
   if (!t || typeof t.call !== 'function') {
     return Promise.reject(
-      new Error('vc-sdk storage: no syscall transport available (storage is unreachable in this context)'),
+      new Error('vc-sdk: no syscall transport available (capabilities are unreachable in this context)'),
     );
   }
   return t.call(method, params) as Promise<T>;
@@ -148,6 +211,25 @@ export const storage = {
     remove(collection: string, id: number): Promise<void> {
       return syscall<unknown>('storage.records.remove', { collection, id }).then(() => undefined);
     },
+  },
+};
+
+// ── Cues facade (effects-and-cues D7) ────────────────────────────────────────
+// Gated physical cues (haptic, short sound) as syscalls #2/#3, riding the SAME one-way
+// `__whimSyscall` transport as `storage` — nothing stronger (constraint #2). Fire-and-forget:
+// each resolves as soon as the host triggers the cue (the sysret is `{}`); completion, duration,
+// and device state are deliberately UNOBSERVABLE — cues add zero sensing surface (D7). Tokens,
+// not values (D4): the closed `HapticKind`/`SoundName` sets are the only expressible vocabulary,
+// and the host owns the token→pattern/tone mapping. Requires `capabilities: ['cues']`; an
+// undeclared call rejects with a structured `undeclared_capability` (the gate, not the stub).
+export const cues = {
+  /** Buzz the device with a named haptic. Resolves once triggered; observes nothing back. */
+  haptic(kind: HapticKind): Promise<void> {
+    return syscall<unknown>('cues.haptic', { kind }).then(() => undefined);
+  },
+  /** Play a named short sound. Resolves once triggered; observes nothing back. */
+  sound(name: SoundName): Promise<void> {
+    return syscall<unknown>('cues.sound', { name }).then(() => undefined);
   },
 };
 

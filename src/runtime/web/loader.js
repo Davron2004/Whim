@@ -40,6 +40,19 @@
     postMessage: function (s) { try { window.parent.postMessage(String(s), '*'); } catch (e) {} },
   };
 
+  // ── nav-depth seam anchor (launcher-shell / #5 D4 — the #3 SDK half's TODO) ──
+  // The back-navigation contract rides THIS same one-way transport (no new capability):
+  //   • SDK → host (hint): the SDK runtime (sdk-design-system / #3) posts, on every nav-stack
+  //     depth change, `window.parent.postMessage(JSON.stringify({__whimNavDepth:true,
+  //     depth:<n>, generation: window.__whimGeneration}), '*')`. The outer page source-verifies
+  //     and relays it to RN as kind:'nav-depth'. Unauthenticated by design (F4): a hint, never
+  //     authority — the host back-policy owns whether the user can leave.
+  //   • host → realm (request): the host posts `{__whimNavBack:true}` into this iframe on
+  //     system back when depth>0; #3's SDK message listener pops one screen and re-emits
+  //     nav-depth. (No SDK nav exists yet, so nothing emits/consumes these in this change;
+  //     depth is always 0 and back exits at the root. This block is the contract anchor only —
+  //     it adds NO runtime behavior, keeping the iframe loader byte-stable for containment.)
+
   // Genuine, authenticated loader→host control frame (carries the secret nonce).
   function post(kind, payload) {
     try {

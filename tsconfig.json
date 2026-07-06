@@ -27,6 +27,9 @@
     // Same idiom for the storage engine's Node acceptance suite (node:fs/os/path).
     "src/host/storage-engine/test",
     // And the capability-bridge Node suite (node:sqlite via the engine binding).
-    "src/host/bridge/test"
+    "src/host/bridge/test",
+    // And the launcher Node suite (back-policy / app-index / store-access / seed; uses
+    // `process`, run via esbuild). The launcher MODULES themselves stay type-checked.
+    "src/host/launcher/test"
   ]
 }

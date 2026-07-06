@@ -9,7 +9,6 @@
 import type { Buffer as NodeBuffer } from 'buffer';
 
 declare global {
-  // eslint-disable-next-line no-var
   var Buffer: typeof NodeBuffer;
 
   class TextEncoder {
@@ -20,7 +19,6 @@ declare global {
     decode(input?: Uint8Array | ArrayBuffer): string;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace NodeJS {
     interface ErrnoException extends Error {
       code?: string;

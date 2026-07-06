@@ -21,9 +21,7 @@ import {
   createDefaultRegistry,
   Dispatcher,
   launchApp,
-  RealmRecord,
   registerStorageRows,
-  resetRealmGeneration,
   SyscallError,
   SyscallFrame,
   SysretFrame,
@@ -200,7 +198,6 @@ export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
     failures,
     pass: failures.length === 0,
   };
-  // eslint-disable-next-line no-console
   console.error('[whim-bridge] verdict ' + JSON.stringify(verdict));
   return verdict;
 }

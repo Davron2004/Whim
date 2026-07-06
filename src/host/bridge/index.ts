@@ -22,16 +22,28 @@ export { Dispatcher, resetRealmGeneration, tearDownRealm } from './dispatcher';
 export type { DispatcherOptions } from './dispatcher';
 export { launchApp } from './launch';
 export type { EngineFactory, LaunchResult } from './launch';
-export { registerStorageRows, registerDiagRows } from './rows';
+export { registerStorageRows, registerDiagRows, registerCueRows } from './rows';
 
 import { CapabilityRegistry } from './registry';
-import { registerStorageRows, registerDiagRows } from './rows';
+import { CueBackend } from './contract';
+import { registerStorageRows, registerDiagRows, registerCueRows } from './rows';
 
-/** The host's append-only capability table: storage (syscall #1) + diag (the second-row proof).
- *  A duplicate registration anywhere throws at startup (D5). */
-export function createDefaultRegistry(): CapabilityRegistry {
+/** Options for the host capability table. `cueBackend` is the injected haptic/sound device
+ *  (RN-side, `src/host/cue-backend.ts`); omit it (Node suites) and the cue rows still register
+ *  so gate denials stay testable — an actually-declared cue then surfaces a structured
+ *  handler error rather than firing. */
+export interface RegistryOptions {
+  cueBackend?: CueBackend | null;
+}
+
+/** The host's append-only capability table: storage (#1) + diag (the second-row proof) + cues
+ *  (#2/#3 — haptic + sound). A duplicate registration anywhere throws at startup (D5). Cue rows
+ *  register UNCONDITIONALLY (effects-and-cues D5): a missing backend denies/errors structurally,
+ *  it does not skip the row. */
+export function createDefaultRegistry(opts: RegistryOptions = {}): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   registerStorageRows(registry);
   registerDiagRows(registry);
+  registerCueRows(registry, opts.cueBackend ?? null);
   return registry;
 }

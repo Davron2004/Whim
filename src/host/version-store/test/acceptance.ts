@@ -273,6 +273,50 @@ await test('§6.2 rollback restores ALL tracked files in lockstep', async () => 
   eq(active!.artifacts['manifest.json'], MANIFEST(1), 'manifest rolled back together too');
 });
 
+// --- remove(appId): the additive launcher-shell (#5 D2) verb -----------------
+
+await test('§remove drops the app history; history empty + active null afterward', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+  const res = await s.remove('app');
+  eq(res, { removed: true }, 'remove reports a product-verb shape');
+  assertNoGitLeak(res, 'remove');
+  eq((await s.history('app')).length, 0, 'history is empty after remove');
+  eq(await s.active('app'), null, 'active is null after remove');
+});
+
+await test('§remove on a KV-backed store leaves ZERO keys for the repo', async () => {
+  const map = new Map<string, string>();
+  const store1 = createPersistentStore(new MapKVBackend(map), { now: clock(), autoCompact: false });
+  await store1.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await store1.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+  const repoKeys = () => [...map.keys()].filter(k => k === 'p:/whim/apps/app' || k.startsWith('p:/whim/apps/app/'));
+  ok(repoKeys().length > 0, 'repo wrote some KV keys');
+  await store1.remove('app');
+  // Every key UNDER the app's repo prefix is gone (one repo == one key prefix). The shared
+  // root-dir scaffolding (/whim, /whim/apps) legitimately remains — it is not repo data.
+  eq(repoKeys().length, 0, 'every KV key for the repo is gone (one repo == one key prefix)');
+  // and a rehydrated store shows no trace
+  const store2 = createPersistentStore(new MapKVBackend(map), { autoCompact: false });
+  eq((await store2.history('app')).length, 0, 'no history survives the remove across a restart');
+});
+
+await test('§remove is scoped to one app — a sibling repo is untouched', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'a');
+  await s.snapshot('app-extra', { 'bundle.js': BUNDLE(9) }, 'b'); // shares the "app" prefix
+  await s.remove('app');
+  eq((await s.history('app')).length, 0, 'target app removed');
+  eq((await s.history('app-extra')).length, 1, 'prefix-sharing sibling app-extra is intact');
+});
+
+await test('§remove is idempotent — removing an unknown app is a clean no-op', async () => {
+  const s = freshStore();
+  const res = await s.remove('never-installed');
+  eq(res, { removed: false }, 'removing an absent app reports removed:false, does not throw');
+});
+
 // --- summary ---------------------------------------------------------------
 
 // eslint-disable-next-line no-console

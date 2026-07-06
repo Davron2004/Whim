@@ -32,3 +32,15 @@ export function createStorageEngine(opts: CreateEngineOptions): StorageEngine {
   const executor = createOpSqlExecutor({ appId: opts.appId, mode: opts.mode });
   return createEngine(executor, { kvSizeCapBytes: opts.kvSizeCapBytes });
 }
+
+/**
+ * Delete an app's entire user-data store — the persistent SQLite db at `storage/<appId>.db`
+ * (launcher-shell / #5 D2: delete leaves no per-app residue). op-sqlite's `db.delete()` removes
+ * the underlying file. Device-only (the native module is required lazily) and acceptance-tested
+ * on-device (task 7.2); off-device this is never called. Best-effort: an absent db is a no-op.
+ */
+export function deleteStorage(opts: { appId: string }): void {
+  const { open } = require('@op-engineering/op-sqlite');
+  const db = open({ name: `${opts.appId}.db`, location: 'storage' });
+  db.delete();
+}

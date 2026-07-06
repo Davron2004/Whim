@@ -277,6 +277,28 @@ export class MemoryFs implements FsBackend {
     this.onWrite(to, node);
   }
 
+  /**
+   * Recursively remove a path and everything under it — the mechanism behind the version
+   * store's `remove(appId)` verb (launcher-shell / #5 D2: delete leaves no per-app residue).
+   * Fires `onDelete` per node so KvBackedFs drops the matching KV keys (one repo == one key
+   * prefix). No-op on an absent path. Returns the number of paths removed. A sibling whose
+   * name merely shares a prefix (`foobar` vs `foo`) is NOT matched — only the exact node and
+   * its `<path>/…` descendants.
+   */
+  removeTree(path: string): number {
+    const np = normalizePath(path);
+    const prefix = np === '/' ? '/' : np + '/';
+    let removed = 0;
+    for (const key of [...this.entries.keys()]) {
+      if (key === np || key.startsWith(prefix)) {
+        this.entries.delete(key);
+        this.onDelete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   // --- persistence hooks (overridden by KvBackedFs) ------------------------
 
   /** Called after a path is created/updated. Base class: no-op (pure RAM). */

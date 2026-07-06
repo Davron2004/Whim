@@ -58,13 +58,65 @@ export function classifyFrame(frame: unknown): FrameFamily {
     f.__whimHarness === true ||
     f.__whimHostInit === true ||
     f.__whimDeliver === true ||
-    f.__whimUiEvent === true
+    f.__whimUiEvent === true ||
+    // nav seam (launcher-shell / #5 D4): the nav-depth hint (iframe→host) and the nav-back
+    // request (host→iframe) are control-family. They are NOT nonce-authenticated — like
+    // ui-events, the legitimate sender is the untrusted bundle (via the SDK), so there is no
+    // honest-sender property; authority lives entirely in the host back-policy (F4).
+    f.__whimNavDepth === true ||
+    f.__whimNavBack === true
   ) {
     return 'control';
   }
   if (f.whim === 'syscall') return 'syscall';
   if (f.whim === 'sysret') return 'sysret';
   return 'unknown';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The nav-depth seam (launcher-shell / #5 D4) — the #3↔#5 coordination contract
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// THIS change (#5, launcher-shell) ships the HOST half: the outer-page relay, the system-back
+// wiring, and the pure guaranteed-exit policy (`src/host/launcher/back-policy.ts`). The SDK
+// half is implemented by `sdk-design-system` (#3) against the frames declared here — this is
+// the TODO anchor #3's author looks for. In this change no SDK nav exists, so depth is always
+// 0 and back exits at the root; the round-trip below is wired but only exercised once #3 lands.
+//
+//   • SDK → host  (hint):  whenever the mini-app's nav-stack depth changes, the SDK runtime
+//     posts `{ __whimNavDepth: true, depth, generation }` over the same one-way transport that
+//     carries ui-events (`window.parent.postMessage`). The outer page source-verifies it came
+//     from its own iframe, STAMPS the generation it authoritatively bound the realm at, and
+//     relays it to RN as `{ kind: 'nav-depth', payload: { depth, generation } }`. Untrusted: a
+//     bundle can forge or inflate it — but it could equally "forge" depth by calling nav.push()
+//     for real, so authentication buys nothing. The host treats it as a HINT, never authority.
+//   • host → realm (request):  on system back with last-hinted depth > 0, the host calls the
+//     outer page's `__whimControl.navBack()`, which posts `{ __whimNavBack: true }` into the
+//     iframe. The SDK (#3) listens for it, pops its stack, and emits a fresh nav-depth.
+//
+// Generation stamping (#41 D3 fencing, mirrored): a nav-depth report whose generation is not
+// the current realm's is ignored — a fresh realm starts at depth 0. The back-policy owns this.
+
+/** SDK→host nav-depth hint (control family, unauthenticated). The SDK (#3) emits it; the
+ *  outer page relays it; the host back-policy consumes it as a hint, never as authority. */
+export interface NavDepthFrame {
+  __whimNavDepth: true;
+  /** The mini-app's current nav-stack depth. 0 means "at the root" (or no nav). */
+  depth: number;
+  /** The realm generation this report is stamped with (the host fences stale gens, D3). */
+  generation: number;
+}
+
+/** host→realm nav-back request (control family). The host posts it on system back when the
+ *  last-hinted depth > 0; the SDK (#3) pops one screen and re-emits nav-depth. */
+export interface NavBackFrame {
+  __whimNavBack: true;
+}
+
+/** Build the host→realm nav-back request frame. The host posts this (JSON-stringified) into
+ *  the iframe via the outer page's `__whimControl.navBack()`. */
+export function navBackFrame(): NavBackFrame {
+  return { __whimNavBack: true };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +206,39 @@ export interface RegistryRow {
   capability: string;
   paramsSchema: ParamsValidator;
   handler: SyscallHandler;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cues (effects-and-cues D3/D4/D5) — the syscall-#2/#3 contract, pure types
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Physical cues (vibration, short sound) cross the bridge under ONE `cues` capability (D3),
+// as the closed token sets below (D4 — tokens-not-values, §5.3 extended to cues). The host
+// owns the token→pattern/tone mapping; no duration, pattern, asset, or raw value is expressible
+// from the bundle. The token arrays are the single source of truth: the row validators reject
+// off-set tokens and the denial hint enumerates them straight from these (the §8.1 self-repair
+// shape). Closed-set substitution is allowed for on-device feel; OPENING a type is not.
+//
+// Keep these RN-free: `rows.ts` (imported by the Node bridge suites) binds onto a `CueBackend`
+// the host injects; the RN `Vibration`/ToneGenerator implementation lives host-side
+// (`src/host/cue-backend.ts`), never here (D5 — the dumb-rows discipline).
+
+export const HAPTIC_KINDS = ['tap', 'double', 'heavy'] as const;
+export type HapticKind = (typeof HAPTIC_KINDS)[number];
+
+export const SOUND_NAMES = ['tick', 'chime', 'alarm'] as const;
+export type SoundName = (typeof SOUND_NAMES)[number];
+
+/**
+ * The injected cue backend (D5). Pure interface — the bridge rows derive their effect from this,
+ * so `bridge/` stays importable under Node. Fire-and-forget (D7): each method returns void and
+ * the row resolves `{}` as soon as the cue is triggered; completion/duration/device-state are
+ * deliberately unobservable (cues add zero sensing surface). The host implementation maps each
+ * token to a vibration pattern / tone; a Node test injects a recording fake.
+ */
+export interface CueBackend {
+  haptic(kind: HapticKind): void;
+  sound(name: SoundName): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
