@@ -191,6 +191,10 @@ async function main() {
     victim: 'fixtures/adversarial/victim.app.tsx',
     'cap-intruder': 'fixtures/adversarial/cap-intruder.app.tsx',
     'sql-injector': 'fixtures/adversarial/sql-injector.app.tsx',
+    // effects-and-cues invariants (runtime-owner, tasks 7.x): INV-TIMER's observable interval
+    // ticker (sandbox-isolation suite) + INV-CUEGATE's hostile cue-gate intruder (bridge suite).
+    'timer-ticker': 'fixtures/adversarial/timer-ticker.app.tsx',
+    'cue-intruder': 'fixtures/adversarial/cue-intruder.app.tsx',
   };
   const bundles = {};
   const maps = {};
@@ -255,7 +259,7 @@ async function main() {
     },
     initial: 'tip-splitter',
     channel: 'b',
-    showDiagnostics: true,
+    showDiagnostics: false,
     autostart: true,
   });
   await mkdir(r('src/runtime/generated'), { recursive: true });

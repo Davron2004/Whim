@@ -87,11 +87,20 @@ outputs — regenerate via `npm run build`, never hand-edit.*
 > NOT author invariants). The English statements are handed off in `test-spec.md §3b`
 > (INV-TIMER, INV-CUEGATE). Left intentionally unchecked.
 
-- [ ] 7.1 (runtime-owner) Author the timer-teardown invariant: gen-1 `interval` marks ticks
+- [x] 7.1 (runtime-owner) Author the timer-teardown invariant: gen-1 `interval` marks ticks
       observably; after realm reset + gen-2 delivery, trusted vantage shows zero gen-1 ticks.
-- [ ] 7.2 (runtime-owner) Author the cue-gating invariant in the `bridge:invariants` hostile-
+      → INV-TIMER in `invariants/sandbox-isolation/run-against-build.mjs` (block 5b) +
+      `fixtures/adversarial/timer-ticker.app.tsx` (40 ms `interval`, ticks posted as UI-events
+      the OUTER PAGE relays — trusted vantage, F4). `npm run invariants` green (8 checks): reset
+      → ticks before=12 after=0; no-reset control after=17 (non-vacuous).
+- [x] 7.2 (runtime-owner) Author the cue-gating invariant in the `bridge:invariants` hostile-
       bundle suite: undeclared cue syscalls denied end-to-end, forged sysret inert, zero fake-
       backend invocations; keep the suite's negative control non-vacuous.
+      → INV-CUEGATE in `invariants/sandbox-isolation/bridge/runner.mjs` (block 8, modeled on
+      cap-denial) + `fixtures/adversarial/cue-intruder.app.tsx` + a recording-fake CueBackend in
+      `bridge/host-shim.ts`. `npm run bridge:invariants` green (9 checks): undeclared →
+      undeclared_capability ×2, forged sysret inert, backend-invocations=0; granted control →
+      off-set invalid_params, valid cues fire, backend log EXACTLY haptic:double+sound:chime.
 
 ## 8. On-device acceptance (the real verdict — CLAUDE.md build env)
 

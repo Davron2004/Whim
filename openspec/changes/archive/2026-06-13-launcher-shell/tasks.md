@@ -91,10 +91,13 @@ session.)*
 - [x] 7.1 Desktop gates green: `npm run build`, `npm run invariants`, `npm run lint`,
       `npm run vstore:test`, `npm run storage:test`, `npm run bridge:test`,
       `npm run launcher:test`.
-- [ ] 7.2 On-device acceptance per 1.3's script (offline release APK, logcat
+- [x] 7.2 On-device acceptance per 1.3's script (offline release APK, logcat
       `ReactNativeJS`, real taps); record observed behavior + any latency notes.
-      → **PENDING: requires a physical device/emulator run** — `npm run android:release`,
-        then walk `src/host/launcher/test/acceptance.spec.md`. Everything else is prepared.
+      → EMULATOR (offline release, `npm run android:release`): walked
+        `src/host/launcher/test/acceptance.spec.md` with the `fix-launcher-shell-bugs`
+        fixes in place — launcher behaves as specified (correct card→app routing, no dev
+        diagnostics, status-bar-safe), tested 2026-06-13. Physical-hardware pass remains
+        the user's outstanding check (tracked in docs/backlog.md).
 - [x] 7.3 Bookkeeping: decisions.md entry (as-built, per #39/#40/#41 convention), DEVLOG
       capture, roadmap ledger `Status` update for #5, and confirm the seam-contract notes
       #3 consumes are accurate as-built.

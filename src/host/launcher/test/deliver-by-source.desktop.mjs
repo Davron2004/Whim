@@ -25,6 +25,7 @@ const PAGES = join(HERE, '.deliver-pages');
 const artifacts = JSON.parse(await readFile(join(ROOT, 'src/runtime/generated/runtime-artifacts.json'), 'utf8'));
 const { parts, bundles } = artifacts;
 const SRC = bundles['tip-splitter'];
+const WATER_SRC = bundles['water-counter'];
 const pick = (t, re) => { const m = (t || '').match(re); return m ? m[1] : null; };
 
 async function writePage(name, html) {
@@ -65,28 +66,45 @@ const bakedPage = await writePage('baked', buildOuterHtml({
 const sourcePage = await writePage('by-source', buildOuterHtml({
   srcdoc: srcdocB, bundles: {}, initial: 'tip-splitter', channel: 'b', autostart: false,
 }));
+// Non-default source: initial/baked-map defaults to tip-splitter, but we inject water-counter by
+// source. Proves the selected card's bundle overrides the baked initial (B1 regression guard).
+const nonDefaultPage = await writePage('non-default-source', buildOuterHtml({
+  srcdoc: srcdocB, bundles: { 'tip-splitter': SRC }, initial: 'tip-splitter', channel: 'b', autostart: false,
+}));
 
 const browser = await chromium.launch();
 const baked = await run(browser, bakedPage);
 const bySource = await run(browser, sourcePage, async (page) => {
   await page.evaluate((src) => window.__whimControl.reinject({ reset: true, bundle: 'tip-splitter', bundleSource: src, generation: 2 }), SRC);
 });
+// Inject water-counter by source into a page whose initial/baked map defaults to tip-splitter.
+// The rendered iframe MUST show Water Counter, not Tip Splitter (B1 regression guard).
+const nonDefault = await run(browser, nonDefaultPage, async (page) => {
+  await page.evaluate((src) => window.__whimControl.reinject({ reset: true, bundle: 'water-counter', bundleSource: src, generation: 2 }), WATER_SRC);
+});
 await browser.close();
 
-const verdict = (r) => ({
+const verdict = (r, paintedCheck) => ({
   contained: pick(r.dom.probes, /contained=(true|false)/),
   accepted: /"accepted":\s*true/.test(r.dom.delivery),
-  painted: /Tip Splitter/.test(r.iframeText) && /Per person/.test(r.iframeText),
+  painted: paintedCheck(r.iframeText),
   errors: r.errors,
 });
-const A = verdict(baked);
-const B = verdict(bySource);
+const A = verdict(baked, (t) => /Tip Splitter/.test(t) && /Per person/.test(t));
+const B = verdict(bySource, (t) => /Tip Splitter/.test(t) && /Per person/.test(t));
+// C: water-counter injected by source when initial/baked-map defaults to tip-splitter.
+// Must render Water Counter, NOT Tip Splitter (B1 regression guard).
+const C = verdict(nonDefault, (t) => /Water Counter/.test(t) && !/Tip Splitter/.test(t));
 
 console.log('deliver-by-source desktop parity (tip-splitter):');
 console.log(`  baked    : contained=${A.contained} painted=${A.painted} accepted=${A.accepted}${A.errors.length ? ' ERR=' + A.errors.join('|') : ''}`);
 console.log(`  by-source: contained=${B.contained} painted=${B.painted} accepted=${B.accepted}${B.errors.length ? ' ERR=' + B.errors.join('|') : ''}`);
+console.log('deliver-by-source non-default app (water-counter over tip-splitter initial):');
+console.log(`  non-default: contained=${C.contained} painted=${C.painted} accepted=${C.accepted}${C.errors.length ? ' ERR=' + C.errors.join('|') : ''}`);
 // Page B was built with an EMPTY baked map, so a rendered + contained tip-splitter proves the
 // bytes came ONLY from the host-supplied bundleSource — identical verdict to the baked twin.
+// Page C proves the selected source overrides the baked initial: water-counter renders,
+// not the tip-splitter that would have run under the fallback path (B1 regression guard).
 
 // Parity = same containment verdict + same render, with page B's bytes proven to be the
 // host-supplied source (empty baked map). `accepted` is logged but not gated (the #delivery
@@ -95,10 +113,18 @@ const ok =
   A.contained === 'true' &&
   B.contained === A.contained &&
   A.painted && B.painted === A.painted &&
-  A.errors.length === 0 && B.errors.length === 0;
+  A.errors.length === 0 && B.errors.length === 0 &&
+  C.contained === 'true' && C.painted && C.errors.length === 0;
 
 if (!ok) {
-  console.error('\n❌ by-source delivery did NOT match the baked twin.');
+  console.error('\n❌ by-source delivery verification failed.');
+  if (!(A.contained === 'true' && B.contained === A.contained && A.painted && B.painted === A.painted && A.errors.length === 0 && B.errors.length === 0)) {
+    console.error('   tip-splitter parity check failed.');
+  }
+  if (!(C.contained === 'true' && C.painted && C.errors.length === 0)) {
+    console.error('   non-default source (water-counter) did NOT render when initial=tip-splitter (B1 regression).');
+  }
   process.exit(1);
 }
 console.log('\n✅ by-source delivery renders + contains identically to its baked twin.');
+console.log('✅ non-default source (water-counter) renders correctly over tip-splitter initial (B1 guard green).');

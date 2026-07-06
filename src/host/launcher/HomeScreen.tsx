@@ -12,7 +12,6 @@ import {
   Dimensions,
   Modal,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -56,7 +55,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
   };
 
   return (
-    <SafeAreaView style={styles.root}>
+    <View style={styles.root}>
       <View style={styles.header}>
         <Text style={styles.title} onLongPress={onOpenDevProbe} suppressHighlighting>
           {COPY.homeTitle}
@@ -115,7 +114,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
           </Pressable>
         </Pressable>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -132,8 +131,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: PAD, paddingTop: 8, paddingBottom: 12 },
   title: { color: '#e5e7eb', fontWeight: '800', fontSize: 28 },
   subtitle: { color: '#94a3b8', fontSize: 13, marginTop: 2 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: PAD, gap: GAP, paddingBottom: 40 },
-  cell: { width: TILE },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: PAD, gap: GAP, paddingBottom: 40, flexGrow: 1, alignContent: 'flex-start' },
+  cell: { width: TILE, alignSelf: 'flex-start' },
   tile: {
     width: TILE,
     height: TILE,

@@ -77,6 +77,7 @@ const pages = {
   'a-tip': buildOuterHtml({ srcdoc: srcdocA, bundles: {}, initial: 'tip-splitter', channel: 'a', autostart: false }),
   'b-evil': buildOuterHtml({ srcdoc: srcdocB, bundles: { evil: bundles['evil'] }, initial: 'evil', channel: 'b' }),
   'b-reinject': buildOuterHtml({ srcdoc: srcdocB, bundles: { poison: bundles['poison'], victim: bundles['victim'] }, initial: 'poison', channel: 'b' }),
+  'b-timer': buildOuterHtml({ srcdoc: srcdocB, bundles: { 'timer-ticker': bundles['timer-ticker'], victim: bundles['victim'] }, initial: 'timer-ticker', channel: 'b' }),
   'c-blob': buildOuterHtml({ srcdoc: srcdocB, bundles: { 'tip-splitter': bundles['tip-splitter'] }, initial: 'tip-splitter', channel: 'c' }),
   'broken': buildOuterHtml({ srcdoc: srcdocBroken, bundles: { 'tip-splitter': bundles['tip-splitter'] }, initial: 'tip-splitter', channel: 'b' }),
 };
@@ -167,6 +168,56 @@ const browser = await chromium.launch();
   const ok = contained === 'true'; // containment holds even in a poisoned realm
   record(ok, 'same-realm re-injection (T7 finding)', `contained=${contained} (persistence ≠ escape); anyPoison=${anyPoison} → reset IS required (constraint #5)`);
   notes.push(`NOTE T7: same-realm gen-2 anyPoison=${anyPoison} (expected true; the reset seam above is what prevents it)`);
+}
+
+// 5b. INV-TIMER (effects-and-cues task 7.1, timer teardown) — a gen-1 SDK `interval` can never
+//     tick into gen-2 after a realm reset. The timer-ticker fixture marks each tick observably by
+//     posting `timertick:<n>` over the one-way transport; the OUTER PAGE relays it and logs
+//     `UI-EVENT press timertick:<n>`, which we read HERE with a wall-clock timestamp — the TRUSTED
+//     VANTAGE (F4), never the bundle's self-report. The bundle makes NO generation claim: the
+//     parent owns the reset boundary and classifies ticks by arrival time.
+//
+//     Drive a RESET re-injection (iframe recreation, carry-forward #5) that delivers a DIFFERENT,
+//     SILENT bundle (the victim) as gen-2. Destroying gen-1's browsing context destroys its timer
+//     queue (design D2), so ZERO `timertick` frames may arrive past the boundary — any that did
+//     would be a surviving gen-1 timer (gen-2 never ticks). A SAME-REALM, NO-RESET control proves
+//     non-vacuity: there, ticks DO continue past the boundary, so the silence in the reset case is
+//     genuine teardown, not a dead detector.
+async function runTimerTeardown(reset) {
+  const TICK = /UI-EVENT press timertick:(\d+)/;
+  const ticks = []; // { n, t } in arrival order, each with a monotonic timestamp
+  const page = await browser.newPage();
+  page.on('console', (m) => { const mm = TICK.exec(m.text() || ''); if (mm) ticks.push({ n: Number(mm[1]), t: Date.now() }); });
+  await page.goto(pathToFileURL(files['b-timer']).href, { waitUntil: 'load', timeout: 20000 });
+  // Let the gen-1 ticker run (40 ms interval → ~10 ticks in 450 ms).
+  await page.waitForFunction(() => /Timer Ticker|gen 1/.test((document.getElementById('status') || {}).textContent || '') || true, { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const boundary = Date.now();
+  const before = ticks.filter((x) => x.t <= boundary).length;
+  // RESET → recreate the iframe, deliver the SILENT victim as gen-2 (the invariant case).
+  // NO-RESET → re-inject the SAME ticker into the SAME realm (the non-vacuity control: ticks go on).
+  await page.evaluate((doReset) => window.__whimControl.reinject(doReset
+    ? { reset: true, generation: 2, bundle: 'victim' }
+    : { reset: false, bundle: 'timer-ticker' }), reset);
+  // Give a surviving gen-1 timer ample time to fire (it must not, in the reset case).
+  await page.waitForTimeout(700);
+  await page.close();
+  const after = ticks.filter((x) => x.t > boundary).length;
+  return { before, after };
+}
+{
+  const torn = await runTimerTeardown(true);   // the invariant: reset → silence
+  const ctrl = await runTimerTeardown(false);  // non-vacuity: no reset → ticks continue
+  const sawGen1 = torn.before > 0;             // detector observed gen-1 ticks at all
+  const detectorLive = ctrl.after > 0;         // without a reset, ticks DO cross the boundary
+  const cleanTeardown = torn.after === 0;      // with a reset, ZERO ticks cross it
+  const ok = sawGen1 && cleanTeardown && detectorLive;
+  record(ok, 'INV-TIMER (gen-1 interval dead after realm reset)',
+    `reset: ticks before=${torn.before} after=${torn.after} (must be 0) · no-reset control after=${ctrl.after} (must be >0) → ` +
+    (ok ? 'gen-1 timer torn down by iframe recreation; detector non-vacuous (no-reset control keeps ticking)'
+        : !sawGen1 ? 'VACUOUS — never observed a gen-1 tick (detector dead)'
+        : !detectorLive ? 'VACUOUS — no-reset control did not keep ticking (cannot distinguish teardown from dead detector)'
+        : 'LEAK — a gen-1 interval ticked past the reset boundary into gen-2'));
 }
 
 // 6. blob/data REFUSAL invariant (task 4.5) — a blob: <script src> stays REFUSED under the

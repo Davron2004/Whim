@@ -16,7 +16,7 @@ export const COPY = {
   exampleBadge: 'Example',
   createTileLabel: 'make your first app',
   createTitle: 'Make your first app',
-  createBody: 'Describe an app out loud and Whim builds it for you. Coming soon.',
+  createBody: 'Describe an app out loud and Whim builds it for you.',
   createDismiss: 'Got it',
   actionOpen: 'Open',
   actionFork: 'Fork',

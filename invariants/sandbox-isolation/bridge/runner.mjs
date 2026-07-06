@@ -208,6 +208,42 @@ const chromiumBrowser = await chromium.launch();
     : 'did NOT observe the breach (the suite would be vacuous!)');
 }
 
+// 8. INV-CUEGATE (effects-and-cues task 7.2) — a hostile bundle cannot cue past the gate. The
+//    cue-intruder (declares NO capabilities) tries valid-token haptic+sound, an off-set token,
+//    and a forged self-posted sysret, end-to-end through the REAL sandbox → syscall → host. The
+//    TRUSTED VANTAGE is the host: a recording-fake CueBackend (host-shim) must log ZERO device
+//    invocations while undeclared, the gate must answer with STRUCTURED denials, and the forged
+//    sysret must be inert. A GRANTED sub-run is the non-vacuity control: once the manifest grants
+//    `cues`, the valid-token calls DO fire the backend (and the off-set one is still rejected
+//    `invalid_params`) — so the undeclared denials are a real gate, not a dead path.
+{
+  // (a) UNDECLARED — valid-token cues must be denied `undeclared_capability`; backend untouched.
+  const undeclared = await scenario('cue-denial', 'cue-intruder');
+  const hapticDenied = /cues\.haptic\(double\): ✓ denied: undeclared_capability/.test(undeclared.text);
+  const soundDenied = /cues\.sound\(chime\): ✓ denied: undeclared_capability/.test(undeclared.text);
+  const offsetWhileUndeclared = /cues\.sound\(siren\) \[off-set\]: ✓ denied: \w+/.test(undeclared.text); // cap gate trips first
+  const forgedInert = /forged self sysret: ↩ posted to self/.test(undeclared.text);
+  const noFire = undeclared.host.cueLog.length === 0;
+  const undeclaredOk = hapticDenied && soundDenied && offsetWhileUndeclared && forgedInert && noFire;
+  record(undeclaredOk, 'INV-CUEGATE undeclared (hostile cue denied end-to-end, backend untouched)',
+    `haptic→undeclared_capability=${hapticDenied} sound→undeclared_capability=${soundDenied} off-set-denied=${offsetWhileUndeclared} ` +
+    `forged-sysret-inert=${forgedInert} backend-invocations=${undeclared.host.cueLog.length} (must be 0)`);
+
+  // (b) OFF-SET while GRANTED — the off-set token is rejected `invalid_params` even with the cap.
+  //     This is BOTH the invalid_params arm of the invariant AND the non-vacuity control: the two
+  //     VALID-token cues now FIRE the backend (the gate is a live path, not vacuously closed), and
+  //     the recording log holds EXACTLY those two — the forged self-sysret added no phantom cue.
+  const granted = await scenario('cue-offset-granted', 'cue-intruder', { manifestOverride: ['cues'] });
+  const offsetInvalidParams = /cues\.sound\(siren\) \[off-set\]: ✓ denied: invalid_params/.test(granted.text);
+  const validFired = /cues\.haptic\(double\): ⚠ NOT DENIED/.test(granted.text) && /cues\.sound\(chime\): ⚠ NOT DENIED/.test(granted.text);
+  const log = granted.host.cueLog.slice().sort();
+  const exactlyTheTwoValid = JSON.stringify(log) === JSON.stringify(['haptic:double', 'sound:chime']);
+  const grantedOk = offsetInvalidParams && validFired && exactlyTheTwoValid;
+  record(grantedOk, 'INV-CUEGATE off-set+non-vacuity (invalid_params rejected; granted cues DO fire — exactly the valid two)',
+    `off-set→invalid_params=${offsetInvalidParams} valid-cues-fired=${validFired} backend-log=${JSON.stringify(granted.host.cueLog)} ` +
+    `(must be exactly haptic:double+sound:chime — proves the gate is a live path AND the forged sysret added no phantom cue)`);
+}
+
 await chromiumBrowser.close();
 await rm(shimOut, { force: true });
 
