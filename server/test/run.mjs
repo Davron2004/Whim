@@ -13,10 +13,14 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
-const tscBin = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+// Resolve tsc via Node module resolution so this runs from an in-repo git worktree
+// (no local node_modules — resolution walks up to the main repo's, exactly as
+// Node/esbuild/tsc already do). A hardcoded repoRoot/node_modules path breaks there.
+const tscBin = createRequire(import.meta.url).resolve('typescript/bin/tsc');
 const fixedPathEnv = { ...process.env, PATH: '/usr/bin:/bin' };
 
 // --- Type-check both workspaces first (SPEC §GS-8) ---
