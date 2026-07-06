@@ -96,7 +96,7 @@ function resetAppDb(appId: string): void {
     const { open } = require('@op-engineering/op-sqlite');
     const db = open({ name: `${appId}.db`, location: 'storage' });
     const exec = (sql: string): Record<string, unknown>[] => {
-      const res = typeof db.executeSync === 'function' ? db.executeSync(sql, []) : db.execute(sql, []);
+      const res = db.executeSync(sql, []);
       return Array.isArray(res?.rows) ? res.rows : (res?.rows?._array ?? []);
     };
     const tables = exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'`);
@@ -113,7 +113,7 @@ function dbSizeBytes(appId: string): number | null {
     const { open } = require('@op-engineering/op-sqlite');
     const db = open({ name: `${appId}.db`, location: 'storage' });
     const run = (sql: string): number => {
-      const res = typeof db.executeSync === 'function' ? db.executeSync(sql, []) : db.execute(sql, []);
+      const res = db.executeSync(sql, []);
       const rows = Array.isArray(res?.rows) ? res.rows : (res?.rows?._array ?? []);
       const row = rows[0] ?? {};
       return Number(row[Object.keys(row)[0]] ?? 0);

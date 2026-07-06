@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createEngine } from '../engine';
+import { assertExecuteSyncAvailable } from '../bindings/assert-executesync';
 import { createNodeSqlExecutor } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
 import { SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
@@ -592,6 +593,96 @@ test('§E (c) records.list surfaces corrupt_storage on a json field with invalid
   // Bypass marshalling to inject non-JSON into the stored column
   rec.execute('UPDATE "c1" SET "f1" = ? WHERE "id" = ?', ['not json{', id]);
   expectError('corrupt_storage', () => store.records.list('Notes'));
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §F  source-integrity checks (D3, D7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§F (D3) the burned-ID injection regex has a single source of truth in ./contract', () => {
+  const enginePath = path.join(process.cwd(), 'src', 'host', 'storage-engine', 'engine.ts');
+  const engineSrc = fs.readFileSync(enginePath, 'utf8');
+  // Standing invariant (independent of any one diff): the SQL-identifier backstop
+  // regex lives ONLY in contract.ts. engine.ts must not inline the pattern literal
+  // (under ANY name), must not declare its own copy, and must USE the imported
+  // binding — two copies could silently drift and weaken the injection guard.
+  ok(
+    !/\/\^\[a-z\]\[0-9\]\+\$\//.test(engineSrc),
+    'engine.ts must not inline the burned-ID regex literal /^[a-z][0-9]+$/ — it must come from ./contract',
+  );
+  ok(
+    !engineSrc.includes('const BURNED_ID_RE'),
+    'engine.ts must not declare a local BURNED_ID_RE',
+  );
+  ok(
+    /import\s*\{[^}]*\bBURNED_ID_RE\b[^}]*\}\s*from\s*'\.\/contract'/.test(engineSrc),
+    'engine.ts must import BURNED_ID_RE from "./contract"',
+  );
+  ok(
+    /\bBURNED_ID_RE\.test\s*\(/.test(engineSrc),
+    'engine.ts must USE the imported BURNED_ID_RE (its .test backstop in quoteIdent), not merely import it',
+  );
+});
+
+test('§F (D7) op-sqlite binding: no executeSync ternary, guard wired to the helper', () => {
+  const opSqliteSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/bindings/op-sqlite.ts'),
+    'utf8',
+  );
+  // No dead ternary fallback (the pinned v16 JSI build always has executeSync).
+  ok(!opSqliteSrc.includes("typeof db.executeSync === 'function'"), 'op-sqlite.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+  // The guard's THROW behavior lives in (and is behaviorally tested via) the
+  // assertExecuteSyncAvailable helper — see the §F test below. Here we only assert
+  // the binding actually WIRES that guard in. (No source-grep of the assertion
+  // text: that broke the moment the guard was extracted, and a comment could fake it.)
+  ok(
+    /\bassertExecuteSyncAvailable\s*\(\s*db\s*\)/.test(opSqliteSrc),
+    'op-sqlite.ts must call assertExecuteSyncAvailable(db) to guard executeSync availability',
+  );
+});
+
+test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', () => {
+  const deviceAcceptSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/host/storage-engine/device-acceptance.ts'),
+    'utf8',
+  );
+  ok(!deviceAcceptSrc.includes("typeof db.executeSync === 'function'"), 'device-acceptance.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
+});
+
+test('§F (D7) assertExecuteSyncAvailable throws iff executeSync is not a function', () => {
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({});
+        return false;
+      } catch (e) {
+        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
+      }
+    })(),
+    'assertExecuteSyncAvailable must throw with the expected message when executeSync is missing',
+  );
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({ executeSync: 123 });
+        return false;
+      } catch (e) {
+        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
+      }
+    })(),
+    'assertExecuteSyncAvailable must throw when executeSync is present but not a function',
+  );
+  ok(
+    (() => {
+      try {
+        assertExecuteSyncAvailable({ executeSync: () => ({ rows: [] }) });
+        return true;
+      } catch {
+        return false;
+      }
+    })(),
+    'assertExecuteSyncAvailable must not throw when executeSync is a function',
+  );
 });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
