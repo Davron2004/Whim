@@ -9,6 +9,7 @@ import {
   OpenRouterAuthError,
   OpenRouterRateLimitError,
   OpenRouterNetworkError,
+  Usage as OpenRouterUsage,
 } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
 
@@ -113,6 +114,9 @@ export async function runOpenRouterTests(): Promise<void> {
     // Must drain deltas before usage resolves
     await drain(deltas);
     const capturedUsage = await usagePromise;
+
+    // Validate the Usage schema exported from openrouter is the same object as the contract's Usage
+    check('usage schema identity: openrouter reuses contract Usage by reference', OpenRouterUsage === Usage);
 
     // Validate the shape is contract Usage by identity
     const parsed = Usage.safeParse(capturedUsage);
