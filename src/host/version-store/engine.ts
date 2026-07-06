@@ -282,11 +282,29 @@ export class VersionStore {
     return changes;
   }
 
+  /**
+   * True iff `target` lies on the same line of history as `tip` (D4 — a "same line"
+   * predicate, not full lineage-membership): equal, `target` is an ancestor of `tip`
+   * (a rollback), or `tip` is an ancestor of `target` (a roll-forward).
+   */
+  private async isSameLine(gitdir: string, target: string, tip: string): Promise<boolean> {
+    if (target === tip) return true;
+    const targetIsAncestorOfTip = await git.isDescendent({ fs: this.client, gitdir, oid: tip, ancestor: target });
+    if (targetIsAncestorOfTip) return true;
+    return git.isDescendent({ fs: this.client, gitdir, oid: target, ancestor: tip });
+  }
+
   /** rollback(appId, snapshotId) → move lineage ref + checkout; non-destructive (task 3.4). */
   async rollback(appId: string, snapshotId: string): Promise<{ activeId: string }> {
     const { dir, gitdir } = this.paths(appId);
     const oid = await this.resolveSnap(gitdir, snapshotId);
     const branch = (await git.currentBranch({ fs: this.client, gitdir, fullname: false })) || 'main';
+    const tip = await git.resolveRef({ fs: this.client, gitdir, ref: `refs/heads/${branch}` });
+    if (!(await this.isSameLine(gitdir, oid, tip))) {
+      throw new Error(
+        `snapshot ${snapshotId} is not in the active lineage — use fork or switchLineage to reach another lineage's history`,
+      );
+    }
     await git.writeRef({ fs: this.client, gitdir, ref: `refs/heads/${branch}`, value: oid, force: true });
     await git.checkout({ fs: this.client, dir, gitdir, ref: branch, force: true });
     return { activeId: snapshotId };

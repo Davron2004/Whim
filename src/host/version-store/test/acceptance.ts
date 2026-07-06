@@ -149,6 +149,62 @@ await test('§3.4 rollback is non-destructive (spec: gen1 active, gen2 still ret
   eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(2), 'can return to gen2');
 });
 
+// --- ST-6: rollback is lineage-scoped (storage-semantic-guards §2) --------
+
+await test('§ST-6a a cross-lineage snapshot id is refused; original lineage unchanged', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2
+  await s.fork('app', 'g1'); // creates fork-1, checked out on the fork now
+  const forkSnap = await s.snapshot('app', { 'bundle.js': BUNDLE(42) }, 'fork edit'); // g3, on fork-1 only
+  await s.switchLineage('app', 'main'); // back to the original lineage
+
+  const activeBefore = await s.active('app');
+  eq(activeBefore!.id, 'g2', 'original lineage active id is g2 before the refused rollback');
+  eq(activeBefore!.artifacts['bundle.js'], BUNDLE(2), 'original lineage active bundle before the refused rollback');
+
+  let threw = false;
+  let message = '';
+  try {
+    await s.rollback('app', forkSnap.id);
+  } catch (err) {
+    threw = true;
+    message = (err as Error).message;
+  }
+  ok(threw, 'rollback() refuses a snapshot id from another lineage');
+  ok(/not in the active lineage/.test(message), 'error names the active-lineage refusal');
+  ok(/fork/.test(message) && /switchLineage/.test(message), 'error names fork/switchLineage as the sanctioned path');
+  ok(!/\b(commit|ref|branch|ancestor)\b/i.test(message), 'error message carries no git vocabulary');
+
+  const activeAfter = await s.active('app');
+  eq(activeAfter!.id, 'g2', 'original lineage active id unchanged by the refused rollback');
+  eq(activeAfter!.artifacts['bundle.js'], BUNDLE(2), 'original lineage active bundle unchanged by the refused rollback');
+});
+
+await test('§ST-6b rollback to generation 1 then roll forward to generation 2 both succeed', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+
+  const back = await s.rollback('app', 'g1');
+  eq(back.activeId, 'g1', 'rollback to g1 succeeds');
+  eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(1), 'g1 is the active bundle after rollback');
+
+  const forward = await s.rollback('app', 'g2');
+  eq(forward.activeId, 'g2', 'roll forward to g2 succeeds');
+  eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(2), 'g2 is the active bundle after rolling forward');
+});
+
+await test('§ST-6c rollback to the current tip succeeds', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // tip is g2
+
+  const res = await s.rollback('app', 'g2');
+  eq(res.activeId, 'g2', 'rollback to the current tip succeeds');
+  eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(2), 'active bundle unchanged when rolling back to the tip');
+});
+
 await test('§3.5 pin survives later generations (spec)', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');

@@ -247,6 +247,20 @@ class Engine implements StorageEngine {
     }
   }
 
+  /** json-typed fields are opaque payloads and are refused in `where`/`orderBy`, BEFORE
+   *  a condition's shape (e.g. `isRangeFilter`) is ever inspected — so a json value that
+   *  happens to carry gt/gte/lt/lte keys is never misread as a range filter. */
+  private assertQueryable(collName: string, fieldName: string, f: FieldSpec): void {
+    if (f.type === 'json') {
+      throw storageError({
+        kind: 'unqueryable_field',
+        collection: collName,
+        field: fieldName,
+        hint: `Field "${fieldName}" in "${collName}" is json-typed and opaque; it cannot be used in where/orderBy. Filter on a scalar field, or declare the value you need to query as its own field.`,
+      });
+    }
+  }
+
   // ── filter compilation (D5) — values bound, identifiers resolved ────────────
 
   private compileWhere(coll: CollectionSpec, collName: string, where: WhereClause | undefined, binds: SqlBindValue[]): string {
@@ -254,6 +268,7 @@ class Engine implements StorageEngine {
     const clauses: string[] = [];
     for (const [name, cond] of Object.entries(where)) {
       const f = this.resolveField(coll, collName, name);
+      this.assertQueryable(collName, name, f);
       const col = quoteIdent(f.id);
       if (isRangeFilter(cond)) {
         for (const [op, sqlOp] of Object.entries(RANGE_OPS)) {
@@ -277,6 +292,7 @@ class Engine implements StorageEngine {
   private compileOrderBy(coll: CollectionSpec, collName: string, orderBy: ListQuery['orderBy']): string {
     if (!orderBy) return '';
     const f = this.resolveField(coll, collName, orderBy.field);
+    this.assertQueryable(collName, orderBy.field, f);
     if (orderBy.direction !== 'asc' && orderBy.direction !== 'desc') {
       throw storageError({ kind: 'type_mismatch', collection: collName, field: orderBy.field, hint: `orderBy direction must be "asc" or "desc".` });
     }
