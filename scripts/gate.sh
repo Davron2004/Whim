@@ -12,6 +12,26 @@
 # the current clean-tree run is ~15s.
 set -u
 cd "$(dirname "$0")/.." || exit 2
+
+# Tamper tripwire (Layer 2 — the anti-reward-hacking capstone). Refuse to run if any
+# verification-config file differs from committed HEAD. The whole point of doctoring these is a
+# green gate; legit config changes are a deliberate human commit, never an uncommitted edit — so
+# a tampered config can never reach a green run, no matter which tool (Edit, Bash, anything) wrote
+# it. This doesn't depend on catching every write path; it bottoms out at `git commit`. To make a
+# legit change: edit, commit it, then run the gate.
+if ! git diff --quiet HEAD -- \
+      package.json package-lock.json tsconfig*.json \
+      eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
+      .claude/hooks .claude/settings.json 2>/dev/null; then
+  echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from committed HEAD."
+  echo "These are human-edited and must be committed deliberately before the gate will run:"
+  git --no-pager diff --name-only HEAD -- \
+      package.json package-lock.json tsconfig*.json \
+      eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
+      .claude/hooks .claude/settings.json 2>/dev/null
+  exit 2
+fi
+
 FAILED=()
 
 section() { printf '\n== %s\n' "$1"; }
@@ -31,6 +51,7 @@ check "storage-engine"    npm run -s storage:test
 check "capability-bridge" npm run -s bridge:test
 check "launcher"          npm run -s launcher:test
 check "deliver-by-source" npm run -s launcher:deliver-verify
+check "server"            npm run -s server:test
 check "openspec"          openspec validate --all --strict
 
 # Scaffolding tripwires: cheap greps for the garbage class you've already met. This is the

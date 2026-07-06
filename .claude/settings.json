@@ -14,8 +14,6 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git show:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
       "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
       "Bash(grep:*)", "Bash(rg:*)", "Bash(wc:*)", "Bash(mkdir:*)"
     ],

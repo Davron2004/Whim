@@ -2,6 +2,10 @@
   "name": "Whim",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "contract",
+    "server"
+  ],
   "scripts": {
     "android": "react-native run-android",
     "android:release": "react-native run-android --mode release --active-arch-only",
@@ -17,7 +21,10 @@
     "launcher:deliver-verify": "node src/host/launcher/test/deliver-by-source.desktop.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
     "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
-    "invariants:spike2": "node invariants/sandbox-isolation/spike2-bundle-contract/runner.mjs"
+    "invariants:spike2": "node invariants/sandbox-isolation/spike2-bundle-contract/runner.mjs",
+    "server:dev": "node server/dev.mjs",
+    "server:test": "node server/test/run.mjs",
+    "guard:metro": "node server/guard-metro.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^16.2.0",
