@@ -9,10 +9,13 @@
  * mini-app-versioning / mini-app-forking spec scenario (§7.4).
  */
 
+import * as git from 'isomorphic-git';
 import {
   createMemoryStore,
   createPersistentStore,
+  KvBackedFs,
   MapKVBackend,
+  MemoryFs,
   VersionStore,
   assertNoGitLeak,
 } from '../index';
@@ -157,6 +160,25 @@ await test('§3.5 pin survives later generations (spec)', async () => {
   assertNoGitLeak(await s.listPins('app'), 'pins');
 });
 
+await test('§3.5 pin label rejects spaces (ref name must be portable to real git)', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+
+  let threw = false;
+  try {
+    await s.pin('app', 'g1', 'known good');
+  } catch (err) {
+    threw = /invalid pin label/.test((err as Error).message);
+  }
+  ok(threw, 'pin() rejects a label containing a space');
+
+  const dashPin = await s.pin('app', 'g1', 'known-good');
+  eq(dashPin.label, 'known-good', 'pin() accepts a label with a dash');
+
+  const underscorePin = await s.pin('app', 'g1', 'known_good');
+  eq(underscorePin.label, 'known_good', 'pin() accepts a label with an underscore');
+});
+
 await test('§3.6 fork is independent (spec: fork advances, original unchanged)', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
@@ -214,6 +236,20 @@ await test('§4.2 auto-compaction fires on the loose-object threshold', async ()
   eq((await s.history('app')).length, 12, 'history intact after auto-compaction');
 });
 
+await test('§4 compaction removes the PREVIOUS pack instead of accumulating stale pack files', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const gitdir = '/whim/apps/app/.git';
+
+  for (let v = 1; v <= 5; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
+  await s.compact('app');
+  eq(backend.listPackFiles(gitdir).length, 2, 'one .pack + one .idx after first compaction');
+
+  for (let v = 6; v <= 10; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
+  await s.compact('app');
+  eq(backend.listPackFiles(gitdir).length, 2, 'still one .pack + one .idx after second compaction (no stale pack accumulation)');
+});
+
 // --- §5 persistence: KV serialize round-trip + restart (logic, in Node) ----
 
 await test('§5 KV-backed store survives a simulated restart (repo/history/pins/forks)', async () => {
@@ -247,6 +283,21 @@ await test('§5 repeated commit/checkout + restart cycles do not corrupt the rep
   }
   const s = createPersistentStore(new MapKVBackend(map), { autoCompact: false });
   eq((await s.history('app')).length, 5, 'all 5 cross-restart snapshots intact, no corruption');
+});
+
+await test('§5 auto-compaction on a KV-backed store reduces real KV key count (not just MemoryFs)', async () => {
+  const backend = new KvBackedFs(new MapKVBackend());
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: true, compactionThreshold: 12 } });
+
+  for (let v = 1; v <= 3; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`); // loose stays <=12, no compaction
+  const before = backend.kvKeyCount();
+
+  await s.snapshot('app', { 'bundle.js': BUNDLE(4) }, 'p4'); // loose crosses >12, auto-compaction fires inside this call
+  const after = backend.kvKeyCount();
+
+  ok(after < before, `auto-compaction shrank the real KV key count (${before} -> ${after})`);
+  eq(s.looseObjectCount('app'), 0, 'loose objects packed away on the KV-backed store too');
+  eq((await s.history('app')).length, 4, 'history intact after KV-backed auto-compaction');
 });
 
 // --- §6 forward seams: content-agnostic + multi-file lockstep --------------
@@ -353,6 +404,89 @@ await test('§4 C1: snapshot() resolves even when auto-compaction throws', async
   ok(!!snap && hist[0].id === snap.id, 'history entry matches the returned snapshot id');
   // (4) loose objects not zeroed — compaction was swallowed, not completed
   ok(store.looseObjectCount('app') > 0, 'looseObjectCount > 0 (compaction did not complete)');
+});
+
+// --- C9: assertNoGitLeak's HEX40 value-scan must not false-positive on -----
+//        opaque mini-app artifact content nested under an "artifacts" key,
+//        while FORBIDDEN_KEYS key-checking still fires everywhere -----------
+
+await test('§assertNoGitLeak: HEX40 artifact content does not false-positive', async () => {
+  let threw1 = false;
+  try {
+    assertNoGitLeak({ artifacts: { 'bundle.js': 'a'.repeat(40) } }, 'snap');
+  } catch {
+    threw1 = true;
+  }
+  ok(!threw1, 'HEX40 string inside artifacts does not throw');
+
+  let threw2 = false;
+  try {
+    assertNoGitLeak({ oid: 'a'.repeat(40) }, 'snap');
+  } catch {
+    threw2 = true;
+  }
+  ok(threw2, 'forbidden key oid still throws');
+
+  let threw3 = false;
+  try {
+    assertNoGitLeak({ id: 'a'.repeat(40) }, 'snap');
+  } catch {
+    threw3 = true;
+  }
+  ok(threw3, 'top-level HEX40 value under non-forbidden key still throws');
+});
+
+// --- C8: an untagged commit (no whim/snap/* tag) must throw loudly, never --
+//        silently surface as id:'' ----------------------------------------
+
+await test('§C8: history() throws an invariant error on an untagged commit', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // creates repo/branch/HEAD + one tagged commit
+
+  // Advance HEAD with a commit that has NO snap tag — the legitimate way the engine
+  // itself would never produce, but a corrupted/partial repo could.
+  await git.commit({
+    fs: { promises: backend },
+    dir,
+    gitdir,
+    message: 'untagged',
+    author: { name: 't', email: 't' },
+  });
+
+  let threw = false;
+  try {
+    await s.history('app');
+  } catch (err) {
+    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
+  }
+  ok(threw, 'history() throws an invariant error instead of returning id:""');
+});
+
+await test('§C8: active() throws an invariant error on an untagged commit', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+
+  await git.commit({
+    fs: { promises: backend },
+    dir,
+    gitdir,
+    message: 'untagged',
+    author: { name: 't', email: 't' },
+  });
+
+  let threw = false;
+  try {
+    await s.active('app');
+  } catch (err) {
+    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
+  }
+  ok(threw, 'active() throws an invariant error instead of returning id:""');
 });
 
 // --- summary ---------------------------------------------------------------

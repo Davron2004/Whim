@@ -206,6 +206,18 @@ export class OpenRouterClient {
                     totalTokens: Number(u.total_tokens ?? 0),
                   };
                 }
+
+                // Extract text delta from choices[0].delta.content
+                const choices = parsed.choices;
+                if (Array.isArray(choices) && choices.length > 0) {
+                  const delta = (choices[0] as Record<string, unknown>).delta;
+                  if (delta && typeof delta === 'object') {
+                    const content = (delta as Record<string, unknown>).content;
+                    if (typeof content === 'string' && content.length > 0) {
+                      yield content;
+                    }
+                  }
+                }
               } catch {
                 // ignore malformed trailing data
               }
@@ -217,14 +229,6 @@ export class OpenRouterClient {
           capturedUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         );
       } catch (err) {
-        if (
-          err instanceof OpenRouterAuthError ||
-          err instanceof OpenRouterRateLimitError ||
-          err instanceof OpenRouterNetworkError
-        ) {
-          rejectUsage(err);
-          throw err;
-        }
         const netErr = new OpenRouterNetworkError('stream read failed', err);
         rejectUsage(netErr);
         throw netErr;

@@ -121,7 +121,8 @@ delivered to the user privately, never committed**.
 `ok`), pause/resume work, **containment held 42/42** throughout; the Kotlin `WhimTone` TurboModule
 
 - codegen compile and install. **Pending:** the runtime-owner invariants (INV-TIMER, INV-CUEGATE —
-authored in a separate session, §16.4) and the *felt* cue check on real hardware. Not yet archived.
+authored in a separate session, §16.4) and the *felt* cue check on real hardware.
+**BLOCKED (archive):** INV-TIMER and INV-CUEGATE (see docs/backlog.md) plus the real-hardware felt-cue check. Not yet archived.
 **Contract notes (durable — Lane A #3/#4 share `src/sdk`):** `vc-sdk` now exports `delay(ms)` and
 `interval(cb, ms, { running })` (web-resident wrapped timers — **no** syscall, no capability, hook
 auto-cleanup on unmount, `running` pauses) and a `cues` facade `cues.haptic(kind)` /
@@ -373,8 +374,8 @@ not all 13 up front: later proposals should see earlier changes' as-built contra
 (meal-plan generator, journal summary, fridge-to-recipe). 3. **Tier 2 — notifications/schedules**
 (meal-plan alarm, full pour-over, med/plant reminders). 4. Control modes (§10.1) + examples
 library / per-app `LEARNED.md` (§9). 5. **Tier 3a — curated HTTP** (weather day-picker).
-2. Direct provider API + prompt caching for the chosen model. 7. Canvas/games (Tier 5).
-3. Sharing track; iOS.
+6. Direct provider API + prompt caching for the chosen model. 7. Canvas/games (Tier 5).
+8. Sharing track; iOS.
 
 ## Open deltas
 

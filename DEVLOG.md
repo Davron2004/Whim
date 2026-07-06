@@ -661,3 +661,68 @@ typed error classes. On-device LAN acceptance (task 8.2) is human-run.
    assertions passed. Fix: `usagePromise.catch(() => undefined)` in each error-path test before
    iterating deltas. The error tests already captured the right typed error; the suppression
    only prevents the spurious non-zero exit.
+
+---
+
+## `parallel-fix-loop` — the worktree-isolated batch-fix harness
+
+**Result:** the build harness, which was designed for attended/sequential/single-tree/human-commits
+work, now also runs **unattended-capable, parallel, multi-worktree, agent-commits** mechanical
+fixes. Mechanism: pinned-BASE integrity (replaces the foldable HEAD-diff tripwire), scoped git
+for subagents (`agent_id` + `cwd`-keyed), a gate split (`gate.sh` fast / `gate-full.sh` full,
+the latter run from the branch's committed tip in the **main** tree), a memory-handoff protocol
+(subagents propose, orchestrator applies, human sees the diff), and a `.devcontainer/` image for
+headless runs. Driven through `/fix-loop`: planner → `fix-worker` (isolated worktree) →
+red-check → integrity → reviewer → full gate → serialized merge, with PARK (rename, never
+delete) on any terminal wall. Validated end-to-end and now landing real fixes from the fix-fest
+critic batch (F1, F3, D1, D3, D6, D7, E1, E2) onto `dev/v1`.
+
+### Lessons
+
+1. **A HEAD-diff tamper check is worthless the moment the thing you're checking can commit.**
+   The original gate tripwire was `git diff HEAD -- <config>` — but once a subagent can `git
+   commit`, it can bake a tampered config into HEAD (HEAD == tree → empty diff → green). Fix:
+   pin to a **BASE SHA the orchestrator records at worktree creation** and diff against that,
+   never HEAD. Git's content-addressing already is the integrity baseline — no hash manifest,
+   no capability system needed on top.
+2. **Worktrees must live under `.claude/worktrees/`, not `/tmp` — but the toolchain still splits
+   on Metro.** Node resolves `node_modules` by walking *up*, so an in-repo worktree gets the
+   real toolchain for free; a `/tmp` worktree (symlinked `node_modules`) never resolved. Metro,
+   though, does **not** walk up — `guard:metro` fails from a worktree even with the toolchain
+   otherwise working. So the *fast* gate runs in the fixer's worktree, but the *full* gate
+   (`gate-full.sh`, which needs Metro + Chromium) runs from the branch's committed tip
+   `--detach`-checked-out into the **main** tree, not a worktree — same reasoning CI never
+   trusts a developer's working directory: a fixer can leave poisoned gitignored/untracked
+   files that a worktree-local gate would silently trust.
+3. **A red-check can be RED for the wrong reason.** Reverting a fix that adds a new imported
+   module makes the suite fail to *build* ("Could not resolve") rather than fail the actual
+   assertion — exit-nonzero either way, but a build failure proves nothing about the fix.
+   Mitigation: revert only the pre-existing prod file(s), not new ones, so the suite still
+   builds and the real assertion fails cleanly; a behavioral test on a brand-new helper can't be
+   revert-red-checked at all and needs reviewer inspection instead.
+4. **The triage list goes stale faster than expected.** Two of the first three findings picked
+   for a parallel batch were already fixed in `dev/v1` after the critic's report was cut. Cheap
+   to catch (the read-only planner step), expensive to miss (a wasted worktree + fixer run) —
+   the planner now has to verify a finding isn't already in HEAD before dispatching a fixer.
+5. **Chromium does not run under macOS Seatbelt at all** (`bootstrap_check_in … Permission
+   denied` — Seatbelt blocks the Mach-port IPC Chromium's multi-process model needs), so the
+   three Chromium-backed npm scripts had to be carved out of the host OS sandbox via
+   `excludedCommands`. That carve-out's safety assumption — a human sees and approves the
+   override prompt — **silently does not hold in a background/auto-mode session**: a batch run
+   that way saw every sandbox override auto-approve with zero prompts, making the run de-facto
+   unattended with the sandbox bypassed for orchestrator git + the full gate. The real fix isn't
+   the override at all — it's `.devcontainer/` (Docker, default-deny egress except the Anthropic
+   API), which replaces the OS sandbox as the threat boundary for any run that isn't a live
+   foreground session.
+6. **The `Write`/`Edit` tools bypass the OS sandbox entirely — only `Bash` subprocesses are
+   sandboxed.** This mattered for memory handoff: subagents are hook-denied from writing the
+   memory store (avoids an N-fixer race on the single `MEMORY.md` index), so they propose facts
+   in their report and the orchestrator applies them via `Write`/`Edit` — which still prompts
+   the human with the full diff regardless of `sandbox.enabled`. The permission prompt, not the
+   sandbox, is the actual gate on memory.
+7. **A `//` comment in `.claude/settings.json` silently drops the *entire* file, not just the
+   commented block.** Settings JSON must be strict — a stray inline note next to the sandbox
+   config invalidated the whole file, so the loader silently dropped sandbox, `worktree.baseRef`,
+   permissions, and hooks together. Symptom looked exactly like "the sandbox isn't enforcing"
+   (writes to `~/` succeeded); root cause was `/doctor` away. After any settings change, restart
+   and verify with a throwaway blocked write before trusting the run.

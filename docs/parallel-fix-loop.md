@@ -226,6 +226,20 @@ Also folded in: **memory handoff** (§4.8) — `protect-harness.sh` now hard-den
 
 ---
 
+### 6.7 Test classification — don't force a behavioral test on a non-behavioral fix (PROPOSED, 2026-06-30)
+
+The fix-worker contract mandates "a test that FAILS without your fix and PASSES with it" *unconditionally* — but that silently assumes every fix changes behavior. For a no-behavioral-delta fix (dedup a regex, delete dead code) the only move left is a source-string grep: bloatware, and un-red-checkable (reverting prod yields no behavioral failure). Classify the change at PLAN time:
+
+- **Behavioral** (changes observable I/O, error surface, persisted state, or executable control flow) → mandate the red-checkable test; red-check is the gate.
+- **Structural + a standing invariant worth locking** ("no `eval` in sandbox source", "the injection regex has ONE definition", "CSP never gains `unsafe-eval`") → a *static/structural* invariant check — legitimate **only if it encodes the invariant, not the patch** (litmus: would the assertion make sense to someone who never saw the diff?). Its home is the static-check pipeline / lint, NOT a behavioral unit test. Red-check is **skipped honestly**; VERIFY-by-inspection is the gate.
+- **Structural, no lasting invariant** (rename, dead-code deletion, internal refactor) → **no test**; the existing suite staying green (regression) + inspection is the honest assurance.
+
+**Implication for the loop:** PLAN emits the classification; the loop must *allow* a fix to land with no behavioral test (or a static-invariant check instead) rather than fabricating a red/green test. Demonstrated 2026-06-30 — D3/D7's §F tests were anti-revert source-greps, and one *induced a comment-plant* the moment the guard it grepped was refactored out (§7). This subsumes the earlier "make VERIFY grade greps harder" idea: the real fix is upstream, at classification.
+
+### 6.8 Containerized unattended execution — DONE (2026-06-30)
+
+`.devcontainer/` runs the loop in Docker with egress locked to Anthropic (`init-firewall.sh`, the resolved /24 — iptables can't wildcard a domain). The **container is now the Threat-C boundary**, replacing the macOS Seatbelt sandbox + its `excludedCommands` holes (Chromium can't run under Seatbelt) AND retiring the "illusory attended gate in background" worry: with `sandbox.enabled:false` inside (managed-settings, image-baked), there is no `dangerouslyDisableSandbox` override dance, and unattended is safe because untrusted fixer work is firewall-bounded while Threats A (hooks) + B (integrity/redcheck/fresh-gate/reviewer) run unchanged. Run via `.devcontainer/run-loop.sh setup` then `run`. Auth = Claude **subscription** OAuth token (`claude setup-token` → `~/.config/whim/oauth-token`, line 1 token + line 2 expiry), NEVER `ANTHROPIC_API_KEY` (that bills the pay-per-token API; the wrapper refuses to forward it). Full operating guide + threat-model table: **`.devcontainer/README.md`**.
+
 ## 7. Open / verify items
 
 > **Dry run (2026-06-26).** Scoped-git validated **live**: a real subagent's `git add`/`git commit` inside its worktree were allowed; `git push` was denied with our exact policy message. Verification half validated end-to-end: green test → BASE-diff (changed files ⊆ allowlist, protected paths clean) → red-check (undo the fix ⇒ test goes RED) → restore. **Fix applied + re-confirmed:** isolation worktrees branched from a stale base → set `worktree.baseRef: head` (§6.5); with that, a re-test isolation subagent came up on dev/v1's tip (`0834592`), scoped-git commit worked, and `./scripts/gate.sh` → **FAST GATE PASSED**. Every loop primitive is now proven end-to-end.
@@ -235,7 +249,13 @@ Also folded in: **memory handoff** (§4.8) — `protect-harness.sh` now hard-den
 3. **Red-check worktree** — run it in a *separate* worktree on `fix/<id>` so it doesn't disturb the fixer's tree; confirm `git checkout <BASE> -- <prod>` + test run is clean and reversible.
 4. **Resume window** — undocumented; validate empirically how long an async agent stays `SendMessage`-resumable. Until known, the branch+note floor (§4.5) is mandatory.
 5. **`agent_id` reliability — RESOLVED.** `agent_id` IS populated for subagents (probe-confirmed); the new rule keys on `agent_id` + `cwd` together.
-6. **Re-validate on a small batch** (2–3 findings) before scaling to the ~47 remaining mechanical fix-fest findings.
+6. **Re-validate on a small batch — DONE (2026-06-30).** F3+D6+E2 ran in parallel (3 subsystems, zero conflicts, clean serialized merge); container + test-quality shakeout below.
+
+**Container + test-quality shakeout (2026-06-30; dev/v1 @ `efc6973`).** The loop now runs headless in its container (§6.8) — validated end-to-end (firewall /24 Anthropic, subscription OAuth, streaming logs). Findings:
+- **The "duplicate" D3/D7 commits were `--no-ff` merge topology** (a fixer commit + a merge commit per finding), NOT a double-apply — the tree had each §F test exactly once (157 checks green). Don't re-alarm on this.
+- **The §F (D3/D7) tests were weak source-greps** (anti-revert only; one satisfiable by a comment). The post-hoc reviewer caught it → tightened into real invariants (D3: single-source pattern-literal; D7: live `if/throw` match) — feeding §6.7.
+- **D7's assertion wasn't Node-testable** (`op-sqlite.ts` imports the native module — *that* is why the worker grepped). Extracted the guard into a pure `assertExecuteSyncAvailable` helper + a real behavioral test, dispatched to a **Sonnet 5** fix-worker (clean minimal diff, self-verified non-vacuity, honest deviation disclosure; merged `c07818a`, reconciled `efc6973`). The extraction then broke the §F grep and forced a comment-plant — the cleanest demonstration of §6.7 (source-greps are refactor-brittle; behavioral tests are not).
+- **Reconciliation-as-prose (the PLAN HEAD-check) stays best-effort** — it didn't fire this run; deterministic hardening deferred to §8. The red-check partially backstops a redundant re-fix (revert-to-BASE stays green → flagged vacuous → park).
 
 ---
 
@@ -251,4 +271,15 @@ This loop is the **particular** (mechanical fixes). The **general** build loop (
 - **Main-thread async-Agent orchestration** (not Workflow) for resumable implementer revise loops.
 - **Scoped protected-file grants (§4.9) — built HERE.** Class-1 config (package.json, tsconfig, eslint, knip, babel, metro) becomes grantable per-chain via an orchestrator-written, agent-unforgeable grant manifest + a `protect-harness` grant check + a sanctioned-vs-tamper split in `fixloop integrity` — so a chain that legitimately touches Class-1 config proceeds autonomously and the human ratifies the lane at merge (never mid-flight). Class-2 (gate/fixloop/`.claude/**`/invariants/`build/`) stays human-authored, full stop. Dependency adds remain a separate higher-bar case (they also need `npm install`).
 
-Source material for that agent: this doc, [`coding-harness-diagram.md`](./coding-harness-diagram.md), [`harness-build-guide.md`](./harness-build-guide.md) (the intended roles), and [`fix-fest-handoff.md`](./fix-fest-handoff.md) (the failure catalog these changes close).
+Source material for that agent: this doc, [`coding-harness-diagram.md`](./coding-harness-diagram.md), and [`harness-build-guide.md`](./harness-build-guide.md) (the intended roles).
+
+---
+
+## 9. Operational notes — do NOT re-derive these
+
+Folded in from the build/validation handoff (now superseded by this doc + the implementation itself):
+
+- **The main thread CAN write protected files** — auto-mode allows it; `protect-harness.sh` only hard-blocks subagents. The one exception is `.claude/settings.json`'s permissions/sandbox block, which the auto-mode classifier refuses as self-modification regardless of caller. So sandbox/permission changes are always human-applied by hand, even though other protected-file edits from the main thread just prompt.
+- **A background/headless subagent can't answer a permission prompt.** It can only run hook-allowed or auto-allowed commands — anything that would fall through to `ask` effectively blocks it rather than pausing for input. Plan fixer/orchestrator commands accordingly when dispatching unattended.
+- **Test hooks by piping sample JSON from a file**, not inline on the command line — trigger words (`git push`, `sudo`, a protected path) appearing in the *test* command's own text will trip the live hook before the hook under test ever runs.
+- **The fix-worker must issue one shell command per `Bash` call.** A chained `&&`/`;`/`|` command falls outside the scoped-git policy's matcher and stalls rather than running or being cleanly denied.

@@ -83,6 +83,8 @@ src/host/launcher/test/.deliver-pages/
 src/runtime/generated/
 .obsidian/
 .claude/settings.local.json
+.claude/fixloop/*.log
+*.tmp.mjs
 
 # Harness server: durable per-device token counter (the only server state) + local secrets
 server/.data/

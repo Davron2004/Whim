@@ -2,6 +2,14 @@
 
 *A working specification, assembled from architectural discussion. This is a thinking document, not a contract. Decisions marked **[OPEN]** are not yet made; decisions marked **[DECIDED]** are settled for now but can be revisited with reason.*
 
+> **⚠️ SUPERSEDED on the points below — `docs/decisions.md` is authoritative, and `docs/capabilities.md` + the spec it points to in `openspec/specs/` are the current source for anything this document sketches.** Per decision #42, this document is deliberately not retro-edited as decisions land — "the log supersedes, the spec stays a thinking document." Known stale points as of decision #43:
+> - §4.4 "likely WebSocket for streaming" — decided **SSE** (#32).
+> - §4.7 "thin REST or tRPC" — **tRPC dropped** (#42).
+> - §5.6 "Storage is schemaless and forgiving... JSON soup" — reversed to **schema-declared SQLite** (#38, #40).
+> - §10 floating button marked `[DECIDED]` as the primary exit affordance — reversed to **system back as primary** (#42).
+> - §13 "leaning DeepSeek" `[OPEN]` — refined to **strong-model-first, DeepSeek a bakeoff candidate** (#42).
+> - §17 "Still Open" (backend runtime, auth, first-run seeding, back-button overlap) — **all resolved** in #42.
+
 ---
 
 ## 1. What Whim is
@@ -132,6 +140,7 @@ export default defineApp({
 });
 
 // UI primitives — the ONLY way to render
+// Only 'vc-sdk' is an allowed import specifier — subpaths like 'vc-sdk/ui' are rejected by the resolver allowlist.
 import {
   Screen, View, Stack, Row, Spacer, ScrollView, SafeArea,           // layout
   Text, Heading,                                                     // typography
@@ -140,7 +149,15 @@ import {
   Card, List, ListItem, Image, Icon, Divider, Badge, ProgressBar,    // display
   Avatar, EmptyState, Skeleton,
   Modal, Sheet, Toast, Alert, Menu,                                  // overlay
-} from 'vc-sdk/ui';
+  useState, useEffect, useMemo, useCallback, useReducer,             // state
+  useNavigation, useRoute,                                           // navigation — nav.push/back/replace
+  http,                                                               // net — get/post; routed through egress filter
+  storage,                                                            // storage — namespaced KV, schemaless JSON
+  delay, interval,                                                    // effects — timers that the host can pause/cancel
+  location, motion, camera, notifications,
+  share, clipboard, haptics, audio,                                   // capabilities — each requires manifest + consent
+  ai,                                                                  // ai.complete(prompt,{schema}); ai.classify
+} from 'vc-sdk';
 
 // Theme tokens — the ONLY accepted style values
 //   Color:    primary secondary accent success warning danger neutral
@@ -150,17 +167,6 @@ import {
 //   TextSize: caption body subtitle title heading display
 //   Weight:   regular medium bold
 // Components accept tokens, never raw hex/px.  <Button radius="md" /> ✓   radius={17.3} ✗
-
-import { useState, useEffect, useMemo, useCallback, useReducer } from 'vc-sdk/state';
-import { useNavigation, useRoute } from 'vc-sdk/navigation';   // nav.push/back/replace
-import { http } from 'vc-sdk/net';                              // get/post; routed through egress filter
-import { storage } from 'vc-sdk/storage';                       // namespaced KV, schemaless JSON
-import { delay, interval } from 'vc-sdk/effects';               // timers that the host can pause/cancel
-import {
-  location, motion, camera, notifications,
-  share, clipboard, haptics, audio,
-} from 'vc-sdk/capabilities';                                   // each requires manifest + consent
-import { ai } from 'vc-sdk/ai';                                 // ai.complete(prompt,{schema}); ai.classify
 ```
 
 ### 5.3 The UI line: tokens, not values [DECIDED]

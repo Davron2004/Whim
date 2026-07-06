@@ -62,6 +62,14 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 - **Suggested approach:** after compaction packs reachable objects, add a second pass that unlinks loose objects **not** in `reachable` (true GC — safe, they are unreferenced by definition); or add a device-acceptance measurement that surfaces orphan-object growth so the leak is observable before it bites.
 - **Source:** critic baseline 2026-06-18 (finding **C2**, full text in `openspec/critic/2026-06-18.md`); adjudicated wontfix-for-now in `openspec/critic/2026-06-18-triage.md`.
 
+### [med] static-check-pipeline chain-A is blocked on human-only bootstrap edits
+- [ ] open
+- **Where:** `openspec/changes/static-check-pipeline/chains.md` chain-A; root `package.json`; root `tsconfig.json`.
+- **What:** chain-A's two bootstrap edits — adding `"checks:test": "node checks/test/run.mjs"` to root `package.json` and `"checks/test"` to root `tsconfig.json`'s `exclude` — are blocked by `.claude/hooks/protect-harness.sh` (it protects `*/package.json` and `tsconfig*.json`) and must be made by a human in an editor before any chain can be dispatched.
+- **Why it matters:** the whole static-check-pipeline change is stalled until this lands.
+- **Suggested approach:** human makes both edits, then dispatch chain-B.
+- **Source:** `static-check-pipeline` chains.md chain-A note.
+
 ---
 
 ## Done

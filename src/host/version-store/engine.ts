@@ -238,11 +238,15 @@ export class VersionStore {
       return []; // unborn HEAD (repo exists, no commits)
     }
     const map = await this.oidToId(gitdir);
-    return commits.map(c => ({
-      id: map.get(c.oid) ?? '',
-      prompt: stripTrailingNewline(c.commit.message),
-      createdAt: c.commit.author.timestamp * 1000,
-    }));
+    return commits.map(c => {
+      const id = map.get(c.oid);
+      if (id === undefined) throw new Error(`invariant: commit ${c.oid} has no snap tag`);
+      return {
+        id,
+        prompt: stripTrailingNewline(c.commit.message),
+        createdAt: c.commit.author.timestamp * 1000,
+      };
+    });
   }
 
   /** diff(appId, a, b) → walk + compare, per-file change (task 3.3). */
@@ -289,7 +293,7 @@ export class VersionStore {
   async pin(appId: string, snapshotId: string, label: string): Promise<Pin> {
     const { gitdir } = this.paths(appId);
     const oid = await this.resolveSnap(gitdir, snapshotId);
-    if (!/^[A-Za-z0-9 ._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
+    if (!/^[A-Za-z0-9._-]+$/.test(label)) throw new Error(`invalid pin label: ${label}`);
     await git.tag({ fs: this.client, gitdir, ref: PIN_TAG(label), object: oid, force: true });
     return { label, snapshotId };
   }
@@ -408,7 +412,8 @@ export class VersionStore {
   private async snapshotContent(gitdir: string, oid: string, knownId?: string): Promise<SnapshotContent> {
     const artifacts = await this.readContentAt(gitdir, oid);
     const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
-    const id = knownId ?? (await this.oidToId(gitdir)).get(oid) ?? '';
+    const id = knownId ?? (await this.oidToId(gitdir)).get(oid);
+    if (id === undefined) throw new Error(`invariant: commit ${oid} has no snap tag`);
     return {
       id,
       prompt: stripTrailingNewline(commit.message),

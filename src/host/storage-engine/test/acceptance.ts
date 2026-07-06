@@ -118,6 +118,11 @@ test('§A the verb surface accepts no app/store-addressing parameter', () => {
   // another store. (The TypeScript contract makes this a compile-time guarantee too.)
 });
 
+test('§A records verb before open() throws "not_open"', () => {
+  const { store } = memEngine();
+  expectError('not_open', () => store.records.append('Whatever', { x: 1 }));
+});
+
 test('§A verbs: append returns an id, list/update/remove round-trip', () => {
   const { store } = memEngine();
   store.open(expensesV1);
@@ -195,6 +200,49 @@ test('§A persistence: data survives reopening the same file (restart simulated)
   eq(second.store.records.list('Expenses'), [{ id, amount: 777, note: 'survive', spentAt: null }], 'records survive reopen');
   eq(second.store.kv.get('streak'), 7, 'kv survives reopen');
   second.store.close();
+});
+
+const mixedSchema: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {
+    Mixed: {
+      id: 'c1',
+      tombstones: [],
+      fields: {
+        flag: { id: 'f1', type: 'bool' },
+        amount: { id: 'f2', type: 'float' },
+        payload: { id: 'f3', type: 'json' },
+      },
+    },
+  },
+};
+
+test('§A field-types: bool/float/json values round-trip through their marshal forms (not their SQL storage class)', () => {
+  const { store } = memEngine();
+  store.open(mixedSchema);
+
+  const trueId = store.records.append('Mixed', { flag: true, amount: 0, payload: null }).id;
+  const trueRow = store.records.list('Mixed').find(r => r.id === trueId)!;
+  ok(trueRow.flag === true && typeof trueRow.flag === 'boolean', 'bool true reads back as the boolean true, not 1/0 (got ' + JSON.stringify(trueRow.flag) + ' typeof ' + typeof trueRow.flag + ')');
+
+  const falseId = store.records.append('Mixed', { flag: false, amount: 0, payload: null }).id;
+  const falseRow = store.records.list('Mixed').find(r => r.id === falseId)!;
+  ok(falseRow.flag === false && typeof falseRow.flag === 'boolean', 'bool false reads back as the boolean false, not 1/0 (got ' + JSON.stringify(falseRow.flag) + ' typeof ' + typeof falseRow.flag + ')');
+
+  const amountId = store.records.append('Mixed', { flag: true, amount: 3.14, payload: null }).id;
+  const amountRow = store.records.list('Mixed').find(r => r.id === amountId)!;
+  eq(amountRow.amount, 3.14, 'float value round-trips exactly');
+
+  const payloadValue = { a: 1, b: [1, 'x', { c: true }] };
+  const payloadId = store.records.append('Mixed', { flag: true, amount: 0, payload: payloadValue }).id;
+  const payloadRow = store.records.list('Mixed').find(r => r.id === payloadId)!;
+  eq(JSON.stringify(payloadRow.payload), JSON.stringify(payloadValue), 'json value deep round-trips (object/array/nested-object all preserved)');
+
+  const nullId = store.records.append('Mixed', { flag: null, amount: null, payload: null }).id;
+  const nullRow = store.records.list('Mixed').find(r => r.id === nullId)!;
+  ok(nullRow.flag === null, 'a null bool reads back as null, not false');
+  ok(nullRow.amount === null, 'a null float reads back as null, not 0');
+  ok(nullRow.payload === null, 'a null json reads back as null');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -286,6 +334,34 @@ test('§B tombstone + display-name reuse: a fresh id, old column retained, no re
     collections: { Expenses: { id: 'c1', tombstones: [], fields: { amount: { id: 'f1', type: 'int' }, ghost: { id: 'f2', type: 'int', default: 0 }, spentAt: { id: 'f3', type: 'date' } } } },
   };
   expectError('tombstone_violation', () => store.open(violation));
+});
+
+test('§B re-declaring a tombstoned field with the same id+type resurrects the retired column with zero DDL', () => {
+  const { store, rec } = memEngine();
+  store.open(expensesV1);
+  const { id } = store.records.append('Expenses', { amount: 1, note: 'keepme', spentAt: 5 });
+
+  // gen N+1 tombstones f2 (note): the column is retired, its data retained, not dropped.
+  const tombstoned: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c1', tombstones: ['f2'], fields: { amount: { id: 'f1', type: 'int' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  store.open(tombstoned);
+
+  // gen N+2 (a rollback-shaped re-declaration) re-declares "note" with the SAME id f2 and the
+  // SAME type — schema.ts:228-236's resurrection path: the column already exists physically,
+  // so it just moves retired→active. No default is supplied (none is needed: this is not the
+  // "truly new field" branch).
+  const resurrected: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c1', tombstones: [], fields: { amount: { id: 'f1', type: 'int' }, note: { id: 'f2', type: 'text' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  const mark = rec.mark();
+  store.open(resurrected); // must not throw
+  const ddl = rec.log.slice(mark).filter(e => /^(CREATE|ALTER)/.test(e.sql));
+  eq(ddl.length, 0, 'resurrecting a retired id+type emits zero DDL — the column already exists');
+  const row = store.records.list('Expenses')[0];
+  eq([row.id, row.note], [id, 'keepme'], 'the retired column\'s data survives the round trip through retired and back to active');
 });
 
 test('§B rollback then roll-forward loses no data (older code preserves a newer field)', () => {

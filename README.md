@@ -18,9 +18,10 @@ You describe what you want — *"a timer with my exact pour-over recipe"*, *"a t
 This project exists to demonstrate harness engineering — the unglamorous machinery that makes LLM code generation *reliable* rather than impressive-once. The hard parts, in order of how much they fight back:
 
 1. **Run untrusted, LLM-generated code on a phone, safely.** Every mini-app is code nobody reviewed. It runs in a sandbox that is pen-tested, never-regress-CI-gated, and assumes the bundle is actively hostile — including assuming it will *lie about its own containment*.
-2. **Design an SDK for a model, not a human.** A small, fully-documented component surface that fits in a system prompt, accepts semantic tokens instead of raw values, and makes hallucinated imports structurally impossible.
-3. **Version control nobody can see.** Every generation is snapshotted with full history, rollback, pinning, and forking — backed by real git, on-device, with zero git vocabulary reaching the user (a build guard fails if a hash or ref leaks into the API surface).
-4. **A self-healing generation loop** *(next up)*: plan → generate → static-check → run → observe → repair, where the quality of the structured diagnostics fed back — not the model — is what makes the harness good.
+2. **Govern what that code can touch.** Storage and physical feedback (haptics, sound) aren't ambient capabilities — they're syscalls over an append-only registry with a fixed-order gate, reachable only from a channel a mini-app can't forge.
+3. **Design an SDK for a model, not a human.** A small, fully-documented component surface that fits in a system prompt, accepts semantic tokens instead of raw values, and makes hallucinated imports structurally impossible.
+4. **Version control nobody can see.** Every generation is snapshotted with full history, rollback, pinning, and forking — backed by real git, on-device, with zero git vocabulary reaching the user (a build guard fails if a hash or ref leaks into the API surface).
+5. **A self-healing generation loop** *(in progress)*: the wire contract, SSE streaming, and a stub Hono server are live; plan → generate → **static-check** → run → observe → repair still needs the static-check stage (proposed, not built) and a real model behind the harness — the quality of the structured diagnostics fed back, not the model, is what's meant to make this good.
 
 ## Architecture
 
@@ -33,8 +34,8 @@ flowchart LR
         RT["Sandbox runtime<br/>(hardened WebView)"]
         VS[("Version store<br/>(on-device git,<br/>product verbs only)")]
     end
-    subgraph Server["☁️ Server — stateless (planned)"]
-        H["Generation harness<br/>plan → generate → check<br/>→ run → observe → repair"]
+    subgraph Server["☁️ Server — stateless (skeleton live)"]
+        H["Generation harness<br/>SSE stub pipeline today;<br/>plan → generate → check<br/>→ run → observe → repair (target)"]
     end
     M["LLM endpoint"]
     UI -- "describe an app" --> H
@@ -79,6 +80,10 @@ All of this is enforced by a **never-regress invariant suite** (`npm run invaria
 
 Every generation is committed to a real git repository on the device (`isomorphic-git` under Hermes), one repo per mini-app. The public API speaks **product verbs only** — `snapshot · history · diff · rollback · pin · fork` — and a build-time guard fails if git vocabulary (a hash, a ref, a commit key) ever reaches a return shape. Since isomorphic-git has no `gc`, compaction is a DIY pack-then-drop-loose pass, triggered by loose-object *count* (the real pressure point on a KV-backed FS, not bytes).
 
+### The capability bridge
+
+Mini-apps don't get ambient access to storage, haptics, or sound — they reach host capabilities only through a governed syscall layer (an append-only registry, a fixed-order gate, a generation-fenced dispatcher) between the sandboxed iframe and the RN host. The syscall channel needs no nonce: a forged `sysret` posted by a bundle to its own window arrives with `ev.source` pointing at the iframe's own window, never `window.parent` — the browser sets `source`, so it's unforgeable by construction. Storage (schema-declared, per-app SQLite) was syscall #1; physical cues (haptics, sound) are #2 and #3, gated by manifest-declared capability tokens. An undeclared capability is denied with a structured error, never silently dropped.
+
 ## On-device evidence
 
 Everything below was measured on the real target — Android System WebView / Hermes, RN new architecture, offline release build — not desktop Chrome.
@@ -92,6 +97,8 @@ Everything below was measured on the real target — Android System WebView / He
 | Storage cost per generation | ~650 B + ~4 git objects |
 | Compaction | 48 loose objects → 0; history/rollback/fork still resolve |
 | Persistence across app kills | 3× kill+relaunch cycles, **0 corruption** |
+| Storage-engine writes (on-device) | `update`/`remove` ~1–11 ms · `kv.set` ~1–9 ms · single `append` ~1.2 ms warm |
+| Capability-bridge round-trip (on-device) | ~16–17 ms median **per syscall**, every verb — transport-bound (2 WebView↔RN crossings), not engine-bound |
 
 <p>
   <img src="invariants/sandbox-isolation/reference/spike1-android-result.png" width="230" alt="Sandbox containment verdict on-device" />
@@ -105,10 +112,11 @@ Everything below was measured on the real target — Android System WebView / He
 The process is as much the portfolio piece as the code:
 
 - **Spike-driven de-risking.** Every risky unknown (can a WebView contain a hostile bundle? does isomorphic-git run under Hermes? what's the bundle delivery channel?) got a throwaway spike with explicit hypotheses and an on-device verdict. Spike scaffolds are deleted; findings outlive them in [`docs/`](docs/).
-- **A numbered decision log.** [`docs/decisions.md`](docs/decisions.md) records 39+ decisions *with their rejected alternatives* — including the reversals, kept on the record.
+- **A numbered decision log.** [`docs/decisions.md`](docs/decisions.md) records 43+ decisions *with their rejected alternatives* — including the reversals, kept on the record.
 - **Adversarial verification.** The bundle contract was pen-tested (T1–T8 + F4) before being productionized; the attacks that landed became carry-forward constraints, and the constraints became CI.
 - **Spec-driven changes.** Work flows through [OpenSpec](openspec/) proposals → design → tasks → archive, with capability specs as the source of truth.
 - **A raw devlog.** [`DEVLOG.md`](DEVLOG.md) captures the dead ends and "I was wrong about X" lessons before they evaporate.
+- **An agentic build harness with adversarial self-checks.** Most implementation work is dispatched to subagents over isolated git worktrees, gated by a pinned-commit integrity check (never a HEAD diff — once an agent can commit, that check is foldable) and a red/green check proving each test is non-vacuous before merge. Built first as a parallel batch-fix loop, generalizing next to the full OpenSpec build loop.
 
 ## Status
 
@@ -116,9 +124,14 @@ The process is as much the portfolio piece as the code:
 |---|---|
 | ✅ | **Sandbox runtime (v0.1)** — hardened WebView realm, bundle contract, nonce-authenticated verdicts, blocking-CI invariant suite |
 | ✅ | **On-device version store (v0.2)** — snapshot/history/rollback/pin/fork over isomorphic-git + MMKV, accepted on-device |
-| 🔜 | **Generation harness** — the server-side plan/generate/check/run/repair loop |
-| 🔜 | **SDK design system** — the real component set + visual language (current SDK implements exactly what the first app uses) |
-| ⏳ | Capability bridge (the "syscall table"), launcher UX, voice input, iOS |
+| ✅ | **Per-app storage engine (v0.2)** — schema-declared SQLite, burned-ID columns, additive-only evolution, accepted on-device |
+| ✅ | **Capability bridge** — governed syscalls (storage, haptics/sound) over an append-only registry, accepted on-device |
+| ✅ | **Effects & cues (v0.3)** — web-resident timers + native haptic/sound feedback, accepted on-device |
+| ✅ | **Launcher shell** — home grid, full-screen launch, system-back exit, fork/delete, first-run seeding |
+| 🔜 | **Generation harness** — skeleton live (Hono server, SSE wire contract, durable token metering); the real plan→generate→**check**→run→repair loop and a model behind it aren't wired yet |
+| 🔜 | **Static check pipeline** — proposed, not yet built; closes the one open pen-test finding (token-scan checks miss prototype-pollution) |
+| 🔜 | **SDK design system** — the real component set + visual language (current SDK implements exactly what shipped apps use) |
+| ⏳ | Voice input, iOS |
 
 ```mermaid
 flowchart LR
@@ -130,13 +143,15 @@ flowchart LR
 ## Repository map
 
 ```
-build/        local stand-in for the future server build (esbuild pipeline)
-src/runtime/  the WebView sandbox runtime (neutralize · resolver · probes · loader)
+build/        esbuild pipeline — mini-app bundles + the runtime HTML the WebView loads
+contract/     @whim/contract — zod wire schemas shared by device and server
+server/       @whim/server — Hono harness server skeleton (SSE generation, token metering)
+src/runtime/  the WebView sandbox runtime (neutralize · resolver · probes · loader · syscall)
 src/sdk/      vc-sdk — the private SDK mini-apps are written against
-src/host/     RN shell, WebView host, on-device version store
+src/host/     RN shell — launcher, capability bridge, storage engine, version store
 invariants/   never-regress containment suites (blocking CI gate)
 fixtures/     the sample mini-app + adversarial bundles that attack the sandbox
-docs/         spec · numbered decision log · spike findings
+docs/         spec · numbered decision log · spike findings · build-harness design
 openspec/     spec-driven change workflow (proposals → specs → archive)
 ```
 
@@ -147,6 +162,8 @@ npm install
 npm run build              # esbuild → runtime HTML + app bundles + artifacts
 npm run invariants         # the containment suite vs this exact build (headless Chromium)
 npm run vstore:test        # version-store acceptance suite (Node)
+npm run storage:test       # storage-engine acceptance suite (Node)
+npm run bridge:test        # capability-bridge acceptance suite (Node)
 ```
 
 Desktop Chromium is the fast pre-check; the authoritative verdict is the real Android WebView. To run on a device/emulator (Node 22, JDK 21): `npm run android:release`.
