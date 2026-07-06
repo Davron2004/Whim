@@ -12,9 +12,15 @@ apply: diagnostics discipline (§8.1/§8.2), two test surfaces (§16.2 — this 
 Surface 1, TDD), reward-hacking defenses (§16.4), and "never widen" (this change touches no
 runtime surface at all).
 
-Current state: nothing exists server-side. The only static checking in the repo is esbuild's
-resolve-failure on off-allowlist imports (build-time, not generation-time) and the runtime's
-three containment legs (which produce *runtime throws*, not structured pre-run diagnostics).
+Current state *(refreshed 2026-07-03)*: #8 landed 2026-06-18 — the `contract/`+`server/`
+workspaces exist. The as-built wire `Diagnostic` is `{ kind: z.string() /* open */,
+symbol?, line?, hint: min(1) }` with a comment reserving the narrowing for this change
+("do NOT hard-code a closed enum here"); the stub pipeline already streams a no-op `check`
+stage pair and emits one canned kind (`BUILD_FAILURE`) in its failure branch. #3
+(sdk-design-system) also landed — 22 components, theme *types* only, and **no navigation
+API**. The only static checking in the repo is still esbuild's resolve-failure on
+off-allowlist imports (build-time, not generation-time) and the runtime's three containment
+legs (which produce *runtime throws*, not structured pre-run diagnostics).
 
 ## Goals / Non-Goals
 
@@ -44,13 +50,18 @@ three containment legs (which produce *runtime throws*, not structured pre-run d
 ### D1 — Placement: top-level `checks/`, plain directory, not yet a workspace
 
 Node-land code in this repo lives at the top level (`build/`, `invariants/`), device code
-under `src/`. The checker is server/eval territory; #8 (proposed 2026-06-12, same wave)
-creates the `contract/` + `server/` workspaces, but #8 and #9 are implemented in independent
-windows, so this library must stand alone in either order. So: `checks/` top-level, plain TS,
-consumed by relative import; when #8's workspaces exist, `checks/` is workspace-ified by
-adding a `package.json`, with import paths inside the lib unchanged. Alternatives rejected: `src/host/` (not device code; Metro has no
-business near it), `server/lib/` (couples to #8's unproposed layout), separate npm package
-(ceremony with no consumer yet).
+under `src/`. The checker is server/eval territory. #8 has since landed, and its as-built
+workspaces show what workspace-ification actually costs: a `package.json` + own tsconfig +
+root-tsconfig exclusion + a `knip.json` workspace block + a `package-lock.json` regen (all
+hook-blocked) + a fresh `guard:metro` verification surface. `checks/` has no dependency of
+its own and no consumer that needs a package specifier yet (#11 is unproposed), so it stays
+a **plain top-level dir under the root tsc** — library files included (root `include` is
+`**/*.ts(x)`), `checks/test` added to the root `exclude` alongside the other Node suite
+dirs. Workspace-ification is deferred to the first consumer that needs `@whim/checks`;
+task 9.1 records this as a deviation from the roadmap #9 note "(workspace-ified once #8's
+exist)". Alternatives rejected: `src/host/` (not device code; Metro has no business near
+it), `server/lib/` (couples the lib to the server's lifetime), npm workspace now (all cost,
+no consumer).
 
 ### D2 — Parser: the TypeScript compiler API, syntactic gate only
 
@@ -112,13 +123,18 @@ plus small const tables, importable by anything):
   bundle: the report's `ok` is `diagnostics.length === 0` — the zero-warning steady state is
   structural, there is no severity threshold knob. A warning class that proves useless is
   removed from the catalog (globally), not suppressed per-app.
-- **Seam to #8 (aligned to #8's as-proposed contract notes, which landed first)**:
-  `@whim/contract` ships the wire `Diagnostic` with an **open** `kind`, and "#9 narrows it
-  in `@whim/contract`". So: the closed union is authored in `checks/contract.ts` (the lib
-  must stand alone — D1), and surfaces in `@whim/contract` as the narrowing of the open
-  `kind` (a TS-source re-export/refinement — exactly what #8's TS-source-only workspace
-  permits). Whichever change is *implemented* second wires that re-export. Consumers
-  (#7, #11) import from `@whim/contract` and see the narrowed vocabulary.
+- **Seam to #8 (now as-built — #8 landed 2026-06-18; this change is second, so the wiring
+  is in-scope here, Chain G / task 9.1)**: `contract/src/index.ts` ships `Diagnostic.kind`
+  as an open `z.string()` with a comment reserving the narrowing for this change. The
+  closed union is authored in `checks/contract.ts` (the lib must stand alone — D1) and
+  surfaced from `@whim/contract` by a TS-source re-export (a relative import escaping the
+  package dir is acceptable for this TS-source-only, never-published workspace; `tsc -p
+  contract` is `--noEmit`, so no `rootDir` constraint). Two rules keep the wire honest:
+  the zod `kind` **stays an open `z.string()`** — the stub pipeline's `BUILD_FAILURE` and
+  #10's future runtime kinds must keep validating; the narrowing is the exported closed
+  union *type* (+ const table). And `severity`/`message` land as **optional** wire fields,
+  so existing producers and `server:test` stay green. Consumers (#11, #12) import from
+  `@whim/contract` and see the narrowed vocabulary.
 
 ### D5 — Manifest extraction: AST-literal-only, never by execution
 
@@ -136,29 +152,39 @@ as the default export — anything else is a diagnostic (the #37 emit contract).
 
 Two small data tables, kept beside the forbidden-name table:
 
-- **Export→capability map**: which `vc-sdk` imports imply which manifest capability (today
-  `storage` → `'storage'`; `haptic`/`sound` → `'cues'` per #2's contract notes). Both
-  directions: used-not-declared → `undeclared_capability` (error; the runtime gate would
-  deny it); declared-not-used → `unused_capability` (warning; §5.4 disclosure honesty — the
-  consent sheet must not list ghosts). Adding capability #N+1 = one map row, mirroring #41's
-  registry discipline.
-- **Nav-call shapes**: `initial ∈ screens` checks today; push/replace-target resolution
-  recognizes the #1-contract API (`useNavigation`/`useRoute`) with **string-literal targets**
-  — a computed target is a diagnostic (same conservative policy as D3, same model-steering
-  rationale). Navigation doesn't exist until #3; the shapes live in the table so #3's
-  as-built API is a data edit, not a checker rewrite. ⚠️ Recorded as a ledger coordination
-  note.
+- **Export→capability map**: which `vc-sdk` imports imply which manifest capability. The
+  as-built facades are two namespace objects: `storage` (`storage.kv.*`,
+  `storage.records.*`) → `'storage'`; `cues` (`cues.haptic`/`cues.sound` — one `cues`
+  export, not separate functions) → `'cues'`. The registry's third capability, `'diag'`,
+  deliberately has **no row**: it has no SDK facade (only the `latency-probe` fixture
+  reaches it, via raw `globalThis.__whimSyscall`), so a generated app declaring it draws
+  `unused_capability`. Both directions: used-not-declared → `undeclared_capability` (error;
+  the runtime gate would deny it); declared-not-used → `unused_capability` (warning; §5.4
+  disclosure honesty — the consent sheet must not list ghosts). Adding capability #N+1 =
+  one map row, mirroring #41's registry discipline.
+- **Nav-call shapes**: `initial ∈ screens` is the whole check today — **#3 landed with no
+  SDK navigation API** (only bridge-level nav-depth/back frames exist, invisible to
+  mini-app source), so the shapes table ships **empty**. The mechanism stays: when a nav
+  change lands, its call shapes (string-literal targets only; a computed target is a
+  diagnostic — same conservative policy as D3, same model-steering rationale) are added as
+  table rows, and the suite proves the mechanism now with a test-injected shape row.
+  ⚠️ The old coordination note pointed at #3; task 9.1 repoints it at whichever future
+  change adds navigation.
 
 ### D7 — Schema check: adapt #40's pure functions, caller supplies state
 
 Import `validateArtifact`, `diffSchemas`, `emptyApplied` from
-`src/host/storage-engine/schema.ts` (relative import; already pure and dependency-free).
-The pass extracts the `schema` literal (D5), runs `validateArtifact`, and — when the caller
+`src/host/storage-engine/schema.ts` (relative import; already pure and dependency-free —
+note `AppliedSchema` is exported from `schema.ts`, not `contract.ts`). The pass extracts
+the `schema` literal (D5), runs `validateArtifact` (as-built kinds: `invalid_artifact`,
+`malformed_id`, `id_reuse`, `bad_field_type`, `bad_default`), and — when the caller
 supplies an `appliedSchema` (the edit/regeneration flow; the server is stateless per Model 1,
-so the device ships the applied schema with the request) — runs `diffSchemas` and maps the
-conflict classes (`type_change`, `id_reuse`, `tombstone_violation`, `missing_default`)
-into catalog diagnostics, preserving the engine's kind names and hints verbatim (one
-vocabulary, again). First generation = `emptyApplied()`.
+so the device ships the applied schema with the request) — runs `diffSchemas` and maps its
+conflict classes (as-built: `type_change`, `tombstone_violation`, `missing_default` —
+`id_reuse` is a validate-time kind, not a diff kind) into catalog diagnostics, preserving
+the engine's kind names and hints verbatim (one vocabulary, again). First generation =
+`emptyApplied()`. *(`storage-semantic-guards` touched neither function — its
+`unqueryable_field` guard is engine-private and runtime-only; see Open Questions.)*
 
 ### D8 — API and verification
 
@@ -176,7 +202,11 @@ on a failing report (the repair prompt wants both). Verification is the house id
 acceptance suite esbuild-bundled and run under Node 22 (`npm run checks:test`), exit non-zero
 on failure, blocking CI step beside `storage:test`/`bridge:test`. TDD per §16.2 — assertions
 written before passes. Two fixture populations: **honest** fixtures (corpus-shaped apps,
-including the real `fixtures/*.app.tsx` sources) must produce *zero* diagnostics — the
+including four of the five real `fixtures/*.app.tsx` sources — `tip-splitter`,
+`water-counter`, `pour-over-timer`, `style-gallery`; `latency-probe` is excluded and pinned
+as an expected-flagged sample, since it bypasses the SDK via raw `globalThis.__whimSyscall`
+to reach the facade-less `diag` capability and the checker flagging it is correct) must
+produce *zero* diagnostics — the
 false-positive gate and the proof the suite isn't vacuously red; **hostile** fixtures (the
 T8-pattern bypass corpus: aliasing, computed access, string-splitting, pollution,
 manifest games) must each produce the expected diagnostic — and these are authored in a
@@ -191,14 +221,15 @@ manifest games) must each produce the expected diagnostic — and these are auth
 - **[False confidence]** A green static check is mistaken for containment. → Stated as a
   non-goal here, restated as a requirement in the spec ("necessary, never sufficient"), and
   the pipeline ordering in #11 always runs #10 after a green check.
-- **[Nav API drift (#3)]** The screen-graph check is written against #1's contract shape;
-  #3 may land a different surface. → Table-driven shapes (D6); finalization is a data edit;
-  coordination note in the roadmap ledger so #3's proposer knows the table exists.
-- **[Seam drift with #8]** #8's wire `Diagnostic` (`{kind, symbol?, line?, hint}`, open
-  kind) and this catalog must stay one type, not two siblings. → Aligned to #8's note
-  ("#9 narrows `kind` in `@whim/contract`"); the union is authored here, surfaced there;
-  `severity`/`message` recorded as this change's additive refinement in both ledger rows'
-  reading path. The implementation task re-verifies against #8's as-built schema.
+- **[Nav API drift]** *(updated — #3 landed with no navigation API.)* The residual risk is
+  a future nav change landing without adding shape rows. → The table ships empty but
+  mechanism-proven (test-injected row in the suite); task 9.1 repoints the ledger
+  coordination note from #3 to the future nav change.
+- **[Seam drift with #8]** *(largely resolved — #8 is as-built and matches the assumed
+  shape.)* Remaining care: the wire `kind` must stay an open `z.string()` when the
+  narrowing lands (the stub's `BUILD_FAILURE` and #10's runtime kinds must keep
+  validating), and `severity`/`message` join the wire as *optional* fields — Chain G
+  verifies `server:test` stays green after the `contract/src/index.ts` edit.
 - **[TS version drift]** Compiler upgrades change AST/diagnostic details. → The suite asserts
   on catalog diagnostics (kinds/lines), never on compiler internals; `typescript` stays the
   single pinned devDependency.
@@ -208,8 +239,13 @@ manifest games) must each produce the expected diagnostic — and these are auth
 
 ## Open Questions
 
-- Semantic type-checking against the frozen SDK `.d.ts` (post-#3): worth a follow-up pass
-  once the surface stops moving — deliberately not designed here beyond keeping the pass
-  list additive.
-- Whether `checks/` becomes `@whim/checks` immediately when #8's workspaces land or stays a
-  relative-import library until #11 needs it — #8's call, zero cost either way.
+- Semantic type-checking against the SDK `.d.ts` (#3 landed — the surface is much larger
+  now, 22 components, but stable): worth a follow-up pass — deliberately not designed here
+  beyond keeping the pass list additive.
+- `storage-semantic-guards` added a runtime-only guard (`unqueryable_field`: `json`-typed
+  fields refused in `where`/`orderBy`) as a **private** engine method. A generation-time
+  analog (schema literal + literal `ListQuery` call sites) is a plausible additive pass,
+  but needs the rule either exported from the engine or re-derived here — deferred, and if
+  built, the kind name `unqueryable_field` is reused verbatim (the D4 one-vocabulary rule).
+- *(Resolved)* `checks/` stays a plain relative-import dir; workspace-ification deferred to
+  the first consumer needing `@whim/checks` (D1, refreshed 2026-07-03).

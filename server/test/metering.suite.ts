@@ -218,4 +218,50 @@ export async function runMeteringTests(): Promise<void> {
     const body = (await res.json()) as { error: string };
     eq('missing device on /v1/usage error code', body.error, 'missing_device_id');
   }
+
+  section('Metering — cancellation does not corrupt metering (SRV-1)');
+
+  // A stream cancelled before its `usage` event credits nothing; the same device then runs a
+  // generation to completion and meters normally.
+  {
+    // Non-zero delay so the client can cancel well before the `usage` event, which only
+    // arrives after every stage/token event has already been emitted.
+    const usageStore = new NodeSqliteUsageStore(':memory:');
+    const app = createApp({ pipeline: createStubPipeline(15), usageStore });
+
+    const cancelledRes = await post(
+      app,
+      '/v1/generate',
+      { prompt: 'hello' },
+      { 'x-whim-device': DEVICE_A },
+    );
+    const reader = cancelledRes.body!.getReader();
+    // Read only the first frame — well before `usage` — then cancel.
+    await reader.read();
+    await reader.cancel();
+
+    // Give the aborted pipeline's in-flight delay a moment to settle before checking.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const usageAfterCancel = await usageStore.read(DEVICE_A);
+    eq('cancelled before usage: promptTokens credited', usageAfterCancel.promptTokens, 0);
+    eq('cancelled before usage: completionTokens credited', usageAfterCancel.completionTokens, 0);
+    eq('cancelled before usage: totalTokens credited', usageAfterCancel.totalTokens, 0);
+
+    // A subsequent completed generation for the SAME device meters normally.
+    const completedRes = await post(
+      app,
+      '/v1/generate',
+      { prompt: 'hello again' },
+      { 'x-whim-device': DEVICE_A },
+    );
+    await drainSse(completedRes);
+    const usageAfterComplete = await usageStore.read(DEVICE_A);
+    check(
+      'subsequent completed generation meters normally',
+      usageAfterComplete.totalTokens > 0,
+    );
+
+    usageStore.close();
+  }
 }

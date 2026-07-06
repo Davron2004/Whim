@@ -55,6 +55,8 @@ export interface OpenRouterOptions {
   maxTokens?: number;
   /** Temperature (0–1). */
   temperature?: number;
+  /** Optional abort signal, forwarded to the injected transport's request-init. */
+  signal?: AbortSignal;
 }
 
 /** Result of a streaming completion. */
@@ -63,6 +65,13 @@ export interface StreamResult {
   deltas: AsyncIterable<string>;
   /** Resolves with the captured usage once the stream ends. */
   usage: Promise<Usage>;
+  /**
+   * Resolves with the top-level generation `id` parsed from the first SSE
+   * chunk — the handle for post-abort usage reconciliation against
+   * OpenRouter's generation-stats endpoint (wired in #11). Resolves to
+   * `undefined` if the stream ends before any chunk arrives.
+   */
+  id: Promise<string | undefined>;
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────
@@ -71,6 +80,7 @@ export interface StreamResult {
 export type FetchFn = typeof globalThis.fetch;
 
 interface ParsedSseFrame {
+  id?: string;
   usage?: Usage;
   content?: string;
 }
@@ -106,6 +116,10 @@ function usageFrom(parsed: Record<string, unknown>): Usage | undefined {
   };
 }
 
+function idFrom(parsed: Record<string, unknown>): string | undefined {
+  return typeof parsed.id === 'string' ? parsed.id : undefined;
+}
+
 function contentFrom(parsed: Record<string, unknown>): string | undefined {
   const choices = parsed.choices;
   if (!Array.isArray(choices) || choices.length === 0) return undefined;
@@ -122,7 +136,7 @@ function parseSseLine(line: string): ParsedSseFrame | null {
   if (payload === '[DONE]') return null;
   try {
     const parsed = JSON.parse(payload) as Record<string, unknown>;
-    return { usage: usageFrom(parsed), content: contentFrom(parsed) };
+    return { id: idFrom(parsed), usage: usageFrom(parsed), content: contentFrom(parsed) };
   } catch {
     return null;
   }
@@ -140,8 +154,13 @@ export class OpenRouterClient {
   }
 
   /**
-   * Start a streaming chat completion. Returns deltas (AsyncIterable<string>)
-   * and a Promise<Usage> that resolves when the stream ends.
+   * Start a streaming chat completion. Returns deltas (AsyncIterable<string>),
+   * a Promise<Usage> that resolves when the stream ends, and a Promise<id>
+   * that resolves with the generation id parsed from the first SSE chunk
+   * (or `undefined` if the stream ends before any chunk arrives).
+   *
+   * `options.signal`, when provided, is forwarded to the injected transport's
+   * request-init so a caller can abort a live completion mid-stream.
    *
    * Throws:
    *   OpenRouterAuthError     on HTTP 401
@@ -159,6 +178,18 @@ export class OpenRouterClient {
       rejectUsage = rej;
     });
 
+    let resolveId!: (id: string | undefined) => void;
+    const idPromise = new Promise<string | undefined>((res) => {
+      resolveId = res;
+    });
+    let idCaptured = false;
+    /** Resolves `idPromise` with the FIRST value it is called with; later calls are no-ops. */
+    function captureId(id: string | undefined): void {
+      if (idCaptured) return;
+      idCaptured = true;
+      resolveId(id);
+    }
+
     async function* makeDeltas(): AsyncIterable<string> {
       let response: Response;
       try {
@@ -169,24 +200,46 @@ export class OpenRouterClient {
             Authorization: `Bearer ${apiKey}`,
           },
           body: requestBody(options),
+          signal: options.signal,
         });
       } catch (err) {
         const netErr = new OpenRouterNetworkError('fetch failed', err);
+        captureId(undefined);
         rejectUsage(netErr);
         throw netErr;
       }
 
       const validationError = responseError(response);
       if (validationError) {
+        captureId(undefined);
         rejectUsage(validationError);
         throw validationError;
       }
+      // `responseError` above already rejects+throws on a null body, so this guard is
+      // unreachable at runtime — it exists to narrow `body` to non-null for the loop below.
+      // Kept consistent with every other throw path (reject the usage promise, never leave it
+      // pending) so it degrades safely if that invariant is ever weakened.
       const body = response.body;
-      if (!body) throw new OpenRouterNetworkError('OpenRouter: response body is null');
+      if (!body) {
+        const netErr = new OpenRouterNetworkError('OpenRouter: response body is null');
+        captureId(undefined);
+        rejectUsage(netErr);
+        throw netErr;
+      }
 
       let capturedUsage: Usage | undefined;
       const decoder = new TextDecoder();
       let buffer = '';
+
+      // Apply one parsed SSE frame: capture the generation id, remember usage, emit any
+      // content delta. Shared by the per-line loop and the trailing-buffer flush so the two
+      // paths cannot drift — a new field (reasoning deltas, tool calls) is handled once.
+      function* emitFrame(rawLine: string): Generator<string> {
+        const frame = parseSseLine(rawLine);
+        if (frame) captureId(frame.id);
+        if (frame?.usage) capturedUsage = frame.usage;
+        if (frame?.content) yield frame.content;
+      }
 
       try {
         for await (const chunk of body) {
@@ -194,26 +247,22 @@ export class OpenRouterClient {
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
 
-          for (const line of lines) {
-            const frame = parseSseLine(line);
-            if (frame?.usage) capturedUsage = frame.usage;
-            if (frame?.content) yield frame.content;
-          }
+          for (const line of lines) yield* emitFrame(line);
         }
 
-        // Flush remaining buffer
-        const tail = parseSseLine(buffer);
-        if (tail?.usage) capturedUsage = tail.usage;
-        if (tail?.content) yield tail.content;
+        // Flush the trailing buffer (a final frame with no terminating newline)
+        yield* emitFrame(buffer);
 
+        captureId(undefined);
         resolveUsage(capturedUsage ?? ZERO_USAGE);
       } catch (streamErr) {
         const netErr = new OpenRouterNetworkError('stream read failed', streamErr);
+        captureId(undefined);
         rejectUsage(netErr);
         throw netErr;
       }
     }
 
-    return { deltas: makeDeltas(), usage: usagePromise };
+    return { deltas: makeDeltas(), usage: usagePromise, id: idPromise };
   }
 }

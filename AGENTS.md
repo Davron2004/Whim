@@ -21,12 +21,14 @@ The mechanical definition of done is the **gate split**: `scripts/gate.sh` (fast
 Unattended/headless `/fix-loop` runs go through `.devcontainer/` (Docker, default-deny egress except the Anthropic API via `init-firewall.sh`) rather than the host OS sandbox — Chromium can't run under macOS Seatbelt, so the three Chromium-dependent commands are carved out of the host sandbox via `excludedCommands`, and that carve-out's safety assumption (a human sees the override prompt) only holds in an *attended, foreground* session — it silently doesn't fire in background/auto-mode (`docs/parallel-fix-loop.md` §6.7).
 
 ## Exploration policy
+
 - The main thread NEVER crawls the codebase. If orienting requires reading more than 3 files, dispatch the `researcher` subagent and work from its digest. This applies with full force to all /opsx:* planning phases.
 - Always read docs/capabilities.md first and pull only the specs it points to.
 - During /opsx proposal/design: save the researcher digest to openspec/changes/<id>/research.md and cite it in design.md.
 
 ## Chain planning
-After tasks.md is written, produce chains.md in the change folder: group tasks into context chains per the rules in any existing chains.md or, failing that: 3–7 tasks per chain, grouped by shared files/layer, sequential, each chain readable from spec excerpts + declared contracts only. Declare a writes-contract for every chain whose outputs a later chain consumes. A contract (`handoff/*.md`) is an interface — signatures, shared types verbatim, invariants, error surface — hard-capped at 60 lines, never a diary of how the chain did its work.
+
+After tasks.md is written, produce chains.md in the change folder: group tasks into context chains per the rules in any existing chains.md or, failing that: 3–7 tasks per chain, grouped by shared files/layer, sequential, each chain readable from spec excerpts + declared contracts only. Declare a writes-contract for every chain whose outputs a later chain consumes. A contract (`handoff/*.md`) is an interface — signatures, shared types verbatim, invariants, error surface — hard-capped at 120 lines, never a diary of how the chain did its work.
 
 ## Commands
 

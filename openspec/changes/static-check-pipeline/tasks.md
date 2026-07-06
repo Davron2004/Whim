@@ -30,13 +30,17 @@ generated.*
       `Diagnostic` shape (`kind`/`severity`/`line`/`column?`/`symbol?`/`message`/`hint`),
       the closed kind union, `CheckReport`, `ExtractedManifest`.
 - [ ] 2.2 Add the data tables: forbidden-global names, SDK-export→capability map
-      (`storage`, `cues` rows), nav-call shapes (#1 contract: `useNavigation`/`useRoute`),
-      SDK-lint rules (raw timers → `delay`/`interval`).
+      (`storage`, `cues` rows — the as-built facades are namespace objects; no `diag` row,
+      it has no SDK facade), nav-call shapes (table ships EMPTY — #3 landed no nav API;
+      structure + test-injection seam only), SDK-lint rules (raw timers →
+      `delay`/`interval`).
 
 ## 3. Parse gate + import allowlist (TDD — red first against task 1.1)
 
 - [ ] 3.1 Scaffold `checks/` + the suite runner (`checks/test/run.mjs`, the house
       esbuild-bundle-then-node idiom) + `npm run checks:test`; first assertions red.
+      (The `package.json` script, root-tsconfig `checks/test` exclude, `scripts/gate.sh`
+      suite line, and `knip.json` coverage are hook-blocked HUMAN edits — chain-A.)
 - [ ] 3.2 Implement the parse gate over the TS compiler API (syntactic only, D2):
       diagnostics with original-source lines; unparseable source short-circuits all later
       passes.
@@ -63,15 +67,19 @@ generated.*
 - [ ] 5.2 Implement capability⇄use both directions over the export→capability table:
       `undeclared_capability` (error, runtime-gate kind name) / `unused_capability`
       (warning).
-- [ ] 5.3 Implement screen-graph resolution: `initial ∈ screens`; literal nav targets
-      resolve; non-literal targets rejected; hints list declared screens.
+- [ ] 5.3 Implement screen-graph resolution: `initial ∈ screens`; the nav-shapes table
+      ships empty (no nav API as of #3), so prove the target-resolution mechanism with a
+      test-injected shape row — literal targets resolve, non-literal targets rejected;
+      hints list declared screens.
 
 ## 6. SDK lint + schema check (TDD; design D6/D7)
 
 - [ ] 6.1 Implement the lint pass over the rules table: raw `setTimeout`/`setInterval`/
       `requestAnimationFrame` (function-arg form) → warning with `delay`/`interval` hint.
-- [ ] 6.2 Implement the schema pass: `validateArtifact` on the extracted schema literal;
-      with caller-supplied `appliedSchema`, `diffSchemas` conflict classes mapped to
+- [ ] 6.2 Implement the schema pass: `validateArtifact` on the extracted schema literal
+      (as-built kinds: `invalid_artifact`/`malformed_id`/`id_reuse`/`bad_field_type`/
+      `bad_default`); with caller-supplied `appliedSchema`, `diffSchemas` conflict classes
+      (as-built: `type_change`/`tombstone_violation`/`missing_default`) mapped to
       diagnostics preserving engine kind names + hints; absent → `emptyApplied()` baseline.
 
 ## 7. Report assembly + the honest population (design D8)
@@ -79,12 +87,17 @@ generated.*
 - [ ] 7.1 Implement `runStaticChecks(source, opts)`: pass ordering, diagnostic
       accumulation, `ok === diagnostics.length === 0`, determinism (stable ordering);
       purity assertions from task 1.1 green.
-- [ ] 7.2 Add the honest fixture population: the real `fixtures/*.app.tsx` sources plus
+- [ ] 7.2 Add the honest fixture population: FOUR of the five real `fixtures/*.app.tsx`
+      (`tip-splitter`, `water-counter`, `pour-over-timer`, `style-gallery`) plus
       corpus-shaped samples — all asserted zero-diagnostics (the false-positive regression
-      gate). If a real fixture trips a check, treat it as a checker bug or a fixture bug to
+      gate). `latency-probe` is excluded by design (raw `globalThis.__whimSyscall` +
+      facade-less `diag`) — pin it as an expected-flagged sample instead. If an honest
+      fixture trips a check, treat it as a checker bug or a fixture bug to
       surface — never weaken the assertion silently.
 - [ ] 7.3 Wire `checks:test` into CI (`.github/workflows/invariants.yml`) as a blocking
-      step beside the existing suites; `npm run lint` clean over `checks/`.
+      step in the `isolation-suite` job beside the other Node suites (`quality-gate`
+      already covers the checks lib via root typecheck/lint/knip once chain-A lands);
+      `npm run lint` clean over `checks/`.
 
 ## 8. Hostile bypass corpus — SEPARATE session (§16.4; never this session)
 
@@ -98,7 +111,14 @@ generated.*
 
 ## 9. Close out
 
-- [ ] 9.1 Re-verify the seams: contract module importable standalone (no checker import);
-      ledger notes for #3 (nav-shape table), #8 (contract re-export), #11
-      (`extractAppManifest`) still accurate against as-built code; record deviations in
-      `docs/v1-roadmap.md` per protocol.
+- [ ] 9.1 Wire the `@whim/contract` narrowing (#8 landed first, so this edit is ours):
+      TS-source re-export of the closed kind union from `checks/contract.ts` in
+      `contract/src/index.ts`; the zod wire `kind` STAYS an open `z.string()` (the stub's
+      `BUILD_FAILURE` must keep validating); add `severity`/`message` as OPTIONAL wire
+      fields; `server:test` green after. Then re-verify seams + ledger: contract module
+      importable standalone (no checker import); record the plain-dir deviation from the
+      roadmap's "(workspace-ified once #8's exist)" note; repoint the nav-table
+      coordination note from #3 to the future nav change; confirm the #11
+      `extractAppManifest` note; record deviations in `docs/v1-roadmap.md` per protocol.
+      (`docs/capabilities.md` already indexes both new capabilities as proposal-stage
+      rows — the pointers flip to `openspec/specs/` at sync/archive; nothing to add.)

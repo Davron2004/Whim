@@ -26,14 +26,20 @@ const KEEPALIVE_FRAME = ': keepalive\n\n';
  * @param source      - The event source to drain.
  * @param keepaliveMs - Emit a keepalive comment every N ms while the stream is open.
  *                      0 or undefined = disabled.
+ * @param onCancel    - Invoked (in addition to the keepalive cleanup) when the consumer cancels
+ *                      the stream — the caller wires this to abort the pipeline run producing
+ *                      `source`. A source that then ends early still closes this stream cleanly
+ *                      (no further enqueue/close calls reach the already-cancelled controller).
  */
 export function buildSseStream(
   source: AsyncIterable<GenerationEvent>,
   keepaliveMs?: number,
+  onCancel?: () => void,
 ): ReadableStream<Uint8Array> {
   let id = 0;
   const useKeepalive = typeof keepaliveMs === 'number' && keepaliveMs > 0;
   let keepaliveInterval: ReturnType<typeof setInterval> | undefined;
+  let cancelled = false;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -49,20 +55,23 @@ export function buildSseStream(
 
       try {
         for await (const event of source) {
+          if (cancelled) break;
           id++;
           controller.enqueue(enc.encode(eventFrame(event, id)));
         }
       } catch (err) {
         if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
-        controller.error(err);
+        if (!cancelled) controller.error(err);
         return;
       }
 
       if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
-      controller.close();
+      if (!cancelled) controller.close();
     },
     cancel() {
+      cancelled = true;
       if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
+      onCancel?.();
     },
   });
 }

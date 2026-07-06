@@ -374,9 +374,96 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
   }
 }
 
+/**
+ * SRV cancellation — cancelling the SSE stream aborts the underlying pipeline (design.md D1-D4).
+ * Replaces the F1 `neverYields` source (structurally unable to detect a leaked pipeline, per
+ * research.md §7) with the REAL stub pipeline wired through an `AbortController`, wrapped in a
+ * counting generator so we can observe whether the pipeline keeps producing events after cancel.
+ * Also instruments `setTimeout`/`clearTimeout` (the stub's `delay()` primitive) to assert no
+ * timer is left dangling once the pipeline observes the abort.
+ */
+async function testSseCancelAbortsPipeline(): Promise<void> {
+  section('SSE cancel() aborts the stub pipeline (SRV-1)');
+
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+
+  // Track every timer the stub pipeline's delay() schedules, and whether it gets cleared —
+  // backed by the REAL timer so pacing behavior is unaffected, only bookkeeping is added.
+  const liveTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  (globalThis as unknown as Record<string, unknown>).setTimeout = (
+    cb: () => void,
+    ms?: number,
+  ): ReturnType<typeof setTimeout> => {
+    const handle = realSetTimeout(() => {
+      liveTimers.delete(handle);
+      cb();
+    }, ms);
+    liveTimers.add(handle);
+    return handle;
+  };
+
+  (globalThis as unknown as Record<string, unknown>).clearTimeout = (
+    handle: ReturnType<typeof setTimeout>,
+  ): void => {
+    if (liveTimers.has(handle)) {
+      realClearTimeout(handle);
+      liveTimers.delete(handle);
+    }
+  };
+
+  try {
+    const controller = new AbortController();
+    const pipeline = createStubPipeline(15); // non-zero inter-event delay (scenario requirement)
+
+    let eventCount = 0;
+    let sawEventAfterCancel = false;
+    let cancelled = false;
+
+    // Instrumented source: counts every event actually pulled from the pipeline, and flags
+    // whether any of them arrive after the stream was cancelled.
+    async function* countingSource(): AsyncGenerator<GenerationEvent> {
+      for await (const event of pipeline.run({ prompt: 'hello' }, controller.signal)) {
+        eventCount++;
+        if (cancelled) sawEventAfterCancel = true;
+        yield event;
+      }
+    }
+
+    const stream = buildSseStream(countingSource(), 0, () => controller.abort());
+    const reader = stream.getReader();
+
+    // Read the first frame (well before the pipeline's `usage`/terminal events).
+    await reader.read();
+    check('at least one event observed before cancel', eventCount > 0);
+
+    // Non-vacuity guard: give the pipeline's next delay() a moment to register its timer
+    // (it's scheduled a few microtask hops after the read resolves) before asserting it exists.
+    await new Promise((r) => realSetTimeout(r, 5));
+    check('a delay timer is pending before cancel', liveTimers.size > 0);
+
+    const eventsBeforeCancel = eventCount;
+    cancelled = true;
+    await reader.cancel();
+
+    // Give the (potentially unfixed) pipeline ample real time to keep running if the abort
+    // didn't actually stop it — long enough for the full stub sequence (~14 events * 15ms).
+    await new Promise((r) => realSetTimeout(r, 300));
+
+    check('no further events after cancel', eventCount === eventsBeforeCancel);
+    check('no event observed with the cancelled flag set', !sawEventAfterCancel);
+    eq('no delay timers left dangling after cancel', liveTimers.size, 0);
+  } finally {
+    (globalThis as unknown as Record<string, unknown>).setTimeout = realSetTimeout;
+    (globalThis as unknown as Record<string, unknown>).clearTimeout = realClearTimeout;
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
   await testStubPipelineEndpoints();
   await testSseCancelClearsKeepalive();
+  await testSseCancelAbortsPipeline();
 }

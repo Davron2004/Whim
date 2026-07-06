@@ -5,7 +5,11 @@
 import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
 
 export interface Pipeline {
-  run(request: GenerateRequest): AsyncIterable<GenerationEvent>;
+  /**
+   * `signal`, when provided, is honored by every implementation (stub included): on abort the
+   * returned generator stops emitting events and returns early, without a terminal event.
+   */
+  run(request: GenerateRequest, signal?: AbortSignal): AsyncIterable<GenerationEvent>;
 }
 
 /** Fixed WireAppRecord emitted on success. */
@@ -21,19 +25,36 @@ const STUB_APP_RECORD: WireAppRecord = {
 /** Factory for the stub pipeline with injectable inter-event delay. */
 export function createStubPipeline(delayMs = 200): Pipeline {
   return {
-    run(request: GenerateRequest): AsyncIterable<GenerationEvent> {
-      return stubRun(request, delayMs);
+    run(request: GenerateRequest, signal?: AbortSignal): AsyncIterable<GenerationEvent> {
+      return stubRun(request, delayMs, signal);
     },
   };
+}
+
+/**
+ * Signal-aware delay: resolves after `ms`, or early (clearing its timer) if `signal` aborts
+ * first. Never rejects — an abort is a normal, expected way for this promise to settle.
+ */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function* stubRun(
   request: GenerateRequest,
   delayMs: number,
+  signal?: AbortSignal,
 ): AsyncIterable<GenerationEvent> {
-  const delay = (ms: number): Promise<void> =>
-    ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
-
   const isFailure = request.prompt.includes('[[fail]]');
 
   // Stages: plan → generate (with tokens) → check → run
@@ -45,30 +66,35 @@ async function* stubRun(
   ];
 
   for (const stage of stages) {
-    await delay(delayMs);
+    await delay(delayMs, signal);
+    if (signal?.aborted) return;
     yield { type: 'stage', stage, status: 'start' };
 
     if (stage === 'generate' && !isFailure) {
       // Emit a few token events during generate
       for (const text of ['Hello', ' ', 'World', '!']) {
-        await delay(delayMs);
+        await delay(delayMs, signal);
+        if (signal?.aborted) return;
         yield { type: 'token', text };
       }
     }
 
-    await delay(delayMs);
+    await delay(delayMs, signal);
+    if (signal?.aborted) return;
     yield { type: 'stage', stage, status: 'done' };
   }
 
   // Usage event always precedes the terminal
-  await delay(delayMs);
+  await delay(delayMs, signal);
+  if (signal?.aborted) return;
   yield {
     type: 'usage',
     usage: { promptTokens: 42, completionTokens: 128, totalTokens: 170 },
   };
 
   // Terminal event
-  await delay(delayMs);
+  await delay(delayMs, signal);
+  if (signal?.aborted) return;
   if (isFailure) {
     yield {
       type: 'failure',
