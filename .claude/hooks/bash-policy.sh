@@ -47,6 +47,41 @@ owners_claim() {
   [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]
 }
 
+# cleanup_lane: the git-cleanup lane (docs/parallel-fix-loop.md §4.10). ACTIVE iff (a) the
+# human-minted grant exists (.claude/fixloop/grants/git-cleanup — agent-unwritable, same trust
+# anchor as Class-1 grants), (b) the command runs from inside the HARDCODED lane worktree, and
+# (c) THIS agent owns that worktree (owners_claim — same binding as fixers). Inside the lane the
+# history-rewrite PATH is freed; the OUTCOME gate is scripts/git-cleanup-check.sh (tree-tip
+# identity + main unmoved + backup intact). The main thread is never lane-checked (returns 1 →
+# existing behavior), and with no grant file the lane does not exist — policy is byte-identical
+# to before for every other caller.
+GC_WT="main-squashed"
+cleanup_lane() {
+  [[ -n "$AGENT_ID" ]] || return 1
+  local root=""
+  case "$CWD" in
+    */.claude/worktrees/"$GC_WT"|*/.claude/worktrees/"$GC_WT"/*)
+      root="${CWD%%/.claude/worktrees/*}" ;;
+    *)
+      # The harness re-pins a subagent's cwd to the repo root on EVERY Bash call (`cd` does not
+      # persist), so a dispatched lane agent can never satisfy the cwd condition. Therefore
+      # `git -C <lane-worktree-root> …` also counts as in-lane: the -C path must be EXACTLY the
+      # hardcoded lane worktree root, and repo root is derived from that path — same no-cwd-trust
+      # derivation as grant_allows. Grant + ownership checks below are identical either way.
+      case "$CMD" in
+        "git -C "*"/.claude/worktrees/$GC_WT "*)
+          local p="${CMD#git -C }"; p="${p%% *}"
+          case "$p" in
+            /*/.claude/worktrees/"$GC_WT") root="${p%%/.claude/worktrees/*}" ;;
+            *) return 1 ;;
+          esac ;;
+        *) return 1 ;;
+      esac ;;
+  esac
+  [[ -f "$root/.claude/fixloop/grants/git-cleanup" ]] || return 1
+  owners_claim "$root" "$GC_WT"
+}
+
 # The fix-loop toolkit runs git UNHOOKED (commands inside a script don't re-trigger this hook), so it
 # is an orchestrator-only tool. Subagents must never INVOKE it; the main thread falls through to `ask`.
 # Invocation shapes only — direct exec at a command-segment start, or via an interpreter — NOT reads:
@@ -62,17 +97,32 @@ case "$CMD" in
   *sudo*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
     deny "blocked by harness policy — if genuinely needed, stop and report a class-B deviation" ;;
 esac
-# Security-critical git: network reach, history rewrite, or SHARED-ref mutation — denied for EVERY
-# caller (orchestrator and subagents alike), and kept HERE (match-anywhere) so a chained segment
-# can't smuggle them past the simple-command policy below. `git worktree` is intentionally NOT
-# listed: the orchestrator (main thread) needs it; subagents are blocked from it by the scoped
-# policy further down. Worktree-safe mutating git (commit/add/checkout/…) is handled there too.
+# Security-critical git, TIER 1 — SHARED-state reach: network, shared-ref forcing, recovery-data
+# destruction (reflog/gc — the reflog + backup ref are the cleanup lane's undo button), and
+# `git config` (a linked worktree's `git config` writes the SHARED .git/config; core.fsmonitor
+# there is code execution in the MAIN tree). Denied for EVERY caller — orchestrator, subagents,
+# and the cleanup lane alike — and kept HERE (match-anywhere) so a chained segment can't smuggle
+# them past the simple-command policy below. `git worktree` is intentionally NOT listed: the
+# orchestrator (main thread) needs it; subagents are blocked from it by the scoped policy further
+# down. Worktree-safe mutating git (commit/add/checkout/…) is handled there too.
 case "$CMD" in
   *"git push"*|*"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
-  *"git update-ref"*|*"git symbolic-ref"*|*"git rebase"*|*"git reflog"*|*"git gc"*|*"git config"*|\
+  *"git update-ref"*|*"git symbolic-ref"*|*"git reflog"*|*"git gc"*|*"git config"*|\
+  *"git tag -f"*|*"git tag -d"*|\
   *"git branch -f dev/v1"*|*"git branch -D dev/v1"*|*"git branch -m dev/v1"*|\
-  *"git branch -f main"*|*"git branch -D main"*|*"git branch -m main"*)
+  *"git branch -f main"*|*"git branch -D main"*|*"git branch -m main"*|\
+  *"git checkout -B main"*|*"git switch -C main"*|*"git checkout -B dev/v1"*|*"git switch -C dev/v1"*)
     deny "git network/shared-ref/history op is human-approved only (class-B deviation)" ;;
+esac
+# Security-critical git, TIER 2 — history rewrite: denied everywhere EXCEPT inside the active
+# git-cleanup lane (§4.10), where tree-tip identity at finish is the real gate and the path is
+# deliberately free. Still match-anywhere for non-lane callers; in-lane chained forms fall to the
+# compound fall-through below (no auto-allow of chained payloads either way).
+case "$CMD" in
+  *"git rebase"*)
+    if ! cleanup_lane; then
+      deny "git history rewrite is human-approved only outside the git-cleanup lane (class-B deviation)"
+    fi ;;
 esac
 
 # Protected-config writes (Layer 1 — closes the Edit|Write bypass). Harness/verification config
@@ -91,7 +141,7 @@ esac
 # must never write it, or it could forge its own Class-1 grant. Same for fixloop/owners (the
 # agent↔worktree binding markers) — forging one would let a fixer claim a sibling's worktree.
 # invariants/ is the never-regress suite (owner-authored) — write-protected like the gate it feeds.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|build/|invariants/'
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|build/|invariants/'
 BND='(^|[[:space:]&;|(])'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
@@ -115,6 +165,17 @@ case "$CMD" in
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*) : ;;  # read-only
   git|"git "*)
     if [[ -n "$AGENT_ID" ]]; then
+      # git-cleanup lane (§4.10): inside the ACTIVE lane the full simple-command git vocabulary is
+      # allowed — the tier-1 denies above have already screened every shared-state verb, and the
+      # outcome gate (tree-tip identity) is what actually vouches for the result. Worktree
+      # management stays orchestrator-only even here.
+      if cleanup_lane; then
+        case "$CMD" in
+          "git worktree"*)
+            deny "git worktree management is orchestrator-only, even inside the cleanup lane (class-B deviation)" ;;
+          *) allow ;;
+        esac
+      fi
       # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree — and only
       # inside the worktree THIS agent owns (owners_claim binds on first use; critic 2026-07-02).
       case "$CWD" in

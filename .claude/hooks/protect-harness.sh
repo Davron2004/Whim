@@ -76,7 +76,7 @@ case "$FILE" in
   # Class 2 — the harness that verifies the work. Subagent: hard-block; main thread: fall to `ask`.
   */.claude/worktrees/*/.claude/*|\
   */.claude/worktrees/*/build/*|\
-  */.claude/worktrees/*/scripts/gate.sh|*/.claude/worktrees/*/scripts/gate-full.sh|*/.claude/worktrees/*/scripts/fixloop.sh|\
+  */.claude/worktrees/*/scripts/gate.sh|*/.claude/worktrees/*/scripts/gate-full.sh|*/.claude/worktrees/*/scripts/fixloop.sh|*/.claude/worktrees/*/scripts/git-cleanup-check.sh|\
   */.claude/worktrees/*/invariants/*)
     if [[ -n "$AGENT_ID" ]]; then
       echo "BLOCKED: '$FILE' is Class-2 control-plane config (the harness that verifies the work). It is NEVER editable by a subagent — even inside a worktree, even under a grant. Report as a class-B deviation." >&2
@@ -100,6 +100,7 @@ esac
 
 case "$FILE" in
   */scripts/gate.sh|scripts/gate.sh|*/scripts/gate-full.sh|scripts/gate-full.sh|*/scripts/fixloop.sh|scripts/fixloop.sh|\
+  */scripts/git-cleanup-check.sh|scripts/git-cleanup-check.sh|\
   */.claude/*|.claude/*|\
   */eslint.config.*|eslint.config.*|*/.eslintrc*|.eslintrc*|*/.eslintignore|.eslintignore|\
   */knip.json|knip.json|*/knip.config.*|knip.config.*|\

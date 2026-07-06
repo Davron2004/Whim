@@ -6,6 +6,26 @@ INPUT=$(cat)
 AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // empty')
 SESSION=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
 
+# git-cleanup lane finisher (§4.10): the cleaner may stop only when the OUTCOME gate passes
+# (tree-tip identity + main unmoved + backup intact). Self-reported verdicts are never trusted —
+# same reasoning as the sandbox's F4 finding. Same attempt-cap pattern as the implementer gate.
+if [[ "$AGENT_TYPE" = "git-cleaner" ]]; then
+  ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  COUNT_FILE="/tmp/cleanup-gate-attempts-${SESSION}"
+  COUNT=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
+  if [[ "$COUNT" -ge 2 ]]; then rm -f "$COUNT_FILE"; exit 0; fi
+  OUT=$("$ROOT/scripts/git-cleanup-check.sh" 2>&1)
+  if [[ $? -eq 0 ]]; then rm -f "$COUNT_FILE"; exit 0; fi
+  echo $((COUNT + 1)) > "$COUNT_FILE"
+  {
+    echo "CLEANUP GATE FAILED — you are not done."
+    echo "The outcome gate (tree-tip identity + main unmoved + backup intact) must pass before you finish."
+    echo "--- gate output ---"
+    echo "$OUT" | tail -20
+  } >&2
+  exit 2
+fi
+
 # Only gate the implementer.
 [[ "$AGENT_TYPE" = "implementer" ]] || exit 0
 
