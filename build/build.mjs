@@ -69,6 +69,50 @@ async function bundleApp(entryRelPath) {
   return { js, map };
 }
 
+// ── host-side app-record extraction (capability-bridge task 2.4) ────────────────
+// Bundle a fixture for Node with `vc-sdk` resolved to the REAL SDK and react/react-dom stubbed
+// (components are never rendered during extraction — we only read `.default`), import it, and
+// read the declared {name, capabilities, schema}. This is the single source of truth: a fixture
+// cannot declare one manifest in `defineApp` and have the host gate a different one.
+const REACT_STUB =
+  'export const createElement=function(){return null;};' +
+  "export const Fragment='Fragment';" +
+  'export const useState=function(v){return [typeof v===\"function\"?v():v,function(){}];};' +
+  'export const useEffect=function(){};' +
+  'export default {createElement:createElement,Fragment:Fragment,useState:useState,useEffect:useEffect};';
+
+async function extractAppRecord(appId, entryRelPath) {
+  const fallback = { appId, name: appId, manifest: { capabilities: [] }, schemaArtifact: undefined };
+  try {
+    const out = await esbuild.build({
+      entryPoints: [r(entryRelPath)],
+      bundle: true, format: 'esm', platform: 'node', target: 'node20',
+      tsconfigRaw: '{}', jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
+      write: false, logLevel: 'silent',
+      plugins: [{
+        name: 'whim-extract-stubs',
+        setup(build) {
+          build.onResolve({ filter: /^vc-sdk$/ }, () => ({ path: r('src/sdk/index.tsx') }));
+          build.onResolve({ filter: /^(react|react-dom|react-dom\/client)$/ }, () => ({ path: 'whim-react-stub', namespace: 'whim-stub' }));
+          build.onLoad({ filter: /.*/, namespace: 'whim-stub' }, () => ({ contents: REACT_STUB, loader: 'js' }));
+        },
+      }],
+    });
+    const code = out.outputFiles[0].text;
+    const mod = await import('data:text/javascript;base64,' + Buffer.from(code).toString('base64'));
+    const spec = mod.default || {};
+    return {
+      appId,
+      name: typeof spec.name === 'string' ? spec.name : appId,
+      manifest: { capabilities: Array.isArray(spec.capabilities) ? spec.capabilities : [] },
+      schemaArtifact: spec.schema,
+    };
+  } catch (e) {
+    console.log(`  app-record extract: ${appId} → default [] (${e.message.split('\n')[0]})`);
+    return fallback;
+  }
+}
+
 // ── minimal source-map consumer (verify the D4 round-trip without a heavy dep) ──
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 function decodeVlq(segment) {
@@ -124,22 +168,28 @@ async function verifySourceMap(appName, js, mapText, originalRelPath, needle) {
 async function main() {
   console.log('Whim build: transpiling runtime + bundles with esbuild…');
 
-  const [neutralize, resolver, probes, loader] = await Promise.all([
+  const [neutralize, resolver, probes, syscall, loader] = await Promise.all([
     read('src/runtime/web/neutralize.js'),
     read('src/runtime/web/resolver.js'),
     read('src/runtime/web/probes.js'),
+    read('src/runtime/web/syscall.js'),
     read('src/runtime/web/loader.js'),
   ]);
   const reactInject = await bundleInjectReact();
   const sdkInject = await bundleInjectSdk();
-  const parts = { neutralize, reactInject, resolver, sdkInject, probes, loader };
+  const parts = { neutralize, reactInject, resolver, sdkInject, probes, syscall, loader };
 
-  // App bundles. tip-splitter is the app; the adversarial ones feed the invariant suite.
+  // App bundles. tip-splitter + water-counter are real apps; the adversarial ones feed the
+  // invariant suite (sandbox-escape: evil/poison/victim; bridge: cap-intruder/sql-injector).
   const APPS = {
     'tip-splitter': 'fixtures/tip-splitter.app.tsx',
+    'water-counter': 'fixtures/water-counter.app.tsx',
+    'latency-probe': 'fixtures/latency-probe.app.tsx',
     evil: 'fixtures/adversarial/evil.app.tsx',
     poison: 'fixtures/adversarial/poison.app.tsx',
     victim: 'fixtures/adversarial/victim.app.tsx',
+    'cap-intruder': 'fixtures/adversarial/cap-intruder.app.tsx',
+    'sql-injector': 'fixtures/adversarial/sql-injector.app.tsx',
   };
   const bundles = {};
   const maps = {};
@@ -148,6 +198,26 @@ async function main() {
     bundles[name] = js;
     maps[name] = map;
     console.log(`  bundled ${name} (${(js.length / 1024).toFixed(1)} KiB IIFE)`);
+  }
+
+  // ── Host-side app records (capability-bridge task 2.4) ──────────────────────────
+  // Extract each fixture's declared {capabilities, schema} from the SAME source the bundle is
+  // built from, so the host-held manifest the gate enforces cannot drift from the in-bundle
+  // declaration. (The harness inherits this extraction job later.) Best-effort: the throwaway
+  // sandbox-escape fixtures run module-scope attacks that throw under Node — they declare no
+  // capabilities, so a failed extract defaults to [] correctly.
+  // The sandbox-escape fixtures (evil/poison/victim) run module-scope attacks that touch
+  // document/Object.prototype — never import them into the build process. They declare no
+  // capabilities, so a static [] record is exactly right.
+  const SKIP_EXTRACT = new Set(['evil', 'poison', 'victim']);
+  const appRecords = {};
+  for (const [name, entry] of Object.entries(APPS)) {
+    appRecords[name] = SKIP_EXTRACT.has(name)
+      ? { appId: name, name, manifest: { capabilities: [] }, schemaArtifact: undefined }
+      : await extractAppRecord(name, entry);
+  }
+  for (const [name, rec] of Object.entries(appRecords)) {
+    console.log(`  app-record ${name}: capabilities=[${rec.manifest.capabilities.join(',')}]${rec.schemaArtifact ? ' +schema' : ''}`);
   }
 
   // D4 / task 3.6 — source-map round-trip for the tip splitter.
@@ -170,9 +240,17 @@ async function main() {
   const srcdocB = buildSrcdoc({ parts, channel: 'b' });
   const RUNTIME_HTML = buildOuterHtml({
     srcdoc: srcdocB,
-    // tip-splitter is auto-delivered; `evil` is available for the on-device F4 negative
-    // control (a native button calls window.__whimControl.deliver('evil')) — task 8.3.
-    bundles: { 'tip-splitter': bundles['tip-splitter'], evil: bundles['evil'] },
+    // tip-splitter is auto-delivered; `evil` is available for the on-device F4 negative control;
+    // water-counter / sql-injector / cap-intruder are the capability-bridge on-device targets
+    // (deliver-by-name via window.__whimControl + the host bridge wiring in WebViewHost).
+    bundles: {
+      'tip-splitter': bundles['tip-splitter'],
+      'water-counter': bundles['water-counter'],
+      'latency-probe': bundles['latency-probe'],
+      'sql-injector': bundles['sql-injector'],
+      'cap-intruder': bundles['cap-intruder'],
+      evil: bundles['evil'],
+    },
     initial: 'tip-splitter',
     channel: 'b',
     showDiagnostics: true,
@@ -191,7 +269,19 @@ async function main() {
   // Artifacts for the invariant suite (it generates scenario pages against THIS runtime).
   await writeFile(
     r('src/runtime/generated/runtime-artifacts.json'),
-    JSON.stringify({ parts, bundles }, null, 0),
+    JSON.stringify({ parts, bundles, appRecords }, null, 0),
+  );
+
+  // Host-side app records (capability-bridge): the WebView host reads these to launch an app's
+  // engine + bind its realm (manifest + schema) before delivering the bundle (D7).
+  await writeFile(
+    r('src/runtime/generated/app-records.ts'),
+    '// AUTO-GENERATED by build/build.mjs — do not edit. Run `npm run build` to regenerate.\n' +
+    '// Host-held app records (capability-bridge D4/D7): the manifest the gate enforces and the\n' +
+    '// schema the engine opens, extracted from each fixture\'s own defineApp declaration.\n' +
+    '/* eslint-disable */\n' +
+    "import type { AppRecord } from '../../host/bridge/contract';\n" +
+    'export const APP_RECORDS: Record<string, AppRecord> = ' + JSON.stringify(appRecords, null, 2) + ';\n',
   );
 
   console.log(

@@ -35,8 +35,18 @@ jobs:
       # fails fast.
       - name: Run the storage-engine acceptance + injection invariant (blocks on red)
         run: npm run storage:test
+      # ── capability-bridge gate/dispatcher core (Decision #41, D8) ───────────────
+      # Pure host-side logic (node:sqlite, sub-second): gate order + every denial kind, dedup,
+      # generation fences, append-only registry, channel-derived identity. Fails fast.
+      - name: Run the capability-bridge host-core suite (blocks on red)
+        run: npm run bridge:test
       - run: npx playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
       - name: Run the §16.2 isolation suite (blocks on red)
         run: npm run invariants
+      # ── capability-bridge security invariants over the real sandbox→syscall path ──
+      # Undeclared-capability denial, stub-authority, forged-sysret inertness, stale-generation
+      # drop, end-to-end SQL-injection — plus a negative control proving the suite isn't vacuous.
+      - name: Run the capability-bridge invariant suite (blocks on red)
+        run: npm run bridge:invariants

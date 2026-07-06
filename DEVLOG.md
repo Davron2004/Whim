@@ -430,3 +430,85 @@ a reset run shows the ~164 KB high-water). **The one to watch:** a 2000-append *
 each append is its own implicit transaction (one fsync), and the lean verb set has no batch API
 by design. The actual interactive path (a user logging *one* expense) is ~1–10 ms; if bulk
 import ever matters, a batch/transaction verb or `journal_mode=WAL` collapses it.
+
+## capability-bridge — the syscall boundary (Decision #41)
+
+The bridge wires #40's storage engine to mini-apps as syscall #1. Four host modules
+(`registry`/`gate`/`dispatcher`/`launch` + storage `rows`), one iframe marshaller
+(`src/runtime/web/syscall.js`), one `vc-sdk` `storage` facade. Raw lessons:
+
+1. **Playwright's `frame.evaluate` runs OUTSIDE the page CSP — a real false-negative trap.**
+   The stub-authority invariant first tried to prove "no codegen reachable from the facade" by
+   doing `Object.getPrototypeOf(storage).constructor.constructor('return 1')()` inside a
+   `frame.evaluate`. It DID-NOT-THROW — not a CSP breach, but because CDP's `Runtime.evaluate`
+   isn't subject to the page's `script-src`. The in-page bundle code (probes.js) IS, which is
+   why the containment suite's `Function()` probes correctly throw. Lesson: the codegen leg is
+   the in-page suite's job; a Playwright-driven probe can only assert **reachability** (no
+   engine/host/native ref reachable from the facade), not codegen. Conflating them gives a
+   green that means nothing — or here, a red that means nothing.
+
+2. **The generation fence needs ONE authority, and it's the host.** First cut had the iframe
+   marshaller stamp `window.__whimGeneration` (the loader's counter). But a realm reset
+   recreates the iframe → fresh script → counter restarts at 1, while the host's realm
+   generation had advanced → every syscall dropped as "stale." Fix: the host stamps the
+   generation into the init frame (the same handshake that carries the nonce); the marshaller
+   echoes it. Host controls both the realm record's generation and the number the iframe
+   stamps, so they're consistent by construction. The Node suite drives stale frames directly
+   (it owns the gen), so it tests the fence without the handshake.
+
+3. **Forged-sysret inertness is `ev.source`, not crypto.** A bundle can `window.postMessage` a
+   fake `{whim:'sysret',…}` to its own window, but `ev.source` is then the iframe's own window,
+   not `window.parent`; the marshaller requires `ev.source === window.parent` (the host
+   channel). `window.parent.postMessage` posts TO the parent, never INTO self with a parent
+   source — the browser sets `source`, so it's unforgeable. No nonce needed on the syscall
+   channel (and adding one would be security theater implying the channel is trusted — exactly
+   the #37/F4 mistake).
+
+4. **Single-source-of-truth manifests via build-time extraction.** To stop a fixture declaring
+   one manifest in `defineApp` and the host gating a different one, the build re-bundles each
+   fixture for Node with `vc-sdk` → the REAL SDK and react/react-dom stubbed (components are
+   never rendered during extract — we only read `.default`), imports it, and reads
+   `{capabilities, schema}` into `app-records.ts`. Gotcha: the sandbox-escape fixtures
+   (evil/poison/victim) run module-scope attacks that touch `document`/`Object.prototype` —
+   importing them into the build process is both broken (throws in Node) and gross (pollutes
+   the builder). They declare `[]`, so they're skip-listed with a static `[]` record.
+
+5. **`dispatcher.handle` returns the sysret (or null) — no `send` callback.** Returning the
+   value (null = dropped: stale gen, torn-down realm, malformed-uncorrelatable) made the same
+   dispatcher serve three hosts unchanged: the RN host injects `__whimRelaySysret`, the Node
+   test reads it directly, and the invariant suite returns it from a Playwright `exposeFunction`
+   — which is what let the bridge invariants run the REAL host core (real gate + real
+   node:sqlite engine) behind the REAL browser sandbox, not a reimplementation.
+
+### capability-bridge on-device (Pixel_9_Pro_XL arm64, offline release) — and the bug it caught
+
+Two runs, both PASS. The **host-core probe** (`RUN_BRIDGE_PROBE`) exercised the gate/dispatcher/
+registry over op-sqlite — all denials, dedup, stale-gen drop, injection-inert, append-only,
+and cross-restart persistence (`priorRecords` 0→1→2 across real kills, `restartVerified:true`).
+The **full WebView path** (deliver buttons) ran 111 syscalls end-to-end, the water-counter hit
+3 → force-stop → reloaded 3, sql-injector landed 0 injections, cap-intruder was denied
+`undeclared_capability` — containment `42/42` throughout.
+
+1. **The device run caught a host-wiring bug the whole desktop suite missed.** `WebViewHost`
+   only built a dispatcher when `manifest.capabilities.length > 0`. So `cap-intruder` (declares
+   nothing) syscalled, hit `if (!live.current) return` in `onMessage`, and the frame was
+   **silently dropped** → the marshaller sat on it until the 10 s timeout instead of getting a
+   structured `undeclared_capability`. `bridge:invariants` never saw it because the Node host
+   shim's `makeHost` ALWAYS builds a dispatcher (the gate then denies correctly). Lesson, again:
+   the desktop suite tests the gate; only the device tests the *host wiring around* the gate.
+   Fix: always bind a realm + dispatcher (engine opened only if storage is declared), so the
+   gate refuses at the capability step rather than the host swallowing the frame.
+
+2. **The round-trip is transport-bound, ~16–17 ms median for EVERY verb.** Host-side the engine
+   is sub-ms (`kv.get` 0.1 ms, `list` 0.4 ms, `diag.echo` 0.04 ms via the probe), but the full
+   WebView round-trip converges to ~16.6 ms regardless of verb — even the engine-less
+   `diag.echo`. The cost is the two RN↔WebView bridge crossings (iframe→`onMessage`, then
+   `injectJavaScript`→iframe), not the gate or SQLite. So batching (the envelope's `v` field
+   leaves room) would help a chatty app far more than any engine tuning — but Tier-0 apps are
+   one-tap-one-syscall, so it stays deferred. The 10 s timeout is ~600× the observed max; left
+   as-is pending real-hardware numbers (the emulator is the conservative case).
+
+3. **WebView accessibility nodes expose the mini-app's text to `uiautomator`.** Driving the
+   acceptance headlessly worked because the sandboxed iframe's rendered `Text` shows up in the
+   native view dump — so assertions like "INJECTIONS LANDED: 0" and "denied: undeclared_capability"
+   are greppable without OCR. Handy for scripting an on-device UI acceptance.

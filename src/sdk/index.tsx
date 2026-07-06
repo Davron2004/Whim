@@ -31,21 +31,41 @@ import {
   type WeightToken,
 } from './tokens';
 
-// ── State (design D6 / task 3.3) ─────────────────────────────────────────────
-// In-memory, web-side, no bridge: this is literally React's useState, surfaced through the
-// SDK so the bundle never has to import `react` itself (the SDK stays the only import
-// surface for app authors, even though `react` is also a resolvable runtime external).
-export const useState = React.useState;
+// The storage verb/param types are the `mini-app-storage-engine` D8 inter-change seam,
+// re-exported here so a mini-app author types its `schema` and storage calls against the
+// SAME contract the host gates with. Type-only: nothing from the engine is bundled into the
+// SDK (the facade below holds only the one-way transport — carry-forward constraint #2).
+import type {
+  JsonValue,
+  StorageRecord,
+  ListQuery,
+  SchemaArtifact,
+  FieldType,
+} from '../host/storage-engine/contract';
+export type { JsonValue, StorageRecord, ListQuery, SchemaArtifact, FieldType };
 
-// ── App descriptor (design D6 / task 3.1) ────────────────────────────────────
+// ── State (design D6 / task 3.3) ─────────────────────────────────────────────
+// In-memory, web-side, no bridge: this is literally React's useState/useEffect, surfaced
+// through the SDK so the bundle never has to import `react` itself (the SDK stays the only
+// import surface for app authors, even though `react` is also a resolvable runtime external).
+export const useState = React.useState;
+export const useEffect = React.useEffect;
+
+// ── App descriptor (design D6 / tasks 2.4 / 3.1) ─────────────────────────────
 export type ScreenComponent = React.ComponentType<Record<string, unknown>>;
 
 export interface AppSpec {
   name: string;
   initial: string;
   screens: Record<string, ScreenComponent>;
-  /** v0.1 tip splitter is Tier-0: zero syscalls. The bridge/capability gate is v0.2. */
+  /** The capabilities this app declares (the manifest the host gate enforces). Tier-0 apps
+   *  (tip splitter) declare `[]` and never pass the gate's threshold — they never syscall. */
   capabilities: string[];
+  /** The storage schema artifact, REQUIRED when `capabilities` includes `'storage'`. The build
+   *  step extracts this (and `capabilities`) into the host-side app record — single source of
+   *  truth, so a fixture cannot drift from its own declaration. The runtime gate reads only the
+   *  host-held copy (design D6); this in-bundle declaration is what the build extracts. */
+  schema?: SchemaArtifact;
 }
 
 /**
@@ -74,6 +94,62 @@ function emitUiEvent(type: string, label?: string): void {
     /* one-way, best-effort: never let telemetry break the render */
   }
 }
+
+// ── Storage facade (capability-bridge D6 / task 2.3) ──────────────────────────
+// Typed client stubs over the engine's contract verbs. Each call builds a syscall envelope and
+// awaits a correlated `sysret` through `window.__whimSyscall` — the iframe-side marshaller the
+// runtime installs (src/runtime/web/syscall.js), whose ONLY capability is the same one-way
+// `parent.postMessage` transport the loader already holds (constraint #2). The facade caches
+// nothing, validates nothing beyond types, holds no engine handle and no host reference — the
+// host is the sole interpreter of effects (§5.6). Enumerating anything reachable from `storage`
+// yields at most the ability to post a string (the stub-authority invariant).
+interface SyscallTransport {
+  call(method: string, params: Record<string, JsonValue>): Promise<JsonValue>;
+}
+
+function syscall<T>(method: string, params: Record<string, JsonValue>): Promise<T> {
+  const t = (globalThis as { __whimSyscall?: SyscallTransport }).__whimSyscall;
+  if (!t || typeof t.call !== 'function') {
+    return Promise.reject(
+      new Error('vc-sdk storage: no syscall transport available (storage is unreachable in this context)'),
+    );
+  }
+  return t.call(method, params) as Promise<T>;
+}
+
+export const storage = {
+  kv: {
+    /** Read a KV scalar; resolves to `undefined` when the key is absent. */
+    get(key: string): Promise<JsonValue | undefined> {
+      return syscall<{ found: boolean; value: JsonValue }>('storage.kv.get', { key }).then((r) =>
+        r.found ? r.value : undefined,
+      );
+    },
+    set(key: string, value: JsonValue): Promise<void> {
+      return syscall<unknown>('storage.kv.set', { key, value }).then(() => undefined);
+    },
+    remove(key: string): Promise<void> {
+      return syscall<unknown>('storage.kv.remove', { key }).then(() => undefined);
+    },
+  },
+  records: {
+    append(collection: string, record: { [field: string]: JsonValue }): Promise<{ id: number }> {
+      return syscall<{ id: number }>('storage.records.append', { collection, record });
+    },
+    list(collection: string, query?: ListQuery): Promise<StorageRecord[]> {
+      return syscall<{ records: StorageRecord[] }>('storage.records.list', {
+        collection,
+        ...(query ? { query: query as unknown as JsonValue } : {}),
+      }).then((r) => r.records);
+    },
+    update(collection: string, id: number, patch: { [field: string]: JsonValue }): Promise<void> {
+      return syscall<unknown>('storage.records.update', { collection, id, patch }).then(() => undefined);
+    },
+    remove(collection: string, id: number): Promise<void> {
+      return syscall<unknown>('storage.records.remove', { collection, id }).then(() => undefined);
+    },
+  },
+};
 
 // ── Components (design D6 / task 3.2) ─────────────────────────────────────────
 // Each takes tokens and resolves them to CSS internally. The bundle never sees a raw value.
