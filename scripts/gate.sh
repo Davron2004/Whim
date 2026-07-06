@@ -26,6 +26,7 @@ CONFIG_SET=(
   scripts/gate.sh scripts/gate-full.sh
   .claude/hooks .claude/settings.json .claude/agents .claude/commands
   babel.config.js metro.config.js
+  build   # the build harness is executed (npm run build, below) — refuse to run tampered build code
 )
 if ! git diff --quiet "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null; then
   echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from baseline ($BASE)."

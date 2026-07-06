@@ -1,75 +1,62 @@
 {
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyWrite": ["./node_modules"]
+    },
+    "credentials": {
+      "files": [
+        { "path": "~/.ssh", "mode": "deny" },
+        { "path": "~/.claude.json", "mode": "deny" },
+        { "path": "~/.docker/config.json", "mode": "deny" },
+        { "path": "~/.aws", "mode": "deny" }
+      ],
+      "envVars": [
+        { "name": "ANTHROPIC_API_KEY", "mode": "deny" },
+        { "name": "GITHUB_TOKEN", "mode": "deny" },
+        { "name": "GH_TOKEN", "mode": "deny" },
+        { "name": "NPM_TOKEN", "mode": "deny" },
+        { "name": "AWS_ACCESS_KEY_ID", "mode": "deny" },
+        { "name": "AWS_SECRET_ACCESS_KEY", "mode": "deny" }
+      ]
+    },
+    "excludedCommands": [
+      "npm run invariants",
+      "npm run bridge:invariants",
+      "npm run launcher:deliver-verify",
+      "./scripts/gate-full.sh",
+      "scripts/fixloop.sh"
+    ]
+  },
   "worktree": {
     "baseRef": "head"
   },
   "permissions": {
     "allow": [
-      "Read",
-      "Edit",
-      "Write",
-      "Grep",
-      "Glob",
-      "Bash(./scripts/gate.sh)",
-      "Bash(./scripts/gate-full.sh)",
-      "Bash(npm run:*)",
-      "Bash(npm test:*)",
-      "Bash(npx tsc:*)",
-      "Bash(npx eslint:*)",
-      "Bash(npx knip:*)",
-      "Bash(npx openspec:*)",
-      "Bash(openspec:*)",
-      "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git rev-parse:*)",
-      "Bash(ls:*)",
-      "Bash(cat:*)",
-      "Bash(head:*)",
-      "Bash(tail:*)",
-      "Bash(grep:*)",
-      "Bash(rg:*)",
-      "Bash(wc:*)",
-      "Bash(mkdir:*)"
+      "Read", "Edit", "Write", "Grep", "Glob",
+      "Bash(./scripts/gate.sh)", "Bash(./scripts/gate-full.sh)",
+      "Bash(npm run:*)", "Bash(npm test:*)",
+      "Bash(npx tsc:*)", "Bash(npx eslint:*)", "Bash(npx knip:*)", "Bash(npx openspec:*)", "Bash(openspec:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git rev-parse:*)",
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(wc:*)", "Bash(mkdir:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
-      "Bash(npm install:*)",
-      "Bash(npm uninstall:*)",
-      "Bash(sudo:*)",
-      "Bash(curl:*)",
-      "Bash(wget:*)"
+      "Bash(git push:*)", "Bash(npm install:*)", "Bash(npm uninstall:*)",
+      "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)"
     ]
   },
   "hooks": {
     "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-on-subagent-stop.sh"
-          }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/gate-on-subagent-stop.sh" }] }
     ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/protect-harness.sh"
-          }
-        ]
+        "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/protect-harness.sh" }]
       },
       {
         "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/bash-policy.sh"
-          }
-        ]
+        "hooks": [{ "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/bash-policy.sh" }]
       }
     ]
   }

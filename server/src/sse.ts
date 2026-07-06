@@ -33,11 +33,10 @@ export function buildSseStream(
 ): ReadableStream<Uint8Array> {
   let id = 0;
   const useKeepalive = typeof keepaliveMs === 'number' && keepaliveMs > 0;
+  let keepaliveInterval: ReturnType<typeof setInterval> | undefined;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      let keepaliveInterval: ReturnType<typeof setInterval> | undefined;
-
       if (useKeepalive) {
         keepaliveInterval = setInterval(() => {
           try {
@@ -61,6 +60,9 @@ export function buildSseStream(
 
       if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
       controller.close();
+    },
+    cancel() {
+      if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
     },
   });
 }
