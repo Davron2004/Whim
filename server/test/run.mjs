@@ -16,12 +16,15 @@ import fs from 'node:fs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
+const tscBin = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+const fixedPathEnv = { ...process.env, PATH: '/usr/bin:/bin' };
 
 // --- Type-check both workspaces first (SPEC §GS-8) ---
 for (const project of ['contract/tsconfig.json', 'server/tsconfig.json']) {
   console.log(`tsc --noEmit -p ${project}`);
-  const tsc = spawnSync('npx', ['tsc', '--noEmit', '-p', project], {
+  const tsc = spawnSync(process.execPath, [tscBin, '--noEmit', '-p', project], {
     cwd: repoRoot,
+    env: fixedPathEnv,
     stdio: 'inherit',
   });
   if (tsc.status !== 0) {

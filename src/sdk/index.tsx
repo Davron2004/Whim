@@ -40,9 +40,8 @@ import type {
   StorageRecord,
   ListQuery,
   SchemaArtifact,
-  FieldType,
 } from '../host/storage-engine/contract';
-export type { JsonValue, StorageRecord, ListQuery, SchemaArtifact, FieldType };
+export type { JsonValue, StorageRecord, ListQuery, SchemaArtifact, FieldType } from '../host/storage-engine/contract';
 
 // The closed cue token sets (effects-and-cues D4) — type-only, so NOTHING from the bridge is
 // bundled into the SDK (the facade still holds only the one-way transport — constraint #2). A

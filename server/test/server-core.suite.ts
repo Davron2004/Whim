@@ -52,7 +52,7 @@ function checkStageOrder(events: GenerationEvent[]): boolean {
   return true;
 }
 
-export async function runServerCoreTests(): Promise<void> {
+async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
   // §3.3 — /healthz is exempt (no device header needed)
@@ -107,6 +107,9 @@ export async function runServerCoreTests(): Promise<void> {
     eq('missing device on rewrite error code', body.error, 'missing_device_id');
   }
 
+}
+
+async function testSseFraming(): Promise<void> {
   section('SSE framing (SPEC §4)');
 
   // §4.1/4.2/4.4 — frame shape, monotonic ids, exactly one terminal last
@@ -138,7 +141,7 @@ export async function runServerCoreTests(): Promise<void> {
       (e) => e.data.type === 'result' || e.data.type === 'failure',
     );
     eq('exactly one terminal event', terminals.length, 1);
-    const lastEvent = events[events.length - 1];
+    const lastEvent = events.at(-1);
     check(
       'terminal event is last',
       lastEvent !== undefined &&
@@ -179,6 +182,9 @@ export async function runServerCoreTests(): Promise<void> {
     eq('keepalive on → 0 skipped frames', skippedFrames, 0);
   }
 
+}
+
+async function testStubPipelineEndpoints(): Promise<void> {
   section('Stub pipeline + endpoints (SPEC §5)');
 
   // §5.1 — happy path event order
@@ -206,11 +212,11 @@ export async function runServerCoreTests(): Promise<void> {
     );
 
     // result is last
-    const lastType = types[types.length - 1];
+    const lastType = types.at(-1);
     eq('result is last event', lastType, 'result');
 
     // result carries a WireAppRecord with expected fields
-    const resultEvent = events[events.length - 1].data;
+    const resultEvent = events.at(-1)!.data;
     check(
       'result event has app field',
       resultEvent.type === 'result' && typeof resultEvent.app === 'object',
@@ -235,10 +241,10 @@ export async function runServerCoreTests(): Promise<void> {
     ).length;
     eq('failure path: exactly one terminal', terminalCount, 1);
 
-    const lastType = types[types.length - 1];
+    const lastType = types.at(-1);
     eq('failure path: terminal is failure', lastType, 'failure');
 
-    const failEvent = events[events.length - 1].data;
+    const failEvent = events.at(-1)!.data;
     if (failEvent.type === 'failure') {
       check(
         'failure has non-empty reason',
@@ -297,12 +303,15 @@ export async function runServerCoreTests(): Promise<void> {
     check('invalid rewrite body → JSON', ct.includes('application/json'));
   }
 
+}
+
+async function testSseCancelClearsKeepalive(): Promise<void> {
   section('SSE cancel() clears keepalive interval (F1)');
 
   // F1 — cancel() on client disconnect must clear the keepalive interval immediately
   {
-    const realSetInterval = global.setInterval;
-    const realClearInterval = global.clearInterval;
+    const realSetInterval = globalThis.setInterval;
+    const realClearInterval = globalThis.clearInterval;
 
     // stub state
     let intervalCb: (() => void) | null = null;
@@ -311,7 +320,7 @@ export async function runServerCoreTests(): Promise<void> {
     // Unique object so we can test identity in clearInterval
     const stubHandle = {} as ReturnType<typeof setInterval>;
 
-    (global as unknown as Record<string, unknown>).setInterval = (
+    (globalThis as unknown as Record<string, unknown>).setInterval = (
       cb: () => void,
       _ms: number,
     ): ReturnType<typeof setInterval> => {
@@ -320,7 +329,7 @@ export async function runServerCoreTests(): Promise<void> {
       return stubHandle;
     };
 
-    (global as unknown as Record<string, unknown>).clearInterval = (
+    (globalThis as unknown as Record<string, unknown>).clearInterval = (
       handle: ReturnType<typeof setInterval>,
     ): void => {
       if (handle === capturedHandle) intervalCb = null;
@@ -329,6 +338,7 @@ export async function runServerCoreTests(): Promise<void> {
     try {
       // Given: a source that never yields (simulates long-running generation)
       async function* neverYields(): AsyncGenerator<GenerationEvent> {
+        if (false) yield { type: 'token', text: '' };
         await new Promise<void>(() => {});
       }
 
@@ -358,8 +368,15 @@ export async function runServerCoreTests(): Promise<void> {
       }
       eq('keepalive fires 0 times after cancel', firesAfterCancel, 0);
     } finally {
-      (global as unknown as Record<string, unknown>).setInterval = realSetInterval;
-      (global as unknown as Record<string, unknown>).clearInterval = realClearInterval;
+      (globalThis as unknown as Record<string, unknown>).setInterval = realSetInterval;
+      (globalThis as unknown as Record<string, unknown>).clearInterval = realClearInterval;
     }
   }
+}
+
+export async function runServerCoreTests(): Promise<void> {
+  await testDeviceIdentity();
+  await testSseFraming();
+  await testStubPipelineEndpoints();
+  await testSseCancelClearsKeepalive();
 }

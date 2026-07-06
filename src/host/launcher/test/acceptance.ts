@@ -8,14 +8,14 @@
  */
 
 import { Harness } from './harness';
-import { runBackPolicyTests } from './back-policy.test';
-import { runAppIndexTests } from './app-index.test';
-import { runStoreAccessTests } from './store-access.test';
-import { runSeedTests } from './seed.test';
-import { runProductVerbsTests } from './product-verbs.test';
-import { runDevProbeBackButtonTests } from './dev-probe-back-button.test';
-import { runUnmountTeardownTests } from './unmount-teardown.test';
-import { runDeliverTests } from './deliver.test';
+import { runBackPolicyTests } from './back-policy.suite';
+import { runAppIndexTests } from './app-index.suite';
+import { runStoreAccessTests } from './store-access.suite';
+import { runSeedTests } from './seed.suite';
+import { runProductVerbsTests } from './product-verbs.suite';
+import { runDevProbeBackButtonTests } from './dev-probe-back-button.suite';
+import { runUnmountTeardownTests } from './unmount-teardown.suite';
+import { runDeliverTests } from './deliver.suite';
 
 const h = new Harness();
 

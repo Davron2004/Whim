@@ -52,12 +52,12 @@ export function storeIdOf(entry: InstalledApp): string {
 }
 
 export class StoreAccess {
-  private store: VersionStore;
-  private index: AppIndex;
-  private deleteStorage: DeleteStorage;
-  private now: () => number;
+  private readonly store: VersionStore;
+  private readonly index: AppIndex;
+  private readonly deleteStorage: DeleteStorage;
+  private readonly now: () => number;
   /** repoId → the lineage the repo HEAD is currently on (this session's knowledge). */
-  private repoLineage = new Map<string, string>();
+  private readonly repoLineage = new Map<string, string>();
 
   constructor(opts: StoreAccessOptions) {
     this.store = opts.store;

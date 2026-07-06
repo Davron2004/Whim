@@ -33,7 +33,7 @@ function stats(xs: number[]): string {
   const sorted = xs.slice().sort((a, b) => a - b);
   const med = sorted[Math.floor(sorted.length / 2)];
   const r1 = (n: number) => Math.round(n * 100) / 100;
-  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted[sorted.length - 1])} ms (n=${xs.length})`;
+  return `min ${r1(sorted[0])} · med ${r1(med)} · max ${r1(sorted.at(-1)!)} ms (n=${xs.length})`;
 }
 
 // The diag transport is on `vc-sdk` only via the same syscall pipe; call it directly through
@@ -60,12 +60,13 @@ function Home() {
     (async () => {
       try {
         await echo({ warm: true }); // warm-up
-        const result: string[] = [];
-        result.push('diag.echo (pure pipe round-trip): ' + stats(await timeN(30, () => echo({ i: 1 }))));
-        result.push('kv.set: ' + stats(await timeN(20, () => storage.kv.set('k', 1))));
-        result.push('kv.get: ' + stats(await timeN(20, () => storage.kv.get('k'))));
-        result.push('records.append: ' + stats(await timeN(20, () => storage.records.append('Pings', { at: Date.now() }))));
-        result.push('records.list: ' + stats(await timeN(20, () => storage.records.list('Pings', { limit: 50 }))));
+        const result = [
+          'diag.echo (pure pipe round-trip): ' + stats(await timeN(30, () => echo({ i: 1 }))),
+          'kv.set: ' + stats(await timeN(20, () => storage.kv.set('k', 1))),
+          'kv.get: ' + stats(await timeN(20, () => storage.kv.get('k'))),
+          'records.append: ' + stats(await timeN(20, () => storage.records.append('Pings', { at: Date.now() }))),
+          'records.list: ' + stats(await timeN(20, () => storage.records.list('Pings', { limit: 50 }))),
+        ];
         setLines(result);
       } catch (e) {
         const detail = (e as { detail?: { hint?: string } } | undefined)?.detail;
@@ -79,8 +80,8 @@ function Home() {
       <Stack gap="sm">
         <Heading size="title">Latency Probe</Heading>
         <Text size="caption" color="text-muted">syscall round-trip over the real transport</Text>
-        {lines.map((l, i) => (
-          <Text key={i} size="caption">{l}</Text>
+        {lines.map((l) => (
+          <Text key={l} size="caption">{l}</Text>
         ))}
       </Stack>
     </Screen>

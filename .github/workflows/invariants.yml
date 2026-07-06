@@ -27,6 +27,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - name: Build generated runtime modules
+        run: npm run build
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
       - name: Lint (eslint --max-warnings 0)
@@ -52,6 +54,8 @@ jobs:
         with:
           node-version: 22 # pinned per the DEVLOG build-env gotcha
       - run: npm ci
+      - name: Build generated runtime modules
+        run: npm run build
       # ── Server + contract suite (harness-server-skeleton, #8) ───────────────────
       # Type-checks both workspaces (contract/ + server/), then runs the full
       # in-process acceptance suite (metering, SSE framing, stub pipeline, OpenRouter

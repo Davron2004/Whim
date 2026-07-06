@@ -6,6 +6,6 @@
  */
 export function assertExecuteSyncAvailable(db: { executeSync?: unknown }): void {
   if (typeof db.executeSync !== 'function') {
-    throw new Error('op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build');
+    throw new TypeError('op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build');
   }
 }

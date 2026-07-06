@@ -20,7 +20,7 @@ export interface FloatingExitProps {
   onPress: () => void;
 }
 
-export default function FloatingExit({ onPress }: FloatingExitProps) {
+export default function FloatingExit({ onPress }: Readonly<FloatingExitProps>) {
   const { width, height } = Dimensions.get('window');
   const startX = width - SIZE - MARGIN;
   const startY = height - SIZE - MARGIN * 6;

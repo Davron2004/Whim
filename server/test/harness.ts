@@ -19,21 +19,22 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (typeof a === 'object') {
     const ao = a as Record<string, unknown>;
     const bo = b as Record<string, unknown>;
-    const ak = Object.keys(ao).sort();
-    const bk = Object.keys(bo).sort();
+    const ak = Object.keys(ao).sort((left, right) => left.localeCompare(right));
+    const bk = Object.keys(bo).sort((left, right) => left.localeCompare(right));
     if (ak.length !== bk.length || !ak.every((k, i) => k === bk[i])) return false;
     return ak.every((k) => deepEqual(ao[k], bo[k]));
   }
   return false;
 }
 
-export function check(name: string, cond: boolean, detail?: string): void {
-  if (cond) {
+export function check(name: string, passedCheck: boolean, detail?: string): void {
+  if (passedCheck) {
     passed++;
     console.log(`  ok  ${name}`);
   } else {
     failed++;
-    const line = `  XX  ${name}${detail ? ` — ${detail}` : ''}`;
+    const detailText = detail ? ` — ${detail}` : '';
+    const line = `  XX  ${name}${detailText}`;
     failures.push(line);
     console.error(line);
   }
@@ -49,7 +50,7 @@ export function eq(name: string, actual: unknown, expected: unknown): void {
 }
 
 /** Run `fn`, returning the thrown error (or `undefined` if it did not throw) for type inspection. */
-export async function caught(fn: () => unknown | Promise<unknown>): Promise<unknown> {
+export async function caught(fn: () => void | Promise<void>): Promise<unknown> {
   try {
     await fn();
     return undefined;

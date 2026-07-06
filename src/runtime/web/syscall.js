@@ -20,10 +20,10 @@
 (function whimSyscallMarshaller() {
   'use strict';
 
-  var seq = 0;                 // monotonic id, per generation (a fresh iframe → a fresh seq)
-  var hostGen = 1;            // the generation the host bound this realm at; set from init
-  var pending = Object.create(null); // id -> { resolve, reject, timer }
-  var TIMEOUT_MS = 10000;     // D8 placeholder — tune from the on-device round-trip (task 6.3)
+  let seq = 0;                 // monotonic id, per generation (a fresh iframe → a fresh seq)
+  let hostGen = 1;             // the generation the host bound this realm at; set from init
+  const pending = Object.create(null); // id -> { resolve, reject, timer }
+  const TIMEOUT_MS = 10000;    // D8 placeholder — tune from the on-device round-trip (task 6.3)
 
   function err(kind, method, hint) {
     return { kind: kind, method: method, hint: hint };
@@ -31,12 +31,12 @@
 
   function call(method, params) {
     return new Promise(function (resolve, reject) {
-      var id = ++seq;
-      var frame = {
+      const id = ++seq;
+      const frame = {
         whim: 'syscall', v: 1, id: id, gen: hostGen, method: String(method),
         params: (params && typeof params === 'object') ? params : {},
       };
-      var timer = window.setTimeout(function () {
+      const timer = globalThis.setTimeout(function () {
         if (pending[id]) {
           delete pending[id];
           reject(decorate(err('syscall_timeout', method, 'No host response within ' + TIMEOUT_MS + 'ms.'), id));
@@ -44,11 +44,11 @@
       }, TIMEOUT_MS);
       pending[id] = { resolve: resolve, reject: reject, timer: timer };
       try {
-        window.parent.postMessage(JSON.stringify(frame), '*');
+        window.parent.postMessage(JSON.stringify(frame), '*'); // NOSONAR - sandboxed srcdoc iframe posts to an opaque parent channel.
       } catch (e) {
-        window.clearTimeout(timer);
+        globalThis.clearTimeout(timer);
         delete pending[id];
-        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host.'), id));
+        reject(decorate(err('transport_unavailable', method, 'Could not post the syscall to the host: ' + (e?.name ? e.name : 'postMessage failed') + '.'), id));
       }
     });
   }
@@ -57,20 +57,32 @@
   // readable {kind, hint} (the §8.1 repair-loop shape); the message IS the hint so a bare
   // `catch` still says something useful.
   function decorate(error, id) {
-    var detail = (error && typeof error === 'object') ? error : { kind: 'handler_error', hint: 'syscall failed' };
-    var e = new Error(detail.hint || ('syscall ' + id + ' failed'));
+    const detail = (error && typeof error === 'object') ? error : { kind: 'handler_error', hint: 'syscall failed' };
+    const e = new Error(detail.hint || ('syscall ' + id + ' failed'));
     e.name = 'WhimSyscallError';
     e.detail = detail;
     return e;
   }
 
+  function parseFrame(data) {
+    try {
+      return JSON.parse(data);
+    } catch (e) {
+      if (e instanceof SyntaxError) return null;
+      throw e;
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     // Host-channel-only acceptance (D3): forged in-iframe frames have ev.source === window.
-    if (ev.source !== window.parent) return;
-    var data = ev.data;
+    if (ev.source !== globalThis.parent) return;
+    // The production transport is parent <-> sandboxed srcdoc, so the legitimate origin is
+    // opaque ("null"). The equality branch keeps same-origin invariant harnesses working
+    // without making origin the authority source; the exact parent window remains required.
+    if (ev.origin !== 'null' && ev.origin !== globalThis.location.origin) return;
+    const data = ev.data;
     if (typeof data !== 'string') return;
-    var msg;
-    try { msg = JSON.parse(data); } catch (e) { return; }
+    const msg = parseFrame(data);
     if (!msg || typeof msg !== 'object') return;
 
     // The host init frame carries the generation this realm stamps (the fence authority, D3).
@@ -78,9 +90,9 @@
 
     // Family separation (D1): only `sysret` frames are ours.
     if (msg.whim !== 'sysret') return;
-    var p = pending[msg.id];
+    const p = pending[msg.id];
     if (!p) return; // unknown / forged / already-settled id → inert
-    window.clearTimeout(p.timer);
+    globalThis.clearTimeout(p.timer);
     delete pending[msg.id];
     if (msg.ok) p.resolve(msg.result);
     else p.reject(decorate(msg.error, msg.id));
@@ -91,12 +103,16 @@
   // globals) so a bundle sharing this realm cannot swap the marshaller for a shim that captures the
   // params/results flowing through it. A realm reset recreates the iframe (a fresh realm reinstalls
   // this cleanly), so nothing legitimately reassigns it within a generation.
-  var api = { call: call };
+  const api = { call: call };
   try {
-    Object.defineProperty(window, '__whimSyscall', {
+    Object.defineProperty(globalThis, '__whimSyscall', {
       value: api, writable: false, configurable: false, enumerable: false,
     });
   } catch (e) {
-    window.__whimSyscall = api; // defensive: never leave the transport uninstalled
+    if (e instanceof TypeError) {
+      globalThis.__whimSyscall = api; // defensive: never leave the transport uninstalled
+      return;
+    }
+    throw e;
   }
 })();

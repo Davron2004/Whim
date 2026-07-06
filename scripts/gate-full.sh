@@ -18,11 +18,12 @@ cd "$(dirname "$0")/.." || exit 2
 ./scripts/gate.sh || exit $?
 
 FAILED=()
-section() { printf '\n== %s\n' "$1"; }
+section() { local name="$1"; printf '\n== %s\n' "$name"; return 0; }
 check() {
   local name="$1"; shift
   section "$name"
   if "$@"; then echo "PASS: $name"; else echo "FAIL: $name"; FAILED+=("$name"); fi
+  return 0
 }
 
 # 2. Heavy / browser / bundler checks. gate.sh already ran the build, so src/runtime/generated/*
@@ -36,7 +37,7 @@ check "deliver-by-source" npm run -s launcher:deliver-verify
 command -v openspec >/dev/null 2>&1 || { echo "GATE: 'openspec' CLI not found on PATH — install it (e.g. brew install openspec)"; exit 2; }
 check "openspec"          npx openspec validate --all --strict
 
-if [ ${#FAILED[@]} -gt 0 ]; then
+if [[ ${#FAILED[@]} -gt 0 ]]; then
   printf '\nFULL GATE FAILED: %s\n' "${FAILED[*]}"
   exit 1
 fi

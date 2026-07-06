@@ -70,6 +70,68 @@ export interface StreamResult {
 /** Injectable fetch type (matches the global `fetch` signature). */
 export type FetchFn = typeof globalThis.fetch;
 
+interface ParsedSseFrame {
+  usage?: Usage;
+  content?: string;
+}
+
+const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+function requestBody(options: OpenRouterOptions): string {
+  return JSON.stringify({
+    model: options.model,
+    messages: options.messages,
+    stream: true,
+    ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+    stream_options: { include_usage: true },
+  });
+}
+
+function responseError(response: Response): OpenRouterAuthError | OpenRouterRateLimitError | OpenRouterNetworkError | null {
+  if (response.status === 401) return new OpenRouterAuthError('OpenRouter: unauthorized (401)');
+  if (response.status === 429) return new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)');
+  if (!response.ok) return new OpenRouterNetworkError(`OpenRouter: HTTP ${response.status}`);
+  if (!response.body) return new OpenRouterNetworkError('OpenRouter: response body is null');
+  return null;
+}
+
+function usageFrom(parsed: Record<string, unknown>): Usage | undefined {
+  if (!parsed.usage || typeof parsed.usage !== 'object') return undefined;
+  const u = parsed.usage as Record<string, unknown>;
+  return {
+    promptTokens: Number(u.prompt_tokens ?? 0),
+    completionTokens: Number(u.completion_tokens ?? 0),
+    totalTokens: Number(u.total_tokens ?? 0),
+  };
+}
+
+function contentFrom(parsed: Record<string, unknown>): string | undefined {
+  const choices = parsed.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return undefined;
+  const delta = (choices[0] as Record<string, unknown>).delta;
+  if (!delta || typeof delta !== 'object') return undefined;
+  const content = (delta as Record<string, unknown>).content;
+  return typeof content === 'string' && content.length > 0 ? content : undefined;
+}
+
+function parseSseLine(line: string): ParsedSseFrame | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return null;
+  const payload = trimmed.slice('data:'.length).trim();
+  if (payload === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>;
+    return { usage: usageFrom(parsed), content: contentFrom(parsed) };
+  } catch {
+    return null;
+  }
+}
+
+function decodeChunk(decoder: TextDecoder, chunk: Uint8Array | ArrayBufferLike): string {
+  return decoder.decode(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBuffer), { stream: true });
+}
+
 export class OpenRouterClient {
   private readonly fetchFn: FetchFn;
 
@@ -106,14 +168,7 @@ export class OpenRouterClient {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({
-            model: options.model,
-            messages: options.messages,
-            stream: true,
-            ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-            stream_options: { include_usage: true },
-          }),
+          body: requestBody(options),
         });
       } catch (err) {
         const netErr = new OpenRouterNetworkError('fetch failed', err);
@@ -121,115 +176,39 @@ export class OpenRouterClient {
         throw netErr;
       }
 
-      if (response.status === 401) {
-        const authErr = new OpenRouterAuthError('OpenRouter: unauthorized (401)');
-        rejectUsage(authErr);
-        throw authErr;
+      const validationError = responseError(response);
+      if (validationError) {
+        rejectUsage(validationError);
+        throw validationError;
       }
-      if (response.status === 429) {
-        const rlErr = new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)');
-        rejectUsage(rlErr);
-        throw rlErr;
-      }
-      if (!response.ok) {
-        const netErr = new OpenRouterNetworkError(`OpenRouter: HTTP ${response.status}`);
-        rejectUsage(netErr);
-        throw netErr;
-      }
-
-      if (!response.body) {
-        const netErr = new OpenRouterNetworkError('OpenRouter: response body is null');
-        rejectUsage(netErr);
-        throw netErr;
-      }
+      const body = response.body;
+      if (!body) throw new OpenRouterNetworkError('OpenRouter: response body is null');
 
       let capturedUsage: Usage | undefined;
       const decoder = new TextDecoder();
       let buffer = '';
 
       try {
-        for await (const chunk of response.body) {
-          buffer += decoder.decode(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk as ArrayBuffer), { stream: true });
+        for await (const chunk of body) {
+          buffer += decodeChunk(decoder, chunk);
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
 
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith(':')) continue; // empty / comment
-            if (!trimmed.startsWith('data:')) continue;
-
-            const payload = trimmed.slice('data:'.length).trim();
-            if (payload === '[DONE]') continue;
-
-            let parsed: Record<string, unknown>;
-            try {
-              parsed = JSON.parse(payload) as Record<string, unknown>;
-            } catch {
-              continue;
-            }
-
-            // Capture usage from the final chunk (stream_options: include_usage)
-            if (parsed.usage && typeof parsed.usage === 'object') {
-              const u = parsed.usage as Record<string, unknown>;
-              capturedUsage = {
-                promptTokens: Number(u.prompt_tokens ?? 0),
-                completionTokens: Number(u.completion_tokens ?? 0),
-                totalTokens: Number(u.total_tokens ?? 0),
-              };
-            }
-
-            // Extract text delta from choices[0].delta.content
-            const choices = parsed.choices;
-            if (!Array.isArray(choices) || choices.length === 0) continue;
-            const delta = (choices[0] as Record<string, unknown>).delta;
-            if (!delta || typeof delta !== 'object') continue;
-            const content = (delta as Record<string, unknown>).content;
-            if (typeof content === 'string' && content.length > 0) {
-              yield content;
-            }
+            const frame = parseSseLine(line);
+            if (frame?.usage) capturedUsage = frame.usage;
+            if (frame?.content) yield frame.content;
           }
         }
 
         // Flush remaining buffer
-        if (buffer.trim()) {
-          const trimmed = buffer.trim();
-          if (trimmed.startsWith('data:')) {
-            const payload = trimmed.slice('data:'.length).trim();
-            if (payload !== '[DONE]') {
-              try {
-                const parsed = JSON.parse(payload) as Record<string, unknown>;
-                if (parsed.usage && typeof parsed.usage === 'object') {
-                  const u = parsed.usage as Record<string, unknown>;
-                  capturedUsage = {
-                    promptTokens: Number(u.prompt_tokens ?? 0),
-                    completionTokens: Number(u.completion_tokens ?? 0),
-                    totalTokens: Number(u.total_tokens ?? 0),
-                  };
-                }
+        const tail = parseSseLine(buffer);
+        if (tail?.usage) capturedUsage = tail.usage;
+        if (tail?.content) yield tail.content;
 
-                // Extract text delta from choices[0].delta.content
-                const choices = parsed.choices;
-                if (Array.isArray(choices) && choices.length > 0) {
-                  const delta = (choices[0] as Record<string, unknown>).delta;
-                  if (delta && typeof delta === 'object') {
-                    const content = (delta as Record<string, unknown>).content;
-                    if (typeof content === 'string' && content.length > 0) {
-                      yield content;
-                    }
-                  }
-                }
-              } catch {
-                // ignore malformed trailing data
-              }
-            }
-          }
-        }
-
-        resolveUsage(
-          capturedUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        );
-      } catch (err) {
-        const netErr = new OpenRouterNetworkError('stream read failed', err);
+        resolveUsage(capturedUsage ?? ZERO_USAGE);
+      } catch (streamErr) {
+        const netErr = new OpenRouterNetworkError('stream read failed', streamErr);
         rejectUsage(netErr);
         throw netErr;
       }

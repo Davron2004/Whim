@@ -15,14 +15,12 @@
 
 import type {
   JsonValue,
-  ListQuery,
   SchemaArtifact,
   StorageEngine,
   StorageError,
-  StorageRecord,
 } from '../storage-engine/contract';
 
-export type { JsonValue, ListQuery, SchemaArtifact, StorageRecord, StorageError };
+export type { JsonValue, ListQuery, SchemaArtifact, StorageRecord, StorageError } from '../storage-engine/contract';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D1 — two frame families, classified by a single discriminator rule
@@ -80,7 +78,7 @@ export function classifyFrame(frame: unknown): FrameFamily {
 // THIS change (#5, launcher-shell) ships the HOST half: the outer-page relay, the system-back
 // wiring, and the pure guaranteed-exit policy (`src/host/launcher/back-policy.ts`). The SDK
 // half is implemented by `sdk-design-system` (#3) against the frames declared here — this is
-// the TODO anchor #3's author looks for. In this change no SDK nav exists, so depth is always
+// the anchor #3's author looks for. In this change no SDK nav exists, so depth is always
 // 0 and back exits at the root; the round-trip below is wired but only exercised once #3 lands.
 //
 //   • SDK → host  (hint):  whenever the mini-app's nav-stack depth changes, the SDK runtime
@@ -291,7 +289,7 @@ export function validateSyscall(frame: unknown): { ok: true; frame: SyscallFrame
   const f = frame as Record<string, unknown>;
   if (f.whim !== 'syscall') return { ok: false, id: null, reason: 'not a syscall frame' };
   const id = typeof f.id === 'number' && Number.isFinite(f.id) ? (f.id as number) : null;
-  if (f.v !== SYSCALL_VERSION) return { ok: false, id, reason: `unsupported envelope version ${String(f.v)}` };
+  if (f.v !== SYSCALL_VERSION) return { ok: false, id, reason: `unsupported envelope version ${JSON.stringify(f.v)}` };
   if (id === null) return { ok: false, id: null, reason: 'missing/invalid request id' };
   if (typeof f.gen !== 'number' || !Number.isFinite(f.gen)) return { ok: false, id, reason: 'missing/invalid generation' };
   if (typeof f.method !== 'string' || !f.method) return { ok: false, id, reason: 'missing method' };
@@ -302,7 +300,7 @@ export function validateSyscall(frame: unknown): { ok: true; frame: SyscallFrame
 }
 
 export function okSysret(id: number, result: JsonValue | undefined): SysretFrame {
-  return { whim: 'sysret', v: SYSCALL_VERSION, id, ok: true, result: result === undefined ? null : result };
+  return { whim: 'sysret', v: SYSCALL_VERSION, id, ok: true, result: result ?? null };
 }
 
 export function errSysret(id: number, error: SyscallError): SysretFrame {

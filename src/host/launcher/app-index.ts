@@ -45,7 +45,7 @@ const ORDER_KEY = 'order';
 const SEED_KEY = 'seed:version';
 
 export class AppIndex {
-  constructor(private kv: KVBackend) {}
+  constructor(private readonly kv: KVBackend) {}
 
   private readOrder(): string[] {
     const raw = this.kv.getString(ORDER_KEY);

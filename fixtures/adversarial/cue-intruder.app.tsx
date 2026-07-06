@@ -30,7 +30,7 @@ interface Line { label: string; result: string; }
 
 function denialKind(e: any): string {
   // The marshaller rejects with an Error carrying `.detail` = the structured BridgeError/StorageError.
-  return e && e.detail && e.detail.kind ? e.detail.kind : 'rejected(no-kind)';
+  return e?.detail?.kind ? e.detail.kind : 'rejected(no-kind)';
 }
 
 function Home() {
@@ -62,7 +62,7 @@ function Home() {
       w.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id: 770001, ok: true, result: {} }), '*');
       push('forged self sysret', '↩ posted to self (host-channel-only acceptance → inert)');
     } catch (e: any) {
-      push('forged self sysret', 'post threw (' + (e && e.name) + ')');
+      push('forged self sysret', 'post threw (' + e?.name + ')');
     }
   }, []);
 
@@ -71,8 +71,8 @@ function Home() {
       <Stack gap="sm">
         <Heading size="title">CUE INTRUDER — cue gate pen test</Heading>
         <Text size="caption" color="text-muted">tries to buzz/beep without entitlement; ✓ = attack denied/inert</Text>
-        {lines.map((l, i) => (
-          <Text key={i} size="caption">{l.label}: {l.result}</Text>
+        {lines.map((l) => (
+          <Text key={l.label} size="caption">{l.label}: {l.result}</Text>
         ))}
       </Stack>
     </Screen>

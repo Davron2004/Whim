@@ -37,11 +37,12 @@ fi
 
 FAILED=()
 
-section() { printf '\n== %s\n' "$1"; }
+section() { local name="$1"; printf '\n== %s\n' "$name"; return 0; }
 check() {
   local name="$1"; shift
   section "$name"
   if "$@"; then echo "PASS: $name"; else echo "FAIL: $name"; FAILED+=("$name"); fi
+  return 0
 }
 
 # build first: ≈0.3s (esbuild), and it writes the gitignored src/runtime/generated/* that
@@ -64,7 +65,7 @@ TRIPWIRE=$(grep -rn --include='*.ts' --include='*.tsx' \
   -e 'TEMP:' -e 'HACK:' -e 'isImplemented' -e 'IS_IMPLEMENTED' \
   -e 'console\.log(.*debug' \
   src/ 2>/dev/null || true)
-if [ -n "$TRIPWIRE" ]; then
+if [[ -n "$TRIPWIRE" ]]; then
   echo "$TRIPWIRE"
   echo "FAIL: scaffolding tripwires"
   FAILED+=("scaffolding tripwires")
@@ -72,7 +73,7 @@ else
   echo "PASS: scaffolding tripwires"
 fi
 
-if [ ${#FAILED[@]} -gt 0 ]; then
+if [[ ${#FAILED[@]} -gt 0 ]]; then
   printf '\nFAST GATE FAILED: %s\n' "${FAILED[*]}"
   exit 1
 fi

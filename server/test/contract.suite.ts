@@ -62,7 +62,7 @@ export function runContractTests(): void {
     },
   ];
   for (const { label, value } of samples) {
-    const parsed = GenerationEvent.parse(JSON.parse(JSON.stringify(value)));
+    const parsed = GenerationEvent.parse(structuredClone(value));
     eq(`round-trip ${label}`, parsed, value);
   }
 
@@ -121,7 +121,7 @@ export function runContractTests(): void {
   ];
   const terminals = stream.filter((e) => e.type === 'result' || e.type === 'failure');
   check('exactly one terminal event', terminals.length === 1);
-  check('terminal event is last', stream[stream.length - 1].type === 'result');
+  check('terminal event is last', stream.at(-1)?.type === 'result');
 
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');
@@ -130,7 +130,7 @@ export function runContractTests(): void {
     const pkg = JSON.parse(readFileSync(path.join(root, rel), 'utf8')) as {
       dependencies?: Record<string, string>;
     };
-    return Object.keys(pkg.dependencies ?? {}).sort();
+    return Object.keys(pkg.dependencies ?? {}).sort((a, b) => a.localeCompare(b));
   };
   const isReactAdjacent = (dep: string): boolean => /^react($|[-/])|^@react/.test(dep);
 

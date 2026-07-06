@@ -28,14 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       dnsutils \
       ca-certificates \
       sudo \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'node ALL=(root) NOPASSWD: /workspace/.devcontainer/init-firewall.sh' \
+      > /etc/sudoers.d/firewall \
+    && chmod 0440 /etc/sudoers.d/firewall \
+    && npm install -g @anthropic-ai/claude-code
 
 # Let the unprivileged 'node' user apply the firewall (needs NET_ADMIN) at start.
-RUN echo 'node ALL=(root) NOPASSWD: /workspace/.devcontainer/init-firewall.sh' \
-      > /etc/sudoers.d/firewall && chmod 0440 /etc/sudoers.d/firewall
 
 # Claude Code CLI (the orchestrator + its fixer subagents all run in here).
-RUN npm install -g @anthropic-ai/claude-code
 
 # Playwright Chromium lives OUTSIDE node_modules so the read-only node_modules
 # mount (the run-time node_modules-poison guard) does not hide the browser.
@@ -43,10 +44,12 @@ RUN npm install -g @anthropic-ai/claude-code
 # --with-deps pulls the Chromium apt libraries; must run as root at build time.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx -y playwright@1.49.1 install --with-deps chromium \
-    && chmod -R a+rX /ms-playwright
+    && chmod -R a+rX /ms-playwright \
+    && git config --system --add safe.directory /workspace \
+    && mkdir -p /etc/claude-code \
+    && printf '{ "sandbox": { "enabled": false } }\n' > /etc/claude-code/managed-settings.json
 
 # Quiet git's "dubious ownership" on the bind-mounted (host-owned) /workspace.
-RUN git config --system --add safe.directory /workspace
 
 # Disable Claude Code's OS sandbox INSIDE the container. The container itself is
 # the Threat-C boundary (egress firewall), so the host's bind-mounted
@@ -55,8 +58,6 @@ RUN git config --system --add safe.directory /workspace
 # the bind mount), so the host file stays untouched and sandbox:true on the host.
 # (Linux backend is bubblewrap+socat, deliberately NOT installed; disabling here
 # means no fail-open warning. failIfUnavailable stays off — we never want it on.)
-RUN mkdir -p /etc/claude-code \
-    && printf '{ "sandbox": { "enabled": false } }\n' > /etc/claude-code/managed-settings.json
 
 USER node
 WORKDIR /workspace
@@ -64,5 +65,6 @@ WORKDIR /workspace
 # Pre-trust the bind-mounted /workspace so headless runs don't stall on (and
 # don't ignore .claude/settings.json because of) the first-run trust dialog.
 # Key/path are exactly what Claude Code's untrusted-workspace warning names.
-RUN printf '{ "projects": { "/workspace": { "hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true } } }\n' \
+RUN printf '%s\n' \
+      '{ "projects": { "/workspace": { "hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true } } }' \
       > /home/node/.claude.json

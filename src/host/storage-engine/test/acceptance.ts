@@ -28,8 +28,8 @@ import { validateArtifact } from '../schema';
 let passed = 0;
 const failures: string[] = [];
 
-function ok(cond: boolean, msg: string): void {
-  if (cond) passed++;
+function ok(passedCheck: boolean, msg: string): void {
+  if (passedCheck) passed++;
   else {
     failures.push(msg);
     console.error('  ✗ ' + msg);
@@ -111,8 +111,8 @@ test('§A isolation: two apps with the same collection cannot see each other; se
 
 test('§A the verb surface accepts no app/store-addressing parameter', () => {
   const { store } = memEngine();
-  eq(Object.keys(store.kv).sort(), ['get', 'remove', 'set'], 'kv surface is exactly get/set/remove');
-  eq(Object.keys(store.records).sort(), ['append', 'list', 'remove', 'update'], 'records surface is exactly append/list/update/remove');
+  eq(Object.keys(store.kv).sort((a, b) => a.localeCompare(b)), ['get', 'remove', 'set'], 'kv surface is exactly get/set/remove');
+  eq(Object.keys(store.records).sort((a, b) => a.localeCompare(b)), ['append', 'list', 'remove', 'update'], 'records surface is exactly append/list/update/remove');
   // No verb takes an app id / db path: collection name is the only addressing argument, and
   // the engine holds exactly one handle (bound at construction) — there is no way to name
   // another store. (The TypeScript contract makes this a compile-time guarantee too.)
@@ -325,9 +325,9 @@ test('§B additive diff emits exactly one CREATE TABLE and one ALTER TABLE ADD C
   const mark = rec.mark();
   store.open(additive);
   const ddl = rec.log.slice(mark).map(e => e.sql).filter(s => /^(CREATE|ALTER)/.test(s));
-  eq(ddl.filter(s => /^CREATE TABLE/.test(s)).length, 1, 'exactly one CREATE TABLE');
-  eq(ddl.filter(s => /^ALTER TABLE/.test(s)).length, 1, 'exactly one ALTER TABLE ADD COLUMN');
-  ok(/ADD COLUMN "f4" TEXT DEFAULT 'uncategorized'/.test(ddl.find(s => /^ALTER/.test(s))!), 'the ADD COLUMN carries the declared default');
+  eq(ddl.filter(s => s.startsWith('CREATE TABLE')).length, 1, 'exactly one CREATE TABLE');
+  eq(ddl.filter(s => s.startsWith('ALTER TABLE')).length, 1, 'exactly one ALTER TABLE ADD COLUMN');
+  ok(/ADD COLUMN "f4" TEXT DEFAULT 'uncategorized'/.test(ddl.find(s => s.startsWith('ALTER'))!), 'the ADD COLUMN carries the declared default');
   // the default backfills existing rows (SQLite semantics): a pre-existing row reads the default.
   const eng2 = memEngine();
   eng2.store.open(expensesV1);
@@ -453,15 +453,15 @@ function isHostAuthored(sql: string): boolean {
   const patterns: RegExp[] = [
     /^(BEGIN|COMMIT|ROLLBACK)$/,
     /^CREATE TABLE IF NOT EXISTS "(_meta|kv)" \(k TEXT PRIMARY KEY, v TEXT\)$/,
-    new RegExp(`^CREATE TABLE ${ID} \\("id" INTEGER PRIMARY KEY(, ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?)*\\)$`),
-    new RegExp(`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
+    new RegExp(String.raw`^CREATE TABLE ${ID} \("id" INTEGER PRIMARY KEY(, ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?)*\)$`),
+    new RegExp(String.raw`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
     /^SELECT v FROM "(_meta|kv)" WHERE k = \?$/,
     /^INSERT OR REPLACE INTO "(_meta|kv)"\(k, v\) VALUES \(\?, \?\)$/,
     /^DELETE FROM "kv" WHERE k = \?$/,
-    new RegExp(`^INSERT INTO ${ID} \\(${ID}(, ${ID})*\\) VALUES \\(\\?(, \\?)*\\)$`),
+    new RegExp(String.raw`^INSERT INTO ${ID} \(${ID}(, ${ID})*\) VALUES \(\?(, \?)*\)$`),
     new RegExp(`^INSERT INTO ${ID} DEFAULT VALUES$`),
-    new RegExp(`^UPDATE ${ID} SET ${ID} = \\?(, ${ID} = \\?)* WHERE "id" = \\?$`),
-    new RegExp(`^DELETE FROM ${ID} WHERE "id" = \\?$`),
+    new RegExp(String.raw`^UPDATE ${ID} SET ${ID} = \?(, ${ID} = \?)* WHERE "id" = \?$`),
+    new RegExp(String.raw`^DELETE FROM ${ID} WHERE "id" = \?$`),
   ];
   if (patterns.some(p => p.test(sql))) return true;
   return isSelectListTemplate(sql);
@@ -469,11 +469,11 @@ function isHostAuthored(sql: string): boolean {
 
 /** SELECT "id"(, "fX")* FROM "cX" [WHERE <preds>] [ORDER BY "fX" ASC|DESC] [LIMIT ?[ OFFSET ?]] */
 function isSelectListTemplate(sql: string): boolean {
-  const m = /^SELECT "id"(?:, "[a-z][0-9]+")* FROM "[a-z][0-9]+"( WHERE .+?)?( ORDER BY "[a-z][0-9]+" (?:ASC|DESC))?( LIMIT \?(?: OFFSET \?)?)?$/.exec(sql);
+  const m = /^SELECT "id"(?:, "[a-z]\d+")* FROM "[a-z]\d+"( WHERE .+?)?( ORDER BY "[a-z]\d+" (?:ASC|DESC))?( LIMIT \?(?: OFFSET \?)?)?$/.exec(sql);
   if (!m) return false;
   if (m[1]) {
     const preds = m[1].replace(/^ WHERE /, '').split(' AND ');
-    const predRe = /^"[a-z][0-9]+" (?:=|<|<=|>|>=) \?$|^"[a-z][0-9]+" IS NULL$/;
+    const predRe = /^"[a-z]\d+" (?:=|<|<=|>|>=) \?$|^"[a-z]\d+" IS NULL$/;
     if (!preds.every(p => predRe.test(p))) return false;
   }
   return true;
@@ -559,7 +559,7 @@ test('§C every executed statement is a fixed host-authored template (full verb 
   }
   const offenders = rec.log.filter(e => !isHostAuthored(e.sql));
   eq(offenders.map(e => e.sql), [], 'the executed-statement set is exactly the fixed host-authored templates');
-  const badDdl = rec.log.map(e => e.sql).filter(s => /^(CREATE|ALTER)/.test(s)).filter(s => !/^CREATE TABLE/.test(s) && !/^ALTER TABLE/.test(s));
+  const badDdl = rec.log.map(e => e.sql).filter(s => s.startsWith('CREATE') || s.startsWith('ALTER')).filter(s => !s.startsWith('CREATE TABLE') && !s.startsWith('ALTER TABLE'));
   eq(badDdl, [], 'only CREATE TABLE / ALTER TABLE ADD COLUMN DDL forms are ever observed');
 });
 
@@ -671,7 +671,7 @@ test('§E (b) Engine constructor recovers on corrupt _meta; open() rebuilds DDL'
   const b = engineAt(dbPath('corrupt-meta'));
   const mark = b.rec.mark();
   b.store.open(expensesV1);
-  const creates = b.rec.log.slice(mark).map(e => e.sql).filter(s => /^CREATE TABLE "c1"/.test(s));
+  const creates = b.rec.log.slice(mark).map(e => e.sql).filter(s => s.startsWith('CREATE TABLE "c1"'));
   ok(creates.length > 0, 'corrupt _meta → emptyApplied → CREATE TABLE "c1" issued on open()');
   eq(b.store.records.list('Expenses'), [], 'fresh table has no rows after DDL rebuild');
   b.store.close();

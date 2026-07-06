@@ -35,7 +35,7 @@ function hintOf(e: unknown): string {
   const detail = (e as { detail?: { hint?: string; kind?: string } } | undefined)?.detail;
   if (detail && typeof detail.hint === 'string') return detail.hint;
   const message = (e as { message?: string } | undefined)?.message;
-  return message ?? String(e);
+  return message ?? JSON.stringify(e) ?? 'unknown error';
 }
 
 function Home() {

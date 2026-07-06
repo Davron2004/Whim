@@ -90,7 +90,7 @@ class Engine implements StorageEngine {
       const res = this.sql.execute(`SELECT v FROM "${KV_TABLE}" WHERE k = ?`, [key]);
       if (!res.rows.length) return undefined;
       try {
-        return JSON.parse(String(res.rows[0].v)) as JsonValue;
+        return JSON.parse(sqlText(res.rows[0].v)) as JsonValue;
       } catch {
         throw storageError({ kind: 'corrupt_storage', hint: `KV value for key "${key}" is not valid JSON; the stored data is corrupt.` });
       }
@@ -206,7 +206,7 @@ class Engine implements StorageEngine {
     const res = this.sql.execute(`SELECT v FROM "${META_TABLE}" WHERE k = ?`, [APPLIED_KEY]);
     if (!res.rows.length) return emptyApplied();
     try {
-      return JSON.parse(String(res.rows[0].v)) as AppliedSchema;
+      return JSON.parse(sqlText(res.rows[0].v)) as AppliedSchema;
     } catch {
       return emptyApplied();
     }
@@ -307,6 +307,10 @@ function quoteIdent(id: string): string {
     throw new Error(`refusing to build SQL with non-burned identifier "${id}"`);
   }
   return `"${id}"`;
+}
+
+function sqlText(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value) ?? '';
 }
 
 function isRangeFilter(cond: unknown): cond is RangeFilter {

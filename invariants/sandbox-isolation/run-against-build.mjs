@@ -98,10 +98,10 @@ const browser = await chromium.launch();
       await page.waitForTimeout(200);
     },
   });
-  const contained = pick(r.dom.probes, /contained=(true|false)/);
-  const frac = pick(r.dom.status, /(\d+\/\d+) probes/);
-  const negCtl = pick(r.dom.probes, /negCtl=(true|false)/);
-  const delivLeak = pick(r.dom.probes, /deliveryLeakCaught=(true|false)/);
+  const contained = pick(r.dom.probes, /contained=([a-z]+)/);
+  const frac = pick(r.dom.status, /([0-9]+\/[0-9]+) probes/);
+  const negCtl = pick(r.dom.probes, /negCtl=([a-z]+)/);
+  const delivLeak = pick(r.dom.probes, /deliveryLeakCaught=([a-z]+)/);
   const painted = /Tip Splitter/.test(r.iframeText) && /Per person/.test(r.iframeText);
   const paintMs = pick(r.dom.paint, /mountToFirstPaintMs"?\s*:?\s*([\d.]+)/);
   const tapReached = r.console.some((l) => /UI-EVENT press/.test(l)); // the round-trip
@@ -143,31 +143,31 @@ const browser = await chromium.launch();
 {
   const page = await browser.newPage();
   const aerr = [];
-  page.on('pageerror', (e) => aerr.push(String((e && e.message) || e)));
+  page.on('pageerror', (e) => aerr.push(String(e?.message || e)));
   await page.goto(pathToFileURL(files['b-tip']).href, { waitUntil: 'load', timeout: 20000 });
   await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
   // The sandboxed app frame runs the loader → it is the frame exposing window.__whimGeneration.
   const appFrame = async () => {
     for (const fr of page.frames()) {
-      try { if (await fr.evaluate(() => typeof window.__whimGeneration === 'number')) return fr; } catch {}
+      try { if (await fr.evaluate(() => typeof globalThis.__whimGeneration === 'number')) return fr; } catch {}
     }
     return null;
   };
   let f = await appFrame();
-  const genBefore = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  const genBefore = f ? await f.evaluate(() => globalThis.__whimGeneration) : null;
   // ATTACK: from bundle/iframe scope (ev.source === window) self-post a forged delivery + host-init.
   if (f) await f.evaluate(() => {
-    window.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'window.__WHIM_SELFPOST_RAN=true;' }), '*');
-    window.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*');
+    globalThis.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'globalThis.__WHIM_SELFPOST_RAN=true;' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
+    globalThis.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*'); // NOSONAR - deliberate self-post inside an opaque srcdoc iframe.
   });
   await page.waitForTimeout(300);
   f = await appFrame();
-  const after = f ? await f.evaluate(() => ({ gen: window.__whimGeneration, ran: !!window.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
+  const after = f ? await f.evaluate(() => ({ gen: globalThis.__whimGeneration, ran: !!globalThis.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
   // CONTROL: a real host re-injection (parent → ev.source === parent) must still bump the generation.
-  await page.evaluate(() => window.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
+  await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
   await page.waitForTimeout(400);
   f = await appFrame();
-  const genAfterLegit = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  const genAfterLegit = f ? await f.evaluate(() => globalThis.__whimGeneration) : null;
   await page.close();
 
   const selfPostBlocked = genBefore !== null && after.gen === genBefore && after.ran === false;
@@ -187,10 +187,10 @@ const browser = await chromium.launch();
       // the victim's own post-reset probes. verdictSeq lives in the outer page so it survives the
       // iframe recreation; the realm-local "gen N" display resets to 1 and can't distinguish pre- from
       // post-reset (why the old `/gen 1/` wait + fixed 1200ms sleep were an ambiguous race). No sleep now.
-      await page.waitForFunction(() => window.__whimControl && window.__whimControl.verdictSeq >= 1, { timeout: 8000 }).catch(() => {});
-      const v0 = await page.evaluate(() => (window.__whimControl && window.__whimControl.verdictSeq) || 0);
-      await page.evaluate(() => window.__whimControl.reinject({ reset: true, bundle: 'victim' }));
-      await page.waitForFunction((n) => window.__whimControl && window.__whimControl.verdictSeq > n, { timeout: 8000 }, v0).catch(() => {});
+      await page.waitForFunction(() => globalThis.__whimControl && globalThis.__whimControl.verdictSeq >= 1, { timeout: 8000 }).catch(() => {});
+      const v0 = await page.evaluate(() => globalThis.__whimControl?.verdictSeq || 0);
+      await page.evaluate(() => globalThis.__whimControl.reinject({ reset: true, bundle: 'victim' }));
+      await page.waitForFunction((n) => globalThis.__whimControl && globalThis.__whimControl.verdictSeq > n, { timeout: 8000 }, v0).catch(() => {});
     },
   });
   const anyPoison = pick(r.dom.probes, /anyPoison=(true|false)/);
@@ -209,7 +209,7 @@ const browser = await chromium.launch();
   const r = await run(browser, files['b-reinject'], {
     drive: async (page) => {
       await page.waitForFunction(() => /gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
-      await page.evaluate(() => window.__whimControl.reinject({ reset: false, bundle: 'victim' }));
+      await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'victim' }));
       await page.waitForFunction(() => /gen 2/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
       await page.waitForTimeout(400);
     },
@@ -241,13 +241,13 @@ async function runTimerTeardown(reset) {
   page.on('console', (m) => { const mm = TICK.exec(m.text() || ''); if (mm) ticks.push({ n: Number(mm[1]), t: Date.now() }); });
   await page.goto(pathToFileURL(files['b-timer']).href, { waitUntil: 'load', timeout: 20000 });
   // Let the gen-1 ticker run (40 ms interval → ~10 ticks in 450 ms).
-  await page.waitForFunction(() => /Timer Ticker|gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => /Timer Ticker|gen 1/.test(document.getElementById('status')?.textContent || ''), { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(500);
   const boundary = Date.now();
   const before = ticks.filter((x) => x.t <= boundary).length;
   // RESET → recreate the iframe, deliver the SILENT victim as gen-2 (the invariant case).
   // NO-RESET → re-inject the SAME ticker into the SAME realm (the non-vacuity control: ticks go on).
-  await page.evaluate((doReset) => window.__whimControl.reinject(doReset
+  await page.evaluate((doReset) => globalThis.__whimControl.reinject(doReset
     ? { reset: true, generation: 2, bundle: 'victim' }
     : { reset: false, bundle: 'timer-ticker' }), reset);
   // Give a surviving gen-1 timer ample time to fire (it must not, in the reset case).
@@ -263,12 +263,13 @@ async function runTimerTeardown(reset) {
   const detectorLive = ctrl.after > 0;         // without a reset, ticks DO cross the boundary
   const cleanTeardown = torn.after === 0;      // with a reset, ZERO ticks cross it
   const ok = sawGen1 && cleanTeardown && detectorLive;
+  let timerVerdict = 'LEAK — a gen-1 interval ticked past the reset boundary into gen-2';
+  if (ok) timerVerdict = 'gen-1 timer torn down by iframe recreation; detector non-vacuous (no-reset control keeps ticking)';
+  else if (!sawGen1) timerVerdict = 'VACUOUS — never observed a gen-1 tick (detector dead)';
+  else if (!detectorLive) timerVerdict = 'VACUOUS — no-reset control did not keep ticking (cannot distinguish teardown from dead detector)';
   record(ok, 'INV-TIMER (gen-1 interval dead after realm reset)',
     `reset: ticks before=${torn.before} after=${torn.after} (must be 0) · no-reset control after=${ctrl.after} (must be >0) → ` +
-    (ok ? 'gen-1 timer torn down by iframe recreation; detector non-vacuous (no-reset control keeps ticking)'
-        : !sawGen1 ? 'VACUOUS — never observed a gen-1 tick (detector dead)'
-        : !detectorLive ? 'VACUOUS — no-reset control did not keep ticking (cannot distinguish teardown from dead detector)'
-        : 'LEAK — a gen-1 interval ticked past the reset boundary into gen-2'));
+    timerVerdict);
 }
 
 // 6. blob/data REFUSAL invariant (task 4.5) — a blob: <script src> stays REFUSED under the

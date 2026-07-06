@@ -5,10 +5,10 @@
  * them and reports. Sections are added as chains lead (contract → server core → metering → wrapper).
  */
 import { report } from './harness';
-import { runContractTests } from './contract.test';
-import { runServerCoreTests } from './server-core.test';
-import { runMeteringTests } from './metering.test';
-import { runOpenRouterTests } from './openrouter.test';
+import { runContractTests } from './contract.suite';
+import { runServerCoreTests } from './server-core.suite';
+import { runMeteringTests } from './metering.suite';
+import { runOpenRouterTests } from './openrouter.suite';
 
 runContractTests();
 await runServerCoreTests();

@@ -35,7 +35,13 @@ class WhimToneModule(reactContext: ReactApplicationContext) : NativeWhimToneSpec
       generator.startTone(tone, durationMs)
       // Release shortly after the tone finishes; a fresh generator per cue keeps this stateless.
       Handler(Looper.getMainLooper()).postDelayed(
-        { try { generator.release() } catch (_: Exception) {} },
+        {
+          try {
+            generator.release()
+          } catch (_: Exception) {
+            // Already released or unavailable; cue cleanup is best-effort.
+          }
+        },
         (durationMs + RELEASE_GRACE_MS).toLong(),
       )
     } catch (_: Exception) {

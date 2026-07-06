@@ -25,12 +25,12 @@ export interface DevProbeScreenProps {
   onExit: () => void;
 }
 
-export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
+export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>) {
   const host = useMiniAppHost({ onExit });
   const s = host.state;
 
-  const verdictColor = s.contained === null ? '#94a3b8' : s.contained ? '#16a34a' : '#dc2626';
-  const verdictText = s.contained === null ? 'running…' : s.contained ? 'CONTAINED ✓' : 'LEAK ✗';
+  const verdictColor = verdictValue(s.contained, '#94a3b8', '#16a34a', '#dc2626');
+  const verdictText = verdictValue(s.contained, 'running…', 'CONTAINED ✓', 'LEAK ✗');
   const buttons = useMemo(() => DELIVERABLE, []);
 
   return (
@@ -44,14 +44,14 @@ export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
         </View>
         <View style={styles.statusRow}>
           <Text style={[styles.badge, { color: verdictColor }]}>{verdictText} {s.probesFrac}</Text>
-          <Text style={styles.meta}>paint {s.paintMs != null ? s.paintMs + 'ms' : '—'} · gen {s.generation ?? '—'}</Text>
+          <Text style={styles.meta}>paint {s.paintMs == null ? '—' : s.paintMs + 'ms'} · gen {s.generation ?? '—'}</Text>
         </View>
         <Text style={styles.meta}>
           app: {s.currentApp} · syscalls: {s.syscalls}{s.lastSyscall ? ` · last: ${s.lastSyscall}` : ''}
         </Text>
         <Text style={styles.meta}>
           last tap: {s.lastTap ?? '—'} · forged rejected: {s.rejectedForgeries}
-          {s.t7AnyPoison != null ? ` · T7: ${s.t7AnyPoison}` : ''}
+          {s.t7AnyPoison == null ? '' : ` · T7: ${s.t7AnyPoison}`}
           {s.lastError ? ` · err: ${s.lastError}` : ''}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>
@@ -75,6 +75,11 @@ export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
       />
     </SafeAreaView>
   );
+}
+
+function verdictValue<T>(contained: boolean | null, running: T, containedValue: T, leakValue: T): T {
+  if (contained === null) return running;
+  return contained ? containedValue : leakValue;
 }
 
 const styles = StyleSheet.create({
