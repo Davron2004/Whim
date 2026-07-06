@@ -8,8 +8,7 @@
  * @format
  */
 import React from 'react';
-import { StatusBar, StyleSheet } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import LauncherRoot from './src/host/launcher/LauncherRoot';
 import VersionStoreProbeScreen from './src/host/VersionStoreProbeScreen';
 import StorageProbeScreen from './src/host/StorageProbeScreen';
@@ -26,23 +25,10 @@ const RUN_STORAGE_PROBE = false;
 const RUN_BRIDGE_PROBE = false;
 
 export default function App() {
-  let content = (
-    <SafeAreaView edges={['top']} style={styles.launcher}>
-      <LauncherRoot />
-    </SafeAreaView>
-  );
+  let content = <LauncherRoot />;
   if (RUN_BRIDGE_PROBE) content = <BridgeProbeScreen />;
   else if (RUN_STORAGE_PROBE) content = <StorageProbeScreen />;
   else if (RUN_VSTORE_PROBE) content = <VersionStoreProbeScreen />;
 
-  return (
-    <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor="#0b1020" />
-      {content}
-    </SafeAreaProvider>
-  );
+  return <SafeAreaProvider>{content}</SafeAreaProvider>;
 }
-
-const styles = StyleSheet.create({
-  launcher: { flex: 1, backgroundColor: '#0b1020' },
-});

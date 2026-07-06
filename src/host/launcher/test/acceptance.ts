@@ -16,6 +16,7 @@ import { runProductVerbsTests } from './product-verbs.suite';
 import { runDevProbeBackButtonTests } from './dev-probe-back-button.suite';
 import { runUnmountTeardownTests } from './unmount-teardown.suite';
 import { runDeliverTests } from './deliver.suite';
+import { runThemeTests } from './theme.suite';
 
 const h = new Harness();
 
@@ -29,6 +30,7 @@ await runProductVerbsTests(h);
 await runDevProbeBackButtonTests(h);
 await runUnmountTeardownTests(h);
 await runDeliverTests(h);
+await runThemeTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

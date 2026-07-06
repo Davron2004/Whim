@@ -73,7 +73,7 @@ export interface MiniAppHost {
   state: HostState;
   onMessage: (data: string) => void;
   /** Product path: launch an installed app by host record + bundle SOURCE (#5 D3). */
-  deliverBySource: (record: AppRecord, source: string, engineAppId?: string) => void;
+  deliverBySource: (record: AppRecord, source: string, engineAppId?: string, theme?: object) => void;
   /** Dev/probe path: launch a baked fixture by its host record + display name. */
   deliverByRecord: (record: AppRecord, bundleName: string) => void;
   /** The host→realm control surface (injectJavaScript into the OUTER page only). */
@@ -143,13 +143,13 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     control(`window.__whimControl.reinject({reset:true,bundle:${JSON.stringify(bundleName)},generation:${realm.generation}})`);
   }, [bind, control]);
 
-  const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string) => {
+  const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
     const id = engineAppId ?? record.appId;
     const realm = bind(record, record.name, id);
     if (!realm) return;
     let js: string;
     try {
-      js = deliverBySourceJs({ name: record.name, source, generation: realm.generation });
+      js = deliverBySourceJs({ name: record.name, source, generation: realm.generation, theme });
     } catch (e) {
       setS((p) => ({ ...p, lastError: `deliver ${record.name}: ${(e as Error).message}` }));
       return;

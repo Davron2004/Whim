@@ -193,6 +193,13 @@
     // delivered, so a later (untrusted) bundle cannot re-set or read this nonce.
     if (msg.__whimHostInit === true && hostNonce === null) {
       hostNonce = msg.nonce || '';
+      // Optional inert theme payload (sdk-design-system D1): installed as a frozen global
+      // BEFORE any bundle mount can occur (hostInit always precedes delivery). Absent/invalid
+      // field → no global; the SDK falls back to its own defaults. Best-effort: a malformed
+      // theme must never break delivery.
+      if (msg.theme && typeof msg.theme === 'object') {
+        try { globalThis.__WHIM_THEME__ = Object.freeze(msg.theme); } catch (e) {}
+      }
       post('ready', { generation: window.__whimGeneration });
       // Channel (a) fallback: the bundle was baked into the srcdoc as a parser-inserted
       // <script> that already ran (proving the engine executes a parser-inserted inline

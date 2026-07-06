@@ -108,6 +108,10 @@ function orchestrationScript(cfg) {
     // baked name. The launcher reads it from the version-store record and passes it via
     // reinject({bundleSource}); the iframe-side contract is byte-identical (channel-b delivery).
     '  var pendingSource = null;\n' +
+    // sdk-design-system D1/D8: a host-supplied THEME (inert data — color strings + shape). It rides
+    // the __whimHostInit frame so the iframe SDK can restyle tokens; the SDK sanitizes it there
+    // (that side is the trust boundary). Absent theme = SDK defaults; no new message kinds.
+    '  var pendingTheme = null;\n' +
     "  function rnd(){ try{ var a=new Uint8Array(16); (window.crypto||window.msCrypto).getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ var t=''; for(var j=0;j<32;j++) t+=((j*7+13)%16).toString(16); return t+String((window.performance&&performance.now?performance.now():0)); } }\n" +
     '  function toRN(obj){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj)); }catch(e){} }\n' +
     // Relay a sysret string from the host back INTO the iframe (host→iframe; ev.source there is
@@ -127,7 +131,7 @@ function orchestrationScript(cfg) {
     '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:#fff;display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=SRCDOC; }\n' +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
-    "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ iframe.contentWindow.postMessage(JSON.stringify({__whimHostInit:true,nonce:nonce,gen:GEN}),'*'); }catch(e){} return; }\n" +
+    "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ var initF={__whimHostInit:true,nonce:nonce,gen:GEN}; if(pendingTheme) initF.theme=pendingTheme; iframe.contentWindow.postMessage(JSON.stringify(initF),'*'); }catch(e){} return; }\n" +
     "    if(m.__whimUiEvent===true){ if(ev.source!==(iframe&&iframe.contentWindow)) return; toRN({kind:'ui-event',trusted:false,payload:m}); rnLog('UI-EVENT '+(m.type||'?')+' '+(m.label||'')); return; }\n" +
     // nav seam (launcher-shell / #5 D4): an SDK nav-depth HINT from our iframe. Source-verify it
     // came from OUR iframe (like syscall), then relay to RN STAMPED with the generation the host
@@ -154,7 +158,7 @@ function orchestrationScript(cfg) {
     // pre-reset from a post-reset verdict apart. The invariant suite reads it to wait for a NEW
     // post-reset verdict deterministically (G6), replacing a fixed sleep. Diagnostic-only; no authority.
     '    verdictSeq: 0,\n' +
-    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
+    '    reinject: function(opts){ opts=opts||{}; if(typeof opts.generation==="number") GEN=opts.generation; pendingTheme = (opts.theme && typeof opts.theme==="object") ? opts.theme : null; pendingSource = (typeof opts.bundleSource==="string") ? opts.bundleSource : null; if(opts.reset!==false){ pendingDeliver = opts.bundle||deliveredName||INITIAL; makeIframe(); } else { if(pendingSource!=null) deliver(opts.bundle||deliveredName, {source:pendingSource}); else deliver(opts.bundle||deliveredName||INITIAL, opts); } },\n' +
     '    deliver: function(name, opts){ deliver(name, opts||{}); },\n' +
     '    setGeneration: function(g){ if(typeof g==="number") GEN=g; },\n' +
     // nav seam (launcher-shell / #5 D4): post a host→realm nav-back request into the iframe.

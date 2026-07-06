@@ -381,4 +381,4 @@ library / per-app `LEARNED.md` (§9). 5. **Tier 3a — curated HTTP** (weather d
 
 *(Proposing sessions: record roadmap contradictions here instead of silently resolving them.)*
 
-- None yet.
+- 2026-07-02, change `sdk-design-system` (#3): shipped with a launcher-theming half (settings surface, persisted `ThemePref`, theme handed to delivery) that the 13-change list never mapped — it is neither #5 (`launcher-shell`, done before this) nor any later change. Owner-directed scope (unattended-run instruction); recorded here rather than restructuring the list. The #44 corpus-need rule was owner-waived for this change's exports (proposal.md records the waiver); the gallery fixture stands in as the use-case app.

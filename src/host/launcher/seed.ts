@@ -15,8 +15,9 @@ import { AppIndex } from './app-index';
 import { StoreAccess } from './store-access';
 
 /** Bump when the seed SET changes meaningfully. A higher marker means "already seeded this set";
- *  deleting an example does NOT lower it, so deleted examples stay deleted (D7). */
-export const SEED_VERSION = 1;
+ *  deleting an example does NOT lower it, so deleted examples stay deleted (D7). Version 2 adds
+ *  the style-gallery example (sdk-design-system D9). */
+export const SEED_VERSION = 2;
 
 export interface SeedSpec {
   id: string;

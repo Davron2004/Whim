@@ -19,7 +19,7 @@ This project exists to demonstrate harness engineering — the unglamorous machi
 
 1. **Run untrusted, LLM-generated code on a phone, safely.** Every mini-app is code nobody reviewed. It runs in a sandbox that is pen-tested, never-regress-CI-gated, and assumes the bundle is actively hostile — including assuming it will *lie about its own containment*.
 2. **Govern what that code can touch.** Storage and physical feedback (haptics, sound) aren't ambient capabilities — they're syscalls over an append-only registry with a fixed-order gate, reachable only from a channel a mini-app can't forge.
-3. **Design an SDK for a model, not a human.** A small, fully-documented component surface that fits in a system prompt, accepts semantic tokens instead of raw values, and makes hallucinated imports structurally impossible.
+3. **Design an SDK for a model, not a human.** A small, fully-documented component surface that fits in a system prompt, accepts semantic tokens instead of raw values, and makes hallucinated imports structurally impossible. Because apps only ever speak tokens, one user-chosen theme re-skins every app ever generated — retroactively.
 4. **Version control nobody can see.** Every generation is snapshotted with full history, rollback, pinning, and forking — backed by real git, on-device, with zero git vocabulary reaching the user (a build guard fails if a hash or ref leaks into the API surface).
 5. **A self-healing generation loop** *(in progress)*: the wire contract, SSE streaming, and a stub Hono server are live; plan → generate → **static-check** → run → observe → repair still needs the static-check stage (proposed, not built) and a real model behind the harness — the quality of the structured diagnostics fed back, not the model, is what's meant to make this good.
 
@@ -84,6 +84,10 @@ Every generation is committed to a real git repository on the device (`isomorphi
 
 Mini-apps don't get ambient access to storage, haptics, or sound — they reach host capabilities only through a governed syscall layer (an append-only registry, a fixed-order gate, a generation-fenced dispatcher) between the sandboxed iframe and the RN host. The syscall channel needs no nonce: a forged `sysret` posted by a bundle to its own window arrives with `ev.source` pointing at the iframe's own window, never `window.parent` — the browser sets `source`, so it's unforgeable by construction. Storage (schema-declared, per-app SQLite) was syscall #1; physical cues (haptics, sound) are #2 and #3, gated by manifest-declared capability tokens. An undeclared capability is denied with a structured error, never silently dropped.
 
+### The design system
+
+Mini-apps never pick colors. Components accept semantic tokens (`color="primary"`, `radius="md"`), and the token resolvers read the **user's theme** — six curated presets (light and dark) plus accent and corner-shape knobs, chosen in the launcher's settings and persisted on-device. The resolved theme crosses into the sandbox as **inert JSON on the existing init frame** — no new message kind, no CSP or resolver change — and is sanitized at the iframe boundary like any untrusted input (a hostile bundle mutating the theme global only mis-themes itself). The payoff of tokens-not-values: every app ever generated re-skins instantly, including snapshots made before theming existed. The component kit (forms, toggles, sliders, lists, cards, modal, progress — ~35 exports, deliberately under the system-prompt ceiling) is documented for the model in [`docs/sdk-reference.md`](docs/sdk-reference.md) and exercised end-to-end by a seeded **Style Gallery** app.
+
 ## On-device evidence
 
 Everything below was measured on the real target — Android System WebView / Hermes, RN new architecture, offline release build — not desktop Chrome.
@@ -128,9 +132,9 @@ The process is as much the portfolio piece as the code:
 | ✅ | **Capability bridge** — governed syscalls (storage, haptics/sound) over an append-only registry, accepted on-device |
 | ✅ | **Effects & cues (v0.3)** — web-resident timers + native haptic/sound feedback, accepted on-device |
 | ✅ | **Launcher shell** — home grid, full-screen launch, system-back exit, fork/delete, first-run seeding |
+| ✅ | **SDK design system** — themeable token contract (6 presets, accent/shape knobs, dark mode), ~35-export component kit, theme delivered into the sandbox as inert data; verified on-emulator (release build) |
 | 🔜 | **Generation harness** — skeleton live (Hono server, SSE wire contract, durable token metering); the real plan→generate→**check**→run→repair loop and a model behind it aren't wired yet |
 | 🔜 | **Static check pipeline** — proposed, not yet built; closes the one open pen-test finding (token-scan checks miss prototype-pollution) |
-| 🔜 | **SDK design system** — the real component set + visual language (current SDK implements exactly what shipped apps use) |
 | ⏳ | Voice input, iOS |
 
 ```mermaid
@@ -150,8 +154,8 @@ src/runtime/  the WebView sandbox runtime (neutralize · resolver · probes · l
 src/sdk/      vc-sdk — the private SDK mini-apps are written against
 src/host/     RN shell — launcher, capability bridge, storage engine, version store
 invariants/   never-regress containment suites (blocking CI gate)
-fixtures/     the sample mini-app + adversarial bundles that attack the sandbox
-docs/         spec · numbered decision log · spike findings · build-harness design
+fixtures/     sample mini-apps (incl. the Style Gallery showcase) + adversarial bundles that attack the sandbox
+docs/         spec · numbered decision log · spike findings · build-harness design · prompt-ready SDK reference
 openspec/     spec-driven change workflow (proposals → specs → archive)
 ```
 
@@ -164,6 +168,7 @@ npm run invariants         # the containment suite vs this exact build (headless
 npm run vstore:test        # version-store acceptance suite (Node)
 npm run storage:test       # storage-engine acceptance suite (Node)
 npm run bridge:test        # capability-bridge acceptance suite (Node)
+npm run launcher:test      # launcher + theme acceptance suite (Node)
 ```
 
 Desktop Chromium is the fast pre-check; the authoritative verdict is the real Android WebView. To run on a device/emulator (Node 22, JDK 21): `npm run android:release`.
