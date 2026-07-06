@@ -37,7 +37,7 @@ export default function DevProbeScreen({ onExit }: DevProbeScreenProps) {
     <SafeAreaView style={styles.root}>
       <View style={styles.bar}>
         <View style={styles.titleRow}>
-          <TouchableOpacity onPress={onExit} style={styles.backBtn}>
+          <TouchableOpacity onPress={host.exit} style={styles.backBtn}>
             <Text style={styles.backText}>‹ Home</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Dev probe — containment + bridge</Text>

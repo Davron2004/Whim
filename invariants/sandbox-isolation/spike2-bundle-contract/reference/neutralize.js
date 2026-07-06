@@ -13,14 +13,14 @@
   }
 
   function neutralize(name, replacement) {
-    try { delete window[name]; } catch (e) {}
+    try { delete window[name]; } catch (e) { }
     try {
       Object.defineProperty(window, name, {
         value: replacement, writable: false, configurable: false, enumerable: false,
       });
       return 'redefined';
-    } catch (e) {}
-    try { window[name] = replacement; return 'assigned'; } catch (e) {}
+    } catch (e) { }
+    try { window[name] = replacement; return 'assigned'; } catch (e) { }
     return 'non-configurable';
   }
 
@@ -30,7 +30,7 @@
       set: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
       apply: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
     };
-    try { return new Proxy(function () {}, handler); } catch (e) { return undefined; }
+    try { return new Proxy(function () { }, handler); } catch (e) { return undefined; }
   }
 
   var report = {};

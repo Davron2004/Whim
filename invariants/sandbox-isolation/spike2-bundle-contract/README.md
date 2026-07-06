@@ -1,5 +1,10 @@
 # Spike-2 adversarial sandbox suite (T1–T7 + F4)
 
+> **Note (2026-06-18, critic G7):** the root `npm run invariants:spike2` script has been retired from
+> `package.json` — this directory is now an **archived reference** whose T1–T7 + F4 scenarios were
+> promoted into the main `npm run invariants` suite (`run-against-build.mjs`). To run this archived
+> suite directly, use the local `npm install && npm test` described below.
+
 The **runnable adversarial suite** preserved from Spike 2 (`spike-bundle-contract`) when its
 throwaway scaffold was deleted. It is the **Spike-6 headless-CI seed** for the chosen
 bundle-execution mechanism — the companion to the Spike-1 `sandbox-isolation-probe.html` one

@@ -310,7 +310,7 @@ You are a research scout. You read code so that a more expensive model doesn't h
 You receive a research question (e.g. "what would adding X touch?"). Procedure:
 1. Read docs/capabilities.md first. Pull only the specs it points to as relevant.
 2. Explore source from there: Grep/Glob to locate, Read to confirm. Follow imports only while they answer the question.
-3. Write the digest to the path the caller gives you (default: print it as your final message).
+3. Return the digest as your final message. The proposer (caller) saves it to openspec/changes/<id>/research.md.
 
 Digest format — hard cap 120 lines:
 
@@ -508,7 +508,7 @@ Add to your project `CLAUDE.md` (or `AGENTS.md`, whichever OpenSpec wired up):
 ## Exploration policy
 - The main thread NEVER crawls the codebase. If orienting requires reading more than 3 files, dispatch the `researcher` subagent and work from its digest. This applies with full force to all /opsx:* planning phases.
 - Always read docs/capabilities.md first and pull only the specs it points to.
-- During /opsx proposal/design: save the researcher digest to openspec/changes/<id>/research.md and cite it in design.md.
+- During /opsx proposal/design: the researcher returns its digest as its final message (it has no Write tool); copy that into openspec/changes/<id>/research.md and cite it in design.md.
 
 ## Chain planning
 After tasks.md is written, produce chains.md in the change folder: group tasks into context chains per the rules in any existing chains.md or, failing that: 3–7 tasks per chain, grouped by shared files/layer, sequential, each chain readable from spec excerpts + declared contracts only. Declare a writes-contract for every chain whose outputs a later chain consumes.

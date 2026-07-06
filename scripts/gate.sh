@@ -19,16 +19,23 @@ cd "$(dirname "$0")/.." || exit 2
 # a tampered config can never reach a green run, no matter which tool (Edit, Bash, anything) wrote
 # it. This doesn't depend on catching every write path; it bottoms out at `git commit`. To make a
 # legit change: edit, commit it, then run the gate.
+#
+# H2 (critic 2026-06-18): .claude/settings.local.json is intentionally NOT listed below. It is
+# gitignored, so it can never be committed — this git-diff tripwire only sees tracked files — and
+# protect-harness.sh already blocks in-session subagent writes to .claude/**. The residual risk (a
+# locally-tampered, never-committed allow-list) is accepted; closing it would require a hash baseline.
 if ! git diff --quiet HEAD -- \
       package.json package-lock.json tsconfig*.json \
       eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
-      .claude/hooks .claude/settings.json 2>/dev/null; then
+      .claude/hooks .claude/settings.json \
+      babel.config.js metro.config.js 2>/dev/null; then
   echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from committed HEAD."
   echo "These are human-edited and must be committed deliberately before the gate will run:"
   git --no-pager diff --name-only HEAD -- \
       package.json package-lock.json tsconfig*.json \
       eslint.config.* .eslintrc* .eslintignore knip.json knip.config.* scripts/gate.sh \
-      .claude/hooks .claude/settings.json 2>/dev/null
+      .claude/hooks .claude/settings.json \
+      babel.config.js metro.config.js 2>/dev/null
   exit 2
 fi
 
@@ -45,14 +52,18 @@ check "typecheck"         npm run -s typecheck
 check "lint"              npm run -s lint -- --max-warnings 0
 check "dead code (knip)"  npx knip
 check "build"             npm run -s build
+check "metro-guard"       npm run -s guard:metro
 check "invariants"        npm run -s invariants
+check "bridge-invariants" npm run -s bridge:invariants
 check "version-store"     npm run -s vstore:test
 check "storage-engine"    npm run -s storage:test
 check "capability-bridge" npm run -s bridge:test
 check "launcher"          npm run -s launcher:test
 check "deliver-by-source" npm run -s launcher:deliver-verify
 check "server"            npm run -s server:test
-check "openspec"          openspec validate --all --strict
+# openspec is a required GLOBAL CLI (Homebrew, v1.3.1) — NOT an npm package. Fail clearly if absent.
+command -v openspec >/dev/null 2>&1 || { echo "GATE: 'openspec' CLI not found on PATH — install it (e.g. brew install openspec)"; exit 2; }
+check "openspec"          npx openspec validate --all --strict
 
 # Scaffolding tripwires: cheap greps for the garbage class you've already met. This is the
 # "encode corrections once" slot — every new garbage pattern the critic/reviewer finds gets a

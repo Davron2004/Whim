@@ -216,7 +216,12 @@ export class VersionStore {
     await git.tag({ fs: this.client, gitdir, ref: SNAP_TAG(id), object: oid });
 
     if (this.config.autoCompact && this.backend.countLooseObjects(gitdir) > this.config.compactionThreshold) {
-      await compactRepo(this.client, this.backend, dir, gitdir);
+      try {
+        await compactRepo(this.client, this.backend, dir, gitdir);
+      } catch {
+        // Auto-compaction is best-effort. The snapshot (commit + tag) is already
+        // durable; a compaction failure must NOT surface to the caller as a rejection.
+      }
     }
     return { id, prompt, createdAt: ts * 1000 };
   }

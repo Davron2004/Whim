@@ -110,6 +110,10 @@ export function validateArtifact(artifact: unknown): StorageError[] {
 
   const seenCollectionIds = new Set<string>();
   for (const [collName, coll] of Object.entries(collections)) {
+    if (collName === 'id') {
+      errors.push({ kind: 'invalid_artifact', collection: collName, hint: 'Collection display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
+      continue;
+    }
     if (!isObject(coll) || !isObject((coll as CollectionSpec).fields)) {
       errors.push({ kind: 'invalid_artifact', collection: collName, hint: `Collection "${collName}" must have an \`id\` and a \`fields\` object.` });
       continue;
@@ -136,6 +140,10 @@ export function validateArtifact(artifact: unknown): StorageError[] {
 
     const seenFieldIds = new Set<string>();
     for (const [fieldName, field] of Object.entries(c.fields)) {
+      if (fieldName === 'id') {
+        errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: 'Field display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
+        continue;
+      }
       if (!isObject(field)) {
         errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" must be an object.` });
         continue;

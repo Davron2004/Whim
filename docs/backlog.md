@@ -54,6 +54,14 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 - **Suggested approach:** runtime owner authors INV-TIMER (gen-1 interval ticks die after realm reset) and INV-CUEGATE (undeclared cue syscalls denied, forged sysret inert) in the `bridge:invariants` hostile-bundle suite with a non-vacuous negative control; then archive the change.
 - **Source:** `effects-and-cues` change (open by design).
 
+### [deferred — critic rated high] Orphaned loose git objects from an interrupted snapshot are never reclaimed
+- [ ] open
+- **Where:** `src/host/version-store/engine.ts:194-206` (snapshot writes loose blobs via `git.add` before `git.commit`), `src/host/version-store/compaction.ts:90-93` (deletion loop is guarded by `if (reachable.has(oid))`, so it only frees *packed* reachable objects and skips loose objects unreachable from any ref).
+- **What:** if `snapshot()` is interrupted between the first `git.add` and the `git.commit` (a `writeFile` failure, an isomorphic-git throw, or the app/process being killed mid-write), loose blob objects land in the FS/KV backend with no commit referencing them. `compactRepo()` never unlinks unreachable loose objects, so these orphans accumulate in KV indefinitely — partially defeating the loose-object-count pressure argument the compaction design rests on.
+- **Why it matters / why deferred:** the critic rated this **high** (a slow on-device space leak). **Ratified wontfix-for-now (2026-06-18):** it only triggers on a snapshot interrupted mid-write — rare in practice — and it leaks KV *space*, not correctness (no snapshot or history is lost). Real, but not now. **Revisit if** device KV key-count growth is observed in acceptance, or before any change that makes snapshots larger or more frequent.
+- **Suggested approach:** after compaction packs reachable objects, add a second pass that unlinks loose objects **not** in `reachable` (true GC — safe, they are unreferenced by definition); or add a device-acceptance measurement that surfaces orphan-object growth so the leak is observable before it bites.
+- **Source:** critic baseline 2026-06-18 (finding **C2**, full text in `openspec/critic/2026-06-18.md`); adjudicated wontfix-for-now in `openspec/critic/2026-06-18-triage.md`.
+
 ---
 
 ## Done

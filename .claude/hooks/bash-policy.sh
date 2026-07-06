@@ -36,7 +36,10 @@ esac
 # (cat/grep/git diff) are untouched; the legit edit path is the Edit tool. Must sit BEFORE the
 # compound-command fall-through below, or a `>`-redirect escapes on the control-operator exemption.
 # Best-effort regex over shell — pairs with the gate's tamper tripwire, which is the real guarantee.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|\.claude/'
+# .claude/ is narrowed to the real config dirs (hooks|settings|agents|commands) so it does not
+# false-positive on ephemeral fix worktrees under .claude/worktrees/. The gate's tamper tripwire
+# (which watches .claude/hooks + .claude/settings.json) remains the real backstop; this is best-effort.
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|\.claude/(hooks|settings|agents|commands)'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|sed[^|]*-i[^|]*($PROTECTED)|tee[[:space:]][^|]*($PROTECTED)|(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi

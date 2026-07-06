@@ -131,6 +131,52 @@ const browser = await chromium.launch();
   record(ok, 'b-evil (F4 verdict-spoof)', `trusted-verdict contained=${contained} forgedProbesRejected=${rejectedForgery} forgedSpoofRejected=${rejectedSpoof} honestReportBlocked=${honestBlocked}`);
 }
 
+// 3b. A1 — loader.js host-channel-only acceptance (ev.source guard). A bundle sharing the realm
+//     can window.postMessage a forged __whimDeliver: WITHOUT the guard the loader bumps
+//     __whimGeneration, injects the payload as a DOM <script>, and posts a 'delivery' frame
+//     carrying the closure-captured REAL nonce (indistinguishable to the host) — a host-state
+//     integrity violation (no escape, but the generation machine is corrupted). The self-post
+//     comes from the iframe's OWN window (ev.source === window, not window.parent), so the guard
+//     must drop it. NON-VACUITY: a legitimate host re-injection (posted by the parent, ev.source
+//     === parent) MUST still be accepted and bump the generation — proving the guard discriminates
+//     by source, not a dead "drop everything" that would also pass the blocked-assertions.
+{
+  const page = await browser.newPage();
+  const aerr = [];
+  page.on('pageerror', (e) => aerr.push(String((e && e.message) || e)));
+  await page.goto(pathToFileURL(files['b-tip']).href, { waitUntil: 'load', timeout: 20000 });
+  await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
+  // The sandboxed app frame runs the loader → it is the frame exposing window.__whimGeneration.
+  const appFrame = async () => {
+    for (const fr of page.frames()) {
+      try { if (await fr.evaluate(() => typeof window.__whimGeneration === 'number')) return fr; } catch {}
+    }
+    return null;
+  };
+  let f = await appFrame();
+  const genBefore = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  // ATTACK: from bundle/iframe scope (ev.source === window) self-post a forged delivery + host-init.
+  if (f) await f.evaluate(() => {
+    window.postMessage(JSON.stringify({ __whimDeliver: true, bundle: 'window.__WHIM_SELFPOST_RAN=true;' }), '*');
+    window.postMessage(JSON.stringify({ __whimHostInit: true, nonce: 'evil' }), '*');
+  });
+  await page.waitForTimeout(300);
+  f = await appFrame();
+  const after = f ? await f.evaluate(() => ({ gen: window.__whimGeneration, ran: !!window.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
+  // CONTROL: a real host re-injection (parent → ev.source === parent) must still bump the generation.
+  await page.evaluate(() => window.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
+  await page.waitForTimeout(400);
+  f = await appFrame();
+  const genAfterLegit = f ? await f.evaluate(() => window.__whimGeneration) : null;
+  await page.close();
+
+  const selfPostBlocked = genBefore !== null && after.gen === genBefore && after.ran === false;
+  const legitStillWorks = genAfterLegit !== null && genBefore !== null && genAfterLegit > genBefore;
+  const ok = selfPostBlocked && legitStillWorks && !aerr.length;
+  record(ok, 'A1 (self-posted __whimDeliver/__whimHostInit ignored; ev.source guard)',
+    `selfPost: genBefore=${genBefore} genAfter=${after.gen} (must be equal) selfpostScriptRan=${after.ran} (must be false) · legit reinject genAfter=${genAfterLegit} (must be > ${genBefore}, proves the guard is not a dead drop-all)${aerr.length ? ' ERRORS=' + aerr.join('|') : ''}`);
+}
+
 // 4. realm-reset seam (constraint #5) — re-create the iframe between generations → gen-2 sees
 //    a CLEAN realm (no gen-1 poison). Drive a RESET re-injection of the victim after poison.
 {
