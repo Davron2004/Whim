@@ -55,8 +55,14 @@ esac
 # compound-command fall-through, or a `>`-redirect escapes on the control-operator exemption.
 # .claude/ is narrowed to the real config dirs so it does not false-positive on fix worktrees
 # under .claude/worktrees/. Pairs with the gate's pinned-BASE tripwire, which is the real backstop.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|\.claude/(hooks|settings|agents|commands)|build/'
-if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|sed[^|]*-i[^|]*($PROTECTED)|tee[[:space:]][^|]*($PROTECTED)|(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
+# Write-VERBS (sed/tee/cp/mv/ln/install/dd/truncate) are anchored at a command boundary — start,
+# whitespace, or a shell operator ;&| via BND — so a substring like "dd" in `git add` or "tee" in
+# "committee" cannot false-deny a legit command (this bit real `git add build/…` calls before).
+# .claude/fixloop/grants is the scoped-grant manifest dir (docs/parallel-fix-loop.md §4.9): a subagent
+# must never write it, or it could forge its own Class-1 grant. Keep it as write-protected as the hooks.
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|\.claude/(hooks|settings|agents|commands|fixloop/grants)|build/'
+BND='(^|[[:space:]&;|])'
+if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi
 
