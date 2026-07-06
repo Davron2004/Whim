@@ -243,13 +243,17 @@ async function runTimerTeardown(reset) {
   // Let the gen-1 ticker run (40 ms interval → ~10 ticks in 450 ms).
   await page.waitForFunction(() => /Timer Ticker|gen 1/.test(document.getElementById('status')?.textContent || ''), { timeout: 8000 }).catch(() => {});
   await page.waitForTimeout(500);
-  const boundary = Date.now();
-  const before = ticks.filter((x) => x.t <= boundary).length;
+  const preResetBoundary = Date.now();
   // RESET → recreate the iframe, deliver the SILENT victim as gen-2 (the invariant case).
   // NO-RESET → re-inject the SAME ticker into the SAME realm (the non-vacuity control: ticks go on).
   await page.evaluate((doReset) => globalThis.__whimControl.reinject(doReset
     ? { reset: true, generation: 2, bundle: 'victim' }
     : { reset: false, bundle: 'timer-ticker' }), reset);
+  // The reset boundary is after the host-side iframe recreation has synchronously completed.
+  // A normal gen-1 tick can arrive between "decide to reset" and actual removal on slow CI;
+  // do not classify that pre-removal tick as a teardown leak.
+  const boundary = Date.now();
+  const before = ticks.filter((x) => x.t <= preResetBoundary).length;
   // Give a surviving gen-1 timer ample time to fire (it must not, in the reset case).
   await page.waitForTimeout(700);
   await page.close();
