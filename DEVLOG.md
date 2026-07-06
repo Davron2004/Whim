@@ -15,11 +15,13 @@ pass, `contained:true`, mount→first-paint ≈104 ms cold / ≈12 ms warm. Full
 in `docs/decisions.md` #31; probe checklist preserved at
 `invariants/sandbox-isolation/`.
 
-### The one real lesson
+### The one real lesson (Spike 1)
+
 **CSP is load-bearing, and "strip the globals + inject the SDK" is necessary but
 not sufficient.** I started to neutralize `eval`/`Function` the same way as
 `fetch` — overwrite the global with a throwing stub. Two things were wrong with
 that:
+
 1. It **over-strips** (violates D3). React's internals do `x instanceof Function`
    and touch `Function.prototype`; replacing the `Function` global by value breaks
    the render path. You must strip the *capability*, not the *identifier*.
@@ -32,10 +34,11 @@ that:
 So the containment recipe is three legs, not one: cross-origin iframe (no
 `allow-same-origin`) for host/native isolation, CSP-without-unsafe-eval for codegen,
 and a *surgical* value-strip for the named network/storage/threading globals. The
-#11/#12 "sandboxing is basically free" framing is mostly true but undersold how much
+\#11/#12 "sandboxing is basically free" framing is mostly true but undersold how much
 of the load CSP carries — it's free *if you remember the CSP*.
 
-### Dead ends / friction (spike scaffolding, not the finding)
+### Friction & dead ends (Spike 1)
+
 - **Node 26** is too new for the RN toolchain — pinned everything to nvm **node 22**.
 - **JDK 24** (the only `java_home`-registered JVM) failed `:app:configureCMakeDebug`
   with "A restricted method in java.lang.System has been called" (JDK 24's stricter
@@ -70,7 +73,8 @@ objects per generation, 130 KB/812 objects at 200 gens; snapshot 2.5 ms, rollbac
 166 ms, log 46 ms (deep history); manual `packObjects` compaction works (28 KB pack
 for 200 commits).
 
-### The one real lesson
+### The one real lesson (Spike 4)
+
 **Under Hermes, `Buffer` is not the whole polyfill story — `TextDecoder` is missing
 *while* `TextEncoder` is present.** I predicted `Buffer` (correct, the big one) and
 flagged TextEncoder/Decoder as "verify." The device verdict was sharper than expected:
@@ -90,7 +94,8 @@ has **no `git.gc`/`prune`/`repack`**, so every snapshot leaves ~4 loose objects 
 to manage. Compaction is DIY but proven (`packObjects` on-device), so v0.2 owns a
 periodic pack-then-drop-loose pass.
 
-### Dead ends / friction (spike scaffolding, not the finding)
+### Friction & dead ends (Spike 4)
+
 - **`nvm use 22` didn't actually switch node** — `/opt/homebrew/bin` sits *ahead* of
   the nvm shim in PATH, so Homebrew's node 26 kept winning even after `nvm use`. Had to
   explicitly `export PATH="$HOME/.nvm/versions/node/v22.20.0/bin:$PATH"` on every RN
@@ -145,7 +150,8 @@ seconds, where finding them via the ~30 s APK rebuild cycle would have been mise
 Desktop is NOT the pass (no native bridge, different engine) — but as a *first filter* it
 turned a long device-debug slog into one clean on-device confirmation run.
 
-### The one real lesson (reasoned, pending confirmation)
+### The one real lesson (Spike 2 — reasoned)
+
 **The CSP that closes codegen also dictates the delivery channel — and the channel that
 both runs AND survives re-injection delivers source as a *DOM-inserted inline script*,
 not eval and not a module.** Walk it: `'unsafe-eval'`-absent kills `eval`/`Function`/
@@ -159,6 +165,7 @@ alone survives re-injection without re-creating the iframe (Spike 8). The CSP di
 just constrain *containment* — it picked the *delivery mechanism* for us.
 
 ### The headline UNKNOWN — now ANSWERED on-device: YES
+
 **Does the RN WebView engine gate DOM-inserted inline scripts the same as parser-inserted
 ones?** It was the one thing that couldn't be assumed from desktop (some engines treat
 *dynamically-inserted* inline scripts differently from *parser-inserted* ones). **On the
@@ -169,6 +176,7 @@ real engine; channel (a) (parser-inserted, also 34/34) stays as the fallback if 
 engine ever gates dynamic insertion.
 
 ### The pen test taught two things the probe suite alone wouldn't have
+
 - **T1 (the channel-(b)-specific escape) is blocked because the strip is window-level.** A
   malicious app can use the *same* DOM-inserted-inline-script trick the loader uses to run
   code in a fresh top-level scope. That fresh scope does NOT get channel (a)'s lexical
@@ -185,6 +193,7 @@ engine ever gates dynamic insertion.
   vantage the bundle can't overwrite, never from the bundle's self-reported verdict.**
 
 ### Things I had to get right while building (so the result is trustworthy, not scrappy)
+
 - **One React instance, or hooks break.** First instinct was to let H1a "bundle
   everything in" including react. Wrong: the trusted runner mounts the bundle's screen
   component, so runner-React and bundle-React must be the *same* instance or
@@ -211,12 +220,14 @@ engine ever gates dynamic insertion.
   mapping logic auditable.
 
 ### Build gotchas — unchanged from Spikes 1 & 4, pre-wired into `rn-substrate/README-RUN.md`
+
 node 22 (explicit PATH prefix, `nvm use` isn't enough), JDK 21 (`org.gradle.java.home`),
 arm64-v8a only, offline release bundle (Metro/NAT dead; `adb reverse` doesn't rescue it),
 logs → logcat `ReactNativeJS` (truncates ~4 KB → full probe JSON renders on-screen).
 None re-discovered — they're carried forward by reference.
 
 ### T5–T8 follow-up — the keeper lesson: re-injection persistence (T7)
+
 Confirmed on-device (43/43 still CONTAINED throughout): T5 (module confinement) and T6
 (transport eavesdrop/spoof) held — though T6 generalized F4: a bundle can forge **any**
 host-bound control frame, so the host must authenticate/ignore bundle-origin messages, not
@@ -245,7 +256,7 @@ The tip-splitter (hand-written `fixtures/tip-splitter.app.tsx`, esbuild → a 4.
 delivered over channel (b) and mounted React-to-DOM. On-device logcat (`ReactNativeJS`) +
 the on-screen probe JSON:
 
-```
+```text
 [whim] delivery {accepted:true, generation:1, note:"DOM-inserted inline script appended…"}
 [whim] paint    {generation:1, mountToFirstPaintMs:119.1, appName:"Tip Splitter"}  # first cold
 [whim] CONTAINED=true 42/42 T7anyPoison=false
@@ -253,12 +264,14 @@ the on-screen probe JSON:
 ```
 
 ### Perf (task 5.4 / 8.4) — on the arm64 emulator, headless SwiftShader software-GL
+
 - **mount→first-paint ≈ 119 ms** on the very first cold render (RN just booted, WebView/
   Chromium sandbox process cold-starting), **≈ 32 ms** on a re-created realm (warm WebView).
 - Both under the ~150 ms "feels instant" ceiling, and this is **software** GL — hardware GL
   on a real device should be faster (consistent with Spike 1 ≈104 ms / Spike 2 ≈95 ms cold).
 
 ### What held on-device (the §8 acceptance, 42/42 probes CONTAINED)
+
 - **sandbox-isolation (8.2):** network (`fetch`/XHR/WS/`sendBeacon`), codegen (`eval`/
   `Function`/`({}).constructor.constructor`/`import()`), and persistence/threading
   (`localStorage`/`indexedDB`/`Worker`) all throw or are inert; `parent`/`top`/`frameElement`
@@ -280,6 +293,7 @@ the on-screen probe JSON:
   (reset → `anyPoison=false`).
 
 ### Two real bugs the runs caught (wired ≠ works, again)
+
 1. **esbuild silently used the AUTOMATIC JSX runtime** (`require("react/jsx-runtime")`) —
    it auto-discovers `tsconfig.json` (`jsx:"react-jsx"`) and that overrode the build's
    `jsx:'transform'`. `react/jsx-runtime` is off the H1b allowlist, so the resolver threw at
@@ -290,6 +304,7 @@ the on-screen probe JSON:
    and proved input delivery before the in-WebView button coords were dialed in.
 
 ### Build env — the gotchas held exactly as captured (none re-discovered)
+
 node 22 on PATH for the Gradle JS-bundle step (node 26 is the machine default), JDK 21 via
 `android/gradle.properties` `org.gradle.java.home` (machine default is JDK 24, which the RN
 0.85 plugin rejects), `reactNativeArchitectures=arm64-v8a` only, **offline release bundle**
@@ -298,6 +313,7 @@ node 22 on PATH for the Gradle JS-bundle step (node 26 is the machine default), 
 `assembleRelease` succeeded in 34 s; APK 19 MB (arm64-only).
 
 ### Desktop filter — `npm run build && npm run invariants`
+
 7/7 checks green against the retained build (headless Chromium): b-tip (render+contain+tap),
 channel-a fallback, F4 (forged frames rejected, trusted verdict CONTAINED), reset-seam clean
 gen-2, T7 same-realm finding, blob-refusal, and a **broken-CSP negative control** that the
@@ -305,3 +321,51 @@ suite correctly flags red (proving it isn't vacuously green). Source-map round-t
 (generated line → original `tip-splitter.app.tsx` line, D4). This is the §16.2 blocking CI
 gate seed (`.github/workflows/invariants.yml`); desktop is the fast filter, on-device is the
 acceptance.
+
+---
+
+## v0.2 — `on-device-snapshot-store` (the retained version store)
+
+**Result:** built from the #36 recipe and **accepted on-device** (Pixel_9_Pro_XL arm64, RN
+0.85.3 / Hermes, offline release bundle): full lifecycle (snapshot ×N, history, diff,
+rollback, pin, fork) + compaction + **MMKV cross-restart**, `pass:true`, 0 failures across
+three kill+relaunch cycles. Node core suite (`npm run vstore:test`) 43/43 is the cheap
+checkpoint; the Android run is the acceptance (D7). Full write-up: `docs/decisions.md` #39.
+Evidence: `docs/vstore-android-{inmemory,mmkv-restart}.png`.
+
+### The dead-ends (wired ≠ works, again)
+
+1. **The "keep MMKV out of the bundle" trick worked too well.** To let the in-memory core
+   build with zero native modules, I assembled the module name at runtime
+   (`['react','native','mmkv'].join('-')`) so Metro wouldn't statically pull
+   react-native-mmkv into the graph. It didn't — and then, once I *wanted* it, the native
+   C++ lib loaded fine (`Successfully loaded NitroMmkv`) but the JS side threw **"Requiring
+   unknown module react-native-mmkv"**: Metro only ships modules it statically saw. Lesson:
+   a literal `require('react-native-mmkv')` is correct *once it's a real dependency* —
+   anti-static-analysis is for genuinely-optional deps, and it cuts both ways.
+2. **react-native-mmkv v4 is not `new MMKV()`.** v4 (nitro) dropped the class: `MMKV` is now
+   a **type-only** export. Runtime is `createMMKV({ id })`, and delete is **`remove(key)`**,
+   not `delete`. First MMKV run: *"undefined cannot be used as a constructor"* (the class was
+   gone), then I adapted the backend (`createMMKV` + `remove`→`delete` shim). The KVBackend
+   interface absorbed it in one wrapper — the engine never knew.
+3. **`packObjects` writes the pack but not the `.idx`.** Dropping loose objects after packing
+   made reads fail until I added `git.indexPack` — isomorphic-git can't read a packfile
+   without its index. And `indexPack`'s `filepath` resolves relative to **`dir`**, not
+   `gitdir`, so it's `.git/objects/pack/<name>` (a null-slice crash pointed the way). De-risked
+   in a scratch Node probe *before* building the compaction module — cheap and worth it.
+
+### What the spike handed forward, now closed
+
+- **Cross-restart persistence (D4):** MMKV round-tripped clean — `restartVerified:true`,
+  generations accumulating 1→2→3 across real process kills, 0 corruption. The native-FS
+  fallback was **not** needed.
+- **DIY compaction (D5):** pack-then-drop-loose collapsed **48 loose objects → 0** on-device
+  with every verb still resolving against the pack. Trigger is loose-object **count**
+  (default 80), not bytes — each loose object is a KV key, the real cost driver.
+
+### On-device numbers (offline release, headless software-GL — conservative)
+
+snapshot ~45–86 ms · history ~10–29 ms · diff ~8–16 ms · rollback ~58–183 ms · pin ~1 ms ·
+fork ~37–68 ms · compact (pack 48) ~530–590 ms. All sub-second; `history`/`rollback` are the
+depth-scaling ops (cap/paginate, as #36 said). ~4 loose objects + ~650 B per generation —
+matches the spike's curve. Toggle the run with `RUN_VSTORE_PROBE` in `App.tsx`.

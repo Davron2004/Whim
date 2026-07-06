@@ -20,6 +20,9 @@
     // document/window/off-allowlist modules to attack the sandbox. Not app code; never
     // type-checked against the app lib (they would, and should, fail tsc).
     "fixtures/adversarial",
-    "invariants"
+    "invariants",
+    // Node-only acceptance runner for the version store (run via esbuild, not shipped
+    // in the app; uses `process`/dynamic import). Validated by running it, not by tsc.
+    "src/host/version-store/test"
   ]
 }
