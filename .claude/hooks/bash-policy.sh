@@ -8,7 +8,8 @@
 # Keep this vocabulary in sync with permissions.allow in .claude/settings.json.
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
+AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')   # present ONLY for subagents (probe-confirmed)
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')             # always present; the real working dir
 
 deny() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$1"
@@ -25,54 +26,69 @@ ask() {
 
 # Hard denies first — match anywhere in the command, including chained segments.
 case "$CMD" in
-  *sudo*|*"git push"*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
+  *sudo*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
     deny "blocked by harness policy — if genuinely needed, stop and report a class-B deviation" ;;
+esac
+# Security-critical git: network reach, history rewrite, or SHARED-ref mutation — denied for EVERY
+# caller (orchestrator and subagents alike), and kept HERE (match-anywhere) so a chained segment
+# can't smuggle them past the simple-command policy below. `git worktree` is intentionally NOT
+# listed: the orchestrator (main thread) needs it; subagents are blocked from it by the scoped
+# policy further down. Worktree-safe mutating git (commit/add/checkout/…) is handled there too.
+case "$CMD" in
+  *"git push"*|*"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
+  *"git update-ref"*|*"git symbolic-ref"*|*"git rebase"*|*"git reflog"*|*"git gc"*|*"git config"*|\
+  *"git branch -f dev/v1"*|*"git branch -D dev/v1"*|*"git branch -m dev/v1"*|\
+  *"git branch -f main"*|*"git branch -D main"*|*"git branch -m main"*)
+    deny "git network/shared-ref/history op is human-approved only (class-B deviation)" ;;
 esac
 
 # Protected-config writes (Layer 1 — closes the Edit|Write bypass). Harness/verification config
-# is human-approved only, so block any command that WRITES to it — for EVERY caller, orchestrator
-# and subagents alike. Unlike the Edit hook there is no per-actor "ask" path here: a one-liner
-# redirect is too easy to wave through, and nobody should bash-write these files. Reads
+# is human-approved only, so block any command that WRITES to it — for EVERY caller. Reads
 # (cat/grep/git diff) are untouched; the legit edit path is the Edit tool. Must sit BEFORE the
-# compound-command fall-through below, or a `>`-redirect escapes on the control-operator exemption.
-# Best-effort regex over shell — pairs with the gate's tamper tripwire, which is the real guarantee.
-# .claude/ is narrowed to the real config dirs (hooks|settings|agents|commands) so it does not
-# false-positive on ephemeral fix worktrees under .claude/worktrees/. The gate's tamper tripwire
-# (which watches .claude/hooks + .claude/settings.json) remains the real backstop; this is best-effort.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|\.claude/(hooks|settings|agents|commands)'
+# compound-command fall-through, or a `>`-redirect escapes on the control-operator exemption.
+# .claude/ is narrowed to the real config dirs so it does not false-positive on fix worktrees
+# under .claude/worktrees/. Pairs with the gate's pinned-BASE tripwire, which is the real backstop.
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|\.claude/(hooks|settings|agents|commands)'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|sed[^|]*-i[^|]*($PROTECTED)|tee[[:space:]][^|]*($PROTECTED)|(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi
 
-# Mutating git is human-approved only — this is what makes Layer 2 real. The tripwire trusts that
-# the human is the ONLY committer: an agent that can `git commit`/`--amend`/`reset`/`rebase` could
-# bake a tampered config into HEAD (HEAD==tree -> no diff -> the gate runs green) or rewrite history
-# to erase the evidence. Read-only git (status/diff/log/show) stays auto-allowed below. Subagents
-# are hard-denied; the main thread is routed to the approval prompt — same ask mechanism as the
-# protected edits. Best-effort prefix match (an agent can still evade via `g=git; $g ...` or an
-# absolute path); the durable backstops are commit visibility, your review, and not running in
-# full bypass mode.
-case "$CMD" in
-  "git status"*|"git diff"*|"git log"*|"git show"*) : ;;   # read-only — defer to auto-allow vocab
-  git|"git "*)
-    [ -n "$AGENT_ID" ] && deny "git is human-approved only — subagents must not run git; a commit/amend/reset could defeat the gate tripwire (class-B deviation)"
-    ask "git command needs your approval — review it before allowing (this is the commit history the gate's integrity check trusts)" ;;
-esac
-
-# Compound commands fall through to the normal permission flow. The auto-allow patterns below
-# are anchored at the START of the command, but a trailing glob would otherwise let an allowed
-# prefix drag a chained payload along with it (`npm test && rm -rf src`). Any shell control
-# operator (&, &&, ;, |, ||, redirection, command substitution, newline) disqualifies the fast
-# path — which is exactly the implementer-prompt contract: run commands one at a time.
+# Compound commands fall through to the normal permission flow. Positioned BEFORE the git /
+# auto-allow policies so neither can auto-ALLOW a chained payload (`npm test && rm -rf src`); the
+# security-critical denies above already run on chained segments via match-anywhere. Any shell
+# control operator disqualifies the fast path — the implementer contract is one command at a time.
 case "$CMD" in
   *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
     exit 0 ;;
 esac
 
+# ---- git policy (simple commands only — compound already fell through) ----------------------
+# Tamper detection is decoupled from git (docs/parallel-fix-loop.md): the orchestrator audits
+# every fix as `git diff <recorded BASE>`, which a commit cannot hide — so a subagent may use git
+# INSIDE its own worktree. Allowed there: add/commit/checkout/switch/restore/stash/branch/rev-parse.
+case "$CMD" in
+  "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*) : ;;  # read-only
+  git|"git "*)
+    if [ -n "$AGENT_ID" ]; then
+      # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree.
+      case "$CWD" in
+        */.claude/worktrees/*)
+          case "$CMD" in
+            "git "*add*|"git "*commit*|"git "*checkout*|"git "*switch*|"git "*restore*|\
+            "git "*stash*|"git "*branch*|"git "*"rev-parse"*)
+              allow ;;
+          esac ;;
+      esac
+      deny "subagent git is permitted only inside its own .claude/worktrees/<id> (add/commit/checkout/switch/restore/stash/branch/rev-parse). This command or location is not allowed (class-B deviation)."
+    fi
+    # Main thread: route mutating git to the approval prompt.
+    ask "git command needs your approval — review it before allowing (this is the history the gate's BASE-diff trusts)" ;;
+esac
+
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
 case "$CMD" in
-  "./scripts/gate.sh"*|"npm run "*|"npm test"*|"npx tsc"*|"npx eslint"*|"npx knip"*|"npx openspec"*|"openspec "*|\
-  "git status"*|"git diff"*|"git log"*|"git show"*|\
+  "./scripts/gate.sh"*|"./scripts/gate-full.sh"*|"npm run "*|"npm test"*|"npx tsc"*|"npx eslint"*|"npx knip"*|"npx openspec"*|"openspec "*|\
+  "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*|\
   "ls"*|"cat "*|"head "*|"tail "*|"grep "*|"rg "*|"wc "*|"mkdir "*)
     allow ;;
 esac
