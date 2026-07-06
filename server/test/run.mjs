@@ -40,7 +40,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node20',
+  target: 'node22', // node:sqlite (DatabaseSync) needs Node 22+ — match dev.mjs, not a misleading node20
   logLevel: 'warning',
 });
 

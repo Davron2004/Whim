@@ -9,9 +9,11 @@
 //   • `react` / `react-dom` → the ONE shared host instance (mixed React instances break
 //     hooks across the loader↔bundle boundary — D3). They are pure UI libs with no ambient
 //     authority, so resolving them is by design, not a leak.
-//   • everything else — `react-dom/server`, `fs`, `child_process`, relative paths, SDK
-//     subpaths, any 3rd-party — throws (sandbox-rendering: "the SDK is the only import
-//     surface"; pen-test T5: confinement against relative/dynamic/subpath requires).
+//   • everything else — `react-dom/server`, `react-dom/client`, `fs`, `child_process`, relative
+//     paths, SDK subpaths, any 3rd-party — throws (sandbox-rendering: "the SDK is the only import
+//     surface"; pen-test T5: confinement against relative/dynamic/subpath requires). NB: the
+//     trusted loader mounts via the injected `window.ReactDOM` (which IS react-dom/client's
+//     createRoot surface), NOT via `require('react-dom/client')` — so no bundle needs the subpath.
 //
 // Runs BEFORE the SDK inject (vc-sdk's external `require("react")` resolves through here) and
 // before the loader. `window.require` is exposed because the channel-(b) bundle runs in
@@ -29,7 +31,7 @@
       if (window.React) return window.React;
       throw new Error('react global not injected');
     }
-    if (name === 'react-dom' || name === 'react-dom/client') {
+    if (name === 'react-dom') {
       if (window.ReactDOM) return window.ReactDOM;
       throw new Error('react-dom global not injected');
     }

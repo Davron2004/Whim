@@ -20,6 +20,7 @@ import {
   Text,
   Button,
   useState,
+  useRef,
   interval,
   delay,
   cues,
@@ -46,6 +47,14 @@ function Brew() {
   const [stageIdx, setStageIdx] = useState(0);
   const [remaining, setRemaining] = useState(0);
   const [count, setCount] = useState(0); // the 3-2-1 get-ready number
+
+  // Monotonic run token for the async `start()` coroutine. `start()` claims a fresh id; any
+  // transition that should abort a pending get-ready count (Reset, Pause, or a new Brew) bumps
+  // it, so the in-flight coroutine — which reads `runId.current` LIVE after each await, not a
+  // frozen `useState` snapshot — sees the mismatch and bails instead of ghost-advancing to
+  // 'brewing'. A ref (not state) is required: the running closure captured its state at call
+  // time, so only a stable mutable cell reflects a cancellation that happens mid-count.
+  const runId = useRef(0);
 
   // The staged 1 s countdown. Called unconditionally (hook rules); it only ticks while brewing,
   // so pausing (phase → 'paused') stops it WITHOUT tearing the component down, and unmounting
@@ -78,21 +87,28 @@ function Brew() {
   // Start → a 3-2-1 get-ready beat (delay + a light cue per count), then brewing begins. Async in
   // an event handler is fine; the interval is dormant (phase !== 'brewing') during the count.
   const start = async () => {
+    const myRun = ++runId.current; // claim this run; supersedes any coroutine still counting
     setPhase('ready');
     for (const n of [3, 2, 1]) {
       setCount(n);
       cues.sound('tick');
       cues.haptic('tap');
       await delay(1000);
+      if (runId.current !== myRun) return; // Reset/Pause/new-Brew fired mid-count — abort, don't brew
     }
     setStageIdx(0);
     setRemaining(STAGES[0].secs);
     setPhase('brewing');
   };
 
-  const pause = () => setPhase('paused');
+  // pause/reset both invalidate a pending get-ready count so it can't auto-advance to 'brewing'.
+  const pause = () => {
+    runId.current++;
+    setPhase('paused');
+  };
   const resume = () => setPhase('brewing');
   const reset = () => {
+    runId.current++;
     setPhase('idle');
     setStageIdx(0);
     setRemaining(0);

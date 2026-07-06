@@ -128,7 +128,7 @@ function orchestrationScript(cfg) {
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
     "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ iframe.contentWindow.postMessage(JSON.stringify({__whimHostInit:true,nonce:nonce,gen:GEN}),'*'); }catch(e){} return; }\n" +
-    "    if(m.__whimUiEvent===true){ toRN({kind:'ui-event',trusted:false,payload:m}); rnLog('UI-EVENT '+(m.type||'?')+' '+(m.label||'')); return; }\n" +
+    "    if(m.__whimUiEvent===true){ if(ev.source!==(iframe&&iframe.contentWindow)) return; toRN({kind:'ui-event',trusted:false,payload:m}); rnLog('UI-EVENT '+(m.type||'?')+' '+(m.label||'')); return; }\n" +
     // nav seam (launcher-shell / #5 D4): an SDK nav-depth HINT from our iframe. Source-verify it
     // came from OUR iframe (like syscall), then relay to RN STAMPED with the generation the host
     // authoritatively bound this realm at (GEN) — never the bundle's own claim. Unauthenticated
