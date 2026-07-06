@@ -85,6 +85,7 @@ src/runtime/generated/
 .claude/settings.local.json
 .claude/fixloop/*.log
 .claude/fixloop/grants/
+.claude/fixloop/owners/
 *.tmp.mjs
 
 # Harness server: durable per-device token counter (the only server state) + local secrets

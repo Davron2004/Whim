@@ -20,7 +20,7 @@ import { createEngine } from '../engine';
 import { assertExecuteSyncAvailable } from '../bindings/assert-executesync';
 import { createNodeSqlExecutor } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
-import { SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
+import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
 import { validateArtifact } from '../schema';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
@@ -243,6 +243,27 @@ test('§A field-types: bool/float/json values round-trip through their marshal f
   ok(nullRow.flag === null, 'a null bool reads back as null, not false');
   ok(nullRow.amount === null, 'a null float reads back as null, not 0');
   ok(nullRow.payload === null, 'a null json reads back as null');
+});
+
+test('§A (ST-1) undefined values are rejected as a structured StorageEngineError, not a raw driver exception', () => {
+  const { store } = memEngine();
+  store.open(mixedSchema);
+
+  // append with an undefined json field must be a structured type_mismatch, not an
+  // unstructured SQLite bind error.
+  expectError('type_mismatch', () =>
+    store.records.append('Mixed', { flag: true, amount: 0, payload: undefined as unknown as JsonValue })
+  );
+
+  // update likewise.
+  const { id } = store.records.append('Mixed', { flag: true, amount: 0, payload: null });
+  expectError('type_mismatch', () =>
+    store.records.update('Mixed', id, { payload: undefined as unknown as JsonValue })
+  );
+
+  // kv.set(key, undefined) must throw structured, not silently succeed or bind-crash.
+  expectError('type_mismatch', () => store.kv.set('undef-key', undefined as unknown as JsonValue));
+  ok(store.kv.get('undef-key') === undefined, 'a rejected kv.set must not have written anything');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

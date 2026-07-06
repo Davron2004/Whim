@@ -61,7 +61,7 @@ Regenerate after editing anything in `src/runtime/web/`, `src/sdk/`, `build/`, o
 
 `build/build.mjs` is the local stand-in for the future server-side harness build. A mini-app is **one TS file that imports only `vc-sdk`** and `export default defineApp({...})` (see `fixtures/*.app.tsx`). esbuild emits it as a single IIFE with **classic JSX** (`React.createElement`) and externals `{vc-sdk, react, react-dom}` resolved at runtime from host-injected globals (the "H1b" contract), plus an external source map so errors map back to the original .tsx line. Gotcha: `tsconfigRaw: '{}'` is load-bearing — without it esbuild picks up the project tsconfig's `jsx: "react-jsx"` and emits `require("react/jsx-runtime")`, an off-allowlist specifier the resolver rejects.
 
-`build/assemble.mjs` composes the runtime parts into a srcdoc + outer HTML → `src/runtime/generated/runtime-html.ts`, which `src/host/WebViewHost.tsx` loads into the WebView. It also emits `src/runtime/generated/runtime-artifacts.json` so the invariant suite generates its scenario pages against *this* build.
+`build/assemble.mjs` composes the runtime parts into a srcdoc + outer HTML → `src/runtime/generated/runtime-html.ts`, which `src/host/launcher/useMiniAppHost.ts` (via `MiniAppView`) loads into the WebView. It also emits `src/runtime/generated/runtime-artifacts.json` so the invariant suite generates its scenario pages against *this* build.
 
 ### Containment (`src/runtime/web/`)
 

@@ -105,7 +105,8 @@ case "$FILE" in
   */package.json|package.json|*/package-lock.json|package-lock.json|\
   */babel.config.js|babel.config.js|\
   */metro.config.js|metro.config.js|\
-  */build/*|build/*)
+  */build/*|build/*|\
+  */invariants/*|invariants/*)
 
     if [ -n "$AGENT_ID" ]; then
       echo "BLOCKED: harness/verification config is human-approved only. Subagents cannot edit it — report as a class-B deviation." >&2

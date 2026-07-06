@@ -9,7 +9,7 @@ the scope contract for `sdk-design-system` (#3) and `sdk-charts` (#4), and the s
 ## 1. Current surface (verified on disk, 2026-06-12)
 
 - **Components (7):** `Screen`, `Stack`, `Row`, `Text`, `Heading`, `NumberInput`, `Button`.
-- **Hooks:** `useState`, `useEffect` only.
+- **Hooks:** `useState`, `useEffect` only. *(2026-07-01: `useRef` added — decision #44, B4 disposition; containment-neutral fiber-memory cell.)*
 - **App/system:** `defineApp` (screens map + `schema` + `capabilities`), `storage` facade
   (kv + records, via the bridge), design tokens (space ·radius · color ·text-size · weight).
 - **NOT present:** navigation (`defineApp` takes a `screens` map but there is no
