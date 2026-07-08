@@ -212,6 +212,30 @@ T8-pattern bypass corpus: aliasing, computed access, string-splitting, pollution
 manifest games) must each produce the expected diagnostic — and these are authored in a
 **separate session** (§16.4) from English specs, never by the implementing session.
 
+### D9 — Phased TDD across chains: the greenBy harness
+
+The suite is built across four dispatchable chains (B–E) but `checks:test` runs in *every*
+chain's `gate.sh` — so a chain that leaves an assertion red would fail its own gate and stall
+the dispatch. We resolve this without weakening the "each chain leaves a green gate" contract:
+the suite is a **phased-TDD harness** (full spec + interface: `handoff/greenby-harness.md`).
+
+Chain B authors the **entire** B–E assertion corpus up front (tests-first — the strongest form
+of §16.2), each test tagged `greenBy: <chain>`. The runner reads an untracked
+`checks/test/.phase` file: with `.phase = N`, tests whose `greenBy ≤ N` are *required* and later
+ones are *pending* (a tolerated red); with `.phase` absent it runs **strict** (all required).
+The dispatcher writes `.phase` into each chain's worktree before dispatching it; because the file
+is untracked it never reaches a merge, so the final `gate-full.sh` on the merged main tip — and CI,
+a fresh checkout with no `.phase` — are strict by construction and nothing can pend forever.
+A file, not a `CHECKS_PHASE=…` env prefix, because the prefix is not in `bash-policy.sh`'s
+auto-allow and would stall a subagent; the plain `./scripts/gate.sh` is auto-allowed.
+
+Two axes were tempting to conflate and are not: the fast/full **gate split** (`gate.sh` vs
+`gate-full.sh`) is cost-based (Metro/Chromium deferred), NOT completeness-based — and
+`gate-full.sh` *runs* `gate.sh`, so a suite cannot be made "final-only" by moving gate files.
+Completeness-over-time is exactly what `.phase` encodes instead. This is a reusable dispatch
+mode, not a one-off — documented generally in `docs/harness.md` §6, and wired into the
+dispatcher runbook (`.claude/commands/opsx/apply.md`).
+
 ## Risks / Trade-offs
 
 - **[False positives vs §8.2]** A scope bug flags honest code; the agent burns repair loops

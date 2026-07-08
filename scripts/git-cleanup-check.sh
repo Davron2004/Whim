@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Outcome gate for the git-cleanup lane (docs/parallel-fix-loop.md §4.10).
+# Outcome gate for the git-cleanup lane (docs/archive/parallel-fix-loop.md §4.10).
 # Verifies the RESULT of a history cleanup, never the process:
 #   1. the cleanup branch's tip TREE is byte-identical to the tree pinned at grant time — no
 #      content change of any kind survived the rewrite (this single check is what makes

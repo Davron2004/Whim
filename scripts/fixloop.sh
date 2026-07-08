@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# fixloop.sh — deterministic toolkit for the parallel fix loop (docs/parallel-fix-loop.md §5).
+# fixloop.sh — deterministic toolkit for the parallel fix loop (docs/harness.md; history in
+# docs/archive/parallel-fix-loop.md §5).
 # The ORCHESTRATOR (main thread) runs these so the security-critical mechanics are exact and not
-# reconstructed inline by the LLM each time. It deliberately does NOT execute the merge to dev/v1
-# (that stays an explicit, human-gated orchestrator command) — `finish` only prints it.
+# reconstructed inline by the LLM each time. It deliberately does NOT execute the merge to the
+# integration branch (that stays an explicit, human-gated orchestrator command) — `finish` only prints it.
 #
 # This file is human-edited only (protect-harness.sh + bash-policy.sh block agents). NOTE: git run
 # *inside* this script does not re-trigger the PreToolUse(Bash) hook, so whoever can invoke this
@@ -25,11 +26,16 @@
 # Protected files split by blast radius: Class 2 (control plane — TAMPER, never grantable) vs Class 1
 # (config the agent owns — grantable per-task via .claude/fixloop/grants/<id>). See §4.9 + CLASS1/CLASS2.
 #
-# BASE for a branch is recovered as `git merge-base <branch> dev/v1` — the point it was cut from,
-# immune to dev/v1 advancing. Every integrity question is "diff vs BASE", never "vs HEAD".
+# BASE for a branch is recovered as `git merge-base <branch> $INTEGRATION_BRANCH` — the point it was
+# cut from, immune to the branch advancing. Every integrity question is "diff vs BASE", never "vs HEAD".
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
+
+# The trusted single-writer branch fixes/chains merge into. Was dev/v1 through 2026-07 (fully merged
+# into main at 559defe, now stale); main is the integration branch since 2026-07-07. Env-overridable
+# for a future dirty-area-branch tier (unattended runs landing on a review branch, not main directly).
+INTEGRATION_BRANCH="${FIXLOOP_INTEGRATION_BRANCH:-main}"
 
 # Protected paths split by BLAST RADIUS (docs/parallel-fix-loop.md §4.9):
 #   Class 2 — the integrity & control plane (the thing doing the verifying). Touching it is TAMPER,
@@ -39,8 +45,9 @@ ROOT="$(pwd)"
 #            catches a broken build; the reviewer catches a wrong value). GRANTABLE per-task: a Class-1
 #            change that is ⊆ the declared allowlist is SANCTIONED (needs human ratification), not tamper.
 CLASS2=(
-  scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh
+  scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   .claude/hooks .claude/settings.json .claude/agents .claude/commands .claude/fixloop/grants
+  .codex   # Codex mirror — its hooks are SYMLINKS to .claude/hooks, so an edit via this path IS a control-plane edit
   invariants
   build   # the build harness (build.mjs/assemble.mjs) is executed by `npm run build` — tampering here runs arbitrary code in the gate
 )
@@ -52,7 +59,7 @@ CLASS1=(
 PROTECTED=( "${CLASS2[@]}" "${CLASS1[@]}" )   # union — the full never-silently-touch set
 
 die() { echo "fixloop: $*" >&2; exit 2; }
-base_of() { git merge-base "$1" dev/v1 2>/dev/null || die "no merge-base for '$1' vs dev/v1 (is it a fix branch cut from dev/v1?)"; }
+base_of() { git merge-base "$1" "$INTEGRATION_BRANCH" 2>/dev/null || die "no merge-base for '$1' vs $INTEGRATION_BRANCH (is it a fix branch cut from $INTEGRATION_BRANCH?)"; }
 
 # in_allowlist <file> <allowfile>: 0 iff <file> matches a glob line (mirrors the grant/allowlist parser).
 in_allowlist() {
@@ -231,8 +238,8 @@ case "$cmd" in
 
   park)
     branch="${1:?usage: park <branch> <reason...>}"; shift; reason="${*:-no reason given}"
-    case "$branch" in fix/*) : ;; *) die "park expects a fix/* branch, got '$branch'";; esac
-    id="${branch#fix/}"
+    case "$branch" in fix/*|chain/*) : ;; *) die "park expects a fix/* or chain/* branch, got '$branch'";; esac
+    id="${branch#*/}"
     git branch -m "$branch" "wip/$id" || die "rename failed"
     mkdir -p "$ROOT/.claude/fixloop"
     note="$ROOT/.claude/fixloop/wip-$id.md"
@@ -255,7 +262,7 @@ case "$cmd" in
     echo
     [ -n "$ratify" ] && { echo "$ratify"; echo; }
     echo "INTEGRITY OK — ready to merge (human-gated, run explicitly):"
-    echo "  git switch dev/v1 && git merge --no-ff $branch -m \"fix: ${branch#fix/}\""
+    echo "  git switch $INTEGRATION_BRANCH && git merge --no-ff $branch -m \"fix: ${branch#fix/}\""
     echo "after merge, REGATE the merged tip BEFORE the next merge (catches two individually-green"
     echo "fixes that break each other — a semantic conflict surfaces at the merge that caused it):"
     echo "  ./scripts/gate.sh   # on FAIL: git revert --no-edit -m 1 HEAD, then park the branch"
@@ -267,8 +274,8 @@ case "$cmd" in
     ;;
 
   status)
-    echo "=== fix/wip branches ==="
-    git branch --list 'fix/*' 'wip/*' | sed 's/^/  /' || true
+    echo "=== fix/chain/wip branches ==="
+    git branch --list 'fix/*' 'chain/*' 'wip/*' | sed 's/^/  /' || true
     echo "=== worktrees ==="
     git worktree list | sed 's/^/  /'
     echo "=== parked notes ==="

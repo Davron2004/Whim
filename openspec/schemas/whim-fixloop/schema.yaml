@@ -2,7 +2,7 @@ name: whim-fixloop
 version: 1
 description: >-
   Whim parallel fix-loop workflow - findings → plan → dispositions. Lightweight
-  bookkeeping for a /fix-loop batch (docs/parallel-fix-loop.md): mechanical,
+  bookkeeping for a /fix-loop batch (docs/archive/parallel-fix-loop.md): mechanical,
   independently-fixable findings run in parallel worktrees by fix-worker
   subagents. Deliberately no proposal/design/specs — a fix that changes
   spec-visible behavior needs a delta spec and belongs in a whim-harness change.
@@ -49,7 +49,7 @@ artifacts:
       header lines followed by verbatim buggy lines as they read at HEAD —
       consumed by `scripts/fixloop.sh stale` for the deterministic staleness
       check), the fix sketch, the file allowlist (glob per line), the
-      test-class per docs/parallel-fix-loop.md §6.7 (behavioral |
+      test-class per docs/archive/parallel-fix-loop.md §6.7 (behavioral |
       structural-no-test | invariant), the test + expected red-without
       (behavioral only), severity, and the Class-1 grant declaration (or
       none; Class-2 is never declarable).

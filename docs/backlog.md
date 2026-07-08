@@ -24,7 +24,7 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ### [med] The `researcher` agent can't write its own digest
 - [ ] open
-- **Where:** `.claude/agents/researcher.md` (`tools: Read, Grep, Glob`), `docs/harness-build-guide.md`, `openspec/schemas/whim-harness/schema.yaml` (research artifact instruction).
+- **Where:** `.claude/agents/researcher.md` (`tools: Read, Grep, Glob`), `docs/archive/harness-build-guide.md`, `openspec/schemas/whim-harness/schema.yaml` (research artifact instruction).
 - **What:** the guide and the schema instruction both tell the researcher to write `research.md`, but it has no Write tool, so the proposer must paste its final message instead.
 - **Why it matters:** silent contract mismatch; every proposal pays a manual paste step and the instruction reads as if the subagent does it.
 - **Suggested approach:** either grant the researcher scoped Write (change-folder only) or reword the guide + schema instruction to "return the digest; the proposer saves it."

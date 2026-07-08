@@ -13,7 +13,7 @@ INPUT=$(cat)
 FILE=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')
 
-# grant_allows <abs-file>: true (0) iff a per-worktree grant covers this file (docs/parallel-fix-loop.md
+# grant_allows <abs-file>: true (0) iff a per-worktree grant covers this file (docs/archive/parallel-fix-loop.md
 # §4.9 Class-1 scoped grant). The grant lives at the REPO ROOT (.claude/fixloop/grants/<wt-id>), NOT in
 # the worktree — repo-root .claude/ is agent-unwritable (block-list below + bash-policy), so a subagent
 # cannot forge its own grant. Root + worktree id are derived from the file path itself (no cwd trust).
@@ -61,7 +61,7 @@ esac
 
 # Ephemeral fix worktrees (isolation:'worktree' → under .claude/worktrees/<id>/) hold ordinary repo
 # files a fixer may freely edit. But a worktree is a FULL checkout, so it also contains COPIES of the
-# protected files — handle those by class (docs/parallel-fix-loop.md §4.9). For SUBAGENTS:
+# protected files — handle those by class (docs/archive/parallel-fix-loop.md §4.9). For SUBAGENTS:
 #   • Class 2 (control plane: nested .claude/, build/, gate scripts, fixloop.sh, invariants/) — NEVER
 #     editable, even in-worktree and even if a grant lists it. Hard block here (immediate), with the
 #     post-hoc `fixloop integrity` diff as the second backstop. This CLOSES the old hole: the previous
@@ -75,8 +75,10 @@ esac
 case "$FILE" in
   # Class 2 — the harness that verifies the work. Subagent: hard-block; main thread: fall to `ask`.
   */.claude/worktrees/*/.claude/*|\
+  */.claude/worktrees/*/.codex/*|\
   */.claude/worktrees/*/build/*|\
   */.claude/worktrees/*/scripts/gate.sh|*/.claude/worktrees/*/scripts/gate-full.sh|*/.claude/worktrees/*/scripts/fixloop.sh|*/.claude/worktrees/*/scripts/git-cleanup-check.sh|\
+  */.claude/worktrees/*/scripts/sync-codex.mjs|\
   */.claude/worktrees/*/invariants/*)
     if [[ -n "$AGENT_ID" ]]; then
       echo "BLOCKED: '$FILE' is Class-2 control-plane config (the harness that verifies the work). It is NEVER editable by a subagent — even inside a worktree, even under a grant. Report as a class-B deviation." >&2
@@ -101,7 +103,9 @@ esac
 case "$FILE" in
   */scripts/gate.sh|scripts/gate.sh|*/scripts/gate-full.sh|scripts/gate-full.sh|*/scripts/fixloop.sh|scripts/fixloop.sh|\
   */scripts/git-cleanup-check.sh|scripts/git-cleanup-check.sh|\
+  */scripts/sync-codex.mjs|scripts/sync-codex.mjs|\
   */.claude/*|.claude/*|\
+  */.codex/*|.codex/*|\
   */eslint.config.*|eslint.config.*|*/.eslintrc*|.eslintrc*|*/.eslintignore|.eslintignore|\
   */knip.json|knip.json|*/knip.config.*|knip.config.*|\
   */tsconfig*.json|tsconfig*.json|\

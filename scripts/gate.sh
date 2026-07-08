@@ -4,7 +4,7 @@
 # Runs on every fixer attempt, in the fixer's worktree: build (≈0.3s — writes the gitignored
 # src/runtime/generated/* a fresh worktree lacks) + typecheck + lint + the Node acceptance
 # suites + scaffolding tripwires. NO Metro, NO headless Chromium — those live in gate-full.sh,
-# which the orchestrator runs once per fix before merge. See docs/parallel-fix-loop.md §4.3.
+# which the orchestrator runs once per fix before merge. See docs/archive/parallel-fix-loop.md §4.3.
 #
 # Still the single source of truth for "fast done": implementers must pass it before finishing,
 # and the dispatcher trusts its exit code over any prose report.
@@ -23,10 +23,12 @@ BASE="${GATE_BASE:-HEAD}"
 CONFIG_SET=(
   package.json package-lock.json tsconfig*.json
   eslint.config.* .eslintrc* .eslintignore knip.json knip.config.*
-  scripts/gate.sh scripts/gate-full.sh
+  scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   .claude/hooks .claude/settings.json .claude/agents .claude/commands
+  .codex   # Codex mirror — hook symlinks into .claude/hooks + generated agent TOMLs
   babel.config.js metro.config.js
   build   # the build harness is executed (npm run build, below) — refuse to run tampered build code
+  invariants   # owner-authored never-regress suite — a tampered invariant lies at gate-full time
 )
 if ! git diff --quiet "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null; then
   echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from baseline ($BASE)."

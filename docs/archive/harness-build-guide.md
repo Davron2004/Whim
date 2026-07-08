@@ -1,5 +1,11 @@
 # Harness Build Guide
 
+> **SUPERSEDED (2026-07-07).** This is the original build recipe (June 2026), kept for history.
+> The embedded copies of `gate.sh`, `settings.json`, the agent definitions, and the dispatch
+> command have ALL drifted from the real files — never work from them. Current architecture:
+> [`../harness.md`](../harness.md). `/dispatch` was folded into `/opsx:apply`; the integration
+> branch is `main`; both loops now run worktree-parallel.
+
 Opus dispatches, Sonnet implements, exit codes decide. Built entirely on native Claude Code primitives (subagents, hooks, slash commands) plus OpenSpec artifacts. Assumes TypeScript, Whim as testbed, npm scripts named `typecheck` / `lint` / `test` — adapt those three names and nothing else changes.
 
 -----
@@ -515,6 +521,23 @@ After tasks.md is written, produce chains.md in the change folder: group tasks i
 ```
 
 Your Fable ritual becomes: open session → `/opsx:propose <idea>` → Fable dispatches researcher, gets a digest, writes proposal/design/tasks/chains → you read the proposal and chains (this is where your reading time goes now) → kill the session. Target: session dead under 60k tokens.
+
+### Phased TDD across chains — the greenBy harness (reusable mode)
+
+**When you need it.** A change builds one test suite incrementally across several chains, but that suite is enumerated in `gate.sh` so it runs on *every* chain. Strict TDD wants the whole assertion corpus written first (before implementation can teach-to-the-test), yet a chain that leaves an assertion red fails its own gate and stalls the dispatch. greenBy reconciles the two: write all the tests up front, but schedule *when each must be green*.
+
+**The mechanism** (reference implementation + full contract: `static-check-pipeline/handoff/greenby-harness.md`):
+- Each test is tagged `greenBy: <chain>` on a small home-grown harness (extends the house `test(name, fn)` helper — there is no shared test framework; copy the ~30-line harness into the suite).
+- The runner reads an **untracked** `<suite>/.phase` file holding one chain id. `.phase = N` ⇒ tests with `greenBy ≤ N` are *required*, later ones are tolerated *pending*; **`.phase` absent ⇒ strict** (all required). A not-yet-due test that passes early is an **XPASS** — reported, never swallowed, because a test green before its code exists is probably vacuous (same ethos as the invariants negative control).
+- Exit non-zero **iff a due test fails**. Strict makes everything due, so nothing can pend forever.
+
+**Dispatcher protocol** (the one new orchestrator duty): before dispatching chain N, `Write` `<suite>/.phase = N` (main tree); **delete `.phase` before the final `./scripts/gate.sh` (step 7)** so that run — and CI's fresh checkout — is strict. Add `<suite>/.phase` to `.gitignore` in the change's human-bootstrap pass so it never reaches a commit or CI.
+
+**Why a file, not `CHECKS_PHASE=…`.** `bash-policy.sh` auto-allows commands anchored at their start (`./scripts/gate.sh`); an env-assignment prefix matches nothing and would stall a subagent on a permission prompt it can't answer. The file lets the implementer run the plain, already-allowed gate. Fail-closed: a missing `.phase` yields strict, never a silent skip.
+
+**Don't confuse this with the fast/full gate split.** `gate.sh` vs `gate-full.sh` is cost-based (Metro/Chromium deferred), and `gate-full.sh` *runs* `gate.sh` — so a suite can't be made "final-only" by moving gate files. Completeness-over-time is what `.phase` encodes instead.
+
+**Optional harness edit:** add a line to `.claude/agents/reviewer.md` asking the reviewer to confirm each promoted/ XPASS test is non-vacuous — the one part of "did the schedule stay honest" a machine can't check.
 
 ### `.claude/commands/dispatch.md`
 

@@ -4,7 +4,7 @@ description: >-
   Whim build-harness workflow - research → proposal → specs → design → tasks →
   chains. Adds the two harness-native artifacts (researcher digest + context
   chains) the dispatcher requires, so an unmodified /opsx:propose produces every
-  file /dispatch reads.
+  file the /opsx:apply dispatch loop reads.
 artifacts:
   - id: research
     generates: research.md
@@ -303,13 +303,22 @@ artifacts:
       earlier chain happened to learn," promote that knowledge into the upstream
       contract — otherwise the partition is wrong.
 
-      - Chains are sequential by default. Do not introduce parallel/worktree
-      chains here.
+      - Dependencies are DECLARED, never implied: chain X depends on chain Y iff
+      X reads a contract Y writes; add an explicit `after: <chain-id>` line for
+      any ordering that contracts alone don't capture. The dispatcher runs
+      dependency-free chains in parallel (each in its own worktree) and merges
+      serially — so two chains with no declared dependency MUST NOT touch the
+      same files; if they would, merge them into one chain or add `after:`.
+
+      - A chain that touches Class-2 harness config (gate scripts, .claude/**,
+      invariants/, build/) is not dispatchable: mark it HUMAN-BOOTSTRAP and list
+      its edits precisely — a human applies them.
 
 
       For each chain record: id, the verbatim task range, a one-line rationale,
       the spec sections it reads (cite §, do not say "the whole spec"), the
-      contracts it reads, and the contract it writes (if any).
+      contracts it reads, the contract it writes (if any), and `after:` deps
+      beyond its contract reads (if any).
 
 
       Contracts: declare a `writes-contract: handoff/<name>.md` for EVERY chain
@@ -324,5 +333,12 @@ apply:
     - chains
   tracks: tasks.md
   instruction: |
-    Read context files, work through pending tasks, mark complete as you go.
-    Pause if you hit blockers or need clarification.
+    Do NOT implement inline in the main thread. This change is DISPATCHED:
+    follow the dispatcher runbook in .claude/commands/opsx/apply.md — one
+    implementer subagent per context chain from chains.md, each in an
+    orchestrator-created worktree branched from main, self-gated by
+    ./scripts/gate.sh, integrity-checked, serially merged with a post-merge
+    regate, then gate-full.sh + a reviewer pass over the whole change.
+    The dispatcher (not the implementers) ticks tasks.md at each merge.
+    Architecture: docs/harness.md. If the runbook file is missing, stop and
+    tell the user — never fall back to main-thread implementation.

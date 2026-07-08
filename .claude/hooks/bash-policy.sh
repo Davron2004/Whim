@@ -47,7 +47,7 @@ owners_claim() {
   [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]
 }
 
-# cleanup_lane: the git-cleanup lane (docs/parallel-fix-loop.md §4.10). ACTIVE iff (a) the
+# cleanup_lane: the git-cleanup lane (docs/archive/parallel-fix-loop.md §4.10). ACTIVE iff (a) the
 # human-minted grant exists (.claude/fixloop/grants/git-cleanup — agent-unwritable, same trust
 # anchor as Class-1 grants), (b) the command runs from inside the HARDCODED lane worktree, and
 # (c) THIS agent owns that worktree (owners_claim — same binding as fixers). Inside the lane the
@@ -137,11 +137,11 @@ esac
 # build/…` calls before), while `(cp x package.json)` cannot slip the anchor (a bare `(` is neither
 # whitespace nor a listed operator, and isn't in the compound-command indicator list below either —
 # critic 2026-07-02).
-# .claude/fixloop/grants is the scoped-grant manifest dir (docs/parallel-fix-loop.md §4.9): a subagent
+# .claude/fixloop/grants is the scoped-grant manifest dir (docs/archive/parallel-fix-loop.md §4.9): a subagent
 # must never write it, or it could forge its own Class-1 grant. Same for fixloop/owners (the
 # agent↔worktree binding markers) — forging one would let a fixer claim a sibling's worktree.
 # invariants/ is the never-regress suite (owner-authored) — write-protected like the gate it feeds.
-PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|build/|invariants/'
+PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|scripts/sync-codex\.mjs|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|\.codex/|build/|invariants/'
 BND='(^|[[:space:]&;|(])'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
@@ -158,7 +158,7 @@ case "$CMD" in
 esac
 
 # ---- git policy (simple commands only — compound already fell through) ----------------------
-# Tamper detection is decoupled from git (docs/parallel-fix-loop.md): the orchestrator audits
+# Tamper detection is decoupled from git (docs/archive/parallel-fix-loop.md): the orchestrator audits
 # every fix as `git diff <recorded BASE>`, which a commit cannot hide — so a subagent may use git
 # INSIDE its own worktree. Allowed there: add/commit/checkout/switch/restore/stash/branch/rev-parse.
 case "$CMD" in

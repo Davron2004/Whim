@@ -2,7 +2,7 @@
 
 Runs the Whim parallel fix loop (`/fix-loop`) inside a Docker container whose
 **network egress is locked to Anthropic only**. The container is the loop's
-Threat-C boundary — see `docs/parallel-fix-loop.md` §6.7.
+Threat-C boundary — see `docs/archive/parallel-fix-loop.md` §6.7.
 
 ## Why this exists
 

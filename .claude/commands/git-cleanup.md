@@ -1,4 +1,4 @@
-Run the git-history cleanup lane. "$ARGUMENTS" is optional grouping guidance from the human (which runs to squash, what to keep as milestones); if empty, the cleaner groups by topic on its own judgment. You are the ORCHESTRATOR (main thread): you mint the grant, pin the reference data, create the lane, dispatch the `git-cleaner` subagent, and judge the outcome with ONE mechanical check. You NEVER rewrite history yourself, and the two dangerous operations — moving `main` and force-pushing — are printed for the HUMAN, never executed. Full design + rationale: docs/parallel-fix-loop.md §4.10.
+Run the git-history cleanup lane. "$ARGUMENTS" is optional grouping guidance from the human (which runs to squash, what to keep as milestones); if empty, the cleaner groups by topic on its own judgment. You are the ORCHESTRATOR (main thread): you mint the grant, pin the reference data, create the lane, dispatch the `git-cleaner` subagent, and judge the outcome with ONE mechanical check. You NEVER rewrite history yourself, and the two dangerous operations — moving `main` and force-pushing — are printed for the HUMAN, never executed. Full design + rationale: docs/archive/parallel-fix-loop.md §4.10.
 
 The model in one line: **freed path, gated outcome.** The cleaner may do anything to the shape of history inside its lane; the single acceptance check is that the cleanup branch's tip TREE is byte-identical to `main`'s tree pinned before dispatch — so no content change of any kind can survive, and you audit one hash equality instead of the agent's process.
 
@@ -20,7 +20,7 @@ Hardcoded lane constants (the hooks key on these — do not vary them):
 1. **Pin** (read-only, no prompt): `git rev-parse main` → MAIN_SHA, `git rev-parse main^{tree}` → MAIN_TREE, `git rev-list --count main` → BEFORE_COUNT.
 2. **Mint the grant** — Write (the Edit/Write tool, NEVER a shell redirect — bash writes to `grants/` are policy-denied for everyone) to `.claude/fixloop/grants/git-cleanup`:
    ```
-   # git-cleanup lane grant (docs/parallel-fix-loop.md §4.10) — one-shot, delete after merge.
+   # git-cleanup lane grant (docs/archive/parallel-fix-loop.md §4.10) — one-shot, delete after merge.
    main_sha=<MAIN_SHA>
    main_tree=<MAIN_TREE>
    ```

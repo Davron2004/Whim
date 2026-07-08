@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # FULL verification gate — per-fix, pre-merge. Run ONCE by the orchestrator before a fix is
-# merged to dev/v1 (serialized). Runs the FAST gate (scripts/gate.sh) first, then the heavy /
+# merged to main (serialized). Runs the FAST gate (scripts/gate.sh) first, then the heavy /
 # flaky steps deferred from the inner loop: dead-code, the Metro bundler guard, the headless-
 # Chromium invariant suites, and openspec validation.
 #
-# Split rationale (docs/parallel-fix-loop.md §4.3): `npm run build` is ~0.3s and lives in the
+# Split rationale (docs/archive/parallel-fix-loop.md §4.3): `npm run build` is ~0.3s and lives in the
 # FAST gate (it writes the gitignored src/runtime/generated/* that typecheck + Metro + the
 # invariants all need). What we defer here is Metro + headless Chromium — the steps that are slow
 # and that contend / flake when N fixer worktrees run in parallel.
@@ -33,6 +33,7 @@ check "metro-guard"       npm run -s guard:metro
 check "invariants"        npm run -s invariants
 check "bridge-invariants" npm run -s bridge:invariants
 check "deliver-by-source" npm run -s launcher:deliver-verify
+check "codex-sync"        node scripts/sync-codex.mjs --check
 # openspec is a required GLOBAL CLI (Homebrew) — NOT an npm package. Fail clearly if absent.
 command -v openspec >/dev/null 2>&1 || { echo "GATE: 'openspec' CLI not found on PATH — install it (e.g. brew install openspec)"; exit 2; }
 check "openspec"          npx openspec validate --all --strict

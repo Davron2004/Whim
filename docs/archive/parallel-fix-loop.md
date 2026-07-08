@@ -1,5 +1,13 @@
 # Parallel Fix Loop — design & build spec
 
+> **SUPERSEDED (2026-07-07).** Everything here was built and validated; the current canonical
+> reference is [`../harness.md`](../harness.md), and the operational runbooks are
+> `.claude/commands/fix-loop.md` + `.claude/commands/opsx/apply.md`. Kept because it is the
+> validation log: the spike evidence, threat analyses, and live-run lessons behind the harness.
+> Two facts have changed since: the integration branch is **`main`** (dev/v1 retired), and the
+> §8 generalization (worktree-parallel chains) is now BUILT into `/opsx:apply` (which replaced
+> `/dispatch`). Bare §references from active files point into this doc.
+
 > **Visuals:** see [`coding-harness-diagram.md`](./coding-harness-diagram.md) (per-finding pipeline, fan-out, salvage/PARK + the colour legend). This doc is the **prose spec + build plan + handoff seed**.
 >
 > **Status:** design locked 2026-06-26. **Not yet implemented.** Proven facts in §2 are from a throwaway-worktree spike on that date.

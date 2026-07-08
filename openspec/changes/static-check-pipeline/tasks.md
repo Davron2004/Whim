@@ -7,6 +7,14 @@ session hands off English bypass-class descriptions only. No execution of checke
 anywhere; no edits to `src/runtime/`, `src/sdk/`, `build/`, `invariants/`, or anything
 generated.*
 
+*Phased TDD (design D9 · `handoff/greenby-harness.md`): the executable corpus is authored
+**tests-first in Chain B** — the whole B–E assertion set, every test tagged `greenBy:<chain>`
+— on a greenBy harness that reads an untracked `checks/test/.phase`. Later chains (C/D/E)
+implement code until their tagged tests pass; each chain leaves `checks:test` green *for its
+phase* (later-chain tests are tolerated as pending), and the final/CI run is strict (all
+green). So "write the test" (Chain B) and "make it pass" (its greenBy chain) are separate
+tasks below — the red→green transition is scheduled by tag, not left red across a gate.*
+
 ## 1. English test specs (before any implementation — §16.5)
 
 - [ ] 1.1 Write the English test spec for the checker surface: every assertion tasks 3–7
@@ -34,20 +42,31 @@ generated.*
       it has no SDK facade), nav-call shapes (table ships EMPTY — #3 landed no nav API;
       structure + test-injection seam only), SDK-lint rules (raw timers →
       `delay`/`interval`).
+- [ ] 2.3 Build the greenBy TDD harness `checks/test/harness.ts` per
+      `handoff/greenby-harness.md`: the tagged `test(name, {greenBy}, fn)` helper, the
+      `checks/test/.phase` reader (absent ⇒ strict), and the due/pending/XPASS/FAIL semantics
+      with a non-zero exit iff a *due* test failed. Ordinary `checks/` code (not hook-blocked);
+      frozen after this chain — C/D/E add tests but never edit it.
 
-## 3. Parse gate + import allowlist (TDD — red first against task 1.1)
+## 3. Parse gate + import allowlist (turns the `greenBy:C` tests green — Chain C phase)
 
 - [ ] 3.1 Scaffold `checks/` + the suite runner (`checks/test/run.mjs`, the house
-      esbuild-bundle-then-node idiom) + `npm run checks:test`; first assertions red.
-      (The `package.json` script, root-tsconfig `checks/test` exclude, `scripts/gate.sh`
-      suite line, and `knip.json` coverage are hook-blocked HUMAN edits — chain-A.)
+      esbuild-bundle-then-node idiom) + `npm run checks:test`, then author the FULL B–E
+      assertion corpus in `checks/test/acceptance.ts` on the 2.3 harness — every assertion
+      tasks 3–7 will implement, each tagged `greenBy:` per `handoff/greenby-harness.md`'s
+      schedule (B tests green now; C/D/E tests start pending). Under Chain B's phase, the
+      suite is GREEN (only `greenBy:B` due). (The `package.json` script, root-tsconfig
+      `checks/test` exclude, `scripts/gate.sh` suite line, and `knip.json` coverage are
+      hook-blocked HUMAN edits — chain-A; the `checks/test/.phase` `.gitignore` line rides the
+      same bootstrap pass though it isn't itself hook-blocked, so `.phase` is ignored before the
+      dispatcher's first write.)
 - [ ] 3.2 Implement the parse gate over the TS compiler API (syntactic only, D2):
       diagnostics with original-source lines; unparseable source short-circuits all later
       passes.
 - [ ] 3.3 Implement the import allowlist: static specifiers exactly `vc-sdk`; `require` and
       dynamic `import()` rejected with hints naming the allowed import.
 
-## 4. Forbidden-global walk (TDD; design D3 — the T8 closer)
+## 4. Forbidden-global walk (turns the `greenBy:C` tests green — design D3, the T8 closer)
 
 - [ ] 4.1 Implement lexical scope/binding resolution: global-vs-shadowed reference
       classification, alias tainting through assignment (`const g = globalThis; const h = g`).
@@ -59,7 +78,7 @@ generated.*
 - [ ] 4.3 Verify the shadowing/false-positive assertions pass (honest local bindings named
       like globals are not flagged) — the §8.2 gate for this pass.
 
-## 5. Manifest extraction + consistency checks (TDD; design D5/D6)
+## 5. Manifest extraction + consistency checks (turns the `greenBy:D` tests green — design D5/D6)
 
 - [ ] 5.1 Implement `extractAppManifest`: single default-exported `defineApp` literal →
       `{name, initial, screens, capabilities, schema}`; non-literal fields →
@@ -72,7 +91,7 @@ generated.*
       test-injected shape row — literal targets resolve, non-literal targets rejected;
       hints list declared screens.
 
-## 6. SDK lint + schema check (TDD; design D6/D7)
+## 6. SDK lint + schema check (turns the `greenBy:D` tests green — design D6/D7)
 
 - [ ] 6.1 Implement the lint pass over the rules table: raw `setTimeout`/`setInterval`/
       `requestAnimationFrame` (function-arg form) → warning with `delay`/`interval` hint.
@@ -82,7 +101,7 @@ generated.*
       (as-built: `type_change`/`tombstone_violation`/`missing_default`) mapped to
       diagnostics preserving engine kind names + hints; absent → `emptyApplied()` baseline.
 
-## 7. Report assembly + the honest population (design D8)
+## 7. Report assembly + the honest population (turns the `greenBy:E` tests green — design D8)
 
 - [ ] 7.1 Implement `runStaticChecks(source, opts)`: pass ordering, diagnostic
       accumulation, `ok === diagnostics.length === 0`, determinism (stable ordering);

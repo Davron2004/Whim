@@ -184,7 +184,7 @@ styling; sensible empty/overflow behavior; SVG-or-DOM rendering choice made in d
 **Status:** implemented 2026-06-12 (branch `launcher-shell`, off `dev/v1`) — desktop gates green
 (build · invariants 42/42 (7 scenarios) · lint (no new errors) · vstore 52 · storage 131 ·
 bridge 63 · launcher 433 · tsc clean · by-source desktop parity); **on-device acceptance
-(task 7.2) PENDING** (offline release APK walk per `acceptance.spec.md`). As-built: decisions #43.
+(task 7.2) PENDING** (offline release APK walk per `acceptance.spec.md`). As-built: decisions #43b.
 **Contract notes (as-built, for #3 — the nav-depth seam):** the SDK↔host back-navigation seam
 is declared in `src/host/bridge/contract.ts` (`NavDepthFrame`/`NavBackFrame`, added to
 `classifyFrame` as control-family) with the anchor comment #3 implements against; the iframe-side
