@@ -31,14 +31,16 @@
         "src/host/**/test/**",
         "src/host/**/device-acceptance.ts",
         "invariants/**/*.mjs",
-        "fixtures/**/*.app.tsx"
+        "fixtures/**/*.app.tsx",
+        "checks/test/**"
       ],
       "project": [
         "App.tsx",
         "src/**/*.{ts,tsx,js}",
         "build/**/*.{ts,mjs,js}",
         "invariants/**/*.{mjs,js}",
-        "fixtures/**/*.tsx"
+        "fixtures/**/*.tsx",
+        "checks/**/*.ts"
       ]
     },
     "contract": {

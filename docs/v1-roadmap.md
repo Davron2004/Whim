@@ -274,7 +274,8 @@ decided in design.
 **Status:** proposed 2026-06-12 (`openspec/changes/static-check-pipeline/` — proposal/design/specs/tasks)
 **Contract notes:**
 
-- Top-level **`checks/`** (workspace-ified once #8's exist). `runStaticChecks(source,
+- Top-level plain directory **`checks/`** (not an npm workspace; kept dependency-light and
+  imported as TS source by package consumers). `runStaticChecks(source,
   {appliedSchema?, filename?}) → {ok, diagnostics, manifest?}` — pure, AST-only, **never
   executes** the candidate. Suite `npm run checks:test`, blocking CI.
 - Diagnostics: closed kind union + required `hint` in dependency-free `checks/contract.ts`,
@@ -283,8 +284,11 @@ decided in design.
   zero diagnostics of ANY severity; kinds reuse runtime names (`undeclared_capability`).
 - `extractAppManifest` (literal-only `defineApp`) feeds #11's record; schema check = #40's
   `validateArtifact`/`diffSchemas`, `appliedSchema` caller-supplied (device ships it on edits).
-  ⚠️ #3: nav-target check is table-driven on #1's `useNavigation`/`useRoute` — finalizing
-  against #3's as-built API is a data edit. New specs `static-checks`/`harness-diagnostics`
+  Missing `defineApp` means no manifest to extract in the pure checker; duplicated or
+  present-but-malformed `defineApp` is still an error. The exactly-one-default-`defineApp`
+  completeness guarantee belongs at the future generation-harness caller boundary (#11).
+  ⚠️ Future nav change: nav-target check is table-driven; finalizing against an as-built
+  SDK navigation API is a data edit. New specs `static-checks`/`harness-diagnostics`
   (#10 extends additively); hostile bypass corpus = separate §16.4 session. No brief deviations.
 **In:** a pure TS library (usable by server, evals, and tests): TS parse gate; import
 allowlist (only `vc-sdk`); **forbidden-global AST walk that closes T8** — direct refs,

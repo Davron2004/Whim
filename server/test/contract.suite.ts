@@ -76,6 +76,19 @@ export function runContractTests(): void {
     'Diagnostic accepts non-empty hint + arbitrary open kind',
     Diagnostic.safeParse({ kind: 'some-future-kind', hint: 'do x' }).success,
   );
+  check(
+    'Diagnostic accepts stub BUILD_FAILURE kind',
+    Diagnostic.safeParse({ kind: 'BUILD_FAILURE', hint: 'try again' }).success,
+  );
+  check(
+    'Diagnostic accepts optional severity + message',
+    Diagnostic.safeParse({
+      kind: 'parse_error',
+      severity: 'error',
+      message: 'Could not parse source.',
+      hint: 'Return one valid TypeScript module.',
+    }).success,
+  );
 
   // §1.3 — WireAppRecord is install-state-free: extra install fields do not survive validation.
   const polluted = { ...tinyRecord, id: 'app-1', installedAt: 123, position: 0 };

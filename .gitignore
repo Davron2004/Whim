@@ -87,6 +87,9 @@ src/runtime/generated/
 .claude/fixloop/grants/
 .claude/fixloop/owners/
 *.tmp.mjs
+# greenBy phased-TDD signal: the dispatcher writes checks/test/.phase into each chain's
+# worktree before dispatching; never committed, so gate-full.sh + CI run the suite STRICT.
+checks/test/.phase
 
 # Harness server: durable per-device token counter (the only server state) + local secrets
 server/.data/

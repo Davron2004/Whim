@@ -95,11 +95,13 @@ string-argument `setTimeout`/`setInterval` (implicit eval).
 
 The pipeline SHALL extract `{name, initial, screens, capabilities, schema}` from the
 source's single default-exported `defineApp({...})` call by reading AST literals only.
-A missing or duplicated `defineApp` default export, or a manifest field whose value is not
-statically analyzable (spread, call result, identifier indirection), SHALL produce an error
-diagnostic. The extracted manifest SHALL be included in the report whenever extraction
-succeeds — including on otherwise-failing reports — as the harness-side source of the
-app record.
+A source with no default-exported `defineApp({...})` call has no manifest to extract and
+SHALL produce no manifest diagnostic in the pure checker library. A duplicated
+`defineApp` default export, a present-but-malformed `defineApp`, or a manifest field whose
+value is not statically analyzable (spread, call result, imported identifier indirection)
+SHALL produce an error diagnostic. The extracted manifest SHALL be included in the report
+whenever extraction succeeds — including on otherwise-failing reports — as the
+harness-side source of the app record.
 
 #### Scenario: Computed capabilities rejected
 

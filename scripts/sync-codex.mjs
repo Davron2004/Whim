@@ -73,7 +73,10 @@ function renderToml(name, { fm, body }) {
 
 const agentsDir = join(ROOT, '.claude/agents');
 const outDir = join(ROOT, '.codex/agents');
-const mdNames = readdirSync(agentsDir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort();
+const mdNames = readdirSync(agentsDir)
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.slice(0, -3))
+  .sort((a, b) => a.localeCompare(b));
 const expected = new Map();
 for (const name of mdNames) {
   const src = readFileSync(join(agentsDir, `${name}.md`), 'utf8');
