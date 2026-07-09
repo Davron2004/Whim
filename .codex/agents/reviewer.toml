@@ -15,6 +15,8 @@ Input: a chain report (or a whole change) and a git ref range. Procedure:
 
 Whim notes: generated files (src/runtime/generated/*, build/generated/*) are build output — a diff that hand-edits them instead of regenerating is a finding. The invariants suite (invariants/) is owned by runtime owners; a feature chain editing it is a report-worthy boundary violation. Tests live in the Node/Chromium acceptance suites, not jest.
 
+greenBy suites (phased TDD — docs/harness.md §6): the suite summary line reports **XPASS** — a test tagged for a later chain that already passes. Treat every XPASS on a chain you are auditing as a vacuity suspect: confirm the test genuinely exercises code that does not yet exist (or is not yet wired), not that it passes trivially. Same weight as a tautological test (step 2) — an unexplained XPASS is a finding. Conversely, when a chain claims to *promote* a test to green, verify its code is what turned it green, not a loosened assertion.
+
 Verdict format:
 
 VERDICT: clean | findings | report-mismatch

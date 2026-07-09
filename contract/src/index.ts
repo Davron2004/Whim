@@ -19,6 +19,8 @@
  */
 import { z } from 'zod';
 
+export type { DiagnosticKind } from '../../checks/contract';
+
 /** Integer token counts. ONE shape, used identically by the SSE `usage` event, `/v1/usage`, and
  *  the OpenRouter wrapper's captured usage — imported by reference, never re-declared. */
 export const Usage = z.object({
@@ -29,10 +31,12 @@ export const Usage = z.object({
 export type Usage = z.infer<typeof Usage>;
 
 /** The §8.1 diagnostics envelope. `hint` is mandatory non-empty (shaped like the right SDK
- *  answer). `kind` is an OPEN string at this change — #9 (static-check-pipeline) narrows it into a
- *  closed catalog inside this same package later; do NOT hard-code a closed enum here. */
+ *  answer). `kind` stays an OPEN wire string so existing stub/runtime kinds keep validating; #9
+ *  re-exports the static-check closed kind union as a TS-only narrowing for producers that want it. */
 export const Diagnostic = z.object({
   kind: z.string(),
+  severity: z.enum(['error', 'warning']).optional(),
+  message: z.string().optional(),
   symbol: z.string().optional(),
   line: z.number().optional(),
   hint: z.string().min(1),
