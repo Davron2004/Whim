@@ -1,6 +1,6 @@
 module.exports = {
   root: true,
-  extends: '@react-native',
+  extends: ['@react-native', 'plugin:sonarjs/recommended-legacy'],
   rules: {
     'no-restricted-syntax': [
       'error',
@@ -10,4 +10,12 @@ module.exports = {
       },
     ],
   },
+  overrides: [
+    {
+      // The house greenBy harness (checks/test/harness.ts) asserts via its own
+      // assert/assertHasKind/assertNoKind helpers, which S2699 does not recognize.
+      files: ['checks/test/**'],
+      rules: { 'sonarjs/assertions-in-tests': 'off' },
+    },
+  ],
 };
