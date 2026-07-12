@@ -50,6 +50,13 @@ function fsError(code: string, message: string): NodeJS.ErrnoException {
   return err;
 }
 
+/** Byte size for a node's stat entry: file data length, symlink target length, else 0. */
+function sizeOf(node: FsNode): number {
+  if (node.type === 'file') return node.data!.length;
+  else if (node.type === 'symlink') return node.target!.length;
+  else return 0;
+}
+
 /** POSIX-style path normalization: absolute, collapsed, no trailing slash (except root). */
 export function normalizePath(p: string): string {
   const parts = p.split('/');
@@ -182,7 +189,7 @@ export class MemoryFs implements FsBackend {
     const np = normalizePath(path);
     const node = this.entries.get(np);
     if (!node) throw fsError('ENOENT', `no such file or directory '${path}'`);
-    const size = node.type === 'file' ? node.data!.length : node.type === 'symlink' ? node.target!.length : 0;
+    const size = sizeOf(node);
     return new Stats(node, size);
   }
 

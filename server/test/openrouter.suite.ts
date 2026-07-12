@@ -104,8 +104,8 @@ function makeAbortableSseFetch(
 
 /** Consume an async iterable to completion, discarding values. */
 async function drain(iter: AsyncIterable<unknown>): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _item of iter) { /* intentional no-op drain */ }
+  const iterator = iter[Symbol.asyncIterator]();
+  while (!(await iterator.next()).done) { /* discard */ }
 }
 
 // ─── Recorded SSE frames (success scenario) ──────────────────────────────────

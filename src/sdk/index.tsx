@@ -436,6 +436,13 @@ function buttonVariantStyle(variant: NonNullable<ButtonProps['variant']>) {
       return { background: color('primary'), border: 'none', color: color('on-primary') };
   }
 }
+// Disabled takes precedence over pressed (a disabled button never dips further on press —
+// its pointer handlers aren't attached in the first place, see below).
+function buttonOpacity(disabled: boolean, pressed: boolean): number {
+  if (disabled) return 0.5;
+  if (pressed) return 0.8;
+  return 1;
+}
 export function Button({
   label,
   radius: radiusToken = 'md',
@@ -467,7 +474,7 @@ export function Button({
         padding: `${space('md')} ${space('lg')}`,
         borderRadius: radius(radiusToken),
         cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
+        opacity: buttonOpacity(disabled, pressed),
         transition: 'opacity 80ms',
         ...TAP_RESET,
         ...buttonVariantStyle(variant),

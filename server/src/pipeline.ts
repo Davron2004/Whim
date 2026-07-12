@@ -50,40 +50,43 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function* stubRun(
-  request: GenerateRequest,
+/**
+ * Emits one stage's full event sequence (start → optional token sub-loop → done), each
+ * preceded by a signal-aware delay. Returns `true` as soon as an abort is observed at any exit
+ * point, so the caller can stop the whole stream without emitting a terminal event.
+ */
+async function* emitStage(
+  stage: 'plan' | 'generate' | 'check' | 'run',
   delayMs: number,
+  isFailure: boolean,
   signal?: AbortSignal,
-): AsyncIterable<GenerationEvent> {
-  const isFailure = request.prompt.includes('[[fail]]');
+): AsyncGenerator<GenerationEvent, boolean> {
+  await delay(delayMs, signal);
+  if (signal?.aborted) return true;
+  yield { type: 'stage', stage, status: 'start' };
 
-  // Stages: plan → generate (with tokens) → check → run
-  const stages: Array<'plan' | 'generate' | 'check' | 'run'> = [
-    'plan',
-    'generate',
-    'check',
-    'run',
-  ];
-
-  for (const stage of stages) {
-    await delay(delayMs, signal);
-    if (signal?.aborted) return;
-    yield { type: 'stage', stage, status: 'start' };
-
-    if (stage === 'generate' && !isFailure) {
-      // Emit a few token events during generate
-      for (const text of ['Hello', ' ', 'World', '!']) {
-        await delay(delayMs, signal);
-        if (signal?.aborted) return;
-        yield { type: 'token', text };
-      }
+  if (stage === 'generate' && !isFailure) {
+    // Emit a few token events during generate
+    for (const text of ['Hello', ' ', 'World', '!']) {
+      await delay(delayMs, signal);
+      if (signal?.aborted) return true;
+      yield { type: 'token', text };
     }
-
-    await delay(delayMs, signal);
-    if (signal?.aborted) return;
-    yield { type: 'stage', stage, status: 'done' };
   }
 
+  await delay(delayMs, signal);
+  if (signal?.aborted) return true;
+  yield { type: 'stage', stage, status: 'done' };
+
+  return false;
+}
+
+/** Emits the usage event followed by the single terminal (failure or result) event. */
+async function* emitTerminal(
+  delayMs: number,
+  isFailure: boolean,
+  signal?: AbortSignal,
+): AsyncGenerator<GenerationEvent, void> {
   // Usage event always precedes the terminal
   await delay(delayMs, signal);
   if (signal?.aborted) return;
@@ -105,4 +108,27 @@ async function* stubRun(
   } else {
     yield { type: 'result', app: STUB_APP_RECORD };
   }
+}
+
+async function* stubRun(
+  request: GenerateRequest,
+  delayMs: number,
+  signal?: AbortSignal,
+): AsyncIterable<GenerationEvent> {
+  const isFailure = request.prompt.includes('[[fail]]');
+
+  // Stages: plan → generate (with tokens) → check → run
+  const stages: Array<'plan' | 'generate' | 'check' | 'run'> = [
+    'plan',
+    'generate',
+    'check',
+    'run',
+  ];
+
+  for (const stage of stages) {
+    const aborted = yield* emitStage(stage, delayMs, isFailure, signal);
+    if (aborted) return;
+  }
+
+  yield* emitTerminal(delayMs, isFailure, signal);
 }

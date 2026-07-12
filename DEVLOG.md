@@ -726,3 +726,43 @@ critic batch (F1, F3, D1, D3, D6, D7, E1, E2) onto `dev/v1`.
    permissions, and hooks together. Symptom looked exactly like "the sandbox isn't enforcing"
    (writes to `~/` succeeded); root cause was `/doctor` away. After any settings change, restart
    and verify with a throwaway blocked write before trusting the run.
+
+---
+
+## `fix-sonarjs-gate` — SonarCloud's rules folded into the local gate
+
+**Result:** `eslint-plugin-sonarjs@4.1.0` (`recommended-legacy`, 206 rules) added to the root
+eslint config, so `gate.sh`'s lint step now enforces the same rule set SonarCloud's PR quality
+gate runs — cognitive complexity, nested ternaries, and friends fail the inner loop locally
+instead of surfacing as a post-hoc PR rework cycle (which is exactly what happened to
+`static-check-pipeline`: ~3h of Sonar-driven rework on the PR branch after the OpenSpec ledger
+had closed). Enabling the rules surfaced 20 findings: 9 false positives (the house greenBy
+harness's own assert helpers aren't recognized by S2699 — scoped override for `checks/test/**`)
+and 11 real ones, fixed via the parallel fix loop (9 findings, 9 worktrees, 3 reviewers, all
+merged; storage-engine `schema.ts` complexity-46/39 decomposition user-ratified). Full gate
+green on merged main.
+
+### Lessons / sharp edges
+
+1. **`// NOSONAR` is a scanner feature, not an eslint one.** `schema.ts` carried two NOSONAR
+   suppressions that kept SonarCloud quiet for months; `eslint-plugin-sonarjs` ignores them and
+   flagged both functions immediately. Local lint is therefore *stricter* than SonarCloud here —
+   suppression debt surfaces the moment the plugin lands.
+2. **A real SonarCloud scan can't live in the gate.** Automatic analysis is server-side (no
+   `sonar-project.properties` in-repo), needs a token + network, and the containerized fix-loop
+   is deny-egress-except-Anthropic. The eslint plugin is the right in-loop mirror; SonarCloud
+   stays the authoritative external check at PR time.
+3. **Enabling a new lint rule set before fixing its findings makes every fix-branch baseline-RED.**
+   No individual fix could pass the full gate until all nine merged — the orchestrator had to
+   adjudicate "lint failures excused iff confined to still-unfixed batch files" per merge, with
+   the one authoritative no-excuses `gate-full.sh` after the final merge. Enable-then-fix works,
+   but budget for the batch being atomic from the gate's perspective.
+4. **Rule cascades: deleting the flagged line isn't always the fix.** Removing a dead
+   `if (false) yield` from a generator test-double flipped the finding into
+   `sonarjs/generator-without-yield`; the real fix was replacing the generator with a hand-rolled
+   never-resolving `AsyncIterable`. Fix the construct, not the diagnostic.
+5. **Planner assumptions about "generated files are committed" must be checked against
+   `git ls-files`, not the build docs.** `src/runtime/generated/` is rebuilt by the gate and
+   deliberately gitignored (zero tracked files); a worker following the plan's "commit the
+   regenerated artifacts" instruction force-added them before the orchestrator caught it in the
+   deviation report. `.gitignore` + `git ls-files` is the ground truth for what a commit may contain.

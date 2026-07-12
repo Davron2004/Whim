@@ -93,7 +93,81 @@ export type SchemaDiff =
  * found (empty array = valid). Post-creation default requirements are NOT checked here —
  * that needs the applied schema and is a `missing_default` conflict from `diffSchemas`.
  */
-export function validateArtifact(artifact: unknown): StorageError[] { // NOSONAR - schema validation is deliberately exhaustive and branch-heavy.
+/** Absorbs the two `continue`-triggering shape checks (reserved name, then malformed
+ *  object/`fields`); returns null where the original loop iteration would `continue`. */
+function validateCollectionShape(collName: string, coll: unknown, errors: StorageError[]): CollectionSpec | null {
+  if (collName === 'id') {
+    errors.push({ kind: 'invalid_artifact', collection: collName, hint: 'Collection display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
+    return null;
+  }
+  if (!isObject(coll) || !isObject((coll as unknown as CollectionSpec).fields)) {
+    errors.push({ kind: 'invalid_artifact', collection: collName, hint: `Collection "${collName}" must have an \`id\` and a \`fields\` object.` });
+    return null;
+  }
+  return coll as unknown as CollectionSpec;
+}
+
+/** Burned-ID form + cross-collection reuse check; mutates `seenCollectionIds` in place so
+ *  state survives across loop iterations. */
+function validateCollectionId(c: CollectionSpec, collName: string, seenCollectionIds: Set<string>, errors: StorageError[]): void {
+  if (!BURNED_ID_RE.test(c.id)) {
+    errors.push({ kind: 'malformed_id', collection: collName, hint: `Collection "${collName}" has a malformed ID "${c.id}"; burned IDs are a lowercase letter then digits (e.g. c1).` });
+  }
+  if (seenCollectionIds.has(c.id)) {
+    errors.push({ kind: 'id_reuse', collection: collName, hint: `Collection ID "${c.id}" is used by more than one collection; each needs a unique burned ID.` });
+  }
+  seenCollectionIds.add(c.id);
+}
+
+/** Tombstones-array-or-empty fallback, missing-array error, malformed-tombstone-ID loop.
+ *  Returns the tombstone set for the field loop to cross-check against. */
+function validateTombstones(c: CollectionSpec, collName: string, errors: StorageError[]): Set<string> {
+  const tombstones = Array.isArray(c.tombstones) ? c.tombstones : [];
+  if (!Array.isArray(c.tombstones)) {
+    errors.push({ kind: 'invalid_artifact', collection: collName, hint: `Collection "${collName}" must have a \`tombstones\` array (use [] if none).` });
+  }
+  const tombstoneSet = new Set(tombstones);
+  for (const tid of tombstones) {
+    if (!BURNED_ID_RE.test(tid)) {
+      errors.push({ kind: 'malformed_id', collection: collName, hint: `Tombstone ID "${tid}" in "${collName}" is malformed.` });
+    }
+  }
+  return tombstoneSet;
+}
+
+/** Everything inside the fields loop body: reserved name, shape, malformed ID, ID reuse,
+ *  active+tombstoned conflict, type check, default check. `seenFieldIds` mutated in place. */
+function validateField(collName: string, fieldName: string, field: unknown, seenFieldIds: Set<string>, tombstoneSet: Set<string>, errors: StorageError[]): void {
+  if (fieldName === 'id') {
+    errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: 'Field display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
+    return;
+  }
+  if (!isObject(field)) {
+    errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" must be an object.` });
+    return;
+  }
+  const f = field as unknown as { id: string; type: FieldType; default?: JsonValue };
+  if (!BURNED_ID_RE.test(f.id)) {
+    errors.push({ kind: 'malformed_id', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" has a malformed ID "${f.id}"; burned IDs are a lowercase letter then digits (e.g. f1).` });
+  }
+  if (seenFieldIds.has(f.id)) {
+    errors.push({ kind: 'id_reuse', collection: collName, field: fieldName, hint: `Field ID "${f.id}" is used by more than one field in "${collName}".` });
+  }
+  seenFieldIds.add(f.id);
+  if (tombstoneSet.has(f.id)) {
+    errors.push({ kind: 'id_reuse', collection: collName, field: fieldName, hint: `Field ID "${f.id}" in "${collName}" is both active and tombstoned; a retired ID cannot be active.` });
+  }
+  if (!FIELD_TYPES.includes(f.type)) {
+    errors.push({ kind: 'bad_field_type', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" has unknown type "${String(f.type)}"; use one of ${FIELD_TYPES.join('/')}.` });
+  } else if (f.default !== undefined) {
+    const reason = checkValue(f.type, f.default);
+    if (reason) {
+      errors.push({ kind: 'bad_default', collection: collName, field: fieldName, hint: `Default for "${fieldName}" in "${collName}" is invalid: ${reason}.` });
+    }
+  }
+}
+
+export function validateArtifact(artifact: unknown): StorageError[] {
   const errors: StorageError[] = [];
   if (!isObject(artifact)) {
     return [{ kind: 'invalid_artifact', hint: 'Schema artifact must be an object.' }];
@@ -110,63 +184,14 @@ export function validateArtifact(artifact: unknown): StorageError[] { // NOSONAR
 
   const seenCollectionIds = new Set<string>();
   for (const [collName, coll] of Object.entries(collections)) {
-    if (collName === 'id') {
-      errors.push({ kind: 'invalid_artifact', collection: collName, hint: 'Collection display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
-      continue;
-    }
-    if (!isObject(coll) || !isObject((coll as CollectionSpec).fields)) {
-      errors.push({ kind: 'invalid_artifact', collection: collName, hint: `Collection "${collName}" must have an \`id\` and a \`fields\` object.` });
-      continue;
-    }
-    const c = coll as CollectionSpec;
-    if (!BURNED_ID_RE.test(c.id)) {
-      errors.push({ kind: 'malformed_id', collection: collName, hint: `Collection "${collName}" has a malformed ID "${c.id}"; burned IDs are a lowercase letter then digits (e.g. c1).` });
-    }
-    if (seenCollectionIds.has(c.id)) {
-      errors.push({ kind: 'id_reuse', collection: collName, hint: `Collection ID "${c.id}" is used by more than one collection; each needs a unique burned ID.` });
-    }
-    seenCollectionIds.add(c.id);
-
-    const tombstones = Array.isArray(c.tombstones) ? c.tombstones : [];
-    if (!Array.isArray(c.tombstones)) {
-      errors.push({ kind: 'invalid_artifact', collection: collName, hint: `Collection "${collName}" must have a \`tombstones\` array (use [] if none).` });
-    }
-    const tombstoneSet = new Set(tombstones);
-    for (const tid of tombstones) {
-      if (!BURNED_ID_RE.test(tid)) {
-        errors.push({ kind: 'malformed_id', collection: collName, hint: `Tombstone ID "${tid}" in "${collName}" is malformed.` });
-      }
-    }
+    const c = validateCollectionShape(collName, coll, errors);
+    if (!c) continue;
+    validateCollectionId(c, collName, seenCollectionIds, errors);
+    const tombstoneSet = validateTombstones(c, collName, errors);
 
     const seenFieldIds = new Set<string>();
     for (const [fieldName, field] of Object.entries(c.fields)) {
-      if (fieldName === 'id') {
-        errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: 'Field display name "id" is reserved for the engine-assigned primary key; choose a different name.' });
-        continue;
-      }
-      if (!isObject(field)) {
-        errors.push({ kind: 'invalid_artifact', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" must be an object.` });
-        continue;
-      }
-      const f = field;
-      if (!BURNED_ID_RE.test(f.id)) {
-        errors.push({ kind: 'malformed_id', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" has a malformed ID "${f.id}"; burned IDs are a lowercase letter then digits (e.g. f1).` });
-      }
-      if (seenFieldIds.has(f.id)) {
-        errors.push({ kind: 'id_reuse', collection: collName, field: fieldName, hint: `Field ID "${f.id}" is used by more than one field in "${collName}".` });
-      }
-      seenFieldIds.add(f.id);
-      if (tombstoneSet.has(f.id)) {
-        errors.push({ kind: 'id_reuse', collection: collName, field: fieldName, hint: `Field ID "${f.id}" in "${collName}" is both active and tombstoned; a retired ID cannot be active.` });
-      }
-      if (!FIELD_TYPES.includes(f.type)) {
-        errors.push({ kind: 'bad_field_type', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" has unknown type "${String(f.type)}"; use one of ${FIELD_TYPES.join('/')}.` });
-      } else if (f.default !== undefined) {
-        const reason = checkValue(f.type, f.default);
-        if (reason) {
-          errors.push({ kind: 'bad_default', collection: collName, field: fieldName, hint: `Default for "${fieldName}" in "${collName}" is invalid: ${reason}.` });
-        }
-      }
+      validateField(collName, fieldName, field, seenFieldIds, tombstoneSet, errors);
     }
   }
   return errors;
@@ -181,7 +206,87 @@ export function validateArtifact(artifact: unknown): StorageError[] { // NOSONAR
  * Lands in exactly one of: identical, additive (with a CREATE/ADD-only plan), older-subset
  * (rollback — zero DDL), or conflict (the four reject kinds, each with a fix hint).
  */
-export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): SchemaDiff { // NOSONAR - schema diff classification is intentionally centralized for invariant coverage.
+/** Brand-new collection → one CREATE TABLE with all declared fields (no default needed:
+ *  there are no existing rows to read forgivingly). Caller does the push/set into
+ *  `creates`/`next.collections`/`nextById`. */
+function planNewCollection(coll: CollectionSpec): { create: CreateTablePlan; appliedColl: AppliedCollection } {
+  const columns: PlanColumn[] = Object.values(coll.fields).map(f => ({ id: f.id, type: f.type, default: f.default }));
+  const appliedColl: AppliedCollection = {
+    id: coll.id,
+    active: Object.values(coll.fields).map(f => ({ id: f.id, type: f.type })),
+    retired: [],
+  };
+  return { create: { collectionId: coll.id, columns }, appliedColl };
+}
+
+/** Classifies a single incoming field against the applied collection's active/retired
+ *  columns: type-change (active), rollback-across-tombstone or violation (retired),
+ *  missing-default or additive (neither). Returns whether this field's resolution is a
+ *  non-additive, zero-DDL change (only the rollback-across-tombstone case). */
+function diffField(collectionId: string, collName: string, fieldName: string, f: { id: string; type: FieldType; default?: JsonValue }, activeById: Map<string, AppliedColumn>, retiredById: Map<string, AppliedColumn>, nextColl: AppliedCollection, adds: AddColumnPlan[], errors: StorageError[]): boolean {
+  const activeCol = activeById.get(f.id);
+  const retiredCol = retiredById.get(f.id);
+
+  if (activeCol) {
+    if (activeCol.type !== f.type) {
+      errors.push({ kind: 'type_change', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" changed type ${activeCol.type}→${f.type}; a burned field's type is fixed — add a new field instead.` });
+    }
+    // same id + same type, possibly a different display name = rename → no DDL.
+    return false;
+  }
+  if (retiredCol) {
+    if (retiredCol.type === f.type) {
+      // Rollback across a tombstone: the SAME field re-appears (same id, same type).
+      // The column exists — no DDL — and it returns to active.
+      moveColumn(nextColl, 'retired', 'active', f.id);
+      return true;
+    }
+    errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
+    return false;
+  }
+  if (f.default === undefined) {
+    // Truly new field on an existing collection → a default is required (forgiving reads).
+    errors.push({ kind: 'missing_default', collection: collName, field: fieldName, hint: `New field "${fieldName}" in "${collName}" needs a default so existing rows can be read.` });
+    return false;
+  }
+  adds.push({ collectionId, column: { id: f.id, type: f.type, default: f.default } });
+  nextColl.active.push({ id: f.id, type: f.type });
+  return false;
+}
+
+/** Per-field loop (type-change / rollback-across-tombstone / missing-default / additive),
+ *  tombstone-apply loop, and the per-collection field-omission check. Returns the local
+ *  `changed` accumulation; caller OR-accumulates it into the outer `changed`. */
+function diffExistingFields(collName: string, coll: CollectionSpec, aColl: AppliedCollection, nextColl: AppliedCollection, adds: AddColumnPlan[], errors: StorageError[]): boolean {
+  let changed = false;
+  const activeById = new Map(aColl.active.map(c => [c.id, c]));
+  const retiredById = new Map(aColl.retired.map(c => [c.id, c]));
+  const incomingTombstones = new Set(coll.tombstones);
+
+  for (const [fieldName, f] of Object.entries(coll.fields)) {
+    if (incomingTombstones.has(f.id)) continue; // contradiction caught by validateArtifact
+    if (diffField(coll.id, collName, fieldName, f, activeById, retiredById, nextColl, adds, errors)) changed = true;
+  }
+
+  // Apply incoming tombstones: move any still-active column to retired (data retained).
+  for (const tid of incomingTombstones) {
+    if (nextColl.active.some(c => c.id === tid)) {
+      moveColumn(nextColl, 'active', 'retired', tid);
+      changed = true;
+    }
+  }
+
+  // Omission: an applied-active field the incoming artifact no longer mentions (rollback to
+  // older code). Retained untouched (no DDL); this is what makes older code lossless.
+  const incomingActiveIds = new Set(Object.values(coll.fields).map(f => f.id));
+  for (const ac of aColl.active) {
+    if (!incomingActiveIds.has(ac.id)) changed = true;
+  }
+
+  return changed;
+}
+
+export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): SchemaDiff {
   const errors: StorageError[] = [];
   const creates: CreateTablePlan[] = [];
   const adds: AddColumnPlan[] = [];
@@ -195,68 +300,15 @@ export function diffSchemas(applied: AppliedSchema, incoming: SchemaArtifact): S
     const aColl = appliedById.get(coll.id);
 
     if (!aColl) {
-      // Brand-new collection → one CREATE TABLE with all declared fields (no default needed:
-      // there are no existing rows to read forgivingly).
-      const columns: PlanColumn[] = Object.values(coll.fields).map(f => ({ id: f.id, type: f.type, default: f.default }));
-      creates.push({ collectionId: coll.id, columns });
-      const nextColl: AppliedCollection = {
-        id: coll.id,
-        active: Object.values(coll.fields).map(f => ({ id: f.id, type: f.type })),
-        retired: [],
-      };
-      next.collections.push(nextColl);
-      nextById.set(coll.id, nextColl);
+      const { create, appliedColl } = planNewCollection(coll);
+      creates.push(create);
+      next.collections.push(appliedColl);
+      nextById.set(coll.id, appliedColl);
       continue;
     }
 
     const nextColl = nextById.get(coll.id)!;
-    const activeById = new Map(aColl.active.map(c => [c.id, c]));
-    const retiredById = new Map(aColl.retired.map(c => [c.id, c]));
-    const incomingTombstones = new Set(coll.tombstones);
-
-    for (const [fieldName, f] of Object.entries(coll.fields)) {
-      if (incomingTombstones.has(f.id)) continue; // contradiction caught by validateArtifact
-
-      const activeCol = activeById.get(f.id);
-      const retiredCol = retiredById.get(f.id);
-
-      if (activeCol) {
-        if (activeCol.type !== f.type) {
-          errors.push({ kind: 'type_change', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" changed type ${activeCol.type}→${f.type}; a burned field's type is fixed — add a new field instead.` });
-        }
-        // same id + same type, possibly a different display name = rename → no DDL.
-      } else if (retiredCol) {
-        if (retiredCol.type === f.type) {
-          // Rollback across a tombstone: the SAME field re-appears (same id, same type).
-          // The column exists — no DDL — and it returns to active.
-          moveColumn(nextColl, 'retired', 'active', f.id);
-          changed = true;
-        } else {
-          errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
-        }
-      } else if (f.default === undefined) {
-        // Truly new field on an existing collection → a default is required (forgiving reads).
-        errors.push({ kind: 'missing_default', collection: collName, field: fieldName, hint: `New field "${fieldName}" in "${collName}" needs a default so existing rows can be read.` });
-      } else {
-        adds.push({ collectionId: coll.id, column: { id: f.id, type: f.type, default: f.default } });
-        nextColl.active.push({ id: f.id, type: f.type });
-      }
-    }
-
-    // Apply incoming tombstones: move any still-active column to retired (data retained).
-    for (const tid of incomingTombstones) {
-      if (nextColl.active.some(c => c.id === tid)) {
-        moveColumn(nextColl, 'active', 'retired', tid);
-        changed = true;
-      }
-    }
-
-    // Omission: an applied-active field the incoming artifact no longer mentions (rollback to
-    // older code). Retained untouched (no DDL); this is what makes older code lossless.
-    const incomingActiveIds = new Set(Object.values(coll.fields).map(f => f.id));
-    for (const ac of aColl.active) {
-      if (!incomingActiveIds.has(ac.id)) changed = true;
-    }
+    if (diffExistingFields(collName, coll, aColl, nextColl, adds, errors)) changed = true;
   }
 
   // Whole collections the incoming artifact omits are likewise retained.

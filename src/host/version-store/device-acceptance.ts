@@ -59,17 +59,11 @@ export interface DeviceAcceptanceOptions {
   kv?: KVBackend;
 }
 
-export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): Promise<DeviceVerdict> {
-  const failures: string[] = [];
-  const latencyMs: Record<string, number> = {};
-  const check = (cond: boolean, msg: string) => {
-    if (!cond) failures.push(msg);
-    return cond;
-  };
+type Check = (cond: boolean, msg: string) => boolean;
+type Time = <T>(into: Record<string, number>, key: string, fn: () => Promise<T>) => Promise<T>;
 
-  const gitVersion = git.version();
-
-  // --- 1.3 Hermes load: isomorphic-git loaded; git.init runs (proven by snapshotting).
+// --- 1.3 Hermes load: isomorphic-git loaded; git.init runs (proven by snapshotting).
+async function runHermesLoadSection(failures: string[]): Promise<{ initOk: boolean }> {
   let initOk = false;
   try {
     const probe = new VersionStore({ backend: new MemoryFs(), config: { autoCompact: false } });
@@ -78,29 +72,46 @@ export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): P
   } catch (err) {
     failures.push(`hermes load / git.init failed: ${(err as Error).message}`);
   }
+  return { initOk };
+}
 
-  // --- 7.2 full lifecycle (mini-app-versioning + forking) + 7.3 latency, in-memory.
+// --- 7.2 full lifecycle (mini-app-versioning + forking) + 7.3 latency, in-memory.
+async function runLifecycleSection(
+  check: Check,
+  timed: Time,
+  latencyMs: Record<string, number>,
+  failures: string[],
+): Promise<{
+  historyOk: boolean;
+  diffOk: boolean;
+  rollbackOk: boolean;
+  pinOk: boolean;
+  forkOk: boolean;
+  noMergeOk: boolean;
+  gitNeverExposed: boolean;
+  looseObjects: number;
+}> {
   const APP = 'accept-app';
   const fresh = new VersionStore({ backend: new MemoryFs(), config: { autoCompact: false } });
 
-  await time(latencyMs, 'snapshot', () => fresh.snapshot(APP, { 'bundle.js': BUNDLE(1), 'manifest.json': '{}' }, 'gen 1'));
+  await timed(latencyMs, 'snapshot', () => fresh.snapshot(APP, { 'bundle.js': BUNDLE(1), 'manifest.json': '{}' }, 'gen 1'));
   for (let v = 2; v <= 6; v++) {
     await fresh.snapshot(APP, { 'bundle.js': BUNDLE(v), 'manifest.json': '{}' }, `gen ${v}`);
   }
-  const hist = await time(latencyMs, 'history', () => fresh.history(APP));
+  const hist = await timed(latencyMs, 'history', () => fresh.history(APP));
   const historyOk = check(hist.length === 6 && hist[0].prompt === 'gen 6', 'history wrong');
 
-  const changes = await time(latencyMs, 'diff', () => fresh.diff(APP, 'g1', 'g6'));
+  const changes = await timed(latencyMs, 'diff', () => fresh.diff(APP, 'g1', 'g6'));
   const diffOk = check(changes.some(c => c.file === 'bundle.js' && c.status === 'modified'), 'diff wrong');
 
-  await time(latencyMs, 'rollback', () => fresh.rollback(APP, 'g2'));
+  await timed(latencyMs, 'rollback', () => fresh.rollback(APP, 'g2'));
   const rollbackOk = check((await fresh.active(APP))?.artifacts['bundle.js'] === BUNDLE(2), 'rollback wrong');
   await fresh.rollback(APP, 'g6'); // non-destructive: g6 still returnable
 
-  await time(latencyMs, 'pin', () => fresh.pin(APP, 'g3', 'milestone'));
+  await timed(latencyMs, 'pin', () => fresh.pin(APP, 'g3', 'milestone'));
   const pinOk = check((await fresh.getPinned(APP, 'milestone')).artifacts['bundle.js'] === BUNDLE(3), 'pin wrong');
 
-  const { lineageId } = await time(latencyMs, 'fork', () => fresh.fork(APP, 'g1'));
+  const { lineageId } = await timed(latencyMs, 'fork', () => fresh.fork(APP, 'g1'));
   await fresh.snapshot(APP, { 'bundle.js': BUNDLE(99), 'manifest.json': '{}' }, 'fork edit');
   const g6 = await fresh.getSnapshot(APP, 'g6');
   const forkOk = check(lineageId === 'fork-1' && g6.artifacts['bundle.js'] === BUNDLE(6), 'fork not independent');
@@ -118,20 +129,40 @@ export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): P
     failures.push(`git leaked to surface: ${(err as Error).message}`);
   }
 
-  // --- §4 compaction on-device + integrity (4.3).
+  return {
+    historyOk,
+    diffOk,
+    rollbackOk,
+    pinOk,
+    forkOk,
+    noMergeOk,
+    gitNeverExposed,
+    looseObjects: fresh.looseObjectCount(APP),
+  };
+}
+
+// --- §4 compaction on-device + integrity (4.3).
+async function runCompactionSection(
+  check: Check,
+  timed: Time,
+  latencyMs: Record<string, number>,
+): Promise<{ before: number; after: number; packed: number; integrityOk: boolean }> {
   const cStore = new VersionStore({ backend: new MemoryFs(), config: { autoCompact: false } });
   const COMPACT = 'compact-app';
   for (let v = 1; v <= 12; v++) await cStore.snapshot(COMPACT, { 'bundle.js': BUNDLE(v) }, `c${v}`);
   await cStore.pin(COMPACT, 'g4', 'cpin');
-  const compaction = await time(latencyMs, 'compact', () => cStore.compact(COMPACT));
+  const compaction = await timed(latencyMs, 'compact', () => cStore.compact(COMPACT));
   const integrityOk = check(
     (await cStore.history(COMPACT)).length === 12 &&
       (await cStore.getPinned(COMPACT, 'cpin')).artifacts['bundle.js'] === BUNDLE(4),
     'post-compaction integrity failed',
   );
   check(compaction.after < compaction.before, 'compaction did not reduce loose objects');
+  return { before: compaction.before, after: compaction.after, packed: compaction.packed, integrityOk };
+}
 
-  // --- 5.3 reliability: repeated commit/checkout cycles, assert no corruption.
+// --- 5.3 reliability: repeated commit/checkout cycles, assert no corruption.
+async function runReliabilitySection(check: Check, failures: string[]): Promise<{ cyclesOk: boolean }> {
   let cyclesOk = true;
   try {
     const relStore = new VersionStore({ backend: new MemoryFs(), config: { autoCompact: false } });
@@ -146,16 +177,27 @@ export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): P
     failures.push(`reliability cycles failed: ${(err as Error).message}`);
   }
   check(cyclesOk, 'reliability: repeated commit/checkout cycles corrupted the repo');
+  return { cyclesOk };
+}
 
-  // --- 5.2/5.3 cross-restart persistence — only with a real KV backend (MMKV).
-  let persistBackend: 'mmkv' | 'none' = 'none';
+// --- 5.2/5.3 cross-restart persistence — only with a real KV backend (MMKV).
+async function runPersistenceSection(
+  check: Check,
+  kv: KVBackend | undefined,
+): Promise<{
+  backend: 'mmkv' | 'none';
+  priorGenerations: number;
+  restartVerified: boolean | 'n/a';
+  totalAfterThisRun: number;
+  kvKeys: number;
+}> {
+  let backend: 'mmkv' | 'none' = 'none';
   let priorGenerations = 0;
   let restartVerified: boolean | 'n/a' = 'n/a';
   let totalAfterThisRun = 0;
   let kvKeys = 0;
-  if (opts.kv) {
-    persistBackend = 'mmkv';
-    const kv = opts.kv;
+  if (kv) {
+    backend = 'mmkv';
     const PERSIST = 'persist-probe';
     const kvFs = new KvBackedFs(kv);
     const store = new VersionStore({ backend: kvFs, config: { autoCompact: false } });
@@ -186,15 +228,42 @@ export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): P
     totalAfterThisRun = (await store.history(PERSIST)).length;
     kvKeys = kvFs.kvKeyCount();
   }
+  return { backend, priorGenerations, restartVerified, totalAfterThisRun, kvKeys };
+}
+
+export async function runDeviceAcceptance(opts: DeviceAcceptanceOptions = {}): Promise<DeviceVerdict> {
+  const failures: string[] = [];
+  const latencyMs: Record<string, number> = {};
+  const check: Check = (cond, msg) => {
+    if (!cond) failures.push(msg);
+    return cond;
+  };
+
+  const gitVersion = git.version();
+
+  const { initOk } = await runHermesLoadSection(failures);
+  const lifecycle = await runLifecycleSection(check, time, latencyMs, failures);
+  const compaction = await runCompactionSection(check, time, latencyMs);
+  const reliability = await runReliabilitySection(check, failures);
+  const persistence = await runPersistenceSection(check, opts.kv);
 
   const verdict: DeviceVerdict = {
     gitVersion,
     hermesLoad: { initOk },
-    lifecycle: { snapshots: 6, historyOk, diffOk, rollbackOk, pinOk, forkOk, noMergeOk, gitNeverExposed },
-    compaction: { before: compaction.before, after: compaction.after, packed: compaction.packed, integrityOk },
-    persistence: { backend: persistBackend, priorGenerations, restartVerified, totalAfterThisRun },
-    reliability: { cyclesOk },
-    storage: { looseObjects: fresh.looseObjectCount(APP), kvKeys },
+    lifecycle: {
+      snapshots: 6,
+      historyOk: lifecycle.historyOk,
+      diffOk: lifecycle.diffOk,
+      rollbackOk: lifecycle.rollbackOk,
+      pinOk: lifecycle.pinOk,
+      forkOk: lifecycle.forkOk,
+      noMergeOk: lifecycle.noMergeOk,
+      gitNeverExposed: lifecycle.gitNeverExposed,
+    },
+    compaction,
+    persistence,
+    reliability,
+    storage: { looseObjects: lifecycle.looseObjects, kvKeys: persistence.kvKeys },
     latencyMs,
     failures,
     pass: failures.length === 0,

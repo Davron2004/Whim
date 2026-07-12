@@ -70,6 +70,14 @@ function stripTrailingNewline(s: string): string {
   return out;
 }
 
+/** Classifies a diff() entry from its before/after oids. Missing-before wins over
+ *  missing-after (matches the prior nested-ternary precedence exactly). */
+function changeStatusOf(aOid: string | undefined, bOid: string | undefined): ChangeStatus {
+  if (!aOid) return 'added';
+  if (!bOid) return 'removed';
+  return 'modified';
+}
+
 export interface VersionStoreOptions {
   backend: MemoryFs;
   config?: Partial<VersionStoreConfig>;
@@ -270,7 +278,7 @@ export class VersionStore {
         const aOid = A ? await A.oid() : undefined;
         const bOid = B ? await B.oid() : undefined;
         if (aOid === bOid) return null;
-        const status: ChangeStatus = !aOid ? 'added' : !bOid ? 'removed' : 'modified';
+        const status = changeStatusOf(aOid, bOid);
         const beforeBytes = A ? await A.content() : undefined;
         const afterBytes = B ? await B.content() : undefined;
         const before = beforeBytes ? decodeUtf8(beforeBytes as Uint8Array) : undefined;

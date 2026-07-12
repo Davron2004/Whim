@@ -336,13 +336,16 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
     };
 
     try {
-      // Given: a source that never yields (simulates long-running generation)
-      async function* neverYields(): AsyncGenerator<GenerationEvent> {
-        if (false) yield { type: 'token', text: '' };
-        await new Promise<void>(() => {});
-      }
+      // Given: a source that never yields (simulates long-running generation).
+      // Hand-rolled AsyncIterable (not a generator function) — its `next()` never resolves,
+      // so there's no generator body for sonarjs's generator-without-yield rule to police.
+      const neverYields: AsyncIterable<GenerationEvent> = {
+        [Symbol.asyncIterator]: () => ({
+          next: (): Promise<IteratorResult<GenerationEvent>> => new Promise(() => {}),
+        }),
+      };
 
-      const stream = buildSseStream(neverYields(), 50);
+      const stream = buildSseStream(neverYields, 50);
 
       // start() runs synchronously as part of stream construction — the interval should be
       // registered by the time getReader() returns (Node ReadableStream calls start() eagerly).

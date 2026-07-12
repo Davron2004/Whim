@@ -46,6 +46,28 @@ function b64decode(s: string): Uint8Array {
   return new Uint8Array(Buffer.from(s, 'base64'));
 }
 
+/** Reconstruct an FsNode from its persisted form, stamping mtime/ctime/ino from the caller. */
+function nodeFromSerialized(s: SerializedNode, t: number, ino: number): FsNode {
+  if (s.t === 'file') {
+    return { type: 'file', data: s.d ? b64decode(s.d) : new Uint8Array(0), mode: s.m ?? MODE_FILE, mtimeMs: t, ctimeMs: t, ino };
+  } else if (s.t === 'symlink') {
+    return { type: 'symlink', target: s.tg ?? '', mode: s.m ?? 0o120000, mtimeMs: t, ctimeMs: t, ino };
+  } else {
+    return { type: 'dir', mode: 0o040000, mtimeMs: t, ctimeMs: t, ino };
+  }
+}
+
+/** Serialize an FsNode into its persisted form. */
+function serializedFromNode(node: FsNode): SerializedNode {
+  if (node.type === 'file') {
+    return { t: 'file', m: node.mode === MODE_FILE ? undefined : node.mode, d: b64encode(node.data ?? new Uint8Array(0)) };
+  } else if (node.type === 'symlink') {
+    return { t: 'symlink', tg: node.target, m: node.mode };
+  } else {
+    return { t: 'dir' };
+  }
+}
+
 export class KvBackedFs extends MemoryFs {
   private kv: KVBackend;
 
@@ -67,12 +89,7 @@ export class KvBackedFs extends MemoryFs {
       const s = JSON.parse(raw) as SerializedNode;
       const ino = this.nextIno();
       const t = this.tick();
-      const node: FsNode =
-        s.t === 'file'
-          ? { type: 'file', data: s.d ? b64decode(s.d) : new Uint8Array(0), mode: s.m ?? MODE_FILE, mtimeMs: t, ctimeMs: t, ino }
-          : s.t === 'symlink'
-          ? { type: 'symlink', target: s.tg ?? '', mode: s.m ?? 0o120000, mtimeMs: t, ctimeMs: t, ino }
-          : { type: 'dir', mode: 0o040000, mtimeMs: t, ctimeMs: t, ino };
+      const node = nodeFromSerialized(s, t, ino);
       this.entries.set(path, node);
       maxIno = Math.max(maxIno, ino);
     }
@@ -82,12 +99,7 @@ export class KvBackedFs extends MemoryFs {
   protected onWrite(path: string, node: FsNode): void {
     // Skip during the base constructor (root entry) — kv not assigned yet.
     if (!this.kv) return;
-    const s: SerializedNode =
-      node.type === 'file'
-        ? { t: 'file', m: node.mode === MODE_FILE ? undefined : node.mode, d: b64encode(node.data ?? new Uint8Array(0)) }
-        : node.type === 'symlink'
-        ? { t: 'symlink', tg: node.target, m: node.mode }
-        : { t: 'dir' };
+    const s = serializedFromNode(node);
     this.kv.set(KEY_PREFIX + path, JSON.stringify(s));
   }
 
