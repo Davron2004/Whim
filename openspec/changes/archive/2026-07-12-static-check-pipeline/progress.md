@@ -107,14 +107,14 @@ D's assembly wiring already turns ALL 5 `greenBy:E` tests XPASS (assembly orderi
 - RE-REVIEW: performed by orchestrator via direct diff inspection (change is ~50 surgical lines; a redundant agent would re-derive it). Verified: scope.ts change is provably additive (classification expr identical with local.tainted substituted for local; taint sources/forbidden-global paths untouched); shadow logic correct (nested const found first, importInfo undefined → resolvesToImport false); aliased imports handled (`propertyName ?? name` = module export name); new tests non-vacuous by construction (old text-match fires on the literal `storage` shadow → tests 1&2 red-before-fix). Gate confirms C forbidden-global + honest-shadowing suite stays green.
 - merged: 8814b6e (--no-ff). strict regate → 45/45 green. FINAL gate-full.sh → FULL GATE PASSED (knip clean incl. new exports; 3 Chromium invariant suites; strict greenBy 45/45; openspec 16/16; codex-sync). worktree/branch/owner cleaned.
 
-## CLOSING SUMMARY (implementing work COMPLETE)
+## CLOSING SUMMARY (A–E + capfix — snapshot written BEFORE chains F/G ran; their entries below supersede the REMAINING line)
 - Chains run: A(bootstrap, human-ratified) → B → C → D → E, all merged + regated; + knip-entry fix (f09eb2e) + capfix (reviewer F1/F3, 8814b6e). Straight-line DAG, no parallel dispatch.
 - Redispatches: 1 (capfix revision 1 — class-B API-gap, adjudicated to an additive scope.ts extension). All other chains one-shot.
 - Deviations by class: all class A except the capfix class-B block (resolved). No class-C, no merge conflicts, no proposal-invalidation.
 - Gate history: every chain self-gated (phased) + serial regate; two gate-full failures caught+fixed (knip entry pattern) then green; final gate-full PASSED.
 - Reviewer: full A→E audit — report honesty matches diff; T8 walk genuine; 2 findings → F1 fixed (capfix), F2 → user-approved close-out docs directive (recorded above).
 - Final corpus: 45 tests, all green STRICT. Main tip 8814b6e.
-- REMAINING (handed back to user — NOT dispatched here): chain F (hostile bypass corpus, separate §16.4 session), chain G (close-out — carries the F2 directive + @whim/contract wiring). tasks 8.1/8.2 (F) and 9.1 (G) remain unticked in tasks.md.
+- REMAINING (as of this snapshot — since completed; see chain-F and chain-G entries below): chain F (hostile bypass corpus, separate §16.4 session), chain G (close-out — carries the F2 directive + @whim/contract wiring). Tasks 8.1/8.2 (F) and 9.1 (G) were unticked at snapshot time; both chains later ran to completion and all tasks are now ticked.
 - MEMORY candidates (durable, from implementer reports): (1) esbuild bundling `typescript` into a Node ESM output throws "Dynamic require of fs" → `external:['typescript']` + upward node_modules resolution (chain C); `ts.isImportCall` is @internal/absent from public .d.ts → use `node.expression.kind === ts.SyntaxKind.ImportKeyword`. (2) a `'global'|'local'|'tainted'` binding classification collapses "import" and "shadowing local" → needs declaration-identity (capfix). Orchestrator to apply worthwhile ones.
 
 ## chain-F: hostile-bypass-corpus (8.1, 8.2)
@@ -168,3 +168,20 @@ D's assembly wiring already turns ALL 5 `greenBy:E` tests XPASS (assembly orderi
   Mach-port permission errors; non-Chromium suites, knip, Metro guard, codex-sync, and openspec
   passed.
 - rerun `./scripts/gate-full.sh` outside the sandbox: FULL GATE PASSED.
+
+## POST-LEDGER: SonarCloud quality-gate rework on the PR branch (2026-07-09, recorded 2026-07-12)
+- After the ledger above closed, PR #4 (`static-check-pipeline` → `main`) went through a
+  SonarCloud (automatic analysis) quality-gate cycle outside this harness loop:
+  - 13:50 — `78e59f0` "refactored for code readability" (Sonar-driven cleanup on the PR branch).
+  - 15:31 — three parallel fix worktrees for the remaining findings: manifest cognitive
+    complexity, schema-check readability, scope cognitive complexity (`fix/sonar-*` branches).
+  - 18:31 — branch squashed to `9a3cc7f`; the final versions of `checks/internal/manifest.ts`,
+    `checks/internal/scope.ts`, `checks/passes/schema-check.ts` are reworked variants of those
+    fixes (the draft worktree versions were superseded). `.eslintrc.js` gained a
+    `no-restricted-syntax` rule banning comparator-less `.sort()` (internalizing that Sonar rule).
+  - 22:46Z — SonarCloud Quality Gate PASSED; PR #4 squash-merged to `main` as `03229ce`
+    (tree-identical to `9a3cc7f`).
+- Cleanup (2026-07-12): pruned the three superseded `fix/sonar-*` branches/worktrees, the stale
+  `static-check-pipeline` branch, and 16 stale June `worktree-wf_*` branches.
+- Follow-up adopted: fold SonarJS rules into the local lint so the gate catches these findings
+  before PR time (see DEVLOG / harness docs).

@@ -18,9 +18,9 @@ the scope walker. As-built (not the pre-implementation draft) — file paths are
 - `checks/index.ts` — `runStaticChecks` composes: parse (short-circuit on failure) → build one
   `CheckContext` → run `PASSES` in order → `{ ok: diagnostics.length === 0, diagnostics }`.
   `PASSES` is a plain `readonly Pass[]` array in `checks/index.ts` — **append your pass there**,
-  do not fork the composition. `manifest` is not populated yet — extraction (D, task 5.1) owns
-  filling `CheckReport.manifest`; that plumbing is not yet added to `CheckContext` and is D's to
-  design (e.g. a dedicated extraction step before/alongside `PASSES`, or a mutable slot on ctx).
+  do not fork the composition. `manifest` is populated by D (task 5.1): `manifestExtractionPass`
+  runs first in `PASSES` and fills a mutable `ctx.manifest` slot; later passes
+  (capabilities/screens/schema) read it from there, and `runStaticChecks` copies it onto the report.
 
 ## Pass signature (every pass is a function over shared context, side-effects via `report`)
 

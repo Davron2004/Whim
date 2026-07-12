@@ -129,7 +129,7 @@ Execution: the `/opsx:apply` dispatch loop (runbook: `.claude/commands/opsx/appl
 
 For a change that authors one test corpus up front (strict TDD) but turns it green across several
 chains. Reference implementation + full contract:
-`openspec/changes/static-check-pipeline/handoff/greenby-harness.md`.
+`openspec/changes/archive/2026-07-12-static-check-pipeline/handoff/greenby-harness.md`.
 
 - Each test is tagged `greenBy: <chain>` on the house ~30-line test harness (no shared framework).
 - The runner reads an untracked, gitignored `<suite>/.phase` file holding one chain id:

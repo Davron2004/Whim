@@ -271,7 +271,7 @@ decided in design.
 
 #### 9. `static-check-pipeline` — Size M–L · Deps: none (pure lib; TDD per §16.2)
 
-**Status:** proposed 2026-06-12 (`openspec/changes/static-check-pipeline/` — proposal/design/specs/tasks)
+**Status:** DONE — merged to `main` via PR #4 2026-07-09 (SonarCloud quality gate passed); archived 2026-07-12 (`openspec/changes/archive/2026-07-12-static-check-pipeline/`); live specs `openspec/specs/static-checks/`, `openspec/specs/harness-diagnostics/`
 **Contract notes:**
 
 - Top-level plain directory **`checks/`** (not an npm workspace; kept dependency-light and
