@@ -23,6 +23,29 @@
   'use strict';
   var T0 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 
+  // Capture the repository-internal mount root before any bundle can run, then erase the
+  // transient bootstrap seam. Mini-apps can resolve only the public `vc-sdk` namespace.
+  var internalSdkDescriptor = Object.getOwnPropertyDescriptor(
+    window,
+    '__WHIM_VC_SDK_INTERNAL__',
+  );
+  var internalSdk = window.__WHIM_VC_SDK_INTERNAL__;
+  if (
+    !internalSdkDescriptor ||
+    internalSdkDescriptor.enumerable !== false ||
+    internalSdkDescriptor.writable !== false ||
+    internalSdkDescriptor.configurable !== true ||
+    !internalSdk ||
+    Object.isFrozen(internalSdk) !== true ||
+    typeof internalSdk.NavRoot !== 'function'
+  ) {
+    throw new TypeError('trusted vc-sdk navigation bootstrap is missing or invalid');
+  }
+  var trustedNavRoot = internalSdk.NavRoot;
+  if (!delete window.__WHIM_VC_SDK_INTERNAL__ || '__WHIM_VC_SDK_INTERNAL__' in window) {
+    throw new TypeError('trusted vc-sdk navigation bootstrap could not be erased');
+  }
+
   // CONSTRAINT #3: snapshot the genuine probe fn before any untrusted code can overwrite it.
   var trustedRunProbes = (typeof __whimRunProbes === 'function') ? __whimRunProbes : null;
 
@@ -84,7 +107,7 @@
     try {
       if (!whimRoot) whimRoot = ReactDOM.createRoot(document.getElementById('whim-root'));
       // The bundle does not know it is in an iframe/WebView — it just described screens.
-      whimRoot.render(React.createElement(window.__WHIM_VC_SDK__.NavRoot, { spec: spec }));
+      whimRoot.render(React.createElement(trustedNavRoot, { spec: spec }));
     } catch (e) {
       post('error', { where: 'mount', name: e && e.name, message: e && String(e.message) });
       return;

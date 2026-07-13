@@ -2,7 +2,8 @@
 
 ## Mini-app surface
 
-`src/sdk/index.tsx` exports one stable module-scope object:
+`src/sdk/navigation.tsx` defines one stable module-scope object, re-exported publicly by
+`src/sdk/index.tsx`:
 
 ```ts
 export const nav: {
@@ -15,9 +16,9 @@ It has exactly those two methods. `navigate` and `back` synchronously emit an ac
 currently mounted SDK navigation root. They are ordinary functions, not hooks, and are safe to
 call from event handlers. Calls made while no navigation root is mounted are no-ops.
 
-## Loader mount surface
+## Repository-internal root
 
-The internal runtime export is:
+The runtime mount surface is exported directly from `src/sdk/navigation.tsx`:
 
 ```ts
 export interface NavRootProps {
@@ -27,6 +28,7 @@ export interface NavRootProps {
 export function NavRoot({ spec }: NavRootProps): React.ReactElement;
 ```
 
+Repository-owned acceptance tests import `NavRoot` from `../navigation`, not the public barrel.
 The trusted loader mounts `NavRoot` once per generation with the bundle's default `AppSpec`.
 `NavRoot` owns a `string[]` stack initialized to `[spec.initial]` and renders the component at
 `spec.screens[stack[stack.length - 1]]`. Duplicate pushes are retained. Back pops exactly one
@@ -68,3 +70,18 @@ Extra properties are tolerated. Malformed JSON, decoded primitives or arrays, di
 `event.data`, and decoded objects without the literal `true` marker are ignored. The listener
 adds no authority. At depth zero the frame is a silent no-op. Cleanup removes the message
 listener.
+
+## Temporary compatibility and chain-8 closure
+
+Until chain 8 atomically captures the internal root in the injected SDK payload and updates the
+loader, `src/sdk/index.tsx` temporarily re-exports all three navigation symbols:
+
+```ts
+export { nav, NavRoot } from './navigation';
+export type { NavRootProps } from './navigation';
+```
+
+Chain 8 must retain the public `nav` re-export, remove the `NavRoot` value and `NavRootProps`
+type re-exports from `src/sdk/index.tsx`, and make the trusted loader consume the separately
+captured internal `NavRoot`. That removal and loader capture are one atomic closure: neither may
+land alone, because the current loader still resolves `NavRoot` through the barrel.

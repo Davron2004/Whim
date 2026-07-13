@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { NavRoot, nav, type AppSpec } from '../index';
+import type { AppSpec } from '../index';
+import * as publicSdk from '../index';
+import { NavRoot, nav } from '../navigation';
 
 type MessageListener = (event: { data: unknown }) => void;
 
@@ -21,6 +23,9 @@ function deepEqual(actual: unknown, expected: unknown): void {
 function match(actual: string, expected: RegExp): void {
   if (!expected.test(actual)) fail(`expected ${JSON.stringify(actual)} to match ${String(expected)}`);
 }
+
+equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRoot'), false);
+equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRootProps'), false);
 
 const posted: string[] = [];
 const messageListeners = new Set<MessageListener>();

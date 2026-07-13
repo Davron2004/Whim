@@ -4,5 +4,17 @@
 // `window.React` via the H1b resolver (resolver.js runs before this script). This is the one
 // capability surface the bundle's `require("vc-sdk")` resolves to.
 import * as VcSdk from '../src/sdk';
+import { NavRoot } from '../src/sdk/navigation';
 
-(globalThis as { __WHIM_VC_SDK__?: unknown }).__WHIM_VC_SDK__ = VcSdk;
+const runtimeGlobal = globalThis as {
+  __WHIM_VC_SDK__?: unknown;
+  __WHIM_VC_SDK_INTERNAL__?: Readonly<{ NavRoot: typeof NavRoot }>;
+};
+
+runtimeGlobal.__WHIM_VC_SDK__ = VcSdk;
+Object.defineProperty(runtimeGlobal, '__WHIM_VC_SDK_INTERNAL__', {
+  value: Object.freeze({ NavRoot }),
+  enumerable: false,
+  writable: false,
+  configurable: true,
+});

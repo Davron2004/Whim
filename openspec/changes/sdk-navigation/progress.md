@@ -49,6 +49,10 @@
 - 2026-07-13: dispatched remediation `chain-6` (`binding-aware-screen-graph`) and `chain-7` (`sdk-navigation-module-extraction`) in parallel from BASE `96561a77daab9e376d089d288790fa762429e182` at canonical worktree paths.
 - 2026-07-13: remediation `chain-6` report received at `bff0358`: required alias/namespace bypass and local-shadow false-positive red cases failed (57 pass/3 fail), then binding-aware checks and honest navigation fixture passed 60/60; authoritative fast gate passed with only the two declared checks files changed and no deviations.
 - 2026-07-13: remediation `chain-6` integrity passed, merged without conflict, and the post-merge fast gate passed with static checks 60/60. Task 6.1 complete.
+- 2026-07-13: remediation `chain-7` report received at `257e139`: direct internal-module import failed red as expected, then SDK acceptance, typecheck, lint, and authoritative fast gate passed; four declared SDK/contract files changed, handoff is 87 lines, and no deviations were reported.
+- 2026-07-13: remediation `chain-7` integrity passed, merged without conflict, and the post-merge fast gate passed. Task 6.2 complete; temporary public root compatibility exports remain only for atomic chain-8 removal.
+- 2026-07-13: attended HUMAN-BOOTSTRAP `chain-8` applied the protected injector patch bound to SHA-256 `c767a07f0a82379f11c9f1286ef8754210e67eb247e6971418899aaa818d3e8c`, then committed the four-file atomic loader closure as `8a60061` (warning-free assertion follow-up `831118d`). The injector exposes a frozen, non-enumerable, non-writable, configurable bootstrap; the loader validates, captures, and deletes it before delivery and fails closed otherwise; the public SDK retains `nav` but no root export.
+- 2026-07-13: `chain-8` verification passed: build/source-map round-trip, SDK acceptance, typecheck, lint, containment invariants 9/9, bridge invariants 10/10, production Chromium List → Detail → navBack → List at depths 0→1→0/generation 1 with zero page errors, explicit public/root-bootstrap invisibility, and the authoritative fast gate. Task 6.3 complete.
 
 ## Tripwire candidates
 
