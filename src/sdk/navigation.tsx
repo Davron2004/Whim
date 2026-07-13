@@ -38,6 +38,7 @@ export interface NavRootProps {
 
 interface NavMessageEvent {
   data: unknown;
+  source?: unknown;
 }
 
 interface NavigationWindow {
@@ -79,6 +80,9 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
     });
 
     const onMessage = (event: NavMessageEvent): void => {
+      // Host-channel-only acceptance (mirrors loader.js:212 / syscall.js's ev.source guard): only
+      // the outer runtime page (window.parent) is an accepted sender for __whimNavBack.
+      if (event.source !== navigationWindow().parent) return;
       if (typeof event.data !== 'string') return;
 
       let frame: unknown;
@@ -113,7 +117,8 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
         depth: stack.length - 1,
         generation: runtimeWindow.__whimGeneration,
       }),
-      '*',
+      '*', // NOSONAR - opaque sandboxed srcdoc iframe: the parent's origin is unrepresentable as a
+      // targetOrigin and any non-'*' value silently drops the frame; auth is receiver-side (ev.source).
     );
   }, [stack.length]);
 
