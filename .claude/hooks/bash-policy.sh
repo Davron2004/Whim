@@ -11,6 +11,32 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // empty')   # present ONLY for subagents (probe-confirmed)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')             # always present; the real working dir
 
+# Codex can execute a command with an explicit workdir while the shared hook payload's top-level
+# cwd remains pinned to the repo root. For Git only, accept an exact, unquoted, absolute
+# `git -C <repo>/.claude/worktrees/<id> …` as the location signal. Normalize it BEFORE every Git
+# policy check so `git -C … push/config` cannot bypass the tier-1 denies. Ambiguous paths (spaces,
+# traversal, a nested suffix, or a missing id) do not normalize and therefore remain denied for
+# subagents by the ordinary scoped-Git policy below.
+POLICY_CMD="$CMD"
+GIT_C_ROOT=""
+GIT_C_WT_ID=""
+if [[ "$CMD" =~ ^git[[:space:]]+-C[[:space:]]+(/[^[:space:]]*/\.claude/worktrees/([^/[:space:]]+))[[:space:]]+(.+)$ ]]; then
+  git_c_path="${BASH_REMATCH[1]}"
+  git_c_id="${BASH_REMATCH[2]}"
+  git_c_rest="${BASH_REMATCH[3]}"
+  git_c_root="${git_c_path%%/.claude/worktrees/*}"
+  case "$git_c_path" in
+    *'/../'*|*'/./'*|*/..|*/.) ;;
+    "$git_c_root/.claude/worktrees/$git_c_id")
+      if [[ -n "$git_c_root" && -n "$git_c_rest" && "$git_c_rest" != -* ]]; then
+        POLICY_CMD="git $git_c_rest"
+        GIT_C_ROOT="$git_c_root"
+        GIT_C_WT_ID="$git_c_id"
+      fi ;;
+    *) ;;
+  esac
+fi
+
 deny() {
   local reason="$1"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
@@ -63,20 +89,9 @@ cleanup_lane() {
     */.claude/worktrees/"$GC_WT"|*/.claude/worktrees/"$GC_WT"/*)
       root="${CWD%%/.claude/worktrees/*}" ;;
     *)
-      # The harness re-pins a subagent's cwd to the repo root on EVERY Bash call (`cd` does not
-      # persist), so a dispatched lane agent can never satisfy the cwd condition. Therefore
-      # `git -C <lane-worktree-root> …` also counts as in-lane: the -C path must be EXACTLY the
-      # hardcoded lane worktree root, and repo root is derived from that path — same no-cwd-trust
-      # derivation as grant_allows. Grant + ownership checks below are identical either way.
-      case "$CMD" in
-        "git -C "*"/.claude/worktrees/$GC_WT "*)
-          local p="${CMD#git -C }"; p="${p%% *}"
-          case "$p" in
-            /*/.claude/worktrees/"$GC_WT") root="${p%%/.claude/worktrees/*}" ;;
-            *) return 1 ;;
-          esac ;;
-        *) return 1 ;;
-      esac ;;
+      # The harness can re-pin a subagent's hook cwd to the repo root. The exact normalized
+      # `git -C <lane-root> …` signal above is the only alternate location source.
+      if [[ "$GIT_C_WT_ID" = "$GC_WT" ]]; then root="$GIT_C_ROOT"; else return 1; fi ;;
   esac
   [[ -f "$root/.claude/fixloop/grants/git-cleanup" ]] || return 1
   owners_claim "$root" "$GC_WT"
@@ -105,7 +120,7 @@ esac
 # them past the simple-command policy below. `git worktree` is intentionally NOT listed: the
 # orchestrator (main thread) needs it; subagents are blocked from it by the scoped policy further
 # down. Worktree-safe mutating git (commit/add/checkout/…) is handled there too.
-case "$CMD" in
+case "$POLICY_CMD" in
   *"git push"*|*"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
   *"git update-ref"*|*"git symbolic-ref"*|*"git reflog"*|*"git gc"*|*"git config"*|\
   *"git tag -f"*|*"git tag -d"*|\
@@ -118,7 +133,7 @@ esac
 # git-cleanup lane (§4.10), where tree-tip identity at finish is the real gate and the path is
 # deliberately free. Still match-anywhere for non-lane callers; in-lane chained forms fall to the
 # compound fall-through below (no auto-allow of chained payloads either way).
-case "$CMD" in
+case "$POLICY_CMD" in
   *"git rebase"*)
     if ! cleanup_lane; then
       deny "git history rewrite is human-approved only outside the git-cleanup lane (class-B deviation)"
@@ -161,7 +176,7 @@ esac
 # Tamper detection is decoupled from git (docs/archive/parallel-fix-loop.md): the orchestrator audits
 # every fix as `git diff <recorded BASE>`, which a commit cannot hide — so a subagent may use git
 # INSIDE its own worktree. Allowed there: add/commit/checkout/switch/restore/stash/branch/rev-parse.
-case "$CMD" in
+case "$POLICY_CMD" in
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*) : ;;  # read-only
   git|"git "*)
     if [[ -n "$AGENT_ID" ]]; then
@@ -170,7 +185,7 @@ case "$CMD" in
       # outcome gate (tree-tip identity) is what actually vouches for the result. Worktree
       # management stays orchestrator-only even here.
       if cleanup_lane; then
-        case "$CMD" in
+        case "$POLICY_CMD" in
           "git worktree"*)
             deny "git worktree management is orchestrator-only, even inside the cleanup lane (class-B deviation)" ;;
           *) allow ;;
@@ -178,21 +193,35 @@ case "$CMD" in
       fi
       # Subagent: allow the in-worktree vocabulary ONLY when cwd is inside a worktree — and only
       # inside the worktree THIS agent owns (owners_claim binds on first use; critic 2026-07-02).
-      case "$CWD" in
-        */.claude/worktrees/*)
-          wt_root="${CWD%%/.claude/worktrees/*}"; wt_rest="${CWD#*/.claude/worktrees/}"; wt_id="${wt_rest%%/*}"
+      git_wt_root=""
+      git_wt_id=""
+      if [[ -n "$GIT_C_WT_ID" ]]; then
+        git_wt_root="$GIT_C_ROOT"
+        git_wt_id="$GIT_C_WT_ID"
+      else
+        case "$CWD" in
+          */.claude/worktrees/*)
+            git_wt_root="${CWD%%/.claude/worktrees/*}"
+            git_wt_rest="${CWD#*/.claude/worktrees/}"
+            git_wt_id="${git_wt_rest%%/*}" ;;
+          *) ;;
+        esac
+      fi
+      if [[ -n "$git_wt_id" ]]; then
+          wt_root="$git_wt_root"; wt_id="$git_wt_id"
           if ! owners_claim "$wt_root" "$wt_id"; then
             deny "worktree .claude/worktrees/$wt_id is bound to a different agent — a fixer may touch only its own worktree (class-B deviation)"
           fi
-          case "$CMD" in
-            "git "*add*|"git "*commit*|"git "*checkout*|"git "*switch*|"git "*restore*|\
-            "git "*stash*|"git "*branch*|"git "*"rev-parse"*)
+          case "$POLICY_CMD" in
+            "git add"|"git add "*|"git commit"|"git commit "*|\
+            "git checkout"|"git checkout "*|"git switch"|"git switch "*|\
+            "git restore"|"git restore "*|"git stash"|"git stash "*|\
+            "git branch"|"git branch "*|"git rev-parse"|"git rev-parse "*)
               allow ;;
             *)
               deny "subagent git command is not in the allowlist for its owned worktree (class-B deviation)" ;;
-          esac ;;
-        *) ;;
-      esac
+          esac
+      fi
       deny "subagent git is permitted only inside its own .claude/worktrees/<id> (add/commit/checkout/switch/restore/stash/branch/rev-parse). This command or location is not allowed (class-B deviation)."
     fi
     # Main thread: route mutating git to the approval prompt.
@@ -223,7 +252,7 @@ case "$CMD" in
 esac
 
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
-case "$CMD" in
+case "$POLICY_CMD" in
   "./scripts/gate.sh"*|"./scripts/gate-full.sh"*|"npm run "*|"npm test"*|"npx tsc"*|"npx eslint"*|"npx knip"*|"npx openspec"*|"openspec "*|\
   "git status"*|"git diff"*|"git log"*|"git show"*|"git rev-parse"*|"git worktree list"*|\
   "ls"*|"cat "*|"head "*|"tail "*|"grep "*|"rg "*|"wc "*|"mkdir "*)

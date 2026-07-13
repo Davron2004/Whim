@@ -16,6 +16,31 @@
           {
             "type": "command",
             "command": "'/Users/davrondjabborov/Work/other/Whim/.codex/hooks/bash-policy.sh'"
+          },
+          {
+            "type": "command",
+            "command": "'/Users/davrondjabborov/Work/other/Whim/.codex/hooks/authorize-protected-patch.sh'"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/davrondjabborov/Work/other/Whim/.codex/hooks/permission-request.sh'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/davrondjabborov/Work/other/Whim/.codex/hooks/register-root-session.sh'"
           }
         ]
       }

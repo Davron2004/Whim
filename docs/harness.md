@@ -19,14 +19,15 @@
    chains.md → handoff contracts → progress.md/dispositions.md ledgers. Every artifact is markdown
    in the repo: versioned, greppable, tool-agnostic.
 3. **An agent that must pass the checks can never edit the checks.** The verification layer
-   (Class 2, §4) is human-edited only, enforced by hooks, the gate's own tamper tripwire, and the
-   integrity diff.
+   (Class 2, §4) is human-ratified only, enforced by hooks, the gate's own tamper tripwire, and the
+   integrity diff. Subagents are categorically denied; an attended root task may apply only an
+   exact reviewed patch through the provider's approval lane.
 4. **The only trust anchor is a pinned BASE commit SHA.** Every integrity question is
    "diff vs BASE", never "diff vs HEAD" — an agent with commit rights can move HEAD and branch
    refs, but never a recorded SHA.
 5. **Bounded autonomy, then escalate — never silent-drop.** Explicit caps everywhere; on
    cap-exhaustion or any protected-file touch, a human decides. Rejected work is PARKed
-   (branch renamed `wip/*` + reason note), never deleted.
+   (branch renamed `wip/*` + ignored runtime reason note under `.claude/fixloop/`), never deleted.
 6. **Verification strength buys process freedom.** Fixers get narrow allowlists because code diffs
    are expensive to verify; the git-cleaner gets near-total freedom because tip-tree identity is
    one cheap check.
@@ -92,7 +93,7 @@ The mechanical layer. Protected paths split by blast radius:
 
 | Mechanism | File | What it does |
 |---|---|---|
-| Fast gate | `scripts/gate.sh` | build → typecheck → lint → the five Node suites → scaffolding tripwires. Runs on every inner-loop attempt, in the agent's worktree. Refuses to run if any protected config differs from `GATE_BASE` (pinned-BASE tamper tripwire). Lint includes `plugin:sonarjs/recommended-legacy` (2026-07-12) — the same SonarJS rule implementations SonarCloud runs, so Sonar findings (cognitive complexity, nested ternaries, …) fail the inner loop locally instead of bouncing off the PR quality gate post-hoc. NOTE: the eslint plugin does NOT honor `// NOSONAR` comments — don't suppress, fix (or add a scoped `.eslintrc.js` override with a reason, a Class-1 human-ratified edit). |
+| Fast gate | `scripts/gate.sh` | build → typecheck → lint → the Node suites (including independently-discovered `src/sdk/test/*.acceptance.ts(x)` suites) → the tracked bash-policy regression suite → scaffolding tripwires. Runs on every inner-loop attempt, in the agent's worktree. Refuses to run if any protected config differs from `GATE_BASE` (pinned-BASE tamper tripwire). Lint includes `plugin:sonarjs/recommended-legacy` (2026-07-12) — the same SonarJS rule implementations SonarCloud runs, so Sonar findings (cognitive complexity, nested ternaries, …) fail the inner loop locally instead of bouncing off the PR quality gate post-hoc. NOTE: the eslint plugin does NOT honor `// NOSONAR` comments — don't suppress, fix (or add a scoped `.eslintrc.js` override with a reason, a Class-1 human-ratified edit). |
 | Full gate | `scripts/gate-full.sh` | `gate.sh` + knip + `guard:metro` + the three Chromium invariant suites + `openspec validate` + the codex-mirror freshness check. Once per fix/change, pre-merge, main tree. The Chromium suites generate their scenario pages from `src/runtime/generated/runtime-artifacts.json`, emitted by `npm run build` — so invariants always assert against *this* build, never a stale snapshot. |
 | CI | `.github/workflows/invariants.yml` | Two blocking jobs on every push: `quality-gate` (typecheck, lint, knip, `openspec validate --all --strict`, scaffolding tripwires) and `isolation-suite` (every Node suite + `guard:metro` + `build` + all three Chromium invariant runners) — together effectively `gate-full.sh` on a fresh checkout. |
 | SonarCloud (external) | GitHub PR quality gate | Automatic analysis on every push to a branch with an open PR — server-side, no repo config (`sonar-project.properties` deliberately absent), not runnable locally or in the deny-egress container. The local sonarjs lint (row 1) is the in-loop mirror of its rule set; SonarCloud stays the authoritative external check at PR time. It honors `// NOSONAR`; the local lint does not — keep code clean under the stricter of the two. |
@@ -197,14 +198,28 @@ The repo carries a Codex/ChatGPT mirror so the same harness contract survives a 
 (e.g. Claude tokens run out mid-task). **`.claude/` + `CLAUDE.md` are the source of truth; the
 mirror is never hand-edited.** Two mechanisms, by file kind:
 
-- **Identical content → symlinks.** `AGENTS.md → CLAUDE.md`, and `.codex/hooks/*.sh →
-  ../../.claude/hooks/*.sh`. One file, two names — drift is structurally impossible. (Runbooks
-  need no mirror at all: `.claude/commands/*.md` are plain markdown any agent can read.)
+- **Identical content → symlinks.** `AGENTS.md → CLAUDE.md`; the protocol-compatible Codex
+  `gate-on-subagent-stop.sh` also symlinks to the Claude hook. One file, two names where the wire
+  protocol is genuinely identical. (Runbooks need no mirror at all: `.claude/commands/*.md` are
+  plain markdown any agent can read.)
+- **Equivalent policy, provider-specific wire → adapters.** Codex PreToolUse does not support a
+  bare Claude `permissionDecision:allow` or any `permissionDecision:ask`; Codex `apply_patch` also
+  supplies patch text in `tool_input.command`, not one `file_path`. The regular executable files
+  under `.codex/hooks/` adapt those inputs/outputs while invoking the canonical Claude policies:
+  deny stays deny, Bash allow/ask defer to Codex native permissions, and PermissionRequest restores
+  auto-allow when Codex was already going to prompt. Direct protected `apply_patch` remains
+  fail-closed. In an attended session with `approvals_reviewer = "user"`, the root task may instead
+  present an exact SHA-256-bound patch through `apply-reviewed-protected-patch.sh`; an exec-policy
+  `prompt` requires the human decision. The authorizer binds the root session/transcript, snapshots
+  the reviewed bytes into Git-private state, consumes authority once, clears denied-prompt orphans
+  on the next Bash event, and rejects subagents, shell metacharacters, non-Class-2 targets, and
+  rename/copy escapes. The fast gate runs provider-parity plus 11 stateful approval-bridge cases,
+  and `sync-codex --check` rejects missing/non-executable adapters or bridge programs.
 - **Different format → generated.** `.codex/agents/<name>.toml` is generated from
   `.claude/agents/<name>.md` by `scripts/sync-codex.mjs` (frontmatter → TOML keys, body →
   `developer_instructions`). After editing any agent definition, run
   `node scripts/sync-codex.mjs --write`. `gate-full.sh` runs `--check` (which also asserts the
-  symlinks), so a stale mirror fails the gate instead of rotting silently — same philosophy as
+  links/adapters), so a stale mirror fails the gate instead of rotting silently — same philosophy as
   `src/runtime/generated/*`.
 
 `.agents/` (openspec CLI multi-tool skill output) is vendor-generated and non-canonical; the
@@ -212,8 +227,12 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
 
 ## 11. Operational gotchas — do NOT re-derive these
 
-- Subagents get their cwd re-pinned to the repo root on every Bash call (`cd` does not persist) —
-  location-keyed policy accepts a verifiable `git -C <path>` form for this reason.
+- Subagents can have their hook cwd re-pinned to the repo root on every Bash call (`cd` does not
+  persist, and Codex's execution workdir may not reach the shared hook payload) — location-keyed
+  policy accepts only an exact `git -C <absolute .claude/worktrees/<id>> <command>` form, normalizes
+  it before all Git security checks, and then applies the ordinary agent↔worktree ownership binding.
+  In Codex, mutating linked-worktree Git also needs a narrow per-command sandbox escalation because
+  the index lives under the main tree's read-only `.git/worktrees/`; never request a persistent prefix.
 - One shell command per Bash call in subagents: compound commands (`&&`, `;`, `|`) always fall
   through to a prompt a background agent cannot answer.
 - A background/headless subagent can't answer any permission prompt — anything outside the
@@ -226,7 +245,9 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   worktree before `typecheck`.
 - Test hooks by piping sample JSON from a file — trigger words in an inline test command trip the
   live hook before the hook under test runs.
-- The main thread CAN edit protected files (each edit prompts the human) — except
-  `.claude/settings.json`'s permissions/sandbox block, which is always human-applied by hand.
+- The attended root task CAN request an exact protected-file patch through the reviewed Codex
+  helper (or Claude's native prompt); direct edits and every subagent remain denied. Unattended
+  sessions cannot use this lane. `.claude/settings.json`'s permissions/sandbox block is always
+  human-applied by hand.
 - Findings lists go stale: `fixloop.sh stale <evidence-file>` before dispatching any fix; prose
   judgment proposes, the stale check disposes.

@@ -1,0 +1,28 @@
+# Progress: sdk-navigation
+
+## Ledger
+
+- 2026-07-12: apply started; schema `whim-harness`; 15 tasks remaining; preconditions passed at main `da70edc6849d6a8612557684cd9b006f7e2841f9`.
+- 2026-07-12: dispatched `chain-1` (`sdk-nav-primitive`) from BASE `da70edc6849d6a8612557684cd9b006f7e2841f9`; branch `chain/sdk-navigation-chain-1`; worktree `.claude/worktrees/sdk-navigation-chain-1`.
+- 2026-07-12: `chain-1` worktree created and bootstrap build passed.
+- 2026-07-12: dispatched `chain-3` (`static-checks-row`) from BASE `da70edc6849d6a8612557684cd9b006f7e2841f9`; branch `chain/sdk-navigation-chain-3`; worktree `.claude/worktrees/sdk-navigation-chain-3`.
+- 2026-07-12: `chain-3` worktree created and bootstrap build passed.
+- 2026-07-12: `chain-3` report received: tasks 2/2, `FAST GATE PASSED`, no commit; Class-B ownership-hook rejection blocked `git add` despite the assigned worktree being confirmed. Adjudication: same implementer redispatched once to stage/commit using location-keyed `git -C` form.
+- 2026-07-12: HALT — `chain-3` ownership-hook rejection persisted after the single allowed redispatch. Work is green but unstaged/uncommitted; no integrity check or merge was attempted. `chain-1` was interrupted immediately. Both worktrees remain intact.
+- 2026-07-12: Halt-state inspection found both branches still at BASE with dirty worktrees. `chain-1` and `chain-3` both touch `checks/test/acceptance.ts`, revealing an overlapping-file chain partition that must be re-planned before resume.
+- 2026-07-12: parked `chain-3` as `wip/sdk-navigation-chain-3` and `chain-1` as `wip/sdk-navigation-chain-1`; dirty worktrees and recovery notes under `.claude/fixloop/` are preserved. No change tasks were ticked.
+- 2026-07-12: user approved the recommended human bootstrap. Proposal/design/tasks/chains revised with `chain-0` (`human-bootstrap-test-and-ownership`), a dedicated `sdk:test` gate lane, an ownership-hook regression repair, and explicit disjoint file scopes for parallel chains 1 and 3.
+- 2026-07-12: human bootstrap implemented: independent SDK suite discovery + smoke acceptance; fast-gate SDK and bash-policy checks; exact `git -C <worktree>` normalization with ownership binding; 11-case tracked hook regression suite; PARK notes preserved as ignored runtime state. Focused SDK, hook, typecheck, lint, OpenSpec, shell-syntax, and Codex-mirror checks passed pre-commit.
+- 2026-07-12: bootstrap commit `8acf5ca` passed `scripts/gate.sh`. A real Codex subagent probe confirmed the repaired hook allows staged/unstaged `git -C` operations; the OS sandbox additionally requires narrow per-command escalation for linked-worktree index writes. Implementer/fix-worker/git-cleaner contracts and generated Codex mirrors updated accordingly. Temporary probe worktree, branch, and owner marker removed.
+- 2026-07-12: follow-up commit `b446f58` recorded the Codex escalation contract and regenerated agent mirrors; `scripts/gate.sh` passed again on that tip. HUMAN-BOOTSTRAP tasks 0.1–0.5 complete.
+- 2026-07-12: Codex hook protocol audit found direct Claude PreToolUse symlinks invalid for Codex: bare `allow`/`ask` are unsupported and `apply_patch` supplies patch text rather than `file_path`. User authorized provider-specific Codex adapters with semantically equivalent canonical policy; HUMAN-BOOTSTRAP task 0.6 added.
+- 2026-07-12: HUMAN-BOOTSTRAP task 0.6 implemented. Claude hooks remain unchanged; Codex now has regular Bash/PermissionRequest/apply-patch/translation adapters, 13 provider-parity cases, fail-closed protected patch enumeration, and updated mirror invariants. Focused adapter, shell-syntax, strict OpenSpec, and Codex mirror checks passed.
+- 2026-07-12: provider-specific hook repair committed as `e7e4111`; authoritative `scripts/gate.sh` passed on the new trusted BASE, including canonical bash-policy and Codex provider-adapter suites.
+- 2026-07-12: apply resume audit at main `4100102` confirmed the original ownership-hook and overlapping-chain blockers are resolved, but a fresh authoritative `scripts/gate.sh` failed at lint with 8 errors (`build/build.mjs`, `scripts/sync-codex.mjs`, `src/host/launcher/test/deliver-by-source.desktop.mjs`, and `src/sdk/test/run.mjs`). HALT before feature dispatch: the current BASE is not self-gateable, and the repair includes protected/human-bootstrap scope. Parked `wip/sdk-navigation-chain-{1,3}` worktrees remain intact; no feature task was dispatched or ticked.
+- 2026-07-13: attended Codex Class-2 approval lane bootstrapped and committed as `9667d0d`; live probes confirmed direct protected edits fail closed, the user-routed exact-patch prompt succeeds, consumed grants do not replay, hash mismatch is denied before prompting, and a real subagent is rejected as non-root.
+- 2026-07-13: user-approved lint repair committed as `4903abc`: scoped Node/ES globals, behavior-preserving build cleanup with arithmetic VLQ decoding, one justified POSIX permission-bit exception, and analyzer-safe Codex frontmatter parsing. The authoritative fast gate passed on the new clean baseline.
+- 2026-07-13: security review found and repaired orphan-grant, subagent SessionStart, shell-metacharacter, patch TOCTOU, and rename-escape risks. Hardening commit `e0fa7e3` adds immutable Git-private snapshots plus 11 non-vacuous fast-gate cases; focused tests, mirror check, lint, and the authoritative `scripts/gate.sh` all passed. HUMAN-BOOTSTRAP tasks 0.1–0.7 complete; feature dispatch may resume after Codex trusts the changed hook hashes.
+
+## Tripwire candidates
+
+- None.

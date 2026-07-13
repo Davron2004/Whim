@@ -13,6 +13,7 @@ Multi-screen navigation was promised in the v1 roadmap (change #1's contract not
 - The static-check screen-graph shapes table (`NAV_CALL_SHAPES` in `checks/contract.ts`) gains its first shipped row (`{object:'nav', method:'navigate', argIndex:0}`), so a dangling nav target (`nav.navigate('nonexistent')`) becomes a static error before any run. `nav.back()` takes no target and needs no row.
 - Runtime behavior for an unknown target that survives static checking (non-literal path): no-op plus an SDK console warning — never a crash.
 - `docs/capabilities.md` gains an `sdk-navigation` row pointing at the new spec.
+- A HUMAN-BOOTSTRAP prerequisite adds a first-class SDK acceptance lane to the fast gate and repairs the Codex worktree-ownership hook mismatch discovered during the first dispatch. This keeps the SDK and static-check chains genuinely file-disjoint and parallel; it does not change the navigation product surface.
 
 ## Capabilities
 
@@ -26,7 +27,7 @@ No delta for `mini-app-back-navigation`: its requirements ("depth reports are un
 
 ## Impact
 
-- **Code**: `src/sdk/index.tsx` (new `nav` export + nav-root internals), `src/runtime/web/loader.js` (nav-aware mount), `checks/contract.ts` (`NAV_CALL_SHAPES` row). `src/runtime/generated/*` and `build/generated/*` regenerate via `npm run build` (never hand-edited). No changes to `src/host/bridge/contract.ts` (frame types exist), `back-policy.ts`, `useMiniAppHost.ts`, or `build/assemble.mjs` (relay exists; `build/*` is agent-protected anyway).
+- **Code**: `src/sdk/index.tsx` (new `nav` export + nav-root internals), `src/runtime/web/loader.js` (nav-aware mount), `checks/contract.ts` (`NAV_CALL_SHAPES` row). The human bootstrap also adds the reusable SDK acceptance runner and narrowly repairs `.claude/hooks/bash-policy.sh`; protected harness edits land as a clean prerequisite BASE, never through a feature implementer. `src/runtime/generated/*` and `build/generated/*` regenerate via `npm run build` (never hand-edited). No changes to `src/host/bridge/contract.ts` (frame types exist), `back-policy.ts`, `useMiniAppHost.ts`, or `build/assemble.mjs` (relay exists; `build/*` is agent-protected anyway).
 - **Invariants**: the loader is part of the containment surface — `npm run build` + `npm run invariants` must stay green; the change adds no new frame kinds, touches no CSP, no global strip, no nonce path. Nav frames remain deliberately non-nonce-authenticated (settled design: depth is a hint, authority lives host-side).
 - **Tests**: checks acceptance suite (shipped-row dangling-target case), a new SDK/runtime acceptance for stack semantics + depth emission + navBack consumption, existing launcher back-policy suite unchanged and must stay green.
 - **Downstream**: `synthetic-run-harness` (proposed alongside) declares a dependency on this change for screen-reachability traversal; generation prompts/corpus apps can start using `nav.navigate` once this lands.

@@ -16,7 +16,7 @@
 import * as esbuild from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 import { buildSrcdoc, buildOuterHtml } from './assemble.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -65,7 +65,13 @@ async function bundleApp(entryRelPath) {
     minify: false, write: false, logLevel: 'warning',
   });
   let js = '', map = '';
-  for (const f of out.outputFiles) (f.path.endsWith('.map') ? (map = f.text) : (js = f.text));
+  for (const f of out.outputFiles) {
+    if (f.path.endsWith('.map')) {
+      map = f.text;
+    } else {
+      js = f.text;
+    }
+  }
   return { js, map };
 }
 
@@ -122,10 +128,14 @@ function decodeVlq(segment) {
   const out = []; let shift = 0, value = 0;
   for (const ch of segment) {
     const d = B64.indexOf(ch); if (d < 0) continue;
-    const cont = d & 32, digit = d & 31;
-    value += digit << shift;
+    const cont = d >= 32, digit = d % 32;
+    value += digit * (2 ** shift);
     if (cont) { shift += 5; } else {
-      const neg = value & 1; value >>= 1; out.push(neg ? -value : value); value = 0; shift = 0;
+      const neg = value % 2;
+      value = Math.floor(value / 2);
+      out.push(neg ? -value : value);
+      value = 0;
+      shift = 0;
     }
   }
   return out;
@@ -290,7 +300,7 @@ async function main() {
       'pour-over-timer': bundles['pour-over-timer'],
       'sql-injector': bundles['sql-injector'],
       'cap-intruder': bundles['cap-intruder'],
-      evil: bundles['evil'],
+      evil: bundles.evil,
     },
     initial: 'tip-splitter',
     channel: 'b',

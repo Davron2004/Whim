@@ -1,1 +1,2 @@
 sandbox_mode = "workspace-write"
+approvals_reviewer = "user"

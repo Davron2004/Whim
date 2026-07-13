@@ -84,6 +84,7 @@ src/runtime/generated/
 .obsidian/
 .claude/settings.local.json
 .claude/fixloop/*.log
+.claude/fixloop/wip-*.md
 .claude/fixloop/grants/
 .claude/fixloop/owners/
 *.tmp.mjs
@@ -94,4 +95,3 @@ checks/test/.phase
 # Harness server: durable per-device token counter (the only server state) + local secrets
 server/.data/
 .env
-

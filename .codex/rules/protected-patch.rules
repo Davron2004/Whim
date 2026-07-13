@@ -1,0 +1,5 @@
+prefix_rule(
+    pattern = ["/Users/davrondjabborov/Work/other/Whim/.codex/hooks/apply-reviewed-protected-patch.sh"],
+    decision = "prompt",
+    justification = "Apply one exact, reviewed Whim Class-2 patch",
+)

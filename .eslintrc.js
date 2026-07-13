@@ -12,6 +12,17 @@ module.exports = {
   },
   overrides: [
     {
+      files: ['*.mjs', 'scripts/**/*.js', 'build/**/*.js'],
+      env: {
+        node: true,
+        es2021: true,
+      },
+      parserOptions: {
+        ecmaVersion: 2022,
+        sourceType: 'module',
+      },
+    },
+    {
       // The house greenBy harness (checks/test/harness.ts) asserts via its own
       // assert/assertHasKind/assertNoKind helpers, which S2699 does not recognize.
       files: ['checks/test/**'],

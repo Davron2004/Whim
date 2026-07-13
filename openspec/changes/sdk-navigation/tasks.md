@@ -1,5 +1,15 @@
 # Tasks: sdk-navigation
 
+## 0. Human bootstrap — test lane and harness repair
+
+- [x] 0.1 Add a first-class `sdk:test` runner under `src/sdk/test/` that discovers and executes `*.acceptance.ts(x)` suites independently, uses the repository's esbuild-to-temporary-module pattern with `tsconfigRaw: '{}'`, externalizes React and `react-test-renderer`, and fails vacuously when no suite exists
+- [x] 0.2 Add a permanent SDK smoke acceptance, add the `sdk:test` package script, and wire `sdk:test` into `scripts/gate.sh` so SDK acceptance is part of every fast gate
+- [x] 0.3 Repair `.claude/hooks/bash-policy.sh` by safely normalizing exact simple-command `git -C <absolute .claude/worktrees/<id>> ...` forms before all Git security checks, then applying the existing ownership binding; preserve tier-1 denies, compound-command fallback, traversal/nested-path rejection, and universal read-only behavior; update Codex worktree-agent contracts to use narrow per-command sandbox escalation for mutating linked-worktree Git
+- [x] 0.4 Add a tracked non-vacuous bash-policy regression suite covering same-agent bind/allow, second-agent denial, main-tree denial, malformed/traversal/nested `-C`, tier-1 `push`/`config` denial, and compound-command fallback; wire it into `scripts/gate.sh`
+- [x] 0.5 Preserve PARK recovery notes as ignored runtime state, run the new focused suites, `scripts/sync-codex.mjs --check`, `openspec validate sdk-navigation --strict`, and `scripts/gate.sh`; commit this bootstrap as the clean BASE before dispatching feature chains
+- [x] 0.6 Replace Codex's incompatible PreToolUse symlinks with provider-specific Bash, PermissionRequest, and `apply_patch` adapters; keep Claude hooks unchanged, add provider-parity tests to the fast gate, and update mirror invariants/documentation
+- [x] 0.7 Add an attended root-only Codex Class-2 approval lane: user-routed prompt, exact SHA-256 patch binding, immutable Git-private snapshot, one-shot authority, categorical subagent denial, and a non-vacuous fast-gate regression suite; repair all newly surfaced lint findings without globally weakening a rule
+
 ## 1. SDK nav primitive
 
 - [ ] 1.1 Add the module-scope nav emitter and the `nav` object (`navigate(screenName)`, `back()`) to `src/sdk/index.tsx` — additive barrel export, isolated from the `sdk-charts` export region (design D1/D2)
@@ -7,7 +17,7 @@
 - [ ] 1.3 Implement depth-hint emission: post `{__whimNavDepth:true, depth, generation: window.__whimGeneration}` via `parent.postMessage` on every stack-length change (design D3; shape verbatim from `NavDepthFrame`, type-only import if referenced)
 - [ ] 1.4 Implement `__whimNavBack` consumption: in-realm `message` listener pops one entry; tolerate stray frames at depth 0 as a no-op (design D3)
 - [ ] 1.5 Implement unknown-target handling: `navigate` to an undeclared screen is a no-op with a console warning naming the target and the declared screens (design D4)
-- [ ] 1.6 Node acceptance tests for the nav module: stack semantics (push/pop/duplicate push/no-op back at 0), depth-hint emission on every change, navBack pop, unknown-target warn+no-op — red-check at least the depth-emission test (verify it fails against the pre-change SDK)
+- [ ] 1.6 SDK acceptance tests under `src/sdk/test/navigation.acceptance.tsx`: stack semantics (push/pop/duplicate push/no-op back at 0), depth-hint emission on every change, navBack pop, unknown-target warn+no-op — exercised exclusively by the bootstrapped `sdk:test` lane, with no wiring through `checks/test/acceptance.ts`; red-check at least the depth-emission test against the pre-change SDK
 
 ## 2. Runtime loader mount path
 

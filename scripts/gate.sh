@@ -59,7 +59,11 @@ check "storage-engine"    npm run -s storage:test
 check "capability-bridge" npm run -s bridge:test
 check "launcher"          npm run -s launcher:test
 check "server"            npm run -s server:test
+check "SDK"               npm run -s sdk:test
 check "static-checks"     npm run -s checks:test
+check "bash policy"       bash .claude/hooks/test/bash-policy.test.sh
+check "Codex hook adapters" bash .codex/hooks/test/provider-adapters.test.sh
+check "Codex protected approval" bash .codex/hooks/test/protected-patch.test.sh
 
 # Scaffolding tripwires: cheap greps for the garbage class you've already met. Every new garbage
 # pattern the critic/reviewer finds gets a grep line here. Curate it; don't let stale patterns block.
