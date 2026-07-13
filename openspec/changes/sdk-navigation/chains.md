@@ -97,4 +97,22 @@
 - file-scope: `docs/decisions.md`
 - reads: progress.md remediation gate/reviewer evidence; handoff: none
 - writes-contract: none
-- after: chain-6, chain-8
+- after: chain-10, chain-11
+
+## chain-10: declaration-order-independent-bindings
+
+- tasks: 6.5
+- rationale: repair the shared lexical binding map so all checker consumers see the nearest binding independent of declaration order; keep the already-correct direct/alias/namespace navigation matcher unchanged
+- file-scope: `checks/internal/scope.ts`, `checks/test/acceptance.ts`
+- reads: specs/static-checks/spec.md §Screen graph resolves statically; design.md D4; reviewer finding recorded in progress.md; handoff: none
+- writes-contract: none
+- after: chain-8
+
+## chain-11: durable-bootstrap-regressions
+
+- tasks: 6.6
+- rationale: use existing tracked SDK typecheck and production desktop-delivery lanes to make public type invisibility and loader bootstrap deletion/fail-closed behavior non-vacuous without touching protected gate/build/invariant files
+- file-scope: `src/sdk/test/navigation.acceptance.tsx`, `src/host/launcher/test/deliver-by-source.desktop.mjs`
+- reads: specs/sdk-navigation/spec.md §Navigation adds no containment surface; design.md D2 + Risks; reviewer finding recorded in progress.md; handoff: handoff/nav-api.md
+- writes-contract: none
+- after: chain-8

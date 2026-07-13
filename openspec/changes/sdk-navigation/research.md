@@ -86,3 +86,7 @@ export interface NavCallShape {
 - Closure assertions must prove `require('vc-sdk')` lacks the root, the bootstrap property is absent
   before bundle execution, production navBack still yields depth 0→1→0, and containment/full gates
   remain green. The append-only desktop-verification correction follows a passing remediation review.
+## Reviewer-remediation follow-up: durable closure
+
+- Shared binding resolution must predeclare each lexical scope before classifying reads; a one-pass declaration-order map misclassifies later-declared/hoisted `var` shadows. Direct, aliased, and namespace spellings each need a later-declaration regression while existing genuine-import positives remain green.
+- The existing SDK acceptance/typecheck lane can make `NavRootProps` non-export durable with a used `@ts-expect-error` type reference. The existing production desktop-delivery verifier can inspect the built iframe for public/root-bootstrap absence and construct test-local missing, invalid, and undeletable bootstrap variants from generated runtime parts; no protected gate/build/invariant edit is required.

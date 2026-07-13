@@ -499,6 +499,48 @@ export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabi
       .map(([label]) => label);
     assert(falselyFlagged.length === 0, `non-SDK nav bindings incorrectly flagged: [${falselyFlagged.join(', ')}]`);
   });
+
+  await test('D §screens: later-declared and hoisted shadows are not mistaken for vc-sdk navigation', { greenBy: 'D' }, () => {
+    const sources = {
+      'later block-scoped direct nav': `
+import { defineApp, nav } from 'vc-sdk';
+function Home() {
+  nav.navigate('Missing');
+  const nav = { navigate(_target: string) {} };
+  return null;
+}
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+      'hoisted aliased nav': `
+import { defineApp, nav as router } from 'vc-sdk';
+function Home() {
+  router.navigate('Missing');
+  if (true) {
+    var router = { navigate(_target: string) {} };
+  }
+  return null;
+}
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+      'hoisted namespace nav': `
+import { defineApp } from 'vc-sdk';
+import * as sdk from 'vc-sdk';
+function Home() {
+  sdk.nav.navigate('Missing');
+  if (true) {
+    var sdk = { nav: { navigate(_target: string) {} } };
+  }
+  return null;
+}
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+    };
+
+    const falselyFlagged = Object.entries(sources)
+      .filter(([, src]) => runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'))
+      .map(([label]) => label);
+    assert(falselyFlagged.length === 0, `later-declared non-SDK nav bindings incorrectly flagged: [${falselyFlagged.join(', ')}]`);
+  });
 }
 
 // ── §D4 SDK lint (greenBy: D) — "SDK lint steers toward the taught path" ───

@@ -83,6 +83,12 @@ const NAMED_BINDING_DECLARATION_KINDS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.TypeParameter,
   ts.SyntaxKind.JsxAttribute,
 ]);
+const BLOCK_SCOPED_VARIABLE_FLAGS: ReadonlySet<ts.NodeFlags> = new Set([
+  ts.NodeFlags.Let,
+  ts.NodeFlags.Const,
+  ts.NodeFlags.Using,
+  ts.NodeFlags.AwaitUsing,
+]);
 
 function hasName(node: ts.Node, id: ts.Identifier): boolean {
   return (node as ts.Node & { name?: ts.Node }).name === id;
@@ -169,7 +175,11 @@ function importBindingInfoFor(node: ts.ImportClause | ts.ImportSpecifier | ts.Na
 function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, Binding>; importBindingMap: Map<ts.Node, ImportBindingInfo> } {
   const result = new Map<ts.Node, Binding>();
   const importResult = new Map<ts.Node, ImportBindingInfo>();
-  const scopes: ScopeFrame[] = [new Map()]; // module (top) scope
+  const moduleScope: ScopeFrame = new Map();
+  const scopes: ScopeFrame[] = [moduleScope];
+  const scopeForBoundary = new Map<ts.Node, ScopeFrame>();
+  const declarationScope = new Map<ts.VariableDeclaration, ScopeFrame>();
+  const functionOrModuleScopes = new Set<ScopeFrame>([moduleScope]);
 
   function lookup(name: string): ScopeEntry | undefined {
     for (let i = scopes.length - 1; i >= 0; i--) {
@@ -179,9 +189,81 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
     return undefined;
   }
 
-  function declare(name: string, tainted: boolean, importInfo?: ImportBindingInfo): void {
-    scopes.at(-1)!.set(name, { tainted, importInfo });
+  function declareIn(scope: ScopeFrame, name: string, importInfo?: ImportBindingInfo): void {
+    const existing = scope.get(name);
+    if (!existing) {
+      scope.set(name, { tainted: false, importInfo });
+      return;
+    }
+    // Duplicate declarations are diagnosed elsewhere. For binding resolution, any plain
+    // lexical declaration means the name cannot be proven to resolve to an import.
+    if (!importInfo || !existing.importInfo) scope.set(name, { tainted: false });
   }
+
+  function declarePatternIn(scope: ScopeFrame, name: ts.BindingName): void {
+    declareBindingPattern(name, (bindingName) => declareIn(scope, bindingName));
+  }
+
+  function nearestFunctionOrModuleScope(): ScopeFrame {
+    for (let i = scopes.length - 1; i >= 0; i--) {
+      if (functionOrModuleScopes.has(scopes[i])) return scopes[i];
+    }
+    return moduleScope;
+  }
+
+  function isBlockScopedVariable(node: ts.VariableDeclaration): boolean {
+    return ts.isVariableDeclarationList(node.parent) && BLOCK_SCOPED_VARIABLE_FLAGS.has(node.parent.flags);
+  }
+
+  function predeclareNamedDeclaration(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name) declareIn(scopes.at(-1)!, node.name.text);
+    if (ts.isClassDeclaration(node) && node.name) declareIn(scopes.at(-1)!, node.name.text);
+  }
+
+  function predeclareScopeBoundary(node: ts.Node): boolean {
+    if (!isScopeBoundary(node)) return false;
+    const scope: ScopeFrame = new Map();
+    scopeForBoundary.set(node, scope);
+    scopes.push(scope);
+    if (ts.isFunctionLike(node)) {
+      functionOrModuleScopes.add(scope);
+      if (ts.isFunctionExpression(node) && node.name) declareIn(scope, node.name.text);
+      for (const parameter of node.parameters) declarePatternIn(scope, parameter.name);
+    }
+    if (ts.isCatchClause(node) && node.variableDeclaration) {
+      declarePatternIn(scope, node.variableDeclaration.name);
+    }
+    ts.forEachChild(node, predeclare);
+    scopes.pop();
+    return true;
+  }
+
+  function predeclareVariable(node: ts.Node): void {
+    if (!ts.isVariableDeclaration(node) || ts.isCatchClause(node.parent)) return;
+    const owner = isBlockScopedVariable(node) ? scopes.at(-1)! : nearestFunctionOrModuleScope();
+    declarationScope.set(node, owner);
+    declarePatternIn(owner, node.name);
+  }
+
+  function predeclareImport(node: ts.Node): void {
+    if (!ts.isImportSpecifier(node) && !ts.isImportClause(node) && !ts.isNamespaceImport(node)) return;
+    const name = 'name' in node ? node.name : undefined;
+    if (name && ts.isIdentifier(name)) declareIn(scopes.at(-1)!, name.text, importBindingInfoFor(node));
+  }
+
+  /** First pass: create every lexical scope and predeclare all of its bindings before any
+   *  reads are classified. `var` belongs to the nearest function/module scope even when its
+   *  declaration is nested inside a block; let/const belong to the active lexical owner. */
+  function predeclare(node: ts.Node): void {
+    predeclareNamedDeclaration(node);
+    if (predeclareScopeBoundary(node)) return;
+    predeclareVariable(node);
+    predeclareImport(node);
+    ts.forEachChild(node, predeclare);
+  }
+
+  predeclare(sourceFile);
+  scopes.length = 1;
 
   function initializerTaint(init: ts.Expression | undefined): boolean {
     let expr = init;
@@ -194,29 +276,16 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
 
   function visitVariableDeclaration(node: ts.VariableDeclaration): void {
     if (node.initializer) visit(node.initializer);
-    if (ts.isIdentifier(node.name)) {
-      declare(node.name.text, initializerTaint(node.initializer));
-      return;
+    const owner = declarationScope.get(node);
+    if (owner && ts.isIdentifier(node.name)) {
+      owner.set(node.name.text, { tainted: initializerTaint(node.initializer) });
     }
-    declareBindingPattern(node.name, declare);
   }
 
   function visitScopedNode(node: ts.Node): void {
-    scopes.push(new Map());
-    if (ts.isFunctionLike(node)) {
-      for (const p of node.parameters) declareBindingPattern(p.name, declare);
-    }
-    if (ts.isCatchClause(node) && node.variableDeclaration) {
-      declareBindingPattern(node.variableDeclaration.name, declare);
-    }
+    scopes.push(scopeForBoundary.get(node)!);
     ts.forEachChild(node, visit);
     scopes.pop();
-  }
-
-  function visitImportBinding(node: ts.ImportClause | ts.ImportSpecifier | ts.NamespaceImport): void {
-    const name = 'name' in node ? node.name : undefined;
-    if (name && ts.isIdentifier(name)) declare(name.text, false, importBindingInfoFor(node));
-    ts.forEachChild(node, visit);
   }
 
   function bindingFor(local: ScopeEntry | undefined): Binding {
@@ -234,13 +303,7 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
 
   function visit(node: ts.Node): void {
     if (ts.isVariableDeclaration(node)) return visitVariableDeclaration(node);
-    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
-      declare(node.name.text, false);
-    }
     if (isScopeBoundary(node)) return visitScopedNode(node);
-    if (ts.isImportSpecifier(node) || ts.isImportClause(node) || ts.isNamespaceImport(node)) {
-      return visitImportBinding(node);
-    }
     if (ts.isIdentifier(node)) return visitIdentifier(node);
     ts.forEachChild(node, visit);
   }

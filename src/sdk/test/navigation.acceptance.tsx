@@ -24,8 +24,16 @@ function match(actual: string, expected: RegExp): void {
   if (!expected.test(actual)) fail(`expected ${JSON.stringify(actual)} to match ${String(expected)}`);
 }
 
+function publicSdkMustNotAcceptHostRootProps(
+  // @ts-expect-error NavRootProps is repository-internal and must never be public vc-sdk API.
+  props: import('vc-sdk').NavRootProps,
+): unknown {
+  return props;
+}
+
 equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRoot'), false);
 equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRootProps'), false);
+equal(typeof publicSdkMustNotAcceptHostRootProps, 'function');
 
 const posted: string[] = [];
 const messageListeners = new Set<MessageListener>();

@@ -35,13 +35,19 @@ async function writePage(name, html) {
   return p;
 }
 
-async function run(browser, file, drive) {
+async function run(browser, file, drive, waitForVerdict = true) {
   const page = await browser.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e?.message || e)));
+  const errorDetails = [];
+  page.on('pageerror', (e) => {
+    errors.push(String(e?.message || e));
+    errorDetails.push({ name: String(e?.name || ''), message: String(e?.message || e) });
+  });
   await page.goto(pathToFileURL(file).href, { waitUntil: 'load', timeout: 20000 });
   if (drive) await drive(page);
-  await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
+  if (waitForVerdict) {
+    await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
+  }
   await page.waitForTimeout(400);
   const dom = await page.evaluate(() => ({
     title: document.title || '',
@@ -49,12 +55,35 @@ async function run(browser, file, drive) {
     delivery: document.getElementById('delivery')?.textContent || '',
     paint: document.getElementById('paint')?.textContent || '',
   }));
-  let iframeText = '';
+  let iframeState = null;
   for (const f of page.frames()) {
-    try { const t = await f.evaluate(() => { const r = document.getElementById('whim-root'); return r ? r.innerText : null; }); if (t) iframeText = t; } catch {}
+    try {
+      const state = await f.evaluate(() => {
+        const root = document.getElementById('whim-root');
+        if (!root) return null;
+        const own = Object.prototype.hasOwnProperty;
+        let publicSdk = null;
+        try {
+          publicSdk = typeof window.__whimRequire === 'function'
+            ? window.__whimRequire('vc-sdk')
+            : null;
+        } catch {}
+        return {
+          text: root.innerText,
+          rootChildren: root.childNodes.length,
+          publicNavRoot: !!publicSdk && own.call(publicSdk, 'NavRoot'),
+          publicNavRootProps: !!publicSdk && own.call(publicSdk, 'NavRootProps'),
+          bootstrap: own.call(window, '__WHIM_VC_SDK_INTERNAL__'),
+          loaderInstalled: typeof window.__whimAfterBundle === 'function',
+          generation: own.call(window, '__whimGeneration'),
+          appModule: own.call(window, '__WHIM_APP_MODULE__'),
+        };
+      });
+      if (state) iframeState = state;
+    } catch {}
   }
   await page.close();
-  return { dom, errors, iframeText };
+  return { dom, errors, errorDetails, iframeState, iframeText: iframeState?.text || '' };
 }
 
 const srcdocB = buildSrcdoc({ parts, channel: 'b' });
@@ -72,6 +101,43 @@ const nonDefaultPage = await writePage('non-default-source', buildOuterHtml({
   srcdoc: srcdocB, bundles: { 'tip-splitter': SRC }, initial: 'tip-splitter', channel: 'b', autostart: false,
 }));
 
+const bootstrapVariants = {
+  missing: parts.sdkInject + '\ndelete globalThis.__WHIM_VC_SDK_INTERNAL__;',
+  invalid: parts.sdkInject + `
+Object.defineProperty(globalThis, '__WHIM_VC_SDK_INTERNAL__', {
+  value: Object.freeze({ NavRoot: null }),
+  enumerable: false,
+  writable: false,
+  configurable: true,
+});`,
+  undeletable: parts.sdkInject + `
+(function makeBootstrapUndeletableAfterValidation() {
+  var realGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  Object.getOwnPropertyDescriptor = function (target, key) {
+    var descriptor = realGetOwnPropertyDescriptor(target, key);
+    if (target === globalThis && key === '__WHIM_VC_SDK_INTERNAL__' && descriptor) {
+      Object.defineProperty(target, key, {
+        value: descriptor.value,
+        enumerable: descriptor.enumerable,
+        writable: descriptor.writable,
+        configurable: false,
+      });
+    }
+    return descriptor;
+  };
+})();`,
+};
+
+const bootstrapFailurePages = {};
+for (const [name, sdkInject] of Object.entries(bootstrapVariants)) {
+  bootstrapFailurePages[name] = await writePage(`bootstrap-${name}`, buildOuterHtml({
+    srcdoc: buildSrcdoc({ parts: { ...parts, sdkInject }, channel: 'b' }),
+    bundles: { 'tip-splitter': SRC },
+    initial: 'tip-splitter',
+    channel: 'b',
+  }));
+}
+
 const browser = await chromium.launch();
 const baked = await run(browser, bakedPage);
 const bySource = await run(browser, sourcePage, async (page) => {
@@ -82,6 +148,10 @@ const bySource = await run(browser, sourcePage, async (page) => {
 const nonDefault = await run(browser, nonDefaultPage, async (page) => {
   await page.evaluate((src) => globalThis.__whimControl.reinject({ reset: true, bundle: 'water-counter', bundleSource: src, generation: 2 }), WATER_SRC);
 });
+const bootstrapFailures = {};
+for (const [name, file] of Object.entries(bootstrapFailurePages)) {
+  bootstrapFailures[name] = await run(browser, file, null, false);
+}
 await browser.close();
 
 const verdict = (r, paintedCheck) => ({
@@ -96,11 +166,46 @@ const B = verdict(bySource, (t) => /Tip Splitter/.test(t) && /Per person/.test(t
 // Must render Water Counter, NOT Tip Splitter (B1 regression guard).
 const C = verdict(nonDefault, (t) => /Water Counter/.test(t) && !/Tip Splitter/.test(t));
 
+const normalRuntimeSurfaceOk = (result) =>
+  result.iframeState?.publicNavRoot === false &&
+  result.iframeState?.publicNavRootProps === false &&
+  result.iframeState?.bootstrap === false &&
+  result.iframeState?.loaderInstalled === true &&
+  result.iframeState?.rootChildren > 0;
+
+const expectedBootstrapFailure = (name, result) => {
+  const typeError = result.errorDetails.some((error) =>
+    error.name === 'TypeError' && (
+      name === 'undeletable'
+        ? /delete|erase/i.test(error.message)
+        : /bootstrap is missing or invalid/.test(error.message)
+    ));
+  return typeError &&
+    result.iframeState?.loaderInstalled === false &&
+    result.iframeState?.generation === false &&
+    result.iframeState?.appModule === false &&
+    result.iframeState?.rootChildren === 0 &&
+    result.dom.title === 'WHIM:pending' &&
+    result.dom.delivery === '—' &&
+    result.dom.paint === '—' &&
+    result.dom.probes === '—';
+};
+
+const bootstrapFailureChecks = Object.fromEntries(
+  Object.entries(bootstrapFailures).map(([name, result]) => [name, expectedBootstrapFailure(name, result)]),
+);
+
 console.log('deliver-by-source desktop parity (tip-splitter):');
 console.log(`  baked    : contained=${A.contained} painted=${A.painted} accepted=${A.accepted}${A.errors.length ? ' ERR=' + A.errors.join('|') : ''}`);
 console.log(`  by-source: contained=${B.contained} painted=${B.painted} accepted=${B.accepted}${B.errors.length ? ' ERR=' + B.errors.join('|') : ''}`);
 console.log('deliver-by-source non-default app (water-counter over tip-splitter initial):');
 console.log(`  non-default: contained=${C.contained} painted=${C.painted} accepted=${C.accepted}${C.errors.length ? ' ERR=' + C.errors.join('|') : ''}`);
+console.log('vc-sdk loader-only navigation bootstrap:');
+console.log(`  normal: public-root=${baked.iframeState?.publicNavRoot} public-props=${baked.iframeState?.publicNavRootProps} bootstrap=${baked.iframeState?.bootstrap} loader=${baked.iframeState?.loaderInstalled} rendered=${baked.iframeState?.rootChildren > 0}`);
+for (const [name, result] of Object.entries(bootstrapFailures)) {
+  const errors = result.errorDetails.map((error) => `${error.name}: ${error.message}`).join('|');
+  console.log(`  ${name}: fail-closed=${bootstrapFailureChecks[name]}${errors ? ' ERR=' + errors : ''}`);
+}
 // Page B was built with an EMPTY baked map, so a rendered + contained tip-splitter proves the
 // bytes came ONLY from the host-supplied bundleSource — identical verdict to the baked twin.
 // Page C proves the selected source overrides the baked initial: water-counter renders,
@@ -114,7 +219,9 @@ const ok =
   B.contained === A.contained &&
   A.painted && B.painted === A.painted &&
   A.errors.length === 0 && B.errors.length === 0 &&
-  C.contained === 'true' && C.painted && C.errors.length === 0;
+  C.contained === 'true' && C.painted && C.errors.length === 0 &&
+  normalRuntimeSurfaceOk(baked) &&
+  Object.values(bootstrapFailureChecks).every(Boolean);
 
 if (!ok) {
   console.error('\n❌ by-source delivery verification failed.');
@@ -124,7 +231,14 @@ if (!ok) {
   if (!(C.contained === 'true' && C.painted && C.errors.length === 0)) {
     console.error('   non-default source (water-counter) did NOT render when initial=tip-splitter (B1 regression).');
   }
+  if (!normalRuntimeSurfaceOk(baked)) {
+    console.error('   public vc-sdk/root-bootstrap surface was visible or the trusted loader did not render.');
+  }
+  for (const [name, passed] of Object.entries(bootstrapFailureChecks)) {
+    if (!passed) console.error(`   ${name} bootstrap did not fail closed before delivery/mount.`);
+  }
   process.exit(1);
 }
 console.log('\n✅ by-source delivery renders + contains identically to its baked twin.');
 console.log('✅ non-default source (water-counter) renders correctly over tip-splitter initial (B1 guard green).');
+console.log('✅ navigation bootstrap stays loader-only and missing/invalid/undeletable states fail closed.');
