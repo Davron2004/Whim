@@ -68,3 +68,21 @@ export interface NavCallShape {
 ## Open questions for the planner
 - Should the new capability get its own spec (`openspec/specs/sdk-navigation/spec.md` + a capabilities.md row) or land as a delta inside `sdk-design-system` (which already owns `Screen`/component-kit rendering)? Not decided in code or docs.
 - Does `goBack()` need a `NAV_CALL_SHAPES` row at all, given the table only resolves string-literal *targets* and `goBack` has none?
+
+## Reviewer-remediation digest (2026-07-13)
+
+- The shipped screen-graph pass treated `NavCallShape.object` as a textual identifier. Valid
+  `vc-sdk` aliases and namespace imports bypassed target validation, while unrelated local `nav`
+  bindings false-positived. The existing lexical `resolvesToImport` helper is sufficient to bind
+  direct, aliased, and namespace forms without widening checker infrastructure.
+- `NavRoot` and `NavRootProps` were re-exported by the public SDK barrel, and the injector exposes
+  that entire barrel through the object returned by exact `require('vc-sdk')`. This contradicted
+  D2's loader-only claim and let a mini-app interfere with the singleton nav listener.
+- The minimal gateable repair is two-stage: first extract navigation into an internal source module
+  while retaining temporary compatibility re-exports; then apply one atomic HUMAN-BOOTSTRAP patch
+  that imports the root directly in the injector, publishes it through a temporary frozen internal
+  bootstrap property, has the loader capture and delete that property before delivery, and removes
+  the public barrel exports. No SDK subpath becomes a runtime import.
+- Closure assertions must prove `require('vc-sdk')` lacks the root, the bootstrap property is absent
+  before bundle execution, production navBack still yields depth 0→1→0, and containment/full gates
+  remain green. The append-only desktop-verification correction follows a passing remediation review.

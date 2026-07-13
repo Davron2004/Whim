@@ -9,12 +9,31 @@
 
 import ts from 'typescript';
 import { Diagnostic, NAV_CALL_SHAPES } from '../contract';
-import { CheckContext, Pass, lineOf } from '../internal/scope';
+import { CheckContext, Pass, lineOf, resolvesToImport } from '../internal/scope';
 import { getProperty } from '../internal/manifest';
+
+const VC_SDK_SPECIFIER = 'vc-sdk';
 
 function declaredScreensList(screens: Record<string, true>): string {
   const names = Object.keys(screens);
   return names.length > 0 ? names.join(', ') : '(none declared)';
+}
+
+/**
+ * `shape.object` is the name exported by vc-sdk, not the spelling at the call site. A named
+ * import may be aliased (`nav as router`), while a namespace import exposes the same export as
+ * the exact `sdk.nav` member. Lexical resolution excludes unrelated and shadowing bindings.
+ */
+function resolvesToNavObject(expression: ts.Expression, ctx: CheckContext, exportedName: string): boolean {
+  if (ts.isIdentifier(expression)) {
+    return resolvesToImport(expression, ctx, VC_SDK_SPECIFIER, exportedName);
+  }
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === exportedName &&
+    ts.isIdentifier(expression.expression) &&
+    resolvesToImport(expression.expression, ctx, VC_SDK_SPECIFIER, '*')
+  );
 }
 
 export const screenGraphPass: Pass = (ctx: CheckContext) => {
@@ -46,10 +65,9 @@ export const screenGraphPass: Pass = (ctx: CheckContext) => {
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const objExpr = node.expression.expression;
-      const objName = ts.isIdentifier(objExpr) ? objExpr.text : undefined;
       const methodName = node.expression.name.text;
       for (const shape of NAV_CALL_SHAPES) {
-        if (shape.object !== objName || shape.method !== methodName) continue;
+        if (shape.method !== methodName || !resolvesToNavObject(objExpr, ctx, shape.object)) continue;
         const arg = node.arguments[shape.argIndex];
         if (!arg || !ts.isStringLiteralLike(arg)) {
           const { line, column } = lineOf(sourceFile, arg ?? node);

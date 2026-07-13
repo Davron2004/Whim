@@ -400,6 +400,105 @@ export default defineApp({
     assert(/string literal/i.test(d.message), `message should require a string literal, got: ${d.message}`);
     assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
+
+  await test('D §screens: direct, aliased, and namespace vc-sdk navigation accept a declared literal target', { greenBy: 'D' }, () => {
+    const spellings = {
+      direct: {
+        imports: "import { defineApp, nav } from 'vc-sdk';",
+        call: "nav.navigate('Settings');",
+      },
+      aliased: {
+        imports: "import { defineApp, nav as router } from 'vc-sdk';",
+        call: "router.navigate('Settings');",
+      },
+      namespace: {
+        imports: "import { defineApp } from 'vc-sdk';\nimport * as sdk from 'vc-sdk';",
+        call: "sdk.nav.navigate('Settings');",
+      },
+    };
+
+    for (const [label, spelling] of Object.entries(spellings)) {
+      const src = `
+${spelling.imports}
+function Home() {
+  ${spelling.call}
+  return null;
+}
+function Settings() { return null; }
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home, Settings }, capabilities: [],
+});
+`;
+      const r = runStaticChecks(src);
+      assertNoKind(r, 'unresolved_screen', `${label} vc-sdk navigation to a declared screen must resolve`);
+    }
+  });
+
+  await test('D §screens: aliased nav import rejects dangling and non-literal targets identically to direct nav', { greenBy: 'D' }, () => {
+    const calls = ["router.navigate('Settings');", "const target = 'Home';\n  router.navigate(target);"];
+    const detected: boolean[] = [];
+    for (const call of calls) {
+      const src = `
+import { defineApp, nav as router } from 'vc-sdk';
+function Home() {
+  ${call}
+  return null;
+}
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
+});
+`;
+      detected.push(runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'));
+    }
+    assert(detected.every(Boolean), `aliased vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
+  });
+
+  await test('D §screens: namespace nav import rejects dangling and non-literal targets identically to direct nav', { greenBy: 'D' }, () => {
+    const calls = ["sdk.nav.navigate('Settings');", "const target = 'Home';\n  sdk.nav.navigate(target);"];
+    const detected: boolean[] = [];
+    for (const call of calls) {
+      const src = `
+import { defineApp } from 'vc-sdk';
+import * as sdk from 'vc-sdk';
+function Home() {
+  ${call}
+  return null;
+}
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
+});
+`;
+      detected.push(runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'));
+    }
+    assert(detected.every(Boolean), `namespace vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
+  });
+
+  await test('D §screens: unrelated, local, and shadowed nav bindings are not SDK navigation', { greenBy: 'D' }, () => {
+    const sources = {
+      unrelated: `
+import { defineApp } from 'vc-sdk';
+import { nav } from './unrelated';
+function Home() { nav.navigate('Missing'); return null; }
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+      local: `
+import { defineApp } from 'vc-sdk';
+const nav = { navigate(_target: string) {} };
+function Home() { nav.navigate('Missing'); return null; }
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+      shadowed: `
+import { defineApp, nav } from 'vc-sdk';
+function Home(nav: { navigate(target: string): void }) { nav.navigate('Missing'); return null; }
+export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabilities: [] });
+`,
+    };
+
+    const falselyFlagged = Object.entries(sources)
+      .filter(([, src]) => runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'))
+      .map(([label]) => label);
+    assert(falselyFlagged.length === 0, `non-SDK nav bindings incorrectly flagged: [${falselyFlagged.join(', ')}]`);
+  });
 }
 
 // ── §D4 SDK lint (greenBy: D) — "SDK lint steers toward the taught path" ───
@@ -519,7 +618,13 @@ export default defineApp({
 // ── §E2 honest fixtures + latency-probe pinned expected-flagged (greenBy: E) ──
 
 async function testHonestFixturesAndLatencyProbe(): Promise<void> {
-  const HONEST_FIXTURES = ['tip-splitter.app.tsx', 'water-counter.app.tsx', 'pour-over-timer.app.tsx', 'style-gallery.app.tsx'];
+  const HONEST_FIXTURES = [
+    'tip-splitter.app.tsx',
+    'water-counter.app.tsx',
+    'pour-over-timer.app.tsx',
+    'style-gallery.app.tsx',
+    'navigation-demo.app.tsx',
+  ];
 
   await test('E §honest-corpus: every real honest fixture is ok with zero diagnostics', { greenBy: 'E' }, () => {
     for (const name of HONEST_FIXTURES) {

@@ -69,7 +69,7 @@ The SDK nav root SHALL listen in-realm for the host's `{__whimNavBack: true}` fr
 
 ### Requirement: Navigation adds no containment surface
 
-The navigation implementation SHALL NOT modify the CSP, the global strip, the nonce-authenticated frame vocabulary, or any host-side file (`back-policy.ts`, `useMiniAppHost.ts`, `src/host/bridge/contract.ts`, `build/assemble.mjs`). All nav state SHALL live inside the sandbox realm so that realm reset (iframe recreation) structurally destroys the stack, the emitter, and all listeners with no SDK-level cleanup logic (T7; the `interval` pattern, decision #43/D2). Any nav-related type shared with the host bridge SHALL cross the SDK↔host seam as `import type` only.
+The navigation implementation SHALL NOT modify the CSP, the global strip, the nonce-authenticated frame vocabulary, or any host-side file (`back-policy.ts`, `useMiniAppHost.ts`, `src/host/bridge/contract.ts`, `build/assemble.mjs`). All nav state SHALL live inside the sandbox realm so that realm reset (iframe recreation) structurally destroys the stack, the emitter, and all listeners with no SDK-level cleanup logic (T7; the `interval` pattern, decision #43/D2). Any nav-related type shared with the host bridge SHALL cross the SDK↔host seam as `import type` only. `require('vc-sdk')` SHALL expose the public `nav` object but SHALL NOT expose `NavRoot` or its props type. Any injection-time root bootstrap handle SHALL be captured into the trusted loader closure and deleted before bundle delivery becomes possible; missing, invalid, or undeletable bootstrap state SHALL fail closed.
 
 #### Scenario: Realm reset clears nav state
 
@@ -80,3 +80,8 @@ The navigation implementation SHALL NOT modify the CSP, the global strip, the no
 
 - **WHEN** `npm run build` then `npm run invariants` and `npm run bridge:invariants` run after this change
 - **THEN** all sandbox-isolation and bridge invariant probes pass unchanged
+
+#### Scenario: Runtime root is not a mini-app SDK export
+
+- **WHEN** a mini-app obtains the exact public module through `require('vc-sdk')`
+- **THEN** `NavRoot` and `NavRootProps` are absent and no internal bootstrap global remains

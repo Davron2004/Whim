@@ -60,3 +60,41 @@
 - reads: design.md D0 (independent SDK test discovery); handoff: handoff/human-bootstrap.md
 - writes-contract: none
 - after: chain-4
+
+## chain-6: binding-aware-screen-graph
+
+- tasks: 6.1
+- rationale: reviewer remediation in the pure static-check layer; bind the shipped nav shape to actual `vc-sdk` imports so aliases/namespaces cannot bypass checks and honest local shadows do not false-positive
+- file-scope: `checks/passes/screens.ts`, `checks/test/acceptance.ts`
+- reads: specs/static-checks/spec.md §Screen graph resolves statically; design.md D4; handoff: none
+- writes-contract: none
+- after: chain-5
+
+## chain-7: sdk-navigation-module-extraction
+
+- tasks: 6.2
+- rationale: prepare a direct repository-internal navigation module while temporarily retaining the public barrel exports required by the current loader; this keeps the chain self-gateable before the atomic protected closure
+- file-scope: `src/sdk/index.tsx`, `src/sdk/navigation.tsx`, `src/sdk/test/navigation.acceptance.tsx`, `openspec/changes/sdk-navigation/handoff/nav-api.md`
+- reads: specs/sdk-navigation/spec.md §Navigation adds no containment surface; design.md D2/D3; handoff: handoff/nav-api.md
+- writes-contract: handoff/nav-api.md (public `nav`; direct internal `NavRoot` signature; temporary compatibility exports; exact chain-8 removal contract)
+- after: chain-5
+
+## chain-8: loader-only-root-closure
+
+- tasks: 6.3
+- marker: HUMAN-BOOTSTRAP — atomic attended root patch; touches Class-2 `build/vc-sdk-inject.ts`; never dispatch to an implementer
+- rationale: injection, loader capture/delete, and public-export removal must land together or the runtime is not gateable; the reviewed patch is SHA-bound and exact-scope
+- file-scope: `build/vc-sdk-inject.ts`, `src/runtime/web/loader.js`, `src/sdk/index.tsx`, `src/sdk/test/navigation.acceptance.tsx`
+- reads: specs/sdk-navigation/spec.md §Navigation adds no containment surface; design.md D2 + Risks; handoff: handoff/nav-api.md
+- writes-contract: none
+- after: chain-7
+
+## chain-9: append-only-verification-correction
+
+- tasks: 6.4
+- marker: POST-REVIEW CLOSURE — hold until chains 6/8 pass the full gate and a fresh whole-change reviewer returns PASS
+- rationale: the original append-only decision entry says desktop acceptance is pending; append the correction only after remediation evidence exists, then rerun final verification
+- file-scope: `docs/decisions.md`
+- reads: progress.md remediation gate/reviewer evidence; handoff: none
+- writes-contract: none
+- after: chain-6, chain-8
