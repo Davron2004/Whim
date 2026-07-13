@@ -4,7 +4,7 @@ import type { AppSpec } from '../index';
 import * as publicSdk from '../index';
 import { NavRoot, nav } from '../navigation';
 
-type MessageListener = (event: { data: unknown }) => void;
+type MessageListener = (event: { data: unknown; source?: unknown }) => void;
 
 function fail(message: string): never {
   throw new Error(message);
@@ -106,7 +106,7 @@ deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1]);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: JSON.stringify({ __whimNavBack: true }) });
+    listener({ data: JSON.stringify({ __whimNavBack: true }), source: testWindow.parent });
   }
 });
 equal(renderedText(renderer!), 'Home');
@@ -118,13 +118,25 @@ deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1]);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: '{' });
-    listener({ data: JSON.stringify(null) });
-    listener({ data: JSON.stringify(1) });
-    listener({ data: JSON.stringify([]) });
-    listener({ data: { __whimNavBack: true } });
-    listener({ data: JSON.stringify({ __whimNavBack: false }) });
-    listener({ data: JSON.stringify({ unrelated: true }) });
+    listener({ data: '{', source: testWindow.parent });
+    listener({ data: JSON.stringify(null), source: testWindow.parent });
+    listener({ data: JSON.stringify(1), source: testWindow.parent });
+    listener({ data: JSON.stringify([]), source: testWindow.parent });
+    listener({ data: { __whimNavBack: true }, source: testWindow.parent });
+    listener({ data: JSON.stringify({ __whimNavBack: false }), source: testWindow.parent });
+    listener({ data: JSON.stringify({ unrelated: true }), source: testWindow.parent });
+  }
+});
+equal(renderedText(renderer!), 'Details');
+deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1]);
+
+// Sender-origin guard: a __whimNavBack frame whose source is not window.parent (e.g. forged by
+// a bundle sharing the realm, or the frame's own window) must be ignored, not popped.
+await act(async () => {
+  for (const listener of messageListeners) {
+    listener({ data: JSON.stringify({ __whimNavBack: true }), source: testWindow });
+    listener({ data: JSON.stringify({ __whimNavBack: true }), source: {} });
+    listener({ data: JSON.stringify({ __whimNavBack: true }) });
   }
 });
 equal(renderedText(renderer!), 'Details');
@@ -132,7 +144,10 @@ deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1]);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: JSON.stringify({ __whimNavBack: true, futureField: 'ignored' }) });
+    listener({
+      data: JSON.stringify({ __whimNavBack: true, futureField: 'ignored' }),
+      source: testWindow.parent,
+    });
   }
 });
 equal(renderedText(renderer!), 'Home');
@@ -159,7 +174,7 @@ equal(depthFrames().length, 7);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: JSON.stringify({ __whimNavBack: true }) });
+    listener({ data: JSON.stringify({ __whimNavBack: true }), source: testWindow.parent });
   }
 });
 equal(renderedText(renderer!), 'Home');
