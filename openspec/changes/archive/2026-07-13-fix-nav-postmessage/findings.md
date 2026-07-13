@@ -2,13 +2,14 @@
 
 Source: interactive session 2026-07-13 — SonarCloud finding on `src/sdk/navigation.tsx` plus a
 transport-symmetry gap surfaced during the investigation. Research context:
-`openspec/changes/fix-navigation-message-origin/research.md` (whim-harness folder, research only).
+`research.md` in this change folder (originally researched under a standalone
+`fix-navigation-message-origin` change folder, folded in here at archive time).
 
 ## Finding NAV-1 (single finding, one worker — both fixes are in the same file src/sdk/navigation.tsx and must not be split across parallel workers)
 
 Context: SonarCloud flagged the `postMessage(..., '*')` in src/sdk/navigation.tsx (rule S2819,
-finding AZ9ciqsaZpP-TVNR4hrv). Investigation (see
-openspec/changes/fix-navigation-message-origin/research.md) concluded it is a context-specific
+finding AZ9ciqsaZpP-TVNR4hrv). Investigation (see `research.md` in this change folder)
+concluded it is a context-specific
 false positive: the sender is an opaque-origin sandboxed srcdoc iframe (sandbox="allow-scripts",
 no allow-same-origin), the receiving outer runtime page is loaded via RN WebView source={{html}}
 with no baseUrl so it has no expressible origin, and any non-'*' targetOrigin silently drops the
