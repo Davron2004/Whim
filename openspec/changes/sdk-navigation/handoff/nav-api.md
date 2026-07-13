@@ -56,12 +56,15 @@ After initial mount and after every stack-length change, `NavRoot` calls
 
 The hint is unauthenticated and grants no authority.
 
-While mounted, `NavRoot` listens to the realm's `message` event. A frame whose `data` has this
-shape pops exactly one entry:
+While mounted, `NavRoot` listens to the realm's `message` event. The production host sends back
+navigation as a serialized wire frame, so `NavRoot` accepts only string `event.data`, parses it
+with fail-closed JSON handling, and pops exactly one entry when the decoded value has this shape:
 
 ```ts
 { __whimNavBack: true }
 ```
 
-Extra properties are tolerated. Non-object frames and frames without the literal `true` marker
-are ignored. At depth zero the frame is a silent no-op. Cleanup removes the message listener.
+Extra properties are tolerated. Malformed JSON, decoded primitives or arrays, direct object
+`event.data`, and decoded objects without the literal `true` marker are ignored. The listener
+adds no authority. At depth zero the frame is a silent no-op. Cleanup removes the message
+listener.

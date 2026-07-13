@@ -18,6 +18,7 @@
 - [x] 1.4 Implement `__whimNavBack` consumption: in-realm `message` listener pops one entry; tolerate stray frames at depth 0 as a no-op (design D3)
 - [x] 1.5 Implement unknown-target handling: `navigate` to an undeclared screen is a no-op with a console warning naming the target and the declared screens (design D4)
 - [x] 1.6 SDK acceptance tests under `src/sdk/test/navigation.acceptance.tsx`: stack semantics (push/pop/duplicate push/no-op back at 0), depth-hint emission on every change, navBack pop, unknown-target warn+no-op — exercised exclusively by the bootstrapped `sdk:test` lane, with no wiring through `checks/test/acceptance.ts`; red-check at least the depth-emission test against the pre-change SDK
+- [x] 1.7 Align nav-back consumption with the existing host wire contract: parse the JSON-string `message` payload produced by `window.__whimControl.navBack()`, validate `{__whimNavBack:true}`, ignore malformed/non-object/unknown payloads, update SDK acceptance with the serialized production shape, and revise `handoff/nav-api.md`
 
 ## 2. Runtime loader mount path
 

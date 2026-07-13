@@ -234,10 +234,19 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
     });
 
     const onMessage = (event: NavMessageEvent): void => {
-      const frame = event.data;
+      if (typeof event.data !== 'string') return;
+
+      let frame: unknown;
+      try {
+        frame = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
       if (
         typeof frame === 'object' &&
         frame !== null &&
+        !Array.isArray(frame) &&
         (frame as { __whimNavBack?: unknown }).__whimNavBack === true
       ) {
         setStack(popNavStack);

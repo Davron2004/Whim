@@ -93,11 +93,37 @@ deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1]);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: { __whimNavBack: true } });
+    listener({ data: JSON.stringify({ __whimNavBack: true }) });
   }
 });
 equal(renderedText(renderer!), 'Home');
 deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0]);
+
+await act(async () => nav.navigate('Details'));
+equal(renderedText(renderer!), 'Details');
+deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1]);
+
+await act(async () => {
+  for (const listener of messageListeners) {
+    listener({ data: '{' });
+    listener({ data: JSON.stringify(null) });
+    listener({ data: JSON.stringify(1) });
+    listener({ data: JSON.stringify([]) });
+    listener({ data: { __whimNavBack: true } });
+    listener({ data: JSON.stringify({ __whimNavBack: false }) });
+    listener({ data: JSON.stringify({ unrelated: true }) });
+  }
+});
+equal(renderedText(renderer!), 'Details');
+deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1]);
+
+await act(async () => {
+  for (const listener of messageListeners) {
+    listener({ data: JSON.stringify({ __whimNavBack: true, futureField: 'ignored' }) });
+  }
+});
+equal(renderedText(renderer!), 'Home');
+deepEqual(depthFrames().map((frame) => frame.depth), [0, 1, 2, 1, 0, 1, 0]);
 
 const warnings: unknown[][] = [];
 const originalWarn = console.warn;
@@ -108,7 +134,7 @@ try {
   console.warn = originalWarn;
 }
 equal(renderedText(renderer!), 'Home');
-equal(depthFrames().length, 5);
+equal(depthFrames().length, 7);
 equal(warnings.length, 1);
 match(String(warnings[0]?.[0]), /Missing/);
 match(String(warnings[0]?.[0]), /Home/);
@@ -116,15 +142,15 @@ match(String(warnings[0]?.[0]), /Details/);
 
 await act(async () => nav.back());
 equal(renderedText(renderer!), 'Home');
-equal(depthFrames().length, 5);
+equal(depthFrames().length, 7);
 
 await act(async () => {
   for (const listener of messageListeners) {
-    listener({ data: { __whimNavBack: true } });
+    listener({ data: JSON.stringify({ __whimNavBack: true }) });
   }
 });
 equal(renderedText(renderer!), 'Home');
-equal(depthFrames().length, 5);
+equal(depthFrames().length, 7);
 
 await act(async () => renderer!.unmount());
 equal(messageListeners.size, 0);

@@ -31,6 +31,11 @@
 - 2026-07-13: concurrent, clean `main` commits `fd4c778` and `ad4836a` recorded the separate Class-2 hardening proposal/bootstrap boundary; no sdk-navigation files conflicted. Dispatched `chain-2` (`runtime-loader-mount`) from current BASE `ad4836a73f8e3280d487f9de0033d496cc2ca0df` at `.claude/worktrees/sdk-navigation-chain-2`.
 - 2026-07-13: `chain-2` report received at `7f47b66`: loader-only focused red check established, build/source-map checks passed, sandbox invariants 9/9, bridge invariants 10/10, and authoritative fast gate passed. No `invariants/`, `build/`, or host-side files changed; no deviations were reported.
 - 2026-07-13: `chain-2` integrity passed with only `src/runtime/web/loader.js`; merged without conflict and the post-merge fast gate passed. Tasks 2.1–2.4 complete; end-to-end closure chain-4 is now eligible.
+- 2026-07-13: dispatched `chain-4` (`fixture-docs-verify`) from BASE `42b12f2f549abc9d14cf0e7e35be21a3a9021b21` at `.claude/worktrees/sdk-navigation-chain-4`.
+- 2026-07-13: `chain-4` Chromium run proved List → Detail and depth 0→1, then exposed a Class-B contract mismatch: production `window.__whimControl.navBack()` posts JSON text while `NavRoot` accepted object-only `event.data`, so real system back could not pop. Parked the allowed fixture/docs work intact as `wip/sdk-navigation-chain-4`; no protected files changed. Added narrow SDK follow-up task/chain `1.7`/`chain-1b`; chain-4 now resumes after it merges.
+- 2026-07-13: dispatched `chain-1b` (`sdk-navback-wire-fix`) from BASE `56c97ada598f23e71e4d18a322b908ec26f96799` at `.claude/worktrees/sdk-navigation-chain-1b`.
+- 2026-07-13: `chain-1b` report received at `56257b3`: serialized production navBack frame failed red (`expected Home, received Details`), then focused SDK and authoritative fast gate passed after fail-closed string parsing; handoff contract is 70 lines and no deviations were reported.
+- 2026-07-13: `chain-1b` integrity passed with exactly its three declared SDK/contract files; merged without conflict and the post-merge fast gate passed. Task 1.7 complete; chain-4 may be recreated from the corrected base.
 
 ## Tripwire candidates
 

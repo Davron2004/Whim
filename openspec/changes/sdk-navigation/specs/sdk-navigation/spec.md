@@ -51,7 +51,7 @@ On every stack-length change the SDK SHALL post `{__whimNavDepth: true, depth: <
 
 ### Requirement: System back pops the stack
 
-The SDK nav root SHALL listen in-realm for the host's `{__whimNavBack: true}` frame and pop exactly one entry per frame. A `__whimNavBack` frame arriving at depth 0 SHALL be tolerated as a no-op (the host normally exits instead of forwarding at depth 0, but a stray frame must not throw). The listener SHALL confer no authority beyond what the SDK already holds (`parent.postMessage` only — spike2 constraint 2).
+The SDK nav root SHALL listen in-realm for the host's `{__whimNavBack: true}` frame and pop exactly one entry per frame. The existing host control delivers this frame as JSON-string `message` data; the SDK SHALL parse that wire shape before validating the marker and SHALL ignore malformed, non-object, or unknown payloads. A `__whimNavBack` frame arriving at depth 0 SHALL be tolerated as a no-op (the host normally exits instead of forwarding at depth 0, but a stray frame must not throw). The listener SHALL confer no authority beyond what the SDK already holds (`parent.postMessage` only — spike2 constraint 2).
 
 #### Scenario: System back at depth 1
 

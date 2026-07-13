@@ -34,10 +34,19 @@
 - writes-contract: none
 - after: chain-0
 
+## chain-1b: sdk-navback-wire-fix
+
+- tasks: 1.7
+- rationale: the first real Chromium pass exposed that the pre-existing host control serializes `{__whimNavBack:true}` before `postMessage`; keep the compatibility repair and its SDK regression in the SDK layer, with no protected host/build change
+- file-scope: `src/sdk/index.tsx`, `src/sdk/test/navigation.acceptance.tsx`, `openspec/changes/sdk-navigation/handoff/nav-api.md`
+- reads: specs/sdk-navigation/spec.md §System back pops the stack; design.md D3; handoff: handoff/nav-api.md
+- writes-contract: handoff/nav-api.md (clarify JSON-string wire decoding and malformed/non-object rejection)
+- after: chain-2
+
 ## chain-4: fixture-docs-verify
 
 - tasks: 4.1–4.3
 - rationale: end-to-end closure — the multi-screen fixture, capabilities/decision-log rows, and the gate run need the merged SDK + loader + checks state; touches `fixtures/` and regenerated artifacts (same generated files as chain-2, hence the explicit ordering)
 - reads: specs/sdk-navigation/spec.md (all requirements, as the e2e checklist); handoff: handoff/nav-api.md
 - writes-contract: none
-- after: chain-2, chain-3
+- after: chain-1b, chain-3
