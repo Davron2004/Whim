@@ -529,3 +529,11 @@ JSON on-screen.
 - **Component kit shipped** (`controls.tsx` / `surfaces.tsx` behind the same `vc-sdk` barrel): TextInput, Switch, Checkbox, Slider, SegmentedControl, Card, Divider, Badge, ProgressBar, List/ListItem, Spacer, EmptyState, Modal, Grid; Button variants/disabled; Text align; Row align/justify. ~35 exports, under the #42 ceiling. Native-control styling leans on `accent-color` (pseudo-elements are unreachable from inline styles) — device look-check pending like #43b's task 7.2.
 - **The gallery fixture is the corpus app** (`fixtures/style-gallery.app.tsx`, seeded example #3 via SEED_VERSION 2): exercises every export, anchors knip, and is the manual-QA surface.
 - Launcher settings (preset cards, accent swatches, corner pills) persist a `ThemePref` under `whim.theme:v1` in the existing launcher MMKV backend; changes apply live and ride into the next app launch.
+
+### 46. `sdk-navigation` lands recovered roadmap #3 as a stable `nav` object with no v1 params `[BUILT 2026-07-13 — host seam from #43b consumed; desktop acceptance pending final change gate]`
+
+**Scope recovered:** roadmap change #3 now supplies mini-app-owned screen navigation: a declared `initial` screen, a closed `screens` map, stack pushes through `nav.navigate('LiteralScreen')`, and one-level pops through `nav.back()`. The SDK root emits depth hints over the already reserved #43b seam so Android system back can pop the mini-app stack before the launcher exits. This adds no host capability or containment surface; iframe recreation still destroys the entire stack.
+
+**Stable object, not a hook:** `nav` is a module-scope object because navigation is an event-handler action, not render-derived state. This spelling works directly in `Button` handlers and gives the static screen-graph pass one exact, literal-target row to recognize. A hook would add lifecycle/call-site constraints without supplying useful state and would make generated code and static analysis less direct.
+
+**No params in v1:** `navigate` accepts only a declared screen name. Route params, route-reading hooks, deep links, replace/reset operations, and nested navigators remain out. The Tier-0 corpus only needs screen changes, while omitting params avoids a second type/schema/serialization contract before a concrete app demonstrates the need.

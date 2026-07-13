@@ -36,6 +36,9 @@
 - 2026-07-13: dispatched `chain-1b` (`sdk-navback-wire-fix`) from BASE `56c97ada598f23e71e4d18a322b908ec26f96799` at `.claude/worktrees/sdk-navigation-chain-1b`.
 - 2026-07-13: `chain-1b` report received at `56257b3`: serialized production navBack frame failed red (`expected Home, received Details`), then focused SDK and authoritative fast gate passed after fail-closed string parsing; handoff contract is 70 lines and no deviations were reported.
 - 2026-07-13: `chain-1b` integrity passed with exactly its three declared SDK/contract files; merged without conflict and the post-merge fast gate passed. Task 1.7 complete; chain-4 may be recreated from the corrected base.
+- 2026-07-13: preserved the first dirty chain-4 attempt under `.claude/worktrees/parked-sdk-navigation-chain-4`; redispatched fresh `chain-4` from corrected BASE `5614bf0` at the canonical worktree path, with the parked allowed docs/fixture diff available for recovery.
+- 2026-07-13: corrected `chain-4` report received at `46d8aad`: recovered only capability/append-only decision/fixture edits; root-attended production Chromium proof passed List → Detail → navBack → List with exact depth frames 0→1→0 at generation 1 and zero page errors; authoritative fast gate passed and no protected files or deviations were reported.
+- 2026-07-13: corrected `chain-4` integrity passed with exactly its three docs/fixture files; merged without conflict and the complete post-merge fast gate passed. Tasks 4.1–4.3 complete; all change tasks are now done.
 
 ## Tripwire candidates
 
