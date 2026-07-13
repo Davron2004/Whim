@@ -24,6 +24,8 @@
         "build/react-inject-shim.ts",
         "build/vc-sdk-inject.ts",
         "src/sdk/index.tsx!",
+        "src/sdk/test/*.acceptance.ts",
+        "src/sdk/test/*.acceptance.tsx",
         "src/host/bridge/index.ts!",
         "src/host/storage-engine/index.ts!",
         "src/host/version-store/index.ts!",

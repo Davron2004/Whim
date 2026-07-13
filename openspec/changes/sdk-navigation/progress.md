@@ -39,6 +39,10 @@
 - 2026-07-13: preserved the first dirty chain-4 attempt under `.claude/worktrees/parked-sdk-navigation-chain-4`; redispatched fresh `chain-4` from corrected BASE `5614bf0` at the canonical worktree path, with the parked allowed docs/fixture diff available for recovery.
 - 2026-07-13: corrected `chain-4` report received at `46d8aad`: recovered only capability/append-only decision/fixture edits; root-attended production Chromium proof passed List → Detail → navBack → List with exact depth frames 0→1→0 at generation 1 and zero page errors; authoritative fast gate passed and no protected files or deviations were reported.
 - 2026-07-13: corrected `chain-4` integrity passed with exactly its three docs/fixture files; merged without conflict and the complete post-merge fast gate passed. Tasks 4.1–4.3 complete; all change tasks are now done.
+- 2026-07-13: final `gate-full.sh` reached the knip lane and failed because the dynamically discovered permanent SDK smoke/navigation acceptance modules were not declared as entrypoints. Classified applicable: tests are executed and must be modeled, not ignored/deleted. Added narrow Class-1 `knip.json` closure task/chain 5.1/5; all preceding full-gate lanes shown through the failure remained green.
+- 2026-07-13: dispatched `chain-5` (`knip-dynamic-sdk-entrypoints`) from BASE `9050d75` at `.claude/worktrees/sdk-navigation-chain-5`; planned grant scope is exactly `knip.json`.
+- 2026-07-13: `chain-5` report received at `080085a`: knip red reported exactly the two dynamically executed SDK acceptance modules, then passed after adding their explicit `.ts`/`.tsx` entrypoint patterns; authoritative fast gate passed. Only `knip.json` changed; no ignore or rule relaxation was added.
+- 2026-07-13: `chain-5` integrity returned expected exit 6: exactly the human-granted Class-1 `knip.json` change, no scope violation. User ratified it at merge; merge was conflict-free and the post-merge fast gate passed. Task 5.1 complete.
 
 ## Tripwire candidates
 

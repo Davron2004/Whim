@@ -37,3 +37,7 @@
 - [x] 4.1 Add the `sdk-navigation` row to `docs/capabilities.md` pointing at the new spec; append the decision-log entry for nav landing (recovered #3 scope, `nav` object over hook, no params in v1)
 - [x] 4.2 Author a multi-screen fixture app (list → detail via `nav.navigate`, back via `nav.back`) under `fixtures/`, regenerate, and verify end-to-end in headless Chromium: navigate → depth-1 frame observed, navBack → initial screen renders (this fixture doubles as synthetic-run-harness test material)
 - [x] 4.3 Run `scripts/gate.sh`; resolve anything red
+
+## 5. Full-gate closure
+
+- [x] 5.1 Under a human-ratified Class-1 grant, add the independently discovered `src/sdk/test/*.acceptance.ts` and `*.acceptance.tsx` suites as knip entrypoints (do not ignore them), prove `npx knip` and `scripts/gate.sh` pass, then rerun the full gate

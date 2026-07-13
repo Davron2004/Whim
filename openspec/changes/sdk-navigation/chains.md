@@ -50,3 +50,13 @@
 - reads: specs/sdk-navigation/spec.md (all requirements, as the e2e checklist); handoff: handoff/nav-api.md
 - writes-contract: none
 - after: chain-1b, chain-3
+
+## chain-5: knip-dynamic-sdk-entrypoints
+
+- tasks: 5.1
+- rationale: the full gate correctly reported the SDK acceptance modules as unused because `sdk:test` discovers them dynamically; declare the two acceptance suffixes as real knip entrypoints rather than deleting tests or broadly ignoring dead code
+- file-scope: `knip.json`
+- marker: CLASS-1 GRANT — orchestrator writes `.claude/fixloop/grants/sdk-navigation-chain-5` for exactly `knip.json`; integrity exit 6 requires attended human ratification before merge
+- reads: design.md D0 (independent SDK test discovery); handoff: handoff/human-bootstrap.md
+- writes-contract: none
+- after: chain-4

@@ -236,8 +236,21 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
 - One shell command per Bash call in subagents: compound commands (`&&`, `;`, `|`) always fall
   through to a prompt a background agent cannot answer.
 - A background/headless subagent can't answer any permission prompt — anything outside the
-  auto-allowed vocabulary blocks it silently. Plan dispatched commands accordingly.
+  auto-allowed vocabulary blocks it silently. Plan dispatched commands accordingly. A tool call
+  sitting in `running` state with no process output may be waiting on approval rather than hung;
+  interrupt it before retrying so two copies cannot execute after a late approval.
 - `git worktree add` that checks out `.claude/**` needs the OS sandbox off for that one command.
+- Linked-worktree administration (`git worktree add/move/remove`, branch create/delete, and merges)
+  writes the main repository's `.git/` metadata even when every visible worktree path is writable;
+  Codex therefore needs a narrow root-task escalation for each category. Inside an implementer's
+  worktree, bind ownership first with exact `git -C <worktree> add .gitkeep`, then leave the sentinel
+  untracked before the real commit.
+- On macOS, an arbitrary Node/Playwright verifier can fail before its first assertion at Chromium's
+  `MachPortRendezvousServer` with `Permission denied`: Seatbelt blocks the browser launch. Run the
+  known Chromium suites through their attended unsandboxed carve-out, or have the root task request
+  one narrow escalation for the exact disposable verifier. Do not wait for a subagent's browser
+  prompt—the UI may never surface it. A successful launch followed by a locator/assertion timeout is
+  a real test failure; the MachPort error is only a sandbox-startup failure.
 - An `isolation: worktree` tree is auto-removed at turn end "if unchanged" — hence the untracked
   `.gitkeep` pin. Orchestrator-pre-created worktrees don't have this problem (preferred).
 - Metro does not walk up to the repo root's `node_modules` from a fresh worktree (Node/esbuild/tsc
@@ -249,5 +262,10 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   helper (or Claude's native prompt); direct edits and every subagent remain denied. Unattended
   sessions cannot use this lane. `.claude/settings.json`'s permissions/sandbox block is always
   human-applied by hand.
+- The Codex protected-patch bridge has one registered root session per Git common directory,
+  intentionally last-registration-wins. Starting another root task for the same repository makes
+  older tasks fail closed with `Only the registered root task may request...`; pause the competing
+  task and restart the task that should own the next protected approval. Re-trusting hook hashes is
+  unnecessary unless the hook files themselves changed.
 - Findings lists go stale: `fixloop.sh stale <evidence-file>` before dispatching any fix; prose
   judgment proposes, the stale check disposes.
