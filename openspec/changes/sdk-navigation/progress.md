@@ -28,6 +28,9 @@
 - 2026-07-13: `chain-3` integrity passed with exactly its three declared `checks/**` files; merged without conflict and the post-merge fast gate passed (static checks 56/56). Tasks 3.1–3.2 complete.
 - 2026-07-13: `chain-1` report received at `d801dbf`: required pre-implementation SDK red check failed because `NavRoot`/`nav` were absent; focused SDK, typecheck, lint, diff, and authoritative fast gate all pass. Contract `handoff/nav-api.md` is 67 lines; no deviations were reported.
 - 2026-07-13: `chain-1` integrity passed with exactly its three declared files; merged without conflict and the combined post-merge fast gate passed (SDK navigation acceptance and static checks 56/56). Tasks 1.1–1.6 complete.
+- 2026-07-13: concurrent, clean `main` commits `fd4c778` and `ad4836a` recorded the separate Class-2 hardening proposal/bootstrap boundary; no sdk-navigation files conflicted. Dispatched `chain-2` (`runtime-loader-mount`) from current BASE `ad4836a73f8e3280d487f9de0033d496cc2ca0df` at `.claude/worktrees/sdk-navigation-chain-2`.
+- 2026-07-13: `chain-2` report received at `7f47b66`: loader-only focused red check established, build/source-map checks passed, sandbox invariants 9/9, bridge invariants 10/10, and authoritative fast gate passed. No `invariants/`, `build/`, or host-side files changed; no deviations were reported.
+- 2026-07-13: `chain-2` integrity passed with only `src/runtime/web/loader.js`; merged without conflict and the post-merge fast gate passed. Tasks 2.1–2.4 complete; end-to-end closure chain-4 is now eligible.
 
 ## Tripwire candidates
 

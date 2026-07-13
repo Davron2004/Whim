@@ -21,10 +21,10 @@
 
 ## 2. Runtime loader mount path
 
-- [ ] 2.1 Change `window.__whimAfterBundle` in `src/runtime/web/loader.js` to mount the SDK nav root (`render(createElement(NavRoot, {spec}))`) instead of the fixed `spec.screens[spec.initial]`; keep the `mountedGen` guard and `delivery`/`paint` semantics untouched (design D2); minimal diff — no other loader changes
-- [ ] 2.2 Update the loader nav-seam anchor comment (lines 43–54) to reflect that the SDK now emits/consumes the frames; keep the frame-shape documentation verbatim
-- [ ] 2.3 `npm run build` to regenerate `src/runtime/generated/*` and `build/generated/*` (never hand-edit); confirm the source-map round-trip check passes
-- [ ] 2.4 Run `npm run invariants` and `npm run bridge:invariants` against the fresh build — all probes green, zero modifications under `invariants/` or `build/`
+- [x] 2.1 Change `window.__whimAfterBundle` in `src/runtime/web/loader.js` to mount the SDK nav root (`render(createElement(NavRoot, {spec}))`) instead of the fixed `spec.screens[spec.initial]`; keep the `mountedGen` guard and `delivery`/`paint` semantics untouched (design D2); minimal diff — no other loader changes
+- [x] 2.2 Update the loader nav-seam anchor comment (lines 43–54) to reflect that the SDK now emits/consumes the frames; keep the frame-shape documentation verbatim
+- [x] 2.3 `npm run build` to regenerate `src/runtime/generated/*` and `build/generated/*` (never hand-edit); confirm the source-map round-trip check passes
+- [x] 2.4 Run `npm run invariants` and `npm run bridge:invariants` against the fresh build — all probes green, zero modifications under `invariants/` or `build/`
 
 ## 3. Static-check shapes row
 
