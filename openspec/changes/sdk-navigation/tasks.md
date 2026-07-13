@@ -12,12 +12,12 @@
 
 ## 1. SDK nav primitive
 
-- [ ] 1.1 Add the module-scope nav emitter and the `nav` object (`navigate(screenName)`, `back()`) to `src/sdk/index.tsx` — additive barrel export, isolated from the `sdk-charts` export region (design D1/D2)
-- [ ] 1.2 Implement the SDK-owned nav root component: `useState`-backed stack initialized to `[spec.initial]`, renders `spec.screens[top]`, subscribes to the emitter on mount (design D2)
-- [ ] 1.3 Implement depth-hint emission: post `{__whimNavDepth:true, depth, generation: window.__whimGeneration}` via `parent.postMessage` on every stack-length change (design D3; shape verbatim from `NavDepthFrame`, type-only import if referenced)
-- [ ] 1.4 Implement `__whimNavBack` consumption: in-realm `message` listener pops one entry; tolerate stray frames at depth 0 as a no-op (design D3)
-- [ ] 1.5 Implement unknown-target handling: `navigate` to an undeclared screen is a no-op with a console warning naming the target and the declared screens (design D4)
-- [ ] 1.6 SDK acceptance tests under `src/sdk/test/navigation.acceptance.tsx`: stack semantics (push/pop/duplicate push/no-op back at 0), depth-hint emission on every change, navBack pop, unknown-target warn+no-op — exercised exclusively by the bootstrapped `sdk:test` lane, with no wiring through `checks/test/acceptance.ts`; red-check at least the depth-emission test against the pre-change SDK
+- [x] 1.1 Add the module-scope nav emitter and the `nav` object (`navigate(screenName)`, `back()`) to `src/sdk/index.tsx` — additive barrel export, isolated from the `sdk-charts` export region (design D1/D2)
+- [x] 1.2 Implement the SDK-owned nav root component: `useState`-backed stack initialized to `[spec.initial]`, renders `spec.screens[top]`, subscribes to the emitter on mount (design D2)
+- [x] 1.3 Implement depth-hint emission: post `{__whimNavDepth:true, depth, generation: window.__whimGeneration}` via `parent.postMessage` on every stack-length change (design D3; shape verbatim from `NavDepthFrame`, type-only import if referenced)
+- [x] 1.4 Implement `__whimNavBack` consumption: in-realm `message` listener pops one entry; tolerate stray frames at depth 0 as a no-op (design D3)
+- [x] 1.5 Implement unknown-target handling: `navigate` to an undeclared screen is a no-op with a console warning naming the target and the declared screens (design D4)
+- [x] 1.6 SDK acceptance tests under `src/sdk/test/navigation.acceptance.tsx`: stack semantics (push/pop/duplicate push/no-op back at 0), depth-hint emission on every change, navBack pop, unknown-target warn+no-op — exercised exclusively by the bootstrapped `sdk:test` lane, with no wiring through `checks/test/acceptance.ts`; red-check at least the depth-emission test against the pre-change SDK
 
 ## 2. Runtime loader mount path
 
@@ -28,8 +28,8 @@
 
 ## 3. Static-check shapes row
 
-- [ ] 3.1 Add `{object: 'nav', method: 'navigate', argIndex: 0}` to `NAV_CALL_SHAPES` in `checks/contract.ts` (no row for `back` — design D4)
-- [ ] 3.2 Update the checks acceptance suite: dangling-target and non-literal-target scenarios now exercised via the shipped row (keep or retire the test-injected row per what the suite's negative control needs); red-check the dangling-target case against the empty-table baseline
+- [x] 3.1 Add `{object: 'nav', method: 'navigate', argIndex: 0}` to `NAV_CALL_SHAPES` in `checks/contract.ts` (no row for `back` — design D4)
+- [x] 3.2 Update the checks acceptance suite: dangling-target and non-literal-target scenarios now exercised via the shipped row (keep or retire the test-injected row per what the suite's negative control needs); red-check the dangling-target case against the empty-table baseline
 
 ## 4. Specs, docs, and end-to-end verification
 

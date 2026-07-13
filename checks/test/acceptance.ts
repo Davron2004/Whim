@@ -36,7 +36,6 @@ import {
   FORBIDDEN_DIRECT_NAMES,
   GLOBAL_ROOTS,
   NAV_CALL_SHAPES,
-  NavCallShape,
   SDK_LINT_RULES,
 } from '../contract';
 import { runStaticChecks } from '../index';
@@ -133,8 +132,13 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     assert(!CAPABILITY_EXPORTS.some((r) => r.capability === 'diag'), 'diag must have NO row (no SDK facade)');
   });
 
-  await test('B §contract: NAV_CALL_SHAPES ships EMPTY (#3 landed no nav API)', () => {
-    assert(NAV_CALL_SHAPES.length === 0, `NAV_CALL_SHAPES must ship empty, got ${NAV_CALL_SHAPES.length} rows`);
+  await test('B §contract: NAV_CALL_SHAPES ships exactly the nav.navigate target row', () => {
+    assert(NAV_CALL_SHAPES.length === 1, `NAV_CALL_SHAPES must ship exactly one row, got ${NAV_CALL_SHAPES.length}`);
+    const [row] = NAV_CALL_SHAPES;
+    assert(
+      row?.object === 'nav' && row.method === 'navigate' && row.argIndex === 0,
+      `expected {object:'nav', method:'navigate', argIndex:0}, got ${JSON.stringify(row)}`,
+    );
   });
 
   await test('B §contract: SDK_LINT_RULES steers setTimeout/setInterval/requestAnimationFrame', () => {
@@ -362,30 +366,39 @@ export default defineApp({
     assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
 
-  await test('D §screens: a dangling nav target is rejected (test-injected shape row proves the empty-table mechanism)', { greenBy: 'D' }, () => {
-    const shapes = NAV_CALL_SHAPES as unknown as NavCallShape[];
-    const row: NavCallShape = { object: 'nav', method: 'push', argIndex: 0 };
-    shapes.push(row);
-    try {
-      const src = `
-import { defineApp } from 'vc-sdk';
-declare const nav: { push(screen: string): void };
+  await test('D §screens: a dangling nav.navigate target is rejected through the shipped call-shape row', { greenBy: 'D' }, () => {
+    const src = `
+import { defineApp, nav } from 'vc-sdk';
 function Home() {
-  nav.push('Settings');
+  nav.navigate('Settings');
   return null;
 }
 export default defineApp({
   name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
 });
 `;
-      const r = runStaticChecks(src);
-      const d = r.diagnostics.find((x) => x.kind === 'unresolved_screen' && x.symbol === 'Settings');
-      assert(!!d, `expected an unresolved_screen diagnostic naming "Settings"; got kinds [${kindsOf(r).join(', ')}]`);
-      assert(!!d && /Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d?.hint}`);
-    } finally {
-      const idx = shapes.indexOf(row);
-      if (idx >= 0) shapes.splice(idx, 1);
-    }
+    const r = runStaticChecks(src);
+    const d = r.diagnostics.find((x) => x.kind === 'unresolved_screen' && x.symbol === 'Settings');
+    assert(!!d, `expected an unresolved_screen diagnostic naming "Settings"; got kinds [${kindsOf(r).join(', ')}]`);
+    assert(!!d && /Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d?.hint}`);
+  });
+
+  await test('D §screens: a non-literal nav.navigate target is rejected conservatively', { greenBy: 'D' }, () => {
+    const src = `
+import { defineApp, nav } from 'vc-sdk';
+function Home() {
+  const screenVar = 'Home';
+  nav.navigate(screenVar);
+  return null;
+}
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
+});
+`;
+    const r = runStaticChecks(src);
+    const d = assertHasKind(r, 'unresolved_screen');
+    assert(/string literal/i.test(d.message), `message should require a string literal, got: ${d.message}`);
+    assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
 }
 

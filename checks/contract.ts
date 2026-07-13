@@ -194,13 +194,12 @@ export const CAPABILITY_EXPORTS: readonly CapabilityExportRow[] = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Data table: nav-call shapes (design D6 — ships EMPTY, #3 landed no nav API)
+// Data table: nav-call shapes (design D6/D4 — sdk-navigation)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A recognized navigation call shape: `object.method(...)` where the `argIndex`-th
- *  argument is the string-literal navigation target. Ships empty as-built; a future nav
- *  change adds rows here, never changes the checker. The suite proves the mechanism with a
- *  test-injected row (static-checks req "Screen graph resolves statically"). */
+ *  argument is the string-literal navigation target. Rows are data; adding an SDK target-taking
+ *  call does not change the checker (static-checks req "Screen graph resolves statically"). */
 export interface NavCallShape {
   object: string;
   method: string;
@@ -208,7 +207,9 @@ export interface NavCallShape {
   argIndex: number;
 }
 
-export const NAV_CALL_SHAPES: readonly NavCallShape[] = [];
+export const NAV_CALL_SHAPES: readonly NavCallShape[] = [
+  { object: 'nav', method: 'navigate', argIndex: 0 },
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data table: SDK-lint rules (design D8 — raw timers steer to delay/interval)

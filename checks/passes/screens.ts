@@ -1,11 +1,8 @@
 /**
  * static-check-pipeline — screen graph resolution (task 5.3, spec "Screen graph resolves
- * statically"). `initial` must name a key of `screens` — the whole live check today, since
- * `NAV_CALL_SHAPES` ships empty (#3 landed no navigation API). The target-resolution mechanism
- * itself is table-driven and proven by a test-injected shape row (`checks/test/acceptance.ts`
- * pushes/splices `NAV_CALL_SHAPES` around one scenario): a matching call's string-literal
- * argument must name a declared screen; a non-literal argument is rejected outright (the same
- * conservative policy as computed global access).
+ * statically"). `initial` must name a key of `screens`. Target resolution is table-driven:
+ * a matching call's string-literal argument must name a declared screen; a non-literal argument
+ * is rejected outright (the same conservative policy as computed global access).
  *
  * Runs only when `ctx.manifest` is set.
  */

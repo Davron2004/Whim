@@ -22,6 +22,12 @@
 - 2026-07-13: attended Codex Class-2 approval lane bootstrapped and committed as `9667d0d`; live probes confirmed direct protected edits fail closed, the user-routed exact-patch prompt succeeds, consumed grants do not replay, hash mismatch is denied before prompting, and a real subagent is rejected as non-root.
 - 2026-07-13: user-approved lint repair committed as `4903abc`: scoped Node/ES globals, behavior-preserving build cleanup with arithmetic VLQ decoding, one justified POSIX permission-bit exception, and analyzer-safe Codex frontmatter parsing. The authoritative fast gate passed on the new clean baseline.
 - 2026-07-13: security review found and repaired orphan-grant, subagent SessionStart, shell-metacharacter, patch TOCTOU, and rename-escape risks. Hardening commit `e0fa7e3` adds immutable Git-private snapshots plus 11 non-vacuous fast-gate cases; focused tests, mirror check, lint, and the authoritative `scripts/gate.sh` all passed. HUMAN-BOOTSTRAP tasks 0.1–0.7 complete; feature dispatch may resume after Codex trusts the changed hook hashes.
+- 2026-07-13: user trusted the hardened Codex hook hashes and restarted. Apply resumed at clean BASE `1513917aae262734a43b1b4d0bf88d24922a30b0`; the two original dirty `wip/sdk-navigation-chain-{1,3}` worktrees were preserved intact under parked paths.
+- 2026-07-13: dispatched fresh `chain-1` (`sdk-nav-primitive`) and `chain-3` (`static-checks-row`) from BASE `1513917aae262734a43b1b4d0bf88d24922a30b0`; canonical worktree paths `.claude/worktrees/sdk-navigation-chain-{1,3}`.
+- 2026-07-13: `chain-3` report received at `d228c97`: required empty-table red check failed in exactly 3 cases (53 pass), focused static checks pass 56/56, authoritative fast gate passed, and no deviations were reported.
+- 2026-07-13: `chain-3` integrity passed with exactly its three declared `checks/**` files; merged without conflict and the post-merge fast gate passed (static checks 56/56). Tasks 3.1–3.2 complete.
+- 2026-07-13: `chain-1` report received at `d801dbf`: required pre-implementation SDK red check failed because `NavRoot`/`nav` were absent; focused SDK, typecheck, lint, diff, and authoritative fast gate all pass. Contract `handoff/nav-api.md` is 67 lines; no deviations were reported.
+- 2026-07-13: `chain-1` integrity passed with exactly its three declared files; merged without conflict and the combined post-merge fast gate passed (SDK navigation acceptance and static checks 56/56). Tasks 1.1–1.6 complete.
 
 ## Tripwire candidates
 
