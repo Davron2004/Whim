@@ -111,14 +111,15 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
 
   React.useEffect(() => {
     const runtimeWindow = navigationWindow();
-    runtimeWindow.parent.postMessage(
+    // Opaque sandboxed srcdoc iframe: the parent's origin is unrepresentable as a
+    // targetOrigin and any non-'*' value silently drops the frame; auth is receiver-side (ev.source).
+    runtimeWindow.parent.postMessage( // NOSONAR
       JSON.stringify({
         __whimNavDepth: true,
         depth: stack.length - 1,
         generation: runtimeWindow.__whimGeneration,
       }),
-      '*', // NOSONAR - opaque sandboxed srcdoc iframe: the parent's origin is unrepresentable as a
-      // targetOrigin and any non-'*' value silently drops the frame; auth is receiver-side (ev.source).
+      '*',
     );
   }, [stack.length]);
 
