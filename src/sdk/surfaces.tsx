@@ -167,12 +167,6 @@ export interface ListProps {
   children?: React.ReactNode;
 }
 
-function listItemKey(child: React.ReactNode): React.Key | null {
-  if (React.isValidElement(child)) return child.key;
-  if (typeof child === 'string' || typeof child === 'number') return child;
-  return null;
-}
-
 export function List({ children }: ListProps) {
   const items = React.Children.toArray(children);
   return React.createElement(
@@ -190,7 +184,7 @@ export function List({ children }: ListProps) {
       React.createElement(
         'div',
         {
-          key: listItemKey(child),
+          key: i,
           style: i > 0 ? { borderTop: `1px solid ${color('border')}` } : undefined,
         },
         child,
