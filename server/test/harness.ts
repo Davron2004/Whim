@@ -27,17 +27,32 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+interface CheckResult {
+  name: string;
+  passed: boolean;
+  detail?: string;
+}
+
+function recordPass(name: string): void {
+  passed++;
+  console.log(`  ok  ${name}`);
+}
+
+function recordFailure(name: string, detail?: string): void {
+  failed++;
+  const detailText = detail ? ` — ${detail}` : '';
+  const line = `  XX  ${name}${detailText}`;
+  failures.push(line);
+  console.error(line);
+}
+
+function record(result: CheckResult): void {
+  if (result.passed) recordPass(result.name);
+  else recordFailure(result.name, result.detail);
+}
+
 export function check(name: string, passedCheck: boolean, detail?: string): void {
-  if (passedCheck) {
-    passed++;
-    console.log(`  ok  ${name}`);
-  } else {
-    failed++;
-    const detailText = detail ? ` — ${detail}` : '';
-    const line = `  XX  ${name}${detailText}`;
-    failures.push(line);
-    console.error(line);
-  }
+  record({ name, passed: passedCheck, detail });
 }
 
 export function eq(name: string, actual: unknown, expected: unknown): void {

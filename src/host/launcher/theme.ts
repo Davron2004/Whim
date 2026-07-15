@@ -28,13 +28,13 @@ function sanitizePref(input: unknown): ThemePref {
   const raw = input !== null && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 
   const preset =
-    typeof raw.preset === 'string' && Object.prototype.hasOwnProperty.call(PRESETS, raw.preset)
+    typeof raw.preset === 'string' && Object.hasOwn(PRESETS, raw.preset)
       ? raw.preset
       : DEFAULT_THEME_PREF.preset;
 
   const pref: ThemePref = { preset };
 
-  if (typeof raw.accent === 'string' && Object.prototype.hasOwnProperty.call(ACCENTS, raw.accent)) {
+  if (typeof raw.accent === 'string' && Object.hasOwn(ACCENTS, raw.accent)) {
     pref.accent = raw.accent;
   }
   if (typeof raw.shape === 'string' && SHAPES.has(raw.shape)) {

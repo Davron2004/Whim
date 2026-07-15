@@ -223,34 +223,49 @@ function planNewCollection(coll: CollectionSpec): { create: CreateTablePlan; app
  *  columns: type-change (active), rollback-across-tombstone or violation (retired),
  *  missing-default or additive (neither). Returns whether this field's resolution is a
  *  non-additive, zero-DDL change (only the rollback-across-tombstone case). */
-function diffField(collectionId: string, collName: string, fieldName: string, f: { id: string; type: FieldType; default?: JsonValue }, activeById: Map<string, AppliedColumn>, retiredById: Map<string, AppliedColumn>, nextColl: AppliedCollection, adds: AddColumnPlan[], errors: StorageError[]): boolean {
-  const activeCol = activeById.get(f.id);
-  const retiredCol = retiredById.get(f.id);
+interface ExistingFieldDiffContext {
+  collectionId: string;
+  collectionName: string;
+  activeById: Map<string, AppliedColumn>;
+  retiredById: Map<string, AppliedColumn>;
+  nextCollection: AppliedCollection;
+  adds: AddColumnPlan[];
+  errors: StorageError[];
+}
+
+function diffField(
+  context: ExistingFieldDiffContext,
+  fieldName: string,
+  field: { id: string; type: FieldType; default?: JsonValue },
+): boolean {
+  const { collectionId, collectionName, activeById, retiredById, nextCollection, adds, errors } = context;
+  const activeCol = activeById.get(field.id);
+  const retiredCol = retiredById.get(field.id);
 
   if (activeCol) {
-    if (activeCol.type !== f.type) {
-      errors.push({ kind: 'type_change', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" changed type ${activeCol.type}→${f.type}; a burned field's type is fixed — add a new field instead.` });
+    if (activeCol.type !== field.type) {
+      errors.push({ kind: 'type_change', collection: collectionName, field: fieldName, hint: `Field "${fieldName}" in "${collectionName}" changed type ${activeCol.type}→${field.type}; a burned field's type is fixed — add a new field instead.` });
     }
     // same id + same type, possibly a different display name = rename → no DDL.
     return false;
   }
   if (retiredCol) {
-    if (retiredCol.type === f.type) {
+    if (retiredCol.type === field.type) {
       // Rollback across a tombstone: the SAME field re-appears (same id, same type).
       // The column exists — no DDL — and it returns to active.
-      moveColumn(nextColl, 'retired', 'active', f.id);
+      moveColumn(nextCollection, 'retired', 'active', field.id);
       return true;
     }
-    errors.push({ kind: 'tombstone_violation', collection: collName, field: fieldName, hint: `Field "${fieldName}" in "${collName}" reuses retired ID "${f.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
+    errors.push({ kind: 'tombstone_violation', collection: collectionName, field: fieldName, hint: `Field "${fieldName}" in "${collectionName}" reuses retired ID "${field.id}"; mint a fresh ID for a new field — retired IDs are never reused.` });
     return false;
   }
-  if (f.default === undefined) {
+  if (field.default === undefined) {
     // Truly new field on an existing collection → a default is required (forgiving reads).
-    errors.push({ kind: 'missing_default', collection: collName, field: fieldName, hint: `New field "${fieldName}" in "${collName}" needs a default so existing rows can be read.` });
+    errors.push({ kind: 'missing_default', collection: collectionName, field: fieldName, hint: `New field "${fieldName}" in "${collectionName}" needs a default so existing rows can be read.` });
     return false;
   }
-  adds.push({ collectionId, column: { id: f.id, type: f.type, default: f.default } });
-  nextColl.active.push({ id: f.id, type: f.type });
+  adds.push({ collectionId, column: { id: field.id, type: field.type, default: field.default } });
+  nextCollection.active.push({ id: field.id, type: field.type });
   return false;
 }
 
@@ -262,10 +277,19 @@ function diffExistingFields(collName: string, coll: CollectionSpec, aColl: Appli
   const activeById = new Map(aColl.active.map(c => [c.id, c]));
   const retiredById = new Map(aColl.retired.map(c => [c.id, c]));
   const incomingTombstones = new Set(coll.tombstones);
+  const context: ExistingFieldDiffContext = {
+    collectionId: coll.id,
+    collectionName: collName,
+    activeById,
+    retiredById,
+    nextCollection: nextColl,
+    adds,
+    errors,
+  };
 
   for (const [fieldName, f] of Object.entries(coll.fields)) {
     if (incomingTombstones.has(f.id)) continue; // contradiction caught by validateArtifact
-    if (diffField(coll.id, collName, fieldName, f, activeById, retiredById, nextColl, adds, errors)) changed = true;
+    if (diffField(context, fieldName, f)) changed = true;
   }
 
   // Apply incoming tombstones: move any still-active column to retired (data retained).

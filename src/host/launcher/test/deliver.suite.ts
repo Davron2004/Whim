@@ -76,7 +76,7 @@ export async function runDeliverTests(h: Harness): Promise<void> {
   // (6) a theme value containing quotes/</script> can't break out of the enclosing JS string —
   // JSON.stringify's escaping (backslash-escaped quotes) holds inside the reinject(...) call.
   await h.test('deliver theme with quotes and </script> stays inside the JS string', async () => {
-    const theme = { name: 'a"b</script>c\\d' };
+    const theme = { name: String.raw`a"b</script>c\d` };
     const r = deliverBySourceJs({ name: 'x', source: 'a', generation: 1, theme });
     h.ok(r.includes(',theme:' + JSON.stringify(theme)), 'theme is embedded via the same JSON.stringify escaping as every other field');
     // Extract exactly the theme value's own serialized text (the tail of the call, after the

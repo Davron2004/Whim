@@ -27,7 +27,7 @@ export interface ThemeProviderProps {
 }
 
 export function ThemeProvider({ initialPref, onPrefChange, children }: Readonly<ThemeProviderProps>) {
-  const [pref, setPrefState] = useState<ThemePref>(initialPref);
+  const [pref, setPref] = useState<ThemePref>(initialPref);
   const theme = useMemo(() => resolveTheme(pref), [pref]);
 
   const value = useMemo<ThemeContextValue>(
@@ -35,7 +35,7 @@ export function ThemeProvider({ initialPref, onPrefChange, children }: Readonly<
       theme,
       pref,
       setPref: (next: ThemePref) => {
-        setPrefState(next);
+        setPref(next);
         onPrefChange?.(next);
       },
     }),

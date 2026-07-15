@@ -89,26 +89,26 @@ export async function runThemeTests(h: Harness): Promise<void> {
   });
 
   await h.test('theme sanitizeTheme: never throws on garbage input', async () => {
-    const garbage: unknown[] = [
-      42,
-      [],
-      [1, 2, 3],
-      { colors: 'nope' },
-      { colors: null },
-      { colors: { primary: 123, bg: {} } },
-      { shape: {}, dark: 'yes', name: 42 },
-      { deep: { junk: { goes: { here: [1, { x: () => {} }] } } } },
-      () => {},
-      Symbol('x'),
+    const garbage: Array<{ description: string; value: unknown }> = [
+      { description: 'a number', value: 42 },
+      { description: 'an empty array', value: [] },
+      { description: 'a numeric array', value: [1, 2, 3] },
+      { description: 'a non-object colors value', value: { colors: 'nope' } },
+      { description: 'a null colors value', value: { colors: null } },
+      { description: 'invalid nested color values', value: { colors: { primary: 123, bg: {} } } },
+      { description: 'invalid shape, dark, and name values', value: { shape: {}, dark: 'yes', name: 42 } },
+      { description: 'a nested object containing a function', value: { deep: { junk: { goes: { here: [1, { x: () => {} }] } } } } },
+      { description: 'a function', value: () => {} },
+      { description: 'a symbol', value: Symbol('x') },
     ];
-    for (const g of garbage) {
+    for (const { description, value } of garbage) {
       let threw = false;
       try {
-        sanitizeTheme(g);
+        sanitizeTheme(value);
       } catch {
         threw = true;
       }
-      h.ok(!threw, `sanitizeTheme must not throw on ${String(g)}`);
+      h.ok(!threw, `sanitizeTheme must not throw on ${description}`);
     }
   });
 

@@ -8,13 +8,22 @@ export class Harness {
   passed = 0;
   failures: string[] = [];
 
+  private recordPass(): void {
+    this.passed++;
+  }
+
+  private recordFailure(msg: string): void {
+    this.failures.push(msg);
+    console.error('  ✗ ' + msg);
+  }
+
+  private record(result: { passed: boolean; message: string }): void {
+    if (result.passed) this.recordPass();
+    else this.recordFailure(result.message);
+  }
+
   ok(passedCheck: boolean, msg: string): void {
-    if (passedCheck) {
-      this.passed++;
-    } else {
-      this.failures.push(msg);
-      console.error('  ✗ ' + msg);
-    }
+    this.record({ passed: passedCheck, message: msg });
   }
 
   eq(a: unknown, b: unknown, msg: string): void {

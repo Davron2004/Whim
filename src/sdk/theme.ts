@@ -199,7 +199,7 @@ export const RADIUS_SCALE: Record<ThemeShape, ShapeRadiusScale> = deepFreeze({
 /** Pure: unknown preset id → `paper`; unknown accent id → ignored; an explicit `shape`
  *  overrides the resolved preset's own shape. */
 export function resolveTheme(pref: ThemePref): WhimTheme {
-  const presetId = Object.prototype.hasOwnProperty.call(PRESETS, pref.preset)
+  const presetId = Object.hasOwn(PRESETS, pref.preset)
     ? pref.preset
     : DEFAULT_PRESET_ID;
   const preset = PRESETS[presetId];

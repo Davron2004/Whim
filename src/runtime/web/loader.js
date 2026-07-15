@@ -21,15 +21,18 @@
 //        The bundle, delivered later, never saw it and cannot forge an authenticated frame.
 (function whimLoaderChannelB() {
   'use strict';
-  var T0 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+  function now() {
+    return window.performance?.now ? window.performance.now() : Date.now();
+  }
+  const T0 = now();
 
   // Capture the repository-internal mount root before any bundle can run, then erase the
   // transient bootstrap seam. Mini-apps can resolve only the public `vc-sdk` namespace.
-  var internalSdkDescriptor = Object.getOwnPropertyDescriptor(
+  const internalSdkDescriptor = Object.getOwnPropertyDescriptor(
     window,
     '__WHIM_VC_SDK_INTERNAL__',
   );
-  var internalSdk = window.__WHIM_VC_SDK_INTERNAL__;
+  const internalSdk = window.__WHIM_VC_SDK_INTERNAL__;
   if (
     !internalSdkDescriptor ||
     internalSdkDescriptor.enumerable !== false ||
@@ -41,17 +44,17 @@
   ) {
     throw new TypeError('trusted vc-sdk navigation bootstrap is missing or invalid');
   }
-  var trustedNavRoot = internalSdk.NavRoot;
+  const trustedNavRoot = internalSdk.NavRoot;
   if (!delete window.__WHIM_VC_SDK_INTERNAL__ || '__WHIM_VC_SDK_INTERNAL__' in window) {
     throw new TypeError('trusted vc-sdk navigation bootstrap could not be erased');
   }
 
   // CONSTRAINT #3: snapshot the genuine probe fn before any untrusted code can overwrite it.
-  var trustedRunProbes = (typeof __whimRunProbes === 'function') ? __whimRunProbes : null;
+  const trustedRunProbes = (typeof __whimRunProbes === 'function') ? __whimRunProbes : null;
 
   // CONSTRAINT #4: the per-realm authentication nonce, sent by the host before delivery and
   // kept ONLY in this closure (never on window). null until the host's init frame arrives.
-  var hostNonce = null;
+  let hostNonce = null;
 
   // ── Transport shim (§5.6 / D7) ──────────────────────────────────────────────
   // The bundle calls window.ReactNativeWebView.postMessage(string); inside this opaque-origin
@@ -89,8 +92,8 @@
   // resets the realm (re-creates the iframe) per generation, so in practice this is 1 here;
   // the counter + the in-place re-injection path remain so the seam is real and measurable.
   window.__whimGeneration = 0;
-  var whimRoot = null;      // reused across any same-realm re-injection
-  var mountedGen = -1;      // guard: mount each generation at most once
+  let whimRoot = null;      // reused across any same-realm re-injection
+  let mountedGen = -1;      // guard: mount each generation at most once
 
   // ── Mount + paint + TRUSTED verdict (tasks 5.1 / 5.4 / 6.2) ──────────────────
   window.__whimAfterBundle = function () {
@@ -115,7 +118,7 @@
     // double rAF fires after the first paint → honest mount→first-paint.
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
-        var T1 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+        const T1 = now();
         post('paint', { generation: gen, mountToFirstPaintMs: Math.round((T1 - T0) * 100) / 100, appName: spec.name });
         // CONSTRAINT #3: call the CLOSURE-CAPTURED probe fn, never window.__whimRunProbes.
         if (!trustedRunProbes) { post('error', { where: 'probes', message: 'trusted probe fn missing' }); return; }
@@ -129,6 +132,40 @@
 
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
   var deliveryBusy = false;
+
+  function installTheme(theme) {
+    if (theme === null || typeof theme !== 'object') return false;
+    try {
+      globalThis.__WHIM_THEME__ = Object.freeze(theme);
+      return true;
+    } catch {
+      // A malformed or non-extensible theme must leave the SDK fallback available for delivery.
+      return false;
+    }
+  }
+
+  function handleHostInit(msg) {
+    if (msg.__whimHostInit !== true || hostNonce !== null) return false;
+
+    hostNonce = msg.nonce || '';
+    // Optional inert theme payload (sdk-design-system D1): installed as a frozen global
+    // BEFORE any bundle mount can occur (hostInit always precedes delivery). Invalid input
+    // leaves no usable global, so the SDK falls back to its own defaults.
+    installTheme(msg.theme);
+    post('ready', { generation: window.__whimGeneration });
+
+    // Channel (a) fallback: the bundle was baked into the srcdoc as a parser-inserted
+    // <script> that already ran (proving the engine executes a parser-inserted inline
+    // script under the locked CSP) and set window.__WHIM_APP_MODULE__. The host does NOT
+    // deliver in channel (a); mount the pre-baked module now (after the nonce is set so the
+    // verdict is authenticated). Channel (b) has no module yet here → this is a no-op.
+    if (typeof window.__WHIM_APP_MODULE__ !== 'undefined' && window.__WHIM_APP_MODULE__) {
+      window.__whimGeneration = window.__whimGeneration + 1;
+      window.__whimAfterBundle();
+    }
+    return true;
+  }
+
   function wrappedBundleSource(bundle) {
     // Wrap the bundle so (a) its externalized `require` resolves through the H1b resolver,
     // (b) it gets a benign CommonJS {exports} shim, and (c) the value-type forbidden globals
@@ -213,27 +250,7 @@
 
     // Host init: the FIRST one wins and is locked in. It arrives before any bundle is
     // delivered, so a later (untrusted) bundle cannot re-set or read this nonce.
-    if (msg.__whimHostInit === true && hostNonce === null) {
-      hostNonce = msg.nonce || '';
-      // Optional inert theme payload (sdk-design-system D1): installed as a frozen global
-      // BEFORE any bundle mount can occur (hostInit always precedes delivery). Absent/invalid
-      // field → no global; the SDK falls back to its own defaults. Best-effort: a malformed
-      // theme must never break delivery.
-      if (msg.theme && typeof msg.theme === 'object') {
-        try { globalThis.__WHIM_THEME__ = Object.freeze(msg.theme); } catch (e) {}
-      }
-      post('ready', { generation: window.__whimGeneration });
-      // Channel (a) fallback: the bundle was baked into the srcdoc as a parser-inserted
-      // <script> that already ran (proving the engine executes a parser-inserted inline
-      // script under the locked CSP) and set window.__WHIM_APP_MODULE__. The host does NOT
-      // deliver in channel (a); mount the pre-baked module now (after the nonce is set so the
-      // verdict is authenticated). Channel (b) has no module yet here → this is a no-op.
-      if (typeof window.__WHIM_APP_MODULE__ !== 'undefined' && window.__WHIM_APP_MODULE__) {
-        window.__whimGeneration = window.__whimGeneration + 1;
-        window.__whimAfterBundle();
-      }
-      return;
-    }
+    if (handleHostInit(msg)) return;
 
     if (msg.__whimDeliver !== true || deliveryBusy) return;
     deliverBundle(msg);

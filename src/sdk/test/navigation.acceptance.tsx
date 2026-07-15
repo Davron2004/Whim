@@ -10,8 +10,14 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+function describe(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
 function equal(actual: unknown, expected: unknown): void {
-  if (actual !== expected) fail(`expected ${String(expected)}, received ${String(actual)}`);
+  if (actual !== expected) fail(`expected ${describe(expected)}, received ${describe(actual)}`);
 }
 
 function deepEqual(actual: unknown, expected: unknown): void {
@@ -31,8 +37,8 @@ function publicSdkMustNotAcceptHostRootProps(
   return props;
 }
 
-equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRoot'), false);
-equal(Object.prototype.hasOwnProperty.call(publicSdk, 'NavRootProps'), false);
+equal(Object.hasOwn(publicSdk, 'NavRoot'), false);
+equal(Object.hasOwn(publicSdk, 'NavRootProps'), false);
 equal(typeof publicSdkMustNotAcceptHostRootProps, 'function');
 
 const posted: string[] = [];
@@ -164,9 +170,11 @@ try {
 equal(renderedText(renderer!), 'Home');
 equal(depthFrames().length, 7);
 equal(warnings.length, 1);
-match(String(warnings[0]?.[0]), /Missing/);
-match(String(warnings[0]?.[0]), /Home/);
-match(String(warnings[0]?.[0]), /Details/);
+const warning = warnings[0]?.[0];
+if (typeof warning !== 'string') fail(`expected the navigation warning text, received ${describe(warning)}`);
+match(warning, /Missing/);
+match(warning, /Home/);
+match(warning, /Details/);
 
 await act(async () => nav.back());
 equal(renderedText(renderer!), 'Home');

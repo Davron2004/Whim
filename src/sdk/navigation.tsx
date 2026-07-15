@@ -69,7 +69,7 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
         return;
       }
 
-      if (!Object.prototype.hasOwnProperty.call(spec.screens, action.screenName)) {
+      if (!Object.hasOwn(spec.screens, action.screenName)) {
         const declared = Object.keys(spec.screens).join(', ');
         console.warn(
           `vc-sdk nav: unknown screen "${action.screenName}"; declared screens: ${declared}`,

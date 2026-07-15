@@ -28,12 +28,27 @@ import { validateArtifact } from '../schema';
 let passed = 0;
 const failures: string[] = [];
 
+interface CheckResult {
+  passed: boolean;
+  message: string;
+}
+
+function recordPass(): void {
+  passed++;
+}
+
+function recordFailure(message: string): void {
+  failures.push(message);
+  console.error('  ✗ ' + message);
+}
+
+function record(result: CheckResult): void {
+  if (result.passed) recordPass();
+  else recordFailure(result.message);
+}
+
 function ok(passedCheck: boolean, msg: string): void {
-  if (passedCheck) passed++;
-  else {
-    failures.push(msg);
-    console.error('  ✗ ' + msg);
-  }
+  record({ passed: passedCheck, message: msg });
 }
 function eq(a: unknown, b: unknown, msg: string): void {
   ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
@@ -484,7 +499,7 @@ function isHostAuthored(sql: string): boolean {
     /^(BEGIN|COMMIT|ROLLBACK)$/,
     /^CREATE TABLE IF NOT EXISTS "(_meta|kv)" \(k TEXT PRIMARY KEY, v TEXT\)$/,
     new RegExp(String.raw`^CREATE TABLE ${ID} \("id" INTEGER PRIMARY KEY(, ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?)*\)$`),
-    new RegExp(String.raw`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
+    new RegExp(`^ALTER TABLE ${ID} ADD COLUMN ${ID} (TEXT|INTEGER|REAL)( DEFAULT (NULL|'(''|[^'])*'|-?[0-9.]+))?$`),
     /^SELECT v FROM "(_meta|kv)" WHERE k = \?$/,
     /^INSERT OR REPLACE INTO "(_meta|kv)"\(k, v\) VALUES \(\?, \?\)$/,
     /^DELETE FROM "kv" WHERE k = \?$/,
