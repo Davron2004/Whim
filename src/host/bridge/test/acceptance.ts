@@ -38,27 +38,14 @@ import {
 let passed = 0;
 const failures: string[] = [];
 
-interface CheckResult {
-  passed: boolean;
-  message: string;
-}
-
-function recordPass(): void {
-  passed++;
-}
-
-function recordFailure(message: string): void {
-  failures.push(message);
-  console.error('  ✗ ' + message);
-}
-
-function record(result: CheckResult): void {
-  if (result.passed) recordPass();
-  else recordFailure(result.message);
-}
-
 function ok(passedCheck: boolean, msg: string): void {
-  record({ passed: passedCheck, message: msg });
+  if (passedCheck) {
+    passed++;
+    return;
+  }
+
+  failures.push(msg);
+  console.error('  ✗ ' + msg);
 }
 function eq(a: unknown, b: unknown, msg: string): void {
   ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
