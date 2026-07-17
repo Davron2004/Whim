@@ -45,3 +45,44 @@ Dispatcher: main thread (attended session). Integration branch for THIS run: `ma
   deviation (accepted, in-scope): harness.md §5 still described BASE-from-main + merge-into-main,
   contradicting the rewritten §3. Revision 1 sent to the same implementer: align §5 with the
   staging lane (run-start cut, staging merges/regates, closure pointer to apply.md step 12).
+- 2026-07-17 chain-4 revision-1 report — complete, GATE PASS (worktree), commit a4feaaa.
+  Class-A self-caught: several of its Bash calls ran against the repo root (cwd resets between
+  calls); Edits used absolute paths, integrity diff later confirmed zero stray changes.
+- 2026-07-17 chain-4 integrity exit 0 (allowlist: the 3 docs files); merged --no-ff at 4377e4b^
+  region; tasks 4.1–4.3 ticked; REGATE PASS; lane torn down (worktree/branch/owners).
+- 2026-07-17 gate-full PASS on merged tip 4377e4b.
+- 2026-07-17 reviewer verdict: report-mismatch (narrow). HIGH: harness.md §9 promoted the
+  staging lane to "built, validated" ahead of design.md's own migration-plan gate (the
+  end-to-end closure has never run live; this run was main-direct by design). ROOT CAUSE: the
+  dispatcher's own task 4.1 wording instructed exactly that promotion — planner error, not
+  implementer improvisation. LOW (disclosed, correctly handled): the settings.json push-deny
+  narrowing is a ratified Class-1-shape weakening, human-committed. LOW: no explicit
+  --force-with-lease suite case (logically covered by the prefix match) — follow-up candidate.
+- 2026-07-17 fix chain-5 dispatched (reviewer HIGH → fix chain per runbook step 11): BASE
+  4377e4b, worktree staging-branch-integration-5, one task — reword §9 to
+  built-but-pending-acceptance-run; auto-grant tier stays Future.
+- 2026-07-17 chain-5 complete — GATE PASS, ba350f6; integrity exit 0 (docs/harness.md only);
+  merged 29c65f6; REGATE PASS; lane torn down. §9 now has a third bucket "built, unit-verified,
+  closure pending" with the explicit promotion condition.
+
+## Closing summary
+
+- Chains run: 5 (1–3 HUMAN-BOOTSTRAP main-thread with per-edit ratification; 4 dispatched;
+  5 = reviewer-HIGH fix chain, dispatched). Redispatches: 0. Revisions: 1 (chain-4 §5
+  consistency, self-flagged by the implementer).
+- Deviations: Class A ×4 — spec wording tightened (compound-with-push deny), chain-4 §5
+  staleness (fixed via revision), chain-4 cwd-reset commands (no harm, integrity-confirmed),
+  §9 overclaim (dispatcher task-authoring error, fixed by chain-5). Class B/C: none.
+  Tripwire candidate: subagent cwd-reset is already a documented gotcha; chain-4 hit it anyway —
+  dispatch prompts now carry an explicit per-command cd warning.
+- Reviewer verdict after fix: the single HIGH is resolved by 29c65f6; LOWs logged (ratified
+  settings narrowing — working as designed; missing --force-with-lease suite case — follow-up
+  candidate for the next Class-2 batch).
+- Gates: fast gate green after every merge (e3d6674, 638bae5, 4377e4b, 29c65f6); gate-full
+  green on 4377e4b (chain-5 is docs-only; final gate-full deferred to the pre-archive check).
+- THIS run was the last main-direct integration by design; the NEXT run (sonar-recurrence-ledger)
+  is the staging-lane acceptance run.
+- MEMORY proposals from implementers: one (subagent Bash cwd resets every call — already
+  covered by harness.md §11 gotcha; not saved as a duplicate).
+- Stale side-state surfaced to user (pre-existing, untouched): legacy cleanup teardown pending
+  (grants/git-cleanup + cleanup/main-squashed + backup/pre-cleanup + main-squashed worktree).
