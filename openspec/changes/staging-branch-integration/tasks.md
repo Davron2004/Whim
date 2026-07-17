@@ -22,6 +22,6 @@
 
 ## 4. Documentation (dispatchable)
 
-- [ ] 4.1 `docs/harness.md`: rewrite §3 trust model (staging branch is the single-writer integration target; `main` is the published branch receiving one ratified merge per run), update §4's SonarCloud row and §8's push sentence to describe the scoped `ask`, move the §9 staging-tier bullet from future to current stance, and add the attended-only push gotcha to §11.
-- [ ] 4.2 `CLAUDE.md`: update the build-harness summary paragraph (integration branch wording, git-cleanup targeting, Sonar iteration location) to match harness.md.
-- [ ] 4.3 `docs/coding-harness-diagram.md`: update the pipeline diagrams' merge-target and closure-phase arrows for the staging lane.
+- [x] 4.1 `docs/harness.md`: rewrite §3 trust model (staging branch is the single-writer integration target; `main` is the published branch receiving one ratified merge per run), update §4's SonarCloud row and §8's push sentence to describe the scoped `ask`, move the §9 staging-tier bullet from future to current stance, and add the attended-only push gotcha to §11.
+- [x] 4.2 `CLAUDE.md`: update the build-harness summary paragraph (integration branch wording, git-cleanup targeting, Sonar iteration location) to match harness.md.
+- [x] 4.3 `docs/coding-harness-diagram.md`: update the pipeline diagrams' merge-target and closure-phase arrows for the staging lane.
