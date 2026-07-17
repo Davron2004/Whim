@@ -17,7 +17,7 @@
 #   stale     <evidence-file>                       exit 0 evidence present at HEAD (finding live) | 7 missing
 #                                                    (likely ALREADY FIXED — do not dispatch). Format:
 #                                                    "## <repo-relative-path>" headers, then verbatim source lines.
-#   gatefull  <branch>                             run gate-full from the branch's committed tip in the MAIN tree (passthrough exit)
+#   gatefull  <branch>                             run gate-full from the branch's committed tip in the PRIMARY working tree (passthrough exit)
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity (0/6 print the human-gated merge; 6 flags
 #                                                    a Class-1 change to ratify; 3/4 abort), then merge cleanup
@@ -32,9 +32,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT="$(pwd)"
 
-# The trusted single-writer branch fixes/chains merge into. Was dev/v1 through 2026-07 (fully merged
-# into main at 559defe, now stale); main is the integration branch since 2026-07-07. Env-overridable
-# for a future dirty-area-branch tier (unattended runs landing on a review branch, not main directly).
+# The trusted single-writer branch fixes/chains merge into. Under the staging lane
+# (openspec: staging-branch-integration) each run sets FIXLOOP_INTEGRATION_BRANCH to its
+# integration/<run-id> branch, cut from main at run start; the default `main` covers legacy
+# direct runs. (dev/v1 served through 2026-07, fully merged into main at 559defe.)
 INTEGRATION_BRANCH="${FIXLOOP_INTEGRATION_BRANCH:-main}"
 
 # Protected paths split by BLAST RADIUS (docs/parallel-fix-loop.md §4.9):
@@ -175,17 +176,19 @@ case "$cmd" in
   gatefull)
     branch="${1:?usage: gatefull <branch>}"
     base="$(base_of "$branch")"
-    # Run the FULL gate from the branch's COMMITTED tip, checked out into the MAIN tree — NOT a
-    # worktree. Why not a worktree: a fresh worktree has no node_modules (gitignored) and Metro
-    # (guard:metro) does NOT walk up to the repo-root copy the way Node does, so it cannot resolve the
-    # RN dependency graph there (Unable to resolve @babel/runtime/...). The main tree has the real
-    # node_modules. We check out the branch's committed OBJECTS here (detached, NOT the fixer's worktree
-    # directory), so untracked/gitignored poison in the fixer's worktree never reaches the gate — the
-    # §4.7 "verified == tested" property holds. (Residual Threat-C: shared node_modules tampering — the
+    # Run the FULL gate from the branch's COMMITTED tip, checked out into the PRIMARY working tree
+    # (the repo-root checkout — "primary" is about the tree, not the branch named main; under the
+    # staging lane the checked-out branch is integration/<run-id>) — NOT a linked worktree. Why not
+    # a worktree: a fresh worktree has no node_modules (gitignored) and Metro (guard:metro) does NOT
+    # walk up to the repo-root copy the way Node does, so it cannot resolve the RN dependency graph
+    # there (Unable to resolve @babel/runtime/...). The primary tree has the real node_modules. We
+    # check out the branch's committed OBJECTS here (detached, NOT the fixer's worktree directory),
+    # so untracked/gitignored poison in the fixer's worktree never reaches the gate — the §4.7
+    # "verified == tested" property holds. (Residual Threat-C: shared node_modules tampering — the
     # OS sandbox's job, and this whole command runs unsandboxed anyway for Chromium + checkout.)
-    # SAFETY: refuse on a dirty main tree; record the starting ref; ALWAYS restore it (trap).
+    # SAFETY: refuse on a dirty primary tree; record the starting ref; ALWAYS restore it (trap).
     if ! { git diff --quiet && git diff --cached --quiet; }; then
-      die "main tree is dirty — commit or stash before 'gatefull' (it checks the branch out in the main tree)"
+      die "primary working tree is dirty — commit or stash before 'gatefull' (it checks the branch out here)"
     fi
     start_ref="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
     # shellcheck disable=SC2064
@@ -193,15 +196,15 @@ case "$cmd" in
     # --detach checks out the branch's COMMIT (allowed even while the branch ref is checked out in the
     # fixer's worktree); gate.sh builds first (regenerates the gitignored generated/*); GATE_BASE pins
     # the gate's own tamper tripwire to the recorded BASE.
-    git checkout --quiet --detach "$branch" >/dev/null 2>&1 || die "checkout of $branch into the main tree failed"
+    git checkout --quiet --detach "$branch" >/dev/null 2>&1 || die "checkout of $branch into the primary working tree failed"
     GATE_BASE="$base" ./scripts/gate-full.sh >&2
     rc=$?
-    git checkout --quiet --force "$start_ref" >/dev/null 2>&1 || die "FAILED TO RESTORE main tree to $start_ref — fix by hand before continuing"
+    git checkout --quiet --force "$start_ref" >/dev/null 2>&1 || die "FAILED TO RESTORE the primary working tree to $start_ref — fix by hand before continuing"
     trap - EXIT
     if [ "$rc" -eq 0 ]; then
-      echo "FULL GATE PASSED — main-tree checkout of $branch (base $base); restored to $start_ref"
+      echo "FULL GATE PASSED — primary-tree checkout of $branch (base $base); restored to $start_ref"
     else
-      echo "FULL GATE FAILED (exit $rc) — main-tree checkout of $branch (base $base); restored to $start_ref"
+      echo "FULL GATE FAILED (exit $rc) — primary-tree checkout of $branch (base $base); restored to $start_ref"
     fi
     exit "$rc"
     ;;
