@@ -73,28 +73,40 @@ owners_claim() {
   [[ "$(cat "$of" 2>/dev/null)" = "$AGENT_ID" ]]
 }
 
-# cleanup_lane: the git-cleanup lane (docs/archive/parallel-fix-loop.md §4.10). ACTIVE iff (a) the
-# human-minted grant exists (.claude/fixloop/grants/git-cleanup — agent-unwritable, same trust
-# anchor as Class-1 grants), (b) the command runs from inside the HARDCODED lane worktree, and
+# cleanup_lane: the git-cleanup lane (docs/archive/parallel-fix-loop.md §4.10; branch-parameterized
+# by openspec: staging-branch-integration). ACTIVE iff (a) the human-minted grant exists
+# (.claude/fixloop/grants/git-cleanup — agent-unwritable, same trust anchor as Class-1 grants),
+# (b) the command runs from inside the lane worktree whose name DERIVES FROM THE GRANT's target
+# (`<target_branch with / -> ->-squashed`; legacy grants without target_branch mean main →
+# main-squashed) — the grant, not the path, is the authority on which lane exists, and
 # (c) THIS agent owns that worktree (owners_claim — same binding as fixers). Inside the lane the
 # history-rewrite PATH is freed; the OUTCOME gate is scripts/git-cleanup-check.sh (tree-tip
-# identity + main unmoved + backup intact). The main thread is never lane-checked (returns 1 →
+# identity + target unmoved + backup intact). The main thread is never lane-checked (returns 1 →
 # existing behavior), and with no grant file the lane does not exist — policy is byte-identical
 # to before for every other caller.
-GC_WT="main-squashed"
 cleanup_lane() {
   [[ -n "$AGENT_ID" ]] || return 1
-  local root=""
+  local root="" wt_id=""
   case "$CWD" in
-    */.claude/worktrees/"$GC_WT"|*/.claude/worktrees/"$GC_WT"/*)
-      root="${CWD%%/.claude/worktrees/*}" ;;
+    */.claude/worktrees/*-squashed|*/.claude/worktrees/*-squashed/*)
+      root="${CWD%%/.claude/worktrees/*}"
+      local cl_rest="${CWD#*/.claude/worktrees/}"
+      wt_id="${cl_rest%%/*}" ;;
     *)
       # The harness can re-pin a subagent's hook cwd to the repo root. The exact normalized
       # `git -C <lane-root> …` signal above is the only alternate location source.
-      if [[ "$GIT_C_WT_ID" = "$GC_WT" ]]; then root="$GIT_C_ROOT"; else return 1; fi ;;
+      case "$GIT_C_WT_ID" in
+        *-squashed) root="$GIT_C_ROOT"; wt_id="$GIT_C_WT_ID" ;;
+        *) return 1 ;;
+      esac ;;
   esac
-  [[ -f "$root/.claude/fixloop/grants/git-cleanup" ]] || return 1
-  owners_claim "$root" "$GC_WT"
+  local grant="$root/.claude/fixloop/grants/git-cleanup"
+  [[ -f "$grant" ]] || return 1
+  local gc_target
+  gc_target=$(grep -E '^target_branch=' "$grant" | head -1 | cut -d= -f2)
+  [[ -n "$gc_target" ]] || gc_target="main"
+  [[ "$wt_id" = "${gc_target//\//-}-squashed" ]] || return 1
+  owners_claim "$root" "$wt_id"
 }
 
 # The fix-loop toolkit runs git UNHOOKED (commands inside a script don't re-trigger this hook), so it
@@ -112,6 +124,36 @@ case "$CMD" in
   *sudo*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
     deny "blocked by harness policy — if genuinely needed, stop and report a class-B deviation" ;;
 esac
+# Scoped staging-branch push (openspec: staging-branch-integration) — the ONE remote write that
+# does not hard-deny, and its outcome is ASK, never allow: a human reviews the exact refspec at
+# the prompt, so "nothing reaches a shared remote without a human" holds literally. Conditions
+# (ALL must hold, else the push denies like any other):
+#   - main thread only (no AGENT_ID) — subagents never push anything;
+#   - a single simple command anchored at `git push` (no chaining; `git -c … push` prefix forms
+#     don't anchor and stay denied);
+#   - names an integration/* ref and contains neither `main` nor `dev/v1` ANYWHERE — refspec
+#     tricks (`integration/x:main`) and even innocent substrings (`integration/domain-fix`)
+#     stay denied; fail-closed on substrings is deliberate, rename the branch instead.
+case "$POLICY_CMD" in
+  *"git push"*)
+    if [[ -z "$AGENT_ID" ]]; then
+      case "$CMD" in
+        *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: deny below
+        *)
+          case "$POLICY_CMD" in
+            "git push "*)
+              case "$POLICY_CMD" in
+                *main*|*"dev/v1"*) : ;;  # protected-ref name anywhere: deny below
+                *"integration/"*)
+                  ask "scoped staging-branch push — review the exact refspec (integration/* only) before approving" ;;
+                *) : ;;
+              esac ;;
+            *) : ;;
+          esac ;;
+      esac
+    fi
+    deny "git push is human-approved only; outside the scoped main-thread integration/* form it stays denied (class-B deviation)" ;;
+esac
 # Security-critical git, TIER 1 — SHARED-state reach: network, shared-ref forcing, recovery-data
 # destruction (reflog/gc — the reflog + backup ref are the cleanup lane's undo button), and
 # `git config` (a linked worktree's `git config` writes the SHARED .git/config; core.fsmonitor
@@ -121,7 +163,7 @@ esac
 # orchestrator (main thread) needs it; subagents are blocked from it by the scoped policy further
 # down. Worktree-safe mutating git (commit/add/checkout/…) is handled there too.
 case "$POLICY_CMD" in
-  *"git push"*|*"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
+  *"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
   *"git update-ref"*|*"git symbolic-ref"*|*"git reflog"*|*"git gc"*|*"git config"*|\
   *"git tag -f"*|*"git tag -d"*|\
   *"git branch -f dev/v1"*|*"git branch -D dev/v1"*|*"git branch -m dev/v1"*|\
@@ -129,6 +171,17 @@ case "$POLICY_CMD" in
   *"git checkout -B main"*|*"git switch -C main"*|*"git checkout -B dev/v1"*|*"git switch -C dev/v1"*)
     deny "git network/shared-ref/history op is human-approved only (class-B deviation)" ;;
 esac
+# The ACTIVE staging branch (integration/*) is protected like main against SUBAGENT ref rewrites
+# (openspec: staging-branch-integration; static glob, no per-run enumeration). The main thread
+# falls through to the ordinary mutating-git ask below — branch creation at run start and
+# deletion at run closure are orchestrator/human steps reviewed at the prompt.
+if [[ -n "$AGENT_ID" ]]; then
+  case "$POLICY_CMD" in
+    *"git branch -f integration/"*|*"git branch -D integration/"*|*"git branch -m integration/"*|\
+    *"git checkout -B integration/"*|*"git switch -C integration/"*)
+      deny "the staging branch (integration/*) is orchestrator/human-managed — subagent force-ops on it are denied (class-B deviation)" ;;
+  esac
+fi
 # Security-critical git, TIER 2 — history rewrite: denied everywhere EXCEPT inside the active
 # git-cleanup lane (§4.10), where tree-tip identity at finish is the real gate and the path is
 # deliberately free. Still match-anywhere for non-lane callers; in-lane chained forms fall to the

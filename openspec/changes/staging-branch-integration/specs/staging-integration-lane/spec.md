@@ -32,7 +32,7 @@ At run start the orchestrator SHALL cut a staging branch `integration/<run-id>` 
 
 ### Requirement: Scoped push policy preserves human-gated remote writes
 
-Pushes of `integration/*` refs issued by the main thread SHALL fall through to a permission prompt (`ask`) that a human answers; every push naming `main` SHALL remain denied for all callers, and subagents SHALL remain denied all pushes. Ref recognition SHALL live in the bash-policy hook (not in permission-matcher patterns). The bash-policy regression suite SHALL cover: main-push denied, integration-push prompts (main thread), integration-push denied (subagent), and compound commands containing a push falling through to a prompt.
+Pushes of `integration/*` refs issued by the main thread SHALL fall through to a permission prompt (`ask`) that a human answers; every push naming `main` SHALL remain denied for all callers, and subagents SHALL remain denied all pushes. Ref recognition SHALL live in the bash-policy hook (not in permission-matcher patterns). The bash-policy regression suite SHALL cover: main-push denied, integration-push prompts (main thread), integration-push denied (subagent), refspec smuggling (`integration/x:main`) denied, and compound commands containing a push denied (a chained payload cannot be audited at a prompt).
 
 #### Scenario: Sonar iteration push
 

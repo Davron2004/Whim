@@ -49,4 +49,18 @@ expect_decision "tier-1 config stays denied" deny agent-a "git -C $WT config use
 expect_decision "compound command is not auto-allowed" none agent-a "git -C $WT add file.ts && true" "$ROOT"
 expect_decision "read-only git -C remains allowed" allow agent-b "git -C $WT status --short" "$ROOT"
 
+# Scoped staging-branch push policy (openspec: staging-branch-integration)
+expect_decision "main-thread push of main stays denied" deny "" "git push origin main" "$ROOT"
+expect_decision "main-thread push of integration/* asks" ask "" "git push origin integration/run-1" "$ROOT"
+expect_decision "refspec smuggling integration->main stays denied" deny "" "git push origin integration/run-1:main" "$ROOT"
+expect_decision "subagent push of integration/* stays denied" deny agent-a "git push origin integration/run-1" "$ROOT"
+expect_decision "compound command with integration push stays denied" deny "" "git push origin integration/run-1 && echo done" "$ROOT"
+expect_decision "subagent force-op on integration/* stays denied" deny agent-a "git branch -D integration/run-1" "$ROOT"
+
+# Cleanup lane derives its worktree id from the grant's target_branch (staging-branch-integration)
+mkdir -p "$ROOT/.claude/fixloop/grants" "$ROOT/.claude/worktrees/integration-run-1-squashed" "$ROOT/.claude/worktrees/other-squashed"
+printf 'target_branch=integration/run-1\ntarget_sha=x\ntarget_tree=y\n' > "$ROOT/.claude/fixloop/grants/git-cleanup"
+expect_decision "cleanup lane tracks the grant target" allow agent-c "git rebase -i HEAD~3" "$ROOT/.claude/worktrees/integration-run-1-squashed"
+expect_decision "mismatched -squashed worktree is not the lane" deny agent-d "git rebase -i HEAD~3" "$ROOT/.claude/worktrees/other-squashed"
+
 printf 'bash-policy tests: %d passed\n' "$PASS"
