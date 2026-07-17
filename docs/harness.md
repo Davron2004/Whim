@@ -197,13 +197,21 @@ only) — ask is never allow, so nothing reaches a shared remote without a human
 
 ## 9. Current stance vs deliberate future upgrades
 
-**Current (built, validated):** worktree-parallel execution for both loops; the per-run staging
-branch (`integration/<run-id>`, set via `FIXLOOP_INTEGRATION_BRANCH`) as the serialized merge
-target, with `main` receiving exactly one ratified merge per run at closure; the scoped push-ask
+**Current (built, validated):** worktree-parallel execution for both loops; the scoped push-ask
 policy (main thread only, `ask` never `allow`, subagents always denied); scoped git + owners
-binding; Class-1 grants; greenBy; the target-parameterized git-cleanup lane (targets the staging
-branch before the final merge; `main` only in legacy pre-existing-history mode); containerized
-unattended fix-loop runs.
+binding; Class-1 grants; greenBy; containerized unattended fix-loop runs.
+
+**Current (built, unit-verified, closure pending):** the per-run staging branch
+(`integration/<run-id>`, set via `FIXLOOP_INTEGRATION_BRANCH`) as the serialized merge target,
+with `main` receiving exactly one ratified merge per run at closure; the target-parameterized
+git-cleanup lane (targets the staging branch before the final merge; `main` only in legacy
+pre-existing-history mode). The component pieces — the hook decision matrix, the cleanup-check
+grant schema, the closure runbooks — are built and unit-verified, but the end-to-end closure
+sequence (draft-PR push → SonarCloud iteration → staging-targeted cleanup → ancestor-gated final
+merge into `main`) has never executed live: the run that built this lane still integrated
+main-direct by design. Validation is **pending the first live staging-lane run** (the acceptance
+run called out in `openspec/changes/staging-branch-integration/design.md`'s Migration Plan); this
+bucket promotes to "Current (built, validated)" only after that run lands.
 
 **Future (recorded, NOT built — build deliberately, never by accident):**
 - *Fully-unattended grant tier:* orchestrator auto-grants land directly on the active staging
