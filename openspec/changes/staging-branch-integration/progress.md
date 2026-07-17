@@ -36,3 +36,12 @@ Dispatcher: main thread (attended session). Integration branch for THIS run: `ma
   worktree id from the grant's target_branch (grant = authority). Suite grew 2 lane-derivation
   cases; 19/19 green. Logged as a chain-2 addendum discovered during chain-3 — the runbook
   rewrite is what surfaced it.
+- 2026-07-17 chains 2+3 committed 638bae5 (one batched commit per user feedback); fast gate
+  PASS on 638bae5 (19-case policy suite included).
+- 2026-07-17 chain-4 dispatched — BASE 638bae5, worktree .claude/worktrees/
+  staging-branch-integration-4, branch chain/staging-branch-integration-4, implementer subagent,
+  tasks 4.1–4.3 (docs only).
+- 2026-07-17 chain-4 report — STATUS complete, GATE PASS, commit d5019ff, 3/3 tasks. Class-A
+  deviation (accepted, in-scope): harness.md §5 still described BASE-from-main + merge-into-main,
+  contradicting the rewritten §3. Revision 1 sent to the same implementer: align §5 with the
+  staging lane (run-start cut, staging merges/regates, closure pointer to apply.md step 12).
