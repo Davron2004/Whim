@@ -124,17 +124,24 @@ reads/writes + explicit `after:`; Class-2-touching chains marked HUMAN-BOOTSTRAP
 (`handoff/*.md`) are interfaces — signatures, shared types verbatim, invariants, error surface —
 never diaries.
 
-Execution: the `/opsx:apply` dispatch loop (runbook: `.claude/commands/opsx/apply.md`):
+Execution: the `/opsx:apply` dispatch loop (runbook: `.claude/commands/opsx/apply.md`) first cuts
+the run's staging branch (`integration/<change-id>`, from `main`'s recorded tip) and sets
+`FIXLOOP_INTEGRATION_BRANCH`, refusing if another staging branch is already active, then:
 
-1. Per eligible chain (deps merged): record BASE = `main` tip, pre-create an orchestrator-owned
-   worktree + `chain/<change>-<id>` branch, `npm run build` in it, write `.phase` if the change
-   uses a greenBy suite (§6).
+1. Per eligible chain (deps merged): record BASE = the staging branch tip
+   (`git rev-parse integration/<change-id>`), pre-create an orchestrator-owned worktree +
+   `chain/<change>-<id>` branch, `npm run build` in it, write `.phase` if the change uses a
+   greenBy suite (§6).
 2. One implementer per chain, in parallel where the DAG allows. Each self-gates `gate.sh`,
    commits, reports. Implementers do **not** tick tasks.md — the dispatcher ticks at merge.
 3. Per report: adjudicate deviations (A log / B adjudicate / C halt), `fixloop.sh integrity`,
-   then a **serialized** `--no-ff` merge into `main` + fast regate (fail → revert + park).
-4. After the last chain: `gate-full.sh` on the merged tip, reviewer over the whole diff range,
-   closing summary in progress.md, human-gated memory proposals, `/opsx:archive`.
+   then a **serialized** `--no-ff` merge into the staging branch + fast regate (fail → revert +
+   park); `main` stays untouched.
+4. After the last chain: `gate-full.sh` on the merged staging tip, reviewer over the whole diff
+   range, closing summary in progress.md, human-gated memory proposals. Closure onto `main`
+   (draft-PR Sonar iteration → staging-branch `/git-cleanup` → ancestor check → single human
+   merge) is attended-only and follows apply.md step 12 as the canonical text; then
+   `/opsx:archive`.
 
 ## 6. Phased TDD across chains — greenBy
 
