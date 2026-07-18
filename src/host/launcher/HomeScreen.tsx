@@ -37,6 +37,8 @@ export interface HomeScreenProps {
   onOpen: (app: InstalledApp) => void;
   onFork: (app: InstalledApp) => void;
   onDelete: (app: InstalledApp) => void;
+  /** Opens the app's full-screen history surface (version-history-ux). */
+  onHistory: (app: InstalledApp) => void;
   onCreate: () => void;
   /** Opens the theme picker (design sdk-design-system D7). */
   onSettings: () => void;
@@ -44,7 +46,7 @@ export interface HomeScreenProps {
   onOpenDevProbe?: () => void;
 }
 
-export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
+export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
   const p = shellPalette(theme);
@@ -130,6 +132,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onCreate, o
             <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
             <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
             <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onFork(a); }} />
+            <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
             <SheetRow label={COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} onPress={() => confirmDelete(selected!)} />
             <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
           </Pressable>

@@ -83,3 +83,54 @@ entries carry an explicit `storeId` pointing at the original's repo plus their o
 18. `remove` returns a product-verb shape (e.g. `{ removed: true }`) with no git terminology
     (passes `assertNoGitLeak`); removing an app that other lineages do NOT independently key is
     a single clean prefix delete (one repo == one key prefix in `KvBackedFs`).
+
+## History-surface `StoreAccess` wrappers (version-history-ux task 1.2, design D6)
+
+`history`, `timeline`, `rollback`, `pin`, `listPins`, `diff`, `activeId`, and the updated
+`fork(entry, versionId?)` all read through `StoreAccess` — never a raw `VersionStore` — exactly
+like `activeBundle`/`fork` already do.
+
+### Ensure-lineage-first discipline
+19. Every one of the new wrappers calls `ensureLineage(entry)` before delegating to the store —
+    for a fork entry (whose `storeId`/`lineageId` differ from its launcher `id`) skipping this
+    would silently read/write the wrong lineage. Observed via the same mechanism §11 already
+    exercises: accessing a fork entry, then the original, resolves each to its OWN data.
+
+### Fork entry lists its own line
+20. `history(forkEntry)` lists the fork's own lineage (the shared pre-fork history plus
+    anything the fork itself has snapshotted) — never a sibling lineage's post-fork
+    snapshots (e.g. the original's, taken after the fork was created). This holds
+    unconditionally: `history()` is a strict backward ancestor walk from the fork's own tip.
+20b. `timeline(forkEntry)` has the same guarantee once the fork has diverged (taken at least
+    one snapshot of its own). **Known gap** (verified empirically, engine-level, not fixable
+    from the wrapper): if the fork has NOT yet diverged — its tip is literally the same commit
+    as the pre-fork tip — a snapshot committed later on the ORIGINAL's lineage IS a DAG
+    descendant of that shared commit, so `timeline()`'s ancestry-only `isSameLine` check
+    (chain-1, `engine.ts`) currently includes it. See handoff/store-access-history.md.
+
+### Fork with an explicit version id
+21. `fork(entry, versionId)` forks from the given snapshot id rather than the entry's current
+    active snapshot (the engine resolves any tagged snapshot, branch-independent — research
+    fact 2). `fork(entry)` with no second argument keeps forking from the entry's active
+    snapshot exactly as before (additive; existing call sites unaffected).
+
+### `activeId` reflects restores
+22. `activeId(entry)` returns the entry's current active snapshot id; after
+    `rollback(entry, someOlderId)`, a subsequent `activeId(entry)` call returns
+    `someOlderId` (D6/D3's current-marker).
+
+### Re-pin semantics (D8, verified against the engine)
+23. Pinning a label already in use, to a DIFFERENT snapshot, MOVES the label (last write
+    wins) rather than throwing — the engine's tag-based pin storage overwrites
+    (`git.tag(..., force: true)`). A subsequent `listPins`/`getPinned` call for that label
+    resolves only the new snapshot; the wrapper needs no error-normalization layer.
+
+## Prompt-envelope parsing (design D4, `src/host/launcher/prompt-envelope.ts`)
+
+24. Valid v1 envelope: `parsePromptEnvelope('{"v":1,"text":"make a tip splitter"}')` →
+    `{text: "make a tip splitter"}`.
+25. Invalid JSON (e.g. a raw legacy prompt string that is not JSON at all) → falls back to
+    `{text: <the raw string, unchanged>}`; never throws.
+26. Wrong shape — valid JSON but `v !== 1`, `text` missing or non-string, or the parsed value
+    is not a plain object (e.g. a JSON array or number) — falls back to `{text: <raw>}` the
+    same way as invalid JSON.

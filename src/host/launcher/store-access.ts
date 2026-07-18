@@ -19,7 +19,7 @@
  * ORIGINAL switches back. On a fresh process the cache is empty → one safe switch on first use.
  */
 
-import type { VersionStore } from '../version-store';
+import type { VersionStore, Snapshot, Pin, FileChange } from '../version-store';
 import type { AppRecord } from '../bridge/contract';
 import { AppIndex, InstalledApp } from './app-index';
 
@@ -108,17 +108,70 @@ export class StoreAccess {
     return src;
   }
 
+  /** This entry's own lineage line, newest-first (D6) — an ancestry walk from its active tip. */
+  async history(entry: InstalledApp, opts?: { limit?: number }): Promise<Snapshot[]> {
+    await this.ensureLineage(entry);
+    return this.store.history(storeIdOf(entry), opts);
+  }
+
+  /** Same as `history`, but survives a rollback: later same-line snapshots stay listed (D6). */
+  async timeline(entry: InstalledApp, opts?: { limit?: number }): Promise<Snapshot[]> {
+    await this.ensureLineage(entry);
+    return this.store.timeline(storeIdOf(entry), opts);
+  }
+
+  /** Move this entry's active snapshot (non-destructive — later snaps stay reachable) (D6). */
+  async rollback(entry: InstalledApp, snapshotId: string): Promise<{ activeId: string }> {
+    await this.ensureLineage(entry);
+    return this.store.rollback(storeIdOf(entry), snapshotId);
+  }
+
+  /** Label a snapshot (D6/D8): re-pinning an existing label MOVES it (last write wins) —
+   *  verified against the engine's tag-based pin storage (`force: true`, never throws). */
+  async pin(entry: InstalledApp, snapshotId: string, label: string): Promise<Pin> {
+    await this.ensureLineage(entry);
+    return this.store.pin(storeIdOf(entry), snapshotId, label);
+  }
+
+  /** This entry's pins (D6). */
+  async listPins(entry: InstalledApp): Promise<Pin[]> {
+    await this.ensureLineage(entry);
+    return this.store.listPins(storeIdOf(entry));
+  }
+
+  /** Per-file changes between two of this entry's snapshots (D6). */
+  async diff(entry: InstalledApp, fromId: string, toId: string): Promise<FileChange[]> {
+    await this.ensureLineage(entry);
+    return this.store.diff(storeIdOf(entry), fromId, toId);
+  }
+
+  /** This entry's current active snapshot id, or null if it has never snapshotted (D6). Thin
+   *  wrapper over `active()` for the history screen's current-marker. */
+  async activeId(entry: InstalledApp): Promise<string | null> {
+    await this.ensureLineage(entry);
+    const active = await this.store.active(storeIdOf(entry));
+    return active?.id ?? null;
+  }
+
   /**
-   * Fork an installed entry (D2): version-store fork from the original's current snapshot →
-   * a new lineage in the SAME repo, then a new index entry tracking it. The fork shares the
-   * repo (and its pre-fork history) but evolves independently and gets its OWN engine appId.
+   * Fork an installed entry (D2): version-store fork from a snapshot → a new lineage in the
+   * SAME repo, then a new index entry tracking it. The fork shares the repo (and its pre-fork
+   * history) but evolves independently and gets its OWN engine appId. `versionId` (D6/research
+   * fact 2) forks from that snapshot instead of the entry's current active one — "make this
+   * version its own app" reuses this same fork→install flow unchanged.
    */
-  async fork(entry: InstalledApp): Promise<InstalledApp> {
+  async fork(entry: InstalledApp, versionId?: string): Promise<InstalledApp> {
     const repo = storeIdOf(entry);
     await this.ensureLineage(entry);
-    const active = await this.store.active(repo);
-    if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
-    const { lineageId } = await this.store.fork(repo, active.id);
+    let snapshotId: string;
+    if (versionId != null) {
+      snapshotId = versionId;
+    } else {
+      const active = await this.store.active(repo);
+      if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
+      snapshotId = active.id;
+    }
+    const { lineageId } = await this.store.fork(repo, snapshotId);
     // fork() left the repo HEAD on the new lineage.
     this.repoLineage.set(repo, lineageId);
     const forkEntry: InstalledApp = {
