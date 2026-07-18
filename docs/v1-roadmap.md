@@ -169,7 +169,8 @@ every export.
 
 #### 4. `sdk-charts` — Size M · Deps: #1 · Parallelizable with late #3 (new `src/sdk/charts/` module)
 
-**Status:** unproposed
+**Status:** implemented 2026-07-18 (OpenSpec change `sdk-charts`) — desktop gates green
+(build · lint · sdk:test). As-built: decision #47.
 **Why:** corpus demands charts (spending graph, streak heatmap); big enough surface to own a
 change (user's call, decision #42).
 **In:** declarative `Chart` — exactly **bar, line, calendar-heatmap**; data-as-props; tokens-only
