@@ -11,6 +11,7 @@ import { Harness } from './harness';
 import { runBackPolicyTests } from './back-policy.suite';
 import { runAppIndexTests } from './app-index.suite';
 import { runStoreAccessTests } from './store-access.suite';
+import { runPromptEnvelopeTests } from './prompt-envelope.suite';
 import { runSeedTests } from './seed.suite';
 import { runProductVerbsTests } from './product-verbs.suite';
 import { runDevProbeBackButtonTests } from './dev-probe-back-button.suite';
@@ -25,6 +26,7 @@ console.log('\nlauncher acceptance — back-policy + app-index + store-access + 
 await runBackPolicyTests(h);
 await runAppIndexTests(h);
 await runStoreAccessTests(h);
+await runPromptEnvelopeTests(h);
 await runSeedTests(h);
 await runProductVerbsTests(h);
 await runDevProbeBackButtonTests(h);
