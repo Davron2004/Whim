@@ -41,7 +41,7 @@
       "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)", "Bash(rg:*)", "Bash(wc:*)", "Bash(mkdir:*)"
     ],
     "deny": [
-      "Bash(git push:*)", "Bash(npm install:*)", "Bash(npm uninstall:*)",
+      "Bash(git push origin main:*)", "Bash(npm install:*)", "Bash(npm uninstall:*)",
       "Bash(sudo:*)", "Bash(curl:*)", "Bash(wget:*)"
     ]
   },

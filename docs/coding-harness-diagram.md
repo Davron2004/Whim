@@ -6,7 +6,7 @@ flowchart TD
  
     PLAN["Planner — read-only<br/>defines DONE: fix, test,<br/>file allowlist, red-without-fix"]:::auto --> WT
  
-    WT["Orchestrator: create worktree<br/>branch fix-id from PINNED BASE<br/>BASE = rev-parse dev/v1 (recorded)"]:::orch --> FIX
+    WT["Orchestrator: create worktree<br/>branch fix-id from PINNED BASE<br/>BASE = rev-parse integration/run-id (staging tip, recorded)"]:::orch --> FIX
  
     subgraph ISO["isolated worktree — scoped git (cwd under .claude/worktrees), toolchain resolves, no push / merge / ref-writes"]
       direction TD
@@ -35,7 +35,7 @@ flowchart TD
     HUM -->|"approve"| MERGE
     HUM -->|"deny"| F6(["reject"]):::fail
  
-    MERGE["Orchestrator merge fix-id into dev/v1<br/>SERIALIZED — single writer"]:::orch --> CLEAN["worktree remove + delete branch"]:::orch --> OUT[/"OUT: landed commit on dev/v1"/]:::io
+    MERGE["Orchestrator merge fix-id into integration/run-id<br/>SERIALIZED — single writer, main untouched"]:::orch --> CLEAN["worktree remove + delete branch"]:::orch --> OUT[/"OUT: landed commit on the run's<br/>staging branch (integration/run-id)"/]:::io
  
     classDef io fill:#e8f0fe,stroke:#4285f4,color:#111
     classDef auto fill:#ffffff,stroke:#9aa0a6,color:#111
@@ -59,9 +59,15 @@ flowchart LR
     W2 --> Q
     W3 --> Q
  
-    Q --> DV[/"dev/v1 (landed)"/]:::io
+    Q --> DV[/"integration/run-id (staging, landed)"/]:::io
     Q -.->|"escalate / reject"| HOLD(["human review / dropped"]):::human
  
+    DV --> PUSH{{"Human (attended only):<br/>push integration/run-id<br/>+ draft PR → main"}}:::human
+    PUSH --> SONAR["SonarCloud rounds on the draft PR<br/>nested /fix-loop on integration/run-id<br/>re-push until green"]:::auto
+    SONAR --> CLEANUP{{"Human: /git-cleanup<br/>target=integration/run-id<br/>applies reset + force-with-lease push"}}:::human
+    CLEANUP --> FMERGE{{"Human: ancestor check<br/>(main is ancestor of integration/run-id) passes,<br/>merge --no-ff into main, push"}}:::human
+    FMERGE --> MAINOUT[/"OUT: main — one ratified merge,<br/>no post-merge regate"/]:::io
+
     classDef io fill:#e8f0fe,stroke:#4285f4,color:#111
     classDef auto fill:#ffffff,stroke:#9aa0a6,color:#111
     classDef orch fill:#f3e8fd,stroke:#a142f4,color:#111
@@ -84,7 +90,7 @@ Legend — who approves what (the colors)
 │ 🔴 Red    │ You (human)                                      │ Ratifies highs + every protected-file touch; can deny    │
 └───────────┴──────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘
 
-The two structural invariants the picture encodes: (a) the pinned BASE is the only trust anchor — every integrity question is "diff vs BASE," never "diff vs HEAD"; (b) fan-out is parallel, but the merge queue is a single serialized writer to dev/v1, so two fixes never race the same branch.
+The two structural invariants the picture encodes: (a) the pinned BASE is the only trust anchor — every integrity question is "diff vs BASE," never "diff vs HEAD"; (b) fan-out is parallel, but the merge queue is a single serialized writer to the run's staging branch (`integration/<run-id>`), so two fixes never race the same branch — `main` stays untouched until the attended closure phase lands the single ratified merge.
 
 Failure modes (every red exit)
 

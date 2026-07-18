@@ -32,6 +32,8 @@ Scope: <ref range>, <n> commits, <m> files
 - Suggested approach: sketch only — you do not implement
 ## Patterns worth a tripwire
 Recurring garbage that scripts/gate.sh's grep section or a lint rule could catch mechanically. Be specific enough to paste.
+## Recurring external findings
+Read `openspec/critic/sonar-ledger.md` (append-only; grammar in its header: `- <date> <run-id> <rule-id> <path>:<line>`). State the ledger's most recent append date first — during active Sonar work a stale date is itself a finding. Group lines by rule-id and count DISTINCT run-ids. Every rule at ≥3 distinct runs is a **promotion candidate**: cite its ledger lines and suggest ONE enforcement mechanism, cheapest that fits — (a) enable an existing sonarjs rule not in recommended-legacy; (b) a `no-restricted-syntax` selector with an instructional message (the proven bare-`.sort()` pattern); (c) a type-aware @typescript-eslint rule when the untyped selector over/under-matches; (d) a local custom rule (last resort). Rules at exactly 2 distinct runs MAY be listed as "watch". The threshold (3) is stated here so a human tunes it by editing this line. You propose only: the promotion itself is a separate human-ratified Class-1 (.eslintrc.js) change — never edit lint config, never write to the ledger.
 ## Not findings
 ≤3 things you considered and rejected, so the human knows you looked.
 
