@@ -18,6 +18,7 @@ import { runDevProbeBackButtonTests } from './dev-probe-back-button.suite';
 import { runUnmountTeardownTests } from './unmount-teardown.suite';
 import { runDeliverTests } from './deliver.suite';
 import { runThemeTests } from './theme.suite';
+import { runHistoryLogicTests } from './history-logic.suite';
 
 const h = new Harness();
 
@@ -33,6 +34,7 @@ await runDevProbeBackButtonTests(h);
 await runUnmountTeardownTests(h);
 await runDeliverTests(h);
 await runThemeTests(h);
+await runHistoryLogicTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
