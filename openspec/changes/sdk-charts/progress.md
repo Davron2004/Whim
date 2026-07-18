@@ -45,3 +45,24 @@ Dispatcher-owned run ledger. Append every disposition as it happens. The ledger 
 - **fix-chain dispatched** — `fix/sdk-charts-docfix` from staging tip `433dcb4` for the HIGH doc-fidelity finding.
 - **fix-chain report** — STATUS complete, GATE PASS, commit `8e45b67`, only `docs/sdk-reference.md` (1 line). Integrity exit 0 (1 file). Merged @ `a5b1a94` (`--no-ff`), regate `FAST GATE PASSED`, worktree cleaned. HIGH finding resolved; doc now mirrors the union (bar/line only).
 - LOW nit left as won't-fix (gallery fixture `new Date()` for seed data — out of D7 scope, reviewer agreed non-blocking).
+
+## Closure (2026-07-18, unattended)
+
+- **push DENIED** — `git push origin integration/sdk-charts` refused (`git push is human-approved only … class-B deviation`). Remote writes (push/fetch/force-push) need a human at the terminal; user asleep → unreachable. Per user's explicit standing authorization ("merge it to main … if you won't be able to reach sonar, just treat it as done"), fell back to the local ratified merge.
+- **ratified merge → LOCAL main** `7c01c1d` (`--no-ff`), main was a clean ancestor of the staging tip. Merged tree is byte-identical to the gate-full-verified staging tip (`git diff integration/sdk-charts main` empty); fast gate green on main. **The waiting agent is unblocked — local `main` now contains `sdk-charts`.**
+- **DEFERRED to morning (all require a human / remote):**
+  1. `git push origin main` (or push the staging branch → draft PR) — publish to origin.
+  2. SonarCloud iteration — needs the push; not run. Ledger `openspec/critic/sonar-ledger.md` NOT appended (no findings transcribed, since no Sonar round-trip happened).
+  3. `/git-cleanup` (target=`integration/sdk-charts`) — history-squash + force-push, human-gated; skipped. Main currently carries the honest chain-structured history (3 chain merges + 1 fix merge + bookkeeping commits).
+  4. Teardown — staging branch `integration/sdk-charts` KEPT (local + remote-remnant) so the morning remote flow is possible; NOT deleted.
+- **archive note** (for `/opsx:archive`): `capabilities.md` pointer still targets `openspec/changes/sdk-charts/specs/...` — flip to `openspec/specs/sdk-charts/` when the spec syncs.
+
+## Closing summary (step 13)
+
+- **Chains:** 3 planned (linear DAG) + 1 reviewer fix chain. All merged, no parks, no halts.
+  - chain-1 sdk-chart-geometry → `c9adc28` · chain-2 sdk-chart-component → `5822c0d` · chain-3 gallery-docs-closeout → `bdf568b` · fix `a5b1a94`.
+- **Redispatches:** 0 (every chain passed its self-gate + integrity on first dispatch).
+- **Deviations:** all Class-A, none proposal-invalidating — `.acceptance.ts` suite naming (SDK glob idiom); pure explicit-`endDate` calendar anchor (honors D7 no-wall-clock); stricter real-day-in-month validation; line zero-span mark centered at 0.5; `switch` for TS union narrowing (forced by a real narrowing limit, reproduced); capabilities.md pointer reworded not duplicated.
+- **Reviewer verdict:** CHANGES REQUESTED → 1 HIGH (doc `maxValue` applicability) fixed via the fix chain; 1 LOW (fixture `new Date()`) accepted as won't-fix. Re-verified: doc now mirrors the union. Reviewer independently ran sdk:test/build/invariants and confirmed TZ/DST-immune date math.
+- **Gates:** every inner attempt fast-gated; `gate-full` green twice (post-chain-3 tip `433dcb4`, and final tip after the fix). Chromium invariants unchanged — charts add no containment surface.
+- **MEMORY proposals:** none from any implementer (all reported "none"); nothing durable to record.
