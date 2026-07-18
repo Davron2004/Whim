@@ -117,6 +117,35 @@ Every prop below takes a **token**, never a raw color/pixel value.
 | `Modal` | `title` | `string?` | — | Optional sheet header. |
 | `Modal` | `onClose` | `() => void` (required) | — | Fires on backdrop tap. |
 
+### Charts (`charts.tsx`)
+
+Pure display, no bridge traffic, no interactive marks — usable with `capabilities: []`. One
+component (`Chart`), not `BarChart`/`LineChart`/`Heatmap`; the `kind` discriminant picks the
+render path. Every color derives from the active theme via `color(tone)` — a theme switch
+recolors with no app-side handling, and no new color token is introduced.
+
+| Component | Prop | Type | Default | Semantics |
+|---|---|---|---|---|
+| `Chart` | `kind` | `'bar' \| 'line' \| 'heatmap'` (required) | — | Which chart renders. |
+| `Chart` | `data` | `SeriesPoint[]` (bar/line) or `DayPoint[]` (heatmap) (required) | — | The series to plot. |
+| `Chart` | `tone` | `ChartTone` | `'primary'` | `'primary' \| 'positive' \| 'warning' \| 'danger'`; resolves via `color(tone)`. |
+| `Chart` | `showValues` | `boolean` (bar/line only) | `false` | Renders `String(point.value)` above each bar/point; bar's axis label always renders regardless. |
+| `Chart` | `maxValue` | `number?` (bar/line/heatmap) | derived from data | Pins the scale ceiling; bar/heatmap never lower below the data max, line only raises `domainMax`. |
+| `Chart` | `weeks` | `number?` (heatmap only) | `12` | Clamped to `[1, 53]` by the geometry layer; the grid anchors to the latest date in `data`, never "today". |
+
+Empty `data` (`length === 0`) renders a fixed `160px`-tall reserved frame (never a collapse)
+with a centered `text-muted` span reading exactly `"No data yet"`, for all three `kind`s.
+
+```ts
+type ChartProps =
+  | { kind: 'bar' | 'line'; data: SeriesPoint[]; tone?: ChartTone; showValues?: boolean; maxValue?: number }
+  | { kind: 'heatmap'; data: DayPoint[]; tone?: ChartTone; weeks?: number };
+
+type SeriesPoint = { label: string; value: number };
+type DayPoint = { date: string /* YYYY-MM-DD */; value: number };
+type ChartTone = 'primary' | 'positive' | 'warning' | 'danger';
+```
+
 ## 3. Tokens (the five scales)
 
 | `SpaceToken` | `none` \| `xs` \| `sm` \| `md` \| `lg` \| `xl` |
