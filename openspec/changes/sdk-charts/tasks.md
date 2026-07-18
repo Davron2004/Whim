@@ -18,7 +18,7 @@
 
 ## 3. Gallery, reference doc, close-out
 
-- [ ] 3.1 Style-gallery Charts section: populated bar (week of per-category spending), line (30-point trend), heatmap (~12 weeks of habit days) from hardcoded local-state demo data, plus one empty-data chart showing the placeholder — gallery stays `capabilities: []` (spec: gallery requirement)
-- [ ] 3.2 `docs/sdk-reference.md`: Charts subsection in §2 — props table + data-shape code fence mirroring the landed source verbatim (never invent a prop/default)
-- [ ] 3.3 Close-out bookkeeping: `docs/decisions.md` entry (corpus-need per #44 already recorded in sdk-gap/app-corpus), `docs/v1-roadmap.md` ledger flip for #4, `docs/capabilities.md` pointer to the `sdk-charts` spec
-- [ ] 3.4 Full validation: `scripts/gate.sh` green during the loop, then `scripts/gate-full.sh` once before merge (Chromium invariant suites must pass unchanged — charts add no containment surface)
+- [x] 3.1 Style-gallery Charts section: populated bar (week of per-category spending), line (30-point trend), heatmap (~12 weeks of habit days) from hardcoded local-state demo data, plus one empty-data chart showing the placeholder — gallery stays `capabilities: []` (spec: gallery requirement)
+- [x] 3.2 `docs/sdk-reference.md`: Charts subsection in §2 — props table + data-shape code fence mirroring the landed source verbatim (never invent a prop/default)
+- [x] 3.3 Close-out bookkeeping: `docs/decisions.md` entry (corpus-need per #44 already recorded in sdk-gap/app-corpus), `docs/v1-roadmap.md` ledger flip for #4, `docs/capabilities.md` pointer to the `sdk-charts` spec
+- [x] 3.4 Full validation: `scripts/gate.sh` green during the loop, then `scripts/gate-full.sh` once before merge (Chromium invariant suites must pass unchanged — charts add no containment surface)
