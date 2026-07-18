@@ -205,6 +205,91 @@ await test('§ST-6c rollback to the current tip succeeds', async () => {
   eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(2), 'active bundle unchanged when rolling back to the tip');
 });
 
+// --- timeline(appId, {limit?}): same-line enumeration survives rollback -----
+//     (ADDED requirement, design D2 — enumerate snap tags, keep isSameLine
+//     matches against the active tip, newest-first, capped like history) -----
+
+await test('§timeline: descendants listed after rollback; B and C remain valid roll-forward targets', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // A: g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // B: g2
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3'); // C: g3
+  await s.rollback('app', 'g1');
+
+  const timeline = await s.timeline('app');
+  eq(timeline.map(t => t.id), ['g3', 'g2', 'g1'], 'timeline lists A, B, C newest first after rollback to A');
+
+  const toB = await s.rollback('app', 'g2');
+  eq(toB.activeId, 'g2', 'B (g2) is a valid roll-forward target');
+  const toC = await s.rollback('app', 'g3');
+  eq(toC.activeId, 'g3', 'C (g3) is a valid roll-forward target');
+});
+
+await test("§timeline: other lineages excluded — only the active lineage's line is enumerated", async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2
+  await s.fork('app', 'g1'); // fork-1, checked out on the fork now
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'fork edit'); // g3, fork-1 only
+
+  const forkTimeline = await s.timeline('app');
+  eq(forkTimeline.map(t => t.id), ['g3', 'g1'], "fork lineage timeline excludes g2 (main-only lineage)");
+
+  await s.switchLineage('app', 'main');
+  const mainTimeline = await s.timeline('app');
+  eq(mainTimeline.map(t => t.id), ['g2', 'g1'], "main lineage timeline excludes g3 (fork-only lineage)");
+});
+
+await test('§timeline: cap respected — newest entries up to historyLimit', async () => {
+  const s = freshStore({ historyLimit: 3 });
+  for (let v = 1; v <= 5; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`); // g1..g5
+  const timeline = await s.timeline('app');
+  eq(timeline.map(t => t.id), ['g5', 'g4', 'g3'], 'timeline caps at historyLimit, newest first');
+});
+
+await test('§timeline: shape parity with history() when there is no divergence', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3');
+  const hist = await s.history('app');
+  const timeline = await s.timeline('app');
+  eq(timeline, hist, 'timeline matches history exactly (same Snapshot shape) absent rollback/fork divergence');
+  assertNoGitLeak(timeline, 'timeline');
+});
+
+await test('§timeline: an app with no repo at all returns []', async () => {
+  const s = freshStore();
+  eq(await s.timeline('never-created'), [], 'timeline on an unknown app returns []');
+});
+
+await test('§timeline: unborn HEAD (repo exists, no commits) returns []', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await backend.mkdir('/whim');
+  await backend.mkdir('/whim/apps');
+  await backend.mkdir(dir);
+  await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
+  eq(await s.timeline('app'), [], 'unborn HEAD (repo exists, no commits) still resolves to []');
+});
+
+await test('§timeline: round-trip stability — rollback -> timeline -> roll-forward -> timeline', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // g2
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3'); // g3
+
+  await s.rollback('app', 'g1');
+  const first = await s.timeline('app');
+  eq(first.map(t => t.id), ['g3', 'g2', 'g1'], 'timeline after rollback lists all three, newest first');
+
+  await s.rollback('app', 'g3'); // roll forward back to the tip
+  const second = await s.timeline('app');
+  eq(second, first, 'timeline is stable across a rollback -> roll-forward round trip');
+});
+
 await test('§3.5 pin survives later generations (spec)', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
