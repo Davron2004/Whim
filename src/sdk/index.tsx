@@ -524,3 +524,9 @@ export type {
   EmptyStateProps,
   ModalProps,
 } from './surfaces';
+
+// ── Charts (design sdk-charts D2/D5/D6) ──────────────────────────────────────
+// The single declarative chart component lives in `charts.tsx` (own review lens) and is
+// re-exported here so `vc-sdk` stays the single import surface.
+export { Chart } from './charts';
+export type { ChartProps, ChartTone, SeriesPoint, DayPoint } from './charts';
