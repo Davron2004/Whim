@@ -3,7 +3,7 @@
 ## 1. English test specs (§16.5 — before any implementation)
 
 - [x] 1.1 Spec the `timeline` verb tests in English in the vstore suite area: descendants listed after rollback; other lineages excluded; cap respected; shape parity with `history`; empty/unborn repo; round-trip (rollback → timeline → roll-forward → timeline) stability
-- [ ] 1.2 Spec the `StoreAccess` wrapper tests in English: each wrapper ensures lineage first (fork entry lists its own line); fork with explicit version id; `activeId` reflects restores; prompt-envelope parse (valid v1, invalid JSON, wrong shape → raw fallback)
+- [x] 1.2 Spec the `StoreAccess` wrapper tests in English: each wrapper ensures lineage first (fork entry lists its own line); fork with explicit version id; `activeId` reflects restores; prompt-envelope parse (valid v1, invalid JSON, wrong shape → raw fallback)
 - [ ] 1.3 Spec the history-UI acceptance tests in English: rows render envelope/raw prompts + timestamps; install row has no restore; tap restores previous version and undo returns; current marker moves; pin label appears and re-pin moves it; fork-from-version creates a new entry; data annotation on schema-adding row; restore reassurance when fields leave view; every new string passes the product-verbs guard
 
 ## 2. Version store: `timeline` verb (TDD)
@@ -13,8 +13,8 @@
 
 ## 3. Launcher store surface: wrappers + prompt envelope
 
-- [ ] 3.1 Add `src/host/launcher/prompt-envelope.ts` (`parsePromptEnvelope` per design D4) with the 1.2 envelope tests
-- [ ] 3.2 Add `StoreAccess` wrappers `history`/`timeline`/`rollback`/`pin`/`listPins`/`diff`/`activeId` and the optional version-id parameter on `fork`, each under `ensureLineage` (design D6); verify engine re-pin behavior and normalize to move semantics if needed (design D8); 1.2 tests green, `npm run launcher:test` green
+- [x] 3.1 Add `src/host/launcher/prompt-envelope.ts` (`parsePromptEnvelope` per design D4) with the 1.2 envelope tests
+- [x] 3.2 Add `StoreAccess` wrappers `history`/`timeline`/`rollback`/`pin`/`listPins`/`diff`/`activeId` and the optional version-id parameter on `fork`, each under `ensureLineage` (design D6); verify engine re-pin behavior and normalize to move semantics if needed (design D8); 1.2 tests green, `npm run launcher:test` green
 
 ## 4. History screen UI
 
