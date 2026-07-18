@@ -2,14 +2,14 @@
 
 ## 1. English test specs (§16.5 — before any implementation)
 
-- [ ] 1.1 Spec the `timeline` verb tests in English in the vstore suite area: descendants listed after rollback; other lineages excluded; cap respected; shape parity with `history`; empty/unborn repo; round-trip (rollback → timeline → roll-forward → timeline) stability
+- [x] 1.1 Spec the `timeline` verb tests in English in the vstore suite area: descendants listed after rollback; other lineages excluded; cap respected; shape parity with `history`; empty/unborn repo; round-trip (rollback → timeline → roll-forward → timeline) stability
 - [ ] 1.2 Spec the `StoreAccess` wrapper tests in English: each wrapper ensures lineage first (fork entry lists its own line); fork with explicit version id; `activeId` reflects restores; prompt-envelope parse (valid v1, invalid JSON, wrong shape → raw fallback)
 - [ ] 1.3 Spec the history-UI acceptance tests in English: rows render envelope/raw prompts + timestamps; install row has no restore; tap restores previous version and undo returns; current marker moves; pin label appears and re-pin moves it; fork-from-version creates a new entry; data annotation on schema-adding row; restore reassurance when fields leave view; every new string passes the product-verbs guard
 
 ## 2. Version store: `timeline` verb (TDD)
 
-- [ ] 2.1 Write the 1.1 tests red against `VersionStore.timeline(appId, {limit?})`
-- [ ] 2.2 Implement `timeline` in `src/host/version-store/engine.ts` per design D2 (snap-tag enumeration filtered by `isSameLine` against the branch tip, newest-first, `historyLimit` cap) and export via `index.ts`; all 2.1 tests green, `npm run vstore:test` green
+- [x] 2.1 Write the 1.1 tests red against `VersionStore.timeline(appId, {limit?})`
+- [x] 2.2 Implement `timeline` in `src/host/version-store/engine.ts` per design D2 (snap-tag enumeration filtered by `isSameLine` against the branch tip, newest-first, `historyLimit` cap) and export via `index.ts`; all 2.1 tests green, `npm run vstore:test` green
 
 ## 3. Launcher store surface: wrappers + prompt envelope
 
