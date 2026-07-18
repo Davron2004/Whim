@@ -14,8 +14,16 @@ import type { AppRecord } from '../../bridge/contract';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
 
+// A monotonic clock for the store's commit timestamps (mirrors vstore:test's `clock()`) — the
+// real wall clock has only second granularity here (task 3.2 timeline/history ordering tests
+// need snapshots to strictly increase, not tie within the same second).
+function storeClock(): () => number {
+  let t = 1_700_000_000_000;
+  return () => (t += 1000);
+}
+
 function harnessAccess() {
-  const store = createMemoryStore({ autoCompact: false });
+  const store = createMemoryStore({ autoCompact: false, now: storeClock() });
   const index = new AppIndex(new MapKVBackend());
   const deleted: string[] = [];
   let t = 1000;
@@ -101,5 +109,106 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const sortedDeleted = [...deleted].sort((a, b) => a.localeCompare(b));
     const expectedDeleted = ['wc', fork.id].slice().sort((a, b) => a.localeCompare(b));
     h.eq(sortedDeleted, expectedDeleted, 'both user-data dbs dropped by their own ids');
+  });
+
+  // §19 ensure-lineage-first discipline across the new history-surface wrappers
+  await h.test('store-access §19 history/timeline/activeId ensure lineage first (fork then original)', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const fork = await access.fork(orig); // repo HEAD now on the fork lineage
+    await store.snapshot(storeIdOf(fork), { 'bundle.js': 'V2_FORK' }, 'fork edit');
+    // Reading the ORIGINAL must switch the repo back to main before answering.
+    h.eq((await access.history(orig)).map(s => s.prompt), ['p1'], 'original history is its own line, not the fork edit');
+    h.eq(await access.activeId(orig), (await access.history(orig))[0].id, 'original activeId matches its own tip');
+    // Reading the FORK again must switch back.
+    h.eq((await access.timeline(fork))[0].prompt, 'fork edit', 'fork timeline sees its own latest edit');
+  });
+
+  // §20 fork entry lists its own line, not a sibling lineage's post-fork snapshots
+  await h.test('store-access §20 fork entry history excludes the original\'s later post-fork edit', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const fork = await access.fork(orig);
+    await access.activeBundle(orig); // switches the repo back to main (via the wrapper, so the lineage cache stays accurate)
+    await store.snapshot(storeIdOf(orig), { 'bundle.js': 'V2_ORIG' }, 'orig post-fork edit');
+    // history() is a strict backward ancestor walk from the fork's own tip, so it is safe in
+    // every case, diverged or not: it can never surface a sibling lineage's later commit.
+    const forkHistory = await access.history(fork);
+    h.eq(forkHistory.map(s => s.prompt), ['p1'], 'fork history has no trace of the original\'s later edit');
+  });
+
+  // §20b same guarantee for timeline(), once the fork has diverged with its own snapshot.
+  // NOTE (verified, see handoff/store-access-history.md "known gap"): timeline()'s isSameLine
+  // check is DAG-ancestry-only, so on a fork that has NOT yet diverged (its tip is literally the
+  // same commit as the pre-fork tip), a snapshot committed later on the ORIGINAL's lineage is a
+  // descendant of that shared commit and DOES leak into the fork's timeline(). Diverging (this
+  // test) avoids it; this is an engine-level (chain-1) edge case, not fixable from the wrapper
+  // without new lineage-membership info from the engine.
+  await h.test('store-access §20b once diverged, fork entry timeline excludes the original\'s later edit', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const fork = await access.fork(orig); // HEAD now on fork-1 (== the fork point, cache accurate)
+    await store.snapshot(storeIdOf(fork), { 'bundle.js': 'V_FORK' }, 'fork edit'); // fork diverges
+    await access.activeBundle(orig); // switches back to main via the wrapper (cache stays accurate)
+    await store.snapshot(storeIdOf(orig), { 'bundle.js': 'V2_ORIG' }, 'orig post-fork edit');
+    const forkTimeline = await access.timeline(fork);
+    h.eq(forkTimeline.map(s => s.prompt), ['fork edit', 'p1'], 'diverged fork timeline has no trace of the original\'s later edit');
+  });
+
+  // §21 fork with an explicit version id
+  await h.test('store-access §21 fork(entry, versionId) forks from the given snapshot, not the active one', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, 'p2'); // active snapshot is now g2
+    const history = await access.history(orig);
+    const g1 = history[history.length - 1].id; // oldest = g1
+    const fork = await access.fork(orig, g1);
+    h.eq(await access.activeBundle(fork), 'V1', 'fork(entry, g1) checked out g1, not the active g2');
+    h.eq(fork.forkedFrom, { id: 'wc', name: 'WC' }, 'provenance still recorded on an explicit-id fork');
+    // fork(entry) with no id keeps forking from the active snapshot, unchanged.
+    const fork2 = await access.fork(orig);
+    h.eq(await access.activeBundle(fork2), 'V2', 'fork(entry) with no id still forks from the active snapshot');
+  });
+
+  // §22 activeId reflects restores
+  await h.test('store-access §22 activeId reflects a rollback', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, 'p2');
+    const history = await access.history(orig);
+    const g1 = history[history.length - 1].id;
+    h.ok((await access.activeId(orig)) !== g1, 'active id starts on the newest snapshot');
+    await access.rollback(orig, g1);
+    h.eq(await access.activeId(orig), g1, 'activeId reflects the rollback target');
+  });
+
+  // §23 re-pin moves the label (last write wins) — verified against the engine
+  await h.test('store-access §23 re-pinning an existing label to a new snapshot moves it', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, 'p2');
+    const history = await access.history(orig);
+    const g1 = history[history.length - 1].id;
+    const g2 = history[0].id;
+    await access.pin(orig, g1, 'known-good');
+    const pins1 = await access.listPins(orig);
+    h.eq(pins1.map(p => p.snapshotId), [g1], 'pin initially points at g1');
+    await access.pin(orig, g2, 'known-good'); // re-pin same label, different snapshot
+    const pins2 = await access.listPins(orig);
+    h.eq(pins2.length, 1, 'still exactly one pin under that label (moved, not duplicated)');
+    h.eq(pins2[0].snapshotId, g2, 're-pinning moved the label to the new snapshot');
+  });
+
+  // §diff smoke: diff wrapper ensures lineage and delegates through
+  await h.test('store-access diff(entry, a, b) reports per-file changes through the wrapper', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, 'p2');
+    const history = await access.history(orig);
+    const g1 = history[history.length - 1].id;
+    const g2 = history[0].id;
+    const changes = await access.diff(orig, g1, g2);
+    const bundle = changes.find(c => c.file === 'bundle.js');
+    h.ok(!!bundle && bundle.status === 'modified' && bundle.after === 'V2', 'diff wrapper delegates through and reports the bundle change');
   });
 }
