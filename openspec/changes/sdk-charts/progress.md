@@ -36,3 +36,12 @@ Dispatcher-owned run ledger. Append every disposition as it happens. The ledger 
 - **integrity** chain-3 — exit 0, INTEGRITY OK. 5 files vs BASE, all in scope (4 docs + `fixtures/style-gallery.app.tsx`).
 - **merged** chain-3 → `integration/sdk-charts` @ `bdf568b` (`--no-ff`). Ticked tasks 3.1–3.4.
 - NOTE for archive: `capabilities.md` still points at `openspec/changes/sdk-charts/specs/...`; the pointer needs a final flip to `openspec/specs/sdk-charts/` when `/opsx:archive` syncs the spec (chain-3 flagged this).
+- **regate-pass** chain-3 — `FAST GATE PASSED`. Cleaned up worktree + branch. Staging tip `433dcb4`.
+- **gate-full PASS** (step 10) on `433dcb4` — Chromium invariants + bridge invariants green, knip, guard:metro, codex-sync, `openspec validate` (change/sdk-charts ✓) all pass. `FULL GATE PASSED`.
+- **reviewer dispatched** (step 11) — diff range MAIN_TIP `80816964` → staging tip `433dcb4`.
+- **reviewer verdict** — CHANGES REQUESTED, 1 high (report-mismatch) + 1 low (nit). Reviewer independently ran sdk:test/build/invariants (all green), reproduced the TS-narrowing repro, and confirmed the date math is genuinely TZ/DST-immune (Hinnant days_from_civil, TZ-mutating suite). Otherwise conforms.
+  - HIGH: `docs/sdk-reference.md:133` documents `maxValue` as `(bar/line/heatmap)`, but D2's union carries it on bar/line only (heatmap has no `maxValue`; `renderHeatmap` passes none). Doc contradicts the code-fence at 141–142 in the same file. Fix = correct the doc (union is source of truth), not the code.
+  - LOW (won't-fix): gallery fixture uses `new Date()` to synthesize demo dates — D7 is scoped to `chart-geometry.ts`/`charts.tsx` (both confirmed Date-free); fixture seed data is fine. Non-blocking.
+- **fix-chain dispatched** — `fix/sdk-charts-docfix` from staging tip `433dcb4` for the HIGH doc-fidelity finding.
+- **fix-chain report** — STATUS complete, GATE PASS, commit `8e45b67`, only `docs/sdk-reference.md` (1 line). Integrity exit 0 (1 file). Merged @ `a5b1a94` (`--no-ff`), regate `FAST GATE PASSED`, worktree cleaned. HIGH finding resolved; doc now mirrors the union (bar/line only).
+- LOW nit left as won't-fix (gallery fixture `new Date()` for seed data — out of D7 scope, reviewer agreed non-blocking).
