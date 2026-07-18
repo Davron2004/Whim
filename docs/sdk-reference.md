@@ -130,7 +130,7 @@ recolors with no app-side handling, and no new color token is introduced.
 | `Chart` | `data` | `SeriesPoint[]` (bar/line) or `DayPoint[]` (heatmap) (required) | — | The series to plot. |
 | `Chart` | `tone` | `ChartTone` | `'primary'` | `'primary' \| 'positive' \| 'warning' \| 'danger'`; resolves via `color(tone)`. |
 | `Chart` | `showValues` | `boolean` (bar/line only) | `false` | Renders `String(point.value)` above each bar/point; bar's axis label always renders regardless. |
-| `Chart` | `maxValue` | `number?` (bar/line/heatmap) | derived from data | Pins the scale ceiling; bar/heatmap never lower below the data max, line only raises `domainMax`. |
+| `Chart` | `maxValue` | `number?` (bar/line only) | derived from data | Pins the scale ceiling; bar never lowers below the data max, line only raises `domainMax`. |
 | `Chart` | `weeks` | `number?` (heatmap only) | `12` | Clamped to `[1, 53]` by the geometry layer; the grid anchors to the latest date in `data`, never "today". |
 
 Empty `data` (`length === 0`) renders a fixed `160px`-tall reserved frame (never a collapse)
