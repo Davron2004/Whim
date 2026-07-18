@@ -2,19 +2,19 @@
 
 ## 1. Chart geometry core (pure functions + Node suite)
 
-- [ ] 1.1 Create the chart geometry module under `src/sdk/`: value scaling with `max(maxValue ?? 0, data max, 1)` floor, bar layout, and line point mapping as pure functions (no React, no DOM)
-- [ ] 1.2 Calendar bucketing: `{date: 'YYYY-MM-DD', value}` day points → week-column grid model with `weeks` defaulting/clamping — day-index string arithmetic only, no local-time `Date` parsing (design decision 7)
-- [ ] 1.3 Intensity bucketing + ramp helper: value → 5-step bucket; bucket + theme role → composited fill over `surface`, zero-value → `border`-tinted neutral (design decision 4)
-- [ ] 1.4 Non-vacuous Node suite for 1.1–1.3 following the `theme.suite.ts` pattern: empty/single-point/all-zero/all-equal series, negative clamping, non-finite dropping, DST-transition and year-boundary dates
-- [ ] 1.5 Wire the suite into an existing Node suite runner (first verify how `launcher:test`/sibling `*:test` scripts discover suite files; if a `package.json` script edit is unavoidable, stop and hand that single edit to the main thread — hook-protected)
+- [x] 1.1 Create the chart geometry module under `src/sdk/`: value scaling with `max(maxValue ?? 0, data max, 1)` floor, bar layout, and line point mapping as pure functions (no React, no DOM)
+- [x] 1.2 Calendar bucketing: `{date: 'YYYY-MM-DD', value}` day points → week-column grid model with `weeks` defaulting/clamping — day-index string arithmetic only, no local-time `Date` parsing (design decision 7)
+- [x] 1.3 Intensity bucketing + ramp helper: value → 5-step bucket; bucket + theme role → composited fill over `surface`, zero-value → `border`-tinted neutral (design decision 4)
+- [x] 1.4 Non-vacuous Node suite for 1.1–1.3 following the `theme.suite.ts` pattern: empty/single-point/all-zero/all-equal series, negative clamping, non-finite dropping, DST-transition and year-boundary dates
+- [x] 1.5 Wire the suite into an existing Node suite runner (first verify how `launcher:test`/sibling `*:test` scripts discover suite files; if a `package.json` script edit is unavoidable, stop and hand that single edit to the main thread — hook-protected)
 
 ## 2. Chart component
 
-- [ ] 2.1 `src/sdk/charts.tsx`: the `ChartProps` discriminated union (design decision 2) + the shared SVG frame — viewBox coordinate system, 100% width, reserved height from space tokens, and the empty-data muted placeholder path (spec: Degenerate data renders safely)
-- [ ] 2.2 Bar rendering: one `<rect>` per point scaled to the derived/pinned max, labels beneath, optional value labels via `showValues`
-- [ ] 2.3 Line rendering: single `<polyline>` in data order scaled min→max, endpoint marks, optional value labels
-- [ ] 2.4 Heatmap rendering: week-grid `<rect>` cells with ramp fills from 1.3, neutral cells for unsupplied days
-- [ ] 2.5 Export `Chart` (+ its prop types, type-only) from `index.tsx` matching the `controls.tsx`/`surfaces.tsx` re-export pattern; `npm run build` green (typecheck, bundle, source-map round-trip; no resolver/CSP edits)
+- [x] 2.1 `src/sdk/charts.tsx`: the `ChartProps` discriminated union (design decision 2) + the shared SVG frame — viewBox coordinate system, 100% width, reserved height from space tokens, and the empty-data muted placeholder path (spec: Degenerate data renders safely)
+- [x] 2.2 Bar rendering: one `<rect>` per point scaled to the derived/pinned max, labels beneath, optional value labels via `showValues`
+- [x] 2.3 Line rendering: single `<polyline>` in data order scaled min→max, endpoint marks, optional value labels
+- [x] 2.4 Heatmap rendering: week-grid `<rect>` cells with ramp fills from 1.3, neutral cells for unsupplied days
+- [x] 2.5 Export `Chart` (+ its prop types, type-only) from `index.tsx` matching the `controls.tsx`/`surfaces.tsx` re-export pattern; `npm run build` green (typecheck, bundle, source-map round-trip; no resolver/CSP edits)
 
 ## 3. Gallery, reference doc, close-out
 
