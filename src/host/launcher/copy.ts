@@ -37,6 +37,18 @@ export const COPY = {
   shapeSharp: 'Sharp',
   shapeSoft: 'Soft',
   shapeRound: 'Round',
+  actionHistory: 'History',
+  historyTitle: 'History',
+  historyCurrentLabel: 'Current version',
+  historyInstallLabel: 'Where this app began',
+  historyRestoredToast: 'Restored this version',
+  historyUndo: 'Undo',
+  historyReassurance: 'Nothing is deleted — this data returns when you move to a newer version.',
+  historyPinAction: 'Pin this version…',
+  historyPinPlaceholder: 'Label',
+  historyPinSave: 'Save',
+  historyForkAction: 'Make this version its own app',
+  historyMoreLabel: 'More',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
@@ -64,4 +76,10 @@ export function presetLabel(id: string): string {
 /** Display label for an accent id. */
 export function accentLabel(id: string): string {
   return capitalize(id);
+}
+
+/** The History screen's data-shape annotation line (design D5): "Added: notes (text)". `fields`
+ *  are already formatted as "<display name> (<type>)" by `history-logic.ts`. */
+export function addedFieldsLine(fields: readonly string[]): string {
+  return `Added: ${fields.join(', ')}`;
 }

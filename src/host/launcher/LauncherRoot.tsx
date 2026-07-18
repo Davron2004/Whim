@@ -27,6 +27,7 @@ import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
+import HistoryScreen from './HistoryScreen';
 import { loadThemePref, saveThemePref, shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 
@@ -34,7 +35,8 @@ type Screen =
   | { kind: 'home' }
   | { kind: 'app'; app: InstalledApp; record: AppRecord; source: string; engineAppId: string }
   | { kind: 'dev' }
-  | { kind: 'settings' };
+  | { kind: 'settings' }
+  | { kind: 'history'; app: InstalledApp };
 
 /** The first-run example set, built from the generated host records + bundle sources (D7). */
 function defaultSeeds(): SeedSpec[] {
@@ -110,6 +112,10 @@ function LauncherShell({ index, access }: Readonly<{ index: AppIndex; access: St
     }
   };
 
+  const onHistory = (app: InstalledApp) => {
+    setScreen({ kind: 'history', app });
+  };
+
   const onDelete = async (app: InstalledApp) => {
     try {
       await access.remove(app);
@@ -153,6 +159,8 @@ function LauncherShell({ index, access }: Readonly<{ index: AppIndex; access: St
     content = <DevProbeScreen onExit={goHome} />;
   } else if (screen.kind === 'settings') {
     content = <SettingsScreen onBack={goHome} />;
+  } else if (screen.kind === 'history') {
+    content = <HistoryScreen app={screen.app} access={access} onBack={goHome} />;
   } else {
     content = (
       <HomeScreen
@@ -160,6 +168,7 @@ function LauncherShell({ index, access }: Readonly<{ index: AppIndex; access: St
         onOpen={onOpen}
         onFork={onFork}
         onDelete={onDelete}
+        onHistory={onHistory}
         onCreate={() => {
           // Pending #7 prompt-flow-ux: navigate to the prompt screen once implemented.
         }}
