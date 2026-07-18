@@ -12,5 +12,5 @@
 
 ## 3. Integration verification
 
-- [ ] 3.1 Run the canonical full gate on the merged tip, including the required OpenSpec validation.
+- [x] 3.1 Run the canonical full gate on the merged tip, including the required OpenSpec validation.
 - [x] 3.2 Review the completed change against the SDK design-system delta and record the result in the progress ledger.
