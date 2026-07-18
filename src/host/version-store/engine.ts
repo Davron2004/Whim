@@ -260,6 +260,39 @@ export class VersionStore {
     });
   }
 
+  /**
+   * timeline(appId, {limit}) → same-line enumeration that survives rollback (design D2).
+   * Unlike history() (a tip-ancestry walk), this enumerates every snap tag and keeps the
+   * ones on the active lineage's line — ancestors AND tag-reachable descendants of the
+   * current tip — via the existing isSameLine predicate, so a snapshot rolled past
+   * remains listed (and thus a discoverable roll-forward target). Newest-first by commit
+   * timestamp, capped like history(). Same Snapshot shape; no git vocabulary crosses.
+   */
+  async timeline(appId: string, opts?: { limit?: number }): Promise<Snapshot[]> {
+    const { gitdir } = this.paths(appId);
+    if (!(await this.exists(`${gitdir}/HEAD`))) return [];
+    const limit = opts?.limit ?? this.config.historyLimit;
+    let tip: string;
+    try {
+      tip = await git.resolveRef({ fs: this.client, gitdir, ref: 'HEAD' });
+    } catch (err) {
+      if (err instanceof git.Errors.NotFoundError) return []; // unborn HEAD (repo exists, no commits)
+      throw err;
+    }
+    const map = await this.oidToId(gitdir);
+    const onLine: Array<{ oid: string; id: string }> = [];
+    for (const [oid, id] of map) {
+      if (await this.isSameLine(gitdir, oid, tip)) onLine.push({ oid, id });
+    }
+    const snaps: Snapshot[] = [];
+    for (const { oid, id } of onLine) {
+      const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
+      snaps.push({ id, prompt: stripTrailingNewline(commit.message), createdAt: commit.author.timestamp * 1000 });
+    }
+    snaps.sort((a, b) => b.createdAt - a.createdAt);
+    return snaps.slice(0, limit);
+  }
+
   /** diff(appId, a, b) → walk + compare, per-file change (task 3.3). */
   async diff(appId: string, fromId: string, toId: string): Promise<FileChange[]> {
     const { gitdir } = this.paths(appId);
