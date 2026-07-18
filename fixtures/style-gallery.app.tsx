@@ -30,7 +30,42 @@ import {
   ListItem,
   EmptyState,
   Modal,
+  Chart,
+  type SeriesPoint,
+  type DayPoint,
 } from 'vc-sdk';
+
+// Seeded chart demo data (design sdk-charts D8 — hardcoded, kept alongside the gallery's
+// local-state convention; never fetched, never capability-backed).
+const weeklySpending: SeriesPoint[] = [
+  { label: 'Groceries', value: 128 },
+  { label: 'Rent', value: 950 },
+  { label: 'Transport', value: 64 },
+  { label: 'Dining', value: 87 },
+  { label: 'Utilities', value: 142 },
+  { label: 'Fun', value: 55 },
+  { label: 'Other', value: 33 },
+];
+
+const thirtyDayTrend: SeriesPoint[] = Array.from({ length: 30 }, (_, i) => ({
+  label: `Day ${i + 1}`,
+  value: Math.round(60 + 15 * Math.sin(i / 4) + i * 0.3),
+}));
+
+// 12 weeks (84 days) of sequential calendar dates, self-consistent so the heatmap (which
+// anchors to the latest date present in `data`) renders a full grid.
+function habitDays(startDate: string, days: number): DayPoint[] {
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const points: DayPoint[] = [];
+  for (let i = 0; i < days; i++) {
+    const iso = new Date(start.getTime() + i * 86_400_000).toISOString().slice(0, 10);
+    const value = (i * 7919) % 11 < 7 ? (i * 37) % 4 : 0;
+    points.push({ date: iso, value });
+  }
+  return points;
+}
+
+const twelveWeeksOfHabits: DayPoint[] = habitDays('2026-04-20', 84);
 
 function Home() {
   const [name, setName] = useState('');
@@ -146,6 +181,20 @@ function Home() {
               <Spacer />
               <Text>Right</Text>
             </Row>
+          </Stack>
+        </Card>
+
+        <Card>
+          <Stack gap="md">
+            <Heading size="subtitle">Charts</Heading>
+            <Text size="caption" color="text-muted">Weekly spending by category</Text>
+            <Chart kind="bar" data={weeklySpending} tone="primary" showValues />
+            <Text size="caption" color="text-muted">30-day trend</Text>
+            <Chart kind="line" data={thirtyDayTrend} tone="positive" />
+            <Text size="caption" color="text-muted">Habit heatmap (12 weeks)</Text>
+            <Chart kind="heatmap" data={twelveWeeksOfHabits} tone="warning" weeks={12} />
+            <Text size="caption" color="text-muted">Empty data placeholder</Text>
+            <Chart kind="bar" data={[]} />
           </Stack>
         </Card>
 
