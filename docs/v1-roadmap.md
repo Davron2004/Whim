@@ -209,7 +209,19 @@ plus the draggable auto-dimming floating extra.
 
 #### 6. `version-history-ux` — Size M · Deps: #5
 
-**Status:** unproposed
+**Status:** proposed 2026-07-18 (owner explore session settled scope; artifacts complete, strict-valid)
+**Contract notes:**
+
+- **Prompt envelope `{v: 1, text}`** (JSON in the snapshot's prompt string; store stays
+  content-agnostic): #6 defines + renders defensively; **#7/#11 MUST write this envelope** when
+  delivering generations and may extend it additively. Parser: `src/host/launcher/prompt-envelope.ts`.
+- New store verb `timeline(appId, {limit?})` — same-line enumeration incl. tag-reachable
+  descendants (roll-forward targets survive rollback); `history()` unchanged.
+- `StoreAccess` grows `history`/`timeline`/`rollback`/`pin`/`listPins`/`diff`/`activeId` wrappers +
+  optional version-id on `fork`; launcher still never touches raw `VersionStore` (#43b held).
+- Restore semantics: tap = restore state *before* that prompt, instant, undo toast. UI noun is
+  "version" (guard-vetted). Fork keeps D8 fresh-data semantics — linked-apps model is a
+  separate change (see Open deltas). Rewind-then-new-prompt: NOT here; owned by that sibling.
 **In:** per-app history screen over the version store's product verbs (paginate/cap — history
 and rollback are the depth-scaling ops, #39); prominent rollback (§11: rollbacks are ~10×
 normal coding), pin, fork→new launcher entry; **snapshot↔structured-prompt tagging** (verify
@@ -396,3 +408,14 @@ library / per-app `LEARNED.md` (§9). 5. **Tier 3a — curated HTTP** (weather d
 *(Proposing sessions: record roadmap contradictions here instead of silently resolving them.)*
 
 - 2026-07-02, change `sdk-design-system` (#3): shipped with a launcher-theming half (settings surface, persisted `ThemePref`, theme handed to delivery) that the 13-change list never mapped — it is neither #5 (`launcher-shell`, done before this) nor any later change. Owner-directed scope (unattended-run instruction); recorded here rather than restructuring the list. The #44 corpus-need rule was owner-waived for this change's exports (proposal.md records the waiver); the gallery fixture stands in as the use-case app.
+- 2026-07-18, explore session for #6: the owner settled a **linked-apps data model** that the
+  13-change list never mapped and that **supersedes part of decision #43b** (fork storage
+  isolation): rewind + new prompt = new app **sharing the original's storage DB by default**
+  (explicit fork asks share-vs-fresh at fork time); storage-engine appId gains repo-style
+  refcount-on-delete; generation must treat schema-ID allocation as shared (accumulated-union
+  `appliedSchema`, fail-closed `validateArtifact` collision guard — constrains #11); DB
+  clone/unlink is post-v1. **Proposed 2026-07-18** as `linked-apps-data-model` (unnumbered,
+  dispatched after #6 — shared launcher files; must land before #7 wires rewind-then-new-prompt).
+  #6 itself deliberately keeps #43b semantics. Contract note for #11: for any app in a storage
+  group, `appliedSchema` = the live engine's accumulated `_meta` union, new burned IDs allocated
+  past it (UUIDs recorded as the escape hatch if generation ever goes concurrent).
