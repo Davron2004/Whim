@@ -36,8 +36,8 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 Amend `docs/harness.md` §4 (enforcement map rows for bash-policy, sandbox, and the new ruleset anchor), §8 (remote-write policy re-anchored to server-side main protection; compound-command policy), §11 (attended-only closure → automated closure on the attended host; presence not execution)
-- [ ] 6.2 Append the decision entry to `docs/decisions.md` (server-side main protection as the human gate; compositional unroll policy; orchestrator-executed closure; Sonar Web API ingestion over MCP/annotations)
+- [x] 6.1 Amend `docs/harness.md` §4 (enforcement map rows for bash-policy, sandbox, and the new ruleset anchor), §8 (remote-write policy re-anchored to server-side main protection; compound-command policy), §11 (attended-only closure → automated closure on the attended host; presence not execution) *(also §5 step 4 + §9 current-stance buckets)*
+- [x] 6.2 Append the decision entry to `docs/decisions.md` (server-side main protection as the human gate; compositional unroll policy; orchestrator-executed closure; Sonar Web API ingestion over MCP/annotations) *(decision #49, D1–D6)*
 
 ## 7. Verification
 

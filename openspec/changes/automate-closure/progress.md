@@ -46,6 +46,11 @@ stop-before-closure.
     host, so they see host env (SONAR_TOKEN for the sonar script; gh/git credential helper for
     push/gh) while sandboxed commands stay denied those. If an excluded command does NOT bypass the
     envVars deny, sonar auth fails LOUDLY (guarded, chain-4) — fail-safe, file as divergence.
+- **chain-6 (docs) DONE**: `docs/harness.md` §4 (bash-policy + sandbox rows rewritten; SonarCloud
+  row now cites the ingestion script), §5 step 4, §8 (ask-never-allow re-anchored to server-side
+  main protection + compound policy), §9 current-stance buckets, §11 (compound-unrolling gotcha +
+  closure now orchestrator-executed-on-attended-host). `docs/decisions.md` #49 (D1–D6). Fast gate
+  green (docs are outside CONFIG_SET/test scope).
 - **chain-5 (closure-runbooks) DONE**: `apply.md` step 12 rewritten as the orchestrator-executed
   pipeline (ruleset probe → push → draft PR → bounded/parkable poll → Sonar ingest via script →
   nested fix-loop → cleanup → orchestrator force-push → ready flip + notify → human merge click →

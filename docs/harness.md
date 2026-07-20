@@ -105,12 +105,12 @@ The mechanical layer. Protected paths split by blast radius:
 | Fast gate | `scripts/gate.sh` | build → typecheck → lint → the Node suites (including independently-discovered `src/sdk/test/*.acceptance.ts(x)` suites) → the tracked bash-policy regression suite → scaffolding tripwires. Runs on every inner-loop attempt, in the agent's worktree. Refuses to run if any protected config differs from `GATE_BASE` (pinned-BASE tamper tripwire). Lint includes `plugin:sonarjs/recommended-legacy` (2026-07-12) — the same SonarJS rule implementations SonarCloud runs, so Sonar findings (cognitive complexity, nested ternaries, …) fail the inner loop locally instead of bouncing off the PR quality gate post-hoc. NOTE: the eslint plugin does NOT honor `// NOSONAR` comments — don't suppress, fix (or add a scoped `.eslintrc.js` override with a reason, a Class-1 human-ratified edit). |
 | Full gate | `scripts/gate-full.sh` | `gate.sh` + knip + `guard:metro` + the three Chromium invariant suites + `openspec validate` + the codex-mirror freshness check. Once per fix/change, pre-merge, main tree. The Chromium suites generate their scenario pages from `src/runtime/generated/runtime-artifacts.json`, emitted by `npm run build` — so invariants always assert against *this* build, never a stale snapshot. |
 | CI | `.github/workflows/invariants.yml` | Two blocking jobs on every push: `quality-gate` (typecheck, lint, knip, `openspec validate --all --strict`, scaffolding tripwires) and `isolation-suite` (every Node suite + `guard:metro` + `build` + all three Chromium invariant runners) — together effectively `gate-full.sh` on a fresh checkout. |
-| SonarCloud (external) | GitHub PR quality gate | Automatic analysis on every push to the staging branch's draft PR into `main` — server-side, no repo config (`sonar-project.properties` deliberately absent), not runnable locally or in the deny-egress container. Iteration happens on that draft PR: findings drive a nested `/fix-loop` on the staging branch, re-pushed until green, attended-only (§11) — before the final ratified merge, never after. The local sonarjs lint (row 1) is the in-loop mirror of its rule set; SonarCloud stays the authoritative external check at PR time. It honors `// NOSONAR`; the local lint does not — keep code clean under the stricter of the two. Every finding fixed this way is appended to `openspec/critic/sonar-ledger.md` (one line per finding per fix round) — the promotion loop is external finding → ledger line → critic recurrence candidate (≥3 distinct fix-round run-ids for the same rule/location pattern) → human-ratified `.eslintrc.js` promotion, after which the fast gate's lint catches the recurrence in the inner loop. |
+| SonarCloud (external) | GitHub PR quality gate | Automatic analysis on every push to the staging branch's draft PR into `main` — server-side, no repo config (`sonar-project.properties` deliberately absent), not runnable locally or in the deny-egress container. Iteration happens on that draft PR: findings are ingested programmatically by `scripts/sonar-pr-issues.mjs` (Web API, auth-visibility-guarded) into the fix-loop findings format, driving a nested `/fix-loop` on the staging branch, re-pushed until green — orchestrator-executed on the attended host (§11) — before the final ratified merge, never after. The local sonarjs lint (row 1) is the in-loop mirror of its rule set; SonarCloud stays the authoritative external check at PR time. It honors `// NOSONAR`; the local lint does not — keep code clean under the stricter of the two. Every finding fixed this way is appended to `openspec/critic/sonar-ledger.md` (one line per finding per fix round) — the promotion loop is external finding → ledger line → critic recurrence candidate (≥3 distinct fix-round run-ids for the same rule/location pattern) → human-ratified `.eslintrc.js` promotion, after which the fast gate's lint catches the recurrence in the inner loop. |
 | Deterministic toolkit | `scripts/fixloop.sh` | `integrity` (0 clean / 6 sanctioned Class-1 / 3 tamper / 4 scope), `redcheck` (0 RED / 5 vacuous-GREEN), `stale` (0 live / 7 already-fixed), `gatefull`, `park`, `finish`, `status`. Orchestrator-only: its internal git bypasses the hooks. |
-| Bash policy | `.claude/hooks/bash-policy.sh` | Deterministic allow/deny on the command vocabulary: tier-1 git denies for everyone (push/fetch/config/reflog/ref-rewrites naming `main`/`dev/v1` anywhere, incl. substrings — fail-closed); a simple, anchored `git push origin integration/<run-id>` from the **main thread only** is a scoped **ask** (human reviews the exact refspec — ask, never allow); subagents are denied every push form; scoped git for subagents inside their *own* worktree (owners binding); compound commands always fall through to a prompt; protected-path shell-writes denied. |
+| Bash policy | `.claude/hooks/bash-policy.sh` | Deterministic allow/deny on the command vocabulary: tier-1 git denies for everyone (config/reflog/clone/remote/ref-rewrites naming `main`/`dev/v1` anywhere, incl. substrings — fail-closed); **any push naming `main`/`dev/v1` denied for everyone** (incl. refspec smuggling `integration/x:main`); a **main-thread** push of a non-`main` ref (incl. `--force-with-lease origin integration/<run-id>`) **auto-allows** — the server-side GitHub ruleset on `main` is the human gate, not a per-push `ask` (decision #49); subagents are denied every push form; main-thread `git fetch origin` + `git pull --ff-only origin main` relaxed (closure's ancestor check / teardown); `gh` vocabulary — read-only for all callers, `pr create --draft`/`pr ready` main-thread only, `pr merge` denied for all; compound commands are **unrolled by `unroll-command.mjs` and judged by their worst segment** (deny > ask > none > allow), never blanket-prompted, with anything not soundly unrollable (`$()`, backticks, eval-family, …) falling closed to a prompt; scoped git for subagents inside their *own* worktree (owners binding); protected-path shell-writes (incl. `>`/`>>` redirects) denied. |
 | Edit/Write policy | `.claude/hooks/protect-harness.sh` | Class 2 blocked for subagents everywhere (incl. inside worktrees); Class 1 blocked unless granted; memory store blocked (report `MEMORY:` field instead); main-thread edits to protected files → `ask` (the human ratifies). |
 | Stop gate | `.claude/hooks/gate-on-subagent-stop.sh` | An `implementer` with a dirty main tree, or a `git-cleaner`, cannot finish until its gate passes (attempt-capped). Worktree agents self-gate instead — this hook is the legacy/backstop path. |
-| Sandbox + permissions | `.claude/settings.json` | Deny-by-default egress, credential-path denies, `worktree.baseRef: head`, the auto-allow vocabulary. The `permissions.deny` push pattern is narrowed to `Bash(git push origin main:*)` (belt-and-braces prefix matcher; the bash-policy hook above is the authoritative layer and runs first) so a main-thread `git push origin integration/<run-id>` can reach the scoped `ask` instead of being blanket-denied. Sandbox-excluded (unsandboxed, attended-only) commands: the Chromium suites + `gate-full.sh` + `fixloop.sh`. |
+| Sandbox + permissions | `.claude/settings.json` | Deny-by-default egress, credential-path denies (`GITHUB_TOKEN`/`GH_TOKEN`/`SONAR_TOKEN`/… stripped from sandboxed commands), `worktree.baseRef: head`, the auto-allow vocabulary. The `permissions.deny` push pattern stays `Bash(git push origin main:*)` (belt-and-braces prefix matcher; the bash-policy hook above is the authoritative layer and runs first). Sandbox-excluded (run on the bare host so they get egress + the credential path) commands: the Chromium suites + `gate-full.sh` + `fixloop.sh`, **plus the closure remote commands — `git push`/`git fetch`/`git pull`, `gh`, and `node scripts/sonar-pr-issues.mjs` / `node scripts/ruleset-probe.mjs`**. `SONAR_TOKEN` reaches only the excluded sonar script (envVars-deny inside the sandbox + script exclusion outside it); the bash-policy hook still gates *which* of these commands may run. |
 
 The gate's own `CONFIG_SET`, `fixloop.sh`'s `CLASS2`, and the two hooks' pattern lists are
 **deliberately the same set** — when you add a protected path, add it to all four.
@@ -139,9 +139,9 @@ the run's staging branch (`integration/<change-id>`, from `main`'s recorded tip)
    park); `main` stays untouched.
 4. After the last chain: `gate-full.sh` on the merged staging tip, reviewer over the whole diff
    range, closing summary in progress.md, human-gated memory proposals. Closure onto `main`
-   (draft-PR Sonar iteration → staging-branch `/git-cleanup` → ancestor check → single human
-   merge) is attended-only and follows apply.md step 12 as the canonical text; then
-   `/opsx:archive`.
+   (ruleset probe → draft-PR Sonar iteration → staging-branch `/git-cleanup` → orchestrator
+   force-push → ancestor check → ready flip → single human merge click) is orchestrator-executed
+   on the attended host and follows apply.md step 12 as the canonical text; then `/opsx:archive`.
 
 ## 6. Phased TDD across chains — greenBy
 
@@ -191,15 +191,22 @@ Applied by the HUMAN at the two forced gates (the grant `ask` prompt; the integr
   fighting the harness → default PARK.
 
 The mechanism *detects* rather than trusts: the reviewer flags every check-weakening diff HIGH,
-and every `git push` is either denied outright (subagents always; anything naming `main`/`dev/v1`)
-or surfaced as a scoped human `ask` (main thread, simple anchored `integration/<run-id>` form
-only) — ask is never allow, so nothing reaches a shared remote without a human ratifying it.
+and every `git push` is either denied outright (subagents always; anything naming `main`/`dev/v1`
+for everyone, incl. refspec smuggling) or — for a main-thread push of a non-`main` ref —
+auto-allowed as staging-lane traffic. The human gate for the shared remote's *protected* state
+(`main`) is re-anchored (decision #49) from a per-push `ask` to the **server-side GitHub ruleset**
+(require PR, block force-push, restrict deletion, require checks) plus PR review: nothing reaches
+`main` without the human's merge click on the reviewed PR, and no agent path can edit that ruleset.
+Compound commands carrying a push are unrolled and judged segment-by-segment (compound-command
+policy), so a chained payload is auditable rather than blanket-denied.
 
 ## 9. Current stance vs deliberate future upgrades
 
-**Current (built, validated):** worktree-parallel execution for both loops; the scoped push-ask
-policy (main thread only, `ask` never `allow`, subagents always denied); scoped git + owners
-binding; Class-1 grants; greenBy; containerized unattended fix-loop runs.
+**Current (built, validated):** worktree-parallel execution for both loops; the
+server-side-`main`-protected remote-write policy (main-thread branch pushes auto-allow, any push
+naming `main` denied for all callers, subagents always denied — decision #49) with compound-command
+unrolling; scoped git + owners binding; Class-1 grants; greenBy; containerized unattended fix-loop
+runs.
 
 **Current (built, unit-verified, closure pending):** the per-run staging branch
 (`integration/<run-id>`, set via `FIXLOOP_INTEGRATION_BRANCH`) as the serialized merge target,
@@ -209,14 +216,18 @@ pre-existing-history mode). The component pieces — the hook decision matrix, t
 grant schema, the closure runbooks — are built and unit-verified, but the end-to-end closure
 sequence (draft-PR push → SonarCloud iteration → staging-targeted cleanup → ancestor-gated final
 merge into `main`) has never executed live: the run that built this lane still integrated
-main-direct by design. Validation is **pending the first live staging-lane run** (the acceptance
-run called out in `openspec/changes/staging-branch-integration/design.md`'s Migration Plan); this
-bucket promotes to "Current (built, validated)" only after that run lands.
+main-direct by design. The closure sequence is now **orchestrator-executed** end to end on the
+attended host (decision #49) — the human's one act is the merge click on the reviewed PR. Validation
+is **pending the first live staging-lane run**, which is the supervised closure run in
+`automate-closure` task 7.2 (superseding the acceptance run in
+`openspec/changes/staging-branch-integration/design.md`'s Migration Plan); this bucket promotes to
+"Current (built, validated)" only after that run lands.
 
 **Future (recorded, NOT built — build deliberately, never by accident):**
-- *Fully-unattended grant tier:* orchestrator auto-grants land directly on the active staging
-  branch with no human at the closure gates (push/PR/Sonar/cleanup/final-merge, §9's "attended
-  only") — the staging branch itself is built; auto-granting past its closure is not.
+- *Fully-unattended grant tier:* closure is now orchestrator-executed with the human PRESENT to
+  merge the reviewed PR (decision #49); the unbuilt future removes even that presence — the merge
+  happening with no human at the PR at all (the ruleset would have to be replaced by another gate).
+  The staging branch and the automated pipeline are built; auto-merging past the human is not.
 - *Dependency adds by agents:* always human-in-the-loop — a Class-1 file grant alone cannot make
   one work (`npm install` is denied for supply-chain safety).
 - *Red-check for chains:* the fix-loop's per-finding red-check has no chain-level equivalent yet;
@@ -264,16 +275,22 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   it before all Git security checks, and then applies the ordinary agent↔worktree ownership binding.
   In Codex, mutating linked-worktree Git also needs a narrow per-command sandbox escalation because
   the index lives under the main tree's read-only `.git/worktrees/`; never request a persistent prefix.
-- One shell command per Bash call in subagents: compound commands (`&&`, `;`, `|`) always fall
-  through to a prompt a background agent cannot answer.
+- Compound commands are unrolled by `unroll-command.mjs` and judged by their worst segment
+  (deny > ask > none > allow): an all-allowed compound now runs unprompted, but any ask/unknown
+  segment still surfaces a prompt a background subagent cannot answer, and anything not soundly
+  unrollable (`$()`, backticks, eval-family wrappers, process substitution) falls closed to the
+  prompt — so keep to one command per Bash call in dispatched work regardless.
 - A background/headless subagent can't answer any permission prompt — anything outside the
   auto-allowed vocabulary blocks it silently. Plan dispatched commands accordingly. A tool call
   sitting in `running` state with no process output may be waiting on approval rather than hung;
   interrupt it before retrying so two copies cannot execute after a late approval.
-- The closure phase (push, draft PR, Sonar rounds, git-cleanup, final merge) is attended-only,
-  end to end — an unattended run reaches the first scoped `ask`
-  (`git push origin integration/<run-id>`) and silently waits there; it never times out into a
-  decision. Plan a human checkpoint before dispatching a headless run into closure.
+- The closure phase (ruleset probe, push, draft PR, Sonar rounds, git-cleanup, force-push, ready
+  flip, teardown) is **orchestrator-executed on the ATTENDED host** — the human's presence is
+  required (they merge the reviewed PR — the sole ratification), their execution is not (decision
+  #49, apply.md step 12). It still cannot run **unattended/headless**: the deny-egress container
+  has no route to github.com/sonarcloud.io, and the sandbox carve-outs + credential path assume the
+  bare host. Plan a human checkpoint before dispatching a run into closure; a headless run parks at
+  closure entry rather than proceeding.
 - `git worktree add` that checks out `.claude/**` needs the OS sandbox off for that one command.
 - Linked-worktree administration (`git worktree add/move/remove`, branch create/delete, and merges)
   writes the main repository's `.git/` metadata even when every visible worktree path is writable;
