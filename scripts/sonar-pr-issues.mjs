@@ -20,9 +20,10 @@
 // gate remains the merge-blocking enforcement, so a tampered result wastes a round, never merges.
 //
 //   node scripts/sonar-pr-issues.mjs --pr <number> [--project <key>]   > findings.md
+//   node scripts/sonar-pr-issues.mjs --verify [--project <key>]        # auth-visibility check only
 //
-// Exit: 0 visible + gate OK/WARN/NONE · 10 visible + gate ERROR (red — run a fix round) ·
-//       3 auth-visibility failure (NO stdout — check this before reading findings.md) ·
+// Exit: 0 visible + gate OK/WARN/NONE (or --verify visible) · 10 visible + gate ERROR (red — run a
+//       fix round) · 3 auth-visibility failure (NO stdout — check this before reading findings.md) ·
 //       2 usage · 1 other error.
 import { pathToFileURL } from 'node:url';
 
@@ -131,34 +132,57 @@ export async function ingest({ fetchImpl = globalThis.fetch, base = SONAR_BASE, 
 }
 
 function parseArgs(argv) {
-  const out = { pr: null, project: process.env.SONAR_PROJECT || DEFAULT_PROJECT };
+  const out = { pr: null, project: process.env.SONAR_PROJECT || DEFAULT_PROJECT, verify: false };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--pr') { out.pr = argv[i + 1]; i += 1; }
     else if (argv[i] === '--project') { out.project = argv[i + 1]; i += 1; }
+    else if (argv[i] === '--verify') { out.verify = true; }
   }
   return out;
 }
 
-async function main() {
-  const { pr, project } = parseArgs(process.argv.slice(2));
-  if (!pr) {
-    process.stderr.write('usage: node scripts/sonar-pr-issues.mjs --pr <number> [--project <key>]\n');
-    process.exit(2);
+// Map a thrown error to an exit code, writing the reason to stderr. Shared by both run paths.
+function errorExitCode(e) {
+  if (e instanceof AuthVisibilityError) {
+    process.stderr.write(`AUTH-VISIBILITY: ${e.message}\n`);
+    return 3;
   }
-  const token = process.env.SONAR_TOKEN;
+  process.stderr.write(`ERROR: ${e && e.message ? e.message : e}\n`);
+  return 1;
+}
+
+// --verify: auth-visibility check only (no PR needed) — the standing way to confirm SONAR_TOKEN can
+// see the project (openspec task 1.3). Exit: 0 visible, 3 not visible, 1 other error.
+async function runVerify({ token, project }) {
+  try {
+    await assertVisible({ fetchImpl: globalThis.fetch, base: SONAR_BASE, token, project });
+    process.stdout.write(`VISIBLE: SONAR_TOKEN can see project ${project} (api/components/show 200).\n`);
+    return 0;
+  } catch (e) {
+    return errorExitCode(e);
+  }
+}
+
+async function runIngest({ token, project, pr }) {
   try {
     const { gate, findings } = await ingest({ token, project, pr });
     process.stdout.write(findings.endsWith('\n') ? findings : `${findings}\n`);
     process.stderr.write(`GATE: ${gate}\n`);
-    process.exit(gate === 'ERROR' ? 10 : 0);
+    return gate === 'ERROR' ? 10 : 0;
   } catch (e) {
-    if (e instanceof AuthVisibilityError) {
-      process.stderr.write(`AUTH-VISIBILITY: ${e.message}\n`);
-      process.exit(3);
-    }
-    process.stderr.write(`ERROR: ${e && e.message ? e.message : e}\n`);
-    process.exit(1);
+    return errorExitCode(e);
   }
+}
+
+async function main() {
+  const { pr, project, verify } = parseArgs(process.argv.slice(2));
+  const token = process.env.SONAR_TOKEN;
+  if (verify) { process.exit(await runVerify({ token, project })); }
+  if (!pr) {
+    process.stderr.write('usage: node scripts/sonar-pr-issues.mjs (--pr <number> [--project <key>] | --verify [--project <key>])\n');
+    process.exit(2);
+  }
+  process.exit(await runIngest({ token, project, pr }));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main();
