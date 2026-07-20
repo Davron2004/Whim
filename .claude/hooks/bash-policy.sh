@@ -124,36 +124,58 @@ case "$CMD" in
   *sudo*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
     deny "blocked by harness policy — if genuinely needed, stop and report a class-B deviation" ;;
 esac
-# Scoped staging-branch push (openspec: staging-branch-integration) — the ONE remote write that
-# does not hard-deny, and its outcome is ASK, never allow: a human reviews the exact refspec at
-# the prompt, so "nothing reaches a shared remote without a human" holds literally. Conditions
-# (ALL must hold, else the push denies like any other):
-#   - main thread only (no AGENT_ID) — subagents never push anything;
-#   - a single simple command anchored at `git push` (no chaining; `git -c … push` prefix forms
-#     don't anchor and stay denied);
-#   - names an integration/* ref and contains neither `main` nor `dev/v1` ANYWHERE — refspec
-#     tricks (`integration/x:main`) and even innocent substrings (`integration/domain-fix`)
-#     stay denied; fail-closed on substrings is deliberate, rename the branch instead.
+# Remote-write policy (openspec: staging-integration-lane). The human gate for the SHARED remote's
+# protected state (`main`) is the server-side GitHub ruleset (require PR, block force-push, restrict
+# deletion, require checks) — agents cannot edit it, so it is strictly stronger than any local ask.
+# Re-anchored here (the scoped-`ask`-per-push is retired):
+#   - ANY push naming `main`/`dev/v1` (incl. refspec smuggling `integration/x:main`) is denied for
+#     EVERY caller, match-anywhere, as fail-closed belt-and-braces — a local instant-deny beats a
+#     server rejection; "rename the branch" stays the workaround, never a relaxation.
+#   - Subagents are denied EVERY push, unconditionally (they never reach the shared remote).
+#   - The main thread may push non-`main` refs WITHOUT a prompt — staging-lane traffic, including
+#     `git push --force-with-lease origin integration/<id>` for the cleanup lane. Branches are free
+#     by declared policy; the protected state is `main`, and its ratification is the reviewed PR.
+#   - A COMPOUND containing a push is NOT blanket-denied here: it falls through to the
+#     compound-command policy below, which judges the push segment-by-segment (worst-segment verdict).
 case "$POLICY_CMD" in
   *"git push"*)
-    if [[ -z "$AGENT_ID" ]]; then
-      case "$CMD" in
-        *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: deny below
-        *)
-          case "$POLICY_CMD" in
-            "git push "*)
-              case "$POLICY_CMD" in
-                *main*|*"dev/v1"*) : ;;  # protected-ref name anywhere: deny below
-                *"integration/"*)
-                  ask "scoped staging-branch push — review the exact refspec (integration/* only) before approving" ;;
-                *) : ;;
-              esac ;;
-            *) : ;;
-          esac ;;
-      esac
+    case "$POLICY_CMD" in
+      *main*|*"dev/v1"*)
+        deny "push naming a protected branch (main/dev/v1) is denied for ALL callers — the server-side ruleset + PR review is the merge gate; rename the branch (class-B deviation)" ;;
+    esac
+    if [[ -n "$AGENT_ID" ]]; then
+      deny "subagents are denied every push form, unconditionally (class-B deviation)"
     fi
-    deny "git push is human-approved only; outside the scoped main-thread integration/* form it stays denied (class-B deviation)" ;;
+    case "$CMD" in
+      *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: judged by the compound-command policy below
+      *)
+        case "$POLICY_CMD" in
+          # Main-thread branch push: auto-allow WITHOUT anchoring on a branch NAME. Anchoring on a
+          # specific name (e.g. integration/*) is deliberately avoided — it adds no security while
+          # wrongly blocking a differently-named branch: the server-side GitHub ruleset rejects ANY
+          # push that lands on `main`, INCLUDING an implicit-ref `git push origin` / `git push origin
+          # HEAD` whose current branch happens to be `main`. The local `*main*` deny above is only
+          # belt-and-braces for the literal spelled form.
+          "git push "*) allow ;;
+          *) : ;;                  # `git -c … push` prefix forms don't anchor -> fall through to the git ask
+        esac ;;
+    esac ;;
 esac
+# Tier-1 relaxation (main thread only, openspec: staging-integration-lane). Closure's ancestor check
+# and post-merge teardown need to READ the remote and fast-forward local `main`. EXACTLY two simple
+# forms are allowed, main-thread only; every other fetch/pull — and any compounded form — stays
+# tier-1 denied for all callers below.
+if [[ -z "$AGENT_ID" ]]; then
+  case "$CMD" in
+    *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: not relaxed; tier-1 denies below
+    *)
+      case "$POLICY_CMD" in
+        "git fetch origin"|"git fetch origin "*|\
+        "git pull --ff-only origin main"|"git pull --ff-only origin main "*)
+          allow ;;
+      esac ;;
+  esac
+fi
 # Security-critical git, TIER 1 — SHARED-state reach: network, shared-ref forcing, recovery-data
 # destruction (reflog/gc — the reflog + backup ref are the cleanup lane's undo button), and
 # `git config` (a linked worktree's `git config` writes the SHARED .git/config; core.fsmonitor
@@ -215,15 +237,63 @@ if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi
 
-# Compound commands fall through to the normal permission flow. Positioned BEFORE the git /
-# auto-allow policies so neither can auto-ALLOW a chained payload (`npm test && rm -rf src`); the
-# security-critical denies above already run on chained segments via match-anywhere. Any shell
-# control operator disqualifies the fast path — the implementer contract is one command at a time.
-case "$CMD" in
-  *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
-    exit 0 ;;
-  *) ;; # simple command: continue to the scoped policies below
-esac
+# Compound commands (openspec: compound-command-policy). Positioned BEFORE the git / auto-allow
+# policies so neither can auto-ALLOW a chained payload; the security-critical denies above already
+# ran on the RAW string via match-anywhere, so a denied substring cannot survive a parser bug. A
+# command joined by top-level && || ; | is unrolled by the parser helper and judged by its WORST
+# segment (deny > ask > none > allow). Anything the parser cannot soundly unroll — command
+# substitution, expansion, eval-family wrappers, process substitution, … — falls through to the
+# pre-existing generic permission flow, EXACTLY as before this capability existed (fail closed to
+# the prompt, never to allow).
+#
+# WHIM_BASH_POLICY_SEGMENT marks a re-entrant per-segment evaluation: skip unrolling entirely so a
+# segment carrying a QUOTED connector or redirect is judged as the simple command it is (quotes are
+# inert to the prefix-based policy below), and so the recursion cannot run away.
+if [[ -z "${WHIM_BASH_POLICY_SEGMENT:-}" ]]; then
+  case "$CMD" in
+    *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
+      HOOKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      UNROLL_JSON=$(printf '%s' "$CMD" | node "$HOOKDIR/unroll-command.mjs" 2>/dev/null)
+      if [[ -z "$UNROLL_JSON" ]] || [[ "$(printf '%s' "$UNROLL_JSON" | jq -r '.unrollable // false')" != "true" ]]; then
+        exit 0   # not soundly unrollable -> pre-existing generic permission flow, unchanged
+      fi
+      # Redirect pseudo-writes: deny a redirect whose target hits the protected list (shell redirects
+      # bypass the Edit/Write file-protection hook). Belt-and-braces with the raw-string check above.
+      # A target carrying a glob metacharacter is UNCLASSIFIABLE — bash would expand it at run time
+      # (e.g. `.claude/settin?s.json` -> the real settings.json), so the literal PROTECTED match below
+      # can't see through it; fail closed and deny it. Legitimate redirect targets are single files.
+      while IFS= read -r _rt; do
+        [[ -n "$_rt" ]] || continue
+        if printf '%s' "$_rt" | grep -Eq '[][*?]'; then
+          deny "compound redirect target contains a glob metacharacter — it can expand to a protected path at run time, so it is denied (class-B deviation)"
+        fi
+        if printf '%s' "$_rt" | grep -Eq "($PROTECTED)"; then
+          deny "compound redirect writes to harness/verification config ($_rt) — use the Edit tool (class-B deviation)"
+        fi
+      done < <(printf '%s' "$UNROLL_JSON" | jq -r '.redirects[]?')
+      # Evaluate each segment through THIS policy (re-entrant, guarded); keep the worst verdict.
+      _worst=0   # 0 allow  1 none/fallthrough  2 ask  3 deny
+      while IFS= read -r _seg; do
+        [[ -n "$_seg" ]] || continue
+        _out=$(printf '%s' "$INPUT" | jq -c --arg c "$_seg" '.tool_input.command=$c' \
+                 | WHIM_BASH_POLICY_SEGMENT=1 bash "${BASH_SOURCE[0]}")
+        if [[ -z "$_out" ]]; then _lvl=1; else
+          case "$(printf '%s' "$_out" | jq -r '.hookSpecificOutput.permissionDecision // "none"')" in
+            allow) _lvl=0 ;; deny) _lvl=3 ;; ask) _lvl=2 ;; *) _lvl=1 ;;
+          esac
+        fi
+        (( _lvl > _worst )) && _worst=$_lvl
+        (( _worst == 3 )) && break
+      done < <(printf '%s' "$UNROLL_JSON" | jq -r '.segments[]')
+      case "$_worst" in
+        3) deny "a segment of this compound is denied by policy (class-B deviation)" ;;
+        2) ask "compound command — review the full command line before approving" ;;
+        1) exit 0 ;;   # defer to the normal permission flow, as an unknown simple command would
+        0) allow ;;
+      esac ;;
+    *) ;; # simple command: continue to the scoped policies below
+  esac
+fi
 
 # ---- git policy (simple commands only — compound already fell through) ----------------------
 # Tamper detection is decoupled from git (docs/archive/parallel-fix-loop.md): the orchestrator audits
@@ -302,6 +372,50 @@ case "$CMD" in
         deny "worktree .claude/worktrees/$cd_id is bound to a different agent — cd refused (class-B deviation)" ;;
     esac ;;
   *) ;;
+esac
+
+# gh vocabulary (openspec: staging-integration-lane; design §D4). Read-only forms auto-allow for
+# every caller; closure mutations are main-thread-only and enumerated; `gh pr merge` is denied for
+# ALL callers — merging the reviewed PR into `main` is the human's click on GitHub, never a local
+# command. A compound containing gh is judged per-segment by the compound-command policy above.
+case "$POLICY_CMD" in
+  "gh "*|gh)
+    case "$POLICY_CMD" in
+      "gh pr merge"*)
+        deny "gh pr merge is denied for all callers — the human merges the reviewed PR on GitHub (class-B deviation)" ;;
+    esac
+    # Read-only forms: allowed for everyone (subagents included).
+    case "$POLICY_CMD" in
+      "gh pr view"*|"gh pr checks"*|"gh pr status"*|"gh pr list"*|"gh pr diff"*|\
+      "gh run view"*|"gh run list"*|"gh run watch"*)
+        allow ;;
+      "gh api "*)
+        # gh defaults to GET, but SILENTLY switches to POST when any parameter (-f/-F/--field/
+        # --raw-field/--input) is supplied without an explicit -X/--method. So "read-only" means:
+        # an explicit GET, OR no method AND no data param. Anything else is a mutation and routes to
+        # the caller rules below (subagent -> deny, main thread -> prompt) — no server-side ruleset
+        # gates arbitrary `gh api` writes, so this classifier is the only gate.
+        case "$POLICY_CMD" in
+          *"-X GET"*|*"--method GET"*) allow ;;                              # explicit GET is read-only even with -f
+          *" -X "*|*"--method "*) : ;;                                       # explicit non-GET method -> mutation
+          *" -f"*|*" -F"*|*"--field"*|*"--raw-field"*|*"--input"*) : ;;      # data params -> gh POSTs -> mutation
+          *) allow ;;                                                        # bare path, no data -> GET
+        esac ;;
+    esac
+    # Mutations from here. Subagents never mutate via gh.
+    if [[ -n "$AGENT_ID" ]]; then
+      deny "gh mutations are denied for subagents — read-only gh only (class-B deviation)"
+    fi
+    # Main-thread closure mutations: open the DRAFT PR and flip it to ready-for-review.
+    case "$POLICY_CMD" in
+      "gh pr create "*)
+        case "$POLICY_CMD" in
+          *"--draft"*) allow ;;
+          *) : ;;   # non-draft create -> generic prompt (draft-first is the closure default)
+        esac ;;
+      "gh pr ready"*|"gh pr ready") allow ;;
+      *) : ;;       # any other main-thread gh -> generic permission flow
+    esac ;;
 esac
 
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.
