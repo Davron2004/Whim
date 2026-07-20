@@ -3,8 +3,8 @@
 ## 1. Human bootstrap (out of repo — blocking prerequisites)
 
 - [x] 1.1 HUMAN: create the GitHub ruleset on `main` (require PR before merging, block force pushes, restrict deletions, require the CI status checks) and confirm a direct `git push origin main` is rejected server-side *(done by user)*
-- [ ] 1.2 HUMAN: generate a dedicated SonarCloud user token (My Account → Security) and provision it on the host as `SONAR_TOKEN`
-- [ ] 1.3 Verify the SonarCloud project key `Davron2004_Whim` is visible with the token via `api/components/show` (404 anonymously is expected — the project is private)
+- [x] 1.2 HUMAN: generate a dedicated SonarCloud user token (My Account → Security) and provision it on the host as `SONAR_TOKEN` *(done — 40-char user token in ~/.zshenv; .zshrc was wrong, non-interactive shells don't source it)*
+- [x] 1.3 Verify the SonarCloud project key `Davron2004_Whim` is visible with the token via `api/components/show` (404 anonymously is expected — the project is private) *(VERIFIED: components/show 200 via assertVisible, run unsandboxed to stand in for the not-yet-active carve-out)*
 
 ## 2. Compound-command unroller (compound-command-policy)
 
