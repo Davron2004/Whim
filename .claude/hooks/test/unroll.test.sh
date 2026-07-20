@@ -98,6 +98,11 @@ expect_decision "npm install smuggled denies"           deny  "" 'ls && npm inst
 expect_decision "redirect into protected denies"        deny  "" 'echo x > .claude/settings.json' "$ROOT"
 expect_decision "redirect into protected in compound"   deny  "" 'npm run build && echo x >> scripts/gate.sh' "$ROOT"
 expect_decision "redirect into safe path is not denied"  none  "" 'echo hello > '"$ROOT"'/scratch.txt' "$ROOT"
+# Glob-obfuscated redirect targets are unclassifiable (bash would expand `settin?s`->`settings` at
+# run time), so they fail closed to deny — the literal PROTECTED match can't see through the glob.
+expect_decision "glob (?) redirect denies"              deny  "" 'echo x > .claude/settin?s.json' "$ROOT"
+expect_decision "glob (*) redirect denies"              deny  "" 'echo x > .claude/setti*.json' "$ROOT"
+expect_decision "glob ([]) redirect denies"             deny  "" 'echo x > out-[abc].txt' "$ROOT"
 
 # Refspec smuggling inside a compound stays denied (the push names main via the refspec).
 expect_decision "refspec smuggling in compound denies"  deny  "" 'git push origin integration/run-1:main && echo done' "$ROOT"

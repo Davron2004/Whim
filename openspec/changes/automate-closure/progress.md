@@ -46,6 +46,33 @@ stop-before-closure.
     host, so they see host env (SONAR_TOKEN for the sonar script; gh/git credential helper for
     push/gh) while sandboxed commands stay denied those. If an excluded command does NOT bypass the
     envVars deny, sonar auth fails LOUDLY (guarded, chain-4) — fail-safe, file as divergence.
+- **chain-7.1 (gate) PARTIAL/GREEN-for-affected**: fast gate GREEN in-worktree (unroller 43,
+  bash-policy 38, sonar 10, build, typecheck, lint, all Node suites, Codex adapters). gate-full
+  additions that can be affected: knip GREEN (new files out of scope, not flagged), sync-codex
+  `--check` GREEN, `openspec validate` change VALID. `guard:metro` + Chromium invariants
+  environment-blocked in a worktree (documented @babel/runtime resolution limit); provably
+  unaffected (no Metro/runtime/SDK/launcher/bridge code touched). Definitive gate-full = CI fresh
+  checkout at push, or `fixloop.sh gatefull` from a clean primary tree.
+- **chain-1 (bootstrap) — HUMAN, OUT-OF-REPO, NOT DONE HERE**: create the GitHub ruleset on `main`
+  (require PR, block force-push, restrict deletion, require checks); provision a dedicated
+  `SONAR_TOKEN` on the host; verify `Davron2004_Whim` visible via `api/components/show`. The runbook
+  refuses closure without the ruleset (ruleset-probe). These block the first closure run (7.2).
+- **chain-7.2 — HUMAN-SUPERVISED, separate attended run** (see task note).
+- **reviewer pass (step 11)**: dispatched over cccbf45..HEAD; VERDICT = 3 findings (2 HIGH, 1 MED),
+  all real. Report honesty: matches diff. Resolutions:
+  - F1 (HIGH, gh api mutation via `-f`/`-F`/`--input` misclassified as read-only → subagent write
+    hole, NO server-side backstop) → FIXED: `gh api` is read-only only when explicit GET or no data
+    param; else routes to caller rules (subagent deny / main-thread prompt). +6 suite cases.
+  - F2 (HIGH per reviewer: bare `git push origin [HEAD]` auto-allows, can reach main) → NOT a code
+    change — USER DECISION: the server-side ruleset is the gate; name-anchoring the hook is brittle
+    (would block differently-named branches) and adds no security (main is ruleset-protected). Kept
+    broad allow; added prose comment (bash-policy.sh push case) documenting the ruleset backstop.
+  - F3 (MED, glob metacharacter in redirect target evades literal PROTECTED match) → FIXED: redirect
+    targets with `*?[]` fail closed to deny (bash would expand `settin?s`->`settings` at run time).
+    +3 suite cases.
+  - reviewer confirmed PASS: compound composition, subagent push denial, refspec smuggling,
+    `gh pr merge` deny-all, tier-1 relaxation not-relaxed-in-compound, sonar auth-visibility guard,
+    no regressions in git -C scoping / owners / cleanup lane / fixloop deny.
 - **chain-6 (docs) DONE**: `docs/harness.md` §4 (bash-policy + sandbox rows rewritten; SonarCloud
   row now cites the ingestion script), §5 step 4, §8 (ask-never-allow re-anchored to server-side
   main protection + compound policy), §9 current-stance buckets, §11 (compound-unrolling gotcha +

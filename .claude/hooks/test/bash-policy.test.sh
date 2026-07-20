@@ -78,6 +78,14 @@ expect_decision "gh pr merge denied for all callers" deny "" "gh pr merge 12" "$
 expect_decision "gh pr merge denied for subagents too" deny agent-a "gh pr merge 12" "$ROOT"
 expect_decision "gh mutation denied for subagents" deny agent-a "gh pr create --draft --title x" "$ROOT"
 expect_decision "gh read-only allowed for subagents" allow agent-a "gh pr view 12" "$ROOT"
+# gh api defaults to POST when -f/-F/--field/--input are present with no explicit method — those are
+# mutations, not reads (no server-side ruleset gates arbitrary gh api writes).
+expect_decision "gh api bare read allowed for subagents" allow agent-a "gh api repos/o/r/rulesets" "$ROOT"
+expect_decision "gh api -f is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/issues -f title=x" "$ROOT"
+expect_decision "gh api -F is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/pulls/5/comments -F body=hi" "$ROOT"
+expect_decision "gh api --input is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/x --input body.json" "$ROOT"
+expect_decision "gh api -f is not auto-allowed on the main thread" none "" "gh api repos/o/r/issues -f title=x" "$ROOT"
+expect_decision "gh api explicit GET with -f stays read-only" allow agent-a "gh api repos/o/r/x -X GET -f a=b" "$ROOT"
 
 expect_decision "subagent force-op on integration/* stays denied" deny agent-a "git branch -D integration/run-1" "$ROOT"
 

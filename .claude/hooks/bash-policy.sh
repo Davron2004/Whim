@@ -150,8 +150,14 @@ case "$POLICY_CMD" in
       *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: judged by the compound-command policy below
       *)
         case "$POLICY_CMD" in
-          "git push "*) allow ;;   # main-thread push of a non-`main` ref (any main-naming form denied above)
-          *) : ;;                  # unanchored forms (`git -c … push`) fall through to the generic prompt
+          # Main-thread branch push: auto-allow WITHOUT anchoring on a branch NAME. Anchoring on a
+          # specific name (e.g. integration/*) is deliberately avoided — it adds no security while
+          # wrongly blocking a differently-named branch: the server-side GitHub ruleset rejects ANY
+          # push that lands on `main`, INCLUDING an implicit-ref `git push origin` / `git push origin
+          # HEAD` whose current branch happens to be `main`. The local `*main*` deny above is only
+          # belt-and-braces for the literal spelled form.
+          "git push "*) allow ;;
+          *) : ;;                  # `git -c … push` prefix forms don't anchor -> fall through to the git ask
         esac ;;
     esac ;;
 esac
@@ -253,8 +259,14 @@ if [[ -z "${WHIM_BASH_POLICY_SEGMENT:-}" ]]; then
       fi
       # Redirect pseudo-writes: deny a redirect whose target hits the protected list (shell redirects
       # bypass the Edit/Write file-protection hook). Belt-and-braces with the raw-string check above.
+      # A target carrying a glob metacharacter is UNCLASSIFIABLE — bash would expand it at run time
+      # (e.g. `.claude/settin?s.json` -> the real settings.json), so the literal PROTECTED match below
+      # can't see through it; fail closed and deny it. Legitimate redirect targets are single files.
       while IFS= read -r _rt; do
         [[ -n "$_rt" ]] || continue
+        if printf '%s' "$_rt" | grep -Eq '[][*?]'; then
+          deny "compound redirect target contains a glob metacharacter — it can expand to a protected path at run time, so it is denied (class-B deviation)"
+        fi
         if printf '%s' "$_rt" | grep -Eq "($PROTECTED)"; then
           deny "compound redirect writes to harness/verification config ($_rt) — use the Edit tool (class-B deviation)"
         fi
@@ -378,10 +390,16 @@ case "$POLICY_CMD" in
       "gh run view"*|"gh run list"*|"gh run watch"*)
         allow ;;
       "gh api "*)
+        # gh defaults to GET, but SILENTLY switches to POST when any parameter (-f/-F/--field/
+        # --raw-field/--input) is supplied without an explicit -X/--method. So "read-only" means:
+        # an explicit GET, OR no method AND no data param. Anything else is a mutation and routes to
+        # the caller rules below (subagent -> deny, main thread -> prompt) — no server-side ruleset
+        # gates arbitrary `gh api` writes, so this classifier is the only gate.
         case "$POLICY_CMD" in
-          *"-X GET"*|*"--method GET"*) allow ;;                                     # explicit GET
-          *" -X "*|*"--method "*|*"-XPOST"*|*"-XPUT"*|*"-XPATCH"*|*"-XDELETE"*) : ;; # mutation -> caller rules
-          *) allow ;;                                                               # no method flag -> GET
+          *"-X GET"*|*"--method GET"*) allow ;;                              # explicit GET is read-only even with -f
+          *" -X "*|*"--method "*) : ;;                                       # explicit non-GET method -> mutation
+          *" -f"*|*" -F"*|*"--field"*|*"--raw-field"*|*"--input"*) : ;;      # data params -> gh POSTs -> mutation
+          *) allow ;;                                                        # bare path, no data -> GET
         esac ;;
     esac
     # Mutations from here. Subagents never mutate via gh.
