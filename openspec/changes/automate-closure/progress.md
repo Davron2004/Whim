@@ -46,6 +46,12 @@ stop-before-closure.
     host, so they see host env (SONAR_TOKEN for the sonar script; gh/git credential helper for
     push/gh) while sandboxed commands stay denied those. If an excluded command does NOT bypass the
     envVars deny, sonar auth fails LOUDLY (guarded, chain-4) — fail-safe, file as divergence.
+- **chain-5 (closure-runbooks) DONE**: `apply.md` step 12 rewritten as the orchestrator-executed
+  pipeline (ruleset probe → push → draft PR → bounded/parkable poll → Sonar ingest via script →
+  nested fix-loop → cleanup → orchestrator force-push → ready flip + notify → human merge click →
+  teardown). `git-cleanup.md`: orchestrator executes ref-move + force-push on gate pass; Sonar-fix
+  folding rule added. `fix-loop.md` CLOSURE re-pointed to the new step 12. `gate.sh`: wired
+  `check "sonar ingestion"` + `check "compound unroller"` (the two deferred suites).
 - **chain-4 (sonar-script) DONE**: `scripts/sonar-pr-issues.mjs` (importable module + CLI: paged
   issues/search, project_status gate, components/show auth-visibility guard, fix-loop findings-file
   output; exit 0/10/3 verdict) + `scripts/test/sonar-pr-issues.test.mjs` (10 mocked-HTTP cases:

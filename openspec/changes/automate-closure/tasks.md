@@ -29,9 +29,10 @@
 
 ## 5. Closure runbooks
 
-- [ ] 5.1 Rewrite `apply.md` step 12 as the orchestrator-executed pipeline: ruleset probe → push → `gh pr create --draft` → poll `gh pr checks` (bounded timeout, parkable) → on red: ingest via `sonar-pr-issues.mjs` → nested `/fix-loop` on the staging branch → re-push → re-poll → cleanup → force-push-with-lease → wait for re-analysis green → ancestor check → `gh pr ready` + notify human → post-merge teardown (delete branch local+remote, ff-sync local `main`)
-- [ ] 5.2 Update `git-cleanup.md`: orchestrator executes the ref move and force-push on `CLEANUP GATE PASS` (tree-identity gate and backup ref unchanged); add the standing grouping rule — Sonar-fix commits are folded into the semantic commits they touch, none survive standalone
-- [ ] 5.3 Update `fix-loop.md`'s CLOSURE section to reference the rewritten step 12 (standalone and nested modes)
+- [x] 5.1 Rewrite `apply.md` step 12 as the orchestrator-executed pipeline: ruleset probe → push → `gh pr create --draft` → poll `gh pr checks` (bounded timeout, parkable) → on red: ingest via `sonar-pr-issues.mjs` → nested `/fix-loop` on the staging branch → re-push → re-poll → cleanup → force-push-with-lease → wait for re-analysis green → ancestor check → `gh pr ready` + notify human → post-merge teardown (delete branch local+remote, ff-sync local `main`)
+- [x] 5.2 Update `git-cleanup.md`: orchestrator executes the ref move and force-push on `CLEANUP GATE PASS` (tree-identity gate and backup ref unchanged); add the standing grouping rule — Sonar-fix commits are folded into the semantic commits they touch, none survive standalone
+- [x] 5.3 Update `fix-loop.md`'s CLOSURE section to reference the rewritten step 12 (standalone and nested modes)
+- [x] (chain-5 rider) wire the two deferred suites into `scripts/gate.sh`: `check "compound unroller"` (chain-2) + `check "sonar ingestion"` (chain-4)
 
 ## 6. Documentation
 

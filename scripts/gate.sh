@@ -61,7 +61,9 @@ check "launcher"          npm run -s launcher:test
 check "server"            npm run -s server:test
 check "SDK"               npm run -s sdk:test
 check "static-checks"     npm run -s checks:test
+check "sonar ingestion"   node scripts/test/sonar-pr-issues.test.mjs
 check "bash policy"       bash .claude/hooks/test/bash-policy.test.sh
+check "compound unroller" bash .claude/hooks/test/unroll.test.sh
 check "Codex hook adapters" bash .codex/hooks/test/provider-adapters.test.sh
 check "Codex protected approval" bash .codex/hooks/test/protected-patch.test.sh
 
