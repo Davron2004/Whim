@@ -23,9 +23,9 @@
 
 ## 4. Sonar issue ingestion (sonar-issue-ingestion)
 
-- [ ] 4.1 Implement `scripts/sonar-pr-issues.mjs`: fetch `api/issues/search` (paged, `resolved=false`, `pullRequest=<n>`) + `api/qualitygates/project_status` with Bearer `SONAR_TOKEN`; emit fix-loop findings-file format plus a machine-readable gate verdict
-- [ ] 4.2 Implement the auth-visibility guard: `api/components/show` first; 404/failure → non-zero exit with a distinct error and no findings output; empty findings reportable only after the guard passes
-- [ ] 4.3 Node test suite for the script (mocked HTTP): pagination to exhaustion, findings-format shape, guard failure modes, clean-gate case; wire into `scripts/gate.sh`'s Node suites
+- [x] 4.1 Implement `scripts/sonar-pr-issues.mjs`: fetch `api/issues/search` (paged, `resolved=false`, `pullRequest=<n>`) + `api/qualitygates/project_status` with Bearer `SONAR_TOKEN`; emit fix-loop findings-file format plus a machine-readable gate verdict *(verdict via exit code: 0 green/warn, 10 red, 3 auth-fail; `- gate:` header line)*
+- [x] 4.2 Implement the auth-visibility guard: `api/components/show` first; 404/failure → non-zero exit with a distinct error and no findings output; empty findings reportable only after the guard passes
+- [x] 4.3 Node test suite for the script (mocked HTTP): pagination to exhaustion, findings-format shape, guard failure modes, clean-gate case; wire into `scripts/gate.sh`'s Node suites *(suite `scripts/test/sonar-pr-issues.test.mjs`, 10 cases passing; gate.sh wiring lands in chain-5 per chains.md)*
 
 ## 5. Closure runbooks
 

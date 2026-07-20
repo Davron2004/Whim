@@ -12,6 +12,9 @@
 import { execFileSync } from 'node:child_process';
 
 function ghApiJson(path) {
+  // `gh` is resolved from PATH by design: it is machine-dependent (/opt/homebrew, /usr/bin, …) and
+  // this is a trusted closure-time dev-harness script, not a service handling untrusted input.
+  // eslint-disable-next-line sonarjs/no-os-command-from-path
   const out = execFileSync('gh', ['api', path], { encoding: 'utf8' });
   return JSON.parse(out);
 }

@@ -46,3 +46,9 @@ stop-before-closure.
     host, so they see host env (SONAR_TOKEN for the sonar script; gh/git credential helper for
     push/gh) while sandboxed commands stay denied those. If an excluded command does NOT bypass the
     envVars deny, sonar auth fails LOUDLY (guarded, chain-4) — fail-safe, file as divergence.
+- **chain-4 (sonar-script) DONE**: `scripts/sonar-pr-issues.mjs` (importable module + CLI: paged
+  issues/search, project_status gate, components/show auth-visibility guard, fix-loop findings-file
+  output; exit 0/10/3 verdict) + `scripts/test/sonar-pr-issues.test.mjs` (10 mocked-HTTP cases:
+  pagination-to-exhaustion, guard failure modes incl. the 200/total:0 masquerade, findings shape,
+  clean/red gate). eslint clean (justified sonarjs disable on gh shell-out in ruleset-probe).
+  gate.sh Node-suite wiring deferred to chain-5.
