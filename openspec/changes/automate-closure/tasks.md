@@ -2,7 +2,7 @@
 
 ## 1. Human bootstrap (out of repo — blocking prerequisites)
 
-- [ ] 1.1 HUMAN: create the GitHub ruleset on `main` (require PR before merging, block force pushes, restrict deletions, require the CI status checks) and confirm a direct `git push origin main` is rejected server-side
+- [x] 1.1 HUMAN: create the GitHub ruleset on `main` (require PR before merging, block force pushes, restrict deletions, require the CI status checks) and confirm a direct `git push origin main` is rejected server-side *(done by user)*
 - [ ] 1.2 HUMAN: generate a dedicated SonarCloud user token (My Account → Security) and provision it on the host as `SONAR_TOKEN`
 - [ ] 1.3 Verify the SonarCloud project key `Davron2004_Whim` is visible with the token via `api/components/show` (404 anonymously is expected — the project is private)
 
@@ -41,5 +41,5 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Run `scripts/gate-full.sh` green on the change tip (includes the new unroller, policy, and ingestion suites)
-- [ ] 7.2 HUMAN-SUPERVISED: first closure run on a real change executes end to end with the human present but executing nothing; divergences filed as findings before this change is archived
+- [~] 7.1 Run `scripts/gate-full.sh` green on the change tip (includes the new unroller, policy, and ingestion suites) *(GREEN in-worktree: fast gate incl. all new suites [unroller 43, bash-policy 38, sonar 10], knip, sync-codex, openspec validate. `guard:metro` + 3 Chromium invariant suites are environment-blocked in a worktree [documented @babel/runtime resolution limit, harness.md §11] and provably UNAFFECTED — this change touches no Metro-resolved/runtime/SDK/launcher/bridge code. DEFINITIVE gate-full runs in CI on the fresh-checkout push at closure [step 12b], OR run `scripts/fixloop.sh gatefull integration/automate-closure` from a clean primary tree.)*
+- [ ] 7.2 HUMAN-SUPERVISED: first closure run on a real change executes end to end with the human present but executing nothing; divergences filed as findings before this change is archived *(separate attended run — cannot execute in this background session)*
