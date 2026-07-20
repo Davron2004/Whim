@@ -17,7 +17,8 @@
         { "name": "GH_TOKEN", "mode": "deny" },
         { "name": "NPM_TOKEN", "mode": "deny" },
         { "name": "AWS_ACCESS_KEY_ID", "mode": "deny" },
-        { "name": "AWS_SECRET_ACCESS_KEY", "mode": "deny" }
+        { "name": "AWS_SECRET_ACCESS_KEY", "mode": "deny" },
+        { "name": "SONAR_TOKEN", "mode": "deny" }
       ]
     },
     "excludedCommands": [
@@ -25,7 +26,13 @@
       "npm run bridge:invariants",
       "npm run launcher:deliver-verify",
       "./scripts/gate-full.sh",
-      "scripts/fixloop.sh"
+      "scripts/fixloop.sh",
+      "git push",
+      "git fetch",
+      "git pull",
+      "gh ",
+      "node scripts/sonar-pr-issues.mjs",
+      "node scripts/ruleset-probe.mjs"
     ]
   },
   "worktree": {

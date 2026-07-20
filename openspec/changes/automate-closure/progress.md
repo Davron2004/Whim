@@ -34,3 +34,15 @@ stop-before-closure.
   integration (worst-segment lattice deny>ask>none>allow, re-entrant per-segment eval guarded by
   WHIM_BASH_POLICY_SEGMENT) + `.claude/hooks/test/unroll.test.sh` (43 cases). unroll suite 43/43,
   existing bash-policy suite 19/19 (no regression). gate.sh wiring deferred to chain-5.
+- **chain-3 (remote-policy) DONE**: `bash-policy.sh` push rework (main-push deny all callers incl
+  refspec smuggling; main-thread branch push + force-with-lease auto-allow; subagent deny; compound
+  push judged per-segment), Tier-1 relaxation (main-thread `git fetch origin` + `git pull --ff-only
+  origin main`), gh vocabulary (read-only all callers; `pr create --draft`/`pr ready` main-thread;
+  `pr merge` deny all; subagent mutations deny). `.claude/settings.json`: excludedCommands +=
+  git push/fetch/pull, gh, sonar + ruleset-probe scripts; SONAR_TOKEN envVars-deny (scoped via
+  script exclusion). `scripts/ruleset-probe.mjs` (fail-closed closure-entry probe). Suite updated:
+  bash-policy 38/38, unroll 43/43.
+  - SANDBOX ASSUMPTION (verify at attended first-run, chain-7.2): excludedCommands run on the bare
+    host, so they see host env (SONAR_TOKEN for the sonar script; gh/git credential helper for
+    push/gh) while sandboxed commands stay denied those. If an excluded command does NOT bypass the
+    envVars deny, sonar auth fails LOUDLY (guarded, chain-4) — fail-safe, file as divergence.

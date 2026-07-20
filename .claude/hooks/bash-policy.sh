@@ -124,36 +124,52 @@ case "$CMD" in
   *sudo*|*"npm install"*|*"npm uninstall"*|*curl*|*wget*|*"rm -rf /"*)
     deny "blocked by harness policy — if genuinely needed, stop and report a class-B deviation" ;;
 esac
-# Scoped staging-branch push (openspec: staging-branch-integration) — the ONE remote write that
-# does not hard-deny, and its outcome is ASK, never allow: a human reviews the exact refspec at
-# the prompt, so "nothing reaches a shared remote without a human" holds literally. Conditions
-# (ALL must hold, else the push denies like any other):
-#   - main thread only (no AGENT_ID) — subagents never push anything;
-#   - a single simple command anchored at `git push` (no chaining; `git -c … push` prefix forms
-#     don't anchor and stay denied);
-#   - names an integration/* ref and contains neither `main` nor `dev/v1` ANYWHERE — refspec
-#     tricks (`integration/x:main`) and even innocent substrings (`integration/domain-fix`)
-#     stay denied; fail-closed on substrings is deliberate, rename the branch instead.
+# Remote-write policy (openspec: staging-integration-lane). The human gate for the SHARED remote's
+# protected state (`main`) is the server-side GitHub ruleset (require PR, block force-push, restrict
+# deletion, require checks) — agents cannot edit it, so it is strictly stronger than any local ask.
+# Re-anchored here (the scoped-`ask`-per-push is retired):
+#   - ANY push naming `main`/`dev/v1` (incl. refspec smuggling `integration/x:main`) is denied for
+#     EVERY caller, match-anywhere, as fail-closed belt-and-braces — a local instant-deny beats a
+#     server rejection; "rename the branch" stays the workaround, never a relaxation.
+#   - Subagents are denied EVERY push, unconditionally (they never reach the shared remote).
+#   - The main thread may push non-`main` refs WITHOUT a prompt — staging-lane traffic, including
+#     `git push --force-with-lease origin integration/<id>` for the cleanup lane. Branches are free
+#     by declared policy; the protected state is `main`, and its ratification is the reviewed PR.
+#   - A COMPOUND containing a push is NOT blanket-denied here: it falls through to the
+#     compound-command policy below, which judges the push segment-by-segment (worst-segment verdict).
 case "$POLICY_CMD" in
   *"git push"*)
-    if [[ -z "$AGENT_ID" ]]; then
-      case "$CMD" in
-        *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: deny below
-        *)
-          case "$POLICY_CMD" in
-            "git push "*)
-              case "$POLICY_CMD" in
-                *main*|*"dev/v1"*) : ;;  # protected-ref name anywhere: deny below
-                *"integration/"*)
-                  ask "scoped staging-branch push — review the exact refspec (integration/* only) before approving" ;;
-                *) : ;;
-              esac ;;
-            *) : ;;
-          esac ;;
-      esac
+    case "$POLICY_CMD" in
+      *main*|*"dev/v1"*)
+        deny "push naming a protected branch (main/dev/v1) is denied for ALL callers — the server-side ruleset + PR review is the merge gate; rename the branch (class-B deviation)" ;;
+    esac
+    if [[ -n "$AGENT_ID" ]]; then
+      deny "subagents are denied every push form, unconditionally (class-B deviation)"
     fi
-    deny "git push is human-approved only; outside the scoped main-thread integration/* form it stays denied (class-B deviation)" ;;
+    case "$CMD" in
+      *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: judged by the compound-command policy below
+      *)
+        case "$POLICY_CMD" in
+          "git push "*) allow ;;   # main-thread push of a non-`main` ref (any main-naming form denied above)
+          *) : ;;                  # unanchored forms (`git -c … push`) fall through to the generic prompt
+        esac ;;
+    esac ;;
 esac
+# Tier-1 relaxation (main thread only, openspec: staging-integration-lane). Closure's ancestor check
+# and post-merge teardown need to READ the remote and fast-forward local `main`. EXACTLY two simple
+# forms are allowed, main-thread only; every other fetch/pull — and any compounded form — stays
+# tier-1 denied for all callers below.
+if [[ -z "$AGENT_ID" ]]; then
+  case "$CMD" in
+    *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*) : ;;  # compound: not relaxed; tier-1 denies below
+    *)
+      case "$POLICY_CMD" in
+        "git fetch origin"|"git fetch origin "*|\
+        "git pull --ff-only origin main"|"git pull --ff-only origin main "*)
+          allow ;;
+      esac ;;
+  esac
+fi
 # Security-critical git, TIER 1 — SHARED-state reach: network, shared-ref forcing, recovery-data
 # destruction (reflog/gc — the reflog + backup ref are the cleanup lane's undo button), and
 # `git config` (a linked worktree's `git config` writes the SHARED .git/config; core.fsmonitor
@@ -344,6 +360,44 @@ case "$CMD" in
         deny "worktree .claude/worktrees/$cd_id is bound to a different agent — cd refused (class-B deviation)" ;;
     esac ;;
   *) ;;
+esac
+
+# gh vocabulary (openspec: staging-integration-lane; design §D4). Read-only forms auto-allow for
+# every caller; closure mutations are main-thread-only and enumerated; `gh pr merge` is denied for
+# ALL callers — merging the reviewed PR into `main` is the human's click on GitHub, never a local
+# command. A compound containing gh is judged per-segment by the compound-command policy above.
+case "$POLICY_CMD" in
+  "gh "*|gh)
+    case "$POLICY_CMD" in
+      "gh pr merge"*)
+        deny "gh pr merge is denied for all callers — the human merges the reviewed PR on GitHub (class-B deviation)" ;;
+    esac
+    # Read-only forms: allowed for everyone (subagents included).
+    case "$POLICY_CMD" in
+      "gh pr view"*|"gh pr checks"*|"gh pr status"*|"gh pr list"*|"gh pr diff"*|\
+      "gh run view"*|"gh run list"*|"gh run watch"*)
+        allow ;;
+      "gh api "*)
+        case "$POLICY_CMD" in
+          *"-X GET"*|*"--method GET"*) allow ;;                                     # explicit GET
+          *" -X "*|*"--method "*|*"-XPOST"*|*"-XPUT"*|*"-XPATCH"*|*"-XDELETE"*) : ;; # mutation -> caller rules
+          *) allow ;;                                                               # no method flag -> GET
+        esac ;;
+    esac
+    # Mutations from here. Subagents never mutate via gh.
+    if [[ -n "$AGENT_ID" ]]; then
+      deny "gh mutations are denied for subagents — read-only gh only (class-B deviation)"
+    fi
+    # Main-thread closure mutations: open the DRAFT PR and flip it to ready-for-review.
+    case "$POLICY_CMD" in
+      "gh pr create "*)
+        case "$POLICY_CMD" in
+          *"--draft"*) allow ;;
+          *) : ;;   # non-draft create -> generic prompt (draft-first is the closure default)
+        esac ;;
+      "gh pr ready"*|"gh pr ready") allow ;;
+      *) : ;;       # any other main-thread gh -> generic permission flow
+    esac ;;
 esac
 
 # Auto-allow vocabulary — anchored at command start; only reached for single, simple commands.

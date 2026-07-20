@@ -15,11 +15,11 @@
 
 ## 3. Remote-write policy rework (staging-integration-lane delta)
 
-- [ ] 3.1 Rework the `bash-policy.sh` push branch: main-thread pushes of non-`main` refs (incl. `--force-with-lease origin integration/<id>`) auto-allow; every push naming `main` (incl. refspec smuggling) denied for all callers; subagent pushes denied unconditionally (unchanged)
-- [ ] 3.2 Relax Tier-1 for the main thread only: allow `git fetch origin` and `git pull --ff-only origin main`; all other Tier-1 git denials unchanged for all callers
-- [ ] 3.3 Add `gh` vocabulary to `bash-policy.sh`: auto-allow read-only forms (`pr view`, `pr checks`, `api` GET); main-thread allow for `pr create --draft` and `pr ready`; deny `gh pr merge` for all callers; deny all `gh` mutations for subagents
-- [ ] 3.4 Update `.claude/settings.json`: sandbox carve-outs (excludedCommands or per-host network allowlist — test which the sandbox supports) for the two push forms, the `gh` forms, and the Sonar ingestion script; `SONAR_TOKEN` passthrough scoped to the script invocation; reconcile the `permissions.deny` push entry
-- [ ] 3.5 Update the bash-policy regression suite for the new matrix (branch-push allow, main-push deny, subagent deny, gh vocabulary, fetch/ff-pull relaxation) and implement the closure-entry ruleset probe (`gh api` check that `main` blocks direct pushes)
+- [x] 3.1 Rework the `bash-policy.sh` push branch: main-thread pushes of non-`main` refs (incl. `--force-with-lease origin integration/<id>`) auto-allow; every push naming `main` (incl. refspec smuggling) denied for all callers; subagent pushes denied unconditionally (unchanged)
+- [x] 3.2 Relax Tier-1 for the main thread only: allow `git fetch origin` and `git pull --ff-only origin main`; all other Tier-1 git denials unchanged for all callers
+- [x] 3.3 Add `gh` vocabulary to `bash-policy.sh`: auto-allow read-only forms (`pr view`, `pr checks`, `api` GET); main-thread allow for `pr create --draft` and `pr ready`; deny `gh pr merge` for all callers; deny all `gh` mutations for subagents
+- [x] 3.4 Update `.claude/settings.json`: sandbox carve-outs (excludedCommands or per-host network allowlist — test which the sandbox supports) for the two push forms, the `gh` forms, and the Sonar ingestion script; `SONAR_TOKEN` passthrough scoped to the script invocation; reconcile the `permissions.deny` push entry *(chose `excludedCommands` — no network-allowlist key in this sandbox; SONAR_TOKEN scoped via envVars-deny + script exclusion; `permissions.deny` push entry kept as belt-and-braces)*
+- [x] 3.5 Update the bash-policy regression suite for the new matrix (branch-push allow, main-push deny, subagent deny, gh vocabulary, fetch/ff-pull relaxation) and implement the closure-entry ruleset probe (`gh api` check that `main` blocks direct pushes) *(probe: `scripts/ruleset-probe.mjs`, fail-closed)*
 
 ## 4. Sonar issue ingestion (sonar-issue-ingestion)
 
