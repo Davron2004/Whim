@@ -8,10 +8,10 @@
 
 ## 2. Compound-command unroller (compound-command-policy)
 
-- [ ] 2.1 Implement the parser helper (`.claude/hooks/unroll-command.mjs`): strict tokenizer for plain word-list commands, single/double quotes, top-level `&&`/`||`/`;`/`|`; returns segments or a not-unrollable verdict; extracts `>`/`>>` redirect targets as pseudo-write segments
-- [ ] 2.2 Make the helper refuse to unroll command substitution (`$()`, backticks), eval-family wrappers (`bash -c`, `sh -c`, `eval`, `xargs`, `env <cmd>`), expansion in command position, and process substitution
-- [ ] 2.3 Integrate into `bash-policy.sh`: raw-string deny kernel checked first, then unroll; per-segment evaluation through the existing policy; worst-segment verdict (deny > ask > allow); single ask showing the full compound; not-unrollable → existing generic flow unchanged
-- [ ] 2.4 Write the adversarial regression suite (verdict composition per connector, quoted connectors as argument text, each refused construct falling through, deny-kernel-before-parse, redirect pseudo-write denial, refspec smuggling in compounds, negative control) and wire it into `scripts/gate.sh`'s tripwire section
+- [x] 2.1 Implement the parser helper (`.claude/hooks/unroll-command.mjs`): strict tokenizer for plain word-list commands, single/double quotes, top-level `&&`/`||`/`;`/`|`; returns segments or a not-unrollable verdict; extracts `>`/`>>` redirect targets as pseudo-write segments
+- [x] 2.2 Make the helper refuse to unroll command substitution (`$()`, backticks), eval-family wrappers (`bash -c`, `sh -c`, `eval`, `xargs`, `env <cmd>`), expansion in command position, and process substitution
+- [x] 2.3 Integrate into `bash-policy.sh`: raw-string deny kernel checked first, then unroll; per-segment evaluation through the existing policy; worst-segment verdict (deny > ask > allow); single ask showing the full compound; not-unrollable → existing generic flow unchanged
+- [x] 2.4 Write the adversarial regression suite (verdict composition per connector, quoted connectors as argument text, each refused construct falling through, deny-kernel-before-parse, redirect pseudo-write denial, refspec smuggling in compounds, negative control) and wire it into `scripts/gate.sh`'s tripwire section *(suite written + passing; the one-line `gate.sh` wiring lands in chain-5 per chains.md)*
 
 ## 3. Remote-write policy rework (staging-integration-lane delta)
 

@@ -215,15 +215,57 @@ if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^
   deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
 fi
 
-# Compound commands fall through to the normal permission flow. Positioned BEFORE the git /
-# auto-allow policies so neither can auto-ALLOW a chained payload (`npm test && rm -rf src`); the
-# security-critical denies above already run on chained segments via match-anywhere. Any shell
-# control operator disqualifies the fast path — the implementer contract is one command at a time.
-case "$CMD" in
-  *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
-    exit 0 ;;
-  *) ;; # simple command: continue to the scoped policies below
-esac
+# Compound commands (openspec: compound-command-policy). Positioned BEFORE the git / auto-allow
+# policies so neither can auto-ALLOW a chained payload; the security-critical denies above already
+# ran on the RAW string via match-anywhere, so a denied substring cannot survive a parser bug. A
+# command joined by top-level && || ; | is unrolled by the parser helper and judged by its WORST
+# segment (deny > ask > none > allow). Anything the parser cannot soundly unroll — command
+# substitution, expansion, eval-family wrappers, process substitution, … — falls through to the
+# pre-existing generic permission flow, EXACTLY as before this capability existed (fail closed to
+# the prompt, never to allow).
+#
+# WHIM_BASH_POLICY_SEGMENT marks a re-entrant per-segment evaluation: skip unrolling entirely so a
+# segment carrying a QUOTED connector or redirect is judged as the simple command it is (quotes are
+# inert to the prefix-based policy below), and so the recursion cannot run away.
+if [[ -z "${WHIM_BASH_POLICY_SEGMENT:-}" ]]; then
+  case "$CMD" in
+    *'&'*|*';'*|*'|'*|*'`'*|*'$('*|*'>'*|*'<'*|*$'\n'*)
+      HOOKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      UNROLL_JSON=$(printf '%s' "$CMD" | node "$HOOKDIR/unroll-command.mjs" 2>/dev/null)
+      if [[ -z "$UNROLL_JSON" ]] || [[ "$(printf '%s' "$UNROLL_JSON" | jq -r '.unrollable // false')" != "true" ]]; then
+        exit 0   # not soundly unrollable -> pre-existing generic permission flow, unchanged
+      fi
+      # Redirect pseudo-writes: deny a redirect whose target hits the protected list (shell redirects
+      # bypass the Edit/Write file-protection hook). Belt-and-braces with the raw-string check above.
+      while IFS= read -r _rt; do
+        [[ -n "$_rt" ]] || continue
+        if printf '%s' "$_rt" | grep -Eq "($PROTECTED)"; then
+          deny "compound redirect writes to harness/verification config ($_rt) — use the Edit tool (class-B deviation)"
+        fi
+      done < <(printf '%s' "$UNROLL_JSON" | jq -r '.redirects[]?')
+      # Evaluate each segment through THIS policy (re-entrant, guarded); keep the worst verdict.
+      _worst=0   # 0 allow  1 none/fallthrough  2 ask  3 deny
+      while IFS= read -r _seg; do
+        [[ -n "$_seg" ]] || continue
+        _out=$(printf '%s' "$INPUT" | jq -c --arg c "$_seg" '.tool_input.command=$c' \
+                 | WHIM_BASH_POLICY_SEGMENT=1 bash "${BASH_SOURCE[0]}")
+        if [[ -z "$_out" ]]; then _lvl=1; else
+          case "$(printf '%s' "$_out" | jq -r '.hookSpecificOutput.permissionDecision // "none"')" in
+            allow) _lvl=0 ;; deny) _lvl=3 ;; ask) _lvl=2 ;; *) _lvl=1 ;;
+          esac
+        fi
+        (( _lvl > _worst )) && _worst=$_lvl
+        (( _worst == 3 )) && break
+      done < <(printf '%s' "$UNROLL_JSON" | jq -r '.segments[]')
+      case "$_worst" in
+        3) deny "a segment of this compound is denied by policy (class-B deviation)" ;;
+        2) ask "compound command — review the full command line before approving" ;;
+        1) exit 0 ;;   # defer to the normal permission flow, as an unknown simple command would
+        0) allow ;;
+      esac ;;
+    *) ;; # simple command: continue to the scoped policies below
+  esac
+fi
 
 # ---- git policy (simple commands only — compound already fell through) ----------------------
 # Tamper detection is decoupled from git (docs/archive/parallel-fix-loop.md): the orchestrator audits
