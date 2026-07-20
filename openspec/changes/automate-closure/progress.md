@@ -23,6 +23,27 @@ stop-before-closure.
 - **chain-7.1** gate-full: run from primary tree against committed tip.
 - **chain-7.2** supervised first closure run: HUMAN-SUPERVISED — separate attended run.
 
+## Closing summary
+
+- **Chains run:** 2 (hook-unroller), 3 (remote-policy), 4 (sonar-script), 5 (closure-runbooks +
+  gate wiring), 6 (docs) — all implemented main-thread (user-ratified per override), committed.
+- **Redispatches:** 0. **Deviations:** handoff/*.md contracts skipped (single-context, no
+  cross-agent handoff); gate-wiring for chains 2+4 deferred into chain-5 per chains.md; unroll suite
+  wired as a `check` (not the grep tripwire block) since it's a real suite.
+- **Reviewer verdict:** 3 findings (2 HIGH, 1 MED), all real; report honest. F1 (gh api mutation)
+  and F3 (glob redirect) FIXED with +9 suite cases; F2 (implicit-ref push) resolved as by-design
+  (ruleset is the gate — user decision) with a prose note. No regressions.
+- **Verification:** fast gate GREEN (unroller 46, bash-policy 44, sonar 10, build/typecheck/lint/all
+  Node suites/Codex adapters); knip + sync-codex + openspec-validate GREEN; guard:metro + Chromium
+  invariants provably unaffected + CI-deferred (see 7.1).
+- **MEMORY candidate (for user ratification):** in a background/auto-mode `opsx:apply` run, the
+  auto-mode classifier blocks even the MAIN THREAD's edits to Class-2 protected files
+  (`bash-policy.sh`, `settings.json`, `.claude/commands/*`) — HUMAN-BOOTSTRAP chains need attended
+  approval, not just a bg session. (Extends [[background-agents-cant-execute]].)
+- **Remaining (all attended/human, out of this session's scope):** chain-1 SONAR_TOKEN provisioning
+  (ruleset done; token = personal User Token) + 1.3 verify; task 7.2 supervised first closure run;
+  the closure push/PR/merge itself (CI runs authoritative gate-full there).
+
 ## Dispositions (append as they happen)
 
 - (setup) run-start recorded; worktree created; planning artifacts committed (`a0e1a86`).
