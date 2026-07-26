@@ -49,12 +49,44 @@ expect_decision "tier-1 config stays denied" deny agent-a "git -C $WT config use
 expect_decision "compound command is not auto-allowed" none agent-a "git -C $WT add file.ts && true" "$ROOT"
 expect_decision "read-only git -C remains allowed" allow agent-b "git -C $WT status --short" "$ROOT"
 
-# Scoped staging-branch push policy (openspec: staging-branch-integration)
+# Remote-write policy (openspec: staging-integration-lane) — server-side `main` protection re-anchor.
 expect_decision "main-thread push of main stays denied" deny "" "git push origin main" "$ROOT"
-expect_decision "main-thread push of integration/* asks" ask "" "git push origin integration/run-1" "$ROOT"
 expect_decision "refspec smuggling integration->main stays denied" deny "" "git push origin integration/run-1:main" "$ROOT"
+expect_decision "main-thread branch push auto-allows" allow "" "git push origin integration/run-1" "$ROOT"
+expect_decision "main-thread force-with-lease branch push auto-allows" allow "" "git push --force-with-lease origin integration/run-1" "$ROOT"
 expect_decision "subagent push of integration/* stays denied" deny agent-a "git push origin integration/run-1" "$ROOT"
-expect_decision "compound command with integration push stays denied" deny "" "git push origin integration/run-1 && echo done" "$ROOT"
+expect_decision "subagent push of any ref stays denied" deny agent-a "git push" "$ROOT"
+expect_decision "all-allowed compound branch push allows" allow "" "git push origin integration/run-1 && npm run build" "$ROOT"
+expect_decision "compound push naming main denies" deny "" "npm run build && git push origin main" "$ROOT"
+expect_decision "compound refspec smuggling denies" deny "" "git push origin integration/run-1:main && echo done" "$ROOT"
+
+# Tier-1 relaxation (main thread only): fetch + ff-only pull of main; everything else still denied.
+expect_decision "main-thread git fetch origin allows" allow "" "git fetch origin" "$ROOT"
+expect_decision "main-thread ff-only pull of main allows" allow "" "git pull --ff-only origin main" "$ROOT"
+expect_decision "subagent git fetch stays denied" deny agent-a "git fetch origin" "$ROOT"
+expect_decision "non-ff pull stays denied" deny "" "git pull origin main" "$ROOT"
+expect_decision "git fetch --all stays denied" deny "" "git fetch --all" "$ROOT"
+
+# gh vocabulary (design §D4): read-only for all, closure mutations main-thread-only, merge denied.
+expect_decision "gh pr view read-only allows" allow "" "gh pr view 12" "$ROOT"
+expect_decision "gh pr checks read-only allows" allow "" "gh pr checks 12" "$ROOT"
+expect_decision "gh api GET allows" allow "" "gh api repos/o/r/rulesets" "$ROOT"
+expect_decision "gh api POST is not auto-allowed" none "" "gh api repos/o/r/issues -X POST" "$ROOT"
+expect_decision "gh pr create --draft allows (main)" allow "" "gh pr create --draft --base main --head integration/run-1 --title x --body y" "$ROOT"
+expect_decision "gh pr ready allows (main)" allow "" "gh pr ready 12" "$ROOT"
+expect_decision "gh pr merge denied for all callers" deny "" "gh pr merge 12" "$ROOT"
+expect_decision "gh pr merge denied for subagents too" deny agent-a "gh pr merge 12" "$ROOT"
+expect_decision "gh mutation denied for subagents" deny agent-a "gh pr create --draft --title x" "$ROOT"
+expect_decision "gh read-only allowed for subagents" allow agent-a "gh pr view 12" "$ROOT"
+# gh api defaults to POST when -f/-F/--field/--input are present with no explicit method — those are
+# mutations, not reads (no server-side ruleset gates arbitrary gh api writes).
+expect_decision "gh api bare read allowed for subagents" allow agent-a "gh api repos/o/r/rulesets" "$ROOT"
+expect_decision "gh api -f is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/issues -f title=x" "$ROOT"
+expect_decision "gh api -F is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/pulls/5/comments -F body=hi" "$ROOT"
+expect_decision "gh api --input is a mutation, denied for subagents" deny agent-a "gh api repos/o/r/x --input body.json" "$ROOT"
+expect_decision "gh api -f is not auto-allowed on the main thread" none "" "gh api repos/o/r/issues -f title=x" "$ROOT"
+expect_decision "gh api explicit GET with -f stays read-only" allow agent-a "gh api repos/o/r/x -X GET -f a=b" "$ROOT"
+
 expect_decision "subagent force-op on integration/* stays denied" deny agent-a "git branch -D integration/run-1" "$ROOT"
 
 # Cleanup lane derives its worktree id from the grant's target_branch (staging-branch-integration)
