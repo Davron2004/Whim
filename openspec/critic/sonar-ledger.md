@@ -41,3 +41,47 @@ of that round — never reconstructed from memory.
 - 2026-07-12 2026-07-12-fix-sonarjs-gate sonarjs/no-unused-vars server/test/openrouter.suite.ts:108 (backfilled)
 - 2026-07-12 2026-07-12-fix-sonarjs-gate sonarjs/no-gratuitous-expressions server/test/server-core.suite.ts:341 (backfilled)
 - 2026-07-14 clear-sonarqube-warnings S2819 src/sdk/navigation.tsx:116 (backfilled)
+- 2026-07-24 automate-closure S6582 scripts/sonar-pr-issues.mjs:150
+- 2026-07-24 automate-closure S6582 scripts/sonar-pr-issues.mjs:72
+- 2026-07-24 automate-closure S6582 scripts/sonar-pr-issues.mjs:83
+- 2026-07-24 automate-closure S7785 scripts/sonar-pr-issues.mjs:188
+- 2026-07-24 automate-closure S131 .claude/hooks/bash-policy.sh:172
+- 2026-07-24 automate-closure S131 .claude/hooks/bash-policy.sh:381
+- 2026-07-24 automate-closure S131 .claude/hooks/bash-policy.sh:383
+- 2026-07-24 automate-closure S131 .claude/hooks/bash-policy.sh:388
+- 2026-07-24 automate-closure S7776 scripts/ruleset-probe.mjs:44
+- 2026-07-24 automate-closure S6582 scripts/ruleset-probe.mjs:55
+- 2026-07-24 automate-closure S131 .claude/hooks/bash-policy.sh:288
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:18
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:18
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:21
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:24
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:25
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:25
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:25
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:25
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:26
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:29
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:30
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:30
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:30
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:30
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:31
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:34
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:35
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:35
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:35
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:35
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:36
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:78
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:78
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:78
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:81
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:81
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:81
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:83
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:83
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:83
+- 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:84
+- 2026-07-24 automate-closure S1192 .claude/hooks/test/unroll.test.sh:84
+- 2026-07-24 automate-closure S5332 .claude/hooks/test/unroll.test.sh:94
