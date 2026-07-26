@@ -1,4 +1,6 @@
-Run the git-history cleanup lane. "$ARGUMENTS" is optional grouping guidance from the human (which runs to squash, what to keep as milestones); if empty, the cleaner groups by topic on its own judgment. You are the ORCHESTRATOR (main thread): you mint the grant, pin the reference data, create the lane, dispatch the `git-cleaner` subagent, and judge the outcome with ONE mechanical check. You NEVER rewrite history yourself, and the two dangerous operations — moving the target ref and force-pushing — are printed for the HUMAN, never executed. Full design + rationale: docs/archive/parallel-fix-loop.md §4.10 (branch-parameterized by openspec: staging-branch-integration).
+Run the git-history cleanup lane. "$ARGUMENTS" is optional grouping guidance from the human (which runs to squash, what to keep as milestones); if empty, the cleaner groups by topic on its own judgment. You are the ORCHESTRATOR (main thread): you mint the grant, pin the reference data, create the lane, dispatch the `git-cleaner` subagent, and judge the outcome with ONE mechanical check. You NEVER rewrite history yourself; the rewrite happens only inside the cleaner's lane. On CLEANUP GATE PASS the two dangerous operations — moving the target ref and force-pushing — are executed by the ORCHESTRATOR itself (the pinned tree-identity gate + intact backup ref are the safety, never the human's typing). Full design + rationale: docs/archive/parallel-fix-loop.md §4.10 (branch-parameterized by openspec: staging-integration-lane).
+
+**Standing grouping rule:** Sonar-fix iteration commits (from CLOSURE quality-gate rounds) are FOLDED into the semantic commits whose code they touch — no standalone Sonar-fix commit survives cleanup. The tip tree is unchanged by construction, so folding never alters content.
 
 The model in one line: **freed path, gated outcome.** The cleaner may do anything to the shape of history inside its lane; the single acceptance check is that the cleanup branch's tip TREE is byte-identical to the TARGET's tree pinned before dispatch — so no content change of any kind can survive, and you audit one hash equality instead of the agent's process.
 
@@ -47,16 +49,17 @@ If the agent reports STATUS: blocked, fix the cause and `SendMessage` the SAME a
 
 Run `./scripts/git-cleanup-check.sh` yourself. It verifies: branch tip tree == TARGET_TREE, TARGET still == TARGET_SHA (retroactive catch for anything that slipped the ref fence), backup ref intact. PASS prints the human apply + teardown commands. FAIL exit codes: 3 = grant/plumbing problem (incl. a target branch that doesn't exist), 4 = shared-state breach (target moved or backup gone — investigate before ANYTHING else), 5 = tree drift (not mergeable — send the agent back or abandon the branch; TARGET is untouched either way).
 
-On PASS, show the user `git log --oneline cleanup/<ID>-squashed` (the squash map is the deliverable they review) plus the agent's old→new mapping, then hand over the printed commands:
+On PASS, show the user `git log --oneline cleanup/<ID>-squashed` (the squash map is the deliverable they review) plus the agent's old→new mapping, then the ORCHESTRATOR itself applies the ref move and force-push:
 
 ```
-git checkout <TARGET> && git reset --hard cleanup/<ID>-squashed   # pure ref move — trees identical, zero file churn
+git checkout <TARGET>
+git reset --hard cleanup/<ID>-squashed   # pure ref move — trees identical, zero file churn
 git push --force-with-lease origin <TARGET>
 ```
 
-Standard flow: TARGET is `integration/<run-id>` — a routine PR-branch force-push, approved at the scoped-push prompt. Legacy `main` target: the check script prints an extra warning; treat it as the exceptional lane it now is.
+Standard flow: TARGET is `integration/<run-id>` — the force-push is a main-thread branch push (auto-allowed; sandbox carve-out gives it egress); the ref-move `git reset --hard` is a main-thread mutating-git prompt in the attended session. The tree-identity gate already ran, so nothing content-bearing can slip. Legacy `main` target: `git-cleanup-check.sh` prints an extra warning and force-pushing `main` is NOT part of the standard flow — treat it as the exceptional lane it now is.
 
-## Teardown (after the human has applied and pushed)
+## Teardown (after the orchestrator has applied the ref move and force-pushed)
 
 ```
 rm .claude/fixloop/grants/git-cleanup .claude/fixloop/owners/<ID>-squashed
