@@ -110,7 +110,7 @@ The mechanical layer. Protected paths split by blast radius:
 | Bash policy | `.claude/hooks/bash-policy.sh` | Deterministic allow/deny on the command vocabulary: tier-1 git denies for everyone (config/reflog/clone/remote/ref-rewrites naming `main`/`dev/v1` anywhere, incl. substrings — fail-closed); **any push naming `main`/`dev/v1` denied for everyone** (incl. refspec smuggling `integration/x:main`); a **main-thread** push of a non-`main` ref (incl. `--force-with-lease origin integration/<run-id>`) **auto-allows** — the server-side GitHub ruleset on `main` is the human gate, not a per-push `ask` (decision #49); subagents are denied every push form; main-thread `git fetch origin` + `git pull --ff-only origin main` relaxed (closure's ancestor check / teardown); `gh` vocabulary — read-only for all callers, `pr create --draft`/`pr ready` main-thread only, `pr merge` denied for all; compound commands are **unrolled by `unroll-command.mjs` and judged by their worst segment** (deny > ask > none > allow), never blanket-prompted, with anything not soundly unrollable (`$()`, backticks, eval-family, …) falling closed to a prompt; scoped git for subagents inside their *own* worktree (owners binding); protected-path shell-writes (incl. `>`/`>>` redirects) denied. |
 | Edit/Write policy | `.claude/hooks/protect-harness.sh` | Class 2 blocked for subagents everywhere (incl. inside worktrees); Class 1 blocked unless granted; memory store blocked (report `MEMORY:` field instead); main-thread edits to protected files → `ask` (the human ratifies). |
 | Stop gate | `.claude/hooks/gate-on-subagent-stop.sh` | An `implementer` with a dirty main tree, or a `git-cleaner`, cannot finish until its gate passes (attempt-capped). Worktree agents self-gate instead — this hook is the legacy/backstop path. |
-| Sandbox + permissions | `.claude/settings.json` | Deny-by-default egress, credential-path denies (`GITHUB_TOKEN`/`GH_TOKEN`/`SONAR_TOKEN`/… stripped from sandboxed commands), `worktree.baseRef: head`, the auto-allow vocabulary. The `permissions.deny` push pattern stays `Bash(git push origin main:*)` (belt-and-braces prefix matcher; the bash-policy hook above is the authoritative layer and runs first). Sandbox-excluded (run on the bare host so they get egress + the credential path) commands: the Chromium suites + `gate-full.sh` + `fixloop.sh`, **plus the closure remote commands — `git push`/`git fetch`/`git pull`, `gh`, and `node scripts/sonar-pr-issues.mjs` / `node scripts/ruleset-probe.mjs`**. `SONAR_TOKEN` reaches only the excluded sonar script (envVars-deny inside the sandbox + script exclusion outside it); the bash-policy hook still gates *which* of these commands may run. |
+| Sandbox + permissions | `.claude/settings.json` | Deny-by-default egress, credential-path denies (`GITHUB_TOKEN`/`GH_TOKEN`/`SONAR_TOKEN`/… stripped from sandboxed commands), `worktree.baseRef: head`, the auto-allow vocabulary. The `permissions.deny` push pattern stays `Bash(git push origin main:*)` (belt-and-braces prefix matcher; the bash-policy hook above is the authoritative layer and runs first). `sandbox.excludedCommands` **declares** the bare-host set (the Chromium suites + `gate-full.sh` + `fixloop.sh`, **plus the closure remote commands — `git push`/`git fetch`/`git pull`, `gh`, and `node scripts/sonar-pr-issues.mjs` / `node scripts/ruleset-probe.mjs`**) — but it was **measured inert on 2026-07-26: no entry took effect**, for filesystem or for network, regardless of invocation form. Those commands therefore run **sandboxed** unless the caller sets an explicit per-command override or uses the devcontainer. See §11 and `openspec/changes/harden-gate-preconditions/research.md`; do not read this row as "these commands have egress". `SONAR_TOKEN` reaches only the sonar script (envVars-deny inside the sandbox + the declared exclusion outside it); the bash-policy hook still gates *which* of these commands may run. |
 
 The gate's own `CONFIG_SET`, `fixloop.sh`'s `CLASS2`, and the two hooks' pattern lists are
 **deliberately the same set** — when you add a protected path, add it to all four.
@@ -240,7 +240,9 @@ The repo carries a Codex/ChatGPT mirror so the same harness contract survives a 
 (e.g. Claude tokens run out mid-task). **`.claude/` + `CLAUDE.md` are the source of truth; the
 mirror is never hand-edited.** Two mechanisms, by file kind:
 
-- **Identical content → symlinks.** `AGENTS.md → CLAUDE.md`; the protocol-compatible Codex
+- **Identical content → symlinks.** `AGENTS.md → CLAUDE.md` (verify with `readlink AGENTS.md`, don't
+  assume it — a correction to `CLAUDE.md` therefore needs **no** mirror edit, and hand-writing one
+  would replace the link with a diverging copy); the protocol-compatible Codex
   `gate-on-subagent-stop.sh` also symlinks to the Claude hook. One file, two names where the wire
   protocol is genuinely identical. (Runbooks need no mirror at all: `.claude/commands/*.md` are
   plain markdown any agent can read.)
@@ -288,10 +290,39 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   flip, teardown) is **orchestrator-executed on the ATTENDED host** — the human's presence is
   required (they merge the reviewed PR — the sole ratification), their execution is not (decision
   #49, apply.md step 12). It still cannot run **unattended/headless**: the deny-egress container
-  has no route to github.com/sonarcloud.io, and the sandbox carve-outs + credential path assume the
-  bare host. Plan a human checkpoint before dispatching a run into closure; a headless run parks at
-  closure entry rather than proceeding.
+  has no route to github.com/sonarcloud.io, and the credential path assumes the bare host. Plan a
+  human checkpoint before dispatching a run into closure; a headless run parks at closure entry
+  rather than proceeding.
+- **`sandbox.excludedCommands` is inert — measured, 2026-07-26.** A four-run probe found no entry
+  taking effect: not for `.claude/**` writes, not for `gh`'s network, and not for any invocation
+  form (`./` prefix, bare path, with or without a leading `cd`). Do not plan around a declared
+  exclusion; the declared set in §4 documents *intent*, not observed behaviour. Keeping the three
+  statuses apart, because collapsing them is what produced the wrong answer the first time:
+  - **Documented.** The sandbox denies writes to Claude Code's `settings.json` at every scope so a
+    sandboxed command cannot widen its own policy. This is architectural: not governed by
+    `excludedCommands`, and it survives `sandbox.filesystem.disabled: true`.
+  - **Inferred, not documented.** That the denial extends to all of `.claude/**`. The docs name only
+    `settings.json`; empirically the effective deny list here also covers `.claude/hooks`,
+    `.claude/commands`, `.claude/agents`.
+  - **Unresolved.** Why the `gh` *network* exclusion did not apply. Filesystem-independent, so the
+    built-in `.claude/**` guard cannot explain it. Open question — not guessed at.
+  - **Documented gap.** There is no supported way to detect that a declared exclusion failed to
+    apply. A harness must verify the *effect* itself, which is why `gatefull` asserts its
+    postconditions rather than trusting a checkout's exit status.
+
+  The load-bearing consequence: this repo versions its control plane **inside** `.claude/`, the one
+  path the sandbox reserves as untouchable configuration. So `git checkout` of any branch that
+  changes the harness is sandbox-incompatible **by construction and permanently** — an attended
+  explicit override or the devcontainer, not pending a fix. Relocating the harness sources out of
+  `.claude/` is the candidate structural remedy, deferred to a timeboxed spike with a kill criterion
+  (decision #50).
+- **Assert, don't assume** is the standing rule for every harness command: a step that changes state
+  verifies the change landed before reporting success or handing off. `git checkout` is the worked
+  example — it warns per file, updates what it can, and still exits `0`, so its exit status does not
+  mean the tree applied. Locked by `scripts/test/fixloop-preflight.test.sh`, which asserts on
+  failure-message *content*, since a correct refusal stating the wrong cause is the defect class.
 - `git worktree add` that checks out `.claude/**` needs the OS sandbox off for that one command.
+  (Same root cause as above; this is not a separate quirk.)
 - Linked-worktree administration (`git worktree add/move/remove`, branch create/delete, and merges)
   writes the main repository's `.git/` metadata even when every visible worktree path is writable;
   Codex therefore needs a narrow root-task escalation for each category. Inside an implementer's
