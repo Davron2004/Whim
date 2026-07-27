@@ -345,3 +345,22 @@ since the fixes take effect only once it merges.
 5. **`wip/linked-apps-data-model`** is a complete-but-unclosed run, and `main` is NOT an ancestor of
    it, so its closure needs a merge-from-main first. Resume note at
    `.claude/fixloop/wip-linked-apps-data-model.md`.
+
+## Post-merge (2026-07-27)
+
+- PR #7 **MERGED** as a **rebase merge** — all six semantic commits landed on `main` linearly with
+  new SHAs (`d860c8d` … `e08e06d`), single-parent each. The cleanup lane's output survived intact,
+  which is the outcome the lane exists to produce.
+- **Task 6.3 complete.** The supervised closure ran end to end: 12a ruleset probe → 12b push + draft
+  PR → 12c poll → 12d skipped (no findings) → 12e cleanup → 12f re-poll + ready flip → human merge.
+  Divergences filed above as C1 and C2. Caveat stated plainly: **12d was never exercised**, because
+  SonarCloud was green on every push — so the closure pipeline's most iterated loop remains observed
+  only in earlier runs, not in this one.
+- **Defect #6 from `research.md` reproduced live during teardown**, unprompted:
+  `git branch -D integration/harden-gate-preconditions` printed
+  `error: could not lock config file .git/config` / `warning: update of config-file failed`, then
+  `Deleted branch …` and **exited 0**. The ref went away; the `[branch "integration/…"]` config
+  section survived. Confirms the catalogued behaviour outside the original probe. It could not be
+  cleaned up here either — `git config --remove-section` is a tier-1 denied op for every caller — so
+  a stale config section is the expected residue of every sandboxed branch deletion. Rolled into the
+  follow-up change with C1/C2.
