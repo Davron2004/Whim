@@ -5,12 +5,12 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 
 ## 1. Red-check first (the live bug is the fixture)
 
-- [ ] 1.1 Write `scripts/test/fixloop-preflight.test.sh` with the incomplete-checkout case: build a throwaway git repo fixture whose working tree diverges from the target commit, invoke the `gatefull` precondition path, and assert it fails **naming an incomplete checkout** — assert on message content, not exit status alone (design D2/D4)
-- [ ] 1.2 Add the primary-tree case: invoking from a linked worktree refuses with that stated reason
-- [ ] 1.3 Add the baseline-relation case: a target branch unrelated to the integration branch refuses stating the baseline could not be established
-- [ ] 1.4 Add the restore case: a successful restore emits no restore-failure warning
-- [ ] 1.5 Add the **negative control**: a complete, valid checkout passes every assertion (keeps the suite non-vacuous, per decision #28 discipline)
-- [ ] 1.6 Confirm the suite is RED against current `fixloop.sh` for 1.1–1.4 and GREEN for 1.5 — record the observed failure messages in `progress.md` before any fix
+- [x] 1.1 Write `scripts/test/fixloop-preflight.test.sh` with the incomplete-checkout case: build a throwaway git repo fixture whose working tree diverges from the target commit, invoke the `gatefull` precondition path, and assert it fails **naming an incomplete checkout** — assert on message content, not exit status alone (design D2/D4)
+- [x] 1.2 Add the primary-tree case: invoking from a linked worktree refuses with that stated reason
+- [x] 1.3 Add the baseline-relation case: a target branch unrelated to the integration branch refuses stating the baseline could not be established
+- [x] 1.4 Add the restore case: a successful restore emits no restore-failure warning
+- [x] 1.5 Add the **negative control**: a complete, valid checkout passes every assertion (keeps the suite non-vacuous, per decision #28 discipline)
+- [x] 1.6 Confirm the suite is RED against current `fixloop.sh` for 1.1–1.4 and GREEN for 1.5 — record the observed failure messages in `progress.md` before any fix
 
 ## 2. Assertions in `scripts/fixloop.sh gatefull`
 
