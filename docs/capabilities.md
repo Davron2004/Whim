@@ -25,3 +25,4 @@
 | harness-diagnostics | Every diagnostic (static or runtime) is structured data with a machine-readable kind, severity, source position, and a mandatory actionable fix hint | openspec/specs/harness-diagnostics/spec.md |
 | staging-integration-lane | Every harness run integrates on its own per-run `integration/<run-id>` branch, never on `main`; `main` gets exactly one human-ratified merge per run | openspec/specs/staging-integration-lane/spec.md |
 | sonar-recurrence-tracking | Append-only ledger of external SonarCloud findings across fix rounds; critic reports recurrence-based promotion candidates, promotion into lint config stays human-ratified | openspec/specs/sonar-recurrence-tracking/spec.md |
+| gate-preconditions | The verification harness checks its own pre/postconditions and fails with the accurate cause, never a downstream symptom; a partial success is never reported as success | openspec/specs/gate-preconditions/spec.md |
