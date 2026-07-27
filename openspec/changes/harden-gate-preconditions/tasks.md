@@ -14,12 +14,12 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 
 ## 2. Assertions in `scripts/fixloop.sh gatefull`
 
-- [ ] 2.1 Stop redirecting the checkout's stderr to `/dev/null`; route it to stderr so the diagnostic survives (design D3)
-- [ ] 2.2 After `git checkout --detach`, assert the working tree's tracked content matches the target commit; on mismatch `die` naming the paths that did not update and identifying an incomplete checkout — never let a partial tree reach `gate.sh`
-- [ ] 2.3 Assert `gatefull` is running in the primary working tree (`git rev-parse --git-common-dir` vs `--git-dir`) and refuse with that reason otherwise
-- [ ] 2.4 Assert the target branch is related to `INTEGRATION_BRANCH`; refuse stating the baseline could not be established rather than gating against a wrong baseline
-- [ ] 2.5 Fix the false `FAILED TO RESTORE` alarm so it reports only an actual restore failure
-- [ ] 2.6 Turn the suite from 1.6 GREEN; re-confirm the negative control still passes (no assertion became vacuous)
+- [x] 2.1 Stop redirecting the checkout's stderr to `/dev/null`; route it to stderr so the diagnostic survives (design D3)
+- [x] 2.2 After `git checkout --detach`, assert the working tree's tracked content matches the target commit; on mismatch `die` naming the paths that did not update and identifying an incomplete checkout — never let a partial tree reach `gate.sh`
+- [x] 2.3 Assert `gatefull` is running in the primary working tree (`git rev-parse --git-common-dir` vs `--git-dir`) and refuse with that reason otherwise
+- [x] 2.4 Assert the target branch is related to `INTEGRATION_BRANCH`; refuse stating the baseline could not be established rather than gating against a wrong baseline
+- [x] 2.5 Fix the false `FAILED TO RESTORE` alarm so it reports only an actual restore failure
+- [x] 2.6 Turn the suite from 1.6 GREEN; re-confirm the negative control still passes (no assertion became vacuous)
 
 ## 3. Cleanup-lane apply command
 

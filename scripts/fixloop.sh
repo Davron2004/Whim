@@ -60,7 +60,16 @@ CLASS1=(
 PROTECTED=( "${CLASS2[@]}" "${CLASS1[@]}" )   # union — the full never-silently-touch set
 
 die() { echo "fixloop: $*" >&2; exit 2; }
-base_of() { git merge-base "$1" "$INTEGRATION_BRANCH" 2>/dev/null || die "no merge-base for '$1' vs $INTEGRATION_BRANCH (is it a fix branch cut from $INTEGRATION_BRANCH?)"; }
+
+# base_of <branch> — print the merge-base with $INTEGRATION_BRANCH, or print nothing and return 1.
+# It deliberately does NOT `die`: every call site invokes it inside a command substitution, and
+# `exit` in a subshell CANNOT terminate the parent. It used to die here, which meant an unrelated
+# branch produced an EMPTY base and the run carried on to report a confident verdict against no
+# baseline at all ("FULL GATE PASSED ... (base )"). The status must be checked by the caller —
+# `base="$(base_of "$b")" || die ...` works, because the exit status of an assignment from a
+# command substitution IS the substitution's status.
+base_of() { git merge-base "$1" "$INTEGRATION_BRANCH" 2>/dev/null; }
+no_baseline() { echo "baseline could not be established: '$1' has no merge-base with $INTEGRATION_BRANCH (is it a branch cut from $INTEGRATION_BRANCH? is FIXLOOP_INTEGRATION_BRANCH set for this run?)"; }
 
 # in_allowlist <file> <allowfile>: 0 iff <file> matches a glob line (mirrors the grant/allowlist parser).
 in_allowlist() {
@@ -79,7 +88,7 @@ case "$cmd" in
 
   integrity)
     branch="${1:?usage: integrity <branch> [allowlist-file]}"; allowfile="${2:-}"
-    base="$(base_of "$branch")"
+    base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
     [ -n "$allowfile" ] && { [ -f "$allowfile" ] || die "allowlist file not found: $allowfile"; }
 
     # Class 2 — the control plane. Any touch is TAMPER: never sanctioned, never grantable, even if it
@@ -151,7 +160,7 @@ case "$cmd" in
     done
     [ "${#testcmd[@]}" -gt 0 ] || die "no test command before --"
     [ "${#prod[@]}" -gt 0 ] || die "no prod files after --"
-    base="$(base_of "$branch")"
+    base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
     wt="$ROOT/.claude/worktrees/redcheck-$$"
     git worktree add --detach "$wt" "$branch" >&2 2>&1 || die "worktree add failed"
     # shellcheck disable=SC2064
@@ -175,7 +184,28 @@ case "$cmd" in
 
   gatefull)
     branch="${1:?usage: gatefull <branch>}"
-    base="$(base_of "$branch")"
+
+    # PRECONDITIONS. This command mutates the primary working tree and then pronounces a verdict on
+    # a branch, so both "am I in the right tree" and "do I have the right baseline" must be true
+    # BEFORE anything else happens. Each was previously assumed; each produced a confident wrong
+    # answer when the assumption did not hold (openspec: harden-gate-preconditions).
+
+    # 1. Primary working tree. A linked worktree has no node_modules (gitignored) and Metro
+    #    (guard:metro) does not walk up to the repo-root copy the way Node does — so a run from a
+    #    worktree either fails deep inside the gate as an unrelated dependency-resolution error, or
+    #    (measured) sails through and reports a pass for a tree the gate could not fully verify.
+    gitdir="$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
+    commondir="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
+    [ -n "$gitdir" ] && [ -n "$commondir" ] || die "not inside a git repository"
+    [ "$gitdir" = "$commondir" ] || \
+      die "refusing: this is not the primary working tree (running in a linked worktree at $ROOT). 'gatefull' must run in the repo-root checkout — it is the only one with node_modules, which Metro cannot resolve from anywhere else."
+
+    # 2. Baseline. GATE_BASE pins the gate's tamper tripwire, so a wrong or empty baseline yields a
+    #    verdict about the wrong change. base_of returns non-zero rather than dying (it runs in a
+    #    command substitution, where exit cannot reach us) — the status MUST be checked here.
+    base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
+    [ -n "$base" ] || die "$(no_baseline "$branch")"
+
     # Run the FULL gate from the branch's COMMITTED tip, checked out into the PRIMARY working tree
     # (the repo-root checkout — "primary" is about the tree, not the branch named main; under the
     # staging lane the checked-out branch is integration/<run-id>) — NOT a linked worktree. Why not
@@ -191,16 +221,62 @@ case "$cmd" in
       die "primary working tree is dirty — commit or stash before 'gatefull' (it checks the branch out here)"
     fi
     start_ref="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
-    # shellcheck disable=SC2064
-    trap "git checkout --quiet --force '$start_ref' >/dev/null 2>&1" EXIT
+
+    # ONE verified restore, used by BOTH the normal path and the EXIT trap. The trap is armed for
+    # the whole arm and fires on every early `die` — including the INCOMPLETE CHECKOUT path added
+    # here, which is precisely when the restore is MOST likely to be impeded too (the same write
+    # barrier that broke the checkout can break the restore). A silent >/dev/null fallback there
+    # would reintroduce the exact defect this command now exists to prevent.
+    # Judged by tree content and HEAD, never by git's exit status: git was observed reporting
+    # failure over a tree that had in fact fully restored.
+    restore_primary_tree() {
+      local diffs now
+      git checkout --quiet --force "$start_ref" >&2
+      diffs="$(git diff --name-only "$start_ref" 2>/dev/null)"
+      now="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
+      if [ -z "$diffs" ] && [ "$now" = "$start_ref" ]; then return 0; fi
+      echo "FAILED TO RESTORE the primary working tree to $start_ref — fix by hand before continuing" >&2
+      [ -n "$diffs" ] && { echo "paths still differing from $start_ref:" >&2; printf '%s\n' "$diffs" | sed 's/^/  /' >&2; }
+      [ "$now" != "$start_ref" ] && echo "HEAD is at '$now', expected '$start_ref'" >&2
+      return 1
+    }
+    trap 'restore_primary_tree' EXIT
     # --detach checks out the branch's COMMIT (allowed even while the branch ref is checked out in the
     # fixer's worktree); gate.sh builds first (regenerates the gitignored generated/*); GATE_BASE pins
     # the gate's own tamper tripwire to the recorded BASE.
-    git checkout --quiet --detach "$branch" >/dev/null 2>&1 || die "checkout of $branch into the primary working tree failed"
+    # The checkout's stderr is NOT discarded. It is the one signal that diagnoses a partial
+    # checkout, and sending it to /dev/null is what made the original failure take hours to name.
+    # Its stdout goes to stderr so this command's stdout stays just the verdict line.
+    git checkout --quiet --detach "$branch" >&2 || die "checkout of $branch into the primary working tree failed (git diagnostics above)"
+
+    # POSTCONDITION — the checkout actually landed. `git checkout` reports success per-invocation,
+    # not per-file: when it cannot write a tracked path it prints "error: unable to unlink old
+    # '<path>'", updates everything it CAN, and STILL EXITS 0. The resulting tree is a mixture of
+    # two commits. Handed on, gate.sh diffs it against GATE_BASE and — correctly, for the tree it
+    # was given — reports a verification-config mismatch, i.e. accuses the change of tampering with
+    # the control plane. The operator then has to disprove a security finding to discover a failed
+    # checkout. Detect it here, where the context to name the real cause exists (design D1).
+    # Tracked content only: gitignored build output (src/runtime/generated/*) and untracked files
+    # are correctly excluded, since the question is what the CHECKOUT wrote.
+    stranded="$(git diff --name-only "$branch" 2>/dev/null)"
+    if [ -n "$stranded" ]; then
+      echo "INCOMPLETE CHECKOUT of $branch into the primary working tree — these tracked paths did NOT update:" >&2
+      printf '%s\n' "$stranded" | sed 's/^/  /' >&2
+      echo "The working tree is a mixture of commits, so it is NOT what the gate would be verifying." >&2
+      echo "This is NOT tamper. Usual cause: the checkout could not write those paths — under the OS" >&2
+      echo "sandbox, writes below .claude/** are denied architecturally (see git's own errors above)." >&2
+      echo "Re-run with the sandbox disabled, or in the devcontainer." >&2
+      die "refusing to gate a partially-applied tree"
+    fi
+
     GATE_BASE="$base" ./scripts/gate-full.sh >&2
     rc=$?
-    git checkout --quiet --force "$start_ref" >/dev/null 2>&1 || die "FAILED TO RESTORE the primary working tree to $start_ref — fix by hand before continuing"
+
+    # The restore is verified (content + HEAD), and its diagnostics reach the operator. On failure
+    # restore_primary_tree has already said what is wrong, so exit rather than re-report.
+    restore_primary_tree || exit 2
     trap - EXIT
+
     if [ "$rc" -eq 0 ]; then
       echo "FULL GATE PASSED — primary-tree checkout of $branch (base $base); restored to $start_ref"
     else
@@ -257,11 +333,16 @@ case "$cmd" in
     branch="${1:?usage: finish <branch> [allowlist-file]}"; allowfile="${2:-}"
     "$ROOT/scripts/fixloop.sh" integrity "$branch" "$allowfile"; rc=$?
     case "$rc" in
-      0) ratify="" ;;
-      6) ratify="⚠  SANCTIONED Class-1 config change present (listed above) — RATIFY it before merging: git diff $(base_of "$branch")..$branch" ;;
+      0|6) : ;;
       *) exit "$rc" ;;   # 3 tamper / 4 scope / 2 error — no merge command
     esac
-    base="$(base_of "$branch")"
+    # Resolved ONCE, status-checked, then reused. It used to be called a second time unguarded,
+    # inline inside the ratify string — the same unchecked-`base_of` shape this change exists to
+    # remove, and it would have interpolated an empty baseline into the command a human is told to
+    # run to ratify a protected-config change.
+    base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
+    ratify=""
+    [ "$rc" = 6 ] && ratify="⚠  SANCTIONED Class-1 config change present (listed above) — RATIFY it before merging: git diff $base..$branch"
     echo
     [ -n "$ratify" ] && { echo "$ratify"; echo; }
     echo "INTEGRITY OK — ready to merge (human-gated, run explicitly):"

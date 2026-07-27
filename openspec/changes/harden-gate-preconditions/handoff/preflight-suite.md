@@ -43,7 +43,7 @@ These are the contract. Case-insensitive substring, so surrounding wording is fr
 
 | Condition | Required substring | Also required |
 |---|---|---|
-| Checkout did not fully apply | `INCOMPLETE CHECKOUT` | names each stranded path, e.g. `locked/x.txt`; must NOT contain `TAMPER`; must NOT reach the gate (`STUB-GATE-FULL-RAN` absent); must NOT contain `FAILED TO RESTORE` |
+| Checkout did not fully apply | `INCOMPLETE CHECKOUT` | names each stranded path, e.g. `locked/x.txt`; contains `NOT tamper`; must NOT reach the gate (`STUB-GATE-FULL-RAN` absent); must NOT contain `GATE REFUSING TO RUN` or `FAILED TO RESTORE` |
 | Invoked outside the primary tree | `primary working tree` | must NOT reach the gate |
 | Target unrelated to the integration branch | `baseline could not be established` | must NOT reach the gate |
 | Checkout emitted diagnostics while failing | git's own stderr reaches the operator (`Permission denied` in the fixture) | — |
@@ -75,6 +75,18 @@ four cases from degenerating into "it refuses everything". Decision #28 discipli
 - **Case 4** — already green: the false restore alarm does **not** fire on a clean success path.
   Task 1.6 predicted RED here; it is GREEN, and the real instance of that alarm lives in case 1.
 - **Case 5** — green, all 7 assertions. The suite is non-vacuous.
+
+## One assertion is a redundant guard, not a red-checkable one
+
+`the gate's tripwire is not the reporting mechanism` (output must not contain `GATE REFUSING TO
+RUN`) is **vacuous in this fixture by construction**: the fixture's gate is a stub that never emits
+that wording, so the assertion also passed against the unfixed script. It is kept as a cheap guard
+against a future refactor that lets a partial tree through to a real gate. The load-bearing
+assertion for the same property is `incomplete checkout does not reach the gate` — if the gate is
+never reached, its tripwire cannot be the reporting mechanism — and that one WAS red pre-fix.
+Reproducing the tripwire faithfully would require the fixture's integration branch to be a
+descendant of the branch under gate (the probe's accidental topology, where `GATE_BASE` equals the
+branch tip); judged not worth the fixture complexity for a redundant check.
 
 ## Note for chain-2 beyond the named tasks
 
