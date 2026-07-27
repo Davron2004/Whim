@@ -77,4 +77,37 @@ permission dialog. The dispatcher's parallel-worktree machinery does not apply (
     the fix introducing a spurious warning.
   - **case 5 (negative control)** — GREEN, all 7 assertions. Suite is non-vacuous.
 - 2026-07-26 tasks 1.1–1.6 complete; `handoff/preflight-suite.md` written (contract: the exact
-  failure-message substrings chain-2 must satisfy).
+  failure-message substrings chain-2 must satisfy). Committed dfba574.
+
+### chain-2: gatefull-assertions (tasks 2.1–2.6) — main-thread, HUMAN-BOOTSTRAP
+
+- 2026-07-26 **Class-A deviation, scope**: chains.md declares chain-2's edit as "`scripts/fixloop.sh`
+  — the `gatefull)` case arm only". The fix went wider *within the same file*: `base_of` no longer
+  calls `die` (it returns non-zero and prints nothing), and all four call sites — `integrity`,
+  `redcheck`, `gatefull`, `finish` — now check the assignment's status. Rationale: the case-3 defect
+  is in the shared helper, not in `gatefull`. Fixing only the `gatefull` arm would have left
+  `integrity` — the harness's own tamper detector — able to run against an EMPTY baseline and
+  report a confident verdict. The handoff contract flagged this for chain-2 explicitly. No file
+  outside chain-2's declared scope was touched.
+- 2026-07-26 assertions landed: primary-tree refusal (2.3), baseline refusal + root-cause fix (2.4),
+  checkout stderr preserved to stderr (2.1), post-checkout landed assertion naming stranded paths
+  and explicitly disclaiming tamper (2.2), restore judged by TREE CONTENT + HEAD rather than by
+  git's exit status (2.5).
+- 2026-07-26 **task 2.6 — SUITE GREEN: 23 passed / 0 failed**, negative control intact (7
+  assertions, all still passing — nothing went vacuous).
+- 2026-07-26 one assertion corrected mid-chain: `assert_not_contains "$OUT" "TAMPER"` failed against
+  the *fixed* script because the new message reads "This is NOT tamper" — a case-insensitive
+  substring cannot distinguish an accusation from a disclaimer. Replaced with two precise
+  assertions: output must not contain `GATE REFUSING TO RUN` (gate.sh's actual tripwire wording),
+  and must contain `NOT tamper`. The test was wrong, not the message.
+- 2026-07-26 anti-vacuity re-check for the two assertions added *after* the red check. The obvious
+  route (restore the old script, re-run) was **blocked by `protect-harness.sh`** — twice, including
+  a scratch-tree copy, because the redirect target's path ends in `scripts/fixloop.sh`. Not routed
+  around; verified read-only instead: `git show HEAD:scripts/fixloop.sh` contains neither
+  `NOT tamper` (0) nor `INCOMPLETE CHECKOUT` (0), so `incomplete checkout actively disclaims tamper`
+  is certainly RED pre-fix. `GATE REFUSING TO RUN` is also absent (0) — that assertion is therefore
+  **vacuous in this fixture** and is documented in the contract as a redundant guard; the
+  load-bearing assertion for the same property is `does not reach the gate`, which was red pre-fix.
+- 2026-07-26 note — `gate.sh` cannot run until this is committed: its tamper tripwire refuses while
+  `scripts/fixloop.sh` differs from `GATE_BASE`. That is the designed flow (a human commits the
+  deliberate change, which advances the baseline), not an obstacle.

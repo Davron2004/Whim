@@ -199,14 +199,31 @@ case_incomplete_checkout() {
   assert_contains    "incomplete checkout names its cause"          "$OUT" "INCOMPLETE CHECKOUT"
   assert_contains    "incomplete checkout names the stranded path"  "$OUT" "locked/x.txt"
   assert_not_contains "incomplete checkout does not reach the gate" "$OUT" "STUB-GATE-FULL-RAN"
-  # The whole point: the operator must not be told this is tamper.
-  assert_not_contains "incomplete checkout is not blamed on tamper" "$OUT" "TAMPER"
+  # The whole point: the operator must not be told this is tamper. Asserted against the ACTUAL
+  # misleading message — `gate.sh`'s tripwire wording — rather than the bare word "tamper", which
+  # a substring match cannot distinguish from the message explicitly disclaiming it.
+  assert_not_contains "the gate's tripwire is not the reporting mechanism" "$OUT" "GATE REFUSING TO RUN"
+  assert_contains     "incomplete checkout actively disclaims tamper"      "$OUT" "NOT tamper"
   # D3: the diagnostic git already emitted must survive, not go to /dev/null.
   assert_contains    "checkout stderr is preserved"                 "$OUT" "Permission denied"
   # This is where the false restore alarm was actually OBSERVED (task 1.6 red check): the
   # half-applied path reached the gate, then reported FAILED TO RESTORE although the working tree
   # content had in fact returned to the starting ref. Two misleading messages stacked on one bug.
   assert_not_contains "incomplete checkout does not also cry restore-failure" "$OUT" "FAILED TO RESTORE"
+
+  # The EXIT trap fires on THIS path, and it is the path where the restore is most likely to be
+  # impeded too — the same write barrier that broke the checkout can break the restore. So the
+  # early-exit restore must be verified, not silently attempted. Asserting the outcome, because a
+  # message-only test would leave the operator's tree unchecked exactly when it is most at risk.
+  local head_after tree_diff
+  head_after="$(fgit -C "$fx" symbolic-ref --quiet --short HEAD 2>/dev/null)"
+  tree_diff="$(fgit -C "$fx" diff --name-only base 2>/dev/null)"
+  if [ "$head_after" = "base" ] && [ -z "$tree_diff" ]; then
+    pass "incomplete-checkout exit path leaves the tree restored"
+  else
+    fail "incomplete-checkout exit path leaves the tree restored" \
+         "HEAD='$head_after' (want 'base'); still differing: ${tree_diff:-<none>}"
+  fi
 }
 
 # ================================================================================================
