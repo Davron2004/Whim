@@ -29,15 +29,15 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 
 ## 4. Gate wiring
 
-- [ ] 4.1 Wire `check "fixloop preflight"` into `scripts/gate.sh` (must land with the suite, or the fast gate references a missing file — design Migration Plan)
+- [x] 4.1 Wire `check "fixloop preflight"` into `scripts/gate.sh` (must land with the suite, or the fast gate references a missing file — design Migration Plan)
 - [ ] 4.2 Run `scripts/gate.sh` green on the change tip
 
 ## 5. Documentation correction
 
-- [ ] 5.1 Correct `CLAUDE.md`: remove the claim that the Chromium-dependent commands "are carved out of the host sandbox via `excludedCommands`"; state the measured behaviour — operations writing under `.claude/**` require an attended explicit sandbox override or the devcontainer, permanently, not pending a fix
-- [ ] 5.2 Correct `docs/harness.md` §4/§11 to match, preserving `research.md`'s documented / inferred / unresolved distinction rather than replacing one confident claim with another (design D6)
-- [ ] 5.3 Append a decision entry to `docs/decisions.md` recording: the architectural `.claude/**` denial, the control-plane-inside-`.claude/` collision, assert-don't-assume as the standing rule, and the deferred relocation spike
-- [ ] 5.4 Note in `docs/harness.md` that `AGENTS.md` is a symlink to `CLAUDE.md`, so 5.1 needs no separate mirror edit — verify this rather than assuming it
+- [x] 5.1 Correct `CLAUDE.md`: remove the claim that the Chromium-dependent commands "are carved out of the host sandbox via `excludedCommands`"; state the measured behaviour — operations writing under `.claude/**` require an attended explicit sandbox override or the devcontainer, permanently, not pending a fix
+- [x] 5.2 Correct `docs/harness.md` §4/§11 to match, preserving `research.md`'s documented / inferred / unresolved distinction rather than replacing one confident claim with another (design D6)
+- [x] 5.3 Append a decision entry to `docs/decisions.md` recording: the architectural `.claude/**` denial, the control-plane-inside-`.claude/` collision, assert-don't-assume as the standing rule, and the deferred relocation spike
+- [x] 5.4 Note in `docs/harness.md` that `AGENTS.md` is a symlink to `CLAUDE.md`, so 5.1 needs no separate mirror edit — verify this rather than assuming it
 
 ## 6. Verification
 
