@@ -30,7 +30,7 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 ## 4. Gate wiring
 
 - [x] 4.1 Wire `check "fixloop preflight"` into `scripts/gate.sh` (must land with the suite, or the fast gate references a missing file — design Migration Plan)
-- [ ] 4.2 Run `scripts/gate.sh` green on the change tip
+- [x] 4.2 Run `scripts/gate.sh` green on the change tip
 
 ## 5. Documentation correction
 
@@ -41,6 +41,6 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 
 ## 6. Verification
 
-- [ ] 6.1 Run `scripts/gate-full.sh` green on the change tip, from the **primary tree**, unsandboxed, with `FIXLOOP_INTEGRATION_BRANCH` set — and confirm the new assertions do not fire on this legitimate run
-- [ ] 6.2 Confirm the new assertions fire correctly against the REAL sandboxed failure, not only the synthetic fixture: run `gatefull` sandboxed against a branch that changes `.claude/**` and verify the message now names an incomplete checkout rather than tamper
+- [x] 6.1 Run `scripts/gate-full.sh` green on the change tip, from the **primary tree**, unsandboxed, with `FIXLOOP_INTEGRATION_BRANCH` set — and confirm the new assertions do not fire on this legitimate run
+- [x] 6.2 Confirm the new assertions fire correctly against the REAL sandboxed failure, not only the synthetic fixture: run `gatefull` sandboxed against a branch that changes `.claude/**` and verify the message now names an incomplete checkout rather than tamper
 - [ ] 6.3 HUMAN-SUPERVISED (task 7.2 of `automate-closure`): this change's closure is the first exercise of the automated closure pipeline. Observe end to end, execute nothing that the pipeline should execute, and file divergences as findings before archiving — note that the fixes in this change take effect only after it merges, so its own closure still runs against the old behaviour

@@ -40,7 +40,7 @@ permission dialog. The dispatcher's parallel-worktree machinery does not apply (
   adopted instead — a **read-only parent directory**, which reproduces the defect through git's own
   mechanism rather than simulating a sandbox:
 
-  ```
+  ```text
   error: unable to unlink old 'a/x.txt': Permission denied
   checkout rc=0                 <-- the entire defect, in git itself
   ```
@@ -132,4 +132,216 @@ permission dialog. The dispatcher's parallel-worktree machinery does not apply (
   `echo "  git checkout $target_branch && git reset --hard $BRANCH"` and emits `git -C` **0** times.
   So all three worktree-topology assertions are RED against it — including the executed one, which
   git rejects with "already used by worktree". Case 7 (target checked out nowhere) passes both
-  before and after: it is chain-3's own negative control.
+  before and after: it is chain-3's own negative control. Committed d580c0c.
+
+### chain-4: gate-wiring-and-docs (tasks 4.1–4.2, 5.1–5.4) — main-thread, HUMAN-BOOTSTRAP
+
+- 2026-07-26 4.1 — `check "fixloop preflight" bash scripts/test/fixloop-preflight.test.sh` wired into
+  `scripts/gate.sh` beside the other harness self-tests.
+- 2026-07-26 5.4 — **verified, not assumed**: `readlink AGENTS.md` → `CLAUDE.md`. So 5.1 needs no
+  mirror edit, and hand-writing one would have replaced the symlink with a diverging copy.
+  `docs/harness.md` §10 now states that consequence.
+- 2026-07-26 5.1/5.2 — the false claim lived in exactly two places: `CLAUDE.md:25` and
+  `docs/harness.md` §4's settings row. Both corrected per D6 — the documented / inferred /
+  unresolved split from `research.md` is preserved verbatim in spirit rather than flattened into a
+  new confident claim, since stating an unverified mechanism as fact is what made the old text
+  wrong. §4's row now reads "declares … but was measured inert", so the declared set documents
+  intent rather than behaviour.
+- 2026-07-26 5.3 — decision **#50** appended, superseding **#49 D3** (which recorded the carve-out
+  as working). The log is append-only, so #50 declares the supersession rather than editing #49 —
+  the same precedent by which #49 superseded #43b D8. Records: the architectural `.claude/**`
+  denial, the control-plane-inside-`.claude/` collision that makes it permanent, assert-don't-assume
+  as the standing rule, the `die`-in-a-command-substitution defect, test-the-message, the cleanup
+  apply-command topology fix, and the deferred relocation spike with its kill criterion.
+- 2026-07-26 committed 6c43e02.
+- 2026-07-26 **task 4.2 — FAST GATE PASSED** on the change tip 6c43e02.
+
+### Verification (tasks 6.1–6.3, orchestrator-run, not a chain)
+
+- 2026-07-26 **6.1 — FULL GATE PASSED** on tip 6c43e02, from the primary tree, unsandboxed, with
+  `FIXLOOP_INTEGRATION_BRANCH=integration/harden-gate-preconditions`. `openspec validate` 29/29.
+  The new assertions did **not** fire on this legitimate run — the negative-control property holds
+  outside the fixture too.
+- 2026-07-26 **6.2 — THE REAL-BUG CONFIRMATION, and it is the task that separates a fix from a
+  plausible-looking edit.** Ran `./scripts/fixloop.sh gatefull 635ceff` **sandboxed** (635ceff was
+  chosen because exactly 3 `.claude/**` files differ from the tip — same defect, tight blast
+  radius). Verbatim:
+
+  ```text
+  error: unable to unlink old '.claude/commands/fix-loop.md': Operation not permitted
+  error: unable to unlink old '.claude/commands/git-cleanup.md': Operation not permitted
+  error: unable to unlink old '.claude/commands/opsx/apply.md': Operation not permitted
+  INCOMPLETE CHECKOUT of 635ceff into the primary working tree — these tracked paths did NOT update:
+    .claude/commands/fix-loop.md
+    .claude/commands/git-cleanup.md
+    .claude/commands/opsx/apply.md
+  The working tree is a mixture of commits, so it is NOT what the gate would be verifying.
+  This is NOT tamper. ...
+  fixloop: refusing to gate a partially-applied tree
+  === exit: 2 ===
+  ```
+
+  Before this change the identical command produced a `GATE REFUSING TO RUN` tamper accusation
+  naming those same three files. Note the real errno is `Operation not permitted`, while the fixture
+  produces `Permission denied` — different errno, same defect, which vindicates asserting on **our**
+  message rather than on git's wording.
+- 2026-07-26 post-6.2 tree check — primary tree fully restored, HEAD back on the staging branch, no
+  manual repair needed. Instructive detail: the restore required no write to those three paths
+  (their content had never changed), which is exactly why the old `FAILED TO RESTORE` was a false
+  alarm — git reported failure over a tree that was already correct.
+- 6.3 (supervised closure observation, `automate-closure` task 7.2) — PENDING; it is runbook step 12
+  and happens after the reviewer pass.
+
+## Reviewer pass (runbook step 11)
+
+- 2026-07-26 reviewer dispatched on 3976bc6..fd0449a. Verdict: **FINDINGS** (2 real + 1
+  informational). Scope confirmed exactly as claimed — no `src/`, no `invariants/`, no product code.
+  Independently reproduced the suite (30 passed), `readlink AGENTS.md`, and the 6.2 three-file blast
+  radius. Report honesty: matches the diff.
+- **Finding 1 (MEDIUM) — ACCEPTED AND FIXED.** The restore hardening was asymmetric. The EXIT trap
+  armed at `start_ref` capture was still the *original* silent restore
+  (`git checkout … >/dev/null 2>&1`, no postcondition), and it is what fires on every early `die` —
+  including the new `INCOMPLETE CHECKOUT` path. That is precisely the path where the restore is most
+  likely to be impeded too, since the same write barrier that broke the checkout can break the
+  restore. The verified restore only guarded the post-gate path. So the change reintroduced its own
+  defect class (requirement 4: diagnostics must not go to `/dev/null`) on the exit path it added.
+  The reviewer also noted it was untested. Fixed: one `restore_primary_tree` function — verified by
+  tree content and HEAD, diagnostics to stderr — now serves BOTH the trap and the normal path. New
+  assertion `incomplete-checkout exit path leaves the tree restored` covers the outcome, not just
+  the message.
+- **Finding 2 (LOW) — ACCEPTED AND FIXED.** A **fifth** raw `base_of` call survived, inline in
+  `finish`'s ratify string (`git diff $(base_of "$branch")..$branch`), unguarded — the exact
+  unchecked shape this change exists to remove, and it would have interpolated an empty baseline
+  into the command a human is told to run in order to ratify a protected-config change. Not
+  reachable as a live bug (case 6 only follows a successful `integrity` on the same pair), but
+  fixing the ledger's wording instead of the code would have been the wrong repair. `finish` now
+  resolves `base` once, status-checked, and reuses it; the ratify string interpolates `$base`.
+  Verified: exactly four `base_of` call sites remain (lines 91/163/206/343), all `|| die`-guarded —
+  the earlier "5 occurrences" count included the doc comment at line 69, not code.
+- **Finding 3 — informational, no action.** The reviewer confirmed the chain-2 scope deviation was
+  disclosed correctly and was the right call.
+- Reviewer found no issue with: `worktree_of`'s exact-match awk (immune to prefix collisions), the
+  postcondition's correct exclusion of gitignored/untracked paths, the primary-tree idiom's
+  false-positive risk, decision #50's epistemic accuracy, or the tasks.md checkbox state.
+- 2026-07-26 fix chain applied in the main thread (Class-2, same as every other chain here);
+  **suite 31 passed**, negative controls intact. FAST GATE PASSED, then **FULL GATE PASSED** on the
+  new tip (openspec 29/29). Committed 5c1465b.
+- 2026-07-26 **6.2 re-run after the fix — the finding vindicated in the real environment.** The
+  sandboxed `gatefull 635ceff` output now shows the three `Operation not permitted` errors **twice**:
+  once from the checkout, and once from the EXIT trap's restore. That second block was previously
+  swallowed by `>/dev/null 2>&1` and was invisible — it is exactly the diagnostic the reviewer said
+  was being discarded. And yet **no** `FAILED TO RESTORE` fired, with the tree clean and HEAD back
+  on the staging branch: git errored during the restore while the tree ended up correct, which is
+  precisely the false-alarm condition, correctly not alarmed. Both halves of the restore fix
+  demonstrated in a single real run.
+
+## Closure observation (task 6.3 = `automate-closure` task 7.2)
+
+First exercise of the automated closure pipeline. Divergences filed as findings, not fixed inline.
+Note the deliberate before/after boundary: this change's own closure ran against the OLD behaviour,
+since the fixes take effect only once it merges.
+
+- **12a ruleset probe** — exit 0 first try: ruleset "Protect main" (requires PR; non_fast_forward,
+  deletion, required_status_checks). The fail-closed precondition works as designed.
+- **12b push + draft PR** — clean; PR #7. Both `gh` forms were main-thread auto-allowed as documented.
+- **12c poll** — settled in ~180s, and **all three checks green on the first push**: SonarCloud pass
+  (23s), `isolation-suite` pass (2m14s), `quality-gate` pass (38s). Notable: `isolation-suite` is
+  the first confirmation that the new suite's read-only-directory fixture works on Linux CI as a
+  non-root user, which was the one portability risk flagged when the barrier mechanism was chosen.
+- **12d Sonar round — SKIPPED, no findings.** So the pipeline's most common iteration loop went
+  unexercised by this run; it remains observed only in prior runs. Nothing appended to
+  `openspec/critic/sonar-ledger.md` (correct — the grammar is one line per *finding*).
+- **FINDING C1 (runbook gap, MEDIUM).** Step 12c says to poll `gh pr checks <n>` on a bounded
+  timeout, but does not say how to treat the **not-yet-registered** state. Immediately after a push,
+  `gh pr checks` prints `no checks reported on the '<branch>' branch` and **exits 0** — which a
+  naive "stop when nothing is pending" poll reads as SETTLED and GREEN. This orchestrator's first
+  poll after the reviewer-fix push did exactly that and had to be re-run. This is the *same defect
+  class the change fixes* — an absent result read as a settled result — living in the closure
+  runbook rather than in a script. Recommended: step 12c should specify that `no checks reported`
+  counts as pending, and the poll should require a positive verdict rather than an absence of
+  pending. Filed, not fixed inline, per 6.3's instruction.
+- **12e history cleanup** — CLEANUP GATE PASS; 8 in-scope commits → 6 semantic ones, 99 → 97 on the
+  branch, tip tree byte-identical to the pinned `28013148`. Verified independently of the cleaner's
+  report: content identical to the pre-cleanup target, and `scripts/fixloop.sh` written **exactly
+  once** in the new history, so the reviewer fix genuinely folded and no standalone fix commit
+  survived. chain-1 still precedes chain-2, preserving D7's observed-RED-before-the-fix ordering.
+  - Cleaner deviation, accepted: the reviewer fix was **not contiguous** with chain-2 (three commits
+    between), so a pure `read-tree` snapshot rebuild could not fold them — a snapshot at chain-2's
+    boundary carries the *unfixed* file. Resolved git-natively via `git merge-tree --write-tree`
+    (object-DB only, no worktree writes, which matters because worktree writes are what the sandbox
+    denies) plus `update-index --cacheinfo` at the boundaries. Intermediate trees are therefore
+    synthesized rather than historical — expected for a fold, and deliberately unconstrained: the
+    lane pins only the tip tree ("freed path, gated outcome").
+  - Honest note on the apply command: the gate printed chain-3's new worktree-aware form, but in
+    this run the target was checked out in the PRIMARY tree, where the old `git checkout` form would
+    also have worked. So the new path was exercised without reproducing the condition that broke the
+    old one. The failing case needs the target in a *run* worktree — covered by the suite, not by
+    this run.
+- **12f** — Sonar + both CI jobs re-reported GREEN on the rewritten SHAs (tree identical by
+  construction, but re-reported as required before the flip).
+- **FINDING C2 (policy/doc divergence, MEDIUM).** `docs/harness.md` §4 states that main-thread
+  `git fetch origin` and `git pull --ff-only origin main` are relaxed/auto-allowed for closure's
+  ancestor check and teardown, and apply.md step 12 repeats it. In practice `bash-policy.sh`
+  **denied** a bare main-thread `git fetch origin` with *"git network/shared-ref/history op is
+  human-approved only (class-B deviation)"*. The documented relaxation does not match the hook's
+  behaviour. Step 12f's ancestor check (`git merge-base --is-ancestor main <branch>`) is likewise
+  unrunnable, since the fail-closed substring matcher denies any history op naming `main`.
+  Worked around **without evading the guard** by asking GitHub instead:
+  `gh pr view <n> --json mergeable,mergeStateStatus` returned `MERGEABLE`/`CLEAN`, which is the
+  authoritative answer and strictly better than a possibly-stale local ref. Recommended: either
+  relax the hook to match the docs, or change step 12f to use the `gh` mergeability query and drop
+  the local ancestor check. Filed, not fixed inline. **This also blocks teardown step 12g**, whose
+  `git fetch origin` + `git pull --ff-only origin main` are denied by the same rule — the human will
+  need to fast-forward local `main` themselves after merging.
+- Related friction, not a finding: compound commands containing `main` anywhere (e.g.
+  `git log --oneline main..integration/x` chained after a push) are denied wholesale, because the
+  unroller judges a compound by its worst segment and the matcher is substring-based. Working as
+  designed and fail-closed; just split the commands. Same rule also denies a `cat <<EOF` heredoc
+  whose **prose body** mentions `git fetch` / `main` — the matcher scans the whole command string,
+  heredoc content included. Correct fail-closed behaviour; use the Write/Edit tool for file content,
+  which is the sanctioned path anyway (the same reason grants must be written with Write, never a
+  shell redirect).
+
+## Closing summary
+
+- **Chains run: 4/4**, all HUMAN-BOOTSTRAP and main-thread. No implementer subagent was dispatched
+  and none could have been: every file touched is Class-2, so `/opsx:apply`'s dispatch loop had an
+  empty work queue by construction. The operator chose an attended main-thread session, with the
+  permission dialog as the Class-2 ratification.
+- **Redispatches: 0. Merge conflicts: 0. Parked: 0.** (No merges either — serial main-thread work on
+  the staging branch, so the per-merge regate collapses into the per-chain gate.)
+- **Deviations: 3 Class A, 0 Class B/C.**
+  1. chain-1's fixture mechanism — a read-only parent directory instead of design D4's "deliberately
+     dirtied tree", because a dirty tree is rejected by `gatefull`'s own dirty-tree guard before
+     reaching the assertion under test. The substitute is *stronger*: it reproduces the defect
+     through git's own behaviour rather than simulating a sandbox.
+  2. chain-2's file scope — `base_of` and all its call sites, not just the `gatefull)` arm, because
+     the defect lived in the shared helper and `integrity` (the tamper detector) had the same hole.
+     The reviewer independently judged this the right call.
+  3. the cleaner's non-contiguous fold via `merge-tree --write-tree` (see 12e).
+- **Gates:** fast gate green on every chain tip; **FULL GATE PASSED** twice (before and after the
+  reviewer round); `openspec validate` 29/29; CI + SonarCloud green on every push.
+- **Reviewer: FINDINGS (1 MEDIUM + 1 LOW), both accepted and fixed**, then re-verified against the
+  real sandboxed failure. The MEDIUM was the change reintroducing its own defect class on the exit
+  path it added — the most valuable single result of the run, and NOT something the change's own
+  tests would have caught, since they asserted only on messages and never on the resulting tree.
+- **Suite: 31 assertions**, wired into the fast gate, negative controls intact.
+- **Tasks: 21/22.** Only 6.3 remains open by design — it *is* this closure observation, whose
+  findings are recorded above.
+- **MEMORY proposals: none.** Nothing surfaced that the repo does not already record — the sandbox
+  measurement now lives in `CLAUDE.md` + `docs/harness.md` + decision #50, the fixture technique is
+  documented in the suite's own header, and C1/C2 are here.
+
+### Follow-ups this run created (for archive, not for this change)
+
+1. **C1** — closure runbook step 12c must treat `no checks reported` as pending, not settled.
+2. **C2** — `bash-policy.sh` denies the `git fetch` / `merge-base` forms that `docs/harness.md` §4
+   and apply.md step 12 document as relaxed. Either relax the hook or rewrite 12f/12g to use `gh`.
+3. **`fixloop.sh park` cannot park an `integration/*` branch** (it accepts only `fix/*` / `chain/*`),
+   although runbook step 12g says a parked run keeps its branch under the `wip/*` convention. Hit
+   for real at run start while parking `linked-apps-data-model`.
+4. **Stale remote branch** `integration/sonar-recurrence-ledger` survives although PR #5 merged —
+   step 12g teardown was skipped in that run.
+5. **`wip/linked-apps-data-model`** is a complete-but-unclosed run, and `main` is NOT an ancestor of
+   it, so its closure needs a merge-from-main first. Resume note at
+   `.claude/fixloop/wip-linked-apps-data-model.md`.
