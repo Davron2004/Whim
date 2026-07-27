@@ -39,6 +39,7 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REAL_FIXLOOP="$REPO/scripts/fixloop.sh"
+REAL_CLEANUP="$REPO/scripts/git-cleanup-check.sh"
 
 PASSED=0
 FAILURES=0
@@ -303,11 +304,137 @@ case_negative_control() {
   assert_not_contains "negative control: no permission diagnostics" "$OUT" "Permission denied"
 }
 
+# ================================================================================================
+# Cases 6-7 — `git-cleanup-check.sh` prints an apply command valid for the topology the target is
+# ACTUALLY checked out in (openspec: staging-integration-lane).
+#
+# These cases EXECUTE the printed command rather than only matching its text. That is the whole
+# point: the original defect was a command that had never once been run, and it failed 100% of the
+# time it was followed literally under the staging lane. A test that only grepped the output would
+# have reproduced exactly the mistake being fixed.
+# ================================================================================================
+
+# new_cleanup_fixture <target-in-worktree: yes|no> -> prints fixture path
+# Lane names derive from target_branch=integration/run, so id=integration-run:
+#   cleanup branch  cleanup/integration-run-squashed   (single commit, tree identical to target)
+#   backup ref      backup/pre-cleanup-integration-run
+new_cleanup_fixture() {
+  local in_worktree="$1" fx target_sha target_tree squashed
+  fx="$(mktemp -d "${TMPDIR:-/tmp}/whim-cleanup.XXXXXX")" || return 1
+  FIXTURES+=("$fx")
+  # Resolve symlinks: on macOS $TMPDIR lives under /tmp -> /private/tmp, and `git worktree list`
+  # reports the real path. The assertions compare full absolute paths, so both sides must agree.
+  fx="$(cd "$fx" && pwd -P)" || return 1
+
+  fgit init -q -b main "$fx" >/dev/null 2>&1 || return 1
+  mkdir -p "$fx/scripts" "$fx/.claude/fixloop/grants" || return 1
+  cp "$REAL_CLEANUP" "$fx/scripts/git-cleanup-check.sh" || return 1
+  chmod +x "$fx/scripts/git-cleanup-check.sh"
+
+  echo one > "$fx/file.txt"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "root" >/dev/null 2>&1 || return 1
+
+  fgit -C "$fx" switch -q -c integration/run >/dev/null 2>&1 || return 1
+  echo two >> "$fx/file.txt"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "work" >/dev/null 2>&1 || return 1
+  fgit -C "$fx" switch -q main >/dev/null 2>&1 || return 1
+
+  target_sha="$(fgit -C "$fx" rev-parse integration/run)"
+  target_tree="$(fgit -C "$fx" rev-parse 'integration/run^{tree}')"
+  # A rewritten history whose tip TREE is byte-identical — what the cleanup lane must produce.
+  squashed="$(fgit -C "$fx" commit-tree "$target_tree" -m "squashed")" || return 1
+  fgit -C "$fx" branch cleanup/integration-run-squashed "$squashed" >/dev/null 2>&1 || return 1
+  fgit -C "$fx" branch backup/pre-cleanup-integration-run "$target_sha" >/dev/null 2>&1 || return 1
+
+  {
+    echo "target_branch=integration/run"
+    echo "target_sha=$target_sha"
+    echo "target_tree=$target_tree"
+  } > "$fx/.claude/fixloop/grants/git-cleanup" || return 1
+
+  if [ "$in_worktree" = yes ]; then
+    fgit -C "$fx" worktree add -q "$fx/.claude/worktrees/run-orchestrator" integration/run \
+      >/dev/null 2>&1 || return 1
+  fi
+
+  printf '%s' "$fx"
+}
+
+# apply_command <output> — the runnable apply line, minus the push (no remote in a fixture).
+apply_command() {
+  printf '%s\n' "$1" \
+    | sed -n '/^apply (human/,/^teardown:/p' \
+    | grep -E '^[[:space:]]+git ' \
+    | grep -v -- '--force-with-lease' \
+    | head -1 \
+    | sed 's/^[[:space:]]*//'
+}
+
+case_cleanup_target_in_worktree() {
+  local fx out cmd moved
+  fx="$(new_cleanup_fixture yes)" || { fail "case 6 fixture" "could not build cleanup fixture"; return; }
+  out="$(cd "$fx" && ./scripts/git-cleanup-check.sh 2>&1)"
+
+  assert_contains "cleanup gate passes (target in a worktree)" "$out" "CLEANUP GATE PASS"
+  assert_contains "apply command targets the worktree"         "$out" "git -C $fx/.claude/worktrees/run-orchestrator reset --hard cleanup/integration-run-squashed"
+  assert_not_contains "apply command does not tell the operator to check the target out" \
+                      "$out" "git checkout integration/run &&"
+
+  # Task 3.3 — RUN it. Text that has never been executed is how the original bug survived.
+  cmd="$(apply_command "$out")"
+  if [ -z "$cmd" ]; then
+    fail "printed apply command is runnable (target in a worktree)" "no apply command found in output"
+    return
+  fi
+  if ! (cd "$fx" && eval "$cmd") >/dev/null 2>&1; then
+    fail "printed apply command is runnable (target in a worktree)" "command failed: $cmd"
+    return
+  fi
+  moved="$(fgit -C "$fx" rev-parse integration/run)"
+  if [ "$moved" = "$(fgit -C "$fx" rev-parse cleanup/integration-run-squashed)" ]; then
+    pass "printed apply command actually moved the target branch (worktree topology)"
+  else
+    fail "printed apply command actually moved the target branch (worktree topology)" \
+         "integration/run is at $moved"
+  fi
+}
+
+case_cleanup_target_not_checked_out() {
+  local fx out cmd moved
+  fx="$(new_cleanup_fixture no)" || { fail "case 7 fixture" "could not build cleanup fixture"; return; }
+  out="$(cd "$fx" && ./scripts/git-cleanup-check.sh 2>&1)"
+
+  assert_contains "cleanup gate passes (target checked out nowhere)" "$out" "CLEANUP GATE PASS"
+  assert_contains "apply command may use the checkout form" \
+                  "$out" "git checkout integration/run && git reset --hard cleanup/integration-run-squashed"
+
+  cmd="$(apply_command "$out")"
+  if [ -z "$cmd" ]; then
+    fail "printed apply command is runnable (checked out nowhere)" "no apply command found in output"
+    return
+  fi
+  if ! (cd "$fx" && eval "$cmd") >/dev/null 2>&1; then
+    fail "printed apply command is runnable (checked out nowhere)" "command failed: $cmd"
+    return
+  fi
+  moved="$(fgit -C "$fx" rev-parse integration/run)"
+  if [ "$moved" = "$(fgit -C "$fx" rev-parse cleanup/integration-run-squashed)" ]; then
+    pass "printed apply command actually moved the target branch (detached topology)"
+  else
+    fail "printed apply command actually moved the target branch (detached topology)" \
+         "integration/run is at $moved"
+  fi
+}
+
 case_incomplete_checkout
 case_linked_worktree
 case_unrelated_baseline
 case_restore_not_falsely_alarmed
 case_negative_control
+case_cleanup_target_in_worktree
+case_cleanup_target_not_checked_out
 
 printf '\n'
 if [ "$FAILURES" -gt 0 ]; then

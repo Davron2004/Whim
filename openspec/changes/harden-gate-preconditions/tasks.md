@@ -23,9 +23,9 @@ task is main-thread and human-ratified through the permission dialog. See `chain
 
 ## 3. Cleanup-lane apply command
 
-- [ ] 3.1 In `scripts/git-cleanup-check.sh`, resolve where the target branch is checked out (`git worktree list --porcelain`) and print the worktree-scoped apply command when it lives in a run worktree; keep the primary-tree form only for the not-checked-out-anywhere case (design D5)
-- [ ] 3.2 Extend the suite from task 1 with both topologies: target in a worktree, and target checked out nowhere
-- [ ] 3.3 Verify the printed command by executing it against a fixture — the bug was that the printed text was never run
+- [x] 3.1 In `scripts/git-cleanup-check.sh`, resolve where the target branch is checked out (`git worktree list --porcelain`) and print the worktree-scoped apply command when it lives in a run worktree; keep the primary-tree form only for the not-checked-out-anywhere case (design D5)
+- [x] 3.2 Extend the suite from task 1 with both topologies: target in a worktree, and target checked out nowhere
+- [x] 3.3 Verify the printed command by executing it against a fixture — the bug was that the printed text was never run
 
 ## 4. Gate wiring
 

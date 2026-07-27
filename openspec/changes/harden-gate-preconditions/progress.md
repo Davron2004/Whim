@@ -110,4 +110,26 @@ permission dialog. The dispatcher's parallel-worktree machinery does not apply (
   load-bearing assertion for the same property is `does not reach the gate`, which was red pre-fix.
 - 2026-07-26 note — `gate.sh` cannot run until this is committed: its tamper tripwire refuses while
   `scripts/fixloop.sh` differs from `GATE_BASE`. That is the designed flow (a human commits the
-  deliberate change, which advances the baseline), not an obstacle.
+  deliberate change, which advances the baseline), not an obstacle. Committed 85ebb9b.
+
+### chain-3: cleanup-apply-command (tasks 3.1–3.3) — main-thread, HUMAN-BOOTSTRAP
+
+- 2026-07-26 `git-cleanup-check.sh` gained `worktree_of <branch>` (parses
+  `git worktree list --porcelain`) and now prints `git -C <worktree> reset --hard <lane>` when the
+  target is checked out somewhere, keeping the `checkout` form only for the checked-out-nowhere
+  case (D5).
+- 2026-07-26 tasks 3.2/3.3 — suite extended with both topologies, and the printed command is
+  **executed**, not merely grepped. That is the point of 3.3: the original defect was a command
+  that had never once been run and failed 100% of the time it was followed under the staging lane;
+  a text-matching test would have reproduced the very mistake being fixed. Both cases assert the
+  target branch actually moved to the squashed tip afterwards.
+- 2026-07-26 fixture fix — assertions compare absolute paths, but on macOS `$TMPDIR` resolves
+  through `/tmp -> /private/tmp` while `git worktree list` reports the real path. Fixture paths are
+  now normalized with `pwd -P`.
+- 2026-07-26 **SUITE GREEN: 30 passed / 0 failed.**
+- 2026-07-26 non-vacuity of the two new cases, verified read-only (a scratch copy is blocked by the
+  same protected-path guard): the unfixed script's apply block is a single unconditional
+  `echo "  git checkout $target_branch && git reset --hard $BRANCH"` and emits `git -C` **0** times.
+  So all three worktree-topology assertions are RED against it — including the executed one, which
+  git rejects with "already used by worktree". Case 7 (target checked out nowhere) passes both
+  before and after: it is chain-3's own negative control.
