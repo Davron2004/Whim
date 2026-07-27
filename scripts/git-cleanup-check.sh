@@ -25,6 +25,17 @@ GRANT="$ROOT/.claude/fixloop/grants/git-cleanup"
 
 fail() { echo "CLEANUP GATE FAIL: $1"; exit "$2"; }
 
+# worktree_of <branch> — absolute path of the working tree that has <branch> checked out, or empty.
+# The printed apply command has to match the topology it will actually be run in: under the staging
+# lane the target is checked out in a run worktree, and `git checkout <target>` from another tree is
+# rejected outright ("already used by worktree"). A printed command that cannot work is worse than
+# no command, because it is followed before it is doubted.
+worktree_of() {
+  git -C "$ROOT" worktree list --porcelain 2>/dev/null | awk -v want="refs/heads/$1" '
+    /^worktree /{ wt = substr($0, 10) }
+    /^branch /   { if (substr($0, 8) == want) { print wt; exit } }'
+}
+
 [[ -f "$GRANT" ]] || fail "no active git-cleanup grant at $GRANT" 3
 target_branch=$(grep -E '^target_branch=' "$GRANT" | head -1 | cut -d= -f2)
 target_sha=$(grep -E '^target_sha=' "$GRANT" | head -1 | cut -d= -f2)
@@ -72,7 +83,14 @@ echo
 echo "review the squash map:  git log --oneline $BRANCH"
 echo
 echo "apply (human — a pure ref move, zero file churn, since the trees are identical):"
-echo "  git checkout $target_branch && git reset --hard $BRANCH"
+target_wt="$(worktree_of "$target_branch")"
+if [[ -n "$target_wt" ]]; then
+  echo "  git -C $target_wt reset --hard $BRANCH"
+  echo "  # ^ $target_branch is checked out at that path; 'git checkout $target_branch' from any"
+  echo "  #   other tree is rejected by git. This is the NORMAL staging-lane topology."
+else
+  echo "  git checkout $target_branch && git reset --hard $BRANCH"
+fi
 echo "  git push --force-with-lease origin $target_branch"
 if [[ "$target_branch" = "main" ]]; then
   echo "  # NOTE: main-targeted cleanup is the LEGACY mode (pre-existing history only);"
