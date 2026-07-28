@@ -311,6 +311,22 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
 
 ## 11. Operational gotchas — do NOT re-derive these
 
+- **Closure step 12d has never been exercised.** The first supervised closure run (decision #49
+  task 7.2) reached the ratified merge with SonarCloud green on every push, so the Sonar-findings →
+  nested `/fix-loop` → re-push loop was **skipped, not validated**. Do not read "supervised closure
+  passed" as "every closure step is validated": 12d is the one step whose first real execution is
+  still ahead of it, and the first run through it should be watched, not trusted. This is recorded
+  rather than pre-emptively rewritten — it is unexercised, not known-broken, and speculatively
+  changing code no one has watched fail is how the *other* kind of defect gets introduced.
+- **`gh` under the sandbox fails at the trust store, not the network** (2026-07-27, resolves the
+  open question left by decision #50 D2). `tls: failed to verify certificate: x509: OSStatus -26276`
+  is `errSecInternalComponent`, a macOS Keychain error: `gh` verifies TLS through the system trust
+  store via the Security framework, which the sandbox denies. Unsandboxed the identical command
+  exits 0; `git`'s `osxkeychain` helper fails the same way (`failed to store: 100001`). So it is
+  **filesystem/IPC-dependent**, like the `.claude/**` write denial — not the filesystem-independent
+  mystery #50 D2 recorded. Consequence: `excludedCommands` was never the lever, adding entries there
+  cannot fix it, and every closure `gh` call needs an explicit per-command unsandboxed override.
+  Measured identically for the main thread and for a subagent, so it is not an agent-identity effect.
 - Subagents can have their hook cwd re-pinned to the repo root on every Bash call (`cd` does not
   persist, and Codex's execution workdir may not reach the shared hook payload) — location-keyed
   policy accepts only an exact `git -C <absolute .claude/worktrees/<id>> <command>` form, normalizes
