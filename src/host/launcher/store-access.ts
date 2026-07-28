@@ -66,9 +66,13 @@ export class StoreAccess {
     this.now = opts.now ?? (() => Date.now());
   }
 
-  /** The runtime engine appId for an entry (D8): always the launcher id. A fork's own user data. */
+  /**
+   * The runtime engine appId for an entry (D8, extended by linked-apps-data-model D1): the
+   * entry's storage group id when it belongs to one (the founding entry's own launcher id),
+   * otherwise its own launcher id — an ungrouped entry's own user data, exactly as before.
+   */
   engineAppId(entry: InstalledApp): string {
-    return entry.id;
+    return entry.storageGroupId ?? entry.id;
   }
 
   /** Switch the repo to the entry's lineage only if it is not already there (D2 "checks first"). */
@@ -156,11 +160,19 @@ export class StoreAccess {
   /**
    * Fork an installed entry (D2): version-store fork from a snapshot → a new lineage in the
    * SAME repo, then a new index entry tracking it. The fork shares the repo (and its pre-fork
-   * history) but evolves independently and gets its OWN engine appId. `versionId` (D6/research
-   * fact 2) forks from that snapshot instead of the entry's current active one — "make this
-   * version its own app" reuses this same fork→install flow unchanged.
+   * history) but evolves independently and gets its OWN engine appId (unless it joins a storage
+   * group, below). `versionId` (D6/research fact 2) forks from that snapshot instead of the
+   * entry's current active one — "make this version its own app" reuses this same fork→install
+   * flow unchanged.
+   *
+   * `opts.shareData` (linked-apps-data-model D2) decides storage-group membership at creation
+   * time only: when true, the new entry's `storageGroupId` copies `entry.storageGroupId ??
+   * entry.id` (the founder's own id, whether `entry` is the founder or already a sharer — group
+   * membership is never re-rooted at an intermediate fork); when false/absent (including no
+   * third argument at all — every pre-existing call site), the new entry gets no
+   * `storageGroupId` and keeps its own group, exactly as before this change.
    */
-  async fork(entry: InstalledApp, versionId?: string): Promise<InstalledApp> {
+  async fork(entry: InstalledApp, versionId?: string, opts?: { shareData?: boolean }): Promise<InstalledApp> {
     const repo = storeIdOf(entry);
     await this.ensureLineage(entry);
     let snapshotId: string;
@@ -182,21 +194,28 @@ export class StoreAccess {
       storeId: repo,
       lineageId,
       forkedFrom: { id: entry.id, name: entry.name },
+      storageGroupId: opts?.shareData ? (entry.storageGroupId ?? entry.id) : undefined,
     };
     this.index.put(forkEntry);
     return forkEntry;
   }
 
   /**
-   * Delete an installed entry (D2): drop the index entry + the per-app user-data db, and — when
-   * no installed entry references the repo any longer — the version history too (`store.remove`).
-   * A surviving sibling fork keeps the repo (and its own user data). Order matters: remove the
-   * index entry FIRST, then refcount the repo against the remaining entries.
+   * Delete an installed entry (D2, refcounting extended by linked-apps-data-model D3): drop the
+   * index entry, then drop the group's user-data db only when no remaining entry resolves to it
+   * (`storageRefCount`), and drop the repo's version history only when no remaining entry
+   * references it (`refCount`) — two independent refcounts, since a storage group and a
+   * version-store repo need not have the same membership. A surviving group member or sibling
+   * fork keeps its shared resource intact. Order matters: remove the index entry FIRST, then
+   * refcount both resources against the remaining entries.
    */
   async remove(entry: InstalledApp): Promise<void> {
     const repo = storeIdOf(entry);
+    const groupId = this.engineAppId(entry);
     this.index.remove(entry.id);
-    await this.deleteStorage(entry.id); // no per-app user-data residue (D8)
+    if (this.index.storageRefCount(groupId) === 0) {
+      await this.deleteStorage(groupId); // no residue once no entry resolves to the group (D3)
+    }
     if (this.index.refCount(repo) === 0) {
       await this.store.remove(repo);
       this.repoLineage.delete(repo);

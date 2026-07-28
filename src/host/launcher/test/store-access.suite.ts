@@ -199,6 +199,80 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(pins2[0].snapshotId, g2, 're-pinning moved the label to the new snapshot');
   });
 
+  // §27 engineAppId resolves the storage group (linked-apps-data-model D1)
+  await h.test('store-access §27 engineAppId resolves storageGroupId ?? id', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    h.eq(access.engineAppId(orig), 'wc', 'ungrouped entry resolves to its own id');
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    h.eq(shared.storageGroupId, 'wc', 'shared fork copies the founder\'s own id as its group');
+    h.eq(access.engineAppId(shared), 'wc', 'grouped entry resolves to the group id, not its own launcher id');
+  });
+
+  // §28-29 fork shareData controls storageGroupId
+  await h.test('store-access §28 fork(entry, versionId, {shareData:true}) joins the parent\'s group', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    h.eq(shared.storageGroupId, 'wc', 'joins the founder\'s group (parent was itself ungrouped)');
+  });
+
+  await h.test('store-access §29 fork without shareData gets no storageGroupId (unchanged default)', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const noArg = await access.fork(orig);
+    const explicitFalse = await access.fork(orig, undefined, { shareData: false });
+    h.eq(noArg.storageGroupId, undefined, 'no third argument at all: own group, same as today');
+    h.eq(explicitFalse.storageGroupId, undefined, 'shareData:false: own group');
+  });
+
+  // §30 group membership is immutable / transitive through the founder
+  await h.test('store-access §30 fork-of-a-fork with shareData:true resolves to the ORIGINAL founder', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    h.eq(shared.storageGroupId, 'wc', 'first sharer joins the founder\'s group');
+    const grandchild = await access.fork(shared, undefined, { shareData: true });
+    h.eq(grandchild.storageGroupId, 'wc', 'fork-of-a-fork still resolves to the original founder, never re-rooted');
+    h.eq(access.engineAppId(grandchild), 'wc', 'grandchild engine appId is the founder\'s id');
+  });
+
+  // §32 delete is refcount-gated on storage, both orders
+  await h.test('store-access §32 founder-first delete: storage survives while a sharer remains', async () => {
+    const { access, deleted } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    await access.remove(orig);
+    h.eq(deleted, [], 'deleteStorage NOT called: the sharer still references the group');
+    h.eq(access.engineAppId(shared), 'wc', 'surviving sharer still resolves to the same group id');
+  });
+
+  await h.test('store-access §32 sharer-first delete: storage survives while the founder remains', async () => {
+    const { access, deleted } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    await access.remove(shared);
+    h.eq(deleted, [], 'deleteStorage NOT called: the founder still references the group');
+    h.eq(access.engineAppId(orig), 'wc', 'surviving founder still resolves to its own group id');
+  });
+
+  await h.test('store-access §32 deleting the last remaining group member drops the storage', async () => {
+    const { access, deleted } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const shared = await access.fork(orig, undefined, { shareData: true });
+    await access.remove(orig); // sharer remains, storage survives
+    await access.remove(shared); // last reference
+    h.eq(deleted, ['wc'], 'deleteStorage called once the group has no remaining member');
+  });
+
+  // §33 ungrouped delete unchanged
+  await h.test('store-access §33 ungrouped delete calls deleteStorage immediately (unchanged)', async () => {
+    const { access, deleted } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await access.remove(orig);
+    h.eq(deleted, ['wc'], 'never-shared entry: refcount 1 -> 0 in the same step');
+  });
+
   // §diff smoke: diff wrapper ensures lineage and delegates through
   await h.test('store-access diff(entry, a, b) reports per-file changes through the wrapper', async () => {
     const { store, access } = harnessAccess();
