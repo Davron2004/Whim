@@ -129,3 +129,45 @@ stop-before-closure.
   pagination-to-exhaustion, guard failure modes incl. the 200/total:0 masquerade, findings shape,
   clean/red gate). eslint clean (justified sonarjs disable on gh shell-out in ruleset-probe).
   gate.sh Node-suite wiring deferred to chain-5.
+
+## Task 7.2 — supervised closure observation (2026-07-27)
+
+**COMPLETE.** The first end-to-end exercise of the automated closure pipeline ran as the closure of
+`harden-gate-preconditions` (PR #7, merged). Human present, executing nothing the pipeline should
+execute; the human's single act was the merge click. Full narrative in the observed change's ledger:
+`openspec/changes/archive/2026-07-27-harden-gate-preconditions/progress.md`, "Closure observation".
+
+**Validated:** 12a ruleset probe (exit 0, ruleset "Protect main" confirmed) - 12b push + draft PR -
+12c poll - 12e cleanup lane (8 in-scope commits into 6 semantic ones, tip tree byte-identical to the
+pin) - 12f re-poll + ready flip - human merge. Five pushes, CI and SonarCloud green on every one.
+GitHub's rebase merge landed all six semantic commits on the base branch linearly and intact.
+
+**NOT validated: step 12d.** SonarCloud was green on every push, so the findings-ingestion loop
+never ran. The pipeline's most-iterated path remains observed only in earlier runs. Recorded so that
+"supervised closure passed" is not read as "every step is validated".
+
+**Divergences filed (this is what 7.2 asks for). All four are carried into the new
+`harden-closure-lane` change, which consumes them:**
+
+- **C1 (MEDIUM, runbook)** - step 12c does not say how to treat the not-yet-registered state. The
+  check tool prints that no checks exist for the branch and exits 0, which a poll written as "stop
+  when nothing is pending" reads as settled and green. This happened during the run and had to be
+  caught by hand. Same defect class the observed change had just fixed one layer down: an absent
+  result read as a settled result.
+- **C2 (MEDIUM, policy vs docs)** - the bash policy denies the network/history command forms that
+  harness.md section 4 and this runbook's step 12 document as relaxed for the main thread. Step
+  12f's ancestry check and step 12g's teardown are therefore unrunnable as written. Worked around
+  without evading the guard by using the provider's own mergeability report, which is better
+  evidence anyway. Whether the docs or the hook is the defect is an open question for the owner.
+- **C2b (LOW, friction)** - the same fail-closed matcher denied three commands whose PROSE mentioned
+  the protected vocabulary (a compound, a heredoc body, a PR description). All correct and safe, but
+  the sanctioned workaround (supply the text through a file) is undocumented, which pushes an
+  operator toward rewording until the guard stops firing.
+- **C3 (LOW, tool vs runbook)** - step 12g says a parked run keeps its branch under the wip/*
+  convention, but the park command refuses a staging branch. Hit for real at the start of the run.
+
+**Also observed:** deleting a branch while sandboxed leaves a stale config section behind and exits
+0 - the ref goes, the config write is denied, git treats it as a warning. Expected residue of every
+sandboxed branch deletion, and not cleanable in-session.
+
+All 23 tasks complete. Ready to archive.

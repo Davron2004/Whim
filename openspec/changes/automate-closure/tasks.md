@@ -49,4 +49,4 @@
   `FIXLOOP_INTEGRATION_BRANCH` must be set [else the baseline is `main` and the change's own
   ratified `gate.sh` edit reads as tamper], and the command must run UNSANDBOXED [the sandbox
   denies writes under `.claude/**`, so `git checkout --detach` half-applies while still exiting 0].)*
-- [ ] 7.2 HUMAN-SUPERVISED: first closure run on a real change executes end to end with the human present but executing nothing; divergences filed as findings before this change is archived *(separate attended run — cannot execute in this background session)*
+- [x] 7.2 HUMAN-SUPERVISED: first closure run on a real change executes end to end with the human present but executing nothing; divergences filed as findings before this change is archived *(separate attended run — cannot execute in this background session)*
