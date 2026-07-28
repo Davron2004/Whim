@@ -401,6 +401,59 @@ post-cleanup force-push — see below.
   **unexercised for the second consecutive run**, exactly as chain-4 recorded in `docs/harness.md`
   §11. The note it added is now doubly earned rather than hypothetical.
 
+### 12e — history cleanup SKIPPED, by operator decision, with the reason recorded
+
+The branch is 8 commits: one per chain (chain-0…chain-4) plus three findings-driven follow-ups
+(verification + runbook sweep; reviewer findings; the F6 fix). That is already the *output* shape
+`/git-cleanup` exists to produce — task-level semantic commits — so the lane had little to do
+except fold the three follow-ups.
+
+Not folded, deliberately. The runbook's "none survive standalone" rule is written for **Sonar-fix
+commits**, which are mechanical noise attached to a finding someone else raised. These three are
+not: each records a distinct *discovery* — what the gates verified, what the reviewer caught, and
+what executing the runbook caught. For a change whose whole subject is "assert what you actually
+observed", collapsing when-and-how each problem surfaced into a tidier log destroys the part with
+the most evidentiary value. Skipping also avoids a force-push and its re-analysis wait for a
+cosmetic gain. Recorded here so the skip is a decision with a reason, not an omission.
+
+- 2026-07-27 **12f ANCESTOR CHECK — rc=0**, run the way `docs/harness.md` §4.2 prescribes and the
+  way this change's own D3 reversal settled: **two separate bare commands**, `git fetch origin`
+  then `git merge-base --is-ancestor origin/main integration/harden-closure-lane`. Checked against
+  the *fetched* published tip rather than local `main`, which was stale at `e08e06d` for this whole
+  run — the exact stale-local-ref hazard D3 raised, answered by fetching rather than by swapping in
+  a `gh` query that cannot run under the sandbox. Both commands ran without a policy denial,
+  confirming §4.1a's bare-form rule in practice.
+
+### Task 5.3 — second attempt at the exact F1 window, and an honest negative result
+
+The post-`12f`-fix push gave a second chance at the discriminating condition (`no checks reported`,
+exit 0). Polled within seconds of the push:
+
+```text
+gh rc=8
+  isolation-suite  pending   quality-gate  pending
+  → PENDING — 2 of 2 check(s) have not reported a verdict yet (tool rc=8).
+```
+
+**The exact window was again NOT observed** — GitHub registered both jobs before the poll landed,
+on both pushes. Recorded as a negative result rather than glossed: on this repository CI registers
+faster than a poll can be issued by hand, so the `no checks reported` window is real (it is what
+`research.md` measured) but too narrow to catch reliably in the wild. The discrimination between
+the fixed predicate and the naive one therefore rests on the **fixture red check** (chain-1), which
+exercises that exact input deterministically. What the live polls *do* establish is the weaker but
+still necessary claim 5.3 asks for: polled immediately after a push, the predicate reports PENDING
+and not green, four times across two pushes.
+
+The set-growth observation repeated on this push too — `SonarCloud Code Analysis` was absent at the
+first poll (2 checks) and present at the second (3 checks). Twice observed, in two independent
+pushes, so it is a property of the system rather than a one-off race.
+
+**Incidental evidence for keeping the timeout generous.** `isolation-suite` took **1m53s** on the
+first push and **11m43s** on the second — same job, same repository, 6× the wall-clock, from runner
+contention alone. A tight fixed cap would have parked a perfectly healthy run. This is the reason
+D1 kept the bounded timeout as a *park with a clear reason* rather than tightening it into a
+liveness assumption: the poll's job is to refuse a false green, not to predict CI latency.
+
 ## Reviewer pass (runbook step 11)
 
 Dispatched on the full range `3b3c7fc..ab42615` with the spec excerpts and six explicit targets,
@@ -446,3 +499,62 @@ defects, which is the exact class this change exists to remove.
    validation: every subcommand in `fixloop.sh` uses `${N:?}`, so making this one different would
    trade a documentation inaccuracy for an inconsistency. Both codes remain safely distinct from
    the three verdicts, so the invariant is untouched either way.
+
+## Closing summary
+
+**Chains run:** 5 (chain-0…chain-4), all main-thread HUMAN-BOOTSTRAP, serial. **Redispatches:** 0 —
+no implementer was dispatched at all, since every edited file is Class-2. **Merge conflicts:** 0.
+**Halts:** 0. **Parks:** 0.
+
+**Findings, final disposition** — the planned set did not survive contact:
+
+| # | Planned | Outcome |
+| --- | --- | --- |
+| F1 | poll infers a verdict from silence | **REAL, fixed** — `checkverdict`, red-checked against the naive predicate |
+| F2 | hook lost a documented relaxation | **FALSE, dropped** — relaxation live since `511f024b`; finding aged out mid-run |
+| F2-residual | — (not planned) | **REAL, fixed** — the compound exclusion is what actually denied; documented in §4.1a |
+| F2b | matcher judges carried content | **REAL, fixed** — workaround documented in §4.1b, and used twice this run in anger |
+| F3 | `park` refuses its own documented input | **REAL, fixed** — red-checked against the committed script |
+| F4 | `.git/config` residue | **REAL, documented** — unpreventable, so named as expected |
+| F5 | — (found at dispatch) | **REAL, fixed** — `gh` fails at the trust store; resolves #50 D2 |
+| F6 | — (found during closure) | **REAL, fixed** — `$TMPDIR` is sandbox-remapped; step 12c corrected |
+
+Four planned findings in, seven real ones out, one planned finding deleted. **Three of the seven
+were found by re-measuring or by executing rather than by reading** — F2's refutation and F5 at
+dispatch, F6 during closure.
+
+**Deviations by class.** Class A: two. (1) chain-1 implemented D1's *stated remedy* rather than its
+letter — "invert the predicate" was impossible because step 12c had no predicate, only prose; the
+stop condition was extracted into a subcommand instead. (2) chain-2's ancestry caveat is computed
+rather than boilerplated, which the task did not require but the negative control now enforces.
+Class B: one, escalated and resolved by the operator — chains.md declared the whole change
+undispatchable, and the operator elected the predecessor's attended main-thread precedent rather
+than runbook step 2's "surface and skip". Class C: none.
+
+**Two design decisions were overturned by measurement**, both by the operator after evidence was
+put to them: D2 (resolved as a void premise rather than either of its two branches) and D3
+(reversed — the local ancestor check stays). Neither was overturned by the dispatcher unilaterally.
+
+**Gates:** `gate.sh` PASS ×5 (one per merge point), `gate-full.sh` PASS ×2, preflight suite 30 → 66
+assertions, `openspec validate` 30/0. **Reviewer:** no HIGH, no MEDIUM, three LOW, all fixed;
+report honesty verified against the diff.
+
+**What this run is evidence for**, beyond its own findings: the harness caught two of its own
+defects *while being used to fix its own defects*. The gate refused a dirty Class-2 tree and forced
+the ratifying commit; `checkverdict`'s readable-file precondition turned what would have been a
+false SETTLED PASS into a usage error, inside the code written to remove exactly that class. The
+standing rule the run produced — **re-measure a finding at dispatch** (decision #51 D2) — is the one
+worth carrying forward, because it is what stopped a security deny from being re-broadened on the
+strength of a day-old measurement.
+
+**Left open, deliberately:**
+
+- The `no checks reported` window was never observed live across two pushes (see task 5.3 above).
+  Discrimination rests on the fixture red check.
+- Closure step 12d unexercised for a second consecutive run; recorded in `docs/harness.md` §11.
+- Two absence-read-as-success instances in `opsx/archive.md`, filed in `findings-runbook-sweep.md`,
+  not fixed — out of scope and worth their own change.
+- `scripts/**` and `.github/workflows/**` were not swept for that class.
+
+**MEMORY: proposals** — none. No implementer ran, so there are no implementer reports to harvest;
+the transferable lessons are in decision #51 rather than in agent memory.

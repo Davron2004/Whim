@@ -24,6 +24,7 @@ not concurrently edited — it owns `apply.md`, which chains 1 and 3 both modify
 - [x] 1.3 Confirm the suite is RED against the current predicate before changing it, and record the observed output in `progress.md`
 - [x] 1.4 Rewrite `apply.md` step 12c so the poll continues while any check is pending **or** the tool reports no checks, and concludes only on an explicit verdict from every required check; keep the bounded timeout and the park-on-timeout behaviour
 - [x] 1.5 Turn the suite GREEN; re-confirm the negative control still passes
+- [x] 1.6 **Added during closure (finding F6).** Step 12c's two commands must run in the same sandbox context: `$TMPDIR` is remapped by the sandbox, so an unsandboxed `gh` capture and a sandboxed `checkverdict` resolve different directories and the classifier cannot read the file (`cannot read check output`, exit 2). State that in the step, and state that **exit 2 is never a verdict** — not pending, not passing, not failing. Found by executing the step this change rewrote; the fixture suite could not have caught it, since the fixture hands `checkverdict` a path it wrote itself
 
 ## 2. `fixloop.sh park` accepts a staging branch
 
@@ -58,5 +59,6 @@ friction that was always real (F2b), and the new finding F5. See `progress.md` f
 
 - [x] 5.1 `scripts/gate.sh` green on the change tip
 - [x] 5.2 `scripts/gate-full.sh` green on the change tip, from the primary tree, unsandboxed, with `FIXLOOP_INTEGRATION_BRANCH` set
-- [ ] 5.3 Exercise the rewritten poll on a real closure and confirm it reports pending — not green — when polled immediately after a push, which is the condition that produced F1
+- [x] 5.3 Exercise the rewritten poll on a real closure and confirm it reports pending — not green — when polled immediately after a push, which is the condition that produced F1
+  - **DONE, with one limit stated rather than glossed.** Polled immediately after both pushes of this change's own closure; the predicate reported PENDING and not green all four times, then SETTLED PASS only once every check had reported. **The strictest sub-case — `no checks reported` with exit 0, the input on which the naive predicate says PASS — was NOT observed live:** on this repository CI registers both jobs faster than a poll can be issued by hand. The live polls therefore establish what 5.3 asks (pending, not green, under real conditions) but do **not** discriminate the fixed predicate from the naive one; that discrimination rests on the chain-1 fixture red check, which drives the exact input deterministically. Ticking this without the caveat would be the overclaim this change exists to remove. Full poll transcripts in `progress.md`
 - [x] 5.4 Sweep the runbooks for any other predicate that reads an absence as success (design Open Questions); file what is found rather than fixing it inline
