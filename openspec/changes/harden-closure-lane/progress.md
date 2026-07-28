@@ -184,3 +184,55 @@ Two things follow.
 - 2026-07-27 ordering note — a definite failure outranks an uninterpretable state (`failing` is
   checked before `unknown`), because a failure is already actionable and neither order can produce
   a false green.
+- 2026-07-27 **gate refused before the commit**, correctly: `GATE REFUSING TO RUN: verification
+  config (or a harness hook) differs from baseline (HEAD)`, naming `scripts/fixloop.sh` and
+  `.claude/commands/opsx/apply.md`. The gate compares Class-2 files against HEAD, so a Class-2 edit
+  must be committed before it will run — which is what makes the commit the ratification act rather
+  than a formality. Committed, then re-ran.
+- 2026-07-27 **merged** at `e31bc54`; **regate: FAST GATE PASSED** on the committed tip.
+
+### chain-2: park-staging-branch (tasks 2.1–2.4) — main-thread, HUMAN-BOOTSTRAP
+
+- 2026-07-27 started — no worktree, no implementer: Class-2 (`scripts/fixloop.sh`), attended
+  main-thread. `after: chain-1` honoured — both chains extend
+  `scripts/test/fixloop-preflight.test.sh`, and chain-1 was merged first.
+- 2026-07-27 **RED CHECK — F3 reproduced verbatim against the COMMITTED `park`** (HEAD's
+  `scripts/fixloop.sh` extracted into a throwaway fixture, so the assertion ran against the real
+  refusal rather than a described one):
+
+  ```text
+  === COMMITTED park vs a staging branch ===
+  rc=2
+  fixloop: park expects a fix/* or chain/* branch, got 'integration/run'
+
+  === branch state after the refusal ===
+    * integration/run
+  === note written? ===
+    (no .claude/fixloop directory — no note)
+  ```
+
+  The command the runbook instructs refuses the branch the runbook instructs it on.
+- 2026-07-27 implemented — `park` accepts `integration/*`, deriving `wip/<id>` by the same
+  `${branch#*/}` rule. A staging park additionally emits a "Resuming a parked staging run" section.
+- 2026-07-27 **the ancestry fact is COMPUTED, not boilerplated.** `git merge-base --is-ancestor main
+  <branch>` is evaluated *before* the rename and the note states what is actually true, in both
+  directions. A warning stapled on unconditionally would be noise the next reader learns to skip;
+  this one is a measurement. Both directions are asserted in the suite, so the message cannot
+  degrade into an unconditional string.
+- 2026-07-27 **task 2.4 verified against the real case.** Generated note for the diverged-base
+  condition carries every load-bearing fact the hand-rolled
+  `.claude/fixloop/wip-linked-apps-data-model.md` recorded — branch, tip, reason, resume path, the
+  `main`-is-not-an-ancestor caveat with the same conclusion ("do that FIRST"), and remaining work =
+  runbook step 12 (a–g) — **plus one the hand-rolled note missed**: re-export
+  `FIXLOOP_INTEGRATION_BRANCH=wip/<id>`, without which the toolkit resolves baselines against the
+  wrong branch. Two corrections over the hand-rolled version: the resume line is `git switch` in the
+  PRIMARY tree, not `git worktree add` (a staging run's remaining work is closure, which runs
+  there), and the branch kind now decides which section is emitted. What the hand-rolled note had
+  and this cannot generate is per-run narrative (a reviewer's open item, unrelated debris) — that
+  belongs in the `reason` argument, which is preserved verbatim.
+- 2026-07-27 negative control — parking an unrecognised kind is still refused, the branch is left
+  untouched, and **no note is written**. Widening an accepted-input set is exactly the change that
+  silently becomes "accept anything"; a half-happened rename would leave a run in a state neither
+  branch name describes. Regression guard added for `fix/*`: it still parks and still gets the
+  worktree resume line, with no staging-closure section.
+- 2026-07-27 **GREEN — 66 passed, 0 failed.**
