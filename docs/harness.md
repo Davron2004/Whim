@@ -318,6 +318,19 @@ schema `apply.instruction` is the durable routing anchor if any generated skill 
   still ahead of it, and the first run through it should be watched, not trusted. This is recorded
   rather than pre-emptively rewritten — it is unexercised, not known-broken, and speculatively
   changing code no one has watched fail is how the *other* kind of defect gets introduced.
+- **Delete branches UNSANDBOXED — every site, not just teardown.** `git branch -d/-D` removes the ref
+  *and* the branch's `[branch "…"]` section from `.git/config`. Sandboxed, the ref goes, the config
+  write is **denied**, and the command still exits `0` — stranding a dead section forever, because
+  `git config` is tier-1 denied for every caller including the orchestrator, so nothing can prune it
+  in-session. Measured 2026-07-28: five unsandboxed deletions left **nothing** behind; the one
+  sandboxed deletion stranded its section and printed `could not lock config file .git/config`.
+  This costs nothing — the surrounding steps already need an unsandboxed context, since they touch
+  `.claude/**`. It applies at **every** deletion site: `/opsx:apply` step 9 (per chain — the biggest
+  producer, once per chain per run) and step 12g, `/fix-loop` step 8 (per finding), and the
+  `/git-cleanup` lane. **Partial mitigation, stated honestly:** branches created by the agent
+  runtime's own worktree isolation (`worktree-*`, `wf_*`) are deleted by machinery no runbook here
+  controls, and will keep stranding sections regardless. Existing residue needs a one-off manual
+  prune by a human outside the session — see `openspec/critic/open-follow-ups.md` §7 for the recipe.
 - **`gh` under the sandbox fails at the trust store, not the network** (2026-07-27, resolves the
   open question left by decision #50 D2). `tls: failed to verify certificate: x509: OSStatus -26276`
   is `errSecInternalComponent`, a macOS Keychain error: `gh` verifies TLS through the system trust

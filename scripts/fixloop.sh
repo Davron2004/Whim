@@ -471,7 +471,7 @@ case "$cmd" in
     echo "  ./scripts/gate.sh   # on FAIL: git revert --no-edit -m 1 HEAD, then park the branch"
     echo "then clean up:"
     echo "  git worktree remove --force .claude/worktrees/${branch#fix/}  # if a named worktree exists"
-    echo "  git branch -d $branch"
+    echo "  git branch -d $branch   # UNSANDBOXED (docs/harness.md §11) — sandboxed it strands a dead .git/config section"
     echo "  rm -f .claude/fixloop/owners/${branch#fix/}  # release the agent<->worktree binding (also required before re-dispatching a parked worktree to a NEW agent)"
     exit 0
     ;;

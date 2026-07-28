@@ -96,7 +96,7 @@ if [[ "$target_branch" = "main" ]]; then
   echo "  # NOTE: main-targeted cleanup is the LEGACY mode (pre-existing history only);"
   echo "  # the standard flow targets the run's integration/<run-id> branch pre-merge."
 fi
-echo "teardown:"
+echo "teardown (run the branch deletions UNSANDBOXED — docs/harness.md §11; sandboxed they strand a dead .git/config section):"
 echo "  rm .claude/fixloop/grants/git-cleanup .claude/fixloop/owners/${id}-squashed"
 echo "  git worktree remove $WORKTREE"
 echo "  git branch -D $BRANCH"
