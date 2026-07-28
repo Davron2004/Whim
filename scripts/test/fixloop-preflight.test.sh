@@ -514,6 +514,138 @@ case_poll_unknown_state_is_pending() {
   assert_contains "an unrecognised state is named, not swallowed" "$OUT" "some-new-state"
 }
 
+# ================================================================================================
+# Case 9 — `park` accepts the branch kinds the runbook tells operators to park.
+#
+# The runbook instructs `scripts/fixloop.sh park` on a run's staging branch (apply.md step 12c's
+# timeout path, and the standing terminal-wall rule), and the command refused `integration/*` — so
+# the one real staging park had to be hand-rolled, reproducing this command's own note format by
+# eye (openspec: harden-closure-lane, finding F3).
+#
+# Widening an accepted-input set is exactly the change that silently becomes "accept anything", so
+# the refusal case is asserted alongside, and it asserts that NO note is written on refusal — a
+# rename that half-happened would otherwise leave a run in a state neither branch name describes.
+# ================================================================================================
+
+# new_park_fixture <main-advanced: yes|no> -> path
+# Topology: main -> (branch point) -> integration/run. With `yes`, main gains a further commit so
+# it is no longer an ancestor — the condition that made step 12f fail on the real parked run.
+new_park_fixture() {
+  local advanced="$1" fx
+  fx="$(mktemp -d "${TMPDIR:-/tmp}/whim-park.XXXXXX")" || return 1
+  FIXTURES+=("$fx")
+
+  fgit init -q -b main "$fx" >/dev/null 2>&1 || return 1
+  mkdir -p "$fx/scripts"
+  cp "$REAL_FIXLOOP" "$fx/scripts/fixloop.sh"; chmod +x "$fx/scripts/fixloop.sh"
+  echo v1 > "$fx/a.txt"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "base" >/dev/null 2>&1 || return 1
+
+  fgit -C "$fx" switch -q -c integration/run >/dev/null 2>&1 || return 1
+  echo v2 > "$fx/a.txt"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "run work" >/dev/null 2>&1 || return 1
+
+  if [ "$advanced" = yes ]; then
+    fgit -C "$fx" switch -q main >/dev/null 2>&1 || return 1
+    echo v3 > "$fx/b.txt"
+    fgit -C "$fx" add -A >/dev/null 2>&1
+    fgit -C "$fx" commit -qm "main moved on" >/dev/null 2>&1 || return 1
+    fgit -C "$fx" switch -q integration/run >/dev/null 2>&1 || return 1
+  fi
+
+  printf '%s' "$fx"
+}
+
+case_park_accepts_staging_branch() {
+  local fx out rc note
+  fx="$(new_park_fixture no)" || { fail "case 9 fixture" "could not build park fixture"; return; }
+
+  out="$(cd "$fx" && ./scripts/fixloop.sh park integration/run "closure poll reached no verdict" 2>&1)"
+  rc=$?
+  assert_rc_is "parking a staging branch succeeds" 0 "$rc" "$out"
+  assert_contains "the park is reported" "$out" "PARKED integration/run -> wip/run"
+
+  if fgit -C "$fx" rev-parse --verify -q wip/run >/dev/null; then
+    pass "the staging branch is renamed under wip/*"
+  else
+    fail "the staging branch is renamed under wip/*" "$out"
+  fi
+
+  note="$fx/.claude/fixloop/wip-run.md"
+  if [ -r "$note" ]; then
+    pass "a reason note is written"
+  else
+    fail "a reason note is written" "no note at $note"
+    return
+  fi
+  note="$(cat "$note")"
+  assert_contains "the note records the reason" "$note" "closure poll reached no verdict"
+  assert_contains "the note points at closure, not a worktree redispatch" "$note" "runbook step 12"
+  assert_contains "the note resumes in the primary tree" "$note" "PRIMARY working tree"
+  assert_contains "the note names the integration-branch export" "$note" "FIXLOOP_INTEGRATION_BRANCH=wip/run"
+}
+
+case_park_staging_records_base_divergence() {
+  # The fact that makes a parked staging run resumable, and the one the hand-rolled park had to
+  # work out by hand. Asserted in BOTH directions so the note reports what is true, not a warning
+  # stapled on unconditionally.
+  local fx out note
+  fx="$(new_park_fixture yes)" || { fail "case 9b fixture" "could not build park fixture"; return; }
+  out="$(cd "$fx" && ./scripts/fixloop.sh park integration/run "parked with the base advanced" 2>&1)"
+  note="$(cat "$fx/.claude/fixloop/wip-run.md" 2>/dev/null)"
+  assert_contains "a diverged base is reported as NOT an ancestor" "$note" "is NOT an ancestor"
+  assert_contains "the note says the ancestor check will fail" "$note" "WILL FAIL"
+  assert_contains "the note says to reconcile first" "$note" "Do that FIRST"
+
+  fx="$(new_park_fixture no)" || { fail "case 9c fixture" "could not build park fixture"; return; }
+  out="$(cd "$fx" && ./scripts/fixloop.sh park integration/run "parked with the base still behind" 2>&1)"
+  note="$(cat "$fx/.claude/fixloop/wip-run.md" 2>/dev/null)"
+  assert_contains "an undiverged base is reported as still an ancestor" "$note" "IS still an ancestor"
+  assert_not_contains "no divergence warning when the base has not diverged" "$note" "WILL FAIL"
+}
+
+case_park_still_refuses_unknown_branch_kind() {
+  # The negative control for 2.2. Without it, widening the accepted set could become "accept
+  # anything" and no assertion here would notice.
+  local fx out rc
+  fx="$(new_park_fixture no)" || { fail "case 9d fixture" "could not build park fixture"; return; }
+  fgit -C "$fx" branch scratch/thing integration/run >/dev/null 2>&1
+
+  out="$(cd "$fx" && ./scripts/fixloop.sh park scratch/thing "should be refused" 2>&1)"
+  rc=$?
+  assert_rc_nonzero "parking an unrecognised branch kind is refused" "$rc" "$out"
+  assert_contains "the refusal names the accepted kinds" "$out" "fix/*, chain/* or integration/*"
+  if fgit -C "$fx" rev-parse --verify -q scratch/thing >/dev/null; then
+    pass "a refused park leaves the branch untouched"
+  else
+    fail "a refused park leaves the branch untouched" "scratch/thing no longer exists"
+  fi
+  if [ -e "$fx/.claude/fixloop/wip-thing.md" ]; then
+    fail "a refused park writes no note" "a note was written for a refused park"
+  else
+    pass "a refused park writes no note"
+  fi
+
+  # Regression guard: the pre-existing kinds still park, and still get the worktree resume line.
+  out="$(cd "$fx" && ./scripts/fixloop.sh park fix/thing "nope" 2>&1)"
+  assert_rc_nonzero "parking a nonexistent fix branch fails cleanly" "$?" "$out"
+}
+
+case_park_fix_branch_unchanged() {
+  local fx out rc note
+  fx="$(new_park_fixture no)" || { fail "case 9e fixture" "could not build park fixture"; return; }
+  fgit -C "$fx" branch fix/thing integration/run >/dev/null 2>&1
+
+  out="$(cd "$fx" && ./scripts/fixloop.sh park fix/thing "still works" 2>&1)"
+  rc=$?
+  assert_rc_is "parking a fix branch still succeeds" 0 "$rc" "$out"
+  note="$(cat "$fx/.claude/fixloop/wip-thing.md" 2>/dev/null)"
+  assert_contains "a fix park still gets the worktree resume line" "$note" "git worktree add .claude/worktrees/thing"
+  assert_not_contains "a fix park gets no staging-closure section" "$note" "runbook step 12"
+}
+
 case_incomplete_checkout
 case_linked_worktree
 case_unrelated_baseline
@@ -526,6 +658,10 @@ case_poll_every_check_reported
 case_poll_partial_is_pending
 case_poll_failure_is_settled_fail
 case_poll_unknown_state_is_pending
+case_park_accepts_staging_branch
+case_park_staging_records_base_divergence
+case_park_still_refuses_unknown_branch_kind
+case_park_fix_branch_unchanged
 
 printf '\n'
 if [ "$FAILURES" -gt 0 ]; then

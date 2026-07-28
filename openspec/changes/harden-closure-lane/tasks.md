@@ -23,10 +23,10 @@ not concurrently edited — it owns `apply.md`, which chains 1 and 3 both modify
 
 ## 2. `fixloop.sh park` accepts a staging branch
 
-- [ ] 2.1 Extend the suite with the park case: parking a staging branch renames it under `wip/*` and writes a reason note; parking an unrecognised branch kind still refuses (the negative control that keeps 2.2 from becoming "accept anything")
-- [ ] 2.2 Widen `scripts/fixloop.sh`'s park case arm to accept `integration/*`, deriving `wip/<id>` the same way (design D5)
-- [ ] 2.3 Make a staging park's note record that resuming closure may require reconciling with the base branch first, since the base can advance past a parked run and the ancestry check would then fail — this is the fact that makes a parked staging run resumable, learned by hitting it
-- [ ] 2.4 Verify against the real case: the note `park` now generates carries the same information the hand-rolled `.claude/fixloop/wip-linked-apps-data-model.md` had to record
+- [x] 2.1 Extend the suite with the park case: parking a staging branch renames it under `wip/*` and writes a reason note; parking an unrecognised branch kind still refuses (the negative control that keeps 2.2 from becoming "accept anything")
+- [x] 2.2 Widen `scripts/fixloop.sh`'s park case arm to accept `integration/*`, deriving `wip/<id>` the same way (design D5)
+- [x] 2.3 Make a staging park's note record that resuming closure may require reconciling with the base branch first, since the base can advance past a parked run and the ancestry check would then fail — this is the fact that makes a parked staging run resumable, learned by hitting it
+- [x] 2.4 Verify against the real case: the note `park` now generates carries the same information the hand-rolled `.claude/fixloop/wip-linked-apps-data-model.md` had to record
 
 ## 3. Document what the policy actually enforces, and correct the false capability claim
 

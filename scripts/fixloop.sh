@@ -385,14 +385,61 @@ case "$cmd" in
     ;;
 
   park)
+    # Accepts a run's STAGING branch as well as a fix/chain branch. The runbook (apply.md step 12c
+    # and the terminal-wall rule) instructs `park` on `integration/*`, and this refused it — so the
+    # one real staging park had to be hand-rolled, reproducing this command's own note format by
+    # eye (openspec: harden-closure-lane, finding F3). A tool that refuses its documented input is
+    # the defect, not the input.
     branch="${1:?usage: park <branch> <reason...>}"; shift; reason="${*:-no reason given}"
-    case "$branch" in fix/*|chain/*) : ;; *) die "park expects a fix/* or chain/* branch, got '$branch'";; esac
+    case "$branch" in
+      fix/*|chain/*|integration/*) : ;;
+      *) die "park expects a fix/*, chain/* or integration/* branch, got '$branch'" ;;
+    esac
     id="${branch#*/}"
+    tip="$(git rev-parse --short "$branch" 2>/dev/null)" || die "no such branch '$branch'"
+
+    # Computed BEFORE the rename, and computed rather than boilerplated: whether the published
+    # branch is still an ancestor is the fact that decides whether closure can resume at all, and
+    # it is exactly what the hand-rolled park had to work out by hand.
+    staging_ancestry=""
+    case "$branch" in
+      integration/*)
+        if git merge-base --is-ancestor main "$branch" 2>/dev/null; then
+          staging_ancestry="\`main\` IS still an ancestor of this branch, so closure step 12f's ancestor check will pass as-is."
+        else
+          staging_ancestry="\`main\` is NOT an ancestor of this branch — the published branch advanced while this run was open. Closure step 12f's ancestor check WILL FAIL until \`main\` is merged into \`wip/$id\` (or the branch is rebased onto the current \`main\` tip). Do that FIRST, before pushing or re-opening the PR."
+        fi
+        ;;
+    esac
+
     git branch -m "$branch" "wip/$id" || die "rename failed"
     mkdir -p "$ROOT/.claude/fixloop"
     note="$ROOT/.claude/fixloop/wip-$id.md"
-    { echo "# PARKED: $id"; echo; echo "- branch: wip/$id"; echo "- reason: $reason"; \
-      echo "- resume: git worktree add .claude/worktrees/$id wip/$id"; } > "$note"
+    {
+      echo "# PARKED: $id"
+      echo
+      echo "- branch: wip/$id"
+      echo "- parked from: $branch (tip $tip)"
+      echo "- reason: $reason"
+      case "$branch" in
+        integration/*)
+          # A staging run resumes in the PRIMARY tree — its remaining work is closure, which runs
+          # there. Handing it a worktree resume line would be wrong advice.
+          echo "- resume: git switch wip/$id   # a staging run resumes in the PRIMARY working tree, not a worktree"
+          echo
+          echo "## Resuming a parked staging run"
+          echo
+          echo "- Remaining work is runbook step 12 (a–g): push, draft PR, poll, Sonar round,"
+          echo "  /git-cleanup with \`target_branch=wip/$id\`, ready flip, teardown."
+          echo "- $staging_ancestry"
+          echo "- Export \`FIXLOOP_INTEGRATION_BRANCH=wip/$id\` for every fixloop.sh call after resuming,"
+          echo "  or the toolkit will resolve baselines against the wrong branch."
+          ;;
+        *)
+          echo "- resume: git worktree add .claude/worktrees/$id wip/$id"
+          ;;
+      esac
+    } > "$note"
     echo "PARKED $branch -> wip/$id"
     echo "note: $note"
     exit 0
