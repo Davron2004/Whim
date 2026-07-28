@@ -12,6 +12,14 @@ from editing the gate).
 
 This directory is intentionally kept in git so the "since the last report" marker survives.
 
+## Open follow-ups
+
+`open-follow-ups.md` is the standing backlog of things found during runs and deliberately **not**
+fixed by the run that found them — out-of-scope findings, unexercised paths, and recorded limits on
+what the evidence actually proves. Also not date-named, for the same marker reason. Append rather
+than replace; strike through resolved items with a date instead of deleting them, so the file also
+records what turned out not to matter.
+
 ## SonarCloud recurrence ledger
 
 `sonar-ledger.md` is an append-only log of every external SonarCloud finding, one line per
