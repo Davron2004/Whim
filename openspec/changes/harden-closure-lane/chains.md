@@ -1,9 +1,10 @@
 # Context chains: harden-closure-lane
 
 <!--
-  EVERY chain here is HUMAN-BOOTSTRAP, for the same reason as harden-gate-preconditions: all five
-  files touched — .claude/commands/opsx/apply.md, .claude/hooks/bash-policy.sh, docs/harness.md,
-  scripts/fixloop.sh, scripts/gate.sh — are Class-2 protected. protect-harness.sh hard-blocks
+  EVERY chain here is HUMAN-BOOTSTRAP, for the same reason as harden-gate-preconditions: the files
+  touched — .claude/commands/opsx/apply.md, docs/harness.md, scripts/fixloop.sh — are Class-2
+  protected. (.claude/hooks/bash-policy.sh was on this list until 2026-07-27; chain-3's re-scope
+  removed it — see that chain's note.) protect-harness.sh hard-blocks
   subagents and prompts the main thread. Nothing here is dispatchable to an implementer, so the
   dispatcher's parallel-worktree machinery does not apply; the chains exist to fix ORDERING and to
   keep each sitting small enough to ratify carefully.
@@ -57,33 +58,47 @@
 - edits (Class-2, precise): MODIFY `scripts/fixloop.sh` — the `park)` case arm only; EXTEND
   `scripts/test/fixloop-preflight.test.sh`
 
-## chain-3: policy-doc-reconciliation — HUMAN-BOOTSTRAP
+## chain-3: document-what-is-enforced — HUMAN-BOOTSTRAP
+
+**RE-SCOPED 2026-07-27.** Chain-0 resolved D2 as a void premise: the hook already implements the
+relaxation and the docs already describe it correctly (`progress.md` has the probe evidence). The
+original chain — "correct §4 **or** restore the hook relaxation" — would have either enshrined a
+documentation error or re-broadened a security deny for no cause. **`.claude/hooks/bash-policy.sh`
+is no longer edited by this chain**, and neither is its test suite: there is no behaviour change to
+lock. What remains is the residual that is genuinely real (the compound exclusion), the friction
+that was always real (F2b), and the new finding F5/D7.
 
 - tasks: 3.1–3.5
-- rationale: All five tasks turn on D2's single answer and touch the same two documents plus,
-  conditionally, the hook and its suite. Splitting them would mean ratifying the same reconciliation
-  twice.
+- rationale: All five tasks now describe *what the policy already enforces* and *what the
+  environment actually provides*, and they land in the same two documents. One reconciliation, one
+  ratification sitting.
 - reads: `specs/staging-integration-lane/spec.md` §"Every command a closure step instructs is a
-  command the policy permits"; `design.md` D2, D3, D4; `research.md` §F2, §F2b; handoff:
-  `handoff/poll-predicate.md`
+  command the policy permits"; `design.md` D2 (resolution), D3 (reversal), D4, D7; `research.md`
+  §F2b; `progress.md` §"Pre-dispatch re-measurement"; handoff: `handoff/poll-predicate.md`
 - writes-contract: none
-- after: chain-0 (needs the answer) and chain-1 (both edit `apply.md`; chain-1 owns 12c, this chain
-  owns 12f/12g — sequential to avoid a conflict in one file)
-- edits (Class-2, precise): MODIFY `docs/harness.md` §4 **or** `.claude/hooks/bash-policy.sh` (per
-  D2 — never both); MODIFY `.claude/commands/opsx/apply.md` — steps 12f and 12g; conditionally
-  EXTEND `.claude/hooks/test/bash-policy.test.sh`
+- after: chain-0 (needs the resolution) and chain-1 (both edit `apply.md`; chain-1 owns 12c, this
+  chain owns step 12's preamble and 12g — sequential to avoid a conflict in one file)
+- edits (Class-2, precise): MODIFY `docs/harness.md` — §4 bash-policy row (bare-form constraint,
+  F2b workaround, why 12f's local check stays); MODIFY `.claude/commands/opsx/apply.md` — step 12
+  preamble (false carve-out claim) and step 12g (joined forms). **NOT** `bash-policy.sh`, **NOT**
+  `bash-policy.test.sh`
+- note: task 3.4 is a *deliberate non-edit* — 12f keeps its local ancestor check (D3 reversed). It
+  is a task because the reason must be written down, or the next reader "simplifies" it into a `gh`
+  call that cannot run under the sandbox.
 
 ## chain-4: record-the-unfixable — HUMAN-BOOTSTRAP
 
-- tasks: 4.1–4.3
+- tasks: 4.1–4.4 (**4.4 added 2026-07-27** — CLAUDE.md's open-question paragraph, now answered by D7)
 - rationale: "Everything else is already true, now write it down." The decision entry must come last
   so it can record D2's resolution as settled fact rather than as a pending question.
 - reads: `specs/staging-integration-lane/spec.md` §"Teardown states the expected residue of a
-  sandboxed branch deletion"; `design.md` D6; `research.md` §F4 and §"What the run validated"
+  sandboxed branch deletion"; `design.md` D6, D7, D8; `research.md` §F4 and §"What the run
+  validated"; `progress.md` §"Pre-dispatch re-measurement"
 - writes-contract: none
 - after: chain-3 — 4.3 records D2's resolution, and 4.1 edits the same step 12g that chain-3 rewrites
 - edits (Class-2, precise): MODIFY `.claude/commands/opsx/apply.md` — step 12g; MODIFY
-  `docs/harness.md`; APPEND `docs/decisions.md`
+  `docs/harness.md`; APPEND `docs/decisions.md`; MODIFY `CLAUDE.md` (not Class-2, but `AGENTS.md`
+  symlinks to it — both change together)
 
 ## Verification (not a chain)
 

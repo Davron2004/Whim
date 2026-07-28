@@ -22,9 +22,9 @@ specifies; F4 a `git` command that warns, half-succeeds, and exits 0.
 
 **Non-Goals:**
 
-- Weakening the bash policy. Every denial observed was **fail-closed and safe**; the problem is that
-  the docs describe a different policy, not that the policy is wrong. If D2 resolves toward "the
-  docs are wrong", the correct fix is to correct the docs and reroute the steps.
+- Weakening the bash policy. Every denial observed was **fail-closed and safe**. *(Updated
+  2026-07-27: the docs do **not** describe a different policy — D2's premise was void. `bash-policy.sh`
+  is not edited by this change at all, so this non-goal is now structural rather than a discipline.)*
 - Making `git config` writable under the sandbox (F4). Same architectural denial as `.claude/**`;
   the remedy is to expect it, not to defeat it.
 - Fixing step 12d. It is unexercised, not known-broken; this change records that gap rather than
@@ -41,21 +41,68 @@ want is true, rather than that a symptom of failure is absent. *Alternative reje
 warm-up sleep before the first poll — it trades a correctness bug for a race, and a slow-registering
 check would reintroduce it.
 
-**D2. Which side of F2 is the defect is an OPEN QUESTION for the owner, not an inference.**
-Either the docs overstate a relaxation that was never implemented, or the hook regressed and lost
-one it should have. `research.md` deliberately does not guess. The distinction changes the fix:
-*docs wrong* → correct §4 and reroute 12f/12g; *hook wrong* → restore the relaxation and keep the
-runbook. **Resolve this before implementing**, because implementing the wrong branch either
-re-broadens a security policy without cause, or enshrines a documentation error.
-Note the asymmetry: correcting the docs is safe and reversible; re-relaxing a deny is neither. If
-the owner has no recollection, correct the docs.
+**D2. ~~Which side of F2 is the defect is an OPEN QUESTION for the owner.~~ RESOLVED 2026-07-27:
+neither. The premise is void.**
 
-**D3. 12f's ancestor check moves to the `gh` mergeability query regardless of D2.**
-`gh pr view <n> --json mergeable,mergeStateStatus` answers the question the step is actually asking —
-"will this merge cleanly into the current base?" — using GitHub's own view of the real merge, rather
-than inferring it from a local ref that may be stale, and it needs no local fetch. It is already
-permitted for the main thread. This holds even if D2 restores the relaxation, so it is not blocked
-on D2.
+*Original text:* Either the docs overstate a relaxation that was never implemented, or the hook
+regressed and lost one it should have. `research.md` deliberately does not guess. The distinction
+changes the fix: *docs wrong* → correct §4 and reroute 12f/12g; *hook wrong* → restore the
+relaxation and keep the runbook. **Resolve this before implementing**, because implementing the
+wrong branch either re-broadens a security policy without cause, or enshrines a documentation error.
+
+*Resolution:* Re-measurement before dispatch (full evidence in `progress.md`) shows **both sides are
+already correct**. The relaxation is implemented at `.claude/hooks/bash-policy.sh:164-179` for
+exactly the two forms the docs name, landed by `511f024b` (2026-07-26 12:59,
+`feat(automate-closure): remote-write policy for the staging integration lane`), and is an ancestor
+of this run's base. Bare `git fetch origin` runs from the main thread; the ancestor check returns
+rc=0. `docs/harness.md:110` and `apply.md:49` describe it accurately.
+
+`research.md` §F2 measured a hook that `automate-closure` repaired **mid-run**, during the very
+closure session §F2 was observing — the finding aged out in under 24 hours. What actually denied
+those commands is the **compound exclusion** at `bash-policy.sh:170`, whose denial message names the
+network rule rather than the compounding and so points at the wrong cause.
+
+The real fix is therefore neither branch: document that the relaxed forms are relaxed only when
+issued **bare**, and stop `apply.md` step 12g instructing them joined. `bash-policy.sh` is not
+touched, so no deny is re-broadened. The standing lesson is recorded in D8.
+
+**D3. ~~12f's ancestor check moves to the `gh` mergeability query.~~ REVERSED 2026-07-27 on
+measurement — the local check stays.**
+
+*Original text:* `gh pr view <n> --json mergeable,mergeStateStatus` answers the question the step is
+actually asking — "will this merge cleanly into the current base?" — using GitHub's own view of the
+real merge, rather than inferring it from a local ref that may be stale, and it needs no local
+fetch. It is already permitted for the main thread. This holds even if D2 restores the relaxation.
+
+*Reversal:* D3's stated justification — that the local ancestor check is unrunnable — is false;
+`git merge-base --is-ancestor main <branch>` returns rc=0 from the main thread, and it is not in the
+tier-1 deny list at any position. D7 then removes the remaining argument: the local check runs
+**under the sandbox with no override**, while the `gh` replacement cannot run there at all. Swapping
+a sandbox-runnable check for one that requires an unsandboxed override is a strict regression in the
+one step whose whole purpose is to gate the ready flip. The stale-local-ref concern is covered by
+the bare `git fetch origin` closure already permits main-thread.
+
+**D7. `gh` under the sandbox fails at the trust store, not at the network.**
+Measured in both directions and in both roles: sandboxed `gh pr list` fails identically for the main
+thread and for a subagent with `tls: failed to verify certificate: x509: OSStatus -26276`;
+unsandboxed it exits 0. `OSStatus -26276` is `errSecInternalComponent`, a macOS **Keychain** error —
+`gh` verifies TLS through the system trust store via the Security framework, which the sandbox
+denies. `git`'s `osxkeychain` credential helper fails the same way (`failed to store: 100001`).
+
+Two consequences. First, `apply.md` step 12's claim that "the sandbox carve-outs give them egress +
+the credential path" is **false**, and every closure `gh` call needs an explicit unsandboxed
+override — correcting that claim is task 3.3. Second, this explains what `CLAUDE.md` records as
+unexplained: the blocked `gh` is *not* filesystem-independent, so `sandbox.excludedCommands`
+(separately measured inert) was never the lever. It is filesystem/IPC-dependent, like the `.claude/**`
+write denial beside it. Task 4.4 corrects that paragraph.
+
+**D8. A finding is re-measured at dispatch, not trusted from the proposal.**
+F2 was honestly researched and correctly measured, and was still wrong by the time it reached
+implementation, because a concurrent change edited the same file mid-run. Four commands at dispatch
+caught it; implementing it would have re-broadened a security deny. The same re-measurement pass
+surfaced F5, which no artifact had predicted. This generalises: for any finding whose evidence is an
+observed denial, permission, or exit code, the dispatcher re-runs the observation before acting on
+it. Research measures a moment; a proposal is acted on later.
 
 **D4. Document the matcher friction; do not soften the matcher.**
 F2b's denials were correct. The hazard is behavioural: an operator who does not know about
@@ -94,7 +141,12 @@ is tier-1 denied for all callers). What is fixable is the surprise. Teardown sta
 
 ## Open Questions
 
-- **D2: docs or hook?** Blocking for that item only. Needs the owner's intent.
+- ~~**D2: docs or hook?**~~ **CLOSED 2026-07-27 — neither; the premise was void.** See D2 above and
+  the probe evidence in `progress.md`.
+- **Does any other runbook claim an environmental capability nobody has re-measured?** D7 found one
+  by accident (step 12's sandbox carve-out claim) while investigating something else. That is one
+  instance, not a sweep. Worth its own pass — but as a follow-up change, since it is a different
+  defect class from the absent-result-is-success class this change scopes.
 - Should the closure poll distinguish "required check missing entirely" from "not yet registered"?
   The GitHub API can express it; whether the runbook needs the distinction is unclear until step 12d
   is exercised at least once.
