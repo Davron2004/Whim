@@ -134,3 +134,31 @@ like `activeBundle`/`fork` already do.
 26. Wrong shape — valid JSON but `v !== 1`, `text` missing or non-string, or the parsed value
     is not a plain object (e.g. a JSON array or number) — falls back to `{text: <raw>}` the
     same way as invalid JSON.
+
+## Storage groups (linked-apps-data-model chain-1, design D1–D3)
+
+`InstalledApp.storageGroupId?` names the storage group an entry belongs to: the founding
+entry's own launcher `id`. Absent = own group (today's per-app behavior, unchanged).
+
+27. `engineAppId(entry)` resolves `entry.storageGroupId ?? entry.id` — a grouped entry's engine
+    appId is the founder's id (so its realm reads/writes the founder's database); an ungrouped
+    entry's engine appId is still its own id, exactly as before this change.
+28. `fork(entry, versionId, {shareData: true})` copies the parent's storage group onto the new
+    entry: `newEntry.storageGroupId === (entry.storageGroupId ?? entry.id)` — the founder's own
+    id when the parent itself is ungrouped, or the parent's existing group id when the parent is
+    already a member.
+29. `fork(entry, versionId)` / `fork(entry, versionId, {shareData: false})` / no third argument
+    at all: the new entry gets NO `storageGroupId` — its own group, same as today.
+30. Group membership is immutable after creation: no API mutates `storageGroupId` post-fork; a
+    fork-of-a-fork with `shareData: true` still resolves to the ORIGINAL founder's id (grouping
+    is transitive through the founder, never re-rooted at an intermediate fork).
+31. `AppIndex.storageRefCount(groupId)` counts installed entries whose
+    `(a.storageGroupId ?? a.id) === groupId` — mirrors `refCount`'s idiom for the version-store
+    repo, keyed on the storage field instead.
+32. Delete is refcount-gated on storage exactly like the repo: deleting the founder first, while
+    a sharer remains, drops only the index entry — `deleteStorage` is NOT called for the group,
+    and the sharer still resolves (`engineAppId`) to the same group id and reads its data.
+    Deleting the LAST remaining member of the group then calls `deleteStorage(groupId)`. This
+    holds for both delete orders: founder-first-then-sharer, and sharer-first-then-founder.
+33. Ungrouped delete is unchanged: deleting a never-shared entry calls `deleteStorage(entry.id)`
+    immediately (refcount goes 1 → 0 in the same step), exactly as before this change.

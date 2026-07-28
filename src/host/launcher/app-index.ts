@@ -38,6 +38,12 @@ export interface InstalledApp {
   lineageId: string;
   /** Provenance for the tile/UI only (forks). */
   forkedFrom?: { id: string; name: string };
+  /**
+   * The storage group this entry belongs to (linked-apps-data-model D1): the FOUNDING entry's
+   * own launcher `id`. Absent = its own group (today's per-app behavior, unchanged). Recorded at
+   * creation time only — immutable thereafter (no join/leave/unlink in v1).
+   */
+  storageGroupId?: string;
 }
 
 const APP_KEY = (id: string) => `app:${id}`;
@@ -107,6 +113,12 @@ export class AppIndex {
   /** Count installed entries that reference a given version-store repo (the delete refcount). */
   refCount(storeId: string): number {
     return this.list().filter(a => (a.storeId ?? a.id) === storeId).length;
+  }
+
+  /** Count installed entries that resolve to a given storage group (D3) — the same idiom as
+   *  `refCount`, keyed on `storageGroupId` instead of `storeId`. Used to gate storage deletion. */
+  storageRefCount(groupId: string): number {
+    return this.list().filter(a => (a.storageGroupId ?? a.id) === groupId).length;
   }
 
   /** The seed marker (0 on a virgin backend). Gates first-run seeding idempotence (D7). */

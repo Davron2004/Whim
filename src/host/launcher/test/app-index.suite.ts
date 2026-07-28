@@ -78,6 +78,16 @@ export async function runAppIndexTests(h: Harness): Promise<void> {
     h.eq(idx.refCount('tip-splitter'), 1, 'lone original references its own repo once');
   });
 
+  // storageRefCount (used by delete refcounting in store-access, design D3)
+  await h.test('app-index storageRefCount counts entries sharing a storage group', async () => {
+    const idx = new AppIndex(new MapKVBackend());
+    idx.put(entry('water-counter')); // founder: storageGroupId == id
+    idx.put(entry('water-counter__fork-1', { storageGroupId: 'water-counter', lineageId: 'fork-1' }));
+    idx.put(entry('tip-splitter'));
+    h.eq(idx.storageRefCount('water-counter'), 2, 'founder + sharer both resolve to the group');
+    h.eq(idx.storageRefCount('tip-splitter'), 1, 'lone ungrouped app resolves to its own id once');
+  });
+
   // §8 no git vocabulary in any return shape
   await h.test('app-index §8 records leak no git vocabulary', async () => {
     const idx = new AppIndex(new MapKVBackend());
