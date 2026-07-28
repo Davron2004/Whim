@@ -1,9 +1,13 @@
 # Tasks: harden-closure-lane
 
-Every file touched here is **Class-2 protected** (`.claude/commands/opsx/apply.md`,
-`.claude/hooks/bash-policy.sh`, `docs/harness.md`, `scripts/fixloop.sh`, `scripts/gate.sh`). No
-implementer subagent can edit them — every task is main-thread and human-ratified through the
+The files actually edited here are **Class-2 protected** (`.claude/commands/opsx/apply.md`,
+`docs/harness.md`, `scripts/fixloop.sh` — plus its suite `scripts/test/fixloop-preflight.test.sh`).
+No implementer subagent can edit them — every task is main-thread and human-ratified through the
 permission dialog. See `chains.md`.
+
+Two files that appeared in this list while it was being planned are **not** edited:
+`.claude/hooks/bash-policy.sh` (removed when task 0.1 voided D2's premise — see `chains.md` chain-3)
+and `scripts/gate.sh` (only ever *run*, by task 5.1, never modified).
 
 **Prerequisite:** `automate-closure` task 7.2 must be ticked and that change archived, or at least
 not concurrently edited — it owns `apply.md`, which chains 1 and 3 both modify.
