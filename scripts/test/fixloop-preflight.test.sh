@@ -428,6 +428,92 @@ case_cleanup_target_not_checked_out() {
   fi
 }
 
+# ================================================================================================
+# Case 8 — the closure poll settles only on a POSITIVE verdict from every check.
+#
+# `gh pr checks` prints "no checks reported on the '<branch>' branch" and exits 0 in the window
+# between a push and CI registering. Step 12c's poll used to stop when nothing reported *pending*,
+# so that window read as a PASS and the PR could be flipped ready before a single check had run
+# (openspec: harden-closure-lane, finding F1). The predicate under test asserts the condition the
+# step actually wants — at least one check exists AND every one has reported an explicit terminal
+# verdict — so an absent, empty, or unrecognised result can never produce a green.
+#
+# WHY A SUBCOMMAND AND NOT PROSE: a markdown step has no exit code, so a runbook promise cannot be
+# red-checked. Extracting the condition into `fixloop.sh checkverdict` is what makes F1 testable
+# (design D1). Exit contract: 0 settled-pass | 8 pending | 9 settled-fail | 2 usage error.
+#
+# The fixtures are `gh pr checks` output verbatim in shape: tab-separated NAME/STATE/ELAPSED/URL.
+# ================================================================================================
+
+assert_rc_is() {
+  local name="$1" want="$2" rc="$3" out="$4"
+  if [ "$rc" -eq "$want" ]; then pass "$name"; else fail "$name (expected exit $want, got $rc)" "$out"; fi
+}
+
+CHECKS_DIR=""
+
+# run_checkverdict <tool-rc> <output-text> -> OUT / RC
+run_checkverdict() {
+  local text="$2" f
+  if [ -z "$CHECKS_DIR" ]; then
+    CHECKS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/whim-checkverdict.XXXXXX")" || return 1
+    FIXTURES+=("$CHECKS_DIR")
+  fi
+  f="$(mktemp "$CHECKS_DIR/out.XXXXXX")" || return 1
+  printf '%s' "$text" > "$f"
+  OUT="$("$REAL_FIXLOOP" checkverdict "$1" "$f" 2>&1)"
+  RC=$?
+}
+
+case_poll_absent_verdict_is_pending() {
+  # The defect in its exact shape: the tool exits 0 and reports no verdict at all.
+  run_checkverdict 0 "no checks reported on the 'integration/run' branch"$'\n'
+  assert_rc_is "no-checks-reported classifies as PENDING" 8 "$RC" "$OUT"
+  assert_not_contains "no-checks-reported never reports a pass" "$OUT" "SETTLED PASS"
+
+  # Absence in its other shape: no output whatsoever, exit 0.
+  run_checkverdict 0 ""
+  assert_rc_is "empty check output classifies as PENDING" 8 "$RC" "$OUT"
+  assert_not_contains "empty check output never reports a pass" "$OUT" "SETTLED PASS"
+}
+
+case_poll_every_check_reported() {
+  # The POSITIVE case. This is the negative control for the whole group: without it, a predicate
+  # that returned 8 unconditionally would satisfy every other assertion here.
+  run_checkverdict 0 "$(printf 'build\tpass\t1m2s\thttps://x/1\nlint\tpass\t31s\thttps://x/2\n')"
+  assert_rc_is "every check passing classifies as SETTLED PASS" 0 "$RC" "$OUT"
+  assert_contains "the settled pass is stated, not inferred" "$OUT" "SETTLED PASS"
+
+  # `skipping` is a terminal non-failure verdict — it settles, it does not block.
+  run_checkverdict 0 "$(printf 'build\tpass\t1m2s\thttps://x/1\ndocs\tskipping\t0\thttps://x/3\n')"
+  assert_rc_is "a skipped check still settles" 0 "$RC" "$OUT"
+}
+
+case_poll_partial_is_pending() {
+  # A mix of reported and unreported is the case the old predicate got right only by accident:
+  # it saw the literal word "pending" and kept waiting. Locked so the rewrite cannot lose it.
+  run_checkverdict 8 "$(printf 'build\tpass\t1m2s\thttps://x/1\nlint\tpending\t0\thttps://x/2\n')"
+  assert_rc_is "a pending check keeps the poll waiting" 8 "$RC" "$OUT"
+  assert_not_contains "a partial result never reports a pass" "$OUT" "SETTLED PASS"
+}
+
+case_poll_failure_is_settled_fail() {
+  # Settled, but NOT passing — the poll must stop and route to the Sonar/fix round, never flip ready.
+  run_checkverdict 1 "$(printf 'build\tfail\t1m2s\thttps://x/1\nlint\tpass\t31s\thttps://x/2\n')"
+  assert_rc_is "a failing check classifies as SETTLED FAIL" 9 "$RC" "$OUT"
+  assert_not_contains "a failing check never reports a pass" "$OUT" "SETTLED PASS"
+}
+
+case_poll_unknown_state_is_pending() {
+  # Fail-safe: a state token this predicate does not recognise (a new gh verdict, a format change)
+  # must never be silently counted as success. It is the same absent-is-not-success rule applied to
+  # a value we cannot interpret, and it is what keeps the classifier from rotting into a green.
+  run_checkverdict 0 "$(printf 'build\tsome-new-state\t1m2s\thttps://x/1\n')"
+  assert_rc_is "an unrecognised state classifies as PENDING" 8 "$RC" "$OUT"
+  assert_not_contains "an unrecognised state never reports a pass" "$OUT" "SETTLED PASS"
+  assert_contains "an unrecognised state is named, not swallowed" "$OUT" "some-new-state"
+}
+
 case_incomplete_checkout
 case_linked_worktree
 case_unrelated_baseline
@@ -435,6 +521,11 @@ case_restore_not_falsely_alarmed
 case_negative_control
 case_cleanup_target_in_worktree
 case_cleanup_target_not_checked_out
+case_poll_absent_verdict_is_pending
+case_poll_every_check_reported
+case_poll_partial_is_pending
+case_poll_failure_is_settled_fail
+case_poll_unknown_state_is_pending
 
 printf '\n'
 if [ "$FAILURES" -gt 0 ]; then

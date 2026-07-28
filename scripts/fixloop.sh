@@ -18,6 +18,12 @@
 #                                                    (likely ALREADY FIXED — do not dispatch). Format:
 #                                                    "## <repo-relative-path>" headers, then verbatim source lines.
 #   gatefull  <branch>                             run gate-full from the branch's committed tip in the PRIMARY working tree (passthrough exit)
+#   checkverdict <tool-rc> <output-file>           classify a `gh pr checks` result for closure's poll.
+#                                                    exit 0 SETTLED PASS (every check reported an explicit
+#                                                    pass) | 8 PENDING (something has not reported — INCLUDING
+#                                                    "no checks reported", an empty result, or an unrecognised
+#                                                    state) | 9 SETTLED FAIL | 2 usage error. Absence is never
+#                                                    success; see the arm's comment for the defect it removes.
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity (0/6 print the human-gated merge; 6 flags
 #                                                    a Class-1 change to ratify; 3/4 abort), then merge cleanup
@@ -315,6 +321,69 @@ case "$cmd" in
     exit 0
     ;;
 
+  checkverdict)
+    # Classify a `gh pr checks` result for closure's poll (apply.md step 12c).
+    #
+    # The poll used to stop when nothing reported *pending*. In the window between a push and CI
+    # registering, `gh pr checks` prints "no checks reported on the '<branch>' branch" and exits 0 —
+    # so that window satisfied "nothing is pending" and read as a PASS, and the PR could be flipped
+    # ready before a single check had run (openspec: harden-closure-lane, finding F1).
+    #
+    # This asserts the POSITIVE condition instead: settle only when at least one check exists AND
+    # every one carries an explicit terminal verdict. Absence, emptiness, and any state token this
+    # predicate does not recognise are all PENDING — never success. That last one is the part that
+    # keeps the classifier from rotting: a new `gh` verdict string cannot silently become a green.
+    #
+    # <tool-rc> is reported for diagnosis but deliberately NOT trusted on its own — `gh pr checks`
+    # exits 0 both when everything passed and when nothing exists, which is the whole defect. The
+    # classification comes from the output.
+    #
+    #   usage: checkverdict <tool-rc> <output-file>
+    #   exit 0 SETTLED PASS | 8 PENDING (keep waiting) | 9 SETTLED FAIL | 2 usage error
+    toolrc="${1:?usage: checkverdict <tool-rc> <output-file>}"
+    outfile="${2:?usage: checkverdict <tool-rc> <output-file>}"
+    [ -r "$outfile" ] || die "checkverdict: cannot read check output '$outfile'"
+
+    total=0; failing=0; waiting=0; unknown=""
+    # `|| [ -n "$cname" ]` so a final line without a trailing newline is still classified.
+    while IFS=$'\t' read -r cname cstate _rest || [ -n "${cname:-}" ]; do
+      [ -n "${cname:-}" ] || continue
+      # Prose lines ("no checks reported on the 'x' branch") carry no tab-separated state field.
+      [ -n "${cstate:-}" ] || { cname=""; continue; }
+      total=$((total + 1))
+      case "$(printf '%s' "$cstate" | tr '[:upper:]' '[:lower:]')" in
+        pass|success|skipping|skipped|neutral) : ;;
+        fail|failure|error|cancelled|canceled|timed_out|action_required|startup_failure)
+          failing=$((failing + 1)) ;;
+        pending|queued|in_progress|expected|waiting|requested)
+          waiting=$((waiting + 1)) ;;
+        *) unknown="${unknown:+$unknown, }$cname=$cstate" ;;
+      esac
+      cname=""
+    done < "$outfile"
+
+    if [ "$total" -eq 0 ]; then
+      echo "PENDING — no check has reported a verdict yet (tool rc=$toolrc). An absent verdict is not a passing one."
+      exit 8
+    fi
+    # A definite failure outranks an uninterpretable state: it is already actionable, and reporting
+    # it cannot produce a false green either way.
+    if [ "$failing" -gt 0 ]; then
+      echo "SETTLED FAIL — $failing of $total check(s) failed (tool rc=$toolrc)."
+      exit 9
+    fi
+    if [ -n "$unknown" ]; then
+      echo "PENDING — unrecognised check state(s): $unknown. A state this predicate cannot interpret is never counted as success."
+      exit 8
+    fi
+    if [ "$waiting" -gt 0 ]; then
+      echo "PENDING — $waiting of $total check(s) have not reported a verdict yet (tool rc=$toolrc)."
+      exit 8
+    fi
+    echo "SETTLED PASS — all $total check(s) reported an explicit passing verdict (tool rc=$toolrc)."
+    exit 0
+    ;;
+
   park)
     branch="${1:?usage: park <branch> <reason...>}"; shift; reason="${*:-no reason given}"
     case "$branch" in fix/*|chain/*) : ;; *) die "park expects a fix/* or chain/* branch, got '$branch'";; esac
@@ -368,6 +437,6 @@ case "$cmd" in
     ;;
 
   *)
-    die "unknown subcommand '$cmd' — one of: integrity redcheck stale gatefull park finish status"
+    die "unknown subcommand '$cmd' — one of: integrity redcheck stale gatefull checkverdict park finish status"
     ;;
 esac
