@@ -236,3 +236,48 @@ Two things follow.
   branch name describes. Regression guard added for `fix/*`: it still parks and still gets the
   worktree resume line, with no staging-closure section.
 - 2026-07-27 **GREEN — 66 passed, 0 failed.**
+- 2026-07-27 **merged** at `4b0ce4b`; **regate: FAST GATE PASSED** on the committed tip.
+
+### chain-3: document-what-is-enforced (tasks 3.1–3.6) — main-thread, HUMAN-BOOTSTRAP
+
+Re-scoped by chain-0; `bash-policy.sh` and `bash-policy.test.sh` were removed from this change's
+edit set and were not touched.
+
+- 2026-07-27 started — no worktree, no implementer: Class-2 (`docs/harness.md`,
+  `.claude/commands/opsx/apply.md`), attended main-thread. `after: chain-0, chain-1` honoured.
+- 2026-07-27 **F5 narrowed on reading the target.** `docs/harness.md` §4's sandbox row was ALREADY
+  correct — it records `excludedCommands` as measured inert and says in terms "do not read this row
+  as 'these commands have egress'". The false claim lives only in `apply.md` step 12, which was not
+  updated when the sandbox row was. So F5 is one stale runbook line, not two contradicting
+  documents. What was genuinely absent from both is the **mechanism**, and that is the part worth
+  recording: without it the next reader's instinct is to fix the symptom by adding more
+  `excludedCommands` entries, which cannot work.
+- 2026-07-27 3.1/3.5 + a new §4.1 — the bash-policy row now points to a new subsection
+  **"Three policy behaviours that mislead if you meet them cold"** rather than absorbing three more
+  clauses into an already-enormous table cell. The unifying property is stated explicitly: all three
+  are fail-closed and correct, but each one's *denial message points somewhere other than its
+  cause*. (a) the bare-command constraint and why the message blames the network rule; (b) the
+  content matcher, with the file-based workaround as a call-out block and an explicit warning that
+  rewording is the one response to avoid; (c) a pointer to the `gh` trust-store mechanism.
+- 2026-07-27 3.4 + a new §4.2 — "Why closure's ancestor check is local and stays local". D3's
+  reversal needed a *durable* reason, not a ledger line: the next reader who sees a local ancestry
+  check next to an available `gh` query will otherwise "simplify" it into the form that cannot run
+  under the sandbox. Recorded as measured fact (rc=0 sandboxed, main-thread, not in the tier-1 deny
+  list) with the fetch-then-check answer to the stale-ref objection.
+- 2026-07-27 3.3 — `docs/harness.md` sandbox row gains D7's mechanism (`OSStatus -26276` =
+  `errSecInternalComponent`; trust-store access failure presenting as an egress block;
+  filesystem/IPC-dependent like the `.claude/**` denial; measured identically for main thread and
+  subagent, so not an agent-identity effect). `apply.md` step 12's preamble rewritten: the false
+  carve-out sentence is replaced by two numbered environment facts, both flagged as measured.
+- 2026-07-27 3.2 — step 12g's joined forms split into two explicitly-separate bare commands, with
+  the reason and a pointer to §4.1a. Also added: park a staging run with the tool, do not hand-roll
+  it (chain-2 made that possible; the runbook still implied otherwise).
+- 2026-07-27 3.6 — the spec delta was itself carrying D3. Requirement renamed *"Every command a
+  closure step instructs is **runnable by the caller it names**"* — the original wording
+  ("a command the policy permits") could not express F5 at all, since `gh` **is** permitted by the
+  policy and still cannot run. Scenario "Confirming the branch merges cleanly" no longer mandates
+  the provider's report; it now requires a check that executes in the step's own environment, with
+  the reason recorded so a later simplification does not reverse it. Scenario "A documented
+  relaxation is not enforced" replaced by three that describe what was actually found: a relaxation
+  that is *conditional*, a denial that *names a cause other than its trigger*, and a runbook that
+  *asserts an environmental capability* — the last being the general form of F5.
