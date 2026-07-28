@@ -131,3 +131,51 @@ so a re-park would now be generated correctly.
 
 **Evidence.** `.claude/fixloop/wip-linked-apps-data-model.md`. Also carries one LOW reviewer item
 with a recommended deferral, and flags one piece of unrelated debris.
+
+---
+
+## 7. The `.git/config` branch residue is avoidable, not inherent — and it accumulates
+
+**What.** `harden-closure-lane` F4 established that deleting a branch **under the sandbox** strands a
+`[branch "…"]` section in `.git/config`: the ref goes, the config write is denied, the command still
+exits `0`. `apply.md` step 12g now documents that as expected and cosmetic.
+
+Measuring the *accumulated* state on 2026-07-28 sharpens both halves of that. **28 of 30
+`[branch]` sections describe branches that no longer exist**, and the same session produced a clean
+natural experiment on how they got there:
+
+| Branch | Deleted | Section left behind? |
+| --- | --- | --- |
+| `integration/harden-closure-lane` | **sandboxed** — printed `could not lock config file .git/config` | **yes, stranded** |
+| `chore/archive-harden-gate-preconditions` | unsandboxed | no — cleaned |
+| `harden-gate-preconditions` | unsandboxed | no — cleaned |
+| `backup/pre-cleanup-integration-harden-gate-preconditions` | unsandboxed | no — cleaned |
+| `chore/archive-harden-closure-lane` | unsandboxed | no — cleaned |
+
+Four unsandboxed deletions left nothing; the single sandboxed one stranded its section. Every stale
+section contains only `vscode-merge-base = origin/main` — a key the VS Code Git extension writes per
+branch — which is *what* is stranded, not *why*; git removes the whole section on a successful
+delete regardless of who wrote the keys in it.
+
+**Why it matters.** Two corrections to the current documented position, neither of which makes F4
+wrong so much as incomplete:
+
+1. **The residue is avoidable.** Step 12g tells the operator to expect it. The measured remedy is
+   stronger: *delete the branch unsandboxed and there is no residue at all*. Teardown already needs
+   an unsandboxed context for the `git switch` and the fast-forward (both rewrite `.claude/**`), so
+   this costs nothing extra — it is the same override, extended one command further.
+2. **"Cosmetic" is true per instance and misleading in aggregate.** It grows monotonically: one
+   section per `chain/*` branch plus one per `integration/*` branch, every run, forever. Nothing
+   prunes it, and nothing *can* in-session — `git config` is tier-1 denied for every caller
+   including the orchestrator. 28 sections after a handful of runs is the current rate.
+
+**Done looks like.** Two things, of which only the first is a change:
+
+- `apply.md` step 12g instructs the branch deletion **unsandboxed**, and reframes the residue note
+  as "what you will see if you forget" rather than "what to expect". Class-2 file, so it needs a
+  ratified edit, not an incidental one.
+- A one-off manual prune of the 28 existing sections, by a human outside the session. There is no
+  in-session path; do not look for one.
+
+**Evidence.** This file's own session (2026-07-28); `apply.md` step 12g; decision #51 D7;
+`openspec/changes/archive/2026-07-28-harden-closure-lane/progress.md` teardown entries.
