@@ -23,22 +23,33 @@ verdict SHALL park the run with that reason rather than proceeding.
 - **WHEN** the bounded timeout elapses and at least one required check has still produced no verdict
 - **THEN** the run SHALL be parked with that reason, and the PR SHALL NOT be flipped to ready
 
-### Requirement: Every command a closure step instructs is a command the policy permits
+### Requirement: Every command a closure step instructs is runnable by the caller it names
 
 Closure runbook steps SHALL instruct only command forms that the harness's own command policy allows
-for the caller the step names. Where a step's purpose can be served by a permitted form, the runbook
-SHALL specify that form. Documentation of the command policy SHALL match the policy's enforced
-behaviour.
+for the caller the step names, **and that can execute in the environment that caller runs in**.
+Documentation of the command policy SHALL match the policy's enforced behaviour, including the
+conditions under which a stated relaxation does not apply. Where a runbook states an environmental
+capability, that statement SHALL be measured rather than assumed.
 
-#### Scenario: A documented relaxation is not enforced
+#### Scenario: A documented relaxation is conditional
 
-- **WHEN** documentation states that a command form is permitted for a caller and the policy denies it in practice
-- **THEN** the discrepancy SHALL be resolved so the two agree, and any runbook step depending on the unenforced relaxation SHALL be rewritten to a permitted form
+- **WHEN** documentation states that a command form is permitted for a caller, and the policy applies that permission only under conditions the documentation does not state
+- **THEN** the conditions SHALL be documented alongside the permission, and any runbook step that instructs the form SHALL instruct it in a shape those conditions admit
+
+#### Scenario: A denial names a cause other than its trigger
+
+- **WHEN** a command is denied by a rule other than the one its message names, so the message misidentifies the cause
+- **THEN** the actual trigger SHALL be documented where an operator meeting the denial will look, so the message is not read as evidence about a different component
+
+#### Scenario: A runbook states an environmental capability
+
+- **WHEN** a runbook step asserts that the execution environment supplies a capability its commands depend on, such as network egress or a credential path
+- **THEN** that assertion SHALL be verified by measurement, and SHALL be corrected where the environment does not supply it, rather than carried forward as an assumption
 
 #### Scenario: Confirming the branch merges cleanly before the ready flip
 
 - **WHEN** the closure phase must confirm the staging branch merges cleanly into the base branch before flipping the PR to ready
-- **THEN** it SHALL use the hosting provider's own mergeability report for the pull request, rather than a local ancestry check that depends on a fetched ref
+- **THEN** it SHALL use a check that executes in the environment the step runs in, in preference to one that requires an elevated or overridden environment, and the reason for the choice SHALL be recorded so a later simplification does not reverse it
 
 #### Scenario: A guard denies a command because of its content
 
