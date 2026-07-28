@@ -22,8 +22,9 @@
 #                                                    exit 0 SETTLED PASS (every check reported an explicit
 #                                                    pass) | 8 PENDING (something has not reported — INCLUDING
 #                                                    "no checks reported", an empty result, or an unrecognised
-#                                                    state) | 9 SETTLED FAIL | 2 usage error. Absence is never
-#                                                    success; see the arm's comment for the defect it removes.
+#                                                    state) | 9 SETTLED FAIL | 2 unreadable output file (a missing
+#                                                    argument exits 1 via `${N:?}`, as elsewhere here). Absence is
+#                                                    never success; see the arm's comment for the defect it removes.
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
 #   finish    <branch> [allowlist-file]            re-run integrity (0/6 print the human-gated merge; 6 flags
 #                                                    a Class-1 change to ratify; 3/4 abort), then merge cleanup
@@ -339,7 +340,9 @@ case "$cmd" in
     # classification comes from the output.
     #
     #   usage: checkverdict <tool-rc> <output-file>
-    #   exit 0 SETTLED PASS | 8 PENDING (keep waiting) | 9 SETTLED FAIL | 2 usage error
+    #   exit 0 SETTLED PASS | 8 PENDING (keep waiting) | 9 SETTLED FAIL | 2 unreadable output file.
+    #   A MISSING positional argument exits 1, not 2 — that is the shell's `${N:?}` unbound-parameter
+    #   check, which every subcommand in this script uses. Both are safely distinct from 0/8/9.
     toolrc="${1:?usage: checkverdict <tool-rc> <output-file>}"
     outfile="${2:?usage: checkverdict <tool-rc> <output-file>}"
     [ -r "$outfile" ] || die "checkverdict: cannot read check output '$outfile'"

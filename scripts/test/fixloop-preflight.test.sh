@@ -628,7 +628,8 @@ case_park_still_refuses_unknown_branch_kind() {
     pass "a refused park writes no note"
   fi
 
-  # Regression guard: the pre-existing kinds still park, and still get the worktree resume line.
+  # A branch kind that IS accepted but does not exist must also fail cleanly rather than half-park.
+  # (The "fix/* still parks successfully" regression guard is case_park_fix_branch_unchanged below.)
   out="$(cd "$fx" && ./scripts/fixloop.sh park fix/thing "nope" 2>&1)"
   assert_rc_nonzero "parking a nonexistent fix branch fails cleanly" "$?" "$out"
 }

@@ -1,9 +1,12 @@
 # Progress ledger: harden-closure-lane
 
-Schema `whim-harness`. **Every chain is HUMAN-BOOTSTRAP** — all five files this change touches
-(`scripts/gate.sh`, `scripts/fixloop.sh`, `.claude/hooks/bash-policy.sh`,
+Schema `whim-harness`. **Every chain is HUMAN-BOOTSTRAP** — the files this change edits
+(`scripts/fixloop.sh` and its suite `scripts/test/fixloop-preflight.test.sh`,
 `.claude/commands/opsx/apply.md`, `docs/harness.md`) are Class-2 protected, so nothing is
-dispatchable to an implementer. Per the operator's decision (2026-07-27) this run is an **attended
+dispatchable to an implementer. Two files named in the planning artifacts are NOT edited:
+`.claude/hooks/bash-policy.sh` (removed from the edit set when chain-0 voided D2's premise) and
+`scripts/gate.sh` (only ever *run*, by task 5.1). Corrected after the reviewer flagged the
+inherited inventory as over-counting by one file. Per the operator's decision (2026-07-27) this run is an **attended
 main-thread session**: chains run serially, each Class-2 edit ratified through the permission
 dialog. The dispatcher's parallel-worktree machinery does not apply (chains.md "Parallelism note").
 Same posture the predecessor `harden-gate-preconditions` ran under.
@@ -329,3 +332,49 @@ edit set and were not touched.
 - 2026-07-27 note — the sweep was NOT filed as `openspec/critic/<date>.md`. `critic-run` uses the
   newest date-named file there as its "everything since" marker, so creating one would make the
   next critic run skip all history before today. Filed in the change folder instead.
+
+## Reviewer pass (runbook step 11)
+
+Dispatched on the full range `3b3c7fc..ab42615` with the spec excerpts and six explicit targets,
+including an adversarial-input brief for `checkverdict` (CRLF, header rows, whitespace-padded and
+case-differing state tokens, missing trailing newline, tab-in-URL, nonexistent file).
+
+- 2026-07-27 **VERDICT: findings — no HIGH, no MEDIUM, three LOW. SPEC CONFORMANCE: conforms.
+  REPORT HONESTY: matches diff.**
+- Independently reproduced rather than taken on trust: `gate.sh` (PASS), the preflight suite
+  (66 passed / 0 failed, matching the ledger's claim), `openspec validate --strict` (valid),
+  `git merge-base --is-ancestor 511f024b <base>` (rc=0, confirming F2 was stale), and an empty
+  `git diff` on both `.claude/hooks/bash-policy.sh` and `.claude/hooks/test/bash-policy.test.sh`
+  (confirming no security deny was re-broadened).
+- The **one-directional invariant held** under every adversarial input: exit 0 is reachable through
+  exactly one path requiring `total>0`, `failing==0`, `unknown==""`, `waiting==0`. Whitespace-padded
+  and `\r`-suffixed tokens fall to the `unknown` catch-all → PENDING, never a false pass. The
+  reviewer could not construct an input producing SETTLED PASS without every row being an exact
+  pass-family match.
+- The reviewer also confirmed the ancestry-ordering test is a **genuine** guard, not a label: were
+  the check moved after the rename, the pre-rename ref would no longer resolve and the
+  `advanced: no` fixture would silently report "NOT an ancestor", failing that assertion.
+
+### LOW findings — all three accepted and fixed
+
+A fix chain would be disproportionate for three documentation-accuracy defects; they are fixed
+in place. Worth fixing rather than deferring, though: they are accuracy-of-self-description
+defects, which is the exact class this change exists to remove.
+
+1. `progress.md` / `tasks.md` headers listed **five** Class-2 files "touched", including
+   `scripts/gate.sh` — which this change only ever *runs* (task 5.1) and never edits. Inherited
+   boilerplate from the predecessor's file set; `bash-policy.sh`'s removal was documented but
+   `gate.sh`'s was never true to begin with. Both headers corrected, and both now state explicitly
+   which two files are NOT edited and why. A change whose thesis is "assert what is true rather
+   than what is absent" should not over-count its own blast radius.
+2. `scripts/test/fixloop-preflight.test.sh` — a comment labelled an assertion "Regression guard:
+   the pre-existing kinds still park" when that assertion actually exercises the new
+   `tip=`-lookup die path on a *nonexistent* branch. The real regression guard is
+   `case_park_fix_branch_unchanged` below it. Comment corrected and cross-referenced. No test gap.
+3. `checkverdict`'s documented exit contract said "2 usage error", but a *missing positional
+   argument* exits **1** via the shell's `${N:?}` unbound-parameter check; only the unreadable-file
+   path reaches `die` (2). Corrected in all three places the contract is stated (the subcommand
+   list, the arm's header comment, decision #51 D1). *Not* "fixed" by adding explicit argument
+   validation: every subcommand in `fixloop.sh` uses `${N:?}`, so making this one different would
+   trade a documentation inaccuracy for an inconsistency. Both codes remain safely distinct from
+   the three verdicts, so the invariant is untouched either way.
