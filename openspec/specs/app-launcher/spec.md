@@ -51,9 +51,11 @@ the baked-bundle path.
 ### Requirement: Deleting an app leaves no residue
 
 The launcher SHALL offer delete on every installed app behind an explicit confirmation.
-Deletion MUST remove the launcher record, the app's user data store, and — when no other
-installed entry shares the underlying version data — its version history, leaving no
-per-app storage behind.
+Deletion MUST remove the launcher record; the app's user data store when no other installed
+entry resolves to its storage group; and its version history when no other installed entry
+shares the underlying version data — leaving no unreferenced per-app storage behind. Both
+shared resources are refcounted the same way (see `linked-apps`); an ungrouped app is the
+sole member of its own group, so its data is removed with it exactly as before.
 
 #### Scenario: Delete removes record, data, and history
 
@@ -64,20 +66,64 @@ per-app storage behind.
 #### Scenario: Deleting the original spares a surviving fork
 
 - **WHEN** an app has a fork and the user deletes the original
-- **THEN** the fork still launches, keeps its history, and keeps its own user data
+- **THEN** the fork still launches, keeps its history, and keeps its user data — its own when
+  it was forked fresh, or the group's shared data when it was forked to share
 
 ### Requirement: Forking creates an independent launcher entry
 
 The launcher SHALL offer fork on every installed app. The fork MUST appear as a new launcher
-entry carrying its provenance, MUST start from the original's current bundle, MUST evolve
+entry carrying its provenance, MUST start from the original's current bundle, and MUST evolve
 independently (its future snapshots never affect the original, per the mini-app-forking
-contract), and MUST have its own empty user data store.
+contract). The fork MUST have its own empty user data store UNLESS the user chose at fork time
+to keep using the original's saved data, in which case it joins the original's storage group
+(see `linked-apps`). Code independence is unconditional; data independence is the default the
+user may decline.
 
 #### Scenario: A fork runs independently of its original
 
-- **WHEN** the user forks an installed app and opens the fork
+- **WHEN** the user forks an installed app, chooses to start fresh, and opens the fork
 - **THEN** the fork runs the same bundle as the original at fork time, but writes to its own
   storage — data entered in the fork never appears in the original, and vice versa
+
+#### Scenario: A fork created to share sees the original's data
+
+- **WHEN** the user forks an installed app and chooses to use the same saved data
+- **THEN** the fork still evolves its code independently, but both entries read and write one
+  shared store — either one's writes are visible to the other
+
+### Requirement: Explicit fork asks share-vs-fresh at fork time
+
+When the user invokes the Fork action, the launcher SHALL ask one plain question before creating
+the new app: use the same saved data, or start fresh. The answer SHALL be threaded to the
+creation seam as the sharing decision. Rewind continuations SHALL NOT be asked (they share by
+default, per `linked-apps`). All question copy SHALL come from the centralized copy table and
+pass the product-verbs guard (no "clone"/"link"/storage vocabulary).
+
+#### Scenario: Fork with shared data
+
+- **WHEN** the user forks app A and chooses to use the same saved data
+- **THEN** the new app joins A's storage group and reads A's existing data on first launch
+
+#### Scenario: Fork starting fresh
+
+- **WHEN** the user forks app A and chooses to start fresh
+- **THEN** the new app gets its own empty database, exactly as forks behaved before this change
+
+### Requirement: Delete tears down storage only when the group is empty
+
+The launcher's delete flow SHALL remove the app's index entry unconditionally, and SHALL delete
+the underlying database file only when no remaining installed entry resolves to the same storage
+group — mirroring the existing refcount discipline used for the shared version-store repo.
+
+#### Scenario: Deleting one member of a group
+
+- **WHEN** two apps share a storage group and one is deleted
+- **THEN** the survivor's data is intact and its launches keep working
+
+#### Scenario: Deleting an ungrouped app
+
+- **WHEN** an app with its own database (no sharers) is deleted
+- **THEN** its database file is deleted with it, as before this change
 
 ### Requirement: First run seeds two example apps and a create affordance
 
