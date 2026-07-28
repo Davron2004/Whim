@@ -90,3 +90,20 @@ this data" versus "this removes it for good", which is a behavioral slice needin
 tests, and product-verbs vetting — i.e. a change, not a closure round. Recorded here and on the
 open-follow-ups backlog; the honest-copy surface from chain-3 (`HostState.launchFailed` → `MiniAppView`)
 is the precedent for how it should read.
+
+## Closure ledger, continued
+
+- 2026-07-28 12c re-poll after the acceptance push — **SETTLED PASS** (rc=0), all three checks explicit
+- 2026-07-28 12e history cleanup — run in the standard lane (grant pinned BEFORE the rewrite, `backup/pre-cleanup-integration-linked-apps-data-model` minted as the undo button, dedicated lane worktree, index-only rebuild based on `main` so no historical `.claude/` copy was ever materialized). **DEVIATION (Class B, human-directed), same cause as 12d:** the rewrite was performed by the main thread rather than a dispatched `git-cleaner` subagent. What is NOT weakened by that: the lane's safety is *mechanical, not procedural* — `scripts/git-cleanup-check.sh` PASSED (tip tree identical, target unmoved, backup intact), and independently `integration/…^{tree}` == `backup/pre-cleanup-…^{tree}` == `0a3ad23`, so no content change of any kind could have survived whoever did the rewriting
+- 2026-07-28 12e result — **17 commits → 5 semantic commits**, linear on `main` (129 → 117 total). Groups: storage-group data model + refcounted delete; the share-vs-fresh fork question; the honest launch-failure surface + shared-storage acceptance; decision #52; the change artifacts + closure ledger. Per the standing grouping rule the Sonar dedupe was **folded into** the suite commit whose file it touches — no standalone Sonar-fix commit survives. Ref move applied, force-pushed with lease; lane torn down and `cleanup/*` deleted UNSANDBOXED (no `.git/config` residue this time — cf. the first ledger line, where the rename was not)
+- 2026-07-28 12f ancestor check — `git merge-base --is-ancestor main integration/linked-apps-data-model` PASSES
+
+## Closing summary (closure run, 2026-07-28)
+
+- **outcome:** PR #13, `integration/linked-apps-data-model` → `main`, all checks green, ready for the human's review-and-merge. `main` is ruleset-protected, so that merge click is the sole ratification act
+- **tasks:** 14/14. 5.2 was the last one open and is now RECORDED — the first completed on-device acceptance in this repo (#43b 7.2 and #48 5.2 remain PENDING)
+- **gates:** `gate-full` PASSED three times on this branch — on the reconciled tip, after the Sonar fix, and after the acceptance record. Deliberately re-earned rather than carried over from 2026-07-18, because `scripts/gate.sh` itself had grown in the interim
+- **deviations this closure:** 2, both Class B and both human-directed — the Sonar fix and the history rewrite were done inline by the main thread instead of by `fix-worker` / `git-cleaner` subagents. Recorded plainly because the cost differs between them: the history rewrite lost *nothing* (its guarantee is a tree-hash equality that holds regardless of author), while the Sonar fix genuinely has **no independent reviewer verification** — its assurance is the deterministic gate plus an unchanged assertion count, and nothing else
+- **what this run contributed beyond its own scope:** first real execution of closure step 12d, which immediately exposed that the step's exit-code contract has no cell for "red gate, zero issues" (backlog item 1 resolved, item 9 filed); the delete-confirmation copy inaccuracy found by on-device acceptance (item 8); and `git branch -m` as a residue site the #51 sweep missed (item 10)
+- **MEMORY proposals:** none from implementers (the original run collected none); nothing from this closure that isn't better recorded in the backlog
+- **remaining:** the human's merge click, then 12g teardown (delete local + remote `integration/linked-apps-data-model` UNSANDBOXED, fast-forward `main`, drop `backup/pre-cleanup-…` once confident), then `/opsx:archive linked-apps-data-model`
