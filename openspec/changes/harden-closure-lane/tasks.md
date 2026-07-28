@@ -45,10 +45,10 @@ friction that was always real (F2b), and the new finding F5. See `progress.md` f
 
 ## 4. Record what was learned but cannot be fixed
 
-- [ ] 4.1 State in `apply.md` step 12g that a sandboxed branch deletion leaves a stale `[branch "…"]` section in `.git/config` while exiting 0, that this is expected and cosmetic, and that it cannot be cleaned in-session because `git config` is denied to every caller (design D6)
-- [ ] 4.2 Record in `docs/harness.md` that closure step 12d (the Sonar-findings → nested `/fix-loop` → re-push loop) was **not** exercised by the first supervised run, since SonarCloud was green on every push — so "supervised closure passed" must not be read as "every step is validated"
-- [ ] 4.3 Append a decision entry to `docs/decisions.md`: the absent-result-is-not-success rule extends to runbooks, the documented-vs-enforced reconciliation, D2's resolution (premise void — a finding can age out before it is implemented, so re-measure at dispatch), and D7's mechanism
-- [ ] 4.4 Update `CLAUDE.md`'s sandbox paragraph, which records the blocked-`gh` behaviour as "filesystem-independent and remains **unexplained**". It is now explained and measured in both directions (sandboxed: `OSStatus -26276`; unsandboxed: exit 0) — it is a Keychain/trust-store access failure, hence filesystem-*dependent*, and hence never something `excludedCommands` could have fixed. `AGENTS.md` is a symlink to this file, so both update together
+- [x] 4.1 State in `apply.md` step 12g that a sandboxed branch deletion leaves a stale `[branch "…"]` section in `.git/config` while exiting 0, that this is expected and cosmetic, and that it cannot be cleaned in-session because `git config` is denied to every caller (design D6)
+- [x] 4.2 Record in `docs/harness.md` that closure step 12d (the Sonar-findings → nested `/fix-loop` → re-push loop) was **not** exercised by the first supervised run, since SonarCloud was green on every push — so "supervised closure passed" must not be read as "every step is validated"
+- [x] 4.3 Append a decision entry to `docs/decisions.md`: the absent-result-is-not-success rule extends to runbooks, the documented-vs-enforced reconciliation, D2's resolution (premise void — a finding can age out before it is implemented, so re-measure at dispatch), and D7's mechanism
+- [x] 4.4 Update `CLAUDE.md`'s sandbox paragraph, which records the blocked-`gh` behaviour as "filesystem-independent and remains **unexplained**". It is now explained and measured in both directions (sandboxed: `OSStatus -26276`; unsandboxed: exit 0) — it is a Keychain/trust-store access failure, hence filesystem-*dependent*, and hence never something `excludedCommands` could have fixed. `AGENTS.md` is a symlink to this file, so both update together
 
 ## 5. Verification
 

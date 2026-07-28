@@ -281,3 +281,26 @@ edit set and were not touched.
   relaxation is not enforced" replaced by three that describe what was actually found: a relaxation
   that is *conditional*, a denial that *names a cause other than its trigger*, and a runbook that
   *asserts an environmental capability* — the last being the general form of F5.
+- 2026-07-27 **merged** at `6551cc9`; **regate: FAST GATE PASSED** on the committed tip.
+
+### chain-4: record-the-unfixable (tasks 4.1–4.4) — main-thread, HUMAN-BOOTSTRAP
+
+- 2026-07-27 started — no worktree, no implementer: Class-2 (`.claude/commands/opsx/apply.md`,
+  `docs/harness.md`), attended main-thread. `after: chain-3` honoured (both edit step 12g).
+- 2026-07-27 4.1 — step 12g now states the `.git/config` residue as expected and cosmetic, names
+  why it cannot be cleaned in-session (`git config` tier-1 denied for every caller, orchestrator
+  included), and says to leave it. Framed as "do not investigate it twice", since the cost of this
+  finding was never the residue — it was the investigation it provoked.
+- 2026-07-27 4.2 — `docs/harness.md` §11 records that closure step 12d has **never been exercised**:
+  the first supervised run reached the ratified merge with SonarCloud green on every push, so the
+  Sonar → nested-`/fix-loop` → re-push loop was skipped, not validated. Written as "unexercised, not
+  known-broken", with the reason for not pre-emptively rewriting it.
+- 2026-07-27 4.4 — `CLAUDE.md`'s sandbox paragraph corrected. It recorded the blocked `gh` as
+  "filesystem-independent and remains **unexplained**"; both halves were wrong. Now carries D7's
+  mechanism and the practical consequence. `AGENTS.md` is a symlink to this file, so the Codex-side
+  instructions update in the same commit with no second edit.
+- 2026-07-27 4.3 — **decision #51** appended, seven sub-decisions. It explicitly (a) resolves the
+  open question decision #50 D2 left standing, and (b) records the reversal of this change's *own*
+  design D3, so a reader of the design doc alone cannot act on the superseded direction. The
+  verification paragraph records both red checks with their observed output, and names the two
+  negative controls that keep the suite non-vacuous.
