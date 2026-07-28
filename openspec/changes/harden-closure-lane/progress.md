@@ -333,6 +333,74 @@ edit set and were not touched.
   newest date-named file there as its "everything since" marker, so creating one would make the
   next critic run skip all history before today. Filed in the change folder instead.
 
+## Closure (runbook step 12)
+
+- 2026-07-27 **12a RULESET PRECONDITION — rc=0.** `ruleset-probe`: default branch protected by
+  ruleset "Protect main" (requires PR; also `non_fast_forward`, `deletion`,
+  `required_status_checks`). OK to enter closure.
+- 2026-07-27 **12b** — pushed `integration/harden-closure-lane`; draft PR
+  [#9](https://github.com/Davron2004/Whim/pull/9) opened. The PR body was supplied with
+  `--body-file`, not `--body`: it names the protected vocabulary throughout and `--body` would have
+  been denied by the content matcher (F2b). Second use of that workaround this run, both times in
+  anger rather than as a demonstration.
+
+### 12c — task 5.3 discharged, and a NEW defect found by executing the step this change rewrote
+
+**F6 (new, found and fixed in-flight): `$TMPDIR` is remapped by the sandbox, so the step's own two
+commands could not see each other's file.** Step 12c as written told the operator to capture with
+`gh pr checks <n> > "$TMPDIR/whim-checks.txt"` and then classify that path. `gh` requires an
+unsandboxed context (F5); `checkverdict` does not, so it ran sandboxed — and looked in a *different*
+`$TMPDIR`. Observed:
+
+```text
+fixloop: checkverdict: cannot read check output '/tmp/claude-501/whim-checks.txt'
+checkverdict rc=2
+```
+
+**What saved it is the part worth recording.** `checkverdict` exited **2**, not 0. A predicate that
+treated "no rows parsed" as a pass would have reported SETTLED PASS on a file it never opened —
+F1 reincarnated one layer down, in the very code written to remove F1. The `[ -r "$outfile" ] || die`
+guard is what made an unreadable file a *usage error* rather than a verdict. Step 12c now states
+that both commands must run in the same sandbox context (in practice both unsandboxed), and that
+**exit 2 is never a verdict** — not pending, not passing, not failing.
+
+This is the fixture-vs-reality gap in miniature: 66 green assertions could not have caught it,
+because the fixture hands `checkverdict` a path it wrote itself. Only running the runbook did.
+
+**Task 5.3 — polled immediately after the push, verdict PENDING, not green:**
+
+```text
+poll 1 (immediately after push, gh rc=8)
+  isolation-suite  pending   quality-gate  pending
+  → PENDING — 2 of 2 check(s) have not reported a verdict yet (tool rc=8).
+
+poll 2 (gh rc=8)
+  isolation-suite  pending   SonarCloud  pass   quality-gate  pass
+  → PENDING — 1 of 3 check(s) have not reported a verdict yet (tool rc=8).
+
+poll 3 (after bounded --watch, gh rc=0)
+  SonarCloud  pass   isolation-suite  pass   quality-gate  pass
+  → SETTLED PASS — all 3 check(s) reported an explicit passing verdict (tool rc=0).
+```
+
+**The check SET GREW between polls 1 and 2** — `SonarCloud Code Analysis` did not exist at poll 1 and
+was already passing at poll 2. This is the sharper form of F1's hazard and it was *observed*, not
+theorised: the set of "every required check" is not fixed at push time, so a predicate that settles
+on "every check I can currently see has passed" can settle against an incomplete set. The predicate
+counts what it sees each poll and re-evaluates, which is why poll 2 reported 1-of-3 rather than
+concluding on the two it had already seen pass.
+
+**Honest limit on 5.3.** The *strictest* sub-case — `no checks reported on the '<branch>' branch`
+with exit 0, where the naive predicate would have said PASS — was **not** observed: CI registered
+both jobs before the first poll landed. Polls 1 and 2 are real-condition evidence that the poll
+reports pending rather than green, which is what 5.3 asks for; they do **not** discriminate the
+naive predicate, which would also have seen the literal word `pending`. That discrimination rests on
+the fixture red check (recorded under chain-1), which does exercise the exact window. Retried at the
+post-cleanup force-push — see below.
+- 2026-07-27 **12d SKIPPED — SonarCloud green on first analysis.** Step 12d therefore remains
+  **unexercised for the second consecutive run**, exactly as chain-4 recorded in `docs/harness.md`
+  §11. The note it added is now doubly earned rather than hypothetical.
+
 ## Reviewer pass (runbook step 11)
 
 Dispatched on the full range `3b3c7fc..ab42615` with the spec excerpts and six explicit targets,
