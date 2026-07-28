@@ -43,6 +43,10 @@ export interface HostState {
   rejectedForgeries: number;
   t7AnyPoison: boolean | null;
   lastError: string | null;
+  /** True exactly when the most recent bind() attempt was refused pre-delivery by launchApp
+   *  (a structured launch failure, #41 D7) -- distinct from a later deliver/bundle error, so the
+   *  product surface can show honest copy for this one case without misreading other errors. */
+  launchFailed: boolean;
   currentApp: string;
   syscalls: number;
   lastSyscall: string | null;
@@ -51,7 +55,7 @@ export interface HostState {
 
 const INITIAL: HostState = {
   contained: null, probesFrac: '—', paintMs: null, generation: null,
-  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null,
+  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, launchFailed: false,
   currentApp: '—', syscalls: 0, lastSyscall: null, navDepth: 0,
 };
 
@@ -114,7 +118,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, navDepth: 0 }));
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0 }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
@@ -126,7 +130,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         generation,
       );
       if (!launched.ok) {
-        setS((p) => ({ ...p, lastError: `launch ${displayName}: ${launched.error.kind} — ${launched.error.hint}` }));
+        setS((p) => ({ ...p, lastError: `launch ${displayName}: ${launched.error.kind} — ${launched.error.hint}`, launchFailed: true }));
         return null;
       }
       live.current = { app: displayName, realm: launched.realm, dispatcher: Dispatcher.forRealm(launched.realm, REGISTRY) };

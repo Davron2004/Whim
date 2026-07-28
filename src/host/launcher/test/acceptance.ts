@@ -19,6 +19,9 @@ import { runUnmountTeardownTests } from './unmount-teardown.suite';
 import { runDeliverTests } from './deliver.suite';
 import { runThemeTests } from './theme.suite';
 import { runHistoryLogicTests } from './history-logic.suite';
+import { runForkQuestionUiTests } from './fork-question-ui.suite';
+import { runSharedStorageTests } from './shared-storage.suite';
+import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
 
 const h = new Harness();
 
@@ -35,6 +38,9 @@ await runUnmountTeardownTests(h);
 await runDeliverTests(h);
 await runThemeTests(h);
 await runHistoryLogicTests(h);
+await runForkQuestionUiTests(h);
+await runSharedStorageTests(h);
+await runLaunchFailureUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

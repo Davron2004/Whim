@@ -7,13 +7,14 @@
 // both exit to the launcher; the realm can reach neither. LauncherRoot keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
+import { COPY } from './copy';
 import FloatingExit from './FloatingExit';
 
 export interface MiniAppViewProps {
@@ -40,6 +41,21 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
+  // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
+  if (host.state.launchFailed) {
+    const p = shellPalette(theme);
+    return (
+      <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
+        <Text style={[styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
+        <Text style={[styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
+          <Text style={[styles.errorButtonLabel, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top, backgroundColor: bg }]}>
       <WebView
@@ -62,4 +78,9 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  errorTitle: { fontSize: 20, fontWeight: '600', textAlign: 'center', marginBottom: 12 },
+  errorBody: { fontSize: 15, textAlign: 'center', marginBottom: 24 },
+  errorButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
+  errorButtonLabel: { fontSize: 15, fontWeight: '600' },
 });
