@@ -52,7 +52,7 @@ friction that was always real (F2b), and the new finding F5. See `progress.md` f
 
 ## 5. Verification
 
-- [ ] 5.1 `scripts/gate.sh` green on the change tip
-- [ ] 5.2 `scripts/gate-full.sh` green on the change tip, from the primary tree, unsandboxed, with `FIXLOOP_INTEGRATION_BRANCH` set
+- [x] 5.1 `scripts/gate.sh` green on the change tip
+- [x] 5.2 `scripts/gate-full.sh` green on the change tip, from the primary tree, unsandboxed, with `FIXLOOP_INTEGRATION_BRANCH` set
 - [ ] 5.3 Exercise the rewritten poll on a real closure and confirm it reports pending — not green — when polled immediately after a push, which is the condition that produced F1
-- [ ] 5.4 Sweep the runbooks for any other predicate that reads an absence as success (design Open Questions); file what is found rather than fixing it inline
+- [x] 5.4 Sweep the runbooks for any other predicate that reads an absence as success (design Open Questions); file what is found rather than fixing it inline
