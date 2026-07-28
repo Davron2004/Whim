@@ -304,3 +304,28 @@ edit set and were not touched.
   design D3, so a reader of the design doc alone cannot act on the superseded direction. The
   verification paragraph records both red checks with their observed output, and names the two
   negative controls that keep the suite non-vacuous.
+- 2026-07-27 **merged** at `0be1bde`; **regate: FAST GATE PASSED** on the committed tip.
+
+## Verification (tasks 5.1–5.4)
+
+- 2026-07-27 **5.1 — `./scripts/gate.sh`: FAST GATE PASSED** on the merged tip `0be1bde`.
+- 2026-07-27 **5.2 — `./scripts/gate-full.sh`: FULL GATE PASSED** on the same tip, from the primary
+  tree, unsandboxed. `openspec validate` 30 passed / 0 failed, including
+  `change/harden-closure-lane` with the rewritten spec delta.
+- 2026-07-27 **5.3 — DEFERRED TO CLOSURE, by construction.** The task is to poll immediately after a
+  push and confirm the predicate reports *pending* rather than green. That condition only exists
+  during step 12c of this change's own closure, so it is exercised there, not here. This is the
+  task that distinguishes a fix from a plausible-looking edit — the predicate is unit-green against
+  fixture text, but only closure proves it against the real tool. **Do not tick it before closure
+  runs.**
+- 2026-07-27 **5.4 — swept, filed, not fixed** → `findings-runbook-sweep.md`. Two instances of the
+  class in `.claude/commands/opsx/archive.md` (a missing `tasks.md` proceeds *more* quietly than an
+  incomplete one; absent delta specs skip the sync prompt without distinguishing "declared none"
+  from "expected but absent"). Three near-misses recorded as correct so a later sweep does not
+  re-examine them — notably step 12d's `sonar-pr-issues.mjs` exit-3 guard, which is exactly the
+  shape the two archive.md branches lack and is worth copying rather than reinventing. Coverage
+  limit stated in the file: runbooks only; `scripts/**` and `.github/workflows/**` were not swept
+  for this class.
+- 2026-07-27 note — the sweep was NOT filed as `openspec/critic/<date>.md`. `critic-run` uses the
+  newest date-named file there as its "everything since" marker, so creating one would make the
+  next critic run skip all history before today. Filed in the change folder instead.
