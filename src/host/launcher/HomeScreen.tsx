@@ -35,7 +35,10 @@ const TILE = Math.floor((width - PAD * 2 - GAP * (COLS - 1)) / COLS);
 export interface HomeScreenProps {
   apps: InstalledApp[];
   onOpen: (app: InstalledApp) => void;
-  onFork: (app: InstalledApp) => void;
+  /** opts.shareData answers the share-vs-fresh question asked between the Fork tap and the
+   *  actual fork (design D4) — never asked for rewind continuations, which call access.fork
+   *  directly with shareData: true. */
+  onFork: (app: InstalledApp, opts: { shareData: boolean }) => void;
   onDelete: (app: InstalledApp) => void;
   /** Opens the app's full-screen history surface (version-history-ux). */
   onHistory: (app: InstalledApp) => void;
@@ -48,6 +51,7 @@ export interface HomeScreenProps {
 
 export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
+  const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
   const p = shellPalette(theme);
 
@@ -131,10 +135,23 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
           <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
             <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
             <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
-            <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onFork(a); }} />
+            <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
             <SheetRow label={COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} onPress={() => confirmDelete(selected!)} />
             <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Fork question sheet (design D4): asked only for an explicit Fork tap, never for rewind
+          continuations, which thread shareData: true straight into access.fork. */}
+      <Modal visible={forkTarget != null} transparent animationType="fade" onRequestClose={() => setForkTarget(null)}>
+        <Pressable style={styles.sheetScrim} onPress={() => setForkTarget(null)}>
+          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
+            <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
+            <SheetRow label={COPY.forkShareData} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: true }); }} />
+            <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: false }); }} />
+            <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
           </Pressable>
         </Pressable>
       </Modal>

@@ -103,9 +103,9 @@ function LauncherShell({ index, access }: Readonly<{ index: AppIndex; access: St
     }
   };
 
-  const onFork = async (app: InstalledApp) => {
+  const onFork = async (app: InstalledApp, opts: { shareData: boolean }) => {
     try {
-      await access.fork(app);
+      await access.fork(app, undefined, opts);
       refresh();
     } catch (e) {
       Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));

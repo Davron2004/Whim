@@ -49,6 +49,11 @@ export const COPY = {
   historyPinSave: 'Save',
   historyForkAction: 'Make this version its own app',
   historyMoreLabel: 'More',
+  forkShareData: 'Use the same saved data',
+  forkStartFresh: 'Start fresh',
+  launchFailedTitle: "Couldn't open this app",
+  launchFailedBody: "Something about this app doesn't match what's already saved here, so it can't open right now.",
+  launchFailedBack: 'Back to your apps',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
