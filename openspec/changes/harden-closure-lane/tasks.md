@@ -15,11 +15,11 @@ not concurrently edited — it owns `apply.md`, which chains 1 and 3 both modify
 
 ## 1. The closure poll asserts a positive verdict
 
-- [ ] 1.1 Extend `scripts/test/fixloop-preflight.test.sh` with the poll-predicate case: given tool output reporting that no checks exist for the branch and exit 0, the predicate SHALL classify it as **pending**, not settled — assert on the classification, not on a timing outcome (design D1)
-- [ ] 1.2 Add the settled case and the negative control: explicit pass/fail verdicts for every required check classify as settled; a mix of pass and pending classifies as pending
-- [ ] 1.3 Confirm the suite is RED against the current predicate before changing it, and record the observed output in `progress.md`
-- [ ] 1.4 Rewrite `apply.md` step 12c so the poll continues while any check is pending **or** the tool reports no checks, and concludes only on an explicit verdict from every required check; keep the bounded timeout and the park-on-timeout behaviour
-- [ ] 1.5 Turn the suite GREEN; re-confirm the negative control still passes
+- [x] 1.1 Extend `scripts/test/fixloop-preflight.test.sh` with the poll-predicate case: given tool output reporting that no checks exist for the branch and exit 0, the predicate SHALL classify it as **pending**, not settled — assert on the classification, not on a timing outcome (design D1)
+- [x] 1.2 Add the settled case and the negative control: explicit pass/fail verdicts for every required check classify as settled; a mix of pass and pending classifies as pending
+- [x] 1.3 Confirm the suite is RED against the current predicate before changing it, and record the observed output in `progress.md`
+- [x] 1.4 Rewrite `apply.md` step 12c so the poll continues while any check is pending **or** the tool reports no checks, and concludes only on an explicit verdict from every required check; keep the bounded timeout and the park-on-timeout behaviour
+- [x] 1.5 Turn the suite GREEN; re-confirm the negative control still passes
 
 ## 2. `fixloop.sh park` accepts a staging branch
 
@@ -41,6 +41,7 @@ friction that was always real (F2b), and the new finding F5. See `progress.md` f
 - [ ] 3.3 Correct the false capability claim in `apply.md` step 12: "the sandbox carve-outs give them egress + the credential path" is measured **false**. Every closure `gh` call (12b, 12c, 12f, 12g) fails under the sandbox with `tls: failed to verify certificate: x509: OSStatus -26276` and needs an explicit unsandboxed override. Record the mechanism — `OSStatus -26276` is `errSecInternalComponent`, a macOS Keychain error; `gh` verifies TLS through the system trust store via the Security framework, which the sandbox denies — so it is a **trust-store access failure presenting as an egress block**, not an egress block (design D7)
 - [ ] 3.4 Leave `apply.md` step 12f's local `git merge-base --is-ancestor main integration/<id>` in place (design D3 **reversed on measurement**): it returns rc=0 under the sandbox on the main thread, whereas the `gh` replacement D3 proposed cannot run there at all. Note in `docs/harness.md` that the local check is deliberate and sandbox-runnable, so it is not "simplified" into a `gh` call later
 - [ ] 3.5 Document the content-vs-command matcher friction (F2b) beside the policy description in `docs/harness.md`, with the sanctioned workaround — supply the text through a file (`Write` + `--body-file`, or the Edit tool) rather than rewording prose until the guard stops firing (design D4). Reproduced twice in this run: a compound probe, and a `grep` denied for its **search pattern**
+- [ ] 3.6 Rewrite the spec delta `specs/staging-integration-lane/spec.md` scenario "Confirming the branch merges cleanly before the ready flip", which currently mandates the provider's mergeability report. D3 is reversed: the requirement is that the check be **runnable by the caller in the environment the step names**, which the local ancestry check is and the provider query is not. Also retire the scenario "A documented relaxation is not enforced" as an instance — keep the general requirement, drop the implication that this change found such a discrepancy, since it did not
 
 ## 4. Record what was learned but cannot be fixed
 
