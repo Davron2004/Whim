@@ -30,6 +30,19 @@ speculatively changing code nobody has watched fail is its own defect class.
 
 **Evidence.** `docs/harness.md` §11; `openspec/changes/archive/2026-07-28-harden-closure-lane/progress.md`.
 
+**~~RESOLVED 2026-07-28~~ — exercised end to end by `linked-apps-data-model`'s closure (PR #13), and
+it did break, in the way this entry was right to wait for.** The gate went red, `sonar-pr-issues.mjs`
+exited **10 (red with findings) reporting ZERO issues**, and step 12d has no cell for that
+combination. Not an ingestion bug: the gate was red on a *condition*
+(`new_duplicated_lines_density` 5.71% > 3%), and a condition is a **measure**, not an **issue**, so
+`api/issues/search` — the only endpoint the script reads — structurally cannot see it. Followed
+literally, 12d would have handed `/fix-loop` an empty findings file, dispatched nothing, re-pushed an
+identical tree, and polled a permanently-red gate forever. Decision #51's absent-result rule is the
+only thing standing between that contract and a silent infinite loop. The residue is filed as item 9
+below. Full transcript: `openspec/changes/linked-apps-data-model/progress.md`,
+`findings-sonar-1.md`. Note the vindication of this entry's own advice: the defect was in a branch
+nobody had watched execute, and no amount of pre-emptive rewriting would have predicted it.
+
 ---
 
 ## 2. Two absence-read-as-success predicates in `opsx/archive.md`
@@ -132,6 +145,15 @@ so a re-park would now be generated correctly.
 **Evidence.** `.claude/fixloop/wip-linked-apps-data-model.md`. Also carries one LOW reviewer item
 with a recommended deferral, and flags one piece of unrelated debris.
 
+**~~RESOLVED 2026-07-28~~ — unparked and driven through closure to a ready-for-review PR (#13).**
+Reconciled with main first as the park note instructed (main had advanced 21 commits; exactly one
+file, `docs/decisions.md`, changed on both sides, and this change's decision entry was renumbered
+**#49 → #52** because `automate-closure` had taken 49 and #50 already cites it). `gate-full` was
+re-earned rather than carried over, since `scripts/gate.sh` itself had grown since the original PASS.
+The LOW reviewer item was recorded as a deferral on #52. Task 5.2 was also run — the **first
+completed on-device acceptance in this repo**. The unrelated debris it flagged
+(`integration/sonar-recurrence-ledger` on the remote) was already gone by 2026-07-28.
+
 ---
 
 ## 7. The `.git/config` branch residue is avoidable, not inherent — and it accumulates
@@ -192,3 +214,73 @@ stranding sections. This reduces the growth rate; it does not stop it.
 
 **Evidence.** This file's own session (2026-07-28); `apply.md` step 12g; decision #51 D7;
 `openspec/changes/archive/2026-07-28-harden-closure-lane/progress.md` teardown entries.
+
+---
+
+## 8. The delete confirmation lies about shared data
+
+**What.** `COPY`/`deleteBody` renders **"'<name>' and all its data will be removed. This can't be
+undone."** for every delete. Since `linked-apps-data-model`, that is false for any storage-group
+member that is not the last one: deleting it removes the index entry but the database survives,
+because another entry still resolves to the group.
+
+**Why it matters.** It is the exact inverse of the failure the copy is written to prevent. A user
+who wants their data *gone* deletes one app, is told it is gone, and it is not — it is still readable
+from the fork. Directly observed, not theorised: task 5.2's on-device run deleted the founder, saw
+this copy, and then read the founder's records back from the surviving fork.
+
+**Done looks like.** `deleteBody` becomes refcount-aware — `AppIndex.storageRefCount` is already the
+right primitive and is already called on the delete path in `StoreAccess.remove` — and says something
+true in both cases ("your other app keeps this data" vs. "this removes it for good"). Not a copy
+tweak: it is a behavioral slice needing a delta spec, tests, and product-verbs vetting, which is why
+the run that found it did not fix it inside closure. The honest-copy surface chain-3 built for launch
+failures (`HostState.launchFailed` → `MiniAppView`) is the precedent for tone.
+
+**Evidence.** `openspec/changes/linked-apps-data-model/progress.md` (task 5.2 section, step 8);
+`src/host/launcher/copy.ts`; decision #52 D3.
+
+---
+
+## 9. `sonar-pr-issues.mjs` cannot see a gate that fails on a condition
+
+**What.** The ingestion script reads `api/issues/search` only. SonarCloud's quality gate can fail on
+a **condition over a measure** (duplication density, coverage, ratings) with **zero open issues** —
+and then the script exits 10 ("red with findings") while emitting an empty findings list.
+
+**Why it matters.** Step 12d's exit-code contract is `3 = auth failure, 10 = red with findings,
+0 = green`. There is no cell for *red with no findings*, and the naive reading of 10 is "run the fix
+loop over these findings" — over an empty file. That dispatches nothing, re-pushes an identical tree,
+and re-polls a gate that cannot change: a silent infinite loop whose only guard today is a human
+noticing the arithmetic. Item 1 above hit this on its first real execution.
+
+**Done looks like.** The script also reads `api/qualitygates/project_status`, and when the gate is
+ERROR with no issues it emits the failing **conditions** as findings (metric, threshold, actual) —
+plus, for duplication specifically, the `api/duplications/show` blocks, which is what makes the
+finding actionable. A distinct exit code for "red on conditions, no issues" would let 12d branch
+instead of relying on the operator. The manual diagnosis is transcribed in the change's
+`findings-sonar-1.md`, so the API shapes do not need rediscovering.
+
+**Evidence.** `scripts/sonar-pr-issues.mjs`; `openspec/changes/linked-apps-data-model/findings-sonar-1.md`;
+`.claude/commands/opsx/apply.md` step 12d.
+
+---
+
+## 10. `git branch -m` is a sixth `.git/config` residue site the sweep missed
+
+**What.** Item 7 and decision #51's D7-AMENDED swept the four runbook **deletion** sites so branches
+are deleted unsandboxed. A branch **rename** writes `.git/config` exactly as a deletion does, and
+`git branch -m` under the sandbox strands a `[branch "…"]` section the same way — ref renamed, config
+write denied, and unlike deletion it fails **loudly** (`fatal: branch is renamed, but update of
+config-file failed`, exit 128).
+
+**Why it matters.** Small in itself, but it shows the sweep enumerated *the sites the runbooks named*
+rather than *the operations that write `.git/config`*. Rename is the one park/unpark uses, so it fires
+on exactly the recovery path where an operator is least expecting an unrelated failure. The exit-128
+also means a script chaining on `&&` after a rename silently stops.
+
+**Done looks like.** `docs/harness.md` §11 states the rule over the *operation class* ("any command
+that writes `.git/config` — delete, rename, set upstream — runs unsandboxed") rather than a list of
+four call sites, and `fixloop.sh park` inherits it.
+
+**Evidence.** Observed 2026-07-28 unparking `wip/linked-apps-data-model`;
+`openspec/changes/linked-apps-data-model/progress.md` first closure ledger line; decision #51 D7-AMENDED.

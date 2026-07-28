@@ -85,3 +85,4 @@ of that round — never reconstructed from memory.
 - 2026-07-24 automate-closure S7679 .claude/hooks/test/unroll.test.sh:84
 - 2026-07-24 automate-closure S1192 .claude/hooks/test/unroll.test.sh:84
 - 2026-07-24 automate-closure S5332 .claude/hooks/test/unroll.test.sh:94
+- 2026-07-28 linked-apps-data-model new_duplicated_lines_density src/host/launcher/test/shared-storage.suite.ts:83
