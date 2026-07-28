@@ -61,11 +61,15 @@ Standard flow: TARGET is `integration/<run-id>` — the force-push is a main-thr
 
 ## Teardown (after the orchestrator has applied the ref move and force-pushed)
 
+Run the two branch deletions **UNSANDBOXED** (`docs/harness.md` §11): sandboxed, `git branch -D`
+drops the ref but is denied the `.git/config` write and still exits `0`, stranding a dead
+`[branch "…"]` section that nothing can prune in-session.
+
 ```
 rm .claude/fixloop/grants/git-cleanup .claude/fixloop/owners/<ID>-squashed
 git worktree remove .claude/worktrees/<ID>-squashed
-git branch -D cleanup/<ID>-squashed
-git branch -D backup/pre-cleanup-<ID>    # ONLY after the human is confident; until then it is the rollback: git reset --hard backup/pre-cleanup-<ID>
+git branch -D cleanup/<ID>-squashed                       # unsandboxed
+git branch -D backup/pre-cleanup-<ID>    # unsandboxed; ONLY after the human is confident — until then it is the rollback: git reset --hard backup/pre-cleanup-<ID>
 ```
 
 Grants are minted per run, never left standing — a lingering grant file is the loophole this whole design exists to avoid.

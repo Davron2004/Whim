@@ -171,11 +171,24 @@ wrong so much as incomplete:
 
 **Done looks like.** Two things, of which only the first is a change:
 
-- `apply.md` step 12g instructs the branch deletion **unsandboxed**, and reframes the residue note
+- ~~`apply.md` step 12g instructs the branch deletion **unsandboxed**, and reframes the residue note
   as "what you will see if you forget" rather than "what to expect". Class-2 file, so it needs a
-  ratified edit, not an incidental one.
+  ratified edit, not an incidental one.~~ **DONE 2026-07-28** — and wider than this bullet asked.
+  Tracing the 28 sections to their sources showed step 12g produces only 4 of them: `/opsx:apply`
+  **step 9** strands one *per chain per run* and is the biggest producer, `/fix-loop` step 8 strands
+  one per finding, and the `/git-cleanup` teardown two more. Fixing 12g alone would have addressed
+  under a third of the problem. The rule now lives once in `docs/harness.md` §11, with pointers at
+  all four runbook sites and in the two scripts that *print* deletion commands
+  (`fixloop.sh finish`, `git-cleanup-check.sh`). Decision #51 D7 amended — it recorded the residue
+  as unpreventable, which was inferred from one observation of the failure rather than from any
+  attempt to avoid it.
 - A one-off manual prune of the 28 existing sections, by a human outside the session. There is no
-  in-session path; do not look for one.
+  in-session path; do not look for one. **STILL OPEN** — the fix above stops new residue from the
+  harness's own deletions; it does not remove what has already accumulated.
+
+**Residual, permanent:** `worktree-*` / `wf_*` branches (20 of the 28) are created and deleted by
+the agent runtime's own worktree isolation, which no runbook here controls. Those will keep
+stranding sections. This reduces the growth rate; it does not stop it.
 
 **Evidence.** This file's own session (2026-07-28); `apply.md` step 12g; decision #51 D7;
 `openspec/changes/archive/2026-07-28-harden-closure-lane/progress.md` teardown entries.
