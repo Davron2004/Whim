@@ -18,6 +18,7 @@ import { SynthRunSession } from '../session';
 import { wireCapabilityBridge } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
+import { createRunCandidate } from '../report';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -26,6 +27,11 @@ import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../swe
 const ROOT = process.cwd();
 const FIXTURE = path.join(ROOT, 'fixtures/tip-splitter.app.tsx');
 const PRODUCTION_ARTIFACT = path.join(ROOT, 'build/generated/tip-splitter.app.js');
+// The `sdk-navigation` 4.2 multi-screen fixture (list → detail via `nav.navigate`, back via
+// `nav.back`) — authored explicitly to double as synthetic-run-harness material (its own
+// top-of-file comment). Read as raw source text; the harness builds candidates from source, not
+// from `build/generated/*`.
+const NAVIGATION_DEMO_FIXTURE = path.join(ROOT, 'fixtures/navigation-demo.app.tsx');
 
 let passed = 0;
 const failures: string[] = [];
@@ -103,6 +109,9 @@ async function main(): Promise<void> {
 
   // ── chain 4 (task 4.5): interaction sweep + nav-aware screen coverage + cold-mount ──────────
   await testSweep();
+
+  // ── chain 5 (task 5.3): the assembled RunCandidate — end-to-end acceptance ──────────────────
+  await testRunCandidate();
 
   console.log('');
   if (failures.length === 0) {
@@ -332,9 +341,18 @@ async function testObservers(): Promise<void> {
     await test('mount_timeout: a synchronous top-level hang never posts paint (spec "Never-settling mount")', async () => {
       const { obs, dispose } = await openObservedRun(session, FIXTURE_MOUNT_HANG);
       try {
-        // A generous budget relative to HANG_MS (1200) — the assertion is about the hang
-        // preventing paint at all, not about racing a tight timer against machine load.
-        const budgets = mergeBudgets({ mountBudgetMs: 500 });
+        // A generous budget relative to HANG_MS (1200). Widened 500ms→800ms (chain 5 stability
+        // fix, per the integration note this chain received). NOTE for whoever next touches
+        // this test: widening the margin measurably does NOT fully eliminate an intermittent
+        // flake here — this fixture's hang is long/synchronous enough to block the OUTER page's
+        // own `load` event (the iframe's parser-blocking script delays its parent's `load` per
+        // the HTML spec), so `openObservedRun`'s `page.goto` itself doesn't resolve until the
+        // hang is already over. That puts `EarlyObservers.finish()`'s async setup (the
+        // `window.ReactNativeWebView` relay override) into a real race against the double-rAF
+        // paint message the candidate posts a couple of frames later — a race independent of
+        // `mountBudgetMs`. Out of this chain's scope to restructure (chain 2's already-merged
+        // `observe.ts`); rerun-to-confirm remains the sanctioned mitigation for now.
+        const budgets = mergeBudgets({ mountBudgetMs: 800 });
         const diagnostic = await awaitMount(obs, budgets);
         ok(diagnostic?.kind === 'mount_timeout', `awaitMount returned a mount_timeout diagnostic (got ${diagnostic?.kind})`);
         ok(obs.state.diagnostics.includes(diagnostic!), 'the returned diagnostic is the SAME one appended to state.diagnostics (no silent catch)');
@@ -552,6 +570,140 @@ async function testSweep(): Promise<void> {
         a.diagnosticKinds.join('|') === b.diagnosticKinds.join('|'),
         `the two runs produced identical diagnostics (got ${a.diagnosticKinds.join('|')} vs ${b.diagnosticKinds.join('|')})`,
       );
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+// ── chain 5 (task 5.3): the assembled RunCandidate — end-to-end acceptance ────────────────────
+
+// Six independent hostile behaviors in ONE well-formed-enough candidate (mounts, renders, is
+// swept) — proves the ASSEMBLED report composes every chain's diagnostic source correctly, not
+// just each chain in isolation (chains 2/3/4 already own the per-layer edge-case coverage):
+//   1. an unhandled rejection fired on mount                       → unhandled_rejection
+//   2. an uncaught throw in a swept Button's onPress                → runtime_throw
+//   3. an undeclared `storage` call, swallowed                      → undeclared_capability
+//   4. an undeclared `cues` call, ALSO swallowed (a denied syscall's own rejected Promise is a
+//      genuine unhandled rejection if left uncaught — swallowed here so this behavior stays a
+//      single, distinct `undeclared_capability` diagnostic, not an incidental second
+//      `unhandled_rejection` on top of behavior 1's deliberate one)  → undeclared_capability
+//   5. a declared screen no nav path reaches                        → unreachable_screen
+//   6. a forged, unauthenticated "contained:false" probes frame     → must be REJECTED, not
+//      adopted (no extra diagnostic; the genuine trusted verdict still lands)
+const FIXTURE_SIX_WAY_HOSTILE = `import { defineApp, Screen, Stack, Heading, Button, useEffect, storage, cues } from 'vc-sdk';
+const w = globalThis;
+try {
+  if (w.parent && typeof w.parent.postMessage === 'function') {
+    w.parent.postMessage(JSON.stringify({ __whimHarness: true, kind: 'probes', payload: { contained: false, __FORGED_BY_TEST: true } }), '*');
+  }
+} catch (e) { /* one-way, best-effort */ }
+function Home() {
+  useEffect(() => { Promise.reject(new Error('hostile-unhandled-rejection')); }, []);
+  useEffect(() => { storage.kv.set('sneaky', 'x').catch(() => {}); }, []);
+  useEffect(() => { cues.haptic('double').catch(() => {}); }, []);
+  return (
+    <Screen>
+      <Stack>
+        <Heading size="title">Hostile</Heading>
+        <Button label="Boom" onPress={() => { throw new Error('hostile-boom-on-press'); }} />
+      </Stack>
+    </Screen>
+  );
+}
+function Orphan() {
+  return <Screen><Stack><Heading size="title">Orphan</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'SixWayHostile', initial: 'Home', screens: { Home, Orphan }, capabilities: [] });
+`;
+
+function diagnosticSignature(d: { kind: string }): string {
+  return d.kind;
+}
+
+async function testRunCandidate(): Promise<void> {
+  const session = await SynthRunSession.launch({ concurrency: 2 });
+  try {
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('clean report: a well-formed multi-screen candidate (sdk-navigation 4.2 fixture) yields ok:true', async () => {
+      const runCandidate = createRunCandidate(session);
+      const source = await readFile(NAVIGATION_DEMO_FIXTURE, 'utf8');
+      const report = await runCandidate(source, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.ok === true, `a well-formed candidate produces ok:true (got diagnostics: ${JSON.stringify(report.diagnostics)})`);
+      ok(report.diagnostics.length === 0, `no diagnostics were recorded (got ${report.diagnostics.length})`);
+      ok(report.contained === true, 'the trusted probes verdict is contained');
+      ok(report.truncated === false, 'the run was not truncated');
+      ok(
+        [...report.screens.declared].sort((a, b) => a.localeCompare(b)).join(',') === 'Detail,List',
+        `both declared screens are reported (got ${report.screens.declared.join(',')})`,
+      );
+      ok(
+        [...report.screens.visited].sort((a, b) => a.localeCompare(b)).join(',') === 'Detail,List',
+        `both screens end up visited — List via live mount, Detail via nav.navigate (got ${report.screens.visited.join(',')})`,
+      );
+      ok(report.timings.buildMs >= 0 && report.timings.bootMs >= 0, 'build/boot timings are recorded');
+      ok(typeof report.timings.mountToPaintMs === 'number' && report.timings.mountToPaintMs > 0, 'mount→paint timing is recorded');
+      ok(typeof report.timings.perScreenMs.List === 'number' && typeof report.timings.perScreenMs.Detail === 'number', 'both screens have their own per-screen timing entry');
+      ok(report.trace.length === 0, `no capabilities are declared, so the trace is empty (got ${report.trace.length} entries)`);
+      ok(report.budgets.mountBudgetMs === 5000, 'the applied budgets are recorded verbatim, merged with the caller override');
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('six-way hostile: exactly the expected diagnostic set, forged verdict rejected', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_SIX_WAY_HOSTILE, {
+        budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 },
+      });
+
+      ok(report.ok === false, 'a hostile candidate produces ok:false');
+      const expectedKinds = ['unhandled_rejection', 'runtime_throw', 'undeclared_capability', 'undeclared_capability', 'unreachable_screen'];
+      const gotKinds = report.diagnostics.map(diagnosticSignature).sort((a, b) => a.localeCompare(b));
+      ok(
+        gotKinds.join(',') === [...expectedKinds].sort((a, b) => a.localeCompare(b)).join(','),
+        `exactly the expected diagnostic kind multiset was produced (got ${gotKinds.join(',')})`,
+      );
+
+      const rejection = report.diagnostics.find((d) => d.kind === 'unhandled_rejection');
+      ok(rejection?.message.includes('hostile-unhandled-rejection') ?? false, `unhandled_rejection names the rejection (got ${rejection?.message})`);
+
+      const thrown = report.diagnostics.find((d) => d.kind === 'runtime_throw');
+      ok(thrown?.message.includes('hostile-boom-on-press') ?? false, `runtime_throw names the thrown error (got ${thrown?.message})`);
+
+      const denials = report.diagnostics.filter((d) => d.kind === 'undeclared_capability');
+      ok(denials.length === 2, `both undeclared capability calls were denied and surfaced (got ${denials.length})`);
+      ok(denials.some((d) => d.message.includes('storage.kv.set')), 'one denial names storage.kv.set');
+      ok(denials.some((d) => d.message.includes('cues.haptic')), 'one denial names cues.haptic');
+
+      const unreachable = report.diagnostics.find((d) => d.kind === 'unreachable_screen');
+      ok(unreachable?.message.includes('Orphan') ?? false, `unreachable_screen names Orphan (got ${unreachable?.message})`);
+
+      // Behavior 6 (forged verdict): rejected, never adopted — the genuine trusted probes frame
+      // still lands and the forgery contributes NO extra diagnostic (spec "Forged verdict attempt").
+      ok(report.contained === true, 'the forged contained:false claim is rejected — the genuine trusted verdict (contained) still wins');
+      ok(
+        !report.diagnostics.some((d) => 'message' in d && typeof d.message === 'string' && d.message.includes('__FORGED_BY_TEST')),
+        "the forgery's own marker never leaks into any diagnostic",
+      );
+
+      ok(
+        [...report.screens.declared].sort((a, b) => a.localeCompare(b)).join(',') === 'Home,Orphan',
+        `both declared screens are reported (got ${report.screens.declared.join(',')})`,
+      );
+    });
+
+    // ── red-check (non-vacuity, task 5.3): a candidate with NO hostile behavior at all must
+    // never produce a false-positive diagnostic from the assembled pipeline itself.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('red-check: the assembled pipeline is non-vacuous — a trivially harmless candidate is clean too', async () => {
+      const runCandidate = createRunCandidate(session);
+      const harmless = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading></Stack></Screen>; }
+export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+      const report = await runCandidate(harmless, { budgets: { mountBudgetMs: 5000 } });
+      ok(report.ok === true, `a harmless candidate is clean (got ${JSON.stringify(report.diagnostics)})`);
+      ok(report.diagnostics.length === 0, 'no diagnostics leak in from the hostile fixture above being run in the same suite');
     });
   } finally {
     await session.close();
