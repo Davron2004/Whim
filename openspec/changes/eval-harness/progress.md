@@ -17,3 +17,4 @@
 - chain-B REPORT: complete 5/5, GATE PASS + evals 82/82, commit 46b4551, contract handoff/run-observation.md (73 lines). Deviations (A): run.mjs external:['typescript'] (pre-authorized); missing RuntimeDiagnostic.line defaults to 0 sentinel (documented); computeCaseVerdict excludes TierCResult by type signature ("Tier C never gates" compiler-enforced).
 - chain-B INTEGRITY: exit 0. MERGED onto v1-sprint, tasks 2.1-2.5 ticked, REGATE PASS, evals green on merged tip.
 - chain-C (tier-b-assertions) DISPATCHED next (after B).
+- INTERRUPTION (monthly API spend limit): chain-C implementer killed just after start; no work lost, worktree+branch cleaned. Resume: dispatch chain-C fresh (block scratchpad/chain-blocks/eval-C.md or re-assemble), then E→F→G per chains.md. See HANDOFF-v1-sprint.md.
