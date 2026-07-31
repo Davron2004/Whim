@@ -5,9 +5,11 @@
  * into the regression lists, per D9 ("Tier C scores are... marked non-deterministic, so a diff
  * shows score deltas without pretending they are regressions").
  *
- * Structurally inherits redaction (design D3): pairs cases by `case.caseId` only and never reads
- * `case.prompt`/`case.expectation`/`case.candidateSource` off either report — those fields are
- * simply absent for a holdout `CaseResult`, so there is nothing to accidentally surface.
+ * Structurally inherits redaction (design D3, extended by `fix/redaction-tier-results`): pairs
+ * cases by `case.caseId` only and never reads `case.prompt`/`case.expectation`/
+ * `case.candidateSource` off either report; a Tier-B regression's `english` is simply whatever
+ * `after.english` already is on the (already-redacted) `CaseResult` — absent for a holdout
+ * assertion, present for a visible one — so there is nothing here to accidentally surface.
  */
 import type { AssertionKind, EvalRunReport } from '../contract';
 
@@ -21,7 +23,10 @@ export interface TierARegression {
 export interface TierBAssertionRegression {
   readonly caseId: string;
   readonly tier: 'B';
-  readonly english: string;
+  /** The assertion's English statement, when present — absent for a holdout set (design D3
+   *  extension: `english` is expectation prose, the same disclosure class as
+   *  `EvalCase.expectation`). */
+  readonly english?: string;
   readonly kind: AssertionKind;
   readonly from: 'pass';
   readonly to: 'fail';
@@ -133,9 +138,10 @@ export function renderDiff(diff: ReportDiff): string {
   diff.casesAdded.forEach((id) => lines.push(`+ case added: ${id}`));
   diff.casesRemoved.forEach((id) => lines.push(`- case removed: ${id}`));
   diff.tierARegressions.forEach((r) => lines.push(`REGRESSION [${r.caseId}] Tier A: pass -> fail`));
-  diff.tierBRegressions.forEach((r) =>
-    lines.push(`REGRESSION [${r.caseId}] Tier B (${r.kind}): pass -> fail — ${r.english}`),
-  );
+  diff.tierBRegressions.forEach((r) => {
+    const suffix = r.english !== undefined ? ` — ${r.english}` : '';
+    lines.push(`REGRESSION [${r.caseId}] Tier B (${r.kind}): pass -> fail${suffix}`);
+  });
   diff.tierCScoreDeltas.forEach((d) =>
     lines.push(`Tier C delta (non-deterministic) [${d.caseId}] ${d.criterion}: ${d.from ?? 'n/a'} -> ${d.to ?? 'n/a'}`),
   );
