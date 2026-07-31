@@ -17,6 +17,7 @@ import { awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget,
 import { SynthRunSession } from '../session';
 import { wireCapabilityBridge } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
+import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -99,6 +100,9 @@ async function main(): Promise<void> {
 
   // ── chain 3 (task 3.3): capability wiring — real gate, ephemeral engine, recording effectors
   await testCapabilityWiring();
+
+  // ── chain 4 (task 4.5): interaction sweep + nav-aware screen coverage + cold-mount ──────────
+  await testSweep();
 
   console.log('');
   if (failures.length === 0) {
@@ -438,6 +442,120 @@ async function testObservers(): Promise<void> {
     const elapsed = Date.now() - started;
     ok(elapsed < 1000, `an idle stub settles near the quiet window, not the 5s hard cap (elapsed=${elapsed}ms)`);
   });
+}
+
+// ── chain 4 (task 4.5): interaction sweep + nav-aware screen coverage + cold-mount ────────────
+
+// Mints exactly ONE extra button, once, on the FIRST tap — then stays stable. A sweep that
+// re-acted on an already-visited fingerprint, or that never noticed the new one, would either
+// loop forever (bounded only by the action cap, which this test asserts was NOT hit) or leave
+// "Extra" unvisited.
+const FIXTURE_MINT_ONE = `import { defineApp, Screen, Stack, Button, useState } from 'vc-sdk';
+function Home() {
+  const [minted, setMinted] = useState(false);
+  return (
+    <Screen>
+      <Stack>
+        <Button label="Mint" onPress={() => setMinted(true)} />
+        {minted ? <Button label="Extra" onPress={() => {}} /> : null}
+      </Stack>
+    </Screen>
+  );
+}
+export default defineApp({ name: 'Mint', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// Declares TWO screens; `Home` has no navigation call at all, so `Orphan` is unreachable via any
+// live nav path (spec "Unreachable screen is rendered and flagged" scenario).
+const FIXTURE_UNREACHABLE_SCREEN = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+function Home() {
+  return <Screen><Stack><Heading size="title">Home</Heading></Stack></Screen>;
+}
+function Orphan() {
+  return <Screen><Stack><Heading size="title">Orphan</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'Coverage', initial: 'Home', screens: { Home, Orphan }, capabilities: [] });
+`;
+
+function actionSignature(el: SweptElement): string {
+  return `${el.kind}|${el.label}|${el.domPath}`;
+}
+
+async function testSweep(): Promise<void> {
+  const session = await SynthRunSession.launch({ concurrency: 4 });
+  const sweepBudgets = mergeBudgets({ actionQuietMs: 40, actionHardCapMs: 250, mountBudgetMs: 5000 });
+  try {
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('state-minted element is swept exactly once, then the sweep terminates', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_MINT_ONE);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        const result = await sweepApp(ctx, obs, FIXTURE_MINT_ONE, sweepBudgets);
+        ok(result.truncated === false, `the sweep did not hit the per-screen action cap (got truncated=${result.truncated})`);
+        ok(result.actionsLog.length === 2, `exactly two actions were performed — Mint then the state-minted Extra (got ${result.actionsLog.length})`);
+        ok(result.actionsLog[0]?.label === 'Mint', `the first action was Mint (got ${result.actionsLog[0]?.label})`);
+        ok(result.actionsLog[1]?.label === 'Extra', `the second (newly-minted) action was Extra (got ${result.actionsLog[1]?.label})`);
+        ok(result.visitedScreens.length === 1 && result.visitedScreens[0] === 'Home', 'only the single declared screen was visited');
+        ok(result.diagnostics.length === 0, `no screens are unreachable, so no unreachable_screen diagnostics (got ${result.diagnostics.length})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('unreachable screen: cold-mounted directly and flagged (spec "Unreachable screen is rendered and flagged")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_UNREACHABLE_SCREEN);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        const result = await sweepApp(ctx, obs, FIXTURE_UNREACHABLE_SCREEN, sweepBudgets);
+        ok(
+          [...result.declaredScreens].sort((a, b) => a.localeCompare(b)).join(',') === 'Home,Orphan',
+          `both declared screens are reported (got ${result.declaredScreens.join(',')})`,
+        );
+        ok(
+          [...result.visitedScreens].sort((a, b) => a.localeCompare(b)).join(',') === 'Home,Orphan',
+          `both screens end up visited — Home via live mount, Orphan via cold-mount (got ${result.visitedScreens.join(',')})`,
+        );
+        ok(result.diagnostics.length === 1, `exactly one unreachable_screen diagnostic was recorded (got ${result.diagnostics.length})`);
+        ok(result.diagnostics[0]?.kind === 'unreachable_screen', `the diagnostic kind is unreachable_screen (got ${result.diagnostics[0]?.kind})`);
+        ok(result.diagnostics[0]?.message.includes('Orphan') ?? false, `the diagnostic names "Orphan" (got ${result.diagnostics[0]?.message})`);
+        ok(typeof result.perScreenMs.Orphan === 'number', 'Orphan has its own per-screen timing entry from the cold-mount sweep');
+
+        // Non-vacuity: the cold-mount pass really rendered Orphan (fresh realm, T7 — never
+        // in-place re-delivery) rather than just declaring the diagnostic and stopping.
+        const frame = await findAppFrame(ctx.page);
+        const info = await getScreenInfo(frame);
+        ok(info.current === 'Orphan', `the page is left showing the cold-mounted Orphan screen (got ${info.current})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('determinism: two independent runs of the same candidate produce the same action sequence + diagnostics', async () => {
+      const runOnce = async (): Promise<{ signatures: string[]; diagnosticKinds: string[] }> => {
+        const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_UNREACHABLE_SCREEN);
+        try {
+          await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+          const result = await sweepApp(ctx, obs, FIXTURE_UNREACHABLE_SCREEN, sweepBudgets);
+          return { signatures: result.actionsLog.map(actionSignature), diagnosticKinds: result.diagnostics.map((d) => `${d.kind}:${d.message}`) };
+        } finally {
+          obs.detach();
+          await dispose();
+        }
+      };
+      const [a, b] = await Promise.all([runOnce(), runOnce()]);
+      ok(a.signatures.join('|') === b.signatures.join('|'), `the two runs performed the identical action sequence (got ${a.signatures.join('|')} vs ${b.signatures.join('|')})`);
+      ok(
+        a.diagnosticKinds.join('|') === b.diagnosticKinds.join('|'),
+        `the two runs produced identical diagnostics (got ${a.diagnosticKinds.join('|')} vs ${b.diagnosticKinds.join('|')})`,
+      );
+    });
+  } finally {
+    await session.close();
+  }
 }
 
 main();
