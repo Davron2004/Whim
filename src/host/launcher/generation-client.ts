@@ -7,22 +7,134 @@
  * `generateApp` parses the same `event:`/`data:`/`id:`/blank-line SSE framing the server writes
  * (`server/src/sse.ts`) directly off the `Response.body` reader, incrementally — frames are
  * yielded as they arrive, not buffered to stream completion. Every frame is validated against
- * `GenerationEvent` (zod, `@whim/contract`) before being yielded; a frame that fails to parse as
- * valid JSON or fails schema validation raises `GenerationClientError{kind:'stream_parse'}`
- * rather than silently passing bad data to the UI. Keepalive comment lines (`: ...`) are
- * recognized and skipped, never treated as malformed frames.
+ * `GenerationEvent`'s shape (hand-rolled structural guards below, mirroring `@whim/contract`'s
+ * zod schema field-for-field — see the guards' doc comment for why) before being yielded; a
+ * frame that fails to parse as valid JSON or fails shape validation raises
+ * `GenerationClientError{kind:'stream_parse'}` rather than silently passing bad data to the UI.
+ * Keepalive comment lines (`: ...`) are recognized and skipped, never treated as malformed
+ * frames.
  *
  * `fetchImpl` defaults to global `fetch` and is injectable so `launcher:test` can supply canned
  * `Response` objects with no real HTTP server.
  */
 
-import {
+import type {
   DeviceIdError,
+  Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  RewriteRequest,
   RewriteResponse,
-  type RewriteRequest,
+  Usage,
+  WireAppRecord,
 } from '@whim/contract';
+
+/**
+ * Hand-rolled structural guards standing in for `@whim/contract`'s zod schemas
+ * (`DeviceIdError`/`RewriteResponse`/`GenerationEvent`.`safeParse`). `@whim/contract` is a
+ * TYPE-ONLY import at the top of this file — importing the zod schema VALUES here would pull
+ * zod into the Metro bundle graph, and zod's dist uses `export * from` namespace syntax that RN's
+ * babel config doesn't transform (`guard:metro`). These guards mirror each schema's shape
+ * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || typeof value === 'number';
+}
+
+function isDeviceIdError(value: unknown): value is DeviceIdError {
+  return (
+    isRecord(value) &&
+    (value.error === 'missing_device_id' || value.error === 'invalid_device_id') &&
+    isNonEmptyString(value.hint)
+  );
+}
+
+function isRewriteResponse(value: unknown): value is RewriteResponse {
+  return isRecord(value) && typeof value.rewrittenPrompt === 'string';
+}
+
+function isDiagnostic(value: unknown): value is Diagnostic {
+  return (
+    isRecord(value) &&
+    typeof value.kind === 'string' &&
+    (value.severity === undefined || value.severity === 'error' || value.severity === 'warning') &&
+    isOptionalString(value.message) &&
+    isOptionalString(value.symbol) &&
+    isOptionalNumber(value.line) &&
+    isNonEmptyString(value.hint)
+  );
+}
+
+function isUsage(value: unknown): value is Usage {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.promptTokens) &&
+    Number.isInteger(value.completionTokens) &&
+    Number.isInteger(value.totalTokens)
+  );
+}
+
+function isWireAppRecord(value: unknown): value is WireAppRecord {
+  return (
+    isRecord(value) &&
+    typeof value.name === 'string' &&
+    typeof value.source === 'string' &&
+    typeof value.bundle === 'string' &&
+    isOptionalString(value.sourceMap) &&
+    isRecord(value.manifest) &&
+    isRecord(value.schema)
+  );
+}
+
+/** Structural guard for `GenerationEvent`'s discriminated union — one arm per `type` literal,
+ *  matching `contract/src/index.ts`'s zod union exactly. An unrecognized `type` (or a `type` that
+ *  isn't a string at all) fails, same as the zod union rejecting an unknown discriminant. */
+function isGenerationEvent(value: unknown): value is GenerationEvent {
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    return false;
+  }
+  switch (value.type) {
+    case 'stage':
+      return (
+        (value.stage === 'plan' ||
+          value.stage === 'generate' ||
+          value.stage === 'check' ||
+          value.stage === 'run' ||
+          value.stage === 'repair') &&
+        (value.status === 'start' || value.status === 'done') &&
+        isOptionalNumber(value.attempt)
+      );
+    case 'token':
+      return typeof value.text === 'string';
+    case 'diagnostic':
+      return isDiagnostic(value.diagnostic);
+    case 'usage':
+      return isUsage(value.usage);
+    case 'result':
+      return isWireAppRecord(value.app);
+    case 'failure':
+      return (
+        typeof value.reason === 'string' &&
+        typeof value.attempts === 'number' &&
+        Array.isArray(value.diagnostics) &&
+        value.diagnostics.every(isDiagnostic)
+      );
+    default:
+      return false;
+  }
+}
 
 /**
  * RN's shipped ambient fetch types (`react-native/src/types/globals.d.ts`) predate its actual
@@ -84,9 +196,8 @@ function messageOf(err: unknown): string {
  *  when the body has one, e.g. the `invalid_request` shape the route handlers return). */
 async function httpErrorFrom(response: Response): Promise<GenerationClientError> {
   const bodyJson: unknown = await response.json().catch(() => null);
-  const deviceIdError = DeviceIdError.safeParse(bodyJson);
-  if (deviceIdError.success) {
-    return new GenerationClientError('device_id', { status: response.status, hint: deviceIdError.data.hint });
+  if (isDeviceIdError(bodyJson)) {
+    return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint });
   }
   const hint =
     bodyJson !== null && typeof bodyJson === 'object' && typeof (bodyJson as Record<string, unknown>).hint === 'string'
@@ -114,11 +225,10 @@ export async function rewritePrompt(opts: ClientOptions, prompt: string): Promis
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
-  const parsed = RewriteResponse.safeParse(bodyJson);
-  if (!parsed.success) {
+  if (!isRewriteResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
-  return parsed.data;
+  return bodyJson;
 }
 
 /** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited) into a
@@ -145,11 +255,10 @@ function parseSseBlock(block: string): GenerationEvent | undefined {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame data is not valid JSON' });
   }
 
-  const parsed = GenerationEvent.safeParse(dataJson);
-  if (!parsed.success) {
+  if (!isGenerationEvent(dataJson)) {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame did not match GenerationEvent' });
   }
-  return parsed.data;
+  return dataJson;
 }
 
 /** Open the `POST /v1/generate` SSE stream and return its body reader, or `'aborted'` if
