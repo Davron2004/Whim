@@ -8,6 +8,7 @@
  * (chain 5, task 5.1) — this module only references that union, it does not own it.
  */
 
+import type { BrowserContext, Page } from 'playwright';
 import type { Diagnostic as StaticDiagnostic } from '../checks/contract';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +86,14 @@ export interface RunOptions {
   /** Ephemeral storage-engine `appId` scope for this run (design D3). Defaults to the run's
    *  generated id when omitted — never shared across runs (no cross-candidate contamination). */
   appId?: string;
+  /** Called with the freshly-opened page + context AFTER `context.newPage()` but BEFORE
+   *  navigation — the seam for setup that must be live before the delivered page's inline
+   *  scripts run: chain 2's CDP `Runtime.enable` (a candidate can throw before the
+   *  nonce-handshake's slower `toRN()` frame channel would ever catch it — `handoff/
+   *  observe-api.md`'s `attachObserversEarly`); chain 3's `context.exposeFunction(
+   *  'whimHostDispatch', ...)`. Multiple concerns compose by wrapping: `session.openRun(source,
+   *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
+  beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
 }
 
 export interface RunReport {
