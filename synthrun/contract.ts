@@ -94,6 +94,15 @@ export interface RunOptions {
    *  'whimHostDispatch', ...)`. Multiple concerns compose by wrapping: `session.openRun(source,
    *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
   beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
+  /** Cancellation (chain 6, design D8, generation-loop spec "Cancellation aborts the pipeline at
+   *  every boundary"). Threaded into `observe.ts`'s `withTotalBudget` — the SAME cleanup path the
+   *  total-budget watchdog already uses: an abort races the in-flight work exactly like a budget
+   *  overrun, hard-kills the page, and the caller's existing `dispose()` (context close + semaphore
+   *  release) then runs from its own `finally` block, unchanged. Not raced against `runCandidate` as
+   *  a whole — an abort during build/boot/mount-wait is observed the next time control reaches
+   *  `withTotalBudget`, not before (D8: "threaded, not raced" — the rejected alternative leaks a
+   *  context/slot for up to `totalBudgetMs` per cancellation). */
+  signal?: AbortSignal;
 }
 
 export interface RunReport {
