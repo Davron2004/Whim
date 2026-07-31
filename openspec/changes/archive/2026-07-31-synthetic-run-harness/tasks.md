@@ -32,6 +32,6 @@
 
 - [x] 5.1 Add the runtime-observed kinds to `DIAGNOSTIC_KINDS` in `checks/contract.ts` (additive; denial kinds reused verbatim, not duplicated); confirm checks suite green
 - [x] 5.2 Assemble the run report: diagnostics, verdict, per-stage timings, syscall/cue trace, screens visited/declared, budgets applied; hint mandatory on every diagnostic
-- [ ] 5.3 End-to-end acceptance: one well-formed multi-screen fixture (from `sdk-navigation` 4.2) yields a clean report; one six-way-hostile fixture yields exactly the expected diagnostic set; wire both into a new `npm run` suite entry mirroring the existing suite pattern (script addition is Class-2 `package.json` — flag for human application)
+- [x] 5.3 End-to-end acceptance: one well-formed multi-screen fixture (from `sdk-navigation` 4.2) yields a clean report; one six-way-hostile fixture yields exactly the expected diagnostic set; wire both into a new `npm run` suite entry mirroring the existing suite pattern (script addition is Class-2 `package.json` — flag for human application)
 - [x] 5.4 Add the `synthetic-run` row to `docs/capabilities.md`; append the decision-log entry (harness placement, gate-never-faked, watchdog policy, measure-don't-budget)
 - [x] 5.5 Run `scripts/gate.sh`; resolve anything red
