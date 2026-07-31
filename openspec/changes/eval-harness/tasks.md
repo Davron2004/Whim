@@ -85,19 +85,19 @@
 
 ## 5. Reports, diff, and the divergence alarm
 
-- [ ] 5.1 Implement `evals/report/serialize.ts`: canonical JSON — cases sorted by id, assertions in declared
+- [x] 5.1 Implement `evals/report/serialize.ts`: canonical JSON — cases sorted by id, assertions in declared
   order, stable key order, fixed indent — with measured durations and wall-clock timestamps confined to a
   `timings` section excluded from the diffable body (design D9). Record schema version, resolved eval-set id
   and visibility, runner version, candidate-producer label, and rubric version when Tier C ran.
-- [ ] 5.2 Implement `evals/report/summary.ts`: the human-readable Markdown summary, per-tier pass rates and a
+- [x] 5.2 Implement `evals/report/summary.ts`: the human-readable Markdown summary, per-tier pass rates and a
   failure list, inheriting redaction from the constructed report.
-- [ ] 5.3 Implement `evals/report/diff.ts`: compare two reports and name per-case, per-tier regressions down to
+- [x] 5.3 Implement `evals/report/diff.ts`: compare two reports and name per-case, per-tier regressions down to
   the specific assertion; show Tier-C score deltas marked non-deterministic rather than as regressions.
-- [ ] 5.4 Implement `evals/report/compare.ts`: per-tier pass-rate divergence between a visible and a holdout
+- [x] 5.4 Implement `evals/report/compare.ts`: per-tier pass-rate divergence between a visible and a holdout
   report, `overfitting_alarm` + non-zero exit past the configured threshold (recorded in the output), and a
   refusal — naming the mismatch — when schema versions differ or rubric versions differ while Tier C is
   compared (design D10).
-- [ ] 5.5 Tests in `evals/test/report.test.ts`: byte-identical diffable bodies across two identical runs while
+- [x] 5.5 Tests in `evals/test/report.test.ts`: byte-identical diffable bodies across two identical runs while
   timings differ; diff naming a Tier-B regression by case and assertion; alarm firing beyond and staying quiet
   within threshold; mismatched-version refusal; redaction preserved through both `diff` and `compare`.
 
