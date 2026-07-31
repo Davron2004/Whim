@@ -1,0 +1,9 @@
+{
+  "deltas": [
+    "import { defineApp, Screen, Stack, Heading } from 'vc-sdk';\n\n",
+    "function Home() {\n  return (\n    <Screen padding=\"lg\">\n      <Stack gap=\"lg\">\n        <Heading size=\"title\">Hello</Heading>\n      </Stack>\n    </Screen>\n  );\n}\n\n",
+    "export default defineApp({ name: 'Hello', initial: 'Home', screens: { Home }, capabilities: [] });\n"
+  ],
+  "usage": { "promptTokens": 910, "completionTokens": 140, "totalTokens": 1050 },
+  "id": "gen-engineer-fixture-1"
+}

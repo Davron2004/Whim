@@ -1,0 +1,5 @@
+{
+  "deltas": ["A timer that counts down from a chosen number of minutes and buzzes at zero."],
+  "usage": { "promptTokens": 42, "completionTokens": 18, "totalTokens": 60 },
+  "id": "gen-rewrite-fixture-1"
+}

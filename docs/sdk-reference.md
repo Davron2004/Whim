@@ -203,7 +203,50 @@ cues.haptic(kind: HapticKind): Promise<void>
 cues.sound(name: SoundName): Promise<void>
 ```
 
-## 6. Theming
+## 6. Navigation
+
+`nav` is a stable module-scope object, not a hook — call it directly from any event handler.
+
+```ts
+nav.navigate(screenName: string): void  // pushes `screenName` (must be a key of `screens`) onto the stack
+nav.back(): void                        // pops the stack; a no-op at depth 0 (the initial screen)
+```
+
+The host renders the top of the stack; there is no manual "which screen is active" state to track.
+Navigating to an undeclared screen name is a no-op (logged, never thrown). Depth resets to the
+`initial` screen on every realm reset (fresh generation, regeneration) — nothing about navigation
+state survives across those. See `fixtures/navigation-demo.app.tsx` for the canonical list → detail
+example.
+
+```tsx
+import { Button, defineApp, nav, Screen, Stack, Text } from 'vc-sdk';
+
+function List() {
+  return (
+    <Screen padding="lg">
+      <Stack gap="lg">
+        <Text>Pick one.</Text>
+        <Button label="Open detail" onPress={() => nav.navigate('Detail')} />
+      </Stack>
+    </Screen>
+  );
+}
+
+function Detail() {
+  return (
+    <Screen padding="lg">
+      <Stack gap="lg">
+        <Text>Detail screen.</Text>
+        <Button label="Back" variant="secondary" onPress={() => nav.back()} />
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({ name: 'Nav Demo', initial: 'List', screens: { List, Detail }, capabilities: [] });
+```
+
+## 7. Theming
 
 A mini-app never sees the active theme — there is no `useTheme()` and no theme object in the
 SDK's public surface. Every token resolver (`color()`, `radius()`, and the size/weight tables
