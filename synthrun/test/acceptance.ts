@@ -412,6 +412,45 @@ async function testObservers(): Promise<void> {
         });
       }
     });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('withTotalBudget: signal (task 6.1, design D8) hard-kills the page promptly, never marks run_truncated', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
+      try {
+        const budgets = mergeBudgets({ totalBudgetMs: 20000 }); // generous — the signal must win, not the timeout
+        const controller = new AbortController();
+        const started = Date.now();
+        setTimeout(() => controller.abort(), 100);
+        const { truncated, aborted } = await withTotalBudget(ctx, obs, budgets, () => new Promise<void>(() => {}), controller.signal); // never resolves
+        const elapsed = Date.now() - started;
+        ok(aborted === true, 'withTotalBudget reports aborted:true when the signal fires');
+        ok(truncated === false, 'an abort is never reported as truncated (a cancelled run is not a truncated one)');
+        ok(elapsed < 5000, `the abort won the race well before the 20s total budget (elapsed=${elapsed}ms)`);
+        ok(!obs.state.diagnostics.some((d) => d.kind === 'run_truncated'), 'no run_truncated diagnostic is appended on abort');
+        ok(ctx.page.isClosed(), 'the page was hard-killed on the same cleanup path as a budget overrun');
+      } finally {
+        obs.detach();
+        await dispose().catch(() => {
+          /* the page is already closed by the watchdog above */
+        });
+      }
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('red-check: withTotalBudget with no signal supplied is unaffected — same overrun behavior as before', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
+      try {
+        const budgets = mergeBudgets({ totalBudgetMs: 150 });
+        const { truncated, aborted } = await withTotalBudget(ctx, obs, budgets, () => new Promise<void>(() => {})); // no signal arg at all
+        ok(truncated === true, 'omitting signal entirely still truncates on overrun (non-vacuity: the new param is additive, not load-bearing for existing callers)');
+        ok(aborted === undefined, 'aborted is left unset when no signal was supplied');
+      } finally {
+        obs.detach();
+        await dispose().catch(() => {
+          /* the page is already closed by the watchdog above */
+        });
+      }
+    });
   } finally {
     await session.close();
   }
