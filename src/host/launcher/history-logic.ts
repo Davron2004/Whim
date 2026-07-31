@@ -17,25 +17,20 @@ import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 
 /**
- * F1 guard (verified engine gap — handoff/store-access-history.md "known gap"): `timeline()`'s
- * `isSameLine` check is DAG-ancestry-only, so an un-diverged fork's `timeline()` can surface a
- * snapshot committed later on the ORIGINAL's lineage (its tip is literally the same commit as the
- * shared fork point). No cheap "has this fork diverged" signal exists on `InstalledApp`/
- * `StoreAccess` without adding new store state (out of scope here — awaits the lineage-stamp fix
- * in `linked-apps-data-model`), so every fork entry lists via the always-safe `history()` (a
- * strict ancestor walk — provably never a sibling lineage's snapshot). The primary/original
- * lineage lists via `timeline()` for full roll-forward (a rollback on the SAME entry keeps later
- * snapshots reachable and listed).
+ * F1 fixed at the engine level (snapshot-lineage-identity, design D6; handoff/lineage-correctness.md):
+ * `timeline()` is now lineage-correct, not just DAG-same-line — a descendant of the active tip is
+ * only kept if it was actually created as a continuation of the active lineage, so an undiverged
+ * fork's `timeline()` no longer surfaces the original's later snapshots (and a rolled-back original
+ * no longer surfaces a fork's). Every entry, fork or original, lists via `timeline()` for full
+ * roll-forward — the interim `history()`-for-forks guard this function used to apply is retired.
  */
 export async function listVersions(access: StoreAccess, app: InstalledApp): Promise<Snapshot[]> {
-  return app.storeId != null ? access.history(app) : access.timeline(app);
+  return access.timeline(app);
 }
 
 /**
  * D6: whether `app`'s active snapshot is the newest row `listVersions` would show — "at tip" is
- * defined operationally as "matches what the History screen's own top row would show as current",
- * so this reuses `listVersions`'s fork-safe `history()`/`timeline()` split rather than a second,
- * differently-buggy tip check.
+ * defined operationally as "matches what the History screen's own top row would show as current".
  */
 export async function isAtTip(access: StoreAccess, app: InstalledApp): Promise<boolean> {
   const list = await listVersions(access, app);
