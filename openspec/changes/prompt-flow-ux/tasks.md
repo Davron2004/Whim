@@ -1,14 +1,14 @@
 ## 1. English test specs (§16.5 — before any implementation)
 
-- [ ] 1.1 Spec `device-id.ts`/`generation-client.ts` tests in English: device id is generated once and persists across reads; `rewritePrompt` success and HTTP/device-id-error paths; `generateApp` parses stage/token/diagnostic/usage/result/failure frames off an injected `Response`; a malformed frame raises `GenerationClientError{kind:'stream_parse'}`; an aborted stream yields no terminal event and does not throw
+- [x] 1.1 Spec `device-id.ts`/`generation-client.ts` tests in English: device id is generated once and persists across reads; `rewritePrompt` success and HTTP/device-id-error paths; `generateApp` parses stage/token/diagnostic/usage/result/failure frames off an injected `Response`; a malformed frame raises `GenerationClientError{kind:'stream_parse'}`; an aborted stream yields no terminal event and does not throw
 - [x] 1.2 Spec `StoreAccess.update`/`history-logic.isAtTip`/extended `install` tests in English: `update` snapshots onto the same lineage and updates the index record without changing id/lineage/createdAt; `install`/`update` write `schema.json` only when supplied; `isAtTip` is true immediately after install and after every fresh update, false after a rollback to a non-tip snapshot, and uses the same fork-safe `history()`/`timeline()` split as `listVersions`
 - [ ] 1.3 Spec the prompt-flow UI acceptance tests in English: create tile opens the prompt screen with no app being edited; the per-app "Prompt again" action opens it scoped to that app; approve-order is enforced (no generate request before rewrite-preview approval); stage transitions render without ever exposing `token` text or `diagnostic.kind`/`symbol`; a `failure` event or a stream error both land on the failure screen showing `reason` + hint-only diagnostics, and "rephrase" returns to the prompt screen with text preserved; delivery routes correctly for new/at-tip/behind-tip (the behind-tip case forks with `shareData:true` and asks no question); every delivered generation's tracked prompt parses as the `{v:1,text}` envelope; cancelling before a terminal event aborts the request and installs/updates nothing; every request carries the persisted `x-whim-device` header; an unconfigured server address shows the honest Settings message instead of attempting a request; every new string passes the product-verbs guard
 
 ## 2. Device identity + generation client (TDD)
 
-- [ ] 2.1 Write the 1.1 tests red against `src/host/launcher/device-id.ts` and `src/host/launcher/generation-client.ts`
-- [ ] 2.2 Implement `device-id.ts` (`getDeviceId`) per design D2
-- [ ] 2.3 Implement `generation-client.ts` (`rewritePrompt`, `generateApp`, `GenerationClientError`) per design D2 — SSE frame parsing off `Response.body`, validated against `GenerationEvent` (`@whim/contract`); all 2.1 tests green, `npm run launcher:test` green
+- [x] 2.1 Write the 1.1 tests red against `src/host/launcher/device-id.ts` and `src/host/launcher/generation-client.ts`
+- [x] 2.2 Implement `device-id.ts` (`getDeviceId`) per design D2
+- [x] 2.3 Implement `generation-client.ts` (`rewritePrompt`, `generateApp`, `GenerationClientError`) per design D2 — SSE frame parsing off `Response.body`, validated against `GenerationEvent` (`@whim/contract`); all 2.1 tests green, `npm run launcher:test` green
 
 ## 3. StoreAccess: update, isAtTip, schema.json
 
