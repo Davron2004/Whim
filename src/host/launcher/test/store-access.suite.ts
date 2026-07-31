@@ -138,12 +138,12 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   });
 
   // §20b same guarantee for timeline(), once the fork has diverged with its own snapshot.
-  // NOTE (verified, see handoff/store-access-history.md "known gap"): timeline()'s isSameLine
-  // check is DAG-ancestry-only, so on a fork that has NOT yet diverged (its tip is literally the
-  // same commit as the pre-fork tip), a snapshot committed later on the ORIGINAL's lineage is a
-  // descendant of that shared commit and DOES leak into the fork's timeline(). Diverging (this
-  // test) avoids it; this is an engine-level (chain-1) edge case, not fixable from the wrapper
-  // without new lineage-membership info from the engine.
+  // NOTE (see handoff/lineage-correctness.md, snapshot-lineage-identity): the engine's
+  // isSameLine gate now excludes sibling-lineage descendants — a candidate that is a DAG
+  // descendant of the active tip is only kept if its stamped creating lineage matches the
+  // active lineage. The non-diverged-fork over-inclusion this NOTE used to describe is fixed
+  // at the engine level, so timeline() is correct here whether or not the fork has diverged;
+  // this test still diverges the fork to also exercise the ordinary case.
   await h.test('store-access §20b once diverged, fork entry timeline excludes the original\'s later edit', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
