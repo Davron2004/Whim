@@ -6,7 +6,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
+  ApiError,
   Diagnostic,
+  DeviceIdError,
   GenerateRequest,
   GenerationEvent,
   RewriteRequest,
@@ -115,16 +117,52 @@ export function runContractTests(): void {
   check('GenerateRequest requires prompt', !GenerateRequest.safeParse({}).success);
   check('GenerateRequest app is optional', GenerateRequest.safeParse({ prompt: 'p' }).success);
   check(
-    'GenerateRequest app requires full source (no diff)',
-    !GenerateRequest.safeParse({ prompt: 'p', app: { manifest: {}, schema: {} } }).success,
+    'GenerateRequest app.source is optional (legacy install with no tracked source)',
+    GenerateRequest.safeParse({ prompt: 'p', app: { manifest: {}, schema: {} } }).success,
   );
   check(
     'GenerateRequest app with full source ok',
     GenerateRequest.safeParse({ prompt: 'p', app: { source: 's', manifest: {}, schema: {} } })
       .success,
   );
+  const withAppliedSchema = GenerateRequest.safeParse({
+    prompt: 'p',
+    app: { source: 's', manifest: {}, schema: {}, appliedSchema: { name: { type: 'text' } } },
+  });
+  check('GenerateRequest app.appliedSchema is accepted', withAppliedSchema.success);
+  check(
+    'GenerateRequest app.appliedSchema round-trips',
+    withAppliedSchema.success &&
+      JSON.stringify(withAppliedSchema.data.app?.appliedSchema) ===
+        JSON.stringify({ name: { type: 'text' } }),
+  );
+  check(
+    'GenerateRequest app.appliedSchema is optional (absent baseline is empty)',
+    GenerateRequest.safeParse({ prompt: 'p', app: { source: 's', manifest: {}, schema: {} } })
+      .success,
+  );
   check('RewriteRequest shape', RewriteRequest.safeParse({ prompt: 'p' }).success);
   check('RewriteResponse shape', RewriteResponse.safeParse({ rewrittenPrompt: 'r' }).success);
+
+  // ApiError — the shape every non-SSE /v1/* error body validates against.
+  check(
+    'ApiError accepts error + non-empty hint',
+    ApiError.safeParse({ error: 'model_failure', hint: 'retry the rewrite' }).success,
+  );
+  check('ApiError rejects empty hint', !ApiError.safeParse({ error: 'x', hint: '' }).success);
+  check('ApiError rejects missing hint', !ApiError.safeParse({ error: 'x' }).success);
+  const deviceIdErrorValue = { error: 'missing_device_id', hint: 'send x-whim-device' };
+  check('ApiError accepts a DeviceIdError value', ApiError.safeParse(deviceIdErrorValue).success);
+  check(
+    'DeviceIdError still rejects an unrecognized error value',
+    !DeviceIdError.safeParse({ error: 'model_failure', hint: 'retry the rewrite' }).success,
+  );
+
+  // GenerationEvent stage stays closed at plan|generate|check|run|repair — no `rewrite` member.
+  check(
+    'GenerationEvent rejects a rewrite stage',
+    !GenerationEvent.safeParse({ type: 'stage', stage: 'rewrite', status: 'start' }).success,
+  );
 
   // Contract-level stream invariant helper (exactly one terminal, last).
   const stream: GenerationEvent[] = [
