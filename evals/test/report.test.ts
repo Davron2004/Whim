@@ -412,3 +412,45 @@ section('redaction: tier results carry no candidate/prompt-derived free text und
   }, { kind: 'disallowed_import', severity: 'error', line: 5, column: 3 });
   check('message/hint/symbol are absent, not present-but-empty, under holdout', !('message' in holdoutDiagnostic) && !('hint' in holdoutDiagnostic) && !('symbol' in holdoutDiagnostic));
 }
+
+{
+  // A Tier-B assertion's `english` statement is expectation prose written by the eval-set owner
+  // (chain-C built the tier "English-first" precisely so the sentence states what the app should
+  // do) — the same disclosure class `redactCase` already treats `EvalCase.expectation` as. This
+  // must be exercised through an ACTUAL pass -> fail regression (the only shape `diff.ts` embeds
+  // an assertion's `english` into), not just a report snapshot, so the check is non-vacuous
+  // against `diff.ts`'s own code path.
+  const TIER_B_ENGLISH_SECRET = 'THE-SECRET-TIER-B-ENGLISH-token777';
+
+  function englishSecretTierB(status: 'pass' | 'fail'): TierBResult {
+    return {
+      status: 'evaluated',
+      assertions: [
+        {
+          english: `shows the user's ${TIER_B_ENGLISH_SECRET}`,
+          kind: 'screen-reachable',
+          status,
+          observed: { target: 'Home', reachedScreens: [] },
+        },
+      ],
+    };
+  }
+
+  const base = report([caseInput({ caseId: 'holdout-english-c1', prompt: SECRET_PROMPT, tierB: englishSecretTierB('pass') })], { visibility: 'holdout' });
+  const candidate = report([caseInput({ caseId: 'holdout-english-c1', prompt: SECRET_PROMPT, tierB: englishSecretTierB('fail') })], { visibility: 'holdout' });
+
+  const diff = diffReports(base, candidate);
+  eq('a genuine Tier-B regression is produced (proves the check below is non-vacuous)', diff.tierBRegressions.length, 1);
+
+  const surfaces = [serializeReport(base), serializeReport(candidate), renderSummary(base), renderSummary(candidate), JSON.stringify(diff), renderDiff(diff)];
+  for (const surface of surfaces) {
+    check(`no output surface contains the Tier-B english secret "${TIER_B_ENGLISH_SECRET}"`, !surface.includes(TIER_B_ENGLISH_SECRET), surface.slice(0, 300));
+  }
+
+  const visibleForCompare = report([caseInput({ caseId: 'holdout-english-c1', prompt: 'unrelated visible prompt', tierB: englishSecretTierB('pass') })]);
+  const compareOutcome = compareReports(visibleForCompare, base, 0.5);
+  const compareSurface = `${JSON.stringify(compareOutcome)}${renderCompare(compareOutcome)}`;
+  check('compare output does not contain the Tier-B english secret', !compareSurface.includes(TIER_B_ENGLISH_SECRET));
+
+  check('kind/status still identify the regressed assertion under holdout', diff.tierBRegressions[0].kind === 'screen-reachable' && diff.tierBRegressions[0].from === 'pass' && diff.tierBRegressions[0].to === 'fail');
+}

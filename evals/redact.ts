@@ -6,14 +6,17 @@
  * object downstream for a future output path to leak.
  *
  * `redactTierA`/`redactTierB`/`redactTierC` (`fix/redaction-tier-results`) extend the same
- * choke point to the tier results themselves: a candidate's own text can reach a `Diagnostic`'s
- * `message`/`hint`/`symbol` (a static check quoting an offending import specifier back), a
- * Tier-B assertion's `observed` value (deliberately "the concrete observed value, never a bare
- * boolean"), or a Tier-C judge's `rationale`/error `message` — all candidate/prompt-derived free
- * text, dropped (never hashed, never truncated — absence is the safer default) for `holdout`.
- * Closed-vocabulary/numeric fields (`kind`, `severity`, `line`, `column`, `status`, `criterion`,
- * `score`, `rubricVersion`, `judgeIdentity`) always survive — `diff.ts`/`compare.ts`/`summary.ts`
- * read only these, so dropping the free-text fields never breaks diffability or determinism.
+ * choke point to the tier results themselves. This is a DISCLOSURE property, not an execution
+ * one — an eval-set author's own words (a Tier-B assertion's `english` — expectation prose, the
+ * same disclosure class as `EvalCase.expectation`, which `redactCase` already drops) leak exactly
+ * as badly as a candidate's own text reaching a `Diagnostic`'s `message`/`hint`/`symbol` (a static
+ * check quoting an offending import specifier back), a Tier-B assertion's `observed` value
+ * (deliberately "the concrete observed value, never a bare boolean"), or a Tier-C judge's
+ * `rationale`/error `message`. All of the above are dropped (never hashed, never truncated —
+ * absence is the safer default) for `holdout`. Closed-vocabulary/numeric/structural fields
+ * (`kind`, `severity`, `line`, `column`, `status`, `criterion`, `score`, `rubricVersion`,
+ * `judgeIdentity`) always survive — `diff.ts`/`compare.ts`/`summary.ts` read only these, so
+ * dropping the free-text fields never breaks diffability or determinism.
  */
 import { createHash } from 'node:crypto';
 import type {
@@ -90,13 +93,14 @@ export function redactTierA(tierA: TierAResult, visibility: EvalSetVisibility): 
 
 function redactTierBAssertion(assertion: TierBAssertionResult, visibility: EvalSetVisibility): TierBAssertionReportResult {
   if (visibility === 'holdout') {
-    return { english: assertion.english, kind: assertion.kind, status: assertion.status };
+    return { kind: assertion.kind, status: assertion.status };
   }
   return { ...assertion };
 }
 
-/** Redacts a `TierBResult` for the report (`status`/`reason`/`english`/`kind` survive; each
- *  assertion's candidate-derived `observed` is dropped under `holdout`). */
+/** Redacts a `TierBResult` for the report (`status`/`reason`/`kind` survive; each assertion's
+ *  `english` statement — expectation prose, same disclosure class as `EvalCase.expectation` — and
+ *  its candidate-derived `observed` are both dropped under `holdout`). */
 export function redactTierB(tierB: TierBResult, visibility: EvalSetVisibility): TierBReportResult {
   if (tierB.status === 'skipped') return tierB;
   return { status: 'evaluated', assertions: tierB.assertions.map((assertion) => redactTierBAssertion(assertion, visibility)) };

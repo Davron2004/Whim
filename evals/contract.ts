@@ -141,13 +141,14 @@ export type TierCResult =
 // Redacted tier-result shapes (design D3 extension — `fix/redaction-tier-results`): what a
 // `CaseResult` actually carries, as opposed to what a tier evaluator produces (above). A
 // `visible` case gets every field verbatim; a `holdout` case omits (never hashes, never
-// truncates) every free-text/candidate-derived field — `evals/redact.ts`'s `redactTierA`/
-// `redactTierB`/`redactTierC` do the omitting, called only from `buildCaseResult`
-// (`evals/report/serialize.ts`), the single choke point `case` itself already goes through.
-// Closed-vocabulary and numeric fields (`kind`, `severity`, `status`, `line`, `column`, `score`,
-// `criterion`, `rubricVersion`, `judgeIdentity`) are unconditional — never candidate-authored
-// free text, and what keeps a holdout report diffable/comparable (`diff.ts`/`compare.ts` read
-// only these).
+// truncates) every field that is either eval-set-author-written or candidate-derived free text
+// (a DISCLOSURE property — never conflate with the "inert data, never executed" property those
+// same assertions already have) — `evals/redact.ts`'s `redactTierA`/`redactTierB`/`redactTierC`
+// do the omitting, called only from `buildCaseResult` (`evals/report/serialize.ts`), the single
+// choke point `case` itself already goes through. Closed-vocabulary, numeric, and structural
+// fields (`kind`, `severity`, `status`, `line`, `column`, `score`, `criterion`, `rubricVersion`,
+// `judgeIdentity`) are unconditional — never author-written prose, and what keeps a holdout
+// report diffable/comparable (`diff.ts`/`compare.ts` read only these).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** `Diagnostic` minus its free-text fields, which become optional (absent for `holdout`). */
@@ -171,7 +172,9 @@ export interface TierAReportResult {
 }
 
 export interface TierBAssertionReportResult {
-  readonly english: string;
+  /** The assertion's English statement — expectation prose, eval-set-author-written (spec
+   *  "expectation prose" is redacted for a holdout set), so absent under `holdout`. */
+  readonly english?: string;
   readonly kind: AssertionKind;
   readonly status: 'pass' | 'fail';
   /** The concrete observed value — candidate-derived, so absent under `holdout`. */
