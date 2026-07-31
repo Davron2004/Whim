@@ -11,6 +11,8 @@
  */
 
 import { SqlBindValue } from '../marshal';
+import { readAppliedSchema } from '../engine';
+import { AppliedSchema } from '../schema';
 import { runInTransaction, SqlExecutor, SqlResult, SqlRow } from '../sql-executor';
 import { assertExecuteSyncAvailable } from './assert-executesync';
 
@@ -65,4 +67,22 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
     },
   };
   return executor;
+}
+
+/**
+ * Device-side "read-only peek" (task 3.2/3.5, #52-D5): reads an app's live database's
+ * accumulated `_meta` union WITHOUT applying an artifact or running any DDL — `open()` never
+ * runs, so no schema is validated/diffed. Known device-only limitation (not exercised by the
+ * Node suite, like `createOpSqlExecutor` itself): the JS API here exposes no filesystem
+ * existence check, so — unlike the Node-side `readAppliedSchemaFromFile` — connecting to a
+ * brand-new app id's database may create an empty file as a side effect of op-sqlite's own
+ * `open()`. The functional guarantees that matter (no artifact applied, no DDL, `emptyApplied()`
+ * when nothing has ever been applied) hold regardless. */
+export function readAppliedSchemaFromDevice(opts: { appId: string }): AppliedSchema {
+  const executor = createOpSqlExecutor({ appId: opts.appId, mode: 'persistent' });
+  try {
+    return readAppliedSchema(executor);
+  } finally {
+    executor.close();
+  }
 }

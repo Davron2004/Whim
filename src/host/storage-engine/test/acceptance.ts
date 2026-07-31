@@ -16,12 +16,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createEngine } from '../engine';
+import { createEngine, readAppliedSchema } from '../engine';
 import { assertExecuteSyncAvailable } from '../bindings/assert-executesync';
-import { createNodeSqlExecutor } from '../bindings/node-sqlite';
+import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
 import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
-import { validateArtifact } from '../schema';
+import { AppliedSchema, burnedIdFloor, emptyApplied, validateArtifact } from '../schema';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
 
@@ -812,6 +812,97 @@ test('§F (D7) assertExecuteSyncAvailable throws iff executeSync is not a functi
     })(),
     'assertExecuteSyncAvailable must not throw when executeSync is a function',
   );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §G  #52-D5 device seam: burnedIdFloor + the accumulated-schema read-only peek
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('§G burnedIdFloor: retired columns raise the floor exactly like active ones', () => {
+  const applied: AppliedSchema = {
+    collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }, { id: 'f3', type: 'int' }], retired: [{ id: 'f9', type: 'text' }] }],
+  };
+  eq(burnedIdFloor(applied), { c1: 9 }, 'the reported floor is the max ordinal across active AND retired columns');
+});
+
+test('§G burnedIdFloor: a collection absent from the applied schema reports no floor', () => {
+  const applied: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
+  ok(burnedIdFloor(applied).c2 === undefined, 'an unrepresented collection has no floor entry — a first allocation there is unconstrained');
+});
+
+test('§G burnedIdFloor: importable and evaluable with no native storage binding available', () => {
+  // This whole suite runs under plain Node with no op-sqlite install; burnedIdFloor was
+  // imported directly from ./schema (never the ../index barrel) and already evaluated above —
+  // the two assertions here just make that load-bearing property an explicit, named check.
+  ok(typeof burnedIdFloor === 'function', 'burnedIdFloor imports as a plain function off ./schema');
+  eq(burnedIdFloor(emptyApplied()), {}, 'burnedIdFloor evaluates correctly with no native binding in the process');
+});
+
+test('§G readAppliedSchema: a live database reads back its accumulated union, retired columns included', () => {
+  const notesSchema: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Notes: { id: 'c1', tombstones: [], fields: { body: { id: 'f1', type: 'text' } } } },
+  };
+  const file = dbPath('applied-peek-retired');
+  const first = engineAt(file);
+  first.store.open(notesSchema);
+  first.store.close();
+
+  // Tombstone f1 by re-opening with it removed from the active set (evolution is additive-only:
+  // the field must have been declared active first, matching §B's own tombstone scenarios).
+  const tombstoned: SchemaArtifact = { schemaVersion: 1, collections: { Notes: { id: 'c1', tombstones: ['f1'], fields: {} } } };
+  const second = engineAt(file);
+  second.store.open(tombstoned);
+  second.store.close();
+
+  const peek = readAppliedSchemaFromFile(file);
+  const notes = peek.collections.find(c => c.id === 'c1');
+  ok(!!notes && notes.active.length === 0 && notes.retired.some(c => c.id === 'f1'), 'the accumulated union carries f1 as retired, not active');
+  eq(burnedIdFloor(peek), { c1: 1 }, 'the tombstoned id stays burned in the floor read off the peek');
+});
+
+test('§G readAppliedSchema: reading is side-effect-free — _meta, tables, and rows unchanged', () => {
+  const file = dbPath('applied-peek-side-effect-free');
+  const eng = engineAt(file);
+  eng.store.open(expensesV1);
+  eng.store.records.append('Expenses', { amount: 500, note: 'before', spentAt: 1704067200000 });
+  eng.store.close();
+
+  const before = fs.readFileSync(file);
+  const readOnly = new RecordingExecutor(createNodeSqlExecutor(file));
+  const peeked = readAppliedSchema(readOnly);
+  readOnly.close();
+  const after = fs.readFileSync(file);
+
+  eq(readOnly.log.length, 1, 'the peek issues exactly one statement — a passive SELECT');
+  ok(/^\s*SELECT/i.test(readOnly.log[0].sql), 'that one statement is a SELECT, never a DDL/DML form');
+  ok(readOnly.ddlStatements().length === 0, 'the peek runs no DDL — no CREATE/ALTER of any kind');
+  ok(before.equals(after), 'the database file is byte-identical before and after the peek');
+  ok(peeked.collections.some(c => c.id === 'c1'), 'the peek still returns the real accumulated union (not vacuously empty)');
+
+  const verify = engineAt(file);
+  verify.store.open(expensesV1); // identical (zero DDL) since nothing changed
+  eq(verify.store.records.list('Expenses'), [{ id: 1, amount: 500, note: 'before', spentAt: 1704067200000 }], 'rows are unchanged by the peek');
+  verify.store.close();
+});
+
+test('§G readAppliedSchemaFromFile: a never-created database reads as empty and no file is created', () => {
+  const file = dbPath('applied-peek-never-created');
+  ok(!fs.existsSync(file), 'sanity: the file does not exist yet');
+  const peeked = readAppliedSchemaFromFile(file);
+  eq(peeked, emptyApplied(), 'a database that was never created reads back as the empty applied schema');
+  ok(!fs.existsSync(file), 'the peek must not have created the file as a side effect');
+});
+
+test('§G readAppliedSchema: a freshly-connected-but-never-opened db (no _meta table yet) also reads as empty', () => {
+  // Distinct from the "file never created" case above: here the file/connection exists (so
+  // `_meta` itself is missing, not just its row) — the SELECT throws and is swallowed, not DDL'd
+  // around, matching "applies no artifact, runs no DDL" even when the table is absent.
+  const raw = new RecordingExecutor(createNodeSqlExecutor(dbPath('applied-peek-no-meta-table')));
+  const peeked = readAppliedSchema(raw);
+  eq(peeked, emptyApplied(), 'no _meta table yet reads back as the empty applied schema');
+  ok(raw.ddlStatements().length === 0, 'no DDL was issued to accommodate the missing table');
+  raw.close();
 });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
