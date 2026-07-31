@@ -137,6 +137,18 @@ function sumUsage(a: Usage, b: Usage): Usage {
   };
 }
 
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+/** Attach a rejection handler as soon as a model stream is created. The provider rejects its
+ *  `usage` promise on the same paths where the delta iterator throws; waiting to observe the
+ *  promise until after iteration would leave that rejection unhandled. */
+function settle<T>(promise: Promise<T>): Promise<Settled<T>> {
+  return promise.then(
+    (value) => ({ ok: true, value }),
+    (error: unknown) => ({ ok: false, error }),
+  );
+}
+
 function severityOf(d: Diagnostic): 'error' | 'warning' {
   return d.severity ?? 'error';
 }
@@ -210,6 +222,8 @@ type CandidateOutcome =
   | { kind: 'failed'; reason: string }
   | { kind: 'contained-failure' };
 
+type TerminalEvent = Extract<GenerationEvent, { type: 'result' | 'failure' }>;
+
 // ─── The machine ─────────────────────────────────────────────────────────────
 
 export class GenerationMachine {
@@ -250,14 +264,26 @@ export class GenerationMachine {
       yield* this.runRepairLoop(request, plan, schemaContext, source, signal, trace, state);
     } catch {
       if (signal?.aborted) return;
-      yield { type: 'usage', usage: state.usage };
-      yield {
+      yield* this.emitCompletion(state, signal, {
         type: 'failure',
         reason: GENERIC_INTERNAL_ERROR_REASON,
         attempts: state.candidatesProduced,
         diagnostics: state.diagnostics,
-      };
+      });
     }
+  }
+
+  /** The one completion envelope: usage immediately before the terminal, with the abort check
+   *  between those two externally-observable events so cancellation can never leak a terminal. */
+  private async *emitCompletion(
+    state: RunState,
+    signal: AbortSignal | undefined,
+    terminal: TerminalEvent,
+  ): AsyncGenerator<GenerationEvent, void> {
+    if (signal?.aborted) return;
+    yield { type: 'usage', usage: state.usage };
+    if (signal?.aborted) return;
+    yield terminal;
   }
 
   /** Calls the engineer model, accumulating usage/trace, and — when `emitTokens` — streaming
@@ -270,6 +296,14 @@ export class GenerationMachine {
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
     const stream = this.deps.model.stream({ model: this.deps.roster.engineer, messages }, signal);
+    const usageResult = settle(stream.usage);
+    const idResult = settle(stream.id).then((result) => {
+      // Start observing the id immediately, rather than after the delta stream completes. The id
+      // resolves from the provider's first frame, and aborted-run reconciliation depends on the
+      // out-parameter already containing it when cancellation stops this generator (design D9).
+      if (result.ok && result.value !== undefined && trace) trace.generationIds.push(result.value);
+      return result;
+    });
     let text = '';
     for await (const delta of stream.deltas) {
       if (signal?.aborted) return { text, aborted: true };
@@ -277,10 +311,11 @@ export class GenerationMachine {
       if (emitTokens) yield { type: 'token', text: delta };
     }
     if (signal?.aborted) return { text, aborted: true };
-    const usage = await stream.usage;
-    state.usage = sumUsage(state.usage, usage);
-    const id = await stream.id;
-    if (id !== undefined && trace) trace.generationIds.push(id);
+    const settledUsage = await usageResult;
+    if (!settledUsage.ok) throw settledUsage.error;
+    state.usage = sumUsage(state.usage, settledUsage.value);
+    const settledId = await idResult;
+    if (!settledId.ok) throw settledId.error;
     return { text, aborted: signal?.aborted ?? false };
   }
 
@@ -322,13 +357,12 @@ export class GenerationMachine {
 
       priorFailureReason = failureReason;
       if (attempt === this.bounds.planAttempts) {
-        yield { type: 'usage', usage: state.usage };
-        yield {
+        yield* this.emitCompletion(state, signal, {
           type: 'failure',
           reason: failureReason ?? PLAN_FAILURE_FALLBACK_REASON,
           attempts: 0,
           diagnostics: [],
-        };
+        });
         return undefined;
       }
     }
@@ -416,28 +450,25 @@ export class GenerationMachine {
       if (outcome.kind === 'aborted') return;
 
       if (outcome.kind === 'deliver') {
-        yield { type: 'usage', usage: state.usage };
-        yield { type: 'result', app: outcome.record };
+        yield* this.emitCompletion(state, signal, { type: 'result', app: outcome.record });
         return;
       }
       if (outcome.kind === 'contained-failure') {
-        yield { type: 'usage', usage: state.usage };
-        yield {
+        yield* this.emitCompletion(state, signal, {
           type: 'failure',
           reason: CONTAINMENT_FAILURE_REASON,
           attempts: state.candidatesProduced,
           diagnostics: [],
-        };
+        });
         return;
       }
       if (outcome.kind === 'failed') {
-        yield { type: 'usage', usage: state.usage };
-        yield {
+        yield* this.emitCompletion(state, signal, {
           type: 'failure',
           reason: outcome.reason,
           attempts: state.candidatesProduced,
           diagnostics: state.diagnostics,
-        };
+        });
         return;
       }
 
@@ -468,11 +499,15 @@ export class GenerationMachine {
     stage: 'check' | 'run',
     attemptField: { attempt?: number },
     diagnosticsAccum: Diagnostic[],
+    signal: AbortSignal | undefined,
   ): AsyncGenerator<GenerationEvent, void> {
     for (const d of diagnostics) {
+      if (signal?.aborted) return;
       diagnosticsAccum.push(d);
       yield { type: 'diagnostic', diagnostic: d };
+      if (signal?.aborted) return;
     }
+    if (signal?.aborted) return;
     yield { type: 'stage', stage, status: 'done', ...attemptField };
   }
 
@@ -493,13 +528,21 @@ export class GenerationMachine {
     if (signal?.aborted) return { kind: 'aborted' };
     const checkReport = await this.deps.check.check(source, { appliedSchema: request.app?.appliedSchema }, signal);
     if (signal?.aborted) return { kind: 'aborted' };
-    yield* this.emitDiagnosticsAndDone(checkReport.diagnostics, 'check', attemptField, diagnosticsAccum);
+    yield* this.emitDiagnosticsAndDone(checkReport.diagnostics, 'check', attemptField, diagnosticsAccum, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 
     const decision = decideAfterDiagnostics(checkReport.diagnostics, budgets);
     if (decision.action !== 'proceed') return outcomeFromDecision(decision);
 
-    return yield* this.buildAndRun(source, checkReport, signal, diagnosticsAccum, budgets, attemptField);
+    return yield* this.buildAndRun(
+      source,
+      checkReport,
+      signal,
+      diagnosticsAccum,
+      budgets,
+      attemptField,
+      [...checkReport.diagnostics],
+    );
   }
 
   private async *buildAndRun(
@@ -509,6 +552,7 @@ export class GenerationMachine {
     diagnosticsAccum: Diagnostic[],
     budgets: RepairBudgetsSnapshot,
     attemptField: { attempt?: number },
+    roundDiagnostics: Diagnostic[],
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
     yield { type: 'stage', stage: 'run', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
@@ -516,10 +560,11 @@ export class GenerationMachine {
     if (signal?.aborted) return { kind: 'aborted' };
 
     if (!buildOutcome.ok) {
-      yield* this.emitDiagnosticsAndDone([buildOutcome.diagnostic], 'run', attemptField, diagnosticsAccum);
+      yield* this.emitDiagnosticsAndDone([buildOutcome.diagnostic], 'run', attemptField, diagnosticsAccum, signal);
       if (signal?.aborted) return { kind: 'aborted' };
+      roundDiagnostics.push(buildOutcome.diagnostic);
       return budgets.repairsUsed < budgets.repairAttempts
-        ? { kind: 'repair', diagnostics: [buildOutcome.diagnostic], warningsOnly: false }
+        ? { kind: 'repair', diagnostics: errorsFirst(roundDiagnostics), warningsOnly: false }
         : { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON };
     }
 
@@ -534,10 +579,11 @@ export class GenerationMachine {
       return { kind: 'contained-failure' };
     }
 
-    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, diagnosticsAccum);
+    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, diagnosticsAccum, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 
-    const decision = decideAfterDiagnostics(runOutcome.diagnostics, budgets);
+    roundDiagnostics.push(...runOutcome.diagnostics);
+    const decision = decideAfterDiagnostics(roundDiagnostics, budgets);
     if (decision.action !== 'proceed') return outcomeFromDecision(decision);
     return { kind: 'deliver', record: runOutcome.record };
   }

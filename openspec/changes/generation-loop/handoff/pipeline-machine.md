@@ -39,7 +39,8 @@ export interface RunStage {
 // + a validated bundle) — `record.ts` (chain-5) is a helper the concrete stage calls, not
 // something `machine.ts` invokes; machine.ts never re-derives or re-parses a record.
 
-export interface RunTrace { generationIds: string[] }   // D9: appended as each model call resolves.
+export interface RunTrace { generationIds: string[] }   // D9: observed from call start and appended
+                                                        // as each id resolves, including on abort.
 
 export interface PipelineBounds { planAttempts: number; repairAttempts: number; warningRepairAttempts: number }
 export const DEFAULT_BOUNDS: Readonly<PipelineBounds>; // { planAttempts: 2, repairAttempts: 3, warningRepairAttempts: 1 }
@@ -81,6 +82,8 @@ export class GenerationMachine {
 - `diagnostic` events fire as each `CheckReport`/`BuildOutcome`/successful-`RunOutcome` diagnostic
   is observed, before that stage's `done` — except a `contained: false` `RunOutcome`, whose
   diagnostics are never streamed or accumulated (D7).
+- A repair receives all diagnostics observed for its current candidate (for example a non-blocking
+  CHECK warning plus a later RUN error), stable-sorted errors first; prior candidates are excluded.
 - Exactly one `usage` event (accumulated totals across every model call) immediately precedes the
   one terminal event (`result` | `failure`). No terminal event is ever emitted on abort.
 - An unexpected thrown exception from any stage/model call (not an abort) is caught once and

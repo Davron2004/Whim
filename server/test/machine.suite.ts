@@ -46,6 +46,7 @@ const BUILD_RESULT: BuildResult = { bundle: '(()=>{})();' };
 
 const ERROR_DIAG: Diagnostic = { kind: 'raw_timer', severity: 'error', message: 'raw setTimeout used', hint: 'use delay/interval instead' };
 const WARNING_DIAG: Diagnostic = { kind: 'unused_capability', severity: 'warning', message: 'cues declared but unused', hint: 'remove it' };
+const RUN_ERROR_DIAG: Diagnostic = { kind: 'run_fault', severity: 'error', message: 'the synthetic run failed', hint: 'fix the runtime behavior' };
 const BUILD_FAILURE_DIAG: Diagnostic = { kind: 'build_failure', severity: 'error', message: 'esbuild failed', hint: 'fix the syntax error' };
 
 const VALID_PLAN_JSON = JSON.stringify({
@@ -128,6 +129,15 @@ function terminals(events: GenerationEvent[]): GenerationEvent[] {
 type StageEvent = Extract<GenerationEvent, { type: 'stage' }>;
 function stageEvents(events: GenerationEvent[], stage: StageEvent['stage']): StageEvent[] {
   return events.filter((e): e is StageEvent => e.type === 'stage' && e.stage === stage);
+}
+
+function assertCompletedEnvelope(label: string, events: GenerationEvent[]): void {
+  eq(`${label}: exactly one terminal event`, terminals(events).length, 1);
+  eq(`${label}: exactly one usage event`, events.filter((e) => e.type === 'usage').length, 1);
+  check(
+    `${label}: usage immediately precedes the last terminal event`,
+    events.at(-2)?.type === 'usage' && (events.at(-1)?.type === 'result' || events.at(-1)?.type === 'failure'),
+  );
 }
 
 // ── §plan.ts — parser + validator, direct ─────────────────────────────────────
@@ -232,6 +242,7 @@ async function testHappyPath(): Promise<void> {
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('happy path', events);
 
   eq('happy path: stage sequence', events.filter((e) => e.type === 'stage').map((e) => `${e.stage}:${e.status}`), [
     'plan:start',
@@ -274,9 +285,15 @@ async function testRepairThenSuccess(): Promise<void> {
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('repair-then-success', events);
 
   eq('repair-then-success: repair pairs', stageEvents(events, 'repair').map((e) => e.status), ['start', 'done']);
   check('repair-then-success: repair events carry attempt:1', stageEvents(events, 'repair').every((e) => e.type === 'stage' && e.attempt === 1));
+  check(
+    'repair-then-success: repaired check/run events carry attempt:1',
+    [...stageEvents(events, 'check').slice(2), ...stageEvents(events, 'run')].every((e) => e.attempt === 1),
+  );
+  eq('repair-then-success: generate and repair both stream token deltas', events.filter((e) => e.type === 'token').length, 2);
   eq('repair-then-success: check pairs (initial + one repaired round)', stageEvents(events, 'check').length, 4);
   eq('repair-then-success: run pairs (only the successful candidate)', stageEvents(events, 'run').length, 2);
   eq('repair-then-success: exactly one terminal event', terminals(events).length, 1);
@@ -305,6 +322,7 @@ async function testRepairCapExhaustion(): Promise<void> {
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('repair-cap exhaustion', events);
 
   eq('repair-cap exhaustion: 3 repair pairs', stageEvents(events, 'repair').length, 6);
   eq('repair-cap exhaustion: repair attempt numbers are 1,2,3', stageEvents(events, 'repair').filter((e) => e.status === 'start').map((e) => e.attempt), [1, 2, 3]);
@@ -335,6 +353,7 @@ async function testPlanReaskThenFailure(): Promise<void> {
   const deps = baseDeps({ model });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('plan re-ask', events);
 
   eq('plan re-ask: exactly two plan pairs', stageEvents(events, 'plan').length, 4);
   eq('plan re-ask: no generate stage begins', stageEvents(events, 'generate').length, 0);
@@ -368,12 +387,58 @@ async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('warnings-only', events);
 
   eq('warnings-only: exactly one repair pair', stageEvents(events, 'repair').length, 2);
   eq('warnings-only: run begins exactly once (only after the sub-budget is spent)', stageEvents(events, 'run').length, 2);
   eq('warnings-only: both warnings streamed as diagnostic events', events.filter((e) => e.type === 'diagnostic').length, 2);
   eq('warnings-only: exactly one terminal event', terminals(events).length, 1);
   check('warnings-only: terminal is a result (delivered despite residual warnings)', events[events.length - 1].type === 'result');
+}
+
+async function testRepairPromptGetsWholeCurrentRoundErrorsFirst(): Promise<void> {
+  section('machine — repair context: CHECK + RUN diagnostics from one round, errors first');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-1']),
+    engineerTurn(['candidate-2']),
+    engineerTurn(['candidate-3']),
+  ]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([
+      { diagnostics: [WARNING_DIAG], manifest: MANIFEST },
+      { diagnostics: [WARNING_DIAG], manifest: MANIFEST },
+      { diagnostics: [], manifest: MANIFEST },
+    ]),
+    build: scriptedBuild([
+      { ok: true, result: BUILD_RESULT },
+      { ok: true, result: BUILD_RESULT },
+    ]),
+    run: scriptedRun([
+      { contained: true, diagnostics: [RUN_ERROR_DIAG], record: WIRE_RECORD },
+      { contained: true, diagnostics: [], record: WIRE_RECORD },
+    ]),
+  });
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('whole-round repair context', events);
+
+  eq(
+    'whole-round repair context: repair/check/run attempts propagate by candidate',
+    events
+      .filter((e): e is StageEvent => e.type === 'stage' && e.status === 'start' && ['repair', 'check', 'run'].includes(e.stage))
+      .map((e) => `${e.stage}:${e.attempt ?? 'initial'}`),
+    ['check:initial', 'repair:1', 'check:1', 'run:1', 'repair:2', 'check:2', 'run:2'],
+  );
+
+  const secondRepairPrompt = model.requests[3]?.request.messages.map((message) => message.content).join('\n') ?? '';
+  const errorIndex = secondRepairPrompt.indexOf(RUN_ERROR_DIAG.kind);
+  const warningIndex = secondRepairPrompt.indexOf(WARNING_DIAG.kind);
+  check('whole-round repair context: the RUN error is included', errorIndex >= 0);
+  check('whole-round repair context: the preceding CHECK warning is included', warningIndex >= 0);
+  check('whole-round repair context: errors are ordered before warnings', errorIndex >= 0 && errorIndex < warningIndex);
+  check('whole-round repair context: terminal is a result after the next green candidate', events.at(-1)?.type === 'result');
 }
 
 async function testContainmentFailureShortCircuit(): Promise<void> {
@@ -388,6 +453,7 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('containment failure', events);
 
   eq('containment failure: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
   eq('containment failure: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
@@ -412,6 +478,7 @@ async function testStageThrowYieldsOneFailure(): Promise<void> {
   const deps = baseDeps({ model, check: throwingCheck });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('stage throws', events);
 
   eq('stage throws: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
@@ -440,16 +507,18 @@ async function testAbortDuringGenerateTokens(): Promise<void> {
 
   const controller = new AbortController();
   let calls = 0;
+  const signals: (AbortSignal | undefined)[] = [];
   const model: ModelClient = {
-    stream(req): ModelStream {
+    stream(_req, signal): ModelStream {
       calls += 1;
+      signals.push(signal);
       if (calls === 1) {
         return {
           deltas: (async function* () {
             yield VALID_PLAN_JSON;
           })(),
           usage: Promise.resolve(ZERO_USAGE),
-          id: Promise.resolve(undefined),
+          id: Promise.resolve('gen-plan-before-abort'),
         };
       }
       return {
@@ -459,16 +528,22 @@ async function testAbortDuringGenerateTokens(): Promise<void> {
           yield 'never observed';
         })(),
         usage: Promise.resolve(ZERO_USAGE),
-        id: Promise.resolve(undefined),
+        id: Promise.resolve('gen-generate-aborted'),
       };
     },
   };
   const machine = new GenerationMachine(baseDeps({ model }));
-  const events = await collect(machine.run(NEW_APP_REQUEST, controller.signal));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(machine.run(NEW_APP_REQUEST, controller.signal, trace));
 
   eq('abort during generate: exactly one token event before the abort was observed', events.filter((e) => e.type === 'token').length, 1);
   eq('abort during generate: no generate:done event', stageEvents(events, 'generate').filter((e) => e.status === 'done').length, 0);
   eq('abort during generate: no terminal event', terminals(events).length, 0);
+  check('abort during generate: the caller signal reached every model call', signals.every((signal) => signal === controller.signal));
+  eq('abort during generate: RunTrace retains the aborted call id for reconciliation', trace.generationIds, [
+    'gen-plan-before-abort',
+    'gen-generate-aborted',
+  ]);
 }
 
 async function testAbortDuringCheck(): Promise<void> {
@@ -533,6 +608,141 @@ async function testAbortIsIdempotentAndQuiet(): Promise<void> {
   eq('abort twice: no events, ended once', events.length, 0);
 }
 
+async function testAbortAtEveryStageBoundary(): Promise<void> {
+  section('machine — abort checks cover every stage boundary, including the repair round');
+
+  const boundaries: { stage: StageEvent['stage']; status: StageEvent['status']; attempt?: number }[] = [
+    { stage: 'plan', status: 'start' },
+    { stage: 'plan', status: 'done' },
+    { stage: 'generate', status: 'start' },
+    { stage: 'generate', status: 'done' },
+    { stage: 'check', status: 'start' },
+    { stage: 'check', status: 'done' },
+    { stage: 'repair', status: 'start', attempt: 1 },
+    { stage: 'repair', status: 'done', attempt: 1 },
+    { stage: 'check', status: 'start', attempt: 1 },
+    { stage: 'check', status: 'done', attempt: 1 },
+    { stage: 'run', status: 'start', attempt: 1 },
+    { stage: 'run', status: 'done', attempt: 1 },
+  ];
+
+  for (const boundary of boundaries) {
+    const controller = new AbortController();
+    const model = new ScriptedModelClient(ROSTER, [
+      engineerTurn([VALID_PLAN_JSON]),
+      engineerTurn(['candidate-1']),
+      engineerTurn(['candidate-2']),
+    ]);
+    const machine = new GenerationMachine(baseDeps({
+      model,
+      check: scriptedCheck([
+        { diagnostics: [ERROR_DIAG], manifest: MANIFEST },
+        { diagnostics: [], manifest: MANIFEST },
+      ]),
+      build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+      run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+    }));
+
+    const events: GenerationEvent[] = [];
+    let reached = false;
+    for await (const event of machine.run(NEW_APP_REQUEST, controller.signal)) {
+      events.push(event);
+      if (
+        event.type === 'stage' &&
+        event.stage === boundary.stage &&
+        event.status === boundary.status &&
+        event.attempt === boundary.attempt
+      ) {
+        reached = true;
+        controller.abort();
+      }
+    }
+
+    const label = `${boundary.stage}:${boundary.status}:${boundary.attempt ?? 'initial'}`;
+    const lastEvent = events.at(-1);
+    check(`abort boundary ${label}: target was reached`, reached);
+    eq(`abort boundary ${label}: no terminal event`, terminals(events).length, 0);
+    check(
+      `abort boundary ${label}: no event follows the boundary`,
+      lastEvent?.type === 'stage' &&
+        lastEvent.stage === boundary.stage &&
+        lastEvent.status === boundary.status &&
+        lastEvent.attempt === boundary.attempt,
+    );
+  }
+}
+
+async function testAbortAtDiagnosticAndCompletionBoundaries(): Promise<void> {
+  section('machine — abort after diagnostic/usage events emits nothing further');
+
+  const diagnosticController = new AbortController();
+  const diagnosticModel = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-1']),
+  ]);
+  const diagnosticMachine = new GenerationMachine(baseDeps({
+    model: diagnosticModel,
+    check: scriptedCheck([{ diagnostics: [ERROR_DIAG, RUN_ERROR_DIAG], manifest: MANIFEST }]),
+  }));
+  const diagnosticEvents: GenerationEvent[] = [];
+  for await (const event of diagnosticMachine.run(NEW_APP_REQUEST, diagnosticController.signal)) {
+    diagnosticEvents.push(event);
+    if (event.type === 'diagnostic') diagnosticController.abort();
+  }
+  eq('abort after diagnostic: only the observed diagnostic is forwarded', diagnosticEvents.filter((e) => e.type === 'diagnostic').length, 1);
+  eq('abort after diagnostic: check:done is suppressed', stageEvents(diagnosticEvents, 'check').filter((e) => e.status === 'done').length, 0);
+  eq('abort after diagnostic: no terminal event', terminals(diagnosticEvents).length, 0);
+  check('abort after diagnostic: the diagnostic is the last event', diagnosticEvents.at(-1)?.type === 'diagnostic');
+
+  const completionCases: { label: string; machine: GenerationMachine }[] = [
+    {
+      label: 'success',
+      machine: new GenerationMachine(baseDeps({
+        model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['candidate-1'])]),
+        check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+        build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+        run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+      })),
+    },
+    {
+      label: 'failure',
+      machine: new GenerationMachine(baseDeps({
+        model: new ScriptedModelClient(ROSTER, [engineerTurn([DANGLING_INITIAL_PLAN_JSON])]),
+        bounds: { planAttempts: 1 },
+      })),
+    },
+  ];
+
+  for (const completionCase of completionCases) {
+    const controller = new AbortController();
+    const events: GenerationEvent[] = [];
+    for await (const event of completionCase.machine.run(NEW_APP_REQUEST, controller.signal)) {
+      events.push(event);
+      if (event.type === 'usage') controller.abort();
+    }
+    eq(`abort after usage (${completionCase.label}): one usage was observed`, events.filter((e) => e.type === 'usage').length, 1);
+    eq(`abort after usage (${completionCase.label}): terminal is suppressed`, terminals(events).length, 0);
+    check(`abort after usage (${completionCase.label}): usage is the last event`, events.at(-1)?.type === 'usage');
+  }
+}
+
+async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
+  section('machine — a model stream throw and rejected usage become one safe failure');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'engineer', deltas: [], error: new Error('provider secret MODEL-LEAK') },
+  ]);
+  const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+
+  assertCompletedEnvelope('model stream throws', events);
+  const terminal = events.at(-1);
+  check('model stream throws: terminal is a failure', terminal?.type === 'failure');
+  if (terminal?.type === 'failure') {
+    check('model stream throws: failure prose hides provider details', !terminal.reason.includes('MODEL-LEAK'));
+    eq('model stream throws: no candidate was produced', terminal.attempts, 0);
+  }
+}
+
 async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
   section('machine — planAttempts/repairAttempts/warningRepairAttempts are constructor parameters');
 
@@ -540,6 +750,7 @@ async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
   const deps = baseDeps({ model, bounds: { planAttempts: 1, repairAttempts: 0, warningRepairAttempts: 0 } });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('injectable bounds', events);
 
   eq('injectable bounds: exactly one plan pair when planAttempts:1', stageEvents(events, 'plan').length, 2);
   eq('injectable bounds: exactly one terminal event', terminals(events).length, 1);
@@ -586,6 +797,7 @@ async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void
   });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('build failure', events);
 
   eq('build failure: exactly one repair pair', stageEvents(events, 'repair').length, 2);
   const buildFailureDiagnostics = events.filter((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'build_failure');
@@ -604,6 +816,7 @@ export async function runMachineTests(): Promise<void> {
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();
   await testWarningsOnlyOneRepairThenDeliver();
+  await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
   await testContainmentFailureShortCircuit();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();
@@ -611,6 +824,9 @@ export async function runMachineTests(): Promise<void> {
   await testAbortDuringCheck();
   await testAbortDuringRun();
   await testAbortIsIdempotentAndQuiet();
+  await testAbortAtEveryStageBoundary();
+  await testAbortAtDiagnosticAndCompletionBoundaries();
+  await testModelStreamThrowYieldsOneFailure();
   await testRepairBudgetsAreConstructorInjectable();
   await testRunTraceCollectsGenerationIds();
   await testBuildFailureBecomesADiagnosticAndIsRepairable();
