@@ -1,28 +1,28 @@
 ## 1. Contract, corpus registry, and eval-set loading
 
-- [ ] 1.1 Author `evals/contract.ts` — dependency-free types and closed tables only, no I/O: `EvalCase`,
+- [x] 1.1 Author `evals/contract.ts` — dependency-free types and closed tables only, no I/O: `EvalCase`,
   `EvalSetManifest`, `EvalSetVisibility` (`visible | holdout`), the closed `ASSERTION_KINDS` table,
   `TierAResult` / `TierBResult` / `TierCResult` with their `skipped` reasons (`tier_a_failed`,
   `no_judge_configured`), `RunObservation`, `JudgeVerdict`, `EvalRunReport`, and `EVAL_REPORT_SCHEMA_VERSION`.
   Import `Diagnostic`/`DiagnosticKind` type-only from `checks/contract.ts`; do **not** edit `checks/contract.ts`
   and do **not** mint any new diagnostic kind.
-- [ ] 1.2 Author the Node acceptance suite scaffold: `evals/test/run.mjs` (esbuild-bundle-then-run, following
+- [x] 1.2 Author the Node acceptance suite scaffold: `evals/test/run.mjs` (esbuild-bundle-then-run, following
   `checks/test/run.mjs`, with `tsconfigRaw: '{}'`) plus `evals/test/harness.ts` (tally-style `check`/`eq`/
   `section`/`report`, following `server/test/harness.ts`). The runner **auto-discovers** `evals/test/*.test.ts`
   — no hand-maintained registry file, so parallel chains never collide (design D14). Must exit non-zero on any
   failure and run with no eval set present.
-- [ ] 1.3 Author `evals/corpus.ts` — the stable slug registry for the 11 Tier-0 apps from `docs/app-corpus.md`;
+- [x] 1.3 Author `evals/corpus.ts` — the stable slug registry for the 11 Tier-0 apps from `docs/app-corpus.md`;
   add a matching slug column to the Tier-0 rows of `docs/app-corpus.md`; add a drift check to the suite that
   parses that column and fails naming any slug present on only one side (design D11).
-- [ ] 1.4 Implement `evals/eval-set.ts`: resolve the set location from `--eval-set` then `WHIM_EVAL_SET` then
+- [x] 1.4 Implement `evals/eval-set.ts`: resolve the set location from `--eval-set` then `WHIM_EVAL_SET` then
   **refuse**; parse and validate the manifest and cases; reject unknown app slugs, missing English statements,
   unknown assertion kinds, and any assertion expressed as a code string or module reference. No repo-embedded
   default location, no placeholder holdout directory, no network access (design D2, D5).
-- [ ] 1.5 Implement `evals/redact.ts` and wire it as the report-construction gate: for a `holdout` set every
+- [x] 1.5 Implement `evals/redact.ts` and wire it as the report-construction gate: for a `holdout` set every
   emitted case carries `caseId` + `promptSha256` only, never prompt text, expectation prose, or candidate
   source (design D3). Red test: run a synthetic holdout set and assert no prompt or expectation substring
   appears anywhere in the emitted report, summary, or console output.
-- [ ] 1.6 Commit the visible dev eval set under `evals/sets/visible/` encoding the 22 seed phrasings from
+- [x] 1.6 Commit the visible dev eval set under `evals/sets/visible/` encoding the 22 seed phrasings from
   `docs/sdk-gap.md` §6, each case keyed by corpus slug + phrasing index, `visibility: visible`. Tier-B specs
   are added later (task 3.4); this task lands prompts + ids + manifest only.
 
