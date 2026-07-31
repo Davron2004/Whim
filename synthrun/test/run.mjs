@@ -24,7 +24,12 @@ await build({
   format: 'esm',
   target: 'node20',
   tsconfigRaw: '{}',
-  external: ['esbuild'],
+  // `esbuild` (task 1.3's builder) and `playwright` (chain 2's real-Chromium collectors/
+  // watchdog tests) both ship native/optional-platform requires (fsevents, chromium-bidi, …)
+  // that esbuild's bundler cannot resolve statically — same class of gotcha as bundling
+  // `typescript` into a Node suite (documented precedent); keep both external and let Node's
+  // own `require`/`import` resolve them from `node_modules` at run time.
+  external: ['esbuild', 'playwright'],
   logLevel: 'warning',
 });
 
