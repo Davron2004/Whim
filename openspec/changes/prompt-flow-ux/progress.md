@@ -28,3 +28,11 @@
 - chain-5 REPORT: complete 1/1, GATE PASS, commit 7f2aed5, no deviations. Decision #53 appended; roadmap #7 block updated (implemented 2026-07-31, task 7.2 on-device acceptance PENDING).
 - chain-5 INTEGRITY: exit 0. MERGED onto v1-sprint, task 7.1 ticked, REGATE PASS. All 5 chains (+4b fix chain) merged → proceeding to gate-full + reviewer.
 - gate-full on staging tip (23959cd): FULL GATE PASSED (Chromium invariants, knip, guard:metro, openspec validate 31/31). Whole-change reviewer DISPATCHED (diff 6bfe552..HEAD scoped to launcher + change folder + docs).
+- REVIEWER (whole change): verdict CLEAN. Report honesty: matches diff (all chains). Two low findings: (1) task 1.3 had no owning chain in chains.md; its English-spec content shipped as suite doc comments/test names via 6.6 — dispatcher ticked 1.3 with this note as the disposition; (2) ~half of prompt-flow-wiring.suite.ts is source-grep style (established idiom for un-runnable RN components, disclosed in suite doc comment) — logged as tripwire candidate for whim-test-classification.
+
+## Closing summary
+- Chains run: 1,2,3,4,4b(fix),5 — all merged onto v1-sprint, each regated green. Redispatches: 0. SendMessage revisions: 0.
+- Deviations: all Class A except one Class B (guard:metro zod/Metro incompatibility) converted to fix chain-4b and closed same-run (guard:metro OK, 1959826 bytes).
+- Merge conflict (acceptance.ts suite registrations, chains 1+3): union-resolved by dispatcher, regate-validated. Tripwire: chains.md must reserve acceptance.ts registration to one chain.
+- gate-full: PASSED on 23959cd. Reviewer: CLEAN.
+- Remaining: task 7.2 on-device acceptance (ATTENDED, user-run) → then /opsx:archive. Closure (push/PR/Sonar) deferred to attended sprint closure.
