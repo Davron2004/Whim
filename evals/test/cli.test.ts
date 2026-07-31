@@ -364,18 +364,30 @@ section('gate configuration (spec "Eval runs are on demand and never part of the
     !gateContents.includes('cli.mjs') && !/\bevals[: ]run\b/.test(gateContents),
     'a corpus-eval RUN invocation must never appear in the gate — eval runs cost model spend and browser time',
   );
-  // As of this chain, the runner's OWN acceptance-suite entry (`check "corpus-eval" npm run -s
-  // evals:test`) is NOT yet in the gate — it is recorded, unapplied, in
-  // `openspec/changes/eval-harness/pending-class2.md` (design D13: package.json/gate.sh/
-  // tsconfig.json/knip.json are Class-2, human-only). This assertion locks TODAY's true state
-  // rather than asserting the post-bootstrap scenario as if it already held; once a human
-  // applies that pending diff, this check (and this comment) must be updated to assert
-  // PRESENCE instead, and the suite itself becomes reachable via `npm run -s evals:test` from
-  // inside the gate rather than only via `node evals/test/run.mjs` directly.
+  // Tri-state, self-healing across the Class-2 bootstrap: the runner's OWN acceptance-suite
+  // entry (`check "corpus-eval" npm run -s evals:test`) is a Class-2 edit recorded, unapplied,
+  // in `openspec/changes/eval-harness/pending-class2.md`(c) (design D13: package.json/gate.sh/
+  // tsconfig.json/knip.json are Class-2, human-only). Exactly one of three states is legitimate:
+  //   1. APPLIED — a human applied pending-class2.md(c); gate.sh now contains a correctly
+  //      shaped `check "corpus-eval" ... npm run -s evals:test` line. PASS.
+  //   2. NOT APPLIED, RECORDED — gate.sh has no corpus-eval entry, but pending-class2.md still
+  //      records the exact obligation. This is today's true pre-bootstrap state. PASS.
+  //   3. NOT APPLIED, NOT RECORDED — gate.sh has no corpus-eval entry AND pending-class2.md no
+  //      longer records the obligation: it has been silently dropped. FAIL.
+  // A `"corpus-eval"` marker present in gate.sh but not shaped like the recorded line (e.g. the
+  // wrong command) also FAILs, so a malformed application is caught rather than waved through.
+  const corpusEvalCheckLine = /check\s+"corpus-eval"\s+npm run -s evals:test\b/;
+  const gateHasCorpusEvalMarker = gateContents.includes('"corpus-eval"');
+  const gateHasWellFormedCorpusEvalCheck = corpusEvalCheckLine.test(gateContents);
+  const pendingClass2Contents = readFileSync(
+    join(repoRoot, 'openspec', 'changes', 'eval-harness', 'pending-class2.md'),
+    'utf8',
+  );
+  const obligationStillRecorded = corpusEvalCheckLine.test(pendingClass2Contents);
   check(
-    'the corpus-eval acceptance-suite entry is not yet wired into the gate (pending-class2.md, design D13)',
-    !gateContents.includes('"corpus-eval"'),
-    'if this fails, a human has applied pending-class2.md(c) — update this test to assert presence instead',
+    'the corpus-eval acceptance-suite gate entry is either correctly applied, or still tracked as a pending Class-2 obligation (pending-class2.md, design D13)',
+    gateHasWellFormedCorpusEvalCheck || (!gateHasCorpusEvalMarker && obligationStillRecorded),
+    'the corpus-eval gate entry is neither correctly applied to gate.sh nor recorded in pending-class2.md — the obligation has been silently dropped',
   );
 }
 
