@@ -1,15 +1,17 @@
 # Corpus-eval operator guide
 
-The corpus-eval harness (`evals/`, spec `openspec/changes/eval-harness/specs/corpus-eval/spec.md`,
+The corpus-eval harness (`evals/`, spec `openspec/specs/corpus-eval/spec.md`,
 roadmap #12) is an **on-demand, human-run** CLI — it costs model spend and browser time, so it is
 never part of `scripts/gate.sh` or CI. This is the operator's guide to running it. It assumes
 `node evals/test/run.mjs` passes (the harness's own acceptance suite) — see that suite for the
 harness's own contract; this document is about USING the CLI, not its internals.
 
-**Not yet an `npm run` script.** `openspec/changes/eval-harness/pending-class2.md` records the
-exact `package.json`/`tsconfig.json`/`scripts/gate.sh`/`knip.json` diff a human must apply before
-`npm run evals`/`npm run evals:test` exist. Until then, invoke the CLI directly:
-`node evals/cli.mjs <run|diff|compare> ...`.
+**Run it with `npm run evals`.** The Class-2 wiring was applied attended on 2026-07-31
+(`openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md` records the exact diff):
+`npm run evals -- <run|diff|compare> ...` drives the CLI, and `npm run evals:test` runs the
+harness's own acceptance suite — which `scripts/gate.sh` now invokes as `corpus-eval` on every
+fast-gate run. Invoking `node evals/cli.mjs <run|diff|compare> ...` directly still works and is
+equivalent. Note the `--` in `npm run evals -- ...`: without it npm swallows the arguments.
 
 ## Pointing the runner at a set
 
