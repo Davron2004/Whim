@@ -1,0 +1,10 @@
+{
+  "rubricVersion": "v1",
+  "judgeIdentity": "replay:fixture",
+  "criteria": [
+    { "criterion": "intent-fidelity", "score": 4, "rationale": "Splits the bill per the prompt's request." },
+    { "criterion": "usability", "score": 5, "rationale": "Every control is clearly labeled." },
+    { "criterion": "robustness", "score": 3, "rationale": "Zero-guest input is not handled." },
+    { "criterion": "polish", "score": 4, "rationale": "Consistent layout, minor spacing issue." }
+  ]
+}
