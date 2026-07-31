@@ -373,7 +373,9 @@ factor that into provider selection.
 
 #### 12. `eval-harness` — Size M · Deps: #1, #9; full value after #11
 
-**Status:** unproposed
+**Status:** implemented 2026-07-31 (chains A–F built, OpenSpec change `eval-harness`) — desktop
+gates green (`node evals/test/run.mjs`, 196 checks). Chain G's Class-2 bootstrap (below) is
+**PENDING** human application.
 **In:** corpus runner CLI (on-demand, not CI — cost): **Tier A** deterministic gate (= #9 + #10
 pass/fail); **Tier B** behavioral specs per corpus app, English-first then encoded; **Tier C**
 LLM-judge against an English rubric + a human-eyeball protocol; visible/holdout protocol
@@ -383,6 +385,44 @@ DeepSeek, et al.) and rewrite-model candidates, decided on corpus results → re
 open model choice.
 **Out:** CI wiring of evals; corpus growth beyond Tier 0.
 **Read first:** spec §16.3–16.4/§18, `docs/app-corpus.md`, #1's prompt seeds.
+**Contract notes (as-built):** live spec `openspec/changes/eval-harness/specs/corpus-eval/spec.md`;
+operator guide `docs/evals.md`.
+
+- Eval-set resolution is strictly `--eval-set <path>` > `WHIM_EVAL_SET` > refuse — no
+  repo-embedded default, no config file naming a set, no network. No `evals/sets/holdout/`
+  exists or should ever exist; the holdout set is user-held and this repo never records or
+  infers where it lives (decision #42, design D2) — only the committed dev-visible set lives
+  under `evals/sets/visible/` (22 cases: the 11 Tier-0 corpus apps × 2 phrasings each).
+  `docs/app-corpus.md`'s Tier-0 rows carry a matching `Slug` column the suite drift-checks.
+- Report shape (`EvalRunReport`, `evals/contract.ts`): three tier results per case
+  (`TierAResult`/`TierBResult`/`TierCResult`), a case `verdict` gated on Tier A + every required
+  Tier-B assertion only — Tier C never gates. Redaction (`evals/redact.ts`) happens at
+  construction: a `holdout`-visibility case carries only `caseId` + `promptSha256` on every
+  output surface (serialized report, Markdown summary, `diff`, `compare`), structurally, not by
+  convention. Canonical serialization sorts every object's keys alphabetically at every depth
+  and excludes `timings` from the diffable body, so two structurally-equal runs diff
+  byte-identically regardless of upstream property order.
+- `evals/cli.mjs` composes every tier: `run` (sources candidates via `evals/producer.ts` —
+  `--source-dir <dir>` reads `<dir>/<caseId>.ts` fully offline, or `--generate` drives an
+  injected pipeline, classifying a stream with anything other than exactly one terminal
+  `GenerationEvent` as a **runner** error, never a candidate failure — design D12), `diff`
+  (per-case/per-tier regressions between two reports), `compare` (visible-vs-holdout divergence,
+  `overfitting_alarm` past a threshold). Reports default to the git-ignored
+  `evals/.reports/`; the CLI refuses to write into any directory already holding git-tracked
+  content. Exit codes: `run` 0 clean / 1 any case failed / 2 config error; `diff` 0 clean / 1
+  regression named / 2 unreadable report; `compare` 0 clean / 1 alarm / 2 refused (schema or
+  in-play rubric-version mismatch).
+- A real `run` (`--generate` or a real candidate under `--source-dir`) launches a `synthrun`
+  Chromium session for Tier A's runtime leg — real browser time, exactly why eval runs are
+  on-demand only, never wired into `scripts/gate.sh`. The acceptance suite
+  (`evals/test/*.test.ts`) stays Chromium-free by construction: every case it drives through the
+  real CLI subprocess fails or completes during eval-set resolution or candidate *sourcing*,
+  before Tier A would ever launch a browser.
+- **Chain G (HUMAN-BOOTSTRAP, pending):** `openspec/changes/eval-harness/pending-class2.md`
+  records the exact diff for the four Class-2 files (`package.json`'s `evals`/`evals:test`
+  scripts, `tsconfig.json`'s `evals/test` exclude, `scripts/gate.sh`'s `corpus-eval` check line,
+  `knip.json`'s `evals/**` entries) — unapplied. Until a human applies it, the suite runs
+  directly: `node evals/test/run.mjs`.
 
 ### Lane D — integration
 
