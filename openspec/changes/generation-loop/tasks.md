@@ -105,23 +105,23 @@
 
 ## 6. Run stage and cancellation
 
-- [ ] 6.1 `synthrun`: add `RunOptions.signal?: AbortSignal`, threaded so an abort kills the page, disposes
+- [x] 6.1 `synthrun`: add `RunOptions.signal?: AbortSignal`, threaded so an abort kills the page, disposes
       the context, and releases the semaphore slot on the same path the total-budget watchdog already uses;
       cover it in the harness's own suite.
-- [ ] 6.2 `server/src/generation/stages/run.ts`: the harness adapter — one session per pipeline, per-run
+- [x] 6.2 `server/src/generation/stages/run.ts`: the harness adapter — one session per pipeline, per-run
       slot, `RunReport` → diagnostics, `contained === false` → immediate terminal failure consuming no
       repair attempt and feeding nothing back, `truncated` → not a pass.
-- [ ] 6.3 `server/src/generation/reconcile.ts`: post-abort usage reconciliation — injectable transport,
+- [x] 6.3 `server/src/generation/reconcile.ts`: post-abort usage reconciliation — injectable transport,
       bounded attempts and total time budget, quiet give-up, credits through the existing `UsageStore`, no
       new persistence.
-- [ ] 6.4 `server/test/e2e.ts` (+ its runner): the browser-backed end-to-end suite — one honest
+- [x] 6.4 `server/test/e2e.ts` (+ its runner): the browser-backed end-to-end suite — one honest
       corpus-shaped candidate through the real check, build, and run stages to a `result` whose bundle is
       byte-identical to the production build; one escape-attempting candidate to a containment `failure`;
       one cancellation mid-run asserting the context is disposed and the slot released.
-- [ ] 6.5 Record the Class-2 bootstrap in `pending-class2.md` — **HUMAN-BOOTSTRAP**: the exact
+- [x] 6.5 Record the Class-2 bootstrap in `pending-class2.md` — **HUMAN-BOOTSTRAP**: the exact
       `package.json` script line for the new browser-backed suite and the exact `gate-full.sh` invocation
       line. No agent applies either.
-- [ ] 6.6 Write `handoff/run-stage.md` — the run-stage and reconciliation signatures, the session lifecycle
+- [x] 6.6 Write `handoff/run-stage.md` — the run-stage and reconciliation signatures, the session lifecycle
       the composition root owns, and the containment/truncation policy.
 
 ## 7. Server wiring and acceptance
