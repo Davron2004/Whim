@@ -151,7 +151,8 @@ transport/dispatcher edits; suites green.
 
 #### 3. `sdk-design-system` — Size L · Deps: #1; after #2 (file overlap)
 
-**Status:** unproposed
+**Status:** BUILT 2026-07-02 (archived `openspec/changes/archive/2026-07-07-sdk-design-system/`;
+live spec `openspec/specs/sdk-design-system/spec.md`). Decision #45.
 **Why:** the SDK is currently "exactly what the fixtures use"; the corpus needs the real set,
 and the reference doc *is* the future system prompt.
 **In:** components per the gap list (forms incl. nested patterns for workout log; List +
@@ -335,7 +336,11 @@ implementing session).
 
 #### 10. `synthetic-run-harness` — Size M · Deps: none hard (lib-first; #8 to mount it)
 
-**Status:** unproposed
+**Status:** BUILT (OpenSpec change `synthetic-run-harness`, archived 2026-07-31) — desktop gates
+green; `npm run synthrun:test` 82 checks, running inside `scripts/gate.sh` as `synthetic-run`
+since the Class-2 wiring was applied attended 2026-07-31 (which completed task 5.3). Decision
+#55; live spec `openspec/specs/synthetic-run/spec.md`. Consumed by #11's repair loop and #12's
+Tier A.
 **Why:** productionizes Spike 3 — the loop's "run + observe" stage.
 **In:** boot a candidate bundle in the **real runtime page** (reuse `build/assemble.mjs`
 artifacts + the invariants suite's headless-Chromium machinery); synthetic event stream —
@@ -349,7 +354,13 @@ diagnostics catalog.
 
 #### 11. `generation-loop` — Size L · Deps: #8, #9, #10, SDK reference from #3 (+#4)
 
-**Status:** unproposed
+**Status:** BUILT 2026-07-31 (chains 1–7, OpenSpec change `generation-loop`) — desktop gates
+green; `npm run server:test` 465 checks and `npm run server:e2e` 31, the latter running inside
+`scripts/gate-full.sh` as `generation-e2e` since the Class-2 wiring was applied attended
+2026-07-31. Decision #56. **Not yet archived:** task 7.6 (attended on-device — generate and
+install an app end to end against a real key, then kill it mid-generation and confirm the server
+observes the abort and the reconciled usage lands in `/v1/usage`) is outstanding, and it is what
+closes cancellation carryover (a) and flips #56's PENDING tag.
 **In:** the orchestrated pipeline — **rewrite stage** (small model: casual → detailed prompt,
 returned for device-side preview; approved text feeds the engineer model) → **plan** (structured
 plan: screens/state/capabilities/storage keys; validated against the request, §8.1.1) →
@@ -373,9 +384,10 @@ factor that into provider selection.
 
 #### 12. `eval-harness` — Size M · Deps: #1, #9; full value after #11
 
-**Status:** implemented 2026-07-31 (chains A–F built, OpenSpec change `eval-harness`) — desktop
-gates green (`node evals/test/run.mjs`, 196 checks). Chain G's Class-2 bootstrap (below) is
-**PENDING** human application.
+**Status:** BUILT 2026-07-31 (chains A–G, OpenSpec change `eval-harness`, archived) — desktop
+gates green; `npm run evals:test` 263 checks, and the suite now runs inside `scripts/gate.sh` as
+`corpus-eval`. Chain G's Class-2 bootstrap was applied attended the same day. Decision #57.
+The bakeoff itself is still open — it needs an attended holdout run (#25's model choice).
 **In:** corpus runner CLI (on-demand, not CI — cost): **Tier A** deterministic gate (= #9 + #10
 pass/fail); **Tier B** behavioral specs per corpus app, English-first then encoded; **Tier C**
 LLM-judge against an English rubric + a human-eyeball protocol; visible/holdout protocol
@@ -385,7 +397,7 @@ DeepSeek, et al.) and rewrite-model candidates, decided on corpus results → re
 open model choice.
 **Out:** CI wiring of evals; corpus growth beyond Tier 0.
 **Read first:** spec §16.3–16.4/§18, `docs/app-corpus.md`, #1's prompt seeds.
-**Contract notes (as-built):** live spec `openspec/changes/eval-harness/specs/corpus-eval/spec.md`;
+**Contract notes (as-built):** live spec `openspec/specs/corpus-eval/spec.md`;
 operator guide `docs/evals.md`.
 
 - Eval-set resolution is strictly `--eval-set <path>` > `WHIM_EVAL_SET` > refuse — no
@@ -418,11 +430,15 @@ operator guide `docs/evals.md`.
   (`evals/test/*.test.ts`) stays Chromium-free by construction: every case it drives through the
   real CLI subprocess fails or completes during eval-set resolution or candidate *sourcing*,
   before Tier A would ever launch a browser.
-- **Chain G (HUMAN-BOOTSTRAP, pending):** `openspec/changes/eval-harness/pending-class2.md`
-  records the exact diff for the four Class-2 files (`package.json`'s `evals`/`evals:test`
-  scripts, `tsconfig.json`'s `evals/test` exclude, `scripts/gate.sh`'s `corpus-eval` check line,
-  `knip.json`'s `evals/**` entries) — unapplied. Until a human applies it, the suite runs
-  directly: `node evals/test/run.mjs`.
+- **Chain G (HUMAN-BOOTSTRAP): APPLIED 2026-07-31.** All four Class-2 files landed as recorded
+  (`package.json`'s `evals`/`evals:test` scripts, `tsconfig.json`'s `evals/test` exclude,
+  `scripts/gate.sh`'s `corpus-eval` check line, `knip.json`'s `evals/**` entries); the record is
+  kept verbatim at `openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md`. Chain
+  F's gate-configuration check was built tri-state so it would stay green across exactly this
+  transition, and it did. Wiring knip to `evals/` for the first time surfaced three findings —
+  two genuinely dead exports (deleted) and one structural false positive: anything consumed only
+  through `evals/cli.mjs`'s `FACADE_SOURCE` template literal is invisible to static analysis.
+  See decision #57.
 
 ### Lane D — integration
 
