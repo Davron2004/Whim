@@ -19,7 +19,7 @@
    `evals/test/*.test.ts` file needs this same line (D14 naming convention, pinned in the
    contract) — see `handoff/eval-contract.md`. */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { GenerationEvent } from '@whim/contract';
@@ -496,11 +496,30 @@ section('gate configuration (spec "Eval runs are on demand and never part of the
   const corpusEvalCheckLine = /check\s+"corpus-eval"\s+npm run -s evals:test\b/;
   const gateHasCorpusEvalMarker = gateContents.includes('"corpus-eval"');
   const gateHasWellFormedCorpusEvalCheck = corpusEvalCheckLine.test(gateContents);
-  const pendingClass2Contents = readFileSync(
-    join(repoRoot, 'openspec', 'changes', 'eval-harness', 'pending-class2.md'),
-    'utf8',
-  );
-  const obligationStillRecorded = corpusEvalCheckLine.test(pendingClass2Contents);
+  // The record is consulted ONLY in state 2/3 — when gate.sh has no entry. In state 1 the applied
+  // gate line is its own evidence, and the record's whereabouts are irrelevant. Reading it
+  // unconditionally used to crash this suite the moment the change was archived (the file moves
+  // to openspec/changes/archive/<date>-eval-harness/), which is a transition the tri-state was
+  // never taught about: it was built for "unapplied → applied", not "live → archived".
+  // The lookup therefore also searches the archive, and an unreadable record degrades to "not
+  // recorded" — which FAILS the check with the message below rather than throwing, so a silently
+  // dropped obligation still surfaces as a normal failure.
+  const findPendingClass2 = (): string => {
+    const candidates = [join(repoRoot, 'openspec', 'changes', 'eval-harness', 'pending-class2.md')];
+    const archiveDir = join(repoRoot, 'openspec', 'changes', 'archive');
+    if (existsSync(archiveDir)) {
+      for (const entry of readdirSync(archiveDir)) {
+        if (entry.endsWith('-eval-harness')) candidates.push(join(archiveDir, entry, 'pending-class2.md'));
+      }
+    }
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return readFileSync(candidate, 'utf8');
+    }
+    return '';
+  };
+  const obligationStillRecorded = gateHasWellFormedCorpusEvalCheck
+    ? false
+    : corpusEvalCheckLine.test(findPendingClass2());
   check(
     'the corpus-eval acceptance-suite gate entry is either correctly applied, or still tracked as a pending Class-2 obligation (pending-class2.md, design D13)',
     gateHasWellFormedCorpusEvalCheck || (!gateHasCorpusEvalMarker && obligationStillRecorded),
