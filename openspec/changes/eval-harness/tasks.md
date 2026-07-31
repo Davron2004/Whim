@@ -124,7 +124,7 @@
 
 ## 7. Class-2 bootstrap record (HUMAN-BOOTSTRAP — record only, never apply)
 
-- [ ] 7.1 Write `openspec/changes/eval-harness/pending-class2.md` recording the **exact** diff a human must
+- [x] 7.1 Write `openspec/changes/eval-harness/pending-class2.md` recording the **exact** diff a human must
   apply, and apply none of it: (a) `package.json` — add `"evals:test": "node evals/test/run.mjs"` and
   `"evals": "node evals/cli.mjs"`; (b) `tsconfig.json` — add `"evals/test"` to `exclude` with a comment
   matching the existing Node-runner entries; (c) `scripts/gate.sh` — add `check "corpus-eval" npm run -s
