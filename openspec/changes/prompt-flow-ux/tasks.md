@@ -39,5 +39,5 @@
 
 ## 7. Docs and closure
 
-- [ ] 7.1 Append the decision-log entry (delivery/continuation routing as-built, device-id and server-address approach, the compiled-bundle-as-`source` limitation noted for #11) to `docs/decisions.md`; update `docs/v1-roadmap.md`'s #7 status block
+- [x] 7.1 Append the decision-log entry (delivery/continuation routing as-built, device-id and server-address approach, the compiled-bundle-as-`source` limitation noted for #11) to `docs/decisions.md`; update `docs/v1-roadmap.md`'s #7 status block
 - [ ] 7.2 On-device acceptance (attended, human-run): configure a server address, prompt a new app end to end, re-prompt it at tip, restore an old version via History then re-prompt (verify a new silently-shared tile appears with no question asked), trigger the `[[fail]]` failure path, and confirm the device id persists across an app restart
