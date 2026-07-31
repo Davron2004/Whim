@@ -751,12 +751,18 @@ overrun, never leaking one.
 `Pipeline.run`'s real implementation accepts an optional third `trace: RunTrace` out-parameter (widened
 locally in `routes/generate.ts` rather than editing `pipeline.ts`, keeping D1's "untouched" literal); the
 pipeline appends each model call's provider generation id as it resolves. The normal path is unchanged
-(`interceptUsage` stays the sole crediting authority). On abort — gated on "no terminal event was ever
-streamed," never on normal completion — the route reconciles each recorded id against OpenRouter's
-generation-stats endpoint (`openRouterGenerationStatsTransport`) through `reconcile.ts`'s bounded retry, and
-credits the result exactly once. This supersedes generation-server's prior guarantee ("a stream cancelled
+(`interceptUsage` stays the sole crediting authority). On abort — gated on whether `interceptUsage` has
+already taken (or started taking) ownership of crediting this run, a flag it sets *before* awaiting
+`usageStore.credit` so an abort mid-await is covered too — the route reconciles each recorded id against
+OpenRouter's generation-stats endpoint (`openRouterGenerationStatsTransport`) through `reconcile.ts`'s
+bounded retry, and credits the result exactly once. **Correction (2026-07-31):** the guard as originally
+shipped was "no terminal event was ever streamed," not credit ownership — since `emitCompletion` always
+yields `usage` before the terminal, a client disconnecting in that gap (after a normal run's usage was
+already credited, before its terminal was observed) hit `reachedTerminal === false` and was double-credited
+by reconciliation. Fixed in `routes/generate.ts` by gating on credit ownership directly; see
+`fix/double-credit-race`. This supersedes generation-server's prior guarantee ("a stream cancelled
 before its `usage` event credits nothing") with "a stream cancelled before any model call credits nothing,
-plus reconciliation" — cancellation carryover (b), closed.
+plus reconciliation, with the normal path's crediting never re-run" — cancellation carryover (b), closed.
 
 **D10-D14 — one source of truth per input; the two roadmap carryovers from #52/#53 closed.** Prompt inputs
 (SDK reference, few-shot fixtures) are read from disk once at composition-root time, never transcribed. The
