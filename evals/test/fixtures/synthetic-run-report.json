@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "diagnostics": [],
+  "contained": true,
+  "truncated": false,
+  "timings": {
+    "buildMs": 42,
+    "bootMs": 310,
+    "mountToPaintMs": 180,
+    "sweepMs": 95,
+    "perScreenMs": { "Home": 95 }
+  },
+  "trace": [
+    { "kind": "syscall", "method": "storage.get", "atMs": 210 },
+    { "kind": "cue", "method": "cues.haptic", "atMs": 260 },
+    { "kind": "syscall", "method": "storage.set", "atMs": 275 }
+  ],
+  "screens": { "declared": ["Home"], "visited": ["Home"] },
+  "budgets": {
+    "mountBudgetMs": 8000,
+    "actionQuietMs": 300,
+    "actionHardCapMs": 4000,
+    "totalBudgetMs": 45000
+  }
+}
