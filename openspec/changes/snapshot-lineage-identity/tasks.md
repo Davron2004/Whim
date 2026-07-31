@@ -20,5 +20,5 @@
 
 ## 5. Docs and closure
 
-- [ ] 5.1 Append the decision-log entry (per-snapshot lineage stamp mechanism; `timeline`/`rollback` lineage-correctness; UI-guard retirement) to `docs/decisions.md`, AND correct decision #48's "deferred to linked-apps-data-model" note (F1 is orthogonal — that change is SQLite storage-group sharing)
+- [x] 5.1 Append the decision-log entry (per-snapshot lineage stamp mechanism; `timeline`/`rollback` lineage-correctness; UI-guard retirement) to `docs/decisions.md`, AND correct decision #48's "deferred to linked-apps-data-model" note (F1 is orthogonal — that change is SQLite storage-group sharing)
 - [ ] 5.2 On-device acceptance (attended, human-run): fork an app, add versions on the original, open History on the fork → only the fork's own line; roll the original back past the fork point → the fork's versions are not listed/restorable; record `timeline` latency against #39's numbers (design D5)
