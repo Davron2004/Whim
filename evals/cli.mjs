@@ -17,10 +17,12 @@
  * "facade" (the CONTENTS constant below) that imports the real chain A–E modules plus
  * `./producer` by their real relative paths, so the CLI reuses their exact implementations —
  * `EvalSetError`, `resolveEvalSetLocation`, `buildReport`, `compareExitCode`, etc. — never a
- * re-declaration. The facade also imports `../synthrun` (Tier A's runtime leg — Playwright) and
- * `../server/src/pipeline` (the stub generation pipeline for `--generate`); both are external to
- * this bundle so esbuild never tries to inline them (the same "esbuild-in-esbuild"/native-module
- * hazard `evals/test/run.mjs` avoids for `typescript`).
+ * re-declaration. The facade also reaches `SynthRunSession`/`createRunCandidate` (Tier A's
+ * runtime leg — Playwright) via `./adapters/synthetic-run`'s re-export, never by importing
+ * `../synthrun` itself (that stays the ONLY module permitted to do so, design D6), plus
+ * `../server/src/pipeline` (the stub generation pipeline for `--generate`); Playwright is
+ * external to this bundle so esbuild never tries to inline it (the same
+ * "esbuild-in-esbuild"/native-module hazard `evals/test/run.mjs` avoids for `typescript`).
  *
  * Exit codes (the CLI's exit-code contract, spec "Eval runs are on demand..."):
  *   run:     0 clean; 1 any case failed (a sourcing error OR a `fail` verdict); 2 config error
@@ -56,13 +58,12 @@ import { evaluateTierA } from './tiers/tier-a';
 import { evaluateTierB } from './tiers/tier-b';
 import { evaluateTierC } from './tiers/tier-c';
 import { tierAFailed } from './tiers/case';
-import { observationFromRunReport } from './adapters/synthetic-run';
+import { observationFromRunReport, SynthRunSession, createRunCandidate } from './adapters/synthetic-run';
 import { buildReport, serializeReport } from './report/serialize';
 import { renderSummary } from './report/summary';
 import { diffReports, renderDiff } from './report/diff';
 import { compareReports, renderCompare, compareExitCode } from './report/compare';
 import { sourceFromDirectory, sourceFromPipeline } from './producer';
-import { SynthRunSession, createRunCandidate } from '../synthrun';
 import { createStubPipeline } from '../server/src/pipeline';
 
 export { EvalSetError, EVAL_SET_FLAG, EVAL_SET_ENV_VAR, resolveEvalSetLocation, loadEvalSet };

@@ -4,9 +4,18 @@
  * Normalizes its `RunReport` (`synthrun/contract.ts`, `synthrun/report.ts`'s `createRunCandidate`)
  * into the one shape every tier evaluator reads — `RunObservation` (`evals/contract.ts`) — so a
  * harness field-name change touches exactly this file, never a tier.
+ *
+ * `SynthRunSession`/`createRunCandidate` are re-exported (opaque passthrough, never inspected
+ * here) so `evals/cli.mjs`'s embedded facade — which only launches/closes a session and drives a
+ * run, never reads a `RunReport` field directly — can reach them without importing `../synthrun`
+ * itself (`fix/redaction-tier-results`, restoring the "ONLY module" invariant this docstring
+ * asserts).
  */
+import { SynthRunSession, createRunCandidate } from '../../synthrun';
 import type { RunReport } from '../../synthrun/contract';
 import type { Diagnostic, RunObservation } from '../contract';
+
+export { SynthRunSession, createRunCandidate };
 
 /**
  * `report.contained` is derived ONLY from the nonce-authenticated `probes` frame by construction

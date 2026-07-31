@@ -49,9 +49,19 @@ await build({
   // `checks/` (pulled in transitively once a suite exercises Tier A's static leg) imports the
   // `typescript` package, which does its own dynamic `require('fs')` internally — inlining it
   // breaks under esbuild's ESM output (the "esbuild-in-esbuild"-shaped hazard, same family as
-  // the live judge's CLI-shellout workaround in `evals/judge/live.ts`). Left external, Node
-  // resolves the real `node_modules/typescript` at run time instead.
-  external: ['typescript'],
+  // the live judge's CLI-shellout workaround in `evals/judge/live.ts`).
+  //
+  // `esbuild`/`playwright` are pulled in transitively via `evals/adapters/synthetic-run.ts`'s
+  // re-export of `SynthRunSession`/`createRunCandidate` (`fix/redaction-tier-results`), which
+  // drags in the whole `synthrun` barrel — `synthrun/builder.ts`'s own `import * as esbuild`
+  // hits the identical esbuild-in-esbuild hazard, and `synthrun/session.ts`'s `playwright`
+  // import ships native/optional-platform requires (`fsevents`, `chromium-bidi`'s CJS-only
+  // submodules) esbuild cannot bundle either — the exact precedent `synthrun/test/run.mjs`
+  // already documents for its own acceptance suite. All three stay external; Node's own
+  // `require`/`import` resolves them from `node_modules` at run time instead — no test here
+  // calls `SynthRunSession`/`createRunCandidate` (that needs a live Chromium), so the modules
+  // are loaded but unused.
+  external: ['typescript', 'esbuild', 'playwright'],
 });
 
 try {

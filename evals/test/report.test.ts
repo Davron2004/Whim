@@ -282,3 +282,133 @@ const SECRET_CANDIDATE_SOURCE = 'const THE_SECRET_SOURCE_TOKEN = 42;';
     unredactedLeak.includes(SECRET_PROMPT),
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('redaction: tier results carry no candidate/prompt-derived free text under holdout (fix/redaction-tier-results)');
+// ─────────────────────────────────────────────────────────────────────────────
+
+{
+  // A candidate can echo prompt-derived wording into a Tier-A diagnostic's message/hint/symbol
+  // (e.g. a disallowed-import diagnostic that quotes the offending specifier back verbatim), into
+  // a Tier-B assertion's `observed` value (deliberately "the concrete observed value, never a
+  // bare boolean"), and into a Tier-C judge's rationale. None of that may reach a holdout report.
+  const TIER_A_SYMBOL_SECRET = 'THE-SECRET-TIER-A-SYMBOL-token111';
+  const TIER_A_MESSAGE_SECRET = 'THE-SECRET-TIER-A-MESSAGE-token222';
+  const TIER_A_HINT_SECRET = 'THE-SECRET-TIER-A-HINT-token333';
+  const TIER_B_OBSERVED_SECRET = 'THE-SECRET-TIER-B-OBSERVED-token444';
+  const TIER_C_RATIONALE_SECRET = 'THE-SECRET-TIER-C-RATIONALE-token555';
+  const TIER_C_ERROR_MESSAGE_SECRET = 'THE-SECRET-TIER-C-ERROR-token666';
+
+  const secretTierA: TierAResult = {
+    status: 'fail',
+    diagnostics: [
+      {
+        kind: 'disallowed_import',
+        severity: 'error',
+        line: 5,
+        column: 3,
+        symbol: TIER_A_SYMBOL_SECRET,
+        message: `import references '${TIER_A_MESSAGE_SECRET}'`,
+        hint: `remove the reference to ${TIER_A_HINT_SECRET}`,
+      },
+    ],
+    containment: { authenticated: true, contained: true },
+  };
+
+  function secretTierB(status: 'pass' | 'fail'): TierBResult {
+    return {
+      status: 'evaluated',
+      assertions: [
+        {
+          english: 'the Home screen is reachable',
+          kind: 'screen-reachable',
+          status,
+          observed: { target: 'Home', reachedScreens: [TIER_B_OBSERVED_SECRET] },
+        },
+      ],
+    };
+  }
+
+  function secretScoredTierC(score: number): TierCResult {
+    return {
+      status: 'scored',
+      verdict: {
+        rubricVersion: 'v1',
+        judgeIdentity: 'scripted:test',
+        criteria: [{ criterion: 'polish', score, rationale: `mentions ${TIER_C_RATIONALE_SECRET}` }],
+      },
+    };
+  }
+
+  const secretErrorTierC: TierCResult = {
+    status: 'error',
+    message: `judge threw while scoring: ${TIER_C_ERROR_MESSAGE_SECRET}`,
+  };
+
+  const base = report(
+    [
+      caseInput({
+        caseId: 'holdout-tier-c1',
+        prompt: SECRET_PROMPT,
+        tierA: secretTierA,
+        tierB: secretTierB('fail'),
+        tierC: secretScoredTierC(3),
+      }),
+    ],
+    { visibility: 'holdout' },
+  );
+  const candidate = report(
+    [
+      caseInput({
+        caseId: 'holdout-tier-c1',
+        prompt: SECRET_PROMPT,
+        tierA: { ...secretTierA, status: 'pass' },
+        tierB: secretTierB('pass'),
+        tierC: secretErrorTierC,
+      }),
+    ],
+    { visibility: 'holdout' },
+  );
+
+  const surfaces = [
+    serializeReport(base),
+    serializeReport(candidate),
+    renderSummary(base),
+    renderSummary(candidate),
+    JSON.stringify(diffReports(base, candidate)),
+    renderDiff(diffReports(base, candidate)),
+  ];
+  const tierSecrets = [
+    TIER_A_SYMBOL_SECRET,
+    TIER_A_MESSAGE_SECRET,
+    TIER_A_HINT_SECRET,
+    TIER_B_OBSERVED_SECRET,
+    TIER_C_RATIONALE_SECRET,
+    TIER_C_ERROR_MESSAGE_SECRET,
+  ];
+  for (const surface of surfaces) {
+    for (const secret of tierSecrets) {
+      check(`no output surface contains tier-result secret "${secret}"`, !surface.includes(secret), surface.slice(0, 300));
+    }
+  }
+
+  const visibleForCompare = report([
+    caseInput({ caseId: 'holdout-tier-c1', prompt: 'unrelated visible prompt', tierC: secretScoredTierC(4) }),
+  ]);
+  const compareOutcome = compareReports(visibleForCompare, base, 0.5);
+  const compareSurface = `${JSON.stringify(compareOutcome)}${renderCompare(compareOutcome)}`;
+  for (const secret of tierSecrets) {
+    check(`compare output does not contain tier-result secret "${secret}"`, !compareSurface.includes(secret));
+  }
+
+  // Closed-vocabulary/numeric fields survive redaction — this is what keeps a holdout report
+  // diffable/comparable, so this is a positive control, not just an absence check.
+  const holdoutDiagnostic = base.cases[0].tierA.diagnostics[0];
+  eq('kind/severity/line/column survive holdout redaction', {
+    kind: holdoutDiagnostic.kind,
+    severity: holdoutDiagnostic.severity,
+    line: holdoutDiagnostic.line,
+    column: holdoutDiagnostic.column,
+  }, { kind: 'disallowed_import', severity: 'error', line: 5, column: 3 });
+  check('message/hint/symbol are absent, not present-but-empty, under holdout', !('message' in holdoutDiagnostic) && !('hint' in holdoutDiagnostic) && !('symbol' in holdoutDiagnostic));
+}
