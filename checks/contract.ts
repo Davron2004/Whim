@@ -45,6 +45,14 @@ export type Severity = 'error' | 'warning';
  *        present)
  *      - `launch_failed`         — `launchApp`'s defensive fallback for a launch-time engine
  *        failure that is not itself a structured `StorageError`
+ *  - GENERATION-LOOP (added additively by chain 5, `handoff/stage-contracts.md`): kinds the
+ *    generation pipeline itself introduces, neither reused nor runtime-observed.
+ *      - `id_below_floor` — the schema pass's own new diagnostic (`schema-check.ts`): an
+ *        applied-schema-supplied candidate introduces a field ID at or below its collection's
+ *        monotone burned-ID floor (#52 D5) — a never-allocated gap below the union's max,
+ *        invisible to `diffSchemas` alone.
+ *      - `build_failure`   — the concrete `BuildStage` maps a production-builder throw to this
+ *        single error diagnostic rather than propagating the exception (design D2/D12).
  *  - NEW (authored here by Chain B from the static-checks spec, task 1.2/2.1): once
  *    authored this set is closed too — downstream stages extend the union additively,
  *    never by minting ad-hoc kind strings elsewhere.
@@ -101,6 +109,9 @@ export const DIAGNOSTIC_KINDS = [
   'unreachable_screen',
   'missing_schema',
   'launch_failed',
+  // — generation-loop (chain 5) —
+  'id_below_floor',
+  'build_failure',
 ] as const;
 
 export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];

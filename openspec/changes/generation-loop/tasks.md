@@ -83,25 +83,25 @@
 
 ## 5. Check stage, allocation floor, and app record
 
-- [ ] 5.1 `checks/contract.ts`: additively add `id_below_floor` and `build_failure` to the central kind list.
-- [ ] 5.2 `checks/passes/schema-check.ts`: when an applied schema is supplied, flag any introduced field ID
+- [x] 5.1 `checks/contract.ts`: additively add `id_below_floor` and `build_failure` to the central kind list.
+- [x] 5.2 `checks/passes/schema-check.ts`: when an applied schema is supplied, flag any introduced field ID
       at or below its collection's burned-ID floor as `id_below_floor` with a hint naming the next free ID;
       extend `checks:test` with the gap case (`f1`,`f5` applied, candidate adds `f3`), the retired-column
       case, the clean above-floor case, and an unknown-collection case.
-- [ ] 5.3 `server/src/generation/stages/check.ts`: run the checker with the request's applied schema, map
+- [x] 5.3 `server/src/generation/stages/check.ts`: run the checker with the request's applied schema, map
       the report to the stage result (errors block, warnings recorded), and forward every diagnostic; include
       the source pre-flight (parse gate + default-exported `defineApp`) that treats an unparseable supplied
       `app.source` as absent.
-- [ ] 5.4 `server/src/generation/stages/build.ts`: build the candidate through the harness's
+- [x] 5.4 `server/src/generation/stages/build.ts`: build the candidate through the harness's
       production-pinned builder and map a builder throw to a `build_failure` error diagnostic with an
       actionable hint.
-- [ ] 5.5 `server/src/generation/record.ts`: assemble `WireAppRecord` from the check report's extracted
+- [x] 5.5 `server/src/generation/record.ts`: assemble `WireAppRecord` from the check report's extracted
       manifest and schema plus the built bundle and source map — one extraction, no re-parse, no
       model-restated manifest.
-- [ ] 5.6 `server/test/stages.suite.ts`: check-stage severity mapping; pre-flight rejects compiled bundle
+- [x] 5.6 `server/test/stages.suite.ts`: check-stage severity mapping; pre-flight rejects compiled bundle
       text; build failure becomes `build_failure`; record assembly matches the extracted manifest and not
       the model's prose; a record is never assembled from a report carrying an error.
-- [ ] 5.7 Write `handoff/stage-contracts.md` — the check/build/record signatures and the diagnostic mapping.
+- [x] 5.7 Write `handoff/stage-contracts.md` — the check/build/record signatures and the diagnostic mapping.
 
 ## 6. Run stage and cancellation
 
