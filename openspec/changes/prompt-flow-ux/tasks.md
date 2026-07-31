@@ -18,15 +18,15 @@
 
 ## 4. Prompt + rewrite-preview screens
 
-- [ ] 4.1 Add the prompt/rewrite-preview `COPY` strings (product-verbs guard applies)
-- [ ] 4.2 Implement `PromptScreen.tsx`: multiline autofocus input, dictation hint copy, unconfigured-server honesty message, own `BackHandler`/`shellPalette` (design D1, app-launcher "create affordance and re-prompt" + "server address" requirements)
-- [ ] 4.3 Implement `RewritePreviewScreen.tsx`: original prompt shown small/muted, rewritten text editable, approve/back (design D4)
+- [x] 4.1 Add the prompt/rewrite-preview `COPY` strings (product-verbs guard applies)
+- [x] 4.2 Implement `PromptScreen.tsx`: multiline autofocus input, dictation hint copy, unconfigured-server honesty message, own `BackHandler`/`shellPalette` (design D1, app-launcher "create affordance and re-prompt" + "server address" requirements)
+- [x] 4.3 Implement `RewritePreviewScreen.tsx`: original prompt shown small/muted, rewritten text editable, approve/back (design D4)
 
 ## 5. Generating + failure screens
 
-- [ ] 5.1 Add the progress/failure `COPY` strings
-- [ ] 5.2 Implement `GeneratingScreen.tsx`: stage-only presentational props, cancel action, never accepts token/diagnostic props (design D1, prompt-flow "progress without exposing internals" requirement)
-- [ ] 5.3 Implement `FailureScreen.tsx`: reason + hint-only diagnostics list, rephrase/dismiss actions (design D1, prompt-flow "failure shown honestly" requirement)
+- [x] 5.1 Add the progress/failure `COPY` strings
+- [x] 5.2 Implement `GeneratingScreen.tsx`: stage-only presentational props, cancel action, never accepts token/diagnostic props (design D1, prompt-flow "progress without exposing internals" requirement)
+- [x] 5.3 Implement `FailureScreen.tsx`: reason + hint-only diagnostics list, rephrase/dismiss actions (design D1, prompt-flow "failure shown honestly" requirement)
 
 ## 6. LauncherRoot wiring + delivery orchestration
 
