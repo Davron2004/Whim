@@ -26,6 +26,7 @@ import type { GenerationEvent } from '@whim/contract';
 import { EVAL_SET_ENV_VAR, EVAL_SET_FLAG } from '../eval-set';
 import type { CandidatePipeline, SourceableCase } from '../producer';
 import { sourceFromDirectory, sourceFromPipeline } from '../producer';
+import { redactSourcingError } from '../redact';
 import { buildReport } from '../report/serialize';
 import type { CaseInput } from '../report/serialize';
 import type { EvalRunReport, TierAResult, TierBResult, TierCResult } from '../contract';
@@ -277,6 +278,52 @@ section('CLI run: sourcing-error redaction on the console surface (fix/redaction
     result.stderr.includes('missing-source'),
     result.stderr,
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('redactSourcingError: both branches, directly (fix/redaction-tier-results)');
+// ─────────────────────────────────────────────────────────────────────────────
+
+{
+  // The subprocess cases above drive this function only through the `kind`-PRESENT branch (a
+  // `missing-source` sourcing result). The `kind`-ABSENT branch — a harness-internal defect,
+  // where no `CandidateSourceResult` was ever produced and the message is a bug report about
+  // the harness rather than candidate output — has no CLI path that constructs it on demand, so
+  // it is asserted here directly. Calling the function from a module the root program can see
+  // is also what keeps it out of knip's unused-export report: every other caller lives inside
+  // `evals/cli.mjs`'s `FACADE_SOURCE` template literal, which no static analyzer can follow.
+  const CANDIDATE_TEXT = 'THE-SECRET-CANDIDATE-token777';
+
+  const fromSourcingResult = { caseId: 'c1', kind: 'generation-failure' as const, message: `pipeline said ${CANDIDATE_TEXT}` };
+  check(
+    'red-check: the input this branch is asserted against really does carry the secret (non-vacuity)',
+    fromSourcingResult.message.includes(CANDIDATE_TEXT),
+  );
+
+  const redactedHoldout = redactSourcingError(fromSourcingResult, 'holdout');
+  check(
+    'holdout + kind present: the free-text message is dropped',
+    redactedHoldout.message === undefined,
+    JSON.stringify(redactedHoldout),
+  );
+  eq('holdout + kind present: the closed-vocabulary kind survives', redactedHoldout.kind, 'generation-failure');
+  eq('holdout + kind present: the case id survives', redactedHoldout.caseId, 'c1');
+  check(
+    'holdout + kind present: the input object is not mutated (redaction returns a new value)',
+    fromSourcingResult.message.includes(CANDIDATE_TEXT),
+  );
+
+  const visible = redactSourcingError(fromSourcingResult, 'visible');
+  eq('visible + kind present: the message passes through untouched', visible.message, fromSourcingResult.message);
+
+  // No `kind` ⇒ no `CandidateSourceResult` ever existed ⇒ the message cannot carry candidate or
+  // model text. It is a harness bug report, and suppressing it would leave an operator with a
+  // silent failure and nothing to debug — so it survives even under `holdout`.
+  const harnessDefect = { caseId: 'c2', message: 'TypeError: producer is not a function' };
+  const redactedDefect = redactSourcingError(harnessDefect, 'holdout');
+  eq('holdout + kind absent: a harness-internal defect message survives', redactedDefect.message, harnessDefect.message);
+  eq('holdout + kind absent: the case id survives', redactedDefect.caseId, 'c2');
+  check('holdout + kind absent: no kind is invented', redactedDefect.kind === undefined, JSON.stringify(redactedDefect));
 }
 
 {
