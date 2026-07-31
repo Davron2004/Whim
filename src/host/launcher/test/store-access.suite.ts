@@ -273,6 +273,52 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(deleted, ['wc'], 'never-shared entry: refcount 1 -> 0 in the same step');
   });
 
+  // §34 update snapshots onto the same lineage and updates the index record
+  await h.test('store-access §34 update snapshots the same lineage, updates record, id/lineage/createdAt unchanged', async () => {
+    const { index, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const newRecord = REC('wc-v2');
+    const updated = await access.update(orig, { record: newRecord, bundleSource: 'V2', prompt: 'p2' });
+    h.eq(updated.id, orig.id, 'id unchanged');
+    h.eq(updated.lineageId, orig.lineageId, 'lineage unchanged');
+    h.eq(updated.createdAt, orig.createdAt, 'createdAt unchanged');
+    h.eq(updated.record, newRecord, 'record updated');
+    h.eq(index.get('wc')?.record, newRecord, 'index reflects the new record');
+    h.eq(await access.activeBundle(orig), 'V2', 'the new bundle is the active snapshot');
+    h.eq((await access.history(orig)).map(s => s.prompt), ['p2', 'p1'], 'update snapshots onto the same lineage (history grows)');
+  });
+
+  // §35 install/update write schema.json only when supplied
+  await h.test('store-access §35 install writes schema.json only when supplied', async () => {
+    const { store, access } = harnessAccess();
+    const withSchema = await access.install({ id: 'a', name: 'A', record: REC('a'), bundleSource: 'V1', prompt: 'p', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const withoutSchema = await access.install({ id: 'b', name: 'B', record: REC('b'), bundleSource: 'V1', prompt: 'p' });
+    const activeA = await store.active(storeIdOf(withSchema));
+    const activeB = await store.active(storeIdOf(withoutSchema));
+    h.eq(activeA?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to install');
+    h.eq(activeB?.artifacts['schema.json'], undefined, 'schema.json absent when omitted from install');
+  });
+
+  await h.test('store-access §35b update writes schema.json only when supplied', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: 'p2', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const active = await store.active(storeIdOf(updated));
+    h.eq(active?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to update');
+    const updated2 = await access.update(updated, { record: orig.record, bundleSource: 'V3', prompt: 'p3' });
+    const active2 = await store.active(storeIdOf(updated2));
+    h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update that omits it');
+  });
+
+  // §36 activeSource mirrors activeBundle
+  await h.test('store-access §36 activeSource reads the active snapshot bundle.js source', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'SRC_V1', prompt: 'p1' });
+    h.eq(await access.activeSource(orig), 'SRC_V1', 'activeSource reads the installed bundle source');
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'SRC_V2', prompt: 'p2' });
+    h.eq(await access.activeSource(updated), 'SRC_V2', 'activeSource reflects the latest update');
+  });
+
   // §diff smoke: diff wrapper ensures lineage and delegates through
   await h.test('store-access diff(entry, a, b) reports per-file changes through the wrapper', async () => {
     const { store, access } = harnessAccess();
