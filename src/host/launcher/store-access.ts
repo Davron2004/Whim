@@ -44,6 +44,18 @@ export interface InstallSpec {
   /** The structured prompt tracked as snapshot #1 (honest product string; surfaces in #6). */
   prompt: string;
   example?: boolean;
+  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
+  schemaJson?: string;
+}
+
+/** The prompt-flow's delivery spec for `StoreAccess.update` (design D7). */
+export interface UpdateSpec {
+  record: AppRecord;
+  bundleSource: string;
+  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
+  schemaJson?: string;
+  /** The structured prompt tracked as this snapshot (honest product string; surfaces in #6). */
+  prompt: string;
 }
 
 /** The version-store repo an entry reads/writes (its own id for originals; the shared repo for forks). */
@@ -89,7 +101,11 @@ export class StoreAccess {
    * is the source of truth). Used by first-run seeding (D7) and, later, #7's generation flow.
    */
   async install(spec: InstallSpec): Promise<InstalledApp> {
-    await this.store.snapshot(spec.id, { 'bundle.js': spec.bundleSource }, spec.prompt);
+    await this.store.snapshot(
+      spec.id,
+      { 'bundle.js': spec.bundleSource, ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}) },
+      spec.prompt,
+    );
     this.repoLineage.set(spec.id, 'main');
     const entry: InstalledApp = {
       id: spec.id,
@@ -103,6 +119,23 @@ export class StoreAccess {
     return entry;
   }
 
+  /**
+   * Deliver a new version onto an already-installed entry's own lineage (design D7 — the prompt
+   * flow's "update" path): a snapshot (bundle + optional schema artifact) followed by an index
+   * record refresh. `id`/`lineageId`/`createdAt` are untouched; only `record` changes.
+   */
+  async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
+    await this.ensureLineage(entry);
+    await this.store.snapshot(
+      storeIdOf(entry),
+      { 'bundle.js': spec.bundleSource, ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}) },
+      spec.prompt,
+    );
+    const updated: InstalledApp = { ...entry, record: spec.record };
+    this.index.put(updated);
+    return updated;
+  }
+
   /** The active snapshot's bundle source for an entry (switching to its lineage first). */
   async activeBundle(entry: InstalledApp): Promise<string> {
     await this.ensureLineage(entry);
@@ -110,6 +143,13 @@ export class StoreAccess {
     const src = active?.artifacts['bundle.js'];
     if (src == null) throw new Error(`no active bundle for "${entry.id}"`);
     return src;
+  }
+
+  /** The active snapshot's bundle SOURCE for an entry (D7) — today the same tracked artifact as
+   *  `activeBundle` (the store has no separate `source`/`bundle` distinction yet; see D7's known
+   *  limitation note). Mirrors `activeBundle` so callers can read either name meaningfully. */
+  async activeSource(entry: InstalledApp): Promise<string> {
+    return this.activeBundle(entry);
   }
 
   /** This entry's own lineage line, newest-first (D6) — an ancestry walk from its active tip. */
