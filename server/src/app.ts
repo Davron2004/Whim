@@ -12,9 +12,19 @@ import { Hono } from 'hono';
 import type { DeviceIdError } from '@whim/contract';
 import type { Pipeline } from './pipeline';
 import type { UsageStore } from './usage-store';
+import type { ModelClient, ModelRoster } from './generation/model';
+import type { GenerationStatsTransport, ReconcileBounds } from './generation/reconcile';
 import { makeGenerateRoute } from './routes/generate';
 import { makeRewriteRoute } from './routes/rewrite';
 import { makeUsageRoute } from './routes/usage';
+
+/** A transport that never resolves a generation id — safe as the default: the stub pipeline
+ *  never records a generation id on `RunTrace`, so `reconcileAbortedUsage` short-circuits before
+ *  this is ever called (design D9: "a stream cancelled before any model call was made credits
+ *  nothing"). */
+const NO_OP_STATS_TRANSPORT: GenerationStatsTransport = {
+  fetchStats: async () => null,
+};
 
 /** UUID v4 pattern (also accepts other UUID versions — any 8-4-4-4-12 hex). */
 const UUID_RE =
@@ -27,10 +37,19 @@ export interface AppOptions {
   usageStore: UsageStore;
   /** Keepalive interval for SSE streams, in ms. 0 / omitted = disabled. */
   keepaliveMs?: number;
+  /** Model client + roster for the real `/v1/rewrite` (task 7.2). Optional so a caller that only
+   *  exercises the pipeline need not supply one; when absent, `/v1/rewrite` responds `502`
+   *  (`rewrite_not_configured`) rather than falling back to a canned rewrite. */
+  model?: ModelClient;
+  roster?: ModelRoster;
+  /** Post-abort usage reconciliation transport for `/v1/generate` (design D9, task 7.3).
+   *  Defaults to a no-op transport — safe with the stub pipeline (see `NO_OP_STATS_TRANSPORT`). */
+  reconcile?: { transport: GenerationStatsTransport; bounds?: Partial<ReconcileBounds> };
 }
 
 export function createApp(options: AppOptions): Hono<AppEnv> {
-  const { pipeline, usageStore, keepaliveMs } = options;
+  const { pipeline, usageStore, keepaliveMs, model, roster } = options;
+  const reconcile = options.reconcile ?? { transport: NO_OP_STATS_TRANSPORT };
   const app = new Hono<AppEnv>();
 
   // Health check — no auth
@@ -65,8 +84,8 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   });
 
   // Mount routes under /v1
-  app.route('/v1/generate', makeGenerateRoute(pipeline, usageStore, keepaliveMs));
-  app.route('/v1/rewrite', makeRewriteRoute());
+  app.route('/v1/generate', makeGenerateRoute(pipeline, usageStore, { keepaliveMs, reconcile }));
+  app.route('/v1/rewrite', makeRewriteRoute(model, roster, usageStore));
   app.route('/v1/usage', makeUsageRoute(usageStore));
 
   return app;

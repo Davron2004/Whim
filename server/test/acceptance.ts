@@ -9,10 +9,16 @@ import { runContractTests } from './contract.suite';
 import { runServerCoreTests } from './server-core.suite';
 import { runMeteringTests } from './metering.suite';
 import { runOpenRouterTests } from './openrouter.suite';
+import { runPromptsTests } from './prompts.suite';
+import { runMachineTests } from './machine.suite';
+import { runStagesTests } from './stages.suite';
 
 runContractTests();
 await runServerCoreTests();
 await runMeteringTests();
 await runOpenRouterTests();
+await runPromptsTests();
+await runMachineTests();
+await runStagesTests();
 
 report();

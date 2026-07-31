@@ -707,3 +707,79 @@ Roadmap #10 / decision #42. Lands as `synthrun/`, a plain top-level directory (t
 **Recorded limitation:** chain 2's `mount_timeout` hostile fixture (a synchronous top-level hang long enough to itself block the outer page's `load` event) races `EarlyObservers.finish()`'s async relay setup against the candidate's own double-rAF paint message — a race independent of `mountBudgetMs`, so no budget widening fully eliminates it; a stability widening (500ms→800ms) was applied and reduces but does not guarantee-eliminate the flake. A structural fix (moving relay setup earlier, into the CDP-only phase) is out of scope for the chain that found it and is left for a future pass.
 
 **Not in this change:** behavioral ("does the counter actually count") assertions — eval Tier B, #12; device execution or any pipeline/server wiring — #11; a `data-*` enumeration marker, should CDP-role enumeration ever prove ambiguous for some SDK component (flagged to a human, not smuggled in here).
+
+### 56. `generation-loop` built — the real, bounded generation pipeline replaces the stub behind the unchanged `Pipeline` seam `[BUILT — desktop gates green; on-device acceptance (task 7.6) PENDING]`
+
+Roadmap #11. Wires everything #7 (`prompt-flow-ux`), #8 (`generation-contract`/`generation-server` skeleton),
+#10 (`synthetic-run-harness`), and `static-checks` already built into one composition: `server/src/
+generation/` — `model.ts` (the OpenRouter-backed `ModelClient` seam + env-sourced `ModelRoster`), `prompts/`
+(disk-backed SDK reference + curated few-shot inputs, four message builders), `plan.ts` (the internal,
+mechanically-validated `Plan`), `machine.ts` (the bounded state machine over injected `CheckStage`/
+`BuildStage`/`RunStage`/`Clock`), `stages/{check,build,run}.ts` (the concrete stages), `record.ts` (one-
+extraction `WireAppRecord` assembly), `reconcile.ts` (post-abort usage reconciliation), and `index.ts`
+(chain 7's composition root).
+
+**D1/D2 — the pipeline is a new subtree behind the unchanged `Pipeline` interface; only the composition
+root imports concrete implementations.** `server/src/pipeline.ts` is untouched — its `Pipeline` interface
+and `createStubPipeline` stay verbatim, keeping the LAN UI lane alive behind `WHIM_PIPELINE=stub`. `machine.
+ts` depends on nothing concrete; `server/src/generation/index.ts` is the one file wiring the real
+`OpenRouterClient`, `runStaticChecks`, `buildCandidateSource`, and one process-lifetime `SynthRunSession`.
+
+**D3/D4 — one LLM seam, one bounded state machine.** `ModelClient`/`ModelRoster` are the only way the
+pipeline reaches a model, read from the environment (`WHIM_REWRITE_MODEL`/`WHIM_ENGINEER_MODEL`/
+`OPENROUTER_API_KEY`) with typed, actionable errors (`ModelRosterEnvError`, `MissingApiKeyError`) naming
+every missing variable — never a hard-coded id. `PLAN → GENERATE → CHECK/RUN ⇄ REPAIR → DELIVER/FAILED` is
+structural: `planAttempts=2`, `repairAttempts=3` (at most 4 candidates), both constructor parameters.
+
+**D5 — rewrite stays unary, real-model-backed, honest on failure.** No `rewrite` stage joins the closed
+`GenerationEvent` union. `/v1/rewrite` now calls the configured rewrite model for real, meters through the
+same `UsageStore`, and returns `502`+`ApiError` on a model failure — it NEVER falls back to echoing the
+input prompt as a rewrite (chain 7 red-checked this with an observed edit-run-revert cycle).
+
+**D6 — warnings-delivery divergence, recorded.** A literal reading of harness-diagnostics' "severity SHALL
+NOT gate shipping" would let a residual warning fail a run; the resolution instead repairs warnings for at
+most one attempt, then delivers a green, warnings-only candidate with the residual `diagnostic` events
+already streamed — nothing is suppressed, nothing silently dropped.
+
+**D7/D8 — containment failure is terminal; cancellation is threaded, not raced.** A negative containment
+verdict short-circuits immediately, feeding nothing back to the model. The pipeline factory launches one
+`SynthRunSession` per process; `synthrun`'s `RunOptions.signal` threads into the SAME cleanup path the
+total-budget watchdog uses, so an abort during a run disposes the page/context/slot exactly like a budget
+overrun, never leaking one.
+
+**D9 — usage: the route stays the crediting authority; reconciliation closes cancellation carryover (b).**
+`Pipeline.run`'s real implementation accepts an optional third `trace: RunTrace` out-parameter (widened
+locally in `routes/generate.ts` rather than editing `pipeline.ts`, keeping D1's "untouched" literal); the
+pipeline appends each model call's provider generation id as it resolves. The normal path is unchanged
+(`interceptUsage` stays the sole crediting authority). On abort — gated on "no terminal event was ever
+streamed," never on normal completion — the route reconciles each recorded id against OpenRouter's
+generation-stats endpoint (`openRouterGenerationStatsTransport`) through `reconcile.ts`'s bounded retry, and
+credits the result exactly once. This supersedes generation-server's prior guarantee ("a stream cancelled
+before its `usage` event credits nothing") with "a stream cancelled before any model call credits nothing,
+plus reconciliation" — cancellation carryover (b), closed.
+
+**D10-D14 — one source of truth per input; the two roadmap carryovers from #52/#53 closed.** Prompt inputs
+(SDK reference, few-shot fixtures) are read from disk once at composition-root time, never transcribed. The
+plan is internal, mechanically validated, and never crosses the wire. `WireAppRecord` has exactly one
+extraction (manifest/schema from the checker, bundle/source-map from the build, source passed through
+verbatim) — the model's own claims embedded in comments are never consulted. #52 D5 (the applied-schema
+allocation floor) and #53 D7 (edit flow re-sending compiled bundle text as "current source") are both closed
+end to end by the chains preceding this one; chain 7 wires `preflightSource` (chain 5's exported-but-unwired
+honest-edit predicate) into the composition root so a supplied `app.source` that fails the parse-and-
+`defineApp` check is treated as absent, never as "current code."
+
+**D15 — two test lanes.** `npm run server:test` stays Node-only, no browser — 458 checks passed (contract,
+server-core, metering, OpenRouter wrapper, prompts, machine, stages), 0 failed. A second, browser-backed
+suite (`server/test/e2e.ts`, 31 checks, chain 6) runs the pipeline against the real checker/build/run stages
+with a scripted model; it needs Chromium and its `package.json`/`gate-full.sh` wiring is Class-2, recorded in
+`pending-class2.md` for human application — run directly meanwhile via `node server/test/e2e.run.mjs`.
+
+**Verification:** `npm run server:test` green (458 checks, up from 152 — the machine/stage/prompt suites
+registered for the first time, task 7.5). `./scripts/gate.sh` green. On-device acceptance (task 7.6 — a real
+device against a real key generating an app end to end, then killed mid-generation to confirm the server
+observes the abort and `/v1/usage` reflects the reconciled count, closing roadmap cancellation carryover
+(a)) is attended/human-run and updates this entry's status tag once performed.
+
+**Not in this change:** the model bakeoff / eval scoring (#12, `eval-harness`, which consumes this
+pipeline); prompt caching, a direct non-router provider API, deployment, or TLS; any change to the sandbox,
+CSP, bridge, or runtime.
