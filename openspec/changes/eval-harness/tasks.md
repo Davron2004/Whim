@@ -28,19 +28,19 @@
 
 ## 2. Tier A — the deterministic gate
 
-- [ ] 2.1 Implement `evals/tiers/tier-a.ts` static leg: call `runStaticChecks(source)`, fail Tier A on any
+- [x] 2.1 Implement `evals/tiers/tier-a.ts` static leg: call `runStaticChecks(source)`, fail Tier A on any
   `error`-severity diagnostic, and carry each diagnostic's kind, message, and fix hint into `TierAResult`.
-- [ ] 2.2 Implement `evals/adapters/synthetic-run.ts` — the **only** module in `evals/` allowed to import the
+- [x] 2.2 Implement `evals/adapters/synthetic-run.ts` — the **only** module in `evals/` allowed to import the
   synthetic-run harness. Normalize its report into `RunObservation` (diagnostics, declared vs reached screens,
   syscall/cue invocation trace, containment verdict + its vantage, applied budgets; timings kept separate).
   Read the merged harness's `handoff/` contract for its real signature, not its proposal text (design D6).
-- [ ] 2.3 Implement the Tier-A runtime leg over `RunObservation`: boot/mount failure fails Tier A; a
+- [x] 2.3 Implement the Tier-A runtime leg over `RunObservation`: boot/mount failure fails Tier A; a
   containment verdict is accepted only from the nonce-authenticated vantage, and an observation whose verdict
   did not come from that vantage is recorded as an untrusted-verdict failure, never a pass.
-- [ ] 2.4 Implement the gating rule in the case evaluator: Tier A fail ⇒ Tier B and Tier C recorded
+- [x] 2.4 Implement the gating rule in the case evaluator: Tier A fail ⇒ Tier B and Tier C recorded
   `skipped: tier_a_failed` and not evaluated; case verdict is `pass` iff Tier A passed and every required
   Tier-B assertion passed; Tier C never contributes to the verdict (design D4).
-- [ ] 2.5 Tests in `evals/test/tier-a.test.ts`: an honest fixture passing both legs; a fixture with an
+- [x] 2.5 Tests in `evals/test/tier-a.test.ts`: an honest fixture passing both legs; a fixture with an
   `error` diagnostic failing the static leg; a synthesized observation with an un-authenticated verdict failing
   as untrusted; determinism (same source + same observation twice ⇒ equal results); one adapter test pinned to
   a recorded synthetic-run report fixture (no Chromium launch in the suite).
