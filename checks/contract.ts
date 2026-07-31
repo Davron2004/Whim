@@ -28,6 +28,23 @@ export type Severity = 'error' | 'warning';
  *        `bad_field_type`, `bad_default`
  *      - storage-engine `diffSchemas`:      `type_change`, `tombstone_violation`,
  *        `missing_default`
+ *  - RUNTIME-OBSERVED (synthetic-run-harness, added additively by chain 5 — harness-diagnostics
+ *    req 2, `handoff/observe-api.md`/`handoff/capability-trace.md`): kinds only a live run can
+ *    produce, never a static pass. Bridge/storage denial kinds a run surfaces (e.g.
+ *    `undeclared_capability`) reuse the VERBATIM-REUSED rows above, not duplicated here.
+ *      - `runtime_throw`         — an uncaught exception escaped the candidate (CDP
+ *        `Runtime.exceptionThrown`, trusted-vantage)
+ *      - `unhandled_rejection`   — a rejected Promise with no handler (same CDP channel)
+ *      - `mount_timeout`         — no nonce-authenticated `paint` frame within the mount budget
+ *      - `run_truncated`         — the total wall-clock budget fired; the page was hard-killed
+ *      - `containment_failure`   — the nonce-authenticated `probes` frame itself reported a breach
+ *      - `unreachable_screen`    — a declared screen no live nav path reaches (cold-mount warning)
+ *      - `missing_schema`        — `launchApp` refused: `storage` declared, no schema artifact
+ *        shipped (`src/host/bridge/launch.ts`'s own `LaunchResult` kind, reused verbatim — not
+ *        caught by the static schema-check pass, which only runs when a `schema` literal IS
+ *        present)
+ *      - `launch_failed`         — `launchApp`'s defensive fallback for a launch-time engine
+ *        failure that is not itself a structured `StorageError`
  *  - NEW (authored here by Chain B from the static-checks spec, task 1.2/2.1): once
  *    authored this set is closed too — downstream stages extend the union additively,
  *    never by minting ad-hoc kind strings elsewhere.
@@ -75,6 +92,15 @@ export const DIAGNOSTIC_KINDS = [
   'type_change',
   'tombstone_violation',
   'missing_default',
+  // — runtime-observed (synthetic-run-harness, chain 5) —
+  'runtime_throw',
+  'unhandled_rejection',
+  'mount_timeout',
+  'run_truncated',
+  'containment_failure',
+  'unreachable_screen',
+  'missing_schema',
+  'launch_failed',
 ] as const;
 
 export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];
