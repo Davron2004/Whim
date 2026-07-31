@@ -24,6 +24,7 @@ import { runSharedStorageTests } from './shared-storage.suite';
 import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
 import { runPromptFlowScreensTests } from './prompt-flow-screens.suite';
 import { runGenerationClientTests } from './generation-client.suite';
+import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
 
 const h = new Harness();
 
@@ -45,6 +46,7 @@ await runSharedStorageTests(h);
 await runLaunchFailureUiTests(h);
 await runPromptFlowScreensTests(h);
 await runGenerationClientTests(h);
+await runPromptFlowWiringTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

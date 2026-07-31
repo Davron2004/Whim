@@ -15,11 +15,9 @@ export const COPY = {
   homeSubtitle: 'Your apps',
   exampleBadge: 'Example',
   createTileLabel: 'make your first app',
-  createTitle: 'Make your first app',
-  createBody: 'Describe an app out loud and Whim builds it for you.',
-  createDismiss: 'Got it',
   actionOpen: 'Open',
   actionFork: 'Fork',
+  actionPromptAgain: 'Prompt again',
   actionDelete: 'Delete',
   cancel: 'Cancel',
   deleteTitle: 'Delete this app?',
@@ -76,6 +74,12 @@ export const COPY = {
   failureHintsTitle: 'What to try',
   failureRephrase: 'Try rephrasing',
   failureDismiss: 'Back to your apps',
+  serverAddressSectionTitle: 'Server address',
+  // v1 is LAN-dev/personal-use only (design D3, prompt-flow-ux) — the address is an
+  // unauthenticated LAN address the user enters themselves, not a security boundary.
+  // eslint-disable-next-line sonarjs/no-clear-text-protocols
+  serverAddressPlaceholder: 'http://192.168.1.20:4000',
+  serverAddressHint: 'Where Whim sends your prompts to build apps.',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */

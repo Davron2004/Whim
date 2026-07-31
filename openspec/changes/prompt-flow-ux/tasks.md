@@ -30,12 +30,12 @@
 
 ## 6. LauncherRoot wiring + delivery orchestration
 
-- [ ] 6.1 Extend `LauncherRoot`'s `Screen` union with `prompt`/`rewrite-preview`/`generating`/`failure` variants (design D1)
-- [ ] 6.2 Wire `HomeScreen`'s create tile (replacing the placeholder alert) and add the "Prompt again" action-sheet row
-- [ ] 6.3 Implement the orchestration handlers in `LauncherRoot.tsx`: submit → `rewritePrompt` → preview; approve → `generateApp` loop driving the `stage` field and collecting the terminal event; on `result`, route delivery via `isAtTip` (install / update / fork-then-update per design D5), writing the `{v:1,text}` prompt envelope; on `failure` or a stream error, transition to the failure screen
-- [ ] 6.4 Implement cancel-on-navigate-away (`AbortController` wired to the generating screen's back/cancel action; verify nothing is installed/updated on cancel)
-- [ ] 6.5 Add the Settings screen's server-address field, persisted like the theme pref, sanitized the same tolerant way (design D3)
-- [ ] 6.6 The 1.3 acceptance tests green; full `npm run launcher:test` green
+- [x] 6.1 Extend `LauncherRoot`'s `Screen` union with `prompt`/`rewrite-preview`/`generating`/`failure` variants (design D1)
+- [x] 6.2 Wire `HomeScreen`'s create tile (replacing the placeholder alert) and add the "Prompt again" action-sheet row
+- [x] 6.3 Implement the orchestration handlers in `LauncherRoot.tsx`: submit → `rewritePrompt` → preview; approve → `generateApp` loop driving the `stage` field and collecting the terminal event; on `result`, route delivery via `isAtTip` (install / update / fork-then-update per design D5), writing the `{v:1,text}` prompt envelope; on `failure` or a stream error, transition to the failure screen
+- [x] 6.4 Implement cancel-on-navigate-away (`AbortController` wired to the generating screen's back/cancel action; verify nothing is installed/updated on cancel)
+- [x] 6.5 Add the Settings screen's server-address field, persisted like the theme pref, sanitized the same tolerant way (design D3)
+- [x] 6.6 The 1.3 acceptance tests green; full `npm run launcher:test` green
 
 ## 7. Docs and closure
 

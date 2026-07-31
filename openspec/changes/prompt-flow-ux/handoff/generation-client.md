@@ -50,9 +50,17 @@ export function generateApp(
   `{error: 'missing_device_id'|'invalid_device_id', hint}`). `hint` is the server's hint.
 - `http` — any other non-2xx response (`hint` populated when the body has a string `hint`
   field, e.g. the `invalid_request` shape `/v1/rewrite` and `/v1/generate` return on a bad
-  body); also used for a 200 `/v1/rewrite` body that fails `RewriteResponse` validation.
+  body); also used for a 200 `/v1/rewrite` body that fails `RewriteResponse` shape validation.
 - `stream_parse` — a `generateApp` SSE block's `data:` JSON failed to parse or failed
-  `GenerationEvent` (zod) validation. Only ever raised by `generateApp`, never `rewritePrompt`.
+  `GenerationEvent` shape validation. Only ever raised by `generateApp`, never `rewritePrompt`.
+
+### Validation mechanism (guard:metro)
+`@whim/contract` is imported **type-only** (`import type`) — zod's dist uses `export * from`
+namespace syntax RN's babel config can't transform, so importing the zod schema *values* would
+break `guard:metro`. `generation-client.ts` instead validates `DeviceIdError`/`RewriteResponse`/
+`GenerationEvent` with local hand-rolled structural guards that mirror `contract/src/index.ts`'s
+zod shapes field-for-field. Observable behavior (which `GenerationClientErrorKind` each failure
+raises) is unchanged from a zod-backed implementation.
 
 ### Abort semantics (consumer contract)
 Passing `signal` and calling `.abort()` makes `generateApp`'s iteration end **silently** —
