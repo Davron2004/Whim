@@ -236,6 +236,76 @@ section('CLI run: exit-code matrix (spec "Eval runs are on demand...", `handoff/
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+section('CLI run: sourcing-error redaction on the console surface (fix/redaction-tier-results, design D3 extension)');
+// ─────────────────────────────────────────────────────────────────────────────
+
+{
+  // `evals/producer.ts`'s sourcing/generation error `message` can carry candidate/model-derived
+  // text (a pipeline exception, a declared `failure` reason) — the same disclosure property as a
+  // report's tier results, just on the CONSOLE surface (spec "run report, Markdown summary, diff
+  // output, compare output, and console output"). The stub pipeline `--generate` drives
+  // (`server/src/pipeline.ts`, out of this chain's scope) emits a FIXED failure reason, not
+  // controllable per-invocation, so this proves the same `redactSourcingError` code path — and
+  // the same `message` field, dropped only when `kind` is present — through the `missing-source`
+  // kind instead: its message embeds the looked-up path verbatim, which is exactly as
+  // environment/attacker-controllable here as a model's free text would be for the other kinds.
+  const SECRET_SOURCING_PATH_TOKEN = 'THE-SECRET-SOURCING-PATH-token888';
+  const holdoutSet = writeEvalSet('holdout-sourcing-error', {
+    setId: 'holdout-sourcing-error',
+    visibility: 'holdout',
+    cases: [{ caseId: 'c1', appSlug: 'tip-splitter', prompt: 'hello' }],
+  });
+  const missingSourceDir = scratch(`missing-sources-${SECRET_SOURCING_PATH_TOKEN}`);
+  const result = runCli([
+    'run',
+    '--eval-set',
+    holdoutSet,
+    '--source-dir',
+    missingSourceDir,
+    '--out',
+    scratch('out-holdout-sourcing-error'),
+  ]);
+  check('a holdout sourcing error still exits with the case-failure code', result.status === 1, `status=${result.status}`);
+  check(
+    'the console output does not contain the secret sourcing-path token',
+    !result.stderr.includes(SECRET_SOURCING_PATH_TOKEN),
+    result.stderr,
+  );
+  check('the console output still names the case id (operator can see WHAT failed)', result.stderr.includes('c1'), result.stderr);
+  check(
+    'the console output still names the closed-vocabulary kind (operator can see HOW it failed)',
+    result.stderr.includes('missing-source'),
+    result.stderr,
+  );
+}
+
+{
+  // Same scenario, `visible` set: the full message (including the path) still prints —
+  // redaction never touches a visible set's console output.
+  const SECRET_SOURCING_PATH_TOKEN = 'THE-VISIBLE-SOURCING-PATH-token999';
+  const visibleSet = writeEvalSet('visible-sourcing-error', {
+    setId: 'visible-sourcing-error',
+    visibility: 'visible',
+    cases: [{ caseId: 'c1', appSlug: 'tip-splitter', prompt: 'hello' }],
+  });
+  const missingSourceDir = scratch(`missing-sources-${SECRET_SOURCING_PATH_TOKEN}`);
+  const result = runCli([
+    'run',
+    '--eval-set',
+    visibleSet,
+    '--source-dir',
+    missingSourceDir,
+    '--out',
+    scratch('out-visible-sourcing-error'),
+  ]);
+  check(
+    'a visible sourcing error still prints the full message, path included',
+    result.stderr.includes(SECRET_SOURCING_PATH_TOKEN),
+    result.stderr,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 section('CLI run: file-write behavior (spec "reports write under a git-ignored default directory, never overwrite a tracked file")');
 // ─────────────────────────────────────────────────────────────────────────────
 
