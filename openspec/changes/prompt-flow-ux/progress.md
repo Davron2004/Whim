@@ -27,3 +27,4 @@
 - chain-5 (docs-decision) DISPATCHED next.
 - chain-5 REPORT: complete 1/1, GATE PASS, commit 7f2aed5, no deviations. Decision #53 appended; roadmap #7 block updated (implemented 2026-07-31, task 7.2 on-device acceptance PENDING).
 - chain-5 INTEGRITY: exit 0. MERGED onto v1-sprint, task 7.1 ticked, REGATE PASS. All 5 chains (+4b fix chain) merged → proceeding to gate-full + reviewer.
+- gate-full on staging tip (23959cd): FULL GATE PASSED (Chromium invariants, knip, guard:metro, openspec validate 31/31). Whole-change reviewer DISPATCHED (diff 6bfe552..HEAD scoped to launcher + change folder + docs).

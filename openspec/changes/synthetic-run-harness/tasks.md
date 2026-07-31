@@ -9,10 +9,10 @@
 
 ## 2. Observation and watchdog
 
-- [ ] 2.1 Trusted-vantage collectors: nonce-frame listener (`delivery`/`paint`/`error`/`probes`), `pageerror` + console capture, all keyed to the run's generation (design — spec §Observation is trusted-vantage only)
-- [ ] 2.2 Watchdog: mount budget → `mount_timeout`; per-action quiet-window with hard cap (no diagnostic); total budget → kill + `run_truncated`; every timeout an explicit named outcome, no silent catch (design D2)
-- [ ] 2.3 Source-map resolution: map `pageerror` stacks to original-source `line` when possible, omit otherwise (spec §Diagnostics)
-- [ ] 2.4 Node tests: hostile fixtures throws-on-mount, never-resolving `delay` before render (mount_timeout), infinite fast `interval` that mounts fine (no diagnostic), forged-verdict frames (ignored) — red-check mount_timeout against a watchdog-free stub
+- [x] 2.1 Trusted-vantage collectors: nonce-frame listener (`delivery`/`paint`/`error`/`probes`), `pageerror` + console capture, all keyed to the run's generation (design — spec §Observation is trusted-vantage only)
+- [x] 2.2 Watchdog: mount budget → `mount_timeout`; per-action quiet-window with hard cap (no diagnostic); total budget → kill + `run_truncated`; every timeout an explicit named outcome, no silent catch (design D2)
+- [x] 2.3 Source-map resolution: map `pageerror` stacks to original-source `line` when possible, omit otherwise (spec §Diagnostics)
+- [x] 2.4 Node tests: hostile fixtures throws-on-mount, never-resolving `delay` before render (mount_timeout), infinite fast `interval` that mounts fine (no diagnostic), forged-verdict frames (ignored) — red-check mount_timeout against a watchdog-free stub
 
 ## 3. Capability wiring
 
