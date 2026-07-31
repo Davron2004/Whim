@@ -15,6 +15,8 @@ import { build as esbuild } from 'esbuild';
 import { buildCandidateFile } from '../builder';
 import { awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, type AttachedObservers, type ObservedFrameKind } from '../observe';
 import { SynthRunSession } from '../session';
+import { wireCapabilityBridge } from '../capability';
+import type { AppRecord } from '../../src/host/bridge';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -95,6 +97,9 @@ async function main(): Promise<void> {
   // ── chain 2 (task 2.4): trusted-vantage collectors + watchdog, hostile fixtures ──────────
   await testObservers();
 
+  // ── chain 3 (task 3.3): capability wiring — real gate, ephemeral engine, recording effectors
+  await testCapabilityWiring();
+
   console.log('');
   if (failures.length === 0) {
     console.log(`✓ synthrun acceptance: ${passed} checks passed`);
@@ -166,6 +171,120 @@ function Home() {
 }
 export default defineApp({ name: 'Home', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
+
+// ── chain 3 (task 3.3): capability wiring — real gate, ephemeral engine, recording effectors ──
+
+// Declares NO capabilities, then calls a storage verb and FULLY SWALLOWS the rejection — no
+// state, no re-render, nothing observable in the DOM. Proves denial collection happens at the
+// HOST-SIDE dispatch function, not by watching what the candidate does with the promise.
+const FIXTURE_SWALLOWED_DENIAL = `import { defineApp, Screen, Stack, Heading, useEffect, storage } from 'vc-sdk';
+function Home() {
+  useEffect(() => {
+    storage.kv.set('intrude', 'x').catch(() => {});
+  }, []);
+  return <Screen><Stack><Heading size="title">quiet</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'SwallowedDenial', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// Declares storage and writes one kv key on mount — used to prove no state survives across runs.
+const FIXTURE_STORAGE_MARK = `import { defineApp, Screen, Stack, Heading, useEffect, storage } from 'vc-sdk';
+function Home() {
+  useEffect(() => { storage.kv.set('mark', 'A').catch(() => {}); }, []);
+  return <Screen><Stack><Heading size="title">mark</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'StorageMark', initial: 'Home', screens: { Home }, capabilities: ['storage'] });
+`;
+
+const CAP_SCHEMA = {
+  schemaVersion: 1 as const,
+  collections: { Marks: { id: 'c1', tombstones: [], fields: { value: { id: 'f1', type: 'text' as const } } } },
+};
+
+const APP_UNDECLARED: AppRecord = { appId: 'cap-undeclared', name: 'CapUndeclared', manifest: { capabilities: [] } };
+const APP_STORAGE: AppRecord = {
+  appId: 'cap-storage',
+  name: 'CapStorage',
+  manifest: { capabilities: ['storage'] },
+  schemaArtifact: CAP_SCHEMA,
+};
+const APP_MISSING_SCHEMA: AppRecord = {
+  appId: 'cap-missing-schema',
+  name: 'CapMissingSchema',
+  manifest: { capabilities: ['storage'] },
+};
+
+async function testCapabilityWiring(): Promise<void> {
+  const session = await SynthRunSession.launch({ concurrency: 4 });
+  try {
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('undeclared capability: the production denial is collected host-side even when the candidate swallows it', async () => {
+      const wiring = wireCapabilityBridge(APP_UNDECLARED);
+      const { ctx, dispose } = await session.openRun(FIXTURE_SWALLOWED_DENIAL, {
+        appId: APP_UNDECLARED.appId,
+        beforeNavigate: wiring.beforeNavigate,
+      });
+      try {
+        await ctx.page.waitForTimeout(500); // let the mount effect fire + the syscall round-trip
+        const denial = wiring.trace.find((t) => t.kind === 'denial' && t.method === 'storage.kv.set');
+        ok(!!denial, 'a denial trace entry was recorded for storage.kv.set');
+        ok(denial?.kind === 'denial' && denial.errorKind === 'undeclared_capability', `the recorded kind is the production gate's own denial kind (got ${denial && denial.kind === 'denial' ? denial.errorKind : 'none'})`);
+        let text = '';
+        for (const f of ctx.page.frames()) {
+          try {
+            const t = await f.evaluate(() => {
+              const doc = (globalThis as unknown as { document: { getElementById(id: string): { innerText: string } | null } }).document;
+              return doc.getElementById('whim-root')?.innerText ?? null;
+            });
+            if (t) text = t;
+          } catch {
+            /* cross-origin/opaque frames may refuse evaluate — ignore */
+          }
+        }
+        ok(text.trim() === 'quiet', `the candidate's own DOM shows nothing but its static text — it truly swallowed the rejection (got ${JSON.stringify(text)})`);
+      } finally {
+        await dispose();
+      }
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('no cross-candidate contamination: a fresh :memory: engine per run means candidate B never sees candidate A\'s write', async () => {
+      const wiringA = wireCapabilityBridge(APP_STORAGE);
+      const runA = await session.openRun(FIXTURE_STORAGE_MARK, { appId: APP_STORAGE.appId, beforeNavigate: wiringA.beforeNavigate });
+      try {
+        await runA.ctx.page.waitForTimeout(500);
+        ok(wiringA.realm?.engine?.kv.get('mark') === 'A', "candidate A's own write landed in its own engine");
+      } finally {
+        await runA.dispose();
+      }
+
+      // A SECOND wiring over the SAME appId — a fresh call, fresh `:memory:` engine (D3).
+      const wiringB = wireCapabilityBridge(APP_STORAGE);
+      ok(wiringB.realm?.engine?.kv.get('mark') === undefined, "candidate B's fresh engine observes an empty store, not candidate A's write");
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('schema-application failure surfaces as a diagnostic, not a delivered bundle', () => {
+      const wiring = wireCapabilityBridge(APP_MISSING_SCHEMA);
+      ok(wiring.realm === null, 'no realm was bound');
+      ok(wiring.launchError?.kind === 'missing_schema', `the launch failure kind is surfaced verbatim (got ${wiring.launchError?.kind})`);
+      ok(typeof wiring.launchError?.hint === 'string' && wiring.launchError.hint.length > 0, 'the launch failure carries a non-empty hint');
+    });
+  } finally {
+    await session.close();
+  }
+
+  // ── red-check (non-vacuity, task 3.3): a GRANTED capability must NOT be denied — proves the
+  // undeclared-capability assertion above is a real gate, not a permanently-closed one.
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+  await test('red-check: a declared capability is NOT denied (the gate is a live path, not vacuously closed)', async () => {
+    const wiring = wireCapabilityBridge(APP_STORAGE);
+    const sysretRaw = await wiring.dispatch(JSON.stringify({ whim: 'syscall', v: 1, id: 1, gen: 1, method: 'storage.kv.set', params: { key: 'k', value: 'v' } }));
+    const sysret = sysretRaw ? (JSON.parse(sysretRaw) as { ok: boolean }) : null;
+    ok(sysret?.ok === true, `a declared capability's syscall succeeds (got ${sysretRaw})`);
+    ok(!wiring.trace.some((t) => t.kind === 'denial'), 'no denial was recorded for a granted, valid call');
+  });
+}
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
