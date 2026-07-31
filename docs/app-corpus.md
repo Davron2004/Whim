@@ -5,28 +5,28 @@
 the SDK (gap analysis) and seed the eval prompts. Change `tier0-corpus-and-sdk-gap` expands
 this into the per-app SDK breakdown; until then this table is the source of truth.*
 
-| Tier | App | What it uniquely pulls |
-|------|-----|------------------------|
-| 0 | tip splitter ✅ | (shipped — zero syscalls) |
-| 0 | spending tracker + graph | Chart (bar/line), SegmentedControl, record collections, date bucketing |
-| 0 | habit tracker w/ streaks | date math, calendar heatmap (a second chart shape) |
-| 0 | water / calorie counter | "new day" reset semantics, big-tap UX |
-| 0 | workout log | nested forms (exercise → sets), history views |
-| 0 | flashcards w/ spaced repetition | card flip (instant in v1 — animation deferred), date-based scheduling without notifications |
-| 0 | board-game score keeper | dynamic entity lists (add/remove players) |
-| 0 | packing checklist w/ templates | bulk state ops, instantiate-from-template |
-| 0 | recipe box | text-heavy CRUD, search/filter over storage |
-| 0 | tic-tac-toe | grid layout, turn-based state — proves "games ≠ canvas" |
-| 0 | chore rotation roulette (no spin yet) | rotation/modular logic, multi-person data |
-| 1 | meal-plan generator (phase 1) | ai.complete with structured output (schema'd JSON, not prose) |
-| 1 | journal w/ weekly AI summary | AI over accumulated stored data (read-many → summarize) |
-| 1 | fridge-to-recipe | AI as the whole app, trivial UI |
-| 2 | meal-plan alarm (full version) | scheduled notifications w/ pre-baked content |
-| 2 | pour-over timer | interval effects + haptics — **foreground version is the v0.3 fixture** (effects-and-cues); the background/alarm version is the Tier-2 app |
-| 2 | medication / plant reminders | recurring schedules, per-entity timers |
-| 3a | weather day-picker ("bike or train today?") | first curated integration |
-| B-anim | drinking roulette | declarative motion (post-v1 animation tier), randomness + ceremony |
-| 5 | Tetris / 2048 | canvas, frame loop, gestures — the far end, on purpose |
+| Tier | App | Slug | What it uniquely pulls |
+|------|-----|------|------------------------|
+| 0 | tip splitter ✅ | `tip-splitter` | (shipped — zero syscalls) |
+| 0 | spending tracker + graph | `spending-tracker` | Chart (bar/line), SegmentedControl, record collections, date bucketing |
+| 0 | habit tracker w/ streaks | `habit-tracker` | date math, calendar heatmap (a second chart shape) |
+| 0 | water / calorie counter | `water-counter` | "new day" reset semantics, big-tap UX |
+| 0 | workout log | `workout-log` | nested forms (exercise → sets), history views |
+| 0 | flashcards w/ spaced repetition | `flashcards` | card flip (instant in v1 — animation deferred), date-based scheduling without notifications |
+| 0 | board-game score keeper | `score-keeper` | dynamic entity lists (add/remove players) |
+| 0 | packing checklist w/ templates | `packing-checklist` | bulk state ops, instantiate-from-template |
+| 0 | recipe box | `recipe-box` | text-heavy CRUD, search/filter over storage |
+| 0 | tic-tac-toe | `tic-tac-toe` | grid layout, turn-based state — proves "games ≠ canvas" |
+| 0 | chore rotation roulette (no spin yet) | `chore-rotation` | rotation/modular logic, multi-person data |
+| 1 | meal-plan generator (phase 1) | — | ai.complete with structured output (schema'd JSON, not prose) |
+| 1 | journal w/ weekly AI summary | — | AI over accumulated stored data (read-many → summarize) |
+| 1 | fridge-to-recipe | — | AI as the whole app, trivial UI |
+| 2 | meal-plan alarm (full version) | — | scheduled notifications w/ pre-baked content |
+| 2 | pour-over timer | — | interval effects + haptics — **foreground version is the v0.3 fixture** (effects-and-cues); the background/alarm version is the Tier-2 app |
+| 2 | medication / plant reminders | — | recurring schedules, per-entity timers |
+| 3a | weather day-picker ("bike or train today?") | — | first curated integration |
+| B-anim | drinking roulette | — | declarative motion (post-v1 animation tier), randomness + ceremony |
+| 5 | Tetris / 2048 | — | canvas, frame loop, gestures — the far end, on purpose |
 
 ## Notes pinned at authoring time (decision #42)
 
@@ -42,3 +42,6 @@ this into the per-app SDK breakdown; until then this table is the source of trut
   that's a small *additive* engine verb option, flagged early on purpose.
 - **Eval seeds**: each Tier-0 app gets 2–3 prompt phrasings; the visible set lives in the repo,
   the **held-out set stays with the user, never committed** (§16.4).
+- **Slug column** (`eval-harness`, design D11): the case key `evals/corpus.ts`'s registry and
+  every eval case reference. Tier-0 only — the corpus-eval acceptance suite fails if this
+  column and the registry ever disagree.
