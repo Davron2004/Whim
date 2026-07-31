@@ -10,7 +10,8 @@ export const RUBRIC_VERSION = 'v1';
 export const RUBRIC_DOCUMENT_PATH = 'evals/rubric/v1.md'; // repo-root-relative
 export interface RubricCriterion { readonly id: string; readonly label: string; readonly minScore: number; readonly maxScore: number; }
 export const RUBRIC_CRITERIA: readonly RubricCriterion[]; // closed list: intent-fidelity, usability, robustness, polish (all 1–5)
-export const RUBRIC_CRITERION_IDS: readonly string[];
+// RUBRIC_CRITERION_IDS was declared here and shipped, but never gained a consumer — every
+// caller reads RUBRIC_CRITERIA directly. Removed at closure once knip was wired to evals/.
 export const SCORED_SECTION_START_MARKER = '<!-- rubric-scored-content:start -->';
 export const SCORED_SECTION_END_MARKER = '<!-- rubric-scored-content:end -->';
 export function extractScoredSection(rubricMarkdown: string): string; // throws if markers missing/out of order

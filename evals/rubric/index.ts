@@ -30,8 +30,6 @@ export const RUBRIC_CRITERIA: readonly RubricCriterion[] = [
   { id: 'polish', label: 'Polish', minScore: 1, maxScore: 5 },
 ];
 
-export const RUBRIC_CRITERION_IDS: readonly string[] = RUBRIC_CRITERIA.map((criterion) => criterion.id);
-
 /** Markers delimiting the scored section inside `v1.md` — everything strictly between them
  *  (trimmed) is what `RUBRIC_CONTENT_HASH` covers. */
 export const SCORED_SECTION_START_MARKER = '<!-- rubric-scored-content:start -->';
