@@ -34,6 +34,9 @@
     // Same idiom for the static-check pipeline's Node acceptance runner (esbuild-bundled,
     // run via `npm run checks:test`, not shipped). The checker MODULES stay type-checked.
     "checks/test",
+    // Same idiom for the eval-harness's Node acceptance runner (uses `process`/dynamic
+    // import). Validated by running it (`npm run evals:test`), not by tsc.
+    "evals/test",
     // The server-lane workspaces are Node-flavored (their own tsconfigs, moduleResolution
     // bundler, node types). They are type-checked by `npm run server:test` (tsc --noEmit over
     // both), NOT by the RN root config — which would mis-apply react-jsx/RN lib settings.

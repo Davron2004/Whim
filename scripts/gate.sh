@@ -61,6 +61,8 @@ check "launcher"          npm run -s launcher:test
 check "server"            npm run -s server:test
 check "SDK"               npm run -s sdk:test
 check "static-checks"     npm run -s checks:test
+check "synthetic-run"     npm run -s synthrun:test
+check "corpus-eval"       npm run -s evals:test
 check "sonar ingestion"   node scripts/test/sonar-pr-issues.test.mjs
 check "fixloop preflight" bash scripts/test/fixloop-preflight.test.sh
 check "bash policy"       bash .claude/hooks/test/bash-policy.test.sh
