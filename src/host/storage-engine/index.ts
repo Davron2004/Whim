@@ -13,14 +13,15 @@
  */
 
 export * from './contract';
-export { createEngine } from './engine';
+export { createEngine, readAppliedSchema } from './engine';
 export type { SqlExecutor, SqlResult, SqlRow } from './sql-executor';
 export { RecordingExecutor } from './sql-executor';
 export type { AppliedSchema, SchemaDiff, DdlPlan } from './schema';
-export { validateArtifact, diffSchemas, emptyApplied } from './schema';
+export { validateArtifact, diffSchemas, emptyApplied, burnedIdFloor } from './schema';
 
 import { CreateEngineOptions, StorageEngine } from './contract';
 import { createEngine } from './engine';
+import { AppliedSchema } from './schema';
 
 /**
  * Device entrypoint: resolve the per-app database (op-sqlite) and return an engine bound
@@ -43,4 +44,17 @@ export function deleteStorage(opts: { appId: string }): void {
   const { open } = require('@op-engineering/op-sqlite');
   const db = open({ name: `${opts.appId}.db`, location: 'storage' });
   db.delete();
+}
+
+/**
+ * Device entrypoint (#52-D5, task 3.2/3.5): a side-effect-free peek at an app's live database's
+ * accumulated `_meta` union — no artifact applied, no DDL run. This is what
+ * `LauncherRoot.buildGenerateRequest` sources `app.appliedSchema` from, keyed by
+ * `access.engineAppId(entry)`, NEVER `entry.record.schemaArtifact`. The native module is
+ * required lazily (same discipline as `createStorageEngine`/`deleteStorage`), so importing this
+ * module off-device stays safe.
+ */
+export function peekAppliedSchema(opts: { appId: string }): AppliedSchema {
+  const { readAppliedSchemaFromDevice } = require('./bindings/op-sqlite');
+  return readAppliedSchemaFromDevice(opts);
 }

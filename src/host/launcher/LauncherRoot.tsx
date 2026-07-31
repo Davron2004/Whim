@@ -17,7 +17,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
+import type { GenerationEvent, WireAppRecord } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import type { AppManifest, AppRecord } from '../bridge';
@@ -25,9 +25,10 @@ import type { SchemaArtifact } from '../storage-engine';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
-import { deleteStorage } from '../storage-engine';
+import { deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
+import { buildGenerateRequest } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import HomeScreen from './HomeScreen';
 import MiniAppView from './MiniAppView';
@@ -121,25 +122,6 @@ function errorReason(err: unknown): { reason: string; diagnostics: readonly { hi
   return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
 }
 
-/** `GenerateRequest.app` for the edit flow, built from `editing`'s current active snapshot
- *  (design D5) — `undefined` for the new-app flow, which sends no `app` at all. */
-async function buildGenerateRequest(
-  access: StoreAccess,
-  editing: InstalledApp | undefined,
-  prompt: string,
-): Promise<GenerateRequest> {
-  if (!editing) return { prompt };
-  const source = await access.activeSource(editing);
-  return {
-    prompt,
-    app: {
-      source,
-      manifest: editing.record.manifest as unknown as Record<string, unknown>,
-      schema: (editing.record.schemaArtifact ?? {}) as unknown as Record<string, unknown>,
-    },
-  };
-}
-
 /** D5's delivery routing: a brand-new install (no `editing`), an in-place update when `editing`
  *  is at the tip of its own history, or — when it has been restored behind its own tip — a
  *  silent shared continuation (fork with `shareData:true`, no question asked per decision #52 D2
@@ -157,15 +139,15 @@ async function deliverResult(
   if (!editing) {
     const id = freshAppId();
     const record = mapWireRecord(id, wire);
-    return access.install({ id, name: record.name, record, bundleSource: wire.bundle, prompt, example: false, schemaJson });
+    return access.install({ id, name: record.name, record, bundleSource: wire.bundle, source: wire.source, prompt, example: false, schemaJson });
   }
 
   const record = mapWireRecord(editing.record.appId, wire);
   if (await isAtTip(access, editing)) {
-    return access.update(editing, { record, bundleSource: wire.bundle, schemaJson, prompt });
+    return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
   }
   const fork = await access.fork(editing, undefined, { shareData: true });
-  return access.update(fork, { record, bundleSource: wire.bundle, schemaJson, prompt });
+  return access.update(fork, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
 }
 
 export default function LauncherRoot() {
@@ -292,7 +274,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     genRef.current = ctl;
 
     try {
-      const request = await buildGenerateRequest(access, editing, text);
+      const request = await buildGenerateRequest(access, (appId) => peekAppliedSchema({ appId }), editing, text);
       let terminal: GenerationEvent | null = null;
 
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
