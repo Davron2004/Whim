@@ -17,6 +17,13 @@
  * (`kind`, `severity`, `line`, `column`, `status`, `criterion`, `score`, `rubricVersion`,
  * `judgeIdentity`) always survive — `diff.ts`/`compare.ts`/`summary.ts` read only these, so
  * dropping the free-text fields never breaks diffability or determinism.
+ *
+ * `redactSourcingError` covers the same disclosure property on the CONSOLE surface (spec
+ * "run report, Markdown summary, diff output, compare output, and console output"): under
+ * `--generate`, a sourcing/generation failure's `message` (`evals/producer.ts`'s
+ * `CandidateSourceResult`) can carry model/candidate-derived text (a pipeline exception, a
+ * declared `failure` reason). `evals/cli.mjs`'s facade is the one caller, so this stays the only
+ * place that decides what a sourcing error prints.
  */
 import { createHash } from 'node:crypto';
 import type {
@@ -34,6 +41,7 @@ import type {
   TierCReportResult,
   TierCResult,
 } from './contract';
+import type { CandidateSourceErrorKind } from './producer';
 
 export interface RedactableCaseFields {
   readonly caseId: string;
@@ -131,4 +139,32 @@ export function redactTierC(tierC: TierCResult, visibility: EvalSetVisibility): 
       criteria: redactJudgeVerdict(tierC.verdict, visibility),
     },
   };
+}
+
+export interface SourcingErrorSummary {
+  readonly caseId: string;
+  /** Absent for a harness-internal defect (no `CandidateSourceResult` was ever produced) — that
+   *  message never carries candidate/model text, so it is never redacted regardless of
+   *  `visibility` (see `redactSourcingError` below). */
+  readonly kind?: CandidateSourceErrorKind;
+  /** Free text — may carry model/candidate-derived content when `kind` is present (a pipeline
+   *  exception, a declared `failure` reason), so absent under `holdout` whenever `kind` is
+   *  present. */
+  readonly message?: string;
+}
+
+/**
+ * Redacts one sourcing/generation error for console output (`evals/cli.mjs`). Only a `message`
+ * that came from an actual `CandidateSourceResult` (`kind` is present) can carry candidate/model
+ * text, so only that case drops `message` under `holdout` — `kind` and `caseId` always survive
+ * (closed-vocabulary + identifier) so the operator still learns what failed and how many. A
+ * harness-internal defect (`kind` absent — no sourcing result was ever produced for the case)
+ * passes its `message` through unconditionally: it is a bug report about the harness itself, not
+ * candidate output.
+ */
+export function redactSourcingError(error: SourcingErrorSummary, visibility: EvalSetVisibility): SourcingErrorSummary {
+  if (visibility === 'holdout' && error.kind !== undefined) {
+    return { caseId: error.caseId, kind: error.kind };
+  }
+  return { ...error };
 }

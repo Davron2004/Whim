@@ -64,6 +64,7 @@ import { renderSummary } from './report/summary';
 import { diffReports, renderDiff } from './report/diff';
 import { compareReports, renderCompare, compareExitCode } from './report/compare';
 import { sourceFromDirectory, sourceFromPipeline } from './producer';
+import { redactSourcingError } from './redact';
 import { createStubPipeline } from '../server/src/pipeline';
 
 export { EvalSetError, EVAL_SET_FLAG, EVAL_SET_ENV_VAR, resolveEvalSetLocation, loadEvalSet };
@@ -89,7 +90,11 @@ export function compareReportsFacade(visiblePath, holdoutPath, threshold) {
  * Sources every case (offline directory or an injected stub pipeline), evaluates Tier A/B/C for
  * every successfully-sourced case, and assembles the final report. A case whose sourcing
  * produced \`status: 'error'\` (missing file, generation failure, or a runner error — design
- * D12) is logged and excluded from \`cases\` — it never gets a fabricated candidate verdict.
+ * D12) is logged and excluded from \`cases\` — it never gets a fabricated candidate verdict. Each
+ * sourcing error is redacted (\`redactSourcingError\`, \`fix/redaction-tier-results\`) against
+ * \`manifest.visibility\` right here, where visibility is already in scope — a holdout set's
+ * \`sourcingErrors\` entries carry only \`caseId\`/\`kind\`, never the candidate/model-derived
+ * \`message\` a generation failure or pipeline exception can carry.
  * Tier C always runs with no judge configured (\`no_judge_configured\`) — this CLI wires no
  * \`--judge\` flag yet, matching the fully-offline default the acceptance suite itself relies on.
  */
@@ -106,7 +111,8 @@ export async function runEvalSet(opts) {
     const result = sourced.get(evalCase.caseId);
     if (!result || result.status === 'error') {
       const message = result ? result.message : \`no sourcing result produced for case "\${evalCase.caseId}"\`;
-      sourcingErrors.push({ caseId: evalCase.caseId, message });
+      const kind = result ? result.kind : undefined;
+      sourcingErrors.push(redactSourcingError({ caseId: evalCase.caseId, kind, message }, manifest.visibility));
       continue;
     }
     toEvaluate.push({ evalCase, source: result.source });
@@ -316,7 +322,11 @@ async function cmdRun(argv) {
   });
 
   for (const err of sourcingErrors) {
-    console.error(`CASE ERROR ${err.caseId}: ${err.message}`);
+    // `err.message` is already redacted for a holdout set (`redactSourcingError`, called inside
+    // `runEvalSet` where `manifest.visibility` is in scope) — absent whenever `err.kind` alone
+    // (closed-vocabulary) is enough to name what failed without candidate/model-derived text.
+    const detail = err.message !== undefined ? err.message : `[redacted for holdout] kind: ${err.kind}`;
+    console.error(`CASE ERROR ${err.caseId}: ${detail}`);
   }
 
   const written = writeReportOrError(outDir, report, facade.serializeReport ?? ((r) => JSON.stringify(r, null, 2)));
