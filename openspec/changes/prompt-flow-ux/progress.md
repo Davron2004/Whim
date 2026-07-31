@@ -10,3 +10,4 @@
 - chain-2 (store-access-prompt-flow) DISPATCHED: BASE=6bfe552, worktree=.claude/worktrees/prompt-flow-ux-2, branch=chain/prompt-flow-ux-2, implementer=sonnet, heredoc-write instruction included.
 - chain-2 REPORT: complete, GATE PASS (launcher:test 1336 checks), commit 8fad09c, contract handoff/store-access-prompt-flow.md (88 lines). Deviations: none. Notable: activeSource==activeBundle limitation (D7, flagged for #11); schema.json must be resupplied on every update (snapshot is content-agnostic).
 - chain-2 INTEGRITY: exit 0, file scope exactly as declared. MERGED onto v1-sprint (--no-ff), tasks 1.2/3.1/3.2/3.3 ticked, REGATE PASS (FAST GATE PASSED).
+- chain-3 (prompt-flow-screens) DISPATCHED: BASE=b068376, worktree=.claude/worktrees/prompt-flow-ux-3, branch=chain/prompt-flow-ux-3, implementer=sonnet, heredoc instruction included.
