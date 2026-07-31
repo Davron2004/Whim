@@ -38,24 +38,24 @@
 
 ## 3. Device seam
 
-- [ ] 3.1 `src/host/storage-engine/schema.ts`: export a pure `burnedIdFloor(applied)` returning each
+- [x] 3.1 `src/host/storage-engine/schema.ts`: export a pure `burnedIdFloor(applied)` returning each
       collection's maximum ordinal across active **and** retired columns (absent collection ⇒ no floor),
       importable without the native-binding barrel; cover it in `storage:test`.
-- [ ] 3.2 Add a side-effect-free read of a database's accumulated `_meta` union: applies no artifact, runs
+- [x] 3.2 Add a side-effect-free read of a database's accumulated `_meta` union: applies no artifact, runs
       no DDL, does not create a missing database, returns `emptyApplied()` when there is none; cover in
       `storage:test` that reading leaves `_meta`, tables, and rows unchanged.
-- [ ] 3.3 `src/host/launcher/store-access.ts`: add the `source.ts` snapshot artifact — `InstallSpec` and
+- [x] 3.3 `src/host/launcher/store-access.ts`: add the `source.ts` snapshot artifact — `InstallSpec` and
       `UpdateSpec` carry the original source, `install`/`update` write it, and the source reader returns it
       or reports absence instead of aliasing `activeBundle`.
-- [ ] 3.4 Update every `InstallSpec`/`UpdateSpec` construction site (launcher delivery and the first-run
+- [x] 3.4 Update every `InstallSpec`/`UpdateSpec` construction site (launcher delivery and the first-run
       seed path) to supply the original source, keeping legacy entries working untouched.
-- [ ] 3.5 `LauncherRoot.buildGenerateRequest`: send the original TypeScript when the snapshot has it and
+- [x] 3.5 `LauncherRoot.buildGenerateRequest`: send the original TypeScript when the snapshot has it and
       omit `app.source` when it does not; source `app.appliedSchema` from the live database for
       `access.engineAppId(entry)`, never from `entry.record.schemaArtifact`.
-- [ ] 3.6 New `src/host/launcher/test/generation-request.suite.ts`, registered in the launcher acceptance
+- [x] 3.6 New `src/host/launcher/test/generation-request.suite.ts`, registered in the launcher acceptance
       list: legacy entry omits source; a grouped entry ships the union containing the other member's fields;
       a fork with shared data inherits the founder's union; a brand-new app ships no `app` at all.
-- [ ] 3.7 Write `handoff/device-seam.md` — the floor helper and applied-schema read signatures, the source
+- [x] 3.7 Write `handoff/device-seam.md` — the floor helper and applied-schema read signatures, the source
       artifact name and reader semantics, and the request-building rules.
 
 ## 4. Plan and state machine
