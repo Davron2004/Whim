@@ -18,6 +18,7 @@ import {
   annotationBetween,
   fieldsLeavingViewOnRestore,
   formatRelativeTimestamp,
+  isAtTip,
   listVersions,
   restoreTargetId,
 } from '../history-logic';
@@ -187,6 +188,35 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     await access.rollback(orig, oldest.id);
     const afterRollback = await listVersions(access, orig);
     h.eq(afterRollback.map(s => s.prompt), ['p3', 'p2', 'p1'], 'later versions stay listed and restorable after rolling backward');
+  });
+
+  // ── isAtTip (design D6) ────────────────────────────────────────────────────
+  await h.test('history §12 isAtTip is true immediately after install and after every fresh update', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    h.eq(await isAtTip(access, orig), true, 'at tip right after install');
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: 'p2' });
+    h.eq(await isAtTip(access, updated), true, 'at tip right after a fresh update');
+  });
+
+  await h.test('history §13 isAtTip is false after a rollback to a non-tip snapshot', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    await store.snapshot('wc', { 'bundle.js': 'V2' }, 'p2');
+    const list = await listVersions(access, orig);
+    const oldest = list[list.length - 1];
+    await access.rollback(orig, oldest.id);
+    h.eq(await isAtTip(access, orig), false, 'not at tip after rolling back to an older snapshot');
+  });
+
+  await h.test('history §14 isAtTip uses the same fork-safe history()/timeline() split as listVersions', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const fork = await access.fork(orig); // fresh, undiverged: fork tip === orig tip
+    await access.activeBundle(orig); // switches the repo back to main (ensureLineage side effect)
+    await store.snapshot(storeIdOf(orig), { 'bundle.js': 'V2_ORIG' }, 'orig post-fork edit'); // only on original's line
+    h.eq(await isAtTip(access, fork), true, 'undiverged fork is still at its own (history()-based) tip, unaffected by the original\'s later edit');
+    h.eq(await isAtTip(access, orig), true, 'original is at its own (timeline()-based) tip after its own edit');
   });
 
   // ── formatRelativeTimestamp ────────────────────────────────────────────────

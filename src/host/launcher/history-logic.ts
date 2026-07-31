@@ -32,6 +32,18 @@ export async function listVersions(access: StoreAccess, app: InstalledApp): Prom
 }
 
 /**
+ * D6: whether `app`'s active snapshot is the newest row `listVersions` would show — "at tip" is
+ * defined operationally as "matches what the History screen's own top row would show as current",
+ * so this reuses `listVersions`'s fork-safe `history()`/`timeline()` split rather than a second,
+ * differently-buggy tip check.
+ */
+export async function isAtTip(access: StoreAccess, app: InstalledApp): Promise<boolean> {
+  const list = await listVersions(access, app);
+  const active = await access.activeId(app);
+  return list[0]?.id === active;
+}
+
+/**
  * D1: row `idx` (the prompt that produced `list[idx]`) restores to its predecessor, `list[idx+1]`
  * — the version active before that prompt. `list` is newest-first, so the predecessor is the next
  * (older) entry. The oldest row (the install event) has no predecessor and returns `null` — no
