@@ -4,6 +4,13 @@
  * and `src/runtime/generated/runtime-artifacts.json`'s `parts` — never forks, patches, or
  * loosens the page, the CSP, or the loader. Both are consumed strictly read-only.
  */
+// `assemble.d.ts`'s ambient module declaration is otherwise never reached — the root RN tsconfig
+// discovers it via its own repo-wide `include` glob, but `server/tsconfig.json` (`allowJs` off, a
+// narrower `include`) only reaches files THIS file's own import graph pulls in (chain 6:
+// `session.ts`/`page.ts` are now transitively imported once a composition root imports
+// `synthrun/session.ts`). The triple-slash reference makes that ambient module visible regardless
+// of which project's `include` glob is doing the reaching.
+/// <reference path="./assemble.d.ts" />
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 // build/assemble.mjs is the production page assembler (read-only production artifact, no .ts

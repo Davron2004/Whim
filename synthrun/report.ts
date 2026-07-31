@@ -87,17 +87,23 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       let sweepTruncated = false;
       let perScreenMs: Record<string, number> = {};
 
-      const { truncated: budgetTruncated } = await withTotalBudget(ctx, obs, budgets, async () => {
-        if (mountDiag) return; // a hung mount never reaches a swept-able page (spec: no reason to burn the budget)
-        const sweepStart = Date.now();
-        const sweep = await sweepApp(ctx, obs, source, budgets);
-        sweepMs = Date.now() - sweepStart;
-        declared = sweep.declaredScreens;
-        visited = sweep.visitedScreens;
-        sweepTruncated = sweep.truncated;
-        perScreenMs = sweep.perScreenMs;
-        diagnostics.push(...sweep.diagnostics);
-      });
+      const { truncated: budgetTruncated } = await withTotalBudget(
+        ctx,
+        obs,
+        budgets,
+        async () => {
+          if (mountDiag) return; // a hung mount never reaches a swept-able page (spec: no reason to burn the budget)
+          const sweepStart = Date.now();
+          const sweep = await sweepApp(ctx, obs, source, budgets);
+          sweepMs = Date.now() - sweepStart;
+          declared = sweep.declaredScreens;
+          visited = sweep.visitedScreens;
+          sweepTruncated = sweep.truncated;
+          perScreenMs = sweep.perScreenMs;
+          diagnostics.push(...sweep.diagnostics);
+        },
+        opts.signal,
+      );
 
       // `obs.state.diagnostics` is chronological (pushed as observed): the mount gate's own
       // `mount_timeout`, if any, plus every `runtime_throw`/`unhandled_rejection`/

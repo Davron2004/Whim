@@ -436,25 +436,44 @@ export async function awaitQuiet(obs: AttachedObservers, budgets: RunBudgets): P
 }
 
 const TOTAL_BUDGET_TIMEOUT = Symbol('synthrun-total-budget-timeout');
+const ABORTED = Symbol('synthrun-total-budget-aborted');
 
 /**
- * Layer 3 (D2): races `work()` against `budgets.totalBudgetMs`. On overrun, hard-kills
- * `ctx.page` (the runtime page itself stays watchdog-free — ending an overrun run is the
- * harness's job, never the page's own), appends a `run_truncated` diagnostic, and returns
- * `truncated:true`. `work()`'s own eventual settlement (if any) is discarded either way.
+ * Layer 3 (D2): races `work()` against `budgets.totalBudgetMs` and, when supplied, `signal`
+ * (chain 6, design D8 — "threaded into `withTotalBudget`", `contract.ts`'s `RunOptions.signal`
+ * doc). On overrun, hard-kills `ctx.page` (the runtime page itself stays watchdog-free — ending
+ * an overrun run is the harness's job, never the page's own), appends a `run_truncated`
+ * diagnostic, and returns `truncated:true`. An abort hard-kills the page THE SAME WAY but never
+ * appends a diagnostic and returns `aborted:true` instead — a cancelled run is not a truncated
+ * one, and its `RunReport` is discarded by the caller regardless (the machine checks
+ * `signal.aborted` itself and never inspects a stage's return value on that path). `work()`'s own
+ * eventual settlement (if any) is discarded on either exit.
  */
 export async function withTotalBudget<T>(
   ctx: RunContext,
   obs: AttachedObservers,
   budgets: RunBudgets,
   work: () => Promise<T>,
-): Promise<{ truncated: boolean; result?: T }> {
-  const outcome = await Promise.race<T | typeof TOTAL_BUDGET_TIMEOUT>([
+  signal?: AbortSignal,
+): Promise<{ truncated: boolean; aborted?: boolean; result?: T }> {
+  const raced: Promise<T | typeof TOTAL_BUDGET_TIMEOUT | typeof ABORTED>[] = [
     work(),
     new Promise<typeof TOTAL_BUDGET_TIMEOUT>((resolve) => {
       setTimeout(() => resolve(TOTAL_BUDGET_TIMEOUT), budgets.totalBudgetMs);
     }),
-  ]);
+  ];
+  if (signal) {
+    raced.push(
+      new Promise<typeof ABORTED>((resolve) => {
+        if (signal.aborted) {
+          resolve(ABORTED);
+          return;
+        }
+        signal.addEventListener('abort', () => resolve(ABORTED), { once: true });
+      }),
+    );
+  }
+  const outcome = await Promise.race(raced);
   if (outcome === TOTAL_BUDGET_TIMEOUT) {
     obs.state.diagnostics.push({
       kind: 'run_truncated',
@@ -466,6 +485,12 @@ export async function withTotalBudget<T>(
       /* best-effort — may already be gone */
     });
     return { truncated: true };
+  }
+  if (outcome === ABORTED) {
+    await ctx.page.close().catch(() => {
+      /* best-effort — may already be gone */
+    });
+    return { truncated: false, aborted: true };
   }
   return { truncated: false, result: outcome };
 }
