@@ -290,6 +290,140 @@ await test('§timeline: round-trip stability — rollback -> timeline -> roll-fo
   eq(second, first, 'timeline is stable across a rollback -> roll-forward round trip');
 });
 
+// --- lineage identity (ADDED requirement: "Version enumeration and restore are
+//     lineage-correct") — spec.md scenarios, in English:
+//       * a non-diverged fork (checked out at the fork point, no snapshot of its own
+//         yet) excludes the original's LATER snapshots from its timeline
+//       * an original rolled back to (or before) a fork point excludes the fork's
+//         snapshots from its timeline
+//       * rollback refuses a target that belongs to a different lineage, even when
+//         that target is DAG-reachable — same predicate as timeline, no git vocabulary
+//         in the refusal
+//       * the lineage stamp is a commit-message trailer (design D1/D2); it never
+//         leaks into prompt/history/timeline/getSnapshot, and a prompt that itself
+//         contains a trailer-shaped line round-trips byte-identically
+//       * a pre-existing, un-stamped commit (legacy/seeded repos) is treated as
+//         lineage `main` (design D4) — no migration, pure runtime fallback
+//       * single-lineage flows (no fork ever) are byte-identical across rollbacks
+//         (already covered by the §timeline shape-parity / round-trip-stability tests
+//         above, which must stay green unmodified) --------------------------------
+
+await test('§lineage-stamp: snapshot() records the creating lineage in the commit trailer', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const gitdir = '/whim/apps/app/.git';
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  const { lineageId } = await s.fork('app', 'g1'); // fork-1, checked out
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'fork edit'); // fork-1: g2
+
+  const mainOid = await git.resolveRef({ fs: { promises: backend }, gitdir, ref: 'refs/heads/main' });
+  const forkOid = await git.resolveRef({ fs: { promises: backend }, gitdir, ref: `refs/heads/${lineageId}` });
+  const { commit: mainCommit } = await git.readCommit({ fs: { promises: backend }, gitdir, oid: mainOid });
+  const { commit: forkCommit } = await git.readCommit({ fs: { promises: backend }, gitdir, oid: forkOid });
+  ok(mainCommit.message.includes('main'), 'the main-lineage commit message stamps main');
+  ok(forkCommit.message.includes(lineageId), "the fork's commit message stamps the fork lineage");
+});
+
+await test('§lineage-stamp: the trailer never leaks into prompt, even for a prompt shaped like one', async () => {
+  const s = freshStore();
+  const trickyPrompt = 'build a thing\n\nWhim-Lineage: fork-99\nmore text after';
+  const snap = await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, trickyPrompt);
+  eq(snap.prompt, trickyPrompt, 'snapshot() returns the exact prompt, trailer-shaped line included');
+  const hist = await s.history('app');
+  eq(hist[0].prompt, trickyPrompt, 'history() prompt round-trips byte-identically');
+  const timeline = await s.timeline('app');
+  eq(timeline[0].prompt, trickyPrompt, 'timeline() prompt round-trips byte-identically');
+  const content = await s.getSnapshot('app', snap.id);
+  eq(content.prompt, trickyPrompt, 'getSnapshot() prompt round-trips byte-identically');
+  assertNoGitLeak(hist, 'history');
+  assertNoGitLeak(timeline, 'timeline');
+});
+
+await test('§lineage-correctness: non-diverged fork excludes the original later snapshots', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  await s.fork('app', 'g1'); // fork-1, checked out, no snapshot of its own yet
+  await s.switchLineage('app', 'main');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3'); // main: g3
+  await s.switchLineage('app', 'fork-1');
+
+  const forkTimeline = await s.timeline('app');
+  eq(forkTimeline.map(t => t.id), ['g1'], "fork timeline is only its inherited line — g2/g3 (main-only) are excluded");
+});
+
+await test('§lineage-correctness: rolled-back original excludes a diverged forks snapshots', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2
+  await s.fork('app', 'g1'); // fork-1, checked out
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'fork edit'); // fork-1: g3
+  await s.switchLineage('app', 'main');
+  await s.rollback('app', 'g1'); // main rolled back to at/before the fork point
+
+  const mainTimeline = await s.timeline('app');
+  eq(
+    mainTimeline.map(t => t.id),
+    ['g2', 'g1'],
+    "main timeline still lists its own g2 as a roll-forward target, but excludes the fork's g3",
+  );
+});
+
+await test('§lineage-correctness: rollback refuses a DAG-reachable target from a different lineage', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2
+  await s.fork('app', 'g1'); // fork-1, checked out
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'fork edit'); // fork-1: g3
+  await s.switchLineage('app', 'main');
+  await s.rollback('app', 'g1');
+
+  let threw = false;
+  let message = '';
+  try {
+    await s.rollback('app', 'g3'); // g3 is a DAG descendant of g1 but belongs to fork-1
+  } catch (err) {
+    threw = true;
+    message = (err as Error).message;
+  }
+  ok(threw, 'rollback refuses a DAG-descendant snapshot that belongs to a different lineage');
+  ok(/fork/.test(message) && /switchLineage/.test(message), 'error names fork/switchLineage as the sanctioned path');
+  ok(!/\b(commit|ref|branch|ancestor)\b/i.test(message), 'error carries no git vocabulary');
+  eq((await s.active('app'))!.id, 'g1', 'active snapshot on main is unchanged by the refused rollback');
+});
+
+await test('§lineage-correctness: a pre-existing un-stamped commit is treated as lineage main', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const dir = '/whim/apps/app';
+  const gitdir = '/whim/apps/app/.git';
+  await backend.mkdir('/whim');
+  await backend.mkdir('/whim/apps');
+  await backend.mkdir(dir);
+  await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
+
+  // A legacy, un-stamped commit written directly — what a pre-fix repo already has on
+  // disk, with no lineage trailer at all.
+  await backend.writeFile(`${dir}/bundle.js`, BUNDLE(1));
+  await git.add({ fs: { promises: backend }, dir, gitdir, filepath: 'bundle.js' });
+  const legacyOid = await git.commit({
+    fs: { promises: backend },
+    dir,
+    gitdir,
+    message: 'legacy prompt, no trailer',
+    author: { name: 'Whim', email: 'whim@local', timestamp: 1_700_000_000, timezoneOffset: 0 },
+  });
+  await git.tag({ fs: { promises: backend }, gitdir, ref: 'whim/snap/g1', object: legacyOid });
+
+  // A fresh, post-fix snapshot on the same (main) lineage stamps normally.
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2'); // main: g2, stamped
+
+  const timeline = await s.timeline('app');
+  eq(timeline.map(t => t.id), ['g2', 'g1'], 'the legacy un-stamped commit is enumerated on main alongside the stamped one');
+  const back = await s.rollback('app', 'g1');
+  eq(back.activeId, 'g1', 'rollback onto the legacy un-stamped commit succeeds — it is treated as lineage main');
+});
+
 await test('§3.5 pin survives later generations (spec)', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
