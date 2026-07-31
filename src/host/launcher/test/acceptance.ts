@@ -22,6 +22,7 @@ import { runHistoryLogicTests } from './history-logic.suite';
 import { runForkQuestionUiTests } from './fork-question-ui.suite';
 import { runSharedStorageTests } from './shared-storage.suite';
 import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
+import { runGenerationClientTests } from './generation-client.suite';
 
 const h = new Harness();
 
@@ -41,6 +42,7 @@ await runHistoryLogicTests(h);
 await runForkQuestionUiTests(h);
 await runSharedStorageTests(h);
 await runLaunchFailureUiTests(h);
+await runGenerationClientTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
