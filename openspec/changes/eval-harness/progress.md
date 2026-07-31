@@ -14,3 +14,6 @@
 - chain-D REPORT: complete 5/5, GATE PASS + evals 69/69, commit 2c72319, contract handoff/judge.md (93 lines). Deviations: B-resolved-in-scope — live judge cannot statically import server/src (RN vs Node tsconfig global conflict, even import type); construction-gating needs no import; score() shells to esbuild CLI + dynamic import (documented in judge.md closing section); A — rubric criteria originated (intent-fidelity/usability/robustness/polish, 1-5) per D8.
 - chain-D INTEGRITY: exit 0. MERGED onto v1-sprint, tasks 4.1-4.5 ticked, REGATE PASS, evals suite green on merged tip.
 - chains B/C/E/F: HELD pending synthetic-run-harness chain-5 (run-report shape) per DAG + adapter design.
+- chain-B REPORT: complete 5/5, GATE PASS + evals 82/82, commit 46b4551, contract handoff/run-observation.md (73 lines). Deviations (A): run.mjs external:['typescript'] (pre-authorized); missing RuntimeDiagnostic.line defaults to 0 sentinel (documented); computeCaseVerdict excludes TierCResult by type signature ("Tier C never gates" compiler-enforced).
+- chain-B INTEGRITY: exit 0. MERGED onto v1-sprint, tasks 2.1-2.5 ticked, REGATE PASS, evals green on merged tip.
+- chain-C (tier-b-assertions) DISPATCHED next (after B).
