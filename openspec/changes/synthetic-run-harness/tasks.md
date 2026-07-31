@@ -22,11 +22,11 @@
 
 ## 4. Interaction sweep and screen coverage
 
-- [ ] 4.1 Element enumeration via CDP (roles + accessible text) with `(kind, label, DOM path)` fingerprints; escalate to the human if any SDK component proves un-enumerable (design Risks — a `data-*` marker would be a separate SDK change)
-- [ ] 4.2 Per-screen sweep driver: sorted-fingerprint action order, per-component action recipes (tap/type/toggle/segment/slider/modal inside-first), re-enumerate after each action, per-screen cap (design D1)
-- [ ] 4.3 Nav-aware traversal: `__whimNavDepth` change → sweep the new screen; visited-screen set bounds cycles (requires `sdk-navigation` merged)
-- [ ] 4.4 Cold-mount pass for declared-but-unvisited screens via `__whimControl.reinject({reset:true})`; emit `unreachable_screen` warnings (spec §Screen coverage)
-- [ ] 4.5 Tests: state-minted element swept once and sweep terminates; determinism (two runs, same action sequence + diagnostics); unreachable-screen fixture renders `Orphan` and flags it
+- [x] 4.1 Element enumeration via CDP (roles + accessible text) with `(kind, label, DOM path)` fingerprints; escalate to the human if any SDK component proves un-enumerable (design Risks — a `data-*` marker would be a separate SDK change)
+- [x] 4.2 Per-screen sweep driver: sorted-fingerprint action order, per-component action recipes (tap/type/toggle/segment/slider/modal inside-first), re-enumerate after each action, per-screen cap (design D1)
+- [x] 4.3 Nav-aware traversal: `__whimNavDepth` change → sweep the new screen; visited-screen set bounds cycles (requires `sdk-navigation` merged)
+- [x] 4.4 Cold-mount pass for declared-but-unvisited screens via `__whimControl.reinject({reset:true})`; emit `unreachable_screen` warnings (spec §Screen coverage)
+- [x] 4.5 Tests: state-minted element swept once and sweep terminates; determinism (two runs, same action sequence + diagnostics); unreachable-screen fixture renders `Orphan` and flags it
 
 ## 5. Diagnostics, report, and gate
 
