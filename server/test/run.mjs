@@ -49,6 +49,12 @@ await build({
   format: 'esm',
   target: 'node22', // node:sqlite (DatabaseSync) needs Node 22+ — match dev.mjs, not a misleading node20
   logLevel: 'warning',
+  // stages.suite.ts pulls in esbuild transitively (src/generation/stages/build.ts ->
+  // synthrun/builder.ts) and prompts.suite.ts imports the `typescript` package directly;
+  // both ship CJS `require()` calls that bundle into an unsupported dynamic require under
+  // esbuild's ESM output. Externalize rather than bundle them — Node resolves them from
+  // node_modules at runtime instead.
+  external: ['typescript', 'esbuild'],
 });
 
 try {

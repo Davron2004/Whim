@@ -126,26 +126,26 @@
 
 ## 7. Server wiring and acceptance
 
-- [ ] 7.1 `server/src/generation/index.ts`: `createGenerationPipeline(deps)` implementing `Pipeline`,
+- [x] 7.1 `server/src/generation/index.ts`: `createGenerationPipeline(deps)` implementing `Pipeline`,
       composing the machine with the real model client, checker, builder, and run session; roster and
       `OPENROUTER_API_KEY` read from the environment at construction, with a typed actionable error naming
       the variable when the key is absent.
-- [ ] 7.2 `server/src/routes/rewrite.ts`: real rewrite through the model client and the roster's rewrite
+- [x] 7.2 `server/src/routes/rewrite.ts`: real rewrite through the model client and the roster's rewrite
       model, metered through the `UsageStore`, `502` + `ApiError` on model failure, never returning the
       input prompt as a rewrite.
-- [ ] 7.3 `server/src/routes/generate.ts` and `app.ts`: thread `RunTrace` into `Pipeline.run`, schedule
+- [x] 7.3 `server/src/routes/generate.ts` and `app.ts`: thread `RunTrace` into `Pipeline.run`, schedule
       reconciliation on the abort path, keep `interceptUsage` as the sole normal-path crediting authority,
       and convert every route error body to `ApiError`.
-- [ ] 7.4 `server/src/main.ts`: wire the real pipeline by default and keep the stub reachable behind
+- [x] 7.4 `server/src/main.ts`: wire the real pipeline by default and keep the stub reachable behind
       `WHIM_PIPELINE=stub` for LAN UI work; launch the run session once per process and close it on
       shutdown.
-- [ ] 7.5 `server/test/acceptance.ts`: register the new suites, assert the whole deterministic suite passes
+- [x] 7.5 `server/test/acceptance.ts`: register the new suites, assert the whole deterministic suite passes
       with `OPENROUTER_API_KEY` unset and the no-network transport installed, and assert the fast suite
       launches no browser.
 - [ ] 7.6 **Attended, on-device (PENDING at merge)**: real device on the LAN against a real key — generate
       an app end to end and install it; then kill the app mid-generation and confirm the server observes the
       abort (closing the roadmap's cancellation carryover (a)) and that the reconciled usage lands in
       `/v1/usage`.
-- [ ] 7.7 Add the `generation-pipeline` row to `docs/capabilities.md` and append this change's entry to
+- [x] 7.7 Add the `generation-pipeline` row to `docs/capabilities.md` and append this change's entry to
       `docs/decisions.md` (the resolved D-list, the two carryovers, and the recorded warnings-delivery
       divergence).
