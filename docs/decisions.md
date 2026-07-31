@@ -702,7 +702,7 @@ Roadmap #10 / decision #42. Lands as `synthrun/`, a plain top-level directory (t
 
 **Measure-don't-budget.** Every report carries per-stage timings (build, boot, mount→paint, sweep, per-screen); v1 enforces no numeric latency budget beyond the watchdog itself — #11's repair loop is expected to set empirical budgets from the timing data this harness now produces, not from a guess baked in here.
 
-**Verification:** `node synthrun/test/run.mjs` green — 75 checks: the build-contract drift tripwire (+ its red-check), trusted-vantage collectors/watchdog against hostile fixtures (throw-on-mount with a source-mapped line, never-settling mount, a legal forever-`interval`, a forged verdict, total-budget overrun — each with a non-vacuity red-check), capability wiring (swallowed denial still recorded, cross-candidate isolation, launch-failure-as-diagnostic, a granted capability's own red-check), the interaction sweep (state-minted elements swept once, unreachable-screen cold-mount, cross-run determinism), and the assembled `RunCandidate`'s own end-to-end acceptance: a clean multi-screen fixture (`sdk-navigation`'s `navigation-demo.app.tsx`) and a six-way-hostile fixture yielding exactly its expected diagnostic set, plus a non-vacuity red-check. `npm run checks:test` still green (`DIAGNOSTIC_KINDS`'s closed-vocabulary self-test updated for the eight additive runtime-observed kinds). Script wiring (`npm run` entry) is Class-2 `package.json` — flagged for human application, meanwhile runnable directly as `node synthrun/test/run.mjs`.
+**Verification:** `node synthrun/test/run.mjs` green — 75 checks: the build-contract drift tripwire (+ its red-check), trusted-vantage collectors/watchdog against hostile fixtures (throw-on-mount with a source-mapped line, never-settling mount, a legal forever-`interval`, a forged verdict, total-budget overrun — each with a non-vacuity red-check), capability wiring (swallowed denial still recorded, cross-candidate isolation, launch-failure-as-diagnostic, a granted capability's own red-check), the interaction sweep (state-minted elements swept once, unreachable-screen cold-mount, cross-run determinism), and the assembled `RunCandidate`'s own end-to-end acceptance: a clean multi-screen fixture (`sdk-navigation`'s `navigation-demo.app.tsx`) and a six-way-hostile fixture yielding exactly its expected diagnostic set, plus a non-vacuity red-check. `npm run checks:test` still green (`DIAGNOSTIC_KINDS`'s closed-vocabulary self-test updated for the eight additive runtime-observed kinds). Script wiring (`npm run` entry) is Class-2 `package.json` — flagged for human application, meanwhile runnable directly as `node synthrun/test/run.mjs`. **Applied attended 2026-07-31** (`synthrun:test` in `package.json`, `check "synthetic-run"` in `scripts/gate.sh`); the suite stands at 82 checks and now runs on every fast-gate invocation, which is what completed task 5.3.
 
 **Recorded limitation:** chain 2's `mount_timeout` hostile fixture (a synchronous top-level hang long enough to itself block the outer page's `load` event) races `EarlyObservers.finish()`'s async relay setup against the candidate's own double-rAF paint message — a race independent of `mountBudgetMs`, so no budget widening fully eliminates it; a stability widening (500ms→800ms) was applied and reduces but does not guarantee-eliminate the flake. A structural fix (moving relay setup earlier, into the CDP-only phase) is out of scope for the chain that found it and is left for a future pass.
 
@@ -779,6 +779,8 @@ server-core, metering, OpenRouter wrapper, prompts, machine, stages), 0 failed. 
 suite (`server/test/e2e.ts`, 31 checks, chain 6) runs the pipeline against the real checker/build/run stages
 with a scripted model; it needs Chromium and its `package.json`/`gate-full.sh` wiring is Class-2, recorded in
 `pending-class2.md` for human application — run directly meanwhile via `node server/test/e2e.run.mjs`.
+**Applied attended 2026-07-31** (`server:e2e` in `package.json`, `check "generation-e2e"` in
+`scripts/gate-full.sh`, after `bridge-invariants`); it passes inside the full gate, 31 checks.
 
 **Verification:** `npm run server:test` green (458 checks, up from 152 — the machine/stage/prompt suites
 registered for the first time, task 7.5). `./scripts/gate.sh` green. On-device acceptance (task 7.6 — a real
@@ -789,3 +791,66 @@ observes the abort and `/v1/usage` reflects the reconciled count, closing roadma
 **Not in this change:** the model bakeoff / eval scoring (#12, `eval-harness`, which consumes this
 pipeline); prompt caching, a direct non-router provider API, deployment, or TLS; any change to the sandbox,
 CSP, bridge, or runtime.
+
+### 57. `eval-harness` built — an on-demand, holdout-safe corpus eval runner makes generation quality measurable `[BUILT — desktop gates green; no on-device component (Node/Chromium dev-tooling, not an app-facing change); a holdout run is attended and user-supplied by construction]`
+
+Roadmap #12 / decision #42. Lands as `evals/`, a plain top-level directory (D1 — the `checks/`/`synthrun/`
+precedent: no npm workspace, so `guard:metro`'s byte-size surface and `server/`'s closed dependency budget
+are untouched). Answers the question #25 leaves open and #42 makes a bakeoff: *did this prompt/SDK/model
+change make generation better or worse?* Three tiers over a supplied eval set, one report file per run,
+`diff` and `compare` over report files.
+
+**The holdout is a runtime input, never a repo artifact (D2).** The eval set resolves from `--eval-set
+<path>` or `WHIM_EVAL_SET`, flag winning; there is no embedded default and no network fetch, and with no
+location supplied the runner refuses and exits nonzero. This is the structural answer to spec.md §16.4's
+reward-hacking trap: an implementing agent can overfit only to prompts it can read, so the set that decides
+the bakeoff is one no agent in this repo has ever seen. The user holds it and supplies it attended.
+
+**Redaction is keyed off the set's declared `visibility`, at one choke point (D3).** Under `holdout`,
+closed-vocabulary and numeric fields survive (`kind`, `severity`, `status`, `score`, `rubricVersion`, prompt
+SHA-256 digests) and every free-text field is **dropped, not hashed** — so a holdout report is safe to keep,
+diff, and share beside a visible one. **Correction (2026-07-31):** the single-choke-point property was
+claimed before it was true. `buildCaseResult` redacted only the `case` sub-object; `tierA`/`tierB`/`tierC`
+passed through verbatim, and `Diagnostic.symbol` is documented as "the offending identifier/specifier/field
+name" — literal candidate source, from an LLM generated against the secret prompt, on the tier that always
+runs. Three rounds each closed a *different channel of the same property*: tier free text in
+`serializeReport`; `diff.ts`'s regression objects and `renderDiff`'s rendered line; and the CLI's own
+`console.error` sourcing/generation messages, which the spec's redaction sentence names explicitly. The
+claim is now actually true because all three were fixed at the same constructor, not beside it.
+
+**Gating semantics (D4).** Tier A (deterministic: `runStaticChecks` from #9 plus `synthrun`'s trusted-vantage
+boot/containment verdict from #10, normalized behind one adapter into a `RunObservation`, D6) is the only
+tier that short-circuits — its failure records B and C as `skipped: tier_a_failed`. Tier B gates the verdict.
+**Tier C never gates**: an LLM judge scores, it does not decide, so a judge outage or a rubric disagreement
+can never turn a green corpus red.
+
+**Assertions are inert data, never code (D5).** An eval set is an untrusted user-supplied directory, so Tier
+B specs are declarative assertions over the closed `ASSERTION_KINDS` vocabulary carried beside an English
+statement — the runner never executes anything the set contains. The rubric (D8) is a committed English
+document with a version and a checked-in content hash of its scored section, so editing the criteria without
+bumping the version is red-checkable rather than silent.
+
+**Verification:** `node evals/test/run.mjs` green — 263 checks (254 at merge; +9 at closure, below). The
+Class-2 wiring recorded in `pending-class2.md` (D13 — recorded by the change, never applied by a chain) was
+applied attended on 2026-07-31: `evals:test`/`evals` in `package.json`, `evals/test` in `tsconfig.json`'s
+`exclude`, `check "corpus-eval"` in `scripts/gate.sh`, and `evals/` in `knip.json`'s `"."` workspace. Chain
+F's gate-configuration check was built tri-state precisely so it would stay green across that transition,
+and it did.
+
+**What wiring knip revealed.** Until the Class-2 edits landed, knip had never looked at `evals/` — a silent
+gap, not a false negative. Pointing it there surfaced three findings, all actioned at closure: the
+`evals/judge/index.ts` barrel was dead (kept on a prediction that Tier C wiring would give it a consumer;
+that prediction was already falsified — `tiers/tier-c.ts` imports `../judge/judge` directly) and was
+deleted; `RUBRIC_CRITERION_IDS` shipped without ever gaining a caller and was deleted; and
+`redactSourcingError` was a **false positive** — it is imported and called by `evals/cli.mjs`, but only from
+inside the `FACADE_SOURCE` template literal, which no static analyzer can follow. That last one is a
+standing property of D12's design, recorded here so nobody "cleans it up": **any export consumed only
+through the facade string reads as dead to knip.** It was resolved with a direct unit test rather than a
+suppression, which also closed a real gap — the subprocess cases only ever drove the `kind`-present branch,
+so the `kind`-absent branch (a harness-internal defect, whose message carries no candidate text and must
+survive even under `holdout`) had no coverage at all.
+
+**Not in this change:** the bakeoff itself (a decision, not code — #25's model choice stays open until a
+holdout run decides it); any change to the generation pipeline (#11), the sandbox, CSP, bridge, or runtime;
+and the holdout eval set, which is deliberately never created, referenced by path, or described in this
+repo.
