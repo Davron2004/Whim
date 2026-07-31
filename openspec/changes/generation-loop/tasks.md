@@ -1,16 +1,16 @@
 ## 1. Wire contract
 
-- [ ] 1.1 In `contract/src/index.ts`, make `GenerateRequest.app.source` optional and add
+- [x] 1.1 In `contract/src/index.ts`, make `GenerateRequest.app.source` optional and add
       `GenerateRequest.app.appliedSchema` (optional record — the storage group's accumulated `_meta`
       union), with doc comments stating the #52-D5 sourcing rule and that an absent `source` means "the
       device has no original TypeScript for this app".
-- [ ] 1.2 Add `ApiError = { error: string, hint: non-empty string }` to the contract, documented as the
+- [x] 1.2 Add `ApiError = { error: string, hint: non-empty string }` to the contract, documented as the
       shape every non-SSE `/v1/*` error body validates against, with `DeviceIdError` noted as its
       closed-enum specialization (routes are converted in chain 7).
-- [ ] 1.3 Extend `server/test/contract.suite.ts`: `GenerateRequest` parses with and without `app.source`;
+- [x] 1.3 Extend `server/test/contract.suite.ts`: `GenerateRequest` parses with and without `app.source`;
       `appliedSchema` round-trips; `ApiError` accepts a `DeviceIdError` value and rejects an empty `hint`;
       the `GenerationEvent` union still rejects an unknown `type` and still has no `rewrite` stage member.
-- [ ] 1.4 Write `handoff/wire-shapes.md` — the three shape changes verbatim, and the absent-source /
+- [x] 1.4 Write `handoff/wire-shapes.md` — the three shape changes verbatim, and the absent-source /
       absent-appliedSchema semantics the device and pipeline both rely on.
 
 ## 2. Model client and prompt assembly
