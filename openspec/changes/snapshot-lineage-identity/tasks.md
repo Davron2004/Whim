@@ -16,7 +16,7 @@
 
 ## 4. Retire the version-history-ux interim UI guard (design D6)
 
-- [ ] 4.1 Remove the `app.storeId != null ? history() : timeline()` fork guard in `src/host/launcher/history-logic.ts` so fork entries use `timeline()` with full roll-forward; update the launcher acceptance tests to assert a fork entry now lists its own line via `timeline()` (lineage-correct) and the F1-repro test reflects the fixed behavior; `npm run launcher:test` green
+- [x] 4.1 Remove the `app.storeId != null ? history() : timeline()` fork guard in `src/host/launcher/history-logic.ts` so fork entries use `timeline()` with full roll-forward; update the launcher acceptance tests to assert a fork entry now lists its own line via `timeline()` (lineage-correct) and the F1-repro test reflects the fixed behavior; `npm run launcher:test` green
 
 ## 5. Docs and closure
 

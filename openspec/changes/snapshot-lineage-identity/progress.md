@@ -8,3 +8,5 @@
 - chain-1 (engine-lineage-correctness) DISPATCHED: BASE=6d10d29, worktree=.claude/worktrees/snapshot-lineage-1, branch=chain/snapshot-lineage-1, implementer=sonnet.
 - chain-1 REPORT: complete 5/5, GATE PASS (vstore 112/112, launcher 1885/1885), commit e195904, contract handoff/lineage-correctness.md (75 lines). Deviation (A, adjudicated sound): D3's literal predicate refined to isLineageCorrect — ancestors-of-tip always kept (shared pre-divergence history incl. fork point), only descendants-of-tip gated by lineageOf(candidate)===activeLineage; matches spec scenario text, all scenarios green.
 - chain-1 INTEGRITY: exit 0. MERGED onto v1-sprint, tasks 1.1/2.1/2.2/3.1/3.2 ticked, REGATE PASS.
+- chain-2 REPORT: complete 1/1, GATE PASS (launcher 1886), commit 8a9cefd. Deviation (A): added §10b fork roll-forward test beyond literal task wording (capability was previously unobservable). Noted: stale comment in store-access.suite.ts §20b (engine edge case now fixed) — dispatcher amends chain-3 scope to fix it.
+- chain-2 INTEGRITY: exit 0. MERGED onto v1-sprint, task 4.1 ticked, REGATE PASS.
