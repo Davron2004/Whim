@@ -2,17 +2,17 @@
 
 ## 1. English test specs (§16.5 — before any implementation)
 
-- [ ] 1.1 Spec the lineage-correctness tests in English in the vstore suite area: non-diverged fork excludes the original's later versions; rolled-back original excludes a diverged fork's versions; `rollback` refuses an off-lineage target (error still names fork/switch-lineage, no git vocab); no lineage stamp leaks into `prompt` (round-trip a prompt that itself contains a trailer-shaped line); single-lineage flows byte-identical across rollbacks; legacy un-stamped commit → treated as `main`
+- [x] 1.1 Spec the lineage-correctness tests in English in the vstore suite area: non-diverged fork excludes the original's later versions; rolled-back original excludes a diverged fork's versions; `rollback` refuses an off-lineage target (error still names fork/switch-lineage, no git vocab); no lineage stamp leaks into `prompt` (round-trip a prompt that itself contains a trailer-shaped line); single-lineage flows byte-identical across rollbacks; legacy un-stamped commit → treated as `main`
 
 ## 2. Lineage stamp: write + strip-on-read (TDD, design D1/D2)
 
-- [ ] 2.1 Write red tests against a stamped `snapshot()`: the creating lineage is recorded; `history`/`timeline`/`getSnapshot` return `prompt` with NO stamp (including a prompt that contains a trailer-shaped line, which must round-trip byte-identically)
-- [ ] 2.2 Implement in `src/host/version-store/engine.ts`: `snapshot()` reads `git.currentBranch()||'main'` and appends the sentinel-delimited lineage trailer to the commit message; add a strip helper and apply it wherever `Snapshot.prompt` is built (`history`/`timeline`/`snapshotContent`); keep `assertNoGitLeak` intact; all 2.1 tests green, `npm run vstore:test` green
+- [x] 2.1 Write red tests against a stamped `snapshot()`: the creating lineage is recorded; `history`/`timeline`/`getSnapshot` return `prompt` with NO stamp (including a prompt that contains a trailer-shaped line, which must round-trip byte-identically)
+- [x] 2.2 Implement in `src/host/version-store/engine.ts`: `snapshot()` reads `git.currentBranch()||'main'` and appends the sentinel-delimited lineage trailer to the commit message; add a strip helper and apply it wherever `Snapshot.prompt` is built (`history`/`timeline`/`snapshotContent`); keep `assertNoGitLeak` intact; all 2.1 tests green, `npm run vstore:test` green
 
 ## 3. Lineage-correct predicate for `timeline` + `rollback` (TDD, design D3/D4)
 
-- [ ] 3.1 Write the 1.1 red repro tests against `timeline`/`rollback`: the non-diverged-fork case and the original-rolled-back-past-a-fork-point case (both currently over-include); the off-lineage `rollback` refusal; the legacy-un-stamped→`main` fallback
-- [ ] 3.2 Implement `lineageOf(gitdir, oid)` (read the commit trailer via `git.readCommit`, `'main'` fallback, memoized per enumeration) and tighten both `isSameLine` call sites — `timeline()` keeps a candidate iff `isSameLine(...) && lineageOf(candidate)===activeLineage`, `rollback()` gates identically; all 3.1 tests green, `npm run vstore:test` green
+- [x] 3.1 Write the 1.1 red repro tests against `timeline`/`rollback`: the non-diverged-fork case and the original-rolled-back-past-a-fork-point case (both currently over-include); the off-lineage `rollback` refusal; the legacy-un-stamped→`main` fallback
+- [x] 3.2 Implement `lineageOf(gitdir, oid)` (read the commit trailer via `git.readCommit`, `'main'` fallback, memoized per enumeration) and tighten both `isSameLine` call sites — `timeline()` keeps a candidate iff `isSameLine(...) && lineageOf(candidate)===activeLineage`, `rollback()` gates identically; all 3.1 tests green, `npm run vstore:test` green
 
 ## 4. Retire the version-history-ux interim UI guard (design D6)
 
