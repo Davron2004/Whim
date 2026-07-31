@@ -108,6 +108,14 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
       'type_change',
       'tombstone_violation',
       'missing_default',
+      'runtime_throw',
+      'unhandled_rejection',
+      'mount_timeout',
+      'run_truncated',
+      'containment_failure',
+      'unreachable_screen',
+      'missing_schema',
+      'launch_failed',
     ];
     assert(DIAGNOSTIC_KINDS.length === expected.length, `expected ${expected.length} kinds, got ${DIAGNOSTIC_KINDS.length}`);
     assert(new Set(DIAGNOSTIC_KINDS).size === DIAGNOSTIC_KINDS.length, 'DIAGNOSTIC_KINDS must have no duplicates');

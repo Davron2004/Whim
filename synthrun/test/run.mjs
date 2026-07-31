@@ -26,10 +26,12 @@ await build({
   tsconfigRaw: '{}',
   // `esbuild` (task 1.3's builder) and `playwright` (chain 2's real-Chromium collectors/
   // watchdog tests) both ship native/optional-platform requires (fsevents, chromium-bidi, …)
-  // that esbuild's bundler cannot resolve statically — same class of gotcha as bundling
-  // `typescript` into a Node suite (documented precedent); keep both external and let Node's
-  // own `require`/`import` resolve them from `node_modules` at run time.
-  external: ['esbuild', 'playwright'],
+  // that esbuild's bundler cannot resolve statically. `typescript` (chain 5's `runStaticChecks`
+  // import, task 5.2) hits the identical class of gotcha — its CJS bundle has requires esbuild
+  // can't statically resolve when inlined into an ESM output ("Dynamic require of \"fs\" is not
+  // supported"), the exact precedent `checks/test/run.mjs` already documents. All three stay
+  // external; Node's own `require`/`import` resolves them from `node_modules` at run time.
+  external: ['esbuild', 'playwright', 'typescript'],
   logLevel: 'warning',
 });
 
