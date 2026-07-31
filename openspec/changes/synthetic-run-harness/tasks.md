@@ -16,9 +16,9 @@
 
 ## 3. Capability wiring
 
-- [ ] 3.1 Wire the production bridge per the bridge-invariants recipe: `launchApp` + `createEngine(createNodeSqlExecutor(':memory:'))` + `Dispatcher.forRealm` + `page.exposeFunction('whimHostDispatch', …)` + `syscallSink:'exposed'` (design D3)
-- [ ] 3.2 Host-side denial collection at the dispatch function; recording effectors for `cues.*`/`diag.*` (real gate, recorded invocation); pre-mount schema application with failure-as-diagnostic
-- [ ] 3.3 Node tests: undeclared-capability denial carries the bridge's kind verbatim even when the app swallows the rejection; cross-candidate isolation (A writes, B sees empty); schema-application failure surfaces
+- [x] 3.1 Wire the production bridge per the bridge-invariants recipe: `launchApp` + `createEngine(createNodeSqlExecutor(':memory:'))` + `Dispatcher.forRealm` + `page.exposeFunction('whimHostDispatch', …)` + `syscallSink:'exposed'` (design D3)
+- [x] 3.2 Host-side denial collection at the dispatch function; recording effectors for `cues.*`/`diag.*` (real gate, recorded invocation); pre-mount schema application with failure-as-diagnostic
+- [x] 3.3 Node tests: undeclared-capability denial carries the bridge's kind verbatim even when the app swallows the rejection; cross-candidate isolation (A writes, B sees empty); schema-application failure surfaces
 
 ## 4. Interaction sweep and screen coverage
 
