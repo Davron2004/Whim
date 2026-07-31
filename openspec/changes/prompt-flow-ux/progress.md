@@ -25,3 +25,5 @@
 - chain-4b REPORT: complete, GATE PASS (1885 launcher checks), commit 13c5cd5, no deviations. Only generation-client.ts had a runtime contract import; converted to import type + hand-rolled guards (isDeviceIdError/isRewriteResponse/isGenerationEvent); 2 new behavioral tests for previously zod-only paths; handoff updated (79 lines).
 - chain-4b INTEGRITY: exit 0, scope as declared. MERGED onto v1-sprint, REGATE PASS. guard:metro from main tree: OK (Android release bundle resolved, 1959826 bytes). Class-B closed.
 - chain-5 (docs-decision) DISPATCHED next.
+- chain-5 REPORT: complete 1/1, GATE PASS, commit 7f2aed5, no deviations. Decision #53 appended; roadmap #7 block updated (implemented 2026-07-31, task 7.2 on-device acceptance PENDING).
+- chain-5 INTEGRITY: exit 0. MERGED onto v1-sprint, task 7.1 ticked, REGATE PASS. All 5 chains (+4b fix chain) merged → proceeding to gate-full + reviewer.
