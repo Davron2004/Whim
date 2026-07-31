@@ -69,6 +69,32 @@ export default defineApp({
 `;
 }
 
+/** A schema-declaring app source with one `Notes` collection whose fields are exactly the
+ *  given `{displayName: {id, default?}}` map (all `text`-typed — the id/floor logic under
+ *  test is type-agnostic). Used by the allocation-floor tests (§D5), which need multiple
+ *  fields at specific burned IDs rather than the single-field `schemaAppSource` above. */
+function schemaFieldEntry(name: string, spec: { id: string; default?: string }): string {
+  const defaultPart = spec.default !== undefined ? `, default: '${spec.default}'` : '';
+  return `${name}: { id: '${spec.id}', type: 'text'${defaultPart} }`;
+}
+
+function schemaAppSourceFields(fields: Record<string, { id: string; default?: string }>, collectionId = 'c1'): string {
+  const fieldEntries = Object.entries(fields)
+    .map(([name, spec]) => schemaFieldEntry(name, spec))
+    .join(', ');
+  return `
+import { defineApp, type SchemaArtifact } from 'vc-sdk';
+function Home() { return null; }
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: { Notes: { id: '${collectionId}', tombstones: [], fields: { ${fieldEntries} } } },
+};
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [], schema: SCHEMA,
+});
+`;
+}
+
 function schemaAppSource(fieldType: string, typed = false): string {
   const typeImport = typed ? ', type SchemaArtifact' : '';
   const annotation = typed ? ': SchemaArtifact' : '';
@@ -116,6 +142,8 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
       'unreachable_screen',
       'missing_schema',
       'launch_failed',
+      'id_below_floor',
+      'build_failure',
     ];
     assert(DIAGNOSTIC_KINDS.length === expected.length, `expected ${expected.length} kinds, got ${DIAGNOSTIC_KINDS.length}`);
     assert(new Set(DIAGNOSTIC_KINDS).size === DIAGNOSTIC_KINDS.length, 'DIAGNOSTIC_KINDS must have no duplicates');
@@ -606,6 +634,45 @@ async function testSchemaCheck(): Promise<void> {
     const src = schemaAppSource('not-a-real-type');
     const r = runStaticChecks(src);
     assertHasKind(r, 'bad_field_type');
+  });
+
+  // ── generation-loop chain 5 (#52 D5): the monotone allocation floor ──────
+
+  const APPLIED_GAP: AppliedSchema = {
+    collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }, { id: 'f5', type: 'text' }], retired: [] }],
+  };
+
+  await test('D §schema: reusing a never-allocated gap below the floor is id_below_floor, naming the field and hinting the next free id', { greenBy: 'D' }, () => {
+    const src = schemaAppSourceFields({ a: { id: 'f1' }, e: { id: 'f5' }, c: { id: 'f3', default: '' } }, 'c1');
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_GAP });
+    const d = assertHasKind(r, 'id_below_floor');
+    assert(d.symbol === 'f3', `expected symbol "f3", got "${String(d.symbol)}"`);
+    assert(/f6/.test(d.hint), `hint should name the next free id "f6", got: ${d.hint}`);
+  });
+
+  await test('D §schema: a retired column still raises the floor — a tombstoned ID stays burned', { greenBy: 'D' }, () => {
+    const applied: AppliedSchema = {
+      collections: [{ id: 'c1', active: [{ id: 'f2', type: 'text' }], retired: [{ id: 'f9', type: 'text' }] }],
+    };
+    const src = schemaAppSourceFields({ b: { id: 'f2' }, e: { id: 'f5', default: '' } }, 'c1');
+    const r = runStaticChecks(src, { appliedSchema: applied });
+    const d = assertHasKind(r, 'id_below_floor', 'a retired field ID (f9) must still count toward the floor');
+    assert(d.symbol === 'f5', `expected symbol "f5", got "${String(d.symbol)}"`);
+  });
+
+  await test('D §schema: an allocation above the floor is clean — no id_below_floor', { greenBy: 'D' }, () => {
+    const src = schemaAppSourceFields({ a: { id: 'f1' }, e: { id: 'f5' }, g: { id: 'f6', default: '' } }, 'c1');
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_GAP });
+    assertNoKind(r, 'id_below_floor', 'f6 is above the f1/f5 floor of 5 — no diagnostic expected');
+  });
+
+  await test('D §schema: a collection absent from the applied schema has no floor — any allocation is clean', { greenBy: 'D' }, () => {
+    const appliedOtherCollection: AppliedSchema = {
+      collections: [{ id: 'c9', active: [{ id: 'f1', type: 'text' }], retired: [] }],
+    };
+    const src = schemaAppSourceFields({ a: { id: 'f1' } }, 'c1'); // c1 has no counterpart in applied
+    const r = runStaticChecks(src, { appliedSchema: appliedOtherCollection });
+    assertNoKind(r, 'id_below_floor', 'an unmatched collection is unconstrained — a first allocation there is always clean');
   });
 }
 
