@@ -65,20 +65,20 @@
 
 ## 4. Tier C — the rubric judge
 
-- [ ] 4.1 Author `evals/rubric/v1.md` — the English rubric: a closed list of scored criteria, each with what a
+- [x] 4.1 Author `evals/rubric/v1.md` — the English rubric: a closed list of scored criteria, each with what a
   low and a high score mean, plus the human-eyeball protocol; carry an explicit version identifier. Add
   `evals/rubric/index.ts` exposing the version, the criteria table, and the content hash of the scored section.
-- [ ] 4.2 Define the `Judge` interface (`score(input) => Promise<JudgeVerdict>`) and implement the two offline
+- [x] 4.2 Define the `Judge` interface (`score(input) => Promise<JudgeVerdict>`) and implement the two offline
   judges: `createScriptedJudge(map)` and `createReplayJudge(dir)` replaying recorded transcripts keyed by case
   id + rubric version, with fixtures under `evals/test/fixtures/judge/`.
-- [ ] 4.3 Implement the live judge adapter over `server/src/openrouter.ts`'s `OpenRouterClient`: construction
+- [x] 4.3 Implement the live judge adapter over `server/src/openrouter.ts`'s `OpenRouterClient`: construction
   **throws** unless both the explicit opt-in argument and the credential environment variable are present, and
   never silently substitutes a fake. With no judge configured at all, Tier C is `skipped:
   no_judge_configured`.
-- [ ] 4.4 Implement `evals/tiers/tier-c.ts` with verdict validation owned by the tier, not the judge: a verdict
+- [x] 4.4 Implement `evals/tiers/tier-c.ts` with verdict validation owned by the tier, not the judge: a verdict
   missing a rubric criterion, missing a rationale, or scoring outside range is Tier C `error` naming the
   defect, never a passing score. Every result records `rubricVersion` + judge identity.
-- [ ] 4.5 Tests in `evals/test/tier-c.test.ts`: scripted and replay judges score offline with no network; the
+- [x] 4.5 Tests in `evals/test/tier-c.test.ts`: scripted and replay judges score offline with no network; the
   live judge refuses construction without opt-in and without credential; each malformed-verdict shape becomes
   `error`; the rubric content hash drift test fails when the rubric's scored content changes without a version
   bump (design D8).
