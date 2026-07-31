@@ -22,3 +22,6 @@
 - chain-4 INTEGRITY: exit 0, scope as declared. MERGED onto v1-sprint, tasks 6.1-6.6 ticked, REGATE PASS (fast gate).
 - guard:metro on merged tip: FAIL — zod runtime code (export-namespace-from syntax) enters the Metro graph via @whim/contract runtime imports; RN babel config lacks the transform and babel.config.js is Class-2 protected. Class-B → converted to fix chain-4b: type-only contract imports + local runtime guards in launcher; behavioral surface per handoff/generation-client.md preserved. chain-4b DISPATCHED (worktree .claude/worktrees/prompt-flow-ux-4b from post-chain-4 tip).
 - MEMORY candidate (chain-4): guard:metro is worktree-path-depth-sensitive, not just node_modules-presence-sensitive — meaningful verdict only from the main tree (symlinked node_modules is NOT sufficient).
+- chain-4b REPORT: complete, GATE PASS (1885 launcher checks), commit 13c5cd5, no deviations. Only generation-client.ts had a runtime contract import; converted to import type + hand-rolled guards (isDeviceIdError/isRewriteResponse/isGenerationEvent); 2 new behavioral tests for previously zod-only paths; handoff updated (79 lines).
+- chain-4b INTEGRITY: exit 0, scope as declared. MERGED onto v1-sprint, REGATE PASS. guard:metro from main tree: OK (Android release bundle resolved, 1959826 bytes). Class-B closed.
+- chain-5 (docs-decision) DISPATCHED next.
