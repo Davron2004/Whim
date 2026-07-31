@@ -2,11 +2,14 @@
  * evals/report/serialize.ts — chain-E, tasks 5.1. Builds an `EvalRunReport` from raw case
  * inputs and renders it as canonical JSON (design D9, `handoff/eval-contract.md`).
  *
- * Redaction (design D3) happens HERE, at construction: `buildCaseResult` is the only place a
- * `CaseResult.case` is ever produced, and it always goes through `evals/redact.ts`'s
- * `redactCase`. No function in this module — or `summary.ts`/`diff.ts`/`compare.ts`, which only
- * ever consume an already-built `EvalRunReport` — can construct a `CaseResult` any other way,
- * so there is no code path that can hold an unredacted holdout case in memory.
+ * Redaction (design D3, extended by `fix/redaction-tier-results`) happens HERE, at construction:
+ * `buildCaseResult` is the only place a `CaseResult` is ever produced, and every field on it —
+ * `case` AND `tierA`/`tierB`/`tierC` — always goes through `evals/redact.ts`'s `redactCase`/
+ * `redactTierA`/`redactTierB`/`redactTierC`. No function in this module — or
+ * `summary.ts`/`diff.ts`/`compare.ts`, which only ever consume an already-built `EvalRunReport`
+ * — can construct a `CaseResult` any other way, so there is no code path that can hold an
+ * unredacted holdout case (or an unredacted holdout diagnostic/observed-value/rationale) in
+ * memory.
  *
  * Canonical form: `cases` sorted by `case.caseId` (done once, in `buildReport`), assertions kept
  * in the order the tier evaluators produced them (already the declared order — nothing here
@@ -17,7 +20,7 @@
  * (spec "Identical inputs produce an identical body") is scoped to that body, never the full
  * report.
  */
-import { redactCase } from '../redact';
+import { redactCase, redactTierA, redactTierB, redactTierC } from '../redact';
 import type {
   CaseResult,
   EvalRunReport,
@@ -58,9 +61,9 @@ export function buildCaseResult(input: CaseInput, visibility: EvalSetVisibility)
     case: redacted,
     appSlug: input.appSlug,
     verdict: computeCaseVerdict(input.tierA, input.tierB),
-    tierA: input.tierA,
-    tierB: input.tierB,
-    tierC: input.tierC,
+    tierA: redactTierA(input.tierA, visibility),
+    tierB: redactTierB(input.tierB, visibility),
+    tierC: redactTierC(input.tierC, visibility),
   };
 }
 

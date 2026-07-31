@@ -12,9 +12,19 @@ on this task landing.
 - **(a) `package.json`** is the root prerequisite: without it, `npm run evals:test` and
   `npm run evals` do not exist as commands at all — (c)'s `gate.sh` line would fail
   immediately with "missing script" if applied without (a).
-- **(b) `tsconfig.json`** is independent of the others: without it, `npm run typecheck`
-  (which `gate.sh` already runs) will attempt to type-check `evals/test/**` as ordinary
-  app code and fail on its `process`/dynamic-import usage.
+- **(b) `tsconfig.json`** is independent of the others. Verified 2026-07-31 (reviewer
+  finding, `fix/redaction-tier-results`): with the exclude entry absent, `npx tsc --noEmit
+  -p tsconfig.json` currently exits `0` — `evals/env.d.ts`'s ambient declarations (matched
+  by the same root `**/*.ts` include glob, so `declare const process: WhimProcess` etc.
+  are already visible project-wide) satisfy the checker, and a grep of `evals/test/*.ts`
+  turns up zero uses of a dynamic `import(...)`. So applying (b) alone is not fixing a
+  live failure — it is the same defensive idiom as the `checks/test`/`src/host/*/test`
+  entries immediately above it: keeping `evals/test` off the tsc program means a later
+  change to `evals/test` (or to `env.d.ts`'s ambient surface) can start using
+  Node-only/dynamic-import idioms without silently becoming a `gate.sh` typecheck
+  failure, and keeps this Node-suite directory validated by running it
+  (`npm run evals:test`), not by tsc, consistent with every other Node-acceptance-suite
+  exclude entry in this file.
 - **(c) `scripts/gate.sh`** depends on (a) (see above). Without (c) alone, (a)/(b)/(d)
   can be applied safely, but the corpus-eval suite still never runs automatically — the
   fast gate (and `gate-full.sh`, which is `gate.sh` plus more) has no line invoking it, so
