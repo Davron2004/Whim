@@ -32,6 +32,12 @@ declare module 'node:url' {
   export function fileURLToPath(url: string | URL): string;
   export function pathToFileURL(path: string): URL;
 }
+// The live judge (`evals/judge/live.ts`) shells out to the `esbuild` CLI binary rather than
+// importing esbuild's JS API, so `evals/test/run.mjs`'s bundling of `*.test.ts` never inlines
+// esbuild into itself (the "esbuild-in-esbuild" dynamic-require hazard).
+declare module 'node:child_process' {
+  export function execFileSync(file: string, args?: string[]): unknown;
+}
 
 // `process.cwd()`/`process.argv`/`process.env` (location resolution, corpus-drift fixture
 // reads) and `process.exit()` (the Node acceptance suite's non-zero-exit-on-failure idiom).
