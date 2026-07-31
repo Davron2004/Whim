@@ -1,11 +1,15 @@
 /**
  * POST /v1/generate — validates GenerateRequest, streams SSE events from the injected pipeline.
  * Credits usage through the UsageStore BEFORE the terminal event is emitted (`interceptUsage`
- * stays the SOLE normal-path crediting authority, design D9). On abort — before any terminal
- * event was ever observed — reconciles the run's authoritative usage for every provider
- * generation id the pipeline recorded on the request's `RunTrace` (task 7.3, design D9); a run
- * that completed normally never reaches this path, so the two crediting paths can never
- * double-count.
+ * stays the SOLE normal-path crediting authority, design D9). On abort, reconciles the run's
+ * authoritative usage for every provider generation id the pipeline recorded on the request's
+ * `RunTrace` (task 7.3, design D9) — but ONLY if the normal path has not already taken (or
+ * started taking) responsibility for crediting this run. That guard is "has `interceptUsage`
+ * begun crediting", not "was a terminal event observed": a client can disconnect in the gap
+ * between the `usage` event (already credited) and the terminal event (never observed) of a run
+ * that otherwise completed normally, and reconciliation must not double-credit that gap.
+ * `interceptUsage` marks credit ownership BEFORE awaiting `usageStore.credit`, so the abort
+ * listener sees ownership even if the disconnect lands mid-await.
  */
 import { Hono } from 'hono';
 import { GenerateRequest, GenerationEvent, type ApiError } from '@whim/contract';
@@ -70,15 +74,16 @@ export function makeGenerateRoute(
     }
 
     // The pipeline appends each model call's provider generation id here as it resolves
-    // (design D9). Reconciliation, below, fires ONLY if the run is aborted before a terminal
-    // event was ever streamed — a run that never made a model call reconciles nothing
-    // (`trace.generationIds` stays empty, `reconcileAbortedUsage` short-circuits).
+    // (design D9). Reconciliation, below, fires ONLY if the abort lands before the normal path
+    // (`interceptUsage`) has taken ownership of crediting this run — a run that never made a
+    // model call reconciles nothing (`trace.generationIds` stays empty, `reconcileAbortedUsage`
+    // short-circuits).
     const trace: RunTrace = { generationIds: [] };
-    let reachedTerminal = false;
+    let creditOwned = false;
     controller.signal.addEventListener(
       'abort',
       () => {
-        if (reachedTerminal) return;
+        if (creditOwned) return;
         // `reconcileAbortedUsage` never throws/rejects (`../generation/reconcile.ts`'s own
         // contract) — fire-and-forget is intentional, the SSE response has already ended.
         reconcileAbortedUsage(deviceId, trace.generationIds, {
@@ -97,7 +102,7 @@ export function makeGenerateRoute(
       deviceId,
       usageStore,
       () => {
-        reachedTerminal = true;
+        creditOwned = true;
       },
     );
     const stream = buildSseStream(source, keepaliveMs, () => controller.abort());
@@ -116,22 +121,21 @@ export function makeGenerateRoute(
 }
 
 /**
- * Wraps an event source: when a `usage` event is seen, credit the store before yielding it.
- * `onTerminal` fires the moment a `result`/`failure` terminal event is observed, so the abort
- * listener above can gate reconciliation on "never after a terminal event already streamed."
+ * Wraps an event source: when a `usage` event is seen, marks credit ownership (`onCreditOwned`)
+ * BEFORE awaiting `usageStore.credit` — not after — so the abort listener sees ownership even if
+ * the client disconnects mid-await, closing that inner race window too. Only then is the store
+ * credited and the event yielded.
  */
 async function* interceptUsage(
   source: AsyncIterable<GenerationEvent>,
   deviceId: string,
   usageStore: UsageStore,
-  onTerminal: () => void,
+  onCreditOwned: () => void,
 ): AsyncIterable<GenerationEvent> {
   for await (const event of source) {
     if (event.type === 'usage') {
+      onCreditOwned();
       await usageStore.credit(deviceId, event.usage);
-    }
-    if (event.type === 'result' || event.type === 'failure') {
-      onTerminal();
     }
     yield event;
   }
