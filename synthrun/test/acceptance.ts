@@ -209,7 +209,9 @@ async function testObservers(): Promise<void> {
     await test('mount_timeout: a synchronous top-level hang never posts paint (spec "Never-settling mount")', async () => {
       const { obs, dispose } = await openObservedRun(session, FIXTURE_MOUNT_HANG);
       try {
-        const budgets = mergeBudgets({ mountBudgetMs: 200 });
+        // A generous budget relative to HANG_MS (1200) — the assertion is about the hang
+        // preventing paint at all, not about racing a tight timer against machine load.
+        const budgets = mergeBudgets({ mountBudgetMs: 500 });
         const diagnostic = await awaitMount(obs, budgets);
         ok(diagnostic?.kind === 'mount_timeout', `awaitMount returned a mount_timeout diagnostic (got ${diagnostic?.kind})`);
         ok(obs.state.diagnostics.includes(diagnostic!), 'the returned diagnostic is the SAME one appended to state.diagnostics (no silent catch)');
