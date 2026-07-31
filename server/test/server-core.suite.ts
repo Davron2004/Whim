@@ -8,7 +8,25 @@ import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
+import { ScriptedModelClient } from './scripted-model';
+import type { ModelRoster } from '../src/generation/model';
 import type { GenerationEvent } from '@whim/contract';
+
+// Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
+// §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
+// given the same single rewrite turn, must surface the same (non-echoed) response.
+const REWRITE_TEST_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-test', engineer: 'vendor/engineer-test' };
+function scriptedRewriteApp() {
+  const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+    { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },
+  ]);
+  return createApp({
+    pipeline: createStubPipeline(0),
+    usageStore: new InMemoryUsageStore(),
+    model,
+    roster: REWRITE_TEST_ROSTER,
+  });
+}
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
@@ -279,11 +297,11 @@ async function testStubPipelineEndpoints(): Promise<void> {
     check('invalid generate body has error field', typeof body.error === 'string');
   }
 
-  // §5.5 — deterministic rewrite: same input → same output
+  // §5.5 — rewrite: same input against the same scripted response → same output, never the
+  // input prompt echoed back
   {
-    const app = testApp();
-    const res1 = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
-    const res2 = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    const res1 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    const res2 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
     eq('rewrite status 200', res1.status, 200);
     const body1 = (await res1.json()) as { rewrittenPrompt: string };
     const body2 = (await res2.json()) as { rewrittenPrompt: string };
@@ -291,16 +309,26 @@ async function testStubPipelineEndpoints(): Promise<void> {
       'rewrite rewrittenPrompt is non-empty',
       typeof body1.rewrittenPrompt === 'string' && body1.rewrittenPrompt.length > 0,
     );
-    eq('rewrite is deterministic', body1.rewrittenPrompt, body2.rewrittenPrompt);
+    check('rewrite never echoes the input prompt verbatim', body1.rewrittenPrompt !== 'make a todo app');
+    eq('rewrite is deterministic against the same scripted response', body1.rewrittenPrompt, body2.rewrittenPrompt);
   }
 
   // §5.5 — invalid rewrite body → 400
   {
-    const app = testApp();
+    const app = scriptedRewriteApp();
     const res = await post(app, '/v1/rewrite', { notPrompt: 'oops' }, DEVICE_HEADER);
     eq('invalid rewrite body → 400', res.status, 400);
     const ct = res.headers.get('content-type') ?? '';
     check('invalid rewrite body → JSON', ct.includes('application/json'));
+  }
+
+  // §5.5 — rewrite unconfigured (no model/roster) → 502 ApiError, never a canned fallback
+  {
+    const app = testApp();
+    const res = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    eq('rewrite unconfigured → 502', res.status, 502);
+    const body = (await res.json()) as { error: string; hint: string };
+    check('rewrite unconfigured error has non-empty hint', body.hint.length > 0);
   }
 
 }
