@@ -60,25 +60,25 @@
 
 ## 4. Plan and state machine
 
-- [ ] 4.1 `server/src/generation/plan.ts`: the internal `Plan` shape, a fenced-block-tolerant parser for the
+- [x] 4.1 `server/src/generation/plan.ts`: the internal `Plan` shape, a fenced-block-tolerant parser for the
       model's JSON skeleton, and `validatePlan(plan, request)` returning structured, quotable failure
       reasons (initial ∈ screens, unique non-empty names, known capabilities, storage keys imply the storage
       capability, no capability dropped that the supplied applied schema requires).
-- [ ] 4.2 `server/src/generation/machine.ts`: the state machine — states, transitions, the plan-attempt and
+- [x] 4.2 `server/src/generation/machine.ts`: the state machine — states, transitions, the plan-attempt and
       repair-attempt budgets (defaults 2 and 3, both injectable), the warnings-only sub-budget, and an abort
       check at every boundary.
-- [ ] 4.3 The event emitter: `stage` start/done pairs with `attempt` propagated onto the repair round's
+- [x] 4.3 The event emitter: `stage` start/done pairs with `attempt` propagated onto the repair round's
       `repair`/`check`/`run` events, `token` deltas during generate and repair, `diagnostic` events as
       findings occur, exactly one `usage` event immediately before exactly one terminal event, and no
       terminal event on abort.
-- [ ] 4.4 Declare the injected stage interfaces (`CheckStage`, `BuildStage`, `RunStage`, `Clock`) and the
+- [x] 4.4 Declare the injected stage interfaces (`CheckStage`, `BuildStage`, `RunStage`, `Clock`) and the
       `RunTrace` out-parameter here, so the machine compiles and tests against fakes with no concrete
       dependency.
-- [ ] 4.5 `server/test/machine.suite.ts` with fake stages: happy path; repair-then-success; repair-cap
+- [x] 4.5 `server/test/machine.suite.ts` with fake stages: happy path; repair-then-success; repair-cap
       exhaustion (4 candidates, 3 repair pairs, `attempts: 4`); plan re-ask then failure; warnings-only
       one-repair-then-deliver; containment failure short-circuit; abort at each boundary; exactly-one-terminal
       and no-terminal-on-abort assertions; a stage throwing still yields one `failure`.
-- [ ] 4.6 Write `handoff/pipeline-machine.md` — the deps object, the stage interfaces, `RunTrace`, the event
+- [x] 4.6 Write `handoff/pipeline-machine.md` — the deps object, the stage interfaces, `RunTrace`, the event
       ordering contract, and the budget semantics.
 
 ## 5. Check stage, allocation floor, and app record
