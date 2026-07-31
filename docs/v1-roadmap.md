@@ -233,7 +233,24 @@ verbs only, no git vocabulary).
 
 #### 7. `prompt-flow-ux` — Size M–L · Deps: contract types from #8 (mockable before it)
 
-**Status:** unproposed
+**Status:** implemented 2026-07-31 (chains 1–5 built) — desktop gates green. As-built: decision #53.
+**On-device acceptance (task 7.2) PENDING** (attended run: new-app prompt flow against a real
+LAN server, edit-at-tip, edit-behind-tip fork-continuation).
+**Contract notes (as-built):**
+
+- `src/host/launcher/device-id.ts` + `generation-client.ts` (launcher-local, not a workspace);
+  `@whim/contract` imported **type-only** — zod values would break `guard:metro`, so
+  `DeviceIdError`/`RewriteResponse`/`GenerationEvent` validate via hand-rolled structural guards
+  mirroring `contract/src/index.ts` field-for-field.
+- `Screen` gains `prompt`/`rewrite-preview`/`generating`/`failure`, each carrying optional
+  `editing: InstalledApp` (absent = new app, present = edit). Orchestration (SSE loop, abort,
+  delivery decision) lives in `LauncherRoot`, not the presentational screens.
+- Delivery is tip-gated: new app → `access.install`; edit at tip → `access.update` (new store
+  verb, also lands `schema.json` for #6's dormant diff annotation); edit behind tip → silent
+  `access.fork(editing, undefined, {shareData:true})` + `access.update` (decision #52 D2).
+- Known limitation carried to #11: `activeSource()` reads the same `bundle.js` artifact as
+  `activeBundle` (only one artifact was ever tracked), so the edit flow resends compiled bundle
+  text as `GenerateRequest.app.source`, not original TypeScript.
 **In:** prompt screen (text input + OS-dictation affordance — no in-app STT); the **two-stage
 flow**: casual prompt → server rewrite → **preview screen** where the user reviews/edits
 *intent in their own terms* (SDK internals never surface, §10.1) → approve → engineer
