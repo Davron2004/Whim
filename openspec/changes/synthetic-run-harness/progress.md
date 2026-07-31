@@ -1,0 +1,14 @@
+# Progress ledger: synthetic-run-harness
+
+## Run metadata
+
+- run-start: 2026-07-30, dispatcher = overnight orchestrator session (Fable), attended=false (user asleep, standing authorization for this sprint run)
+- staging branch: `v1-sprint` (DEVIATION from `integration/<change-id>`, sanctioned: user pre-created the sprint staging branch; `main` untouched until attended closure; FIXLOOP_INTEGRATION_BRANCH=v1-sprint for all fixloop.sh invocations)
+- MAIN_TIP ancestor: 795c8bd (main); staging tip at run start: f0d56d1 (= main + hooks/sandbox-off chore)
+- harness hooks + OS sandbox: DISABLED repo-wide this run (commit f0d56d1, intentional). Protected-file discipline enforced by dispatcher policy instead.
+- chain DAG: linear, chain-1 → chain-2 → chain-3 → chain-4 → chain-5 (per chains.md `after:` lines)
+- external ordering for chain-4 (sdk-navigation merged) SATISFIED: archived 2026-07-18, in main history.
+- task 5.3 (package.json scripts entry) = HUMAN-BOOTSTRAP: implementer records the exact line, dispatcher writes pending-class2.md; NOT applied this run.
+
+## Dispositions (append-only)
+- chain-1 (core-builder-session) DISPATCHED: BASE=f0d56d1, worktree=.claude/worktrees/synthetic-run-harness-1, branch=chain/synthetic-run-harness-1, implementer=sonnet, chain block via scratchpad file.
