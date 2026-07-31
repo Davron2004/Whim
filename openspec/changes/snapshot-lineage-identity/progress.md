@@ -10,3 +10,5 @@
 - chain-1 INTEGRITY: exit 0. MERGED onto v1-sprint, tasks 1.1/2.1/2.2/3.1/3.2 ticked, REGATE PASS.
 - chain-2 REPORT: complete 1/1, GATE PASS (launcher 1886), commit 8a9cefd. Deviation (A): added §10b fork roll-forward test beyond literal task wording (capability was previously unobservable). Noted: stale comment in store-access.suite.ts §20b (engine edge case now fixed) — dispatcher amends chain-3 scope to fix it.
 - chain-2 INTEGRITY: exit 0. MERGED onto v1-sprint, task 4.1 ticked, REGATE PASS.
+- chain-3 REPORT: complete (5.1 + authorized scope amendment), GATE PASS, commit 1e53875. Decision #54 appended (corrects #48 via append-only convention); §20b stale comment fixed; roadmap has no sli entry (skipped per instruction). Task 5.2 attended, unticked.
+- chain-3 INTEGRITY: exit 0. MERGED onto v1-sprint, task 5.1 ticked. gate-full on merged tip: FULL GATE PASSED. Whole-change reviewer DISPATCHED.
