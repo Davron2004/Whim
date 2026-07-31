@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security config — lets the launcher reach a generation server running on the developer's
+  own machine over plain HTTP, without opening cleartext to the whole internet.
+
+  Why this file exists: the launcher's Settings screen takes a manually entered generation-server
+  address (`src/host/launcher/server-address.ts`) and that server is `npm run server:dev` on a dev
+  box — an http:// LAN address, never https. But the React Native Gradle plugin hard-sets
+  `usesCleartextTraffic="false"` on the `release` build type
+  (`@react-native/gradle-plugin` → AgpConfiguratorUtils.kt), and `npm run android:release` is the
+  variant we actually run on the emulator (the JS bundle is baked in; the emulator's NAT route to
+  Metro is dead — see android/app/build.gradle). Without this config every prompt-flow request dies
+  as `CLEARTEXT communication to <host> not permitted by network security policy`.
+
+  Shape: cleartext stays DENIED by default (base-config below) and is re-enabled only for the
+  named dev hosts. That is deliberate — a blanket `cleartextTrafficPermitted="true"` base-config
+  would also permit plaintext to arbitrary public hosts, which is exactly the downgrade attack the
+  platform default is there to prevent.
+
+  Android's <domain> matches a hostname or IP literal exactly; there is NO CIDR/wildcard syntax, so
+  a LAN range cannot be expressed as a range and each address is listed individually. If DHCP moves
+  your dev machine to a different address, add it here — that is the intended maintenance.
+
+  Note: when a networkSecurityConfig is present it takes precedence over the manifest's
+  `android:usesCleartextTraffic` attribute on API 24+, so the placeholder above it stays untouched.
+-->
+<network-security-config>
+    <!-- Secure default for every host not named below: HTTPS only. -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- The Android emulator's alias for the host machine's loopback (standard AVD). -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <!-- Genymotion's equivalent host alias. -->
+        <domain includeSubdomains="false">10.0.3.2</domain>
+        <!-- On-device loopback, for `adb reverse tcp:8787 tcp:8787`. -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- Dev machine on the local network (server:dev binds 0.0.0.0). DHCP-assigned: update
+             this entry if the address changes. -->
+        <domain includeSubdomains="false">10.0.0.253</domain>
+    </domain-config>
+</network-security-config>
