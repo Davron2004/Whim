@@ -2,10 +2,10 @@
 
 ## 1. Candidate builder and page assembly
 
-- [ ] 1.1 Create the library directory (top-level, `checks/`-style: no workspace entry) with the entry-point signature from the spec (candidate source + options → run report) as types first
-- [ ] 1.2 Implement the single-candidate builder mirroring the production esbuild contract (IIFE, classic JSX, externals, `tsconfigRaw:'{}'`), consuming `runtime-artifacts.json` `parts` + `buildSrcdoc`/`buildOuterHtml` read-only (design D6)
-- [ ] 1.3 Byte-equivalence tripwire test: builder output for a fixture app === production `build.mjs` output for the same fixture (red-check by perturbing a builder option)
-- [ ] 1.4 Chromium session lifecycle: one `chromium.launch()` per session, fresh context+page per run, semaphore for concurrency, teardown on report completion (design D4)
+- [x] 1.1 Create the library directory (top-level, `checks/`-style: no workspace entry) with the entry-point signature from the spec (candidate source + options → run report) as types first
+- [x] 1.2 Implement the single-candidate builder mirroring the production esbuild contract (IIFE, classic JSX, externals, `tsconfigRaw:'{}'`), consuming `runtime-artifacts.json` `parts` + `buildSrcdoc`/`buildOuterHtml` read-only (design D6)
+- [x] 1.3 Byte-equivalence tripwire test: builder output for a fixture app === production `build.mjs` output for the same fixture (red-check by perturbing a builder option)
+- [x] 1.4 Chromium session lifecycle: one `chromium.launch()` per session, fresh context+page per run, semaphore for concurrency, teardown on report completion (design D4)
 
 ## 2. Observation and watchdog
 
