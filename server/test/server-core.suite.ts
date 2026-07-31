@@ -5,12 +5,14 @@
 import { check, eq, section } from './harness';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
-import { createStubPipeline } from '../src/pipeline';
+import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
 import { ScriptedModelClient } from './scripted-model';
 import type { ModelRoster } from '../src/generation/model';
-import type { GenerationEvent } from '@whim/contract';
+import type { RunTrace } from '../src/generation/machine';
+import type { GenerationStatsTransport } from '../src/generation/reconcile';
+import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
 // §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
@@ -491,10 +493,160 @@ async function testSseCancelAbortsPipeline(): Promise<void> {
   }
 }
 
+const RACE_USAGE: Usage = { promptTokens: 10, completionTokens: 20, totalTokens: 30 };
+const RACE_APP: WireAppRecord = {
+  name: 'race-app',
+  source: "import { Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hi</Text></Screen> });",
+  bundle: '(()=>{ /* race-app bundle */ })();',
+  sourceMap: undefined,
+  manifest: { capabilities: [] },
+  schema: {},
+};
+
+/** A transport that resolves the fixed `usage` for exactly one generation id, `null` otherwise —
+ *  matches `GenerationStatsTransport`'s "not yet resolved" contract for any other id. */
+function makeFixedTransport(generationId: string, usage: Usage): GenerationStatsTransport {
+  return {
+    fetchStats: async (id: string) => (id === generationId ? usage : null),
+  };
+}
+
+/** Single-attempt, no-delay reconcile bounds — deterministic and fast for tests whose transport
+ *  resolves synchronously. */
+const FAST_RECONCILE_BOUNDS = { maxAttempts: 1, totalBudgetMs: 2000, retryDelayMs: 0 };
+
+/** Reads response body chunks until `predicate(buffered)` is true (or the stream ends). */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  predicate: (buffered: string) => boolean,
+): Promise<string> {
+  let buffered = '';
+  while (!predicate(buffered)) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  return buffered;
+}
+
+/**
+ * server/src/routes/generate.ts — closing the completed-run double-credit race (reviewer finding:
+ * `makeGenerateRoute` had zero direct coverage). A run that completes NORMALLY credits usage via
+ * `interceptUsage`'s `usage` event before its terminal event is ever observed. If the client
+ * disconnects in the gap between those two events — a real disconnect window, not a contrived
+ * one — the abort listener must not re-credit the same run from `reconcileAbortedUsage`.
+ */
+async function testAbortDoubleCreditRace(): Promise<void> {
+  section('Completed-run double-credit race on client disconnect (generate.ts)');
+
+  // A run that completed normally (its `usage` event was credited) but whose client disconnects
+  // before the terminal event was ever observed must credit usage exactly once, not twice.
+  {
+    const generationId = 'race-completed-1';
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let terminalEmitted = false;
+
+    // Mirrors `GenerationMachine.emitCompletion`'s exact envelope: usage, then an abort check,
+    // then the terminal — gated under test control so the disconnect can be placed deterministically
+    // in that window instead of racing real timers.
+    const pipeline: Pipeline = {
+      async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) {
+        if (signal?.aborted) return;
+        trace?.generationIds.push(generationId);
+        yield { type: 'usage', usage: RACE_USAGE };
+        await gate;
+        if (signal?.aborted) return;
+        terminalEmitted = true;
+        yield { type: 'result', app: RACE_APP };
+      },
+    };
+
+    const usageStore = new InMemoryUsageStore();
+    const transport = makeFixedTransport(generationId, RACE_USAGE);
+    const app = createApp({
+      pipeline,
+      usageStore,
+      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+    });
+
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const buffered = await readUntil(reader, decoder, (b) => b.includes('event: usage'));
+    check('usage frame observed before disconnect', buffered.includes('event: usage'));
+
+    // The client disconnects here: after usage was credited, before any terminal event.
+    await reader.cancel();
+    releaseGate();
+    await new Promise((r) => setTimeout(r, 50));
+
+    check('a run that disconnects after usage never emits a terminal event', !terminalEmitted);
+    const total = await usageStore.read(DEVICE_ID);
+    eq(
+      'a run that completed normally, disconnected before its terminal event, credits usage exactly once (not the doubled 20/40/60)',
+      total,
+      RACE_USAGE,
+    );
+  }
+
+  // A run aborted mid-run — before any `usage` event was ever observed — must still reconcile
+  // and credit exactly once from the reconciliation path (the case reconciliation exists for).
+  {
+    const generationId = 'race-midrun-2';
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let terminalEmitted = false;
+
+    const pipeline: Pipeline = {
+      async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) {
+        if (signal?.aborted) return;
+        trace?.generationIds.push(generationId);
+        yield { type: 'stage', stage: 'plan', status: 'start' };
+        await gate;
+        if (signal?.aborted) return;
+        yield { type: 'usage', usage: RACE_USAGE };
+        if (signal?.aborted) return;
+        terminalEmitted = true;
+        yield { type: 'result', app: RACE_APP };
+      },
+    };
+
+    const usageStore = new InMemoryUsageStore();
+    const transport = makeFixedTransport(generationId, RACE_USAGE);
+    const app = createApp({
+      pipeline,
+      usageStore,
+      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+    });
+
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const buffered = await readUntil(reader, decoder, (b) => b.includes('event: stage'));
+    check('a stage frame arrived before the mid-run disconnect', buffered.includes('event: stage'));
+    check('no usage frame arrived before the mid-run disconnect', !buffered.includes('event: usage'));
+
+    await reader.cancel();
+    releaseGate();
+    await new Promise((r) => setTimeout(r, 50));
+
+    check('a run aborted mid-run never emits a terminal event', !terminalEmitted);
+    const total = await usageStore.read(DEVICE_ID);
+    eq('a run aborted before any usage event still reconciles exactly once', total, RACE_USAGE);
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
   await testStubPipelineEndpoints();
   await testSseCancelClearsKeepalive();
   await testSseCancelAbortsPipeline();
+  await testAbortDoubleCreditRace();
 }
