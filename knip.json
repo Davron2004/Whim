@@ -34,7 +34,9 @@
         "src/host/**/device-acceptance.ts",
         "invariants/**/*.mjs",
         "fixtures/**/*.app.tsx",
-        "checks/test/**"
+        "checks/test/**",
+        "evals/test/**",
+        "evals/cli.mjs"
       ],
       "project": [
         "App.tsx",
@@ -42,7 +44,8 @@
         "build/**/*.{ts,mjs,js}",
         "invariants/**/*.{mjs,js}",
         "fixtures/**/*.tsx",
-        "checks/**/*.ts"
+        "checks/**/*.ts",
+        "evals/**/*.ts"
       ]
     },
     "contract": {

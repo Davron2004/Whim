@@ -32,6 +32,7 @@ check "dead code (knip)"  npx knip
 check "metro-guard"       npm run -s guard:metro
 check "invariants"        npm run -s invariants
 check "bridge-invariants" npm run -s bridge:invariants
+check "generation-e2e"    npm run -s server:e2e
 check "deliver-by-source" npm run -s launcher:deliver-verify
 check "codex-sync"        node scripts/sync-codex.mjs --check
 # openspec is a required GLOBAL CLI (Homebrew) — NOT an npm package. Fail clearly if absent.
