@@ -12,3 +12,9 @@
 - chain-2 INTEGRITY: exit 0. MERGED onto v1-sprint, task 4.1 ticked, REGATE PASS.
 - chain-3 REPORT: complete (5.1 + authorized scope amendment), GATE PASS, commit 1e53875. Decision #54 appended (corrects #48 via append-only convention); §20b stale comment fixed; roadmap has no sli entry (skipped per instruction). Task 5.2 attended, unticked.
 - chain-3 INTEGRITY: exit 0. MERGED onto v1-sprint, task 5.1 ticked. gate-full on merged tip: FULL GATE PASSED. Whole-change reviewer DISPATCHED.
+- REVIEWER (whole change): verdict CLEAN, no findings. Report honesty verified against diff + live suite re-runs (vstore 112, launcher 1886). D3 refinement confirmed to satisfy all spec scenarios; trailer round-trip proof real; no git vocabulary leaks; decision #54 claims match code.
+
+## Closing summary
+- Chains run: 1, 2, 3 — all merged onto v1-sprint, regated green. Redispatches: 0. Deviations: one Class A (D3 predicate refined, reviewer-confirmed sound), one dispatcher-authorized scope amendment (stale §20b comment).
+- gate-full: PASSED. Reviewer: CLEAN.
+- Remaining: task 5.2 on-device acceptance (ATTENDED, user-run) → then /opsx:archive. Closure deferred to attended sprint closure.
