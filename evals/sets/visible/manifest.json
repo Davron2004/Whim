@@ -5,112 +5,219 @@
     {
       "caseId": "tip-splitter-p1",
       "appSlug": "tip-splitter",
-      "prompt": "make a tip calculator that splits the bill between friends"
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" }
+      ]
     },
     {
       "caseId": "tip-splitter-p2",
       "appSlug": "tip-splitter",
-      "prompt": "I enter the bill, pick a tip percent, and see what each person owes"
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" }
+      ]
     },
     {
       "caseId": "spending-tracker-p1",
       "appSlug": "spending-tracker",
-      "prompt": "track my spending and show me a weekly graph"
+      "prompt": "track my spending and show me a weekly graph",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged expense persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "spending-tracker-p2",
       "appSlug": "spending-tracker",
-      "prompt": "an expense tracker with categories and a chart of where my money goes each month"
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged expense persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "habit-tracker-p1",
       "appSlug": "habit-tracker",
-      "prompt": "habit tracker with streaks — show a calendar of the days I did it"
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged habit check-in persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "habit-tracker-p2",
       "appSlug": "habit-tracker",
-      "prompt": "track a few daily habits and show my current streak for each"
+      "prompt": "track a few daily habits and show my current streak for each",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged habit check-in persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "water-counter-p1",
       "appSlug": "water-counter",
-      "prompt": "a water counter — one big button to log a glass, today's total vs my goal"
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "today's logged count persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "water-counter-p2",
       "appSlug": "water-counter",
-      "prompt": "count my calories today with a progress bar toward my daily limit, keep history"
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "today's logged count persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "workout-log-p1",
       "appSlug": "workout-log",
-      "prompt": "a workout log — each session has exercises with sets, reps and weight"
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged workout session persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "workout-log-p2",
       "appSlug": "workout-log",
-      "prompt": "log my gym workouts and let me look back at what I lifted last time"
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a logged workout session persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "flashcards-p1",
       "appSlug": "flashcards",
-      "prompt": "flashcards with spaced repetition — show me the cards due today"
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a created flashcard persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "flashcards-p2",
       "appSlug": "flashcards",
-      "prompt": "I make flashcards and review them; ones I get wrong come back sooner"
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a created flashcard persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "score-keeper-p1",
       "appSlug": "score-keeper",
-      "prompt": "score keeper for board game night — add players and bump their scores"
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "an added player's score persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "score-keeper-p2",
       "appSlug": "score-keeper",
-      "prompt": "keep score for games, plus and minus buttons per player"
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "an added player's score persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "packing-checklist-p1",
       "appSlug": "packing-checklist",
-      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it"
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a saved template persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "packing-checklist-p2",
       "appSlug": "packing-checklist",
-      "prompt": "checklist app where I save a list as a template and start a new trip from it"
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a saved template persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "recipe-box-p1",
       "appSlug": "recipe-box",
-      "prompt": "a recipe box — save recipes with ingredients and steps, search by name"
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a saved recipe persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "recipe-box-p2",
       "appSlug": "recipe-box",
-      "prompt": "store my recipes and filter them by a tag like 'quick'"
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "a saved recipe persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "tic-tac-toe-p1",
       "appSlug": "tic-tac-toe",
-      "prompt": "tic-tac-toe for two people on one phone"
+      "prompt": "tic-tac-toe for two people on one phone",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" }
+      ]
     },
     {
       "caseId": "tic-tac-toe-p2",
       "appSlug": "tic-tac-toe",
-      "prompt": "tic-tac-toe that keeps a running tally of wins"
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "the running win tally persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "chore-rotation-p1",
       "appSlug": "chore-rotation",
-      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly"
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "the current rotation state persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     },
     {
       "caseId": "chore-rotation-p2",
       "appSlug": "chore-rotation",
-      "prompt": "rotate chores between roommates and remember who did what last"
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
+        { "english": "the current rotation state persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
     }
   ]
 }
