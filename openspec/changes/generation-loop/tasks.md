@@ -15,25 +15,25 @@
 
 ## 2. Model client and prompt assembly
 
-- [ ] 2.1 `server/src/generation/model.ts`: `ModelClient` / `ModelRequest` / `ModelStream` interfaces and
+- [x] 2.1 `server/src/generation/model.ts`: `ModelClient` / `ModelRequest` / `ModelStream` interfaces and
       `ModelRoster` (per-role model ids read from the environment, no id literal in any call site), plus
       `openRouterModelClient(client)` adapting the existing wrapper.
-- [ ] 2.2 `server/test/fixtures/model/` + `server/test/scripted-model.ts`: a `ScriptedModelClient` that
+- [x] 2.2 `server/test/fixtures/model/` + `server/test/scripted-model.ts`: a `ScriptedModelClient` that
       replays recorded turns in order, asserts the role each turn was requested for, and exposes the
       requests it received; plus a `noNetworkTransport` that throws on any request to the provider host.
-- [ ] 2.3 `server/src/generation/prompts/inputs.ts`: load `docs/sdk-reference.md` from disk (resolved from
+- [x] 2.3 `server/src/generation/prompts/inputs.ts`: load `docs/sdk-reference.md` from disk (resolved from
       cwd, overridable by `WHIM_SDK_REFERENCE_PATH`) and the curated few-shot list from `fixtures/*.app.tsx`,
       excluding `latency-probe.app.tsx`; fail loudly with an actionable error if an input is missing.
-- [ ] 2.4 `server/src/generation/prompts/index.ts`: message builders for the rewrite, plan, generate, and
+- [x] 2.4 `server/src/generation/prompts/index.ts`: message builders for the rewrite, plan, generate, and
       repair turns, each taking an explicit context object (request, plan, current source, diagnostics
       ordered errors-first, and a pre-computed `schemaContext` string) and returning provider-agnostic
       messages.
-- [ ] 2.5 `server/test/prompts.suite.ts` tripwires: every runtime value export of the `vc-sdk` barrel appears
+- [x] 2.5 `server/test/prompts.suite.ts` tripwires: every runtime value export of the `vc-sdk` barrel appears
       in `docs/sdk-reference.md`; every curated few-shot fixture yields a zero-diagnostic `CheckReport`; no
       builder emits an empty required section; no model id appears as a literal in `server/src/generation/`.
-- [ ] 2.6 Add the missing `nav` section (`nav.navigate(screen)`, `nav.back()`, depth semantics) to
+- [x] 2.6 Add the missing `nav` section (`nav.navigate(screen)`, `nav.back()`, depth semantics) to
       `docs/sdk-reference.md` — the first red of task 2.5's export tripwire.
-- [ ] 2.7 Write `handoff/model-client.md` — the client/roster/stream interfaces, the scripted-client
+- [x] 2.7 Write `handoff/model-client.md` — the client/roster/stream interfaces, the scripted-client
       protocol, and the prompt-builder signatures.
 
 ## 3. Device seam
