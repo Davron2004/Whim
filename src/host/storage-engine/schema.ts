@@ -52,6 +52,24 @@ export function emptyApplied(): AppliedSchema {
   return { collections: [] };
 }
 
+/**
+ * The per-collection burned-ID floor (#52-D5, storage-schema-evolution "burned-ID floor"
+ * requirement): the maximum ordinal among a collection's ACTIVE and RETIRED columns — a
+ * tombstoned ID stays burned, so it counts exactly like an active one. Pure and dependency-free
+ * (importable without the native-binding barrel, mirroring `diffSchemas`/`validateArtifact`),
+ * so both the generation harness (off-device) and the device peek (`engine.ts`'s
+ * `readAppliedSchema`) share one definition of "past the union's max". A collection absent from
+ * `applied` reports no floor — a first allocation there is unconstrained.
+ */
+export function burnedIdFloor(applied: AppliedSchema): Record<string, number> {
+  const floors: Record<string, number> = {};
+  for (const coll of applied.collections) {
+    const ordinals = [...coll.active, ...coll.retired].map(c => Number(c.id.slice(1)));
+    if (ordinals.length) floors[coll.id] = Math.max(...ordinals);
+  }
+  return floors;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DDL plan + diff result (D4)
 // ─────────────────────────────────────────────────────────────────────────────

@@ -310,13 +310,22 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update that omits it');
   });
 
-  // §36 activeSource mirrors activeBundle
-  await h.test('store-access §36 activeSource reads the active snapshot bundle.js source', async () => {
+  // §36 activeSource reads the genuine source.ts artifact (#52-D5 / D14), never bundle.js
+  await h.test('store-access §36 activeSource reads source.ts, never aliases the bundle', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'BUNDLE_V1', source: 'ORIGINAL_TS_V1', prompt: 'p1' });
+    h.eq(await access.activeSource(orig), 'ORIGINAL_TS_V1', 'activeSource reads the distinct source.ts artifact, not bundle.js');
+    h.ok((await store.active(storeIdOf(orig)))?.artifacts['source.ts'] === 'ORIGINAL_TS_V1', 'source.ts is tracked as its own snapshot file');
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'BUNDLE_V2', source: 'ORIGINAL_TS_V2', prompt: 'p2' });
+    h.eq(await access.activeSource(updated), 'ORIGINAL_TS_V2', 'activeSource reflects the latest update\'s source.ts');
+  });
+
+  await h.test('store-access §36b activeSource reports absence honestly for a legacy install (no source supplied)', async () => {
     const { access } = harnessAccess();
-    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'SRC_V1', prompt: 'p1' });
-    h.eq(await access.activeSource(orig), 'SRC_V1', 'activeSource reads the installed bundle source');
-    const updated = await access.update(orig, { record: orig.record, bundleSource: 'SRC_V2', prompt: 'p2' });
-    h.eq(await access.activeSource(updated), 'SRC_V2', 'activeSource reflects the latest update');
+    const legacy = await access.install({ id: 'legacy', name: 'Legacy', record: REC('legacy'), bundleSource: 'BUNDLE_V1', prompt: 'p1' });
+    h.eq(await access.activeSource(legacy), undefined, 'no source.ts written -> activeSource reports absence, not the bundle');
+    const updatedNoSource = await access.update(legacy, { record: legacy.record, bundleSource: 'BUNDLE_V2', prompt: 'p2' });
+    h.eq(await access.activeSource(updatedNoSource), undefined, 'an update that omits source stays a legacy snapshot too');
   });
 
   // §diff smoke: diff wrapper ensures lineage and delegates through

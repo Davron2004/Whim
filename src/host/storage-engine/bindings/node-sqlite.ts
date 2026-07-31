@@ -8,8 +8,11 @@
  * is testable off-device); ':memory:' gives an ephemeral one (no file is created).
  */
 
+import * as fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { SqlBindValue } from '../marshal';
+import { readAppliedSchema } from '../engine';
+import { AppliedSchema, emptyApplied } from '../schema';
 import { runInTransaction, SqlExecutor, SqlResult, SqlRow } from '../sql-executor';
 
 const TXN_CONTROL = /^\s*(BEGIN|COMMIT|ROLLBACK)/i;
@@ -44,4 +47,22 @@ export function createNodeSqlExecutor(filename = ':memory:'): SqlExecutor {
     },
   };
   return executor;
+}
+
+/**
+ * The Node-side "read-only peek" (task 3.2 / storage-schema-evolution "accumulated schema is
+ * readable without applying anything"): reads a database's accumulated `_meta` union WITHOUT
+ * creating the file when it does not exist yet. `DatabaseSync`'s own constructor creates the
+ * underlying file the instant it connects — even before any statement runs — so existence must
+ * be checked BEFORE that connection is ever made; ':memory:' never touches disk and is exempt
+ * from the check (never a real filename to test for). Delegates the actual read to
+ * `readAppliedSchema`, which performs no DDL. */
+export function readAppliedSchemaFromFile(filename: string): AppliedSchema {
+  if (filename !== ':memory:' && !fs.existsSync(filename)) return emptyApplied();
+  const executor = createNodeSqlExecutor(filename);
+  try {
+    return readAppliedSchema(executor);
+  } finally {
+    executor.close();
+  }
 }
