@@ -47,18 +47,18 @@
 
 ## 3. Tier B — behavioral specs
 
-- [ ] 3.1 Enforce English-first at load: a Tier-B spec with a missing or empty English statement fails the
+- [x] 3.1 Enforce English-first at load: a Tier-B spec with a missing or empty English statement fails the
   whole eval set to load, naming the offending case id, and no case is evaluated.
-- [ ] 3.2 Implement `evals/assertions.ts` — the closed `ASSERTION_KINDS` evaluator over `RunObservation`:
+- [x] 3.2 Implement `evals/assertions.ts` — the closed `ASSERTION_KINDS` evaluator over `RunObservation`:
   screen reachability of declared screens, presence/absence of a recorded syscall or cue, presence/absence of a
   diagnostic kind, render-without-error, storage round-trip. Pure data in, result out; never evaluate, compile,
   or import anything supplied by an eval set (design D5).
-- [ ] 3.3 Implement `evals/tiers/tier-b.ts`: each assertion result records pass/fail, the English statement
+- [x] 3.3 Implement `evals/tiers/tier-b.ts`: each assertion result records pass/fail, the English statement
   verbatim, and the **concrete observed value** that contradicted it — never a bare boolean. Distinguish
   required from advisory assertions, since only required ones gate the verdict.
-- [ ] 3.4 Encode Tier-B specs for the visible set's corpus apps into `evals/sets/visible/`, English statement
+- [x] 3.4 Encode Tier-B specs for the visible set's corpus apps into `evals/sets/visible/`, English statement
   first and encoded assertion beside it, using only `ASSERTION_KINDS`.
-- [ ] 3.5 Tests in `evals/test/tier-b.test.ts`: a passing **and** a failing fixture for every assertion kind
+- [x] 3.5 Tests in `evals/test/tier-b.test.ts`: a passing **and** a failing fixture for every assertion kind
   (non-vacuity — an assertion kind with no red case is a bug); missing-English load error; unknown-kind load
   error naming the accepted set; code-as-assertion refused without being imported; failure output carries the
   English statement and the observed value.
