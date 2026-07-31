@@ -103,21 +103,21 @@
 
 ## 6. CLI, candidate sourcing, and docs
 
-- [ ] 6.1 Implement `evals/cli.mjs` with `run` / `diff` / `compare` subcommands: argument and environment
+- [x] 6.1 Implement `evals/cli.mjs` with `run` / `diff` / `compare` subcommands: argument and environment
   parsing, the eval-set resolution order, `--out` defaulting to the git-ignored report directory, and an exit
   code contract (non-zero on missing eval set, on unreadable set, on any case failure, on an overfitting alarm).
-- [ ] 6.2 Implement `evals/producer.ts`: `--source-dir` maps case id → source file with no pipeline constructed
+- [x] 6.2 Implement `evals/producer.ts`: `--source-dir` maps case id → source file with no pipeline constructed
   and no model contacted, recording a per-case `error` for a missing file while other cases still run;
   `--generate` drives an injected `Pipeline`, treating a completed stream with other than exactly one terminal
   `GenerationEvent` as a **runner** error, not a candidate failure (design D12).
-- [ ] 6.3 Add the report output directory to `.gitignore` (not a protected file) and make it the CLI's default
+- [x] 6.3 Add the report output directory to `.gitignore` (not a protected file) and make it the CLI's default
   `--out`.
-- [ ] 6.4 Docs: add the `corpus-eval` row to `docs/capabilities.md`; update `docs/v1-roadmap.md` #12 with
+- [x] 6.4 Docs: add the `corpus-eval` row to `docs/capabilities.md`; update `docs/v1-roadmap.md` #12 with
   status and as-built contract notes; write `docs/evals.md` — the operator guide covering how to point the
   runner at a set, the attended visible→holdout→compare protocol, how to read a report diff, and the
   model-bakeoff protocol (run the same set per candidate model, compare reports, record the decision in
   `docs/decisions.md`). Never record or infer a holdout location.
-- [ ] 6.5 Tests in `evals/test/cli.test.ts`: the refusal path with neither flag nor environment variable set;
+- [x] 6.5 Tests in `evals/test/cli.test.ts`: the refusal path with neither flag nor environment variable set;
   flag-beats-environment resolution; the exit-code matrix; the fully offline `--source-dir` path; the
   `createStubPipeline` generation path; the two-terminal-event runner error; and the gate-configuration check
   asserting no eval-run invocation is present in the gate.
