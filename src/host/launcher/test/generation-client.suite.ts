@@ -191,7 +191,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(got, [event], 'reassembles the split frame and skips the keepalive comment');
   });
 
-  // generateApp: malformed frame
+  // generateApp: malformed frame — unrecognized discriminant
   await h.test('generateApp: a malformed frame raises GenerationClientError{kind:"stream_parse"}', async () => {
     const badFrame = 'event: stage\ndata: {"type":"not-a-real-type"}\nid: 1\n\n';
     const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
@@ -203,6 +203,38 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       h.eq((err as GenerationClientError).kind, 'stream_parse', 'kind is "stream_parse"');
     }
   });
+
+  // generateApp: malformed frame — recognized discriminant, but a required field is missing
+  // (exercises the per-variant field guards, not just the top-level `type` switch).
+  await h.test(
+    'generateApp: a frame with a known type but a missing required field raises GenerationClientError{kind:"stream_parse"}',
+    async () => {
+      const badFrame = 'event: token\ndata: {"type":"token"}\nid: 1\n\n'; // missing `text`
+      const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
+      try {
+        await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+        h.ok(false, 'expected a throw');
+      } catch (err) {
+        h.ok(err instanceof GenerationClientError, 'throws GenerationClientError');
+        h.eq((err as GenerationClientError).kind, 'stream_parse', 'kind is "stream_parse"');
+      }
+    },
+  );
+
+  // rewritePrompt: a 200 body that fails RewriteResponse shape validation still raises 'http'
+  await h.test(
+    'rewritePrompt: a 200 body with the wrong shape raises GenerationClientError{kind:"http"}',
+    async () => {
+      const fetchImpl = (async () => new Response(JSON.stringify({ notRewrittenPrompt: 'oops' }), { status: 200 })) as typeof fetch;
+      try {
+        await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+        h.ok(false, 'expected a throw');
+      } catch (err) {
+        h.ok(err instanceof GenerationClientError, 'throws GenerationClientError');
+        h.eq((err as GenerationClientError).kind, 'http', 'kind is "http" even though the HTTP status was 200');
+      }
+    },
+  );
 
   // generateApp: aborted stream — no terminal event, no throw
   await h.test('generateApp: an aborted stream yields no terminal event and does not throw', async () => {
