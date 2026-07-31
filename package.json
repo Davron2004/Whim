@@ -21,10 +21,14 @@
     "launcher:deliver-verify": "node src/host/launcher/test/deliver-by-source.desktop.mjs",
     "sdk:test": "node src/sdk/test/run.mjs",
     "checks:test": "node checks/test/run.mjs",
+    "synthrun:test": "node synthrun/test/run.mjs",
+    "evals:test": "node evals/test/run.mjs",
+    "evals": "node evals/cli.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
     "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
     "server:dev": "node server/dev.mjs",
     "server:test": "node server/test/run.mjs",
+    "server:e2e": "node server/test/e2e.run.mjs",
     "guard:metro": "node server/guard-metro.mjs"
   },
   "dependencies": {
