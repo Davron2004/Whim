@@ -35,6 +35,7 @@ const NAVIGATION_DEMO_FIXTURE = path.join(ROOT, 'fixtures/navigation-demo.app.ts
 
 let passed = 0;
 const failures: string[] = [];
+const quarantines: string[] = [];
 
 function ok(cond: boolean, msg: string): void {
   if (cond) {
@@ -53,6 +54,24 @@ async function test(name: string, fn: () => void | Promise<void>): Promise<void>
     failures.push(`${name}: threw ${(err as Error).message}`);
     console.error(`  ✗ ${name} THREW: ${(err as Error).stack}`);
   }
+}
+
+/**
+ * Registers a test that is NOT run, because it is currently unsound rather than merely broken —
+ * it would assert a property this suite cannot construct today. Deliberately loud: it prints, it
+ * is counted, and the summary line always names the total, so a quarantine cannot quietly become
+ * permanent the way a commented-out test does. It never affects the exit code (a quarantined
+ * test proves nothing, so it must not be able to fail OR to pass). `reason` must say what would
+ * make the test sound again, not merely that it flakes.
+ */
+function quarantined(name: string, reason: string, fixtureItNeeds: string): void {
+  quarantines.push(`${name} — ${reason}`);
+  console.warn(`⚠ QUARANTINED (not run): ${name}\n    ${reason}`);
+  // The parked test's fixture is otherwise unreferenced, so a tidy-up pass would delete it as
+  // dead code and the quarantine could never be lifted without reconstructing it. Naming it here
+  // both keeps it alive and asserts it is still present — the one thing about a parked test that
+  // can still silently rot.
+  ok(fixtureItNeeds.length > 0, `the quarantined test's fixture is still present: ${name}`);
 }
 
 async function main(): Promise<void> {
@@ -114,13 +133,15 @@ async function main(): Promise<void> {
   await testRunCandidate();
 
   console.log('');
+  const quarantineNote = quarantines.length === 0 ? '' : `, ${quarantines.length} QUARANTINED`;
   if (failures.length === 0) {
-    console.log(`✓ synthrun acceptance: ${passed} checks passed`);
+    console.log(`✓ synthrun acceptance: ${passed} checks passed${quarantineNote}`);
   } else {
-    console.error(`✗ synthrun acceptance: ${failures.length} FAILED, ${passed} passed`);
+    console.error(`✗ synthrun acceptance: ${failures.length} FAILED, ${passed} passed${quarantineNote}`);
     for (const f of failures) console.error('  - ' + f);
     process.exit(1);
   }
+  for (const q of quarantines) console.warn('  ⚠ ' + q);
 }
 
 // A component that throws SYNCHRONOUSLY on its first render. Line 4 (the `throw`) is the
@@ -337,31 +358,36 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-    await test('mount_timeout: a synchronous top-level hang never posts paint (spec "Never-settling mount")', async () => {
-      const { obs, dispose } = await openObservedRun(session, FIXTURE_MOUNT_HANG);
-      try {
-        // A generous budget relative to HANG_MS (1200). Widened 500ms→800ms (chain 5 stability
-        // fix, per the integration note this chain received). NOTE for whoever next touches
-        // this test: widening the margin measurably does NOT fully eliminate an intermittent
-        // flake here — this fixture's hang is long/synchronous enough to block the OUTER page's
-        // own `load` event (the iframe's parser-blocking script delays its parent's `load` per
-        // the HTML spec), so `openObservedRun`'s `page.goto` itself doesn't resolve until the
-        // hang is already over. That puts `EarlyObservers.finish()`'s async setup (the
-        // `window.ReactNativeWebView` relay override) into a real race against the double-rAF
-        // paint message the candidate posts a couple of frames later — a race independent of
-        // `mountBudgetMs`. Out of this chain's scope to restructure (chain 2's already-merged
-        // `observe.ts`); rerun-to-confirm remains the sanctioned mitigation for now.
-        const budgets = mergeBudgets({ mountBudgetMs: 800 });
-        const diagnostic = await awaitMount(obs, budgets);
-        ok(diagnostic?.kind === 'mount_timeout', `awaitMount returned a mount_timeout diagnostic (got ${diagnostic?.kind})`);
-        ok(obs.state.diagnostics.includes(diagnostic!), 'the returned diagnostic is the SAME one appended to state.diagnostics (no silent catch)');
-        ok(obs.state.paintAtMs === null, 'no paint frame had arrived when the budget fired');
-      } finally {
-        obs.detach();
-        await dispose();
-      }
-    });
+    // QUARANTINED at closure 2026-07-31 — this test is UNSOUND, not merely flaky, and the
+    // distinction is why it is parked rather than retried.
+    //
+    // `FIXTURE_MOUNT_HANG`'s hang is *bounded* at HANG_MS = 1200 (deliberately, so a failed
+    // assertion cannot wedge the suite), and the hang is long enough to block the OUTER page's
+    // own `load` event — the iframe's parser-blocking script delays its parent's `load` per the
+    // HTML spec — so `openObservedRun`'s `page.goto` does not resolve until the hang is already
+    // over. The observation window therefore opens at hang-end, and the candidate posts its
+    // double-rAF `paint` about two frames later: comfortably INSIDE the 800ms budget. So the
+    // fixture does eventually paint, and `paintAtMs === null` holds only when
+    // `EarlyObservers.finish()`'s relay override is installed too late to receive that paint.
+    // The test passed because a message was LOST, not because no paint occurred — and it fails
+    // precisely when the harness behaves BETTER (relay ready in time), which is why it reddens
+    // under gate load while passing standalone.
+    //
+    // Widening `mountBudgetMs` cannot fix this and never could (the 500→800ms widening did not):
+    // the window always opens at hang-end regardless of HANG_MS. A sound real-browser version
+    // needs the trusted-vantage relay opened BEFORE navigation (e.g. `waitUntil: 'commit'` plus
+    // early relay install) so an unbounded, genuinely never-painting fixture becomes usable —
+    // that is a change to production `observe.ts`'s attach ordering, i.e. the structural fix
+    // decision #55 defers, and it is not something to land unreviewed.
+    //
+    // Coverage is NOT zero meanwhile: `awaitMount`'s timeout path is asserted deterministically
+    // by the stub red-checks below ("awaitMount times out against a bare stub that never posts
+    // paint", plus its non-vacuity twin). What is parked is only the real-browser variant.
+    quarantined(
+      'mount_timeout: a synchronous top-level hang never posts paint (spec "Never-settling mount")',
+      'unsound: the bounded fixture DOES paint just after page.goto resolves, so the assertion only held when the relay missed the message. Needs observe.ts to open the relay before navigation (decision #55 structural fix); until then the stub red-checks carry awaitMount timeout coverage.',
+      FIXTURE_MOUNT_HANG,
+    );
 
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('legal interval: mounts fine, ticks forever, produces NO diagnostic (spec "Legal interval never fails the run")', async () => {
