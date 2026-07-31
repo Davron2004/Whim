@@ -95,3 +95,8 @@ checks/test/.phase
 # Harness server: durable per-device token counter (the only server state) + local secrets
 server/.data/
 .env
+
+# Corpus-eval CLI: local run reports (the CLI's default --out; never a committed artifact —
+# docs/evals.md). The visible eval set + its Tier-B specs live at evals/sets/visible/ and stay
+# tracked; this is scratch OUTPUT only.
+evals/.reports/
