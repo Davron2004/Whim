@@ -430,6 +430,82 @@ a Sonar check and the repo standard is to fix what you find.
   Suites held exactly at baseline: launcher 1939/0, server 479/0.
 - `push` round-1 fixes → `057f461..8245408`.
 
+#### Sonar round 2 — GREEN
+
+`node scripts/sonar-pr-issues.mjs --pr 19` exit 0, **gate OK, issues: 0**.
+
+#### History cleanup
+
+`/git-cleanup` with `target_branch=integration/fix-generate-stream-transport`.
+**CLEANUP GATE PASS** — tip tree identical to the pinned `5a51c780…`, target unmoved, backup intact.
+**28 commits → 5**, a strict file partition with no straddling:
+
+| commit | scope |
+|---|---|
+| `docs(openspec): plan … and record its build ledger` | the whole change folder |
+| `fix(launcher): stream generate over XMLHttpRequest when fetch has no response body` | `transport-shared.ts`, `xhr-transport.ts`, `generation-client.ts` |
+| `test(launcher): cover the XHR generate transport against a fake XMLHttpRequest` | `fake-xhr.ts`, `xhr-transport.suite.ts`, `acceptance.ts` |
+| `feat(server): log every dev request and stream lifecycle event …` | `server/src/*`, `server/test/server-core.suite.ts` |
+| `docs: record decision 58 on the RN generate stream transport` | `decisions.md`, `capabilities.md`, `contract/src/index.ts` |
+
+All three fix commits FOLDED, none standalone: the Sonar round (`ad89034`), the surrogate fix
+(`02f14c9`) and the cycle break (`00623a4`) were each split by file into the semantic commits that
+own those files. Nine chain-merge commits and six ledger-tick commits absorbed.
+The cleaner built each index BY FILE (`read-tree --prefix` / `update-index --cacheinfo`) rather than
+by chronological snapshot, because chains 5 and 6 landed between launcher chains 1 and 2 — a
+snapshot-boundary partition would have forced launcher/server/docs work to interleave. Index-only
+throughout; no `reset --hard`, no `checkout --`, no `read-tree -u`, no working-tree write.
+
+- `apply` orchestrator ref move + `git push --force-with-lease` → `8245408…acc62b8`.
+  Tree verified identical after the reset (`5a51c780…`) with ZERO file churn, as designed.
+- `teardown` grant, owners marker, lane worktree and cleanup branch removed.
+  **`backup/pre-cleanup-integration-fix-generate-stream-transport` RETAINED** as the rollback until
+  the human merges — `git reset --hard backup/pre-cleanup-integration-fix-generate-stream-transport`.
+- `ancestry` `git merge-base --is-ancestor v1-sprint integration/…` → YES, no divergence.
+- `poll` on the REWRITTEN SHAs — **SETTLED PASS** (verdict exit 0), all three checks. Sonar re-checked:
+  gate OK, 0 issues.
+- `ready` PR #19 flipped out of draft. `gh pr merge` is denied to every caller; the human's merge
+  click is the sole ratification act.
+
+### Closing summary
+
+**Chains run: 7 of 8.** chain-1, chain-2, chain-3, chain-4 (spine) + chain-5, chain-6 (parallel),
+plus two chains that did not exist when the run started: chain-8 (adjudicated defect fix) and
+chain-9 (reviewer follow-ups). Plus one Sonar fix round.
+**chain-7 (on-device) NOT run — attended-only, and it is the change's one real gap.**
+
+**Redispatches: 0.** Every chain came back complete and green on its first dispatch. No chain was
+parked, no merge conflicted, so the chains.md partition was correct as planned.
+
+**Deviations by class:** Class A ×9, all accepted, three of them genuinely load-bearing (chain-5's
+`onSettled` threading, chain-2's decision not to reimplement the taxonomy, chain-9's widening of the
+extraction to `httpErrorFrom`'s dependency chain — without which the "fix" would have left the cycle
+intact). **Class B ×1**, adjudicated to FIX: the surrogate-pair corruption. **Class C: none.**
+No Class-2 escalation was needed — `package.json` was never touched, which chain-4 had flagged as a
+live possibility for suite registration.
+
+**Reviewer verdict:** APPROVE WITH FOLLOW-UPS. No high or medium findings, no report mismatch, all
+six spec requirements met. The three low findings were all actioned in chain-9 rather than tracked.
+
+**Two defects found and fixed that were NOT in the proposal**, both by the machinery rather than by
+inspection:
+1. The surrogate-pair corruption — found by the acceptance chain, which is exactly what design §D4
+   ("test the blindness, not just the bug") predicted would be worth building.
+2. The module cycle — found by the reviewer, introduced by this change's own seam wiring.
+
+**Final state:** `gate-full.sh` exit 0 from the primary tree; launcher 1899 → **1939** checks;
+server 479; SonarCloud gate OK with 0 issues; PR #19 ready for review into `v1-sprint`.
+
+**Memories persisted:** a new `whim-node-suite-bare-await-hang` (a bare `await` in these suites
+converts a regression into a whole-suite hang at exit 13 with no test named), and two additions to
+the existing `whim-worktree-module-resolution` (the `metro-guard`-in-worktree corollary with the
+stash-and-rerun verification technique, and the Edit-tool worktree-vs-primary-path hazard that
+nearly cost a silent mis-edit here).
+
+**Not carried out, flagged for the human:** the cleaner observed that `progress.md` is 453 lines and
+is a build-loop diary rather than a spec artifact — worth trimming before archive. It correctly did
+not act, since that is a content change and the cleanup lane forbids one.
+
 ### Investigated and dismissed — editor-only diagnostic
 
 After the chain-1 merge the IDE reported `generation-client.ts:155` "Property 'body' must be of type
