@@ -38,8 +38,8 @@
 
 ## 6. On-device verification
 
-- [ ] 6.1 Build and install the offline release APK (`npm run android:release`) and run a real generation end to end on the emulator against the dev server.
-- [ ] 6.2 Confirm stage/token events render progressively in `GeneratingScreen` rather than appearing all at once at completion — this is the claim the Node fake cannot settle (design risk 2).
-- [ ] 6.3 Generate an app whose output contains non-ASCII characters and confirm no replacement characters appear, exercising the multi-byte split path on the real native layer (design risk 1).
-- [ ] 6.4 Cancel a generation mid-stream on-device and confirm the request is aborted and the UI returns cleanly with no install.
-- [ ] 6.5 If incremental delivery does not fire on RN 0.85.3 Android, report it explicitly rather than accepting a non-streaming UI silently (design open question 3).
+- [x] 6.1 Build and install the offline release APK (`npm run android:release`) and run a real generation end to end on the emulator against the dev server.
+- [x] 6.2 Confirm stage/token events render progressively in `GeneratingScreen` rather than appearing all at once at completion — this is the claim the Node fake cannot settle (design risk 2).
+- [x] 6.3 Generate an app whose output contains non-ASCII characters and confirm no replacement characters appear, exercising the multi-byte split path on the real native layer (design risk 1).
+- [x] 6.4 Cancel a generation mid-stream on-device and confirm the request is aborted and the UI returns cleanly with no install.
+- [x] 6.5 If incremental delivery does not fire on RN 0.85.3 Android, report it explicitly rather than accepting a non-streaming UI silently (design open question 3).
