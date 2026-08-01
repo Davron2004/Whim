@@ -8,8 +8,8 @@
 // values (`PRESETS`/`ACCENTS` from `vc-sdk`'s theme module) — never a hex literal of its own.
 // This screen is not a mini-app host: it owns its own hardware-back binding directly, and never
 // touches `BackPolicy` (which only ever binds inside `useMiniAppHost`).
-import React, { useEffect } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { ACCENTS, PRESETS, ThemeShape } from '../../sdk/theme';
 import { accentLabel, COPY, presetLabel } from './copy';
 import { shellPalette } from './theme';
@@ -25,12 +25,18 @@ const SHAPE_LABEL: Record<ThemeShape, string> = {
 export interface SettingsScreenProps {
   /** Returns to the home screen — supplied by `LauncherRoot`. */
   onBack: () => void;
+  /** The persisted generation-server address (design D3), or `undefined` when unset. */
+  serverUrl?: string;
+  /** Persists the entered address — `LauncherRoot` writes it via `saveServerUrl` and re-reads
+   *  the sanitized result back into its own state, same round-trip `theme.ts`'s pref uses. */
+  onServerUrlChange: (url: string) => void;
 }
 
 const TRANSPARENT = 'transparent';
 
-export default function SettingsScreen({ onBack }: Readonly<SettingsScreenProps>) {
+export default function SettingsScreen({ onBack, serverUrl, onServerUrlChange }: Readonly<SettingsScreenProps>) {
   const { theme, pref, setPref } = useTheme();
+  const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const p = shellPalette(theme);
   const defaultAccentSelected = !pref.accent;
   const defaultRingColor = defaultAccentSelected ? p.text : TRANSPARENT;
@@ -76,6 +82,19 @@ export default function SettingsScreen({ onBack }: Readonly<SettingsScreenProps>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        <Text style={[styles.sectionTitle, { color: p.textMuted }]}>{COPY.serverAddressSectionTitle}</Text>
+        <TextInput
+          value={serverUrlDraft}
+          onChangeText={(next) => { setServerUrlDraft(next); onServerUrlChange(next); }}
+          placeholder={COPY.serverAddressPlaceholder}
+          placeholderTextColor={p.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={[styles.serverInput, { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card }]}
+        />
+        <Text style={[styles.serverHint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+
         <Text style={[styles.sectionTitle, { color: p.textMuted }]}>{COPY.themeSectionTitle}</Text>
         <View style={styles.presetGrid}>
           {Object.keys(PRESETS).map((id) => {
@@ -161,6 +180,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '800' },
   content: { padding: 16, paddingBottom: 40 },
   sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 20, marginBottom: 10 },
+  serverInput: { fontSize: 15, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  serverHint: { fontSize: 12, marginTop: 6 },
   presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   presetCard: { width: '47%', borderRadius: 14, padding: 12 },
   presetName: { fontSize: 14, fontWeight: '700' },

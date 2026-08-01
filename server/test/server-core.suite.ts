@@ -5,10 +5,30 @@
 import { check, eq, section } from './harness';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
-import { createStubPipeline } from '../src/pipeline';
+import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
-import type { GenerationEvent } from '@whim/contract';
+import { ScriptedModelClient } from './scripted-model';
+import type { ModelRoster } from '../src/generation/model';
+import type { RunTrace } from '../src/generation/machine';
+import type { GenerationStatsTransport } from '../src/generation/reconcile';
+import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
+
+// Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
+// §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
+// given the same single rewrite turn, must surface the same (non-echoed) response.
+const REWRITE_TEST_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-test', engineer: 'vendor/engineer-test' };
+function scriptedRewriteApp() {
+  const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+    { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },
+  ]);
+  return createApp({
+    pipeline: createStubPipeline(0),
+    usageStore: new InMemoryUsageStore(),
+    model,
+    roster: REWRITE_TEST_ROSTER,
+  });
+}
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
@@ -279,11 +299,11 @@ async function testStubPipelineEndpoints(): Promise<void> {
     check('invalid generate body has error field', typeof body.error === 'string');
   }
 
-  // §5.5 — deterministic rewrite: same input → same output
+  // §5.5 — rewrite: same input against the same scripted response → same output, never the
+  // input prompt echoed back
   {
-    const app = testApp();
-    const res1 = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
-    const res2 = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    const res1 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    const res2 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
     eq('rewrite status 200', res1.status, 200);
     const body1 = (await res1.json()) as { rewrittenPrompt: string };
     const body2 = (await res2.json()) as { rewrittenPrompt: string };
@@ -291,16 +311,26 @@ async function testStubPipelineEndpoints(): Promise<void> {
       'rewrite rewrittenPrompt is non-empty',
       typeof body1.rewrittenPrompt === 'string' && body1.rewrittenPrompt.length > 0,
     );
-    eq('rewrite is deterministic', body1.rewrittenPrompt, body2.rewrittenPrompt);
+    check('rewrite never echoes the input prompt verbatim', body1.rewrittenPrompt !== 'make a todo app');
+    eq('rewrite is deterministic against the same scripted response', body1.rewrittenPrompt, body2.rewrittenPrompt);
   }
 
   // §5.5 — invalid rewrite body → 400
   {
-    const app = testApp();
+    const app = scriptedRewriteApp();
     const res = await post(app, '/v1/rewrite', { notPrompt: 'oops' }, DEVICE_HEADER);
     eq('invalid rewrite body → 400', res.status, 400);
     const ct = res.headers.get('content-type') ?? '';
     check('invalid rewrite body → JSON', ct.includes('application/json'));
+  }
+
+  // §5.5 — rewrite unconfigured (no model/roster) → 502 ApiError, never a canned fallback
+  {
+    const app = testApp();
+    const res = await post(app, '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
+    eq('rewrite unconfigured → 502', res.status, 502);
+    const body = (await res.json()) as { error: string; hint: string };
+    check('rewrite unconfigured error has non-empty hint', body.hint.length > 0);
   }
 
 }
@@ -463,10 +493,237 @@ async function testSseCancelAbortsPipeline(): Promise<void> {
   }
 }
 
+const RACE_USAGE: Usage = { promptTokens: 10, completionTokens: 20, totalTokens: 30 };
+const RACE_APP: WireAppRecord = {
+  name: 'race-app',
+  source: "import { Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hi</Text></Screen> });",
+  bundle: '(()=>{ /* race-app bundle */ })();',
+  sourceMap: undefined,
+  manifest: { capabilities: [] },
+  schema: {},
+};
+
+/** A transport that resolves the fixed `usage` for exactly one generation id, `null` otherwise —
+ *  matches `GenerationStatsTransport`'s "not yet resolved" contract for any other id. */
+function makeFixedTransport(generationId: string, usage: Usage): GenerationStatsTransport {
+  return {
+    fetchStats: async (id: string) => (id === generationId ? usage : null),
+  };
+}
+
+/** Single-attempt, no-delay reconcile bounds — deterministic and fast for tests whose transport
+ *  resolves synchronously. */
+const FAST_RECONCILE_BOUNDS = { maxAttempts: 1, totalBudgetMs: 2000, retryDelayMs: 0 };
+
+/** Reads response body chunks until `predicate(buffered)` is true (or the stream ends). */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  predicate: (buffered: string) => boolean,
+): Promise<string> {
+  let buffered = '';
+  while (!predicate(buffered)) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffered += decoder.decode(value, { stream: true });
+  }
+  return buffered;
+}
+
+/**
+ * server/src/routes/generate.ts — closing the completed-run double-credit race (reviewer finding:
+ * `makeGenerateRoute` had zero direct coverage). A run that completes NORMALLY credits usage via
+ * `interceptUsage`'s `usage` event before its terminal event is ever observed. If the client
+ * disconnects in the gap between those two events — a real disconnect window, not a contrived
+ * one — the abort listener must not re-credit the same run from `reconcileAbortedUsage`.
+ */
+async function testAbortDoubleCreditRace(): Promise<void> {
+  section('Completed-run double-credit race on client disconnect (generate.ts)');
+
+  // A run that completed normally (its `usage` event was credited) but whose client disconnects
+  // before the terminal event was ever observed must credit usage exactly once, not twice.
+  {
+    const generationId = 'race-completed-1';
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let terminalEmitted = false;
+
+    // Mirrors `GenerationMachine.emitCompletion`'s exact envelope: usage, then an abort check,
+    // then the terminal — gated under test control so the disconnect can be placed deterministically
+    // in that window instead of racing real timers.
+    const pipeline: Pipeline = {
+      async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) {
+        if (signal?.aborted) return;
+        trace?.generationIds.push(generationId);
+        yield { type: 'usage', usage: RACE_USAGE };
+        await gate;
+        if (signal?.aborted) return;
+        terminalEmitted = true;
+        yield { type: 'result', app: RACE_APP };
+      },
+    };
+
+    const usageStore = new InMemoryUsageStore();
+    const transport = makeFixedTransport(generationId, RACE_USAGE);
+    const app = createApp({
+      pipeline,
+      usageStore,
+      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+    });
+
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const buffered = await readUntil(reader, decoder, (b) => b.includes('event: usage'));
+    check('usage frame observed before disconnect', buffered.includes('event: usage'));
+
+    // The client disconnects here: after usage was credited, before any terminal event.
+    await reader.cancel();
+    releaseGate();
+    await new Promise((r) => setTimeout(r, 50));
+
+    check('a run that disconnects after usage never emits a terminal event', !terminalEmitted);
+    const total = await usageStore.read(DEVICE_ID);
+    eq(
+      'a run that completed normally, disconnected before its terminal event, credits usage exactly once (not the doubled 20/40/60)',
+      total,
+      RACE_USAGE,
+    );
+  }
+
+  // A run aborted mid-run — before any `usage` event was ever observed — must still reconcile
+  // and credit exactly once from the reconciliation path (the case reconciliation exists for).
+  {
+    const generationId = 'race-midrun-2';
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let terminalEmitted = false;
+
+    const pipeline: Pipeline = {
+      async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) {
+        if (signal?.aborted) return;
+        trace?.generationIds.push(generationId);
+        yield { type: 'stage', stage: 'plan', status: 'start' };
+        await gate;
+        if (signal?.aborted) return;
+        yield { type: 'usage', usage: RACE_USAGE };
+        if (signal?.aborted) return;
+        terminalEmitted = true;
+        yield { type: 'result', app: RACE_APP };
+      },
+    };
+
+    const usageStore = new InMemoryUsageStore();
+    const transport = makeFixedTransport(generationId, RACE_USAGE);
+    const app = createApp({
+      pipeline,
+      usageStore,
+      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+    });
+
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const buffered = await readUntil(reader, decoder, (b) => b.includes('event: stage'));
+    check('a stage frame arrived before the mid-run disconnect', buffered.includes('event: stage'));
+    check('no usage frame arrived before the mid-run disconnect', !buffered.includes('event: usage'));
+
+    await reader.cancel();
+    releaseGate();
+    await new Promise((r) => setTimeout(r, 50));
+
+    check('a run aborted mid-run never emits a terminal event', !terminalEmitted);
+    const total = await usageStore.read(DEVICE_ID);
+    eq('a run aborted before any usage event still reconciles exactly once', total, RACE_USAGE);
+  }
+}
+
+/**
+ * Dev request logging (task 4.1, design D5) — one console line per request (method, path,
+ * status, duration) so "arrived and completed" is distinguishable from "never arrived", without
+ * a log call per SSE frame and without leaking bodies/prompts/device ids.
+ */
+async function testDevRequestLogging(): Promise<void> {
+  section('Dev request logging (task 4.1)');
+
+  const LOG_LINE_RE = /^\[whim-server\] (\S+) (\S+) (\d+) (\d+)ms$/;
+  const realConsoleLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]): void => {
+    lines.push(args.map(String).join(' '));
+  };
+
+  try {
+    // Non-streaming: a plain 200 logs exactly once, on the way out of the middleware chain.
+    {
+      lines.length = 0;
+      const app = testApp();
+      await app.request('/healthz');
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('healthz logs exactly one line', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('healthz log method', m[1], 'GET');
+      eq('healthz log path', m[2], '/healthz');
+      eq('healthz log status', m[3], '200');
+    }
+
+    // Non-streaming error path: a validation 400 still logs exactly once with the real status.
+    {
+      lines.length = 0;
+      const app = testApp();
+      await post(app, '/v1/generate', { notPrompt: 'oops' }, DEVICE_HEADER);
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('invalid generate body logs exactly one line', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('invalid generate body log status', m[3], '400');
+    }
+
+    // Streaming: the log must not fire while the SSE body is still open — only once it settles —
+    // and even then exactly once (not once per frame).
+    {
+      lines.length = 0;
+      const app = testApp();
+      const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+      check(
+        'no log line before the SSE stream has been drained',
+        lines.filter((l) => LOG_LINE_RE.test(l)).length === 0,
+      );
+
+      const { events } = await readSseResponse(res);
+      check('sanity: the stream actually produced events', events.length > 0);
+
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('generate stream logs exactly one line once settled (not once per frame)', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('generate stream log method', m[1], 'POST');
+      eq('generate stream log path', m[2], '/v1/generate');
+      eq('generate stream log status', m[3], '200');
+
+      // Privacy floor: never the prompt text or the device id in a log line.
+      check(
+        'no log line contains the prompt text',
+        !lines.some((l) => l.includes('hello')),
+      );
+      check(
+        'no log line contains the device id',
+        !lines.some((l) => l.includes(DEVICE_ID)),
+      );
+    }
+  } finally {
+    console.log = realConsoleLog;
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
   await testStubPipelineEndpoints();
   await testSseCancelClearsKeepalive();
   await testSseCancelAbortsPipeline();
+  await testAbortDoubleCreditRace();
+  await testDevRequestLogging();
 }

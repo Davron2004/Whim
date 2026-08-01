@@ -41,9 +41,28 @@ export interface InstallSpec {
   name: string;
   record: AppRecord;
   bundleSource: string;
+  /** The original TypeScript the bundle was compiled from (#52-D5 / D14), written as the
+   *  snapshot's own `source.ts` artifact — distinct from `bundle.js`. Absent for install paths
+   *  with no original source to track (e.g. the first-run seed examples, which ship only a
+   *  compiled bundle): a legitimate legacy state, never a fallback to `bundleSource`. */
+  source?: string;
   /** The structured prompt tracked as snapshot #1 (honest product string; surfaces in #6). */
   prompt: string;
   example?: boolean;
+  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
+  schemaJson?: string;
+}
+
+/** The prompt-flow's delivery spec for `StoreAccess.update` (design D7). */
+export interface UpdateSpec {
+  record: AppRecord;
+  bundleSource: string;
+  /** The original TypeScript the bundle was compiled from (#52-D5 / D14) — see `InstallSpec.source`. */
+  source?: string;
+  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
+  schemaJson?: string;
+  /** The structured prompt tracked as this snapshot (honest product string; surfaces in #6). */
+  prompt: string;
 }
 
 /** The version-store repo an entry reads/writes (its own id for originals; the shared repo for forks). */
@@ -89,7 +108,15 @@ export class StoreAccess {
    * is the source of truth). Used by first-run seeding (D7) and, later, #7's generation flow.
    */
   async install(spec: InstallSpec): Promise<InstalledApp> {
-    await this.store.snapshot(spec.id, { 'bundle.js': spec.bundleSource }, spec.prompt);
+    await this.store.snapshot(
+      spec.id,
+      {
+        'bundle.js': spec.bundleSource,
+        ...(spec.source != null ? { 'source.ts': spec.source } : {}),
+        ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
+      },
+      spec.prompt,
+    );
     this.repoLineage.set(spec.id, 'main');
     const entry: InstalledApp = {
       id: spec.id,
@@ -103,6 +130,27 @@ export class StoreAccess {
     return entry;
   }
 
+  /**
+   * Deliver a new version onto an already-installed entry's own lineage (design D7 — the prompt
+   * flow's "update" path): a snapshot (bundle + optional schema artifact) followed by an index
+   * record refresh. `id`/`lineageId`/`createdAt` are untouched; only `record` changes.
+   */
+  async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
+    await this.ensureLineage(entry);
+    await this.store.snapshot(
+      storeIdOf(entry),
+      {
+        'bundle.js': spec.bundleSource,
+        ...(spec.source != null ? { 'source.ts': spec.source } : {}),
+        ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
+      },
+      spec.prompt,
+    );
+    const updated: InstalledApp = { ...entry, record: spec.record };
+    this.index.put(updated);
+    return updated;
+  }
+
   /** The active snapshot's bundle source for an entry (switching to its lineage first). */
   async activeBundle(entry: InstalledApp): Promise<string> {
     await this.ensureLineage(entry);
@@ -110,6 +158,16 @@ export class StoreAccess {
     const src = active?.artifacts['bundle.js'];
     if (src == null) throw new Error(`no active bundle for "${entry.id}"`);
     return src;
+  }
+
+  /** The active snapshot's ORIGINAL TypeScript source for an entry (#52-D5 / D14) — the genuine
+   *  `source.ts` artifact, never `activeBundle`'s compiled `bundle.js`. Returns `undefined` when
+   *  this snapshot predates source tracking: absence is a legitimate legacy state, reported
+   *  honestly, never silently substituted with the bundle. */
+  async activeSource(entry: InstalledApp): Promise<string | undefined> {
+    await this.ensureLineage(entry);
+    const active = await this.store.active(storeIdOf(entry));
+    return active?.artifacts['source.ts'];
   }
 
   /** This entry's own lineage line, newest-first (D6) — an ancestry walk from its active tip. */

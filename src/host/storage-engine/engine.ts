@@ -44,6 +44,27 @@ const APPLIED_KEY = 'applied_schema';
 const RECORD_ID = 'id'; // the engine-assigned primary key; never a burned field ID (no digits)
 const RANGE_OPS = { gt: '>', gte: '>=', lt: '<', lte: '<=' } as const;
 
+/**
+ * Read a database's ACCUMULATED `_meta` union off an already-connected executor, without
+ * opening it for use (#52-D5 / storage-schema-evolution "accumulated schema is readable
+ * without applying anything"): a single passive SELECT, never a DDL statement — `open()` is
+ * the only path that ever creates `_meta`/collection tables. Falls back to `emptyApplied()`
+ * both when the row is absent (no schema ever applied) and when `_meta` itself doesn't exist
+ * yet (a freshly connected but never-`open()`-ed database) — the SELECT throws for the latter
+ * and the throw is swallowed here rather than surfaced, since "nothing applied yet" is the
+ * correct read either way. Depends on nothing but `SqlExecutor` — importable without the
+ * native-binding barrel, exactly like `burnedIdFloor`. The executor's OWN construction (and
+ * whether that already touched the filesystem) is the caller's concern, not this function's. */
+export function readAppliedSchema(executor: SqlExecutor): AppliedSchema {
+  try {
+    const res = executor.execute(`SELECT v FROM "${META_TABLE}" WHERE k = ?`, [APPLIED_KEY]);
+    if (!res.rows.length) return emptyApplied();
+    return JSON.parse(sqlText(res.rows[0].v)) as AppliedSchema;
+  } catch {
+    return emptyApplied();
+  }
+}
+
 /** Construct an engine over an already-opened executor (the binding picks the file). */
 export function createEngine(executor: SqlExecutor, opts: { kvSizeCapBytes?: number } = {}): StorageEngine {
   return new Engine(executor, opts.kvSizeCapBytes ?? DEFAULT_KV_CAP_BYTES);
@@ -203,13 +224,7 @@ class Engine implements StorageEngine {
   // ── _meta persistence ──────────────────────────────────────────────────────
 
   private loadApplied(): AppliedSchema {
-    const res = this.sql.execute(`SELECT v FROM "${META_TABLE}" WHERE k = ?`, [APPLIED_KEY]);
-    if (!res.rows.length) return emptyApplied();
-    try {
-      return JSON.parse(sqlText(res.rows[0].v)) as AppliedSchema;
-    } catch {
-      return emptyApplied();
-    }
+    return readAppliedSchema(this.sql);
   }
 
   private persistApplied(applied: AppliedSchema): void {

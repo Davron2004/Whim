@@ -6,9 +6,12 @@
  * server (esbuild), the device (Metro/Babel, #7), the eval CLI (#12) — all compile TS natively.
  *
  * Transport notes (documented here per design D4):
- *   - The generation stream rides a POST response (`fetch` + readable stream), NOT `EventSource`
- *     (GET-only); the request carries a body. RN's fetch streams responses, which is the only
- *     first-party client.
+ *   - The generation stream rides a POST response, NOT `EventSource` (GET-only); the request
+ *     carries a body. React Native's global `fetch` is the `whatwg-fetch` polyfill over
+ *     `XMLHttpRequest` and has no streaming response body (`response.body` is `undefined`), so it
+ *     cannot read this stream incrementally. The device consumes it over an XHR-backed transport
+ *     instead, which RN's `XMLHttpRequest` supports natively — see the `generation-stream-transport`
+ *     capability and decision #58.
  *   - A `GenerationEvent` stream that runs to completion carries EXACTLY ONE terminal event
  *     (`result` | `failure`), always last. That is a stream-level invariant enforced by the
  *     emitter — it is not (and cannot be) expressed in the per-event schema below. A stream
@@ -64,14 +67,28 @@ export const WireAppRecord = z.object({
 export type WireAppRecord = z.infer<typeof WireAppRecord>;
 
 /** Generation request. The edit flow re-sends the FULL current source inside `app` (never a wire
- *  diff — Model 1, #33). */
+ *  diff — Model 1, #33).
+ *
+ *  `app.source` is OPTIONAL (#52-D5 / D14): it carries the app's original TypeScript when the
+ *  device has it. Its absence means exactly "the device has no original source for this app" —
+ *  a pre-existing install whose snapshots predate source tracking — and a conforming server
+ *  regenerates under `manifest`/`appliedSchema` rather than treat compiled bundle output as
+ *  source. `manifest` and `schema` stay required within `app`.
+ *
+ *  `app.appliedSchema` is an OPTIONAL record carrying the storage group's **accumulated**
+ *  applied-schema union — the database's `_meta` monotone union (#38), not the app's own
+ *  `schema` artifact above. It is the diff baseline the harness's schema checks run against and
+ *  the source of the burned-ID allocation floor. When absent, the baseline is the empty applied
+ *  schema. `schema` and `appliedSchema` are deliberately separate optional-vs-required fields
+ *  that can legitimately differ. */
 export const GenerateRequest = z.object({
   prompt: z.string(),
   app: z
     .object({
-      source: z.string(),
+      source: z.string().optional(),
       manifest: ManifestShape,
       schema: SchemaShape,
+      appliedSchema: SchemaShape.optional(),
     })
     .optional(),
 });
@@ -106,8 +123,20 @@ export const GenerationEvent = z.discriminatedUnion('type', [
 ]);
 export type GenerationEvent = z.infer<typeof GenerationEvent>;
 
+/** The shape every non-SSE `4xx`/`5xx` JSON body a conforming server returns from a `/v1/*` route
+ *  validates against — `error` is a machine-readable identifier, `hint` is mandatory non-empty
+ *  guidance, mirroring the diagnostics discipline. No route invents an ad-hoc error shape.
+ *  `DeviceIdError` below is this shape's narrower, closed-enum specialization for the
+ *  device-identity middleware, and stays assignable to `ApiError`. */
+export const ApiError = z.object({
+  error: z.string(),
+  hint: z.string().min(1),
+});
+export type ApiError = z.infer<typeof ApiError>;
+
 /** The structured `400` body the device-identity middleware returns (shared so `/v1/usage` and any
- *  client match it). `hint` is non-empty, mirroring the diagnostics discipline. */
+ *  client match it). `hint` is non-empty, mirroring the diagnostics discipline. A closed-enum
+ *  specialization of `ApiError` above — every `DeviceIdError` value validates as `ApiError` too. */
 export const DeviceIdError = z.object({
   error: z.enum(['missing_device_id', 'invalid_device_id']),
   hint: z.string().min(1),

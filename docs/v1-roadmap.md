@@ -151,7 +151,8 @@ transport/dispatcher edits; suites green.
 
 #### 3. `sdk-design-system` — Size L · Deps: #1; after #2 (file overlap)
 
-**Status:** unproposed
+**Status:** BUILT 2026-07-02 (archived `openspec/changes/archive/2026-07-07-sdk-design-system/`;
+live spec `openspec/specs/sdk-design-system/spec.md`). Decision #45.
 **Why:** the SDK is currently "exactly what the fixtures use"; the corpus needs the real set,
 and the reference doc *is* the future system prompt.
 **In:** components per the gap list (forms incl. nested patterns for workout log; List +
@@ -233,7 +234,24 @@ verbs only, no git vocabulary).
 
 #### 7. `prompt-flow-ux` — Size M–L · Deps: contract types from #8 (mockable before it)
 
-**Status:** unproposed
+**Status:** implemented 2026-07-31 (chains 1–5 built) — desktop gates green. As-built: decision #53.
+**On-device acceptance (task 7.2) PENDING** (attended run: new-app prompt flow against a real
+LAN server, edit-at-tip, edit-behind-tip fork-continuation).
+**Contract notes (as-built):**
+
+- `src/host/launcher/device-id.ts` + `generation-client.ts` (launcher-local, not a workspace);
+  `@whim/contract` imported **type-only** — zod values would break `guard:metro`, so
+  `DeviceIdError`/`RewriteResponse`/`GenerationEvent` validate via hand-rolled structural guards
+  mirroring `contract/src/index.ts` field-for-field.
+- `Screen` gains `prompt`/`rewrite-preview`/`generating`/`failure`, each carrying optional
+  `editing: InstalledApp` (absent = new app, present = edit). Orchestration (SSE loop, abort,
+  delivery decision) lives in `LauncherRoot`, not the presentational screens.
+- Delivery is tip-gated: new app → `access.install`; edit at tip → `access.update` (new store
+  verb, also lands `schema.json` for #6's dormant diff annotation); edit behind tip → silent
+  `access.fork(editing, undefined, {shareData:true})` + `access.update` (decision #52 D2).
+- Known limitation carried to #11: `activeSource()` reads the same `bundle.js` artifact as
+  `activeBundle` (only one artifact was ever tracked), so the edit flow resends compiled bundle
+  text as `GenerateRequest.app.source`, not original TypeScript.
 **In:** prompt screen (text input + OS-dictation affordance — no in-app STT); the **two-stage
 flow**: casual prompt → server rewrite → **preview screen** where the user reviews/edits
 *intent in their own terms* (SDK internals never surface, §10.1) → approve → engineer
@@ -318,7 +336,11 @@ implementing session).
 
 #### 10. `synthetic-run-harness` — Size M · Deps: none hard (lib-first; #8 to mount it)
 
-**Status:** unproposed
+**Status:** BUILT (OpenSpec change `synthetic-run-harness`, archived 2026-07-31) — desktop gates
+green; `npm run synthrun:test` 82 checks, running inside `scripts/gate.sh` as `synthetic-run`
+since the Class-2 wiring was applied attended 2026-07-31 (which completed task 5.3). Decision
+#55; live spec `openspec/specs/synthetic-run/spec.md`. Consumed by #11's repair loop and #12's
+Tier A.
 **Why:** productionizes Spike 3 — the loop's "run + observe" stage.
 **In:** boot a candidate bundle in the **real runtime page** (reuse `build/assemble.mjs`
 artifacts + the invariants suite's headless-Chromium machinery); synthetic event stream —
@@ -332,7 +354,13 @@ diagnostics catalog.
 
 #### 11. `generation-loop` — Size L · Deps: #8, #9, #10, SDK reference from #3 (+#4)
 
-**Status:** unproposed
+**Status:** BUILT 2026-07-31 (chains 1–7, OpenSpec change `generation-loop`) — desktop gates
+green; `npm run server:test` 465 checks and `npm run server:e2e` 31, the latter running inside
+`scripts/gate-full.sh` as `generation-e2e` since the Class-2 wiring was applied attended
+2026-07-31. Decision #56. **Not yet archived:** task 7.6 (attended on-device — generate and
+install an app end to end against a real key, then kill it mid-generation and confirm the server
+observes the abort and the reconciled usage lands in `/v1/usage`) is outstanding, and it is what
+closes cancellation carryover (a) and flips #56's PENDING tag.
 **In:** the orchestrated pipeline — **rewrite stage** (small model: casual → detailed prompt,
 returned for device-side preview; approved text feeds the engineer model) → **plan** (structured
 plan: screens/state/capabilities/storage keys; validated against the request, §8.1.1) →
@@ -356,7 +384,10 @@ factor that into provider selection.
 
 #### 12. `eval-harness` — Size M · Deps: #1, #9; full value after #11
 
-**Status:** unproposed
+**Status:** BUILT 2026-07-31 (chains A–G, OpenSpec change `eval-harness`, archived) — desktop
+gates green; `npm run evals:test` 263 checks, and the suite now runs inside `scripts/gate.sh` as
+`corpus-eval`. Chain G's Class-2 bootstrap was applied attended the same day. Decision #57.
+The bakeoff itself is still open — it needs an attended holdout run (#25's model choice).
 **In:** corpus runner CLI (on-demand, not CI — cost): **Tier A** deterministic gate (= #9 + #10
 pass/fail); **Tier B** behavioral specs per corpus app, English-first then encoded; **Tier C**
 LLM-judge against an English rubric + a human-eyeball protocol; visible/holdout protocol
@@ -366,6 +397,48 @@ DeepSeek, et al.) and rewrite-model candidates, decided on corpus results → re
 open model choice.
 **Out:** CI wiring of evals; corpus growth beyond Tier 0.
 **Read first:** spec §16.3–16.4/§18, `docs/app-corpus.md`, #1's prompt seeds.
+**Contract notes (as-built):** live spec `openspec/specs/corpus-eval/spec.md`;
+operator guide `docs/evals.md`.
+
+- Eval-set resolution is strictly `--eval-set <path>` > `WHIM_EVAL_SET` > refuse — no
+  repo-embedded default, no config file naming a set, no network. No `evals/sets/holdout/`
+  exists or should ever exist; the holdout set is user-held and this repo never records or
+  infers where it lives (decision #42, design D2) — only the committed dev-visible set lives
+  under `evals/sets/visible/` (22 cases: the 11 Tier-0 corpus apps × 2 phrasings each).
+  `docs/app-corpus.md`'s Tier-0 rows carry a matching `Slug` column the suite drift-checks.
+- Report shape (`EvalRunReport`, `evals/contract.ts`): three tier results per case
+  (`TierAResult`/`TierBResult`/`TierCResult`), a case `verdict` gated on Tier A + every required
+  Tier-B assertion only — Tier C never gates. Redaction (`evals/redact.ts`) happens at
+  construction: a `holdout`-visibility case carries only `caseId` + `promptSha256` on every
+  output surface (serialized report, Markdown summary, `diff`, `compare`), structurally, not by
+  convention. Canonical serialization sorts every object's keys alphabetically at every depth
+  and excludes `timings` from the diffable body, so two structurally-equal runs diff
+  byte-identically regardless of upstream property order.
+- `evals/cli.mjs` composes every tier: `run` (sources candidates via `evals/producer.ts` —
+  `--source-dir <dir>` reads `<dir>/<caseId>.ts` fully offline, or `--generate` drives an
+  injected pipeline, classifying a stream with anything other than exactly one terminal
+  `GenerationEvent` as a **runner** error, never a candidate failure — design D12), `diff`
+  (per-case/per-tier regressions between two reports), `compare` (visible-vs-holdout divergence,
+  `overfitting_alarm` past a threshold). Reports default to the git-ignored
+  `evals/.reports/`; the CLI refuses to write into any directory already holding git-tracked
+  content. Exit codes: `run` 0 clean / 1 any case failed / 2 config error; `diff` 0 clean / 1
+  regression named / 2 unreadable report; `compare` 0 clean / 1 alarm / 2 refused (schema or
+  in-play rubric-version mismatch).
+- A real `run` (`--generate` or a real candidate under `--source-dir`) launches a `synthrun`
+  Chromium session for Tier A's runtime leg — real browser time, exactly why eval runs are
+  on-demand only, never wired into `scripts/gate.sh`. The acceptance suite
+  (`evals/test/*.test.ts`) stays Chromium-free by construction: every case it drives through the
+  real CLI subprocess fails or completes during eval-set resolution or candidate *sourcing*,
+  before Tier A would ever launch a browser.
+- **Chain G (HUMAN-BOOTSTRAP): APPLIED 2026-07-31.** All four Class-2 files landed as recorded
+  (`package.json`'s `evals`/`evals:test` scripts, `tsconfig.json`'s `evals/test` exclude,
+  `scripts/gate.sh`'s `corpus-eval` check line, `knip.json`'s `evals/**` entries); the record is
+  kept verbatim at `openspec/changes/archive/2026-07-31-eval-harness/pending-class2.md`. Chain
+  F's gate-configuration check was built tri-state so it would stay green across exactly this
+  transition, and it did. Wiring knip to `evals/` for the first time surfaced three findings —
+  two genuinely dead exports (deleted) and one structural false positive: anything consumed only
+  through `evals/cli.mjs`'s `FACADE_SOURCE` template literal is invisible to static analysis.
+  See decision #57.
 
 ### Lane D — integration
 

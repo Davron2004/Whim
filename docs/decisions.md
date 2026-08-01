@@ -651,3 +651,236 @@ JSON on-screen.
 **Not in this change:** join/leave/unlink of an existing group, DB clone, and the #11 allocation contract's actual implementation (recorded here, built when #11 lands) — all deferred.
 
 **Deferred, recorded at closure (reviewer LOW, 2026-07-28).** D2's share-vs-fresh sheet is wired to the HomeScreen Fork affordance only. History's "Make this version its own app" (`HistoryScreen.forkFromVersion` → `access.fork(app, snapshot.id)`) passes no `opts`, so it silently creates the new app with its own database — the pre-change default. The reviewer read D2's "explicit Fork asks" as the HomeScreen affordance and rated this LOW rather than a defect: the behavior is byte-identical to pre-change and conservative (a user can lose no data by not sharing, only by sharing unintentionally). Deliberately left as-is for v1; the fix, when a later change wants it, is to ask the same sheet at this call site — the `opts` parameter is already there for it.
+
+### 53. `prompt-flow-ux` built — the prompt screen, two-stage rewrite preview, staged generation UI, and the delivery/continuation decision `[BUILT — desktop gates green; on-device acceptance (task 7.2) PENDING]`
+
+**Context.** Wires #7 of the v1 roadmap: the phone-side prompt experience (new-app and edit flows) against #8's stub server and #52's storage-group model, with `LauncherRoot` as the orchestrator per the existing `onFork`/`onDelete` shape.
+
+**D1 — four new `Screen` union variants, orchestration stays in `LauncherRoot`.** `prompt` / `rewrite-preview` / `generating` / `failure` are presentational components (`PromptScreen`, `RewritePreviewScreen`, `GeneratingScreen`, `FailureScreen`); each carries an optional `editing: InstalledApp` (absent = new-app flow off the home tile, present = per-app "Prompt again"). The async SSE loop, abort wiring, and the install/update/fork decision (D5) live in `LauncherRoot`'s handlers alongside the existing async handlers — a dedicated orchestrator hook module was considered and rejected as unwarranted ceremony for four sequential steps with no branching reuse elsewhere.
+
+**D2 — `generation-client.ts`: a small injectable SSE client, no new dependency.** `getDeviceId(kv)` (read-or-generate-and-persist `whim.device:v1`, UUID-v4-shaped via `crypto.randomUUID()` feature-detected, `Math.random` fallback — anonymous metering, not a security boundary, so non-cryptographic is acceptable and avoids a new native dependency), `rewritePrompt`, and `generateApp` (parses the server's `event:`/`data:`/`id:`/blank-line SSE framing directly off the fetch `Response.body` reader — no `EventSource`, since POST+body isn't representable in it). **`@whim/contract` is imported type-only**: zod's dist uses `export * from` namespace syntax RN's babel config can't transform, so importing the zod schema *values* would break `guard:metro`; `generation-client.ts` instead validates `DeviceIdError`/`RewriteResponse`/`GenerationEvent` with local hand-rolled structural guards mirroring `contract/src/index.ts`'s shapes field-for-field — observable error-kind behavior is unchanged from a zod-backed implementation. `fetchImpl` is injectable so `launcher:test` can supply canned `Response` objects with no real HTTP server.
+
+**D3 — server address is a manually entered Settings field (`whim.server-url:v1`), not a build-time env var.** Persisted like `ThemePref` in the same `whim.launcher` KVBackend, sanitized the same way (invalid/absent falls back to `undefined`, never throws); unset shows an honest inline message rather than a network error. A `react-native-config` build-time var was rejected as disproportionate native/build-config surface for a LAN-dev-only v1 feature one person configures once.
+
+**D4 — rewrite preview is one plain-English editable string, no intent/SDK-detail split.** The later control-modes distinction (§10.1, post-v1) is out of scope; the preview screen is a single `TextInput` seeded with the server's rewritten text, original shown small/muted above for context, and the (possibly user-edited) text is what `GenerateRequest.prompt` carries on approve.
+
+**D5 — delivery: tip detection decides install vs. update vs. silent fork-continuation.** On a terminal `result`: new app → `access.install`, navigate to the fresh entry. Edit at tip (`isAtTip`, D6, true) → `access.update` on the same lineage. Edit behind tip (the user restored an old version via History, then re-prompted) → `access.fork(editing, undefined, {shareData:true})` (no share/fresh question — decision #52 D2, rewind continuations share by default) then `access.update` on the fork, landing a new tile on Home sharing the original's data. `GenerateRequest.app` for edit cases is built from `editing`'s current active snapshot via the new `activeSource` read (D7).
+
+**D6 — `isAtTip` lives in `history-logic.ts`, reusing #6's F1-safe listing split.** `isAtTip(access, app)` compares `listVersions(access, app)[0]?.id` against `access.activeId(app)` — the same fork-vs-original branching (`history()` for forks, `timeline()` for originals) #6 already ships and tests, rather than a second, differently-buggy tip check. "At tip" = "matches what the History screen's own top row already shows as current."
+
+**D7 — `StoreAccess` gains `update()` and `activeSource()`; `install`/`update` both write `schema.json`.** `update(entry, {record, bundleSource, schemaJson?, prompt})` snapshots `bundle.js` (+ `schema.json` when supplied) onto the entry's existing lineage and updates the index record in place; `InstallSpec` gained the matching optional `schemaJson?`. This makes #6's dormant `history-logic.ts` schema-diff annotation non-vacuous for the first time — no #6 behavior change, only its input stops being permanently absent. **Recorded limitation:** `activeSource()` reads the same `bundle.js` artifact `activeBundle` does — the store only ever tracked one artifact, so v1's edit flow re-sends the *compiled bundle text* as `GenerateRequest.app.source`, not original TypeScript. Honest given the wire type only requires a string and the stub pipeline doesn't interpret it; #11 (whose `Pipeline` will actually read `app.source`) must either track a `source.ts` artifact by then or accept this.
+
+**Verification:** `npm run launcher:test` green (the four screens, `generation-client`'s SSE parser and error-kind matrix against canned `Response` objects, `isAtTip`, `update`/`activeSource`, the install/update/fork delivery matrix, product-verbs guard over the new copy). No storage-engine, CSP, sandbox, or bridge changes. On-device acceptance (task 7.2 — prompt a new app end to end against a real LAN server, edit an existing app at tip, edit behind tip and confirm a new shared-data tile appears) is attended/human-run and updates this entry's status tag once recorded.
+
+**Not in this change:** control-modes selector (§10.1, post-v1), examples-library UI (§9, post-v1), voice/in-app STT (OS dictation only), source-artifact tracking for `activeSource` (deferred to #11, per D7).
+
+### 54. `snapshot-lineage-identity` built — per-snapshot lineage stamping makes `timeline`/`rollback` lineage-correct `[BUILT — desktop gates green; on-device acceptance (task 5.2) PENDING; corrects #48's F1 note]`
+
+**Corrects #48.** F1 recorded the pure-DAG-ancestry over-inclusion (non-diverged fork, rolled-back original) as "deferred to `linked-apps-data-model`." That was wrong: `linked-apps-data-model` (#52) built storage-group sharing — whether a fork's SQLite database is its own or shared with its founder — which is orthogonal to F1's `timeline`/`isSameLine` lineage-correctness gap. F1 is fixed by this change instead; the launcher's interim `history()`-for-forks guard (#48 D2) is retired.
+
+**D1 — lineage stamp = a commit-message trailer written at `snapshot()`.** `snapshot()` reads the creating lineage via `git.currentBranch({fullname:false}) || 'main'` (already used by `rollback`) and appends a sentinel-delimited trailer (ASCII Record Separator `\x1e`, not typable — a user prompt whose prose happens to look trailer-shaped round-trips byte-identically) to the commit message. Chosen over a per-lineage snap-tag namespace (would change the user-visible global `gN` id sequence) or a per-lineage reflog of ref movement (new drift-prone persistent state). Every read site that builds `Snapshot.prompt` (`history`, `timeline`, `snapshotContent`) strips the trailer before returning it — the lineage id never appears in any returned value, prompt text, or error message.
+
+**D2 — lineage-correct predicate: ancestors always kept, descendants gated by their own stamp.** `timeline()` keeps a DAG-same-line candidate iff it is an ancestor of (or equal to) the active tip, OR it is a descendant whose stamped creating lineage equals `git.currentBranch() || 'main'`. `rollback()` gates identically. An ancestor's own creation-time lineage is irrelevant — shared history predates any split. A descendant (roll-forward candidate) is only valid if it was actually created as a continuation of the active lineage; a sibling fork's commit, or the original's commit made after this lineage forked away, is excluded/refused even though it is DAG-reachable. Fixes both #48 F1 cases: a non-diverged fork no longer shows the original's later snapshots, and a rolled-back original no longer shows the fork's snapshots.
+
+**D3 — legacy fallback, no migration.** An un-stamped commit (any pre-existing repo or seed fixture) is treated as lineage `'main'` — every seed path installs on `main`. Pure runtime fallback; no backfill pass rewrites old commits.
+
+**D4 — the launcher's interim fork guard is retired.** `history-logic.ts`'s `app.storeId != null ? history() : timeline()` branch existed only to hedge against F1's over-inclusion for fork entries; with `timeline()` itself lineage-correct, it now calls `access.timeline(app)` unconditionally for every entry (fork or original), giving forks full roll-forward with no cross-lineage leakage.
+
+**Verification:** `npm run vstore:test` green (new `§lineage-stamp:*`/`§lineage-correctness:*` cases: trailer recorded at `snapshot()`, byte-identical round-trip for a trailer-shaped prompt, the two F1 exclusion cases, off-lineage `rollback()` refusal, legacy fallback — 112 checks passed, up from 98). `npm run launcher:test` green (guard removal, unconditional `timeline()` call). On-device acceptance (task 5.2) is attended/human-run and updates this entry's status tag once recorded.
+
+**Not in this change:** performance benchmarking at 1000+ generations (bounded by `historyLimit`, expected to stay within #39's interactive budget at expected depths, not separately measured).
+
+### 55. `synthetic-run-harness` built — server-side "run + observe" harness productionizes the invariants boot recipe into one candidate-in/report-out library `[BUILT — desktop gates green; no on-device component (Node/Chromium dev-tooling, not an app-facing change)]`
+
+Roadmap #10 / decision #42. Lands as `synthrun/`, a plain top-level directory (the `checks/` precedent — dependency-light, no workspace entry, `guard:metro`'s byte-size surface untouched). One call, `RunCandidate = (source, opts?) => Promise<RunReport>` (`synthrun/contract.ts`), composes: a candidate builder mirroring `build/build.mjs`'s esbuild contract byte-for-byte (pinned drift tripwire); the unmodified production runtime page (`build/assemble.mjs`, `runtime-artifacts.json`); trusted-vantage observation; the real capability gate/dispatcher/registry over an ephemeral per-run `:memory:` engine; and a bounded interaction sweep with nav-aware screen coverage plus cold-mount for unreached screens. `invariants/` and `build/*` stay strictly read-only.
+
+**Harness placement.** A plain top-level directory, not a new npm workspace (D5, `handoff/harness-core.md`) — importable by `server/` later (#11) without adding a `guard:metro` proof obligation. Runtime-observed diagnostic kinds (`runtime_throw`, `unhandled_rejection`, `mount_timeout`, `run_truncated`, `containment_failure`, `unreachable_screen`, plus the launch-failure kinds `missing_schema`/`launch_failed` a live `launchApp` refusal needs — task 5.1 widened the spec's explicit six by two, both already members of the runtime/engine kind-string space, never minted ad hoc) are added additively to `checks/contract.ts`'s closed `DIAGNOSTIC_KINDS` — the one central vocabulary, never a second one.
+
+**Gate-never-faked.** Every failure-grade signal is trusted-vantage: the nonce-authenticated `delivery`/`paint`/`error`/`probes` frames plus CDP-level `Runtime.exceptionThrown`, never the candidate's own self-reports (a hostile bundle can forge a `postMessage`, F4 — it is rejected, never adopted). The capability gate, dispatcher, and registry are the exact production modules from `src/host/bridge`, unmodified; denials are collected host-side at the dispatch function so a candidate `.catch`ing and swallowing a rejected promise cannot hide a denial from the report. `cues.*`/`diag.*` validate through the real gate and then record instead of acting (no hardware server-side) — nothing above the authorization boundary is stubbed.
+
+**Watchdog policy.** Three independent layers, each an explicit named outcome, never a silent catch: a mount budget (no paint in time ⇒ `mount_timeout`), a per-action quiet-window settle with a hard cap (a heuristic only — a legal `interval` never produces a diagnostic), and a total wall-clock budget (hard page kill ⇒ `run_truncated`). The runtime page itself stays watchdog-free — the product surface is never changed to ease testing.
+
+**Measure-don't-budget.** Every report carries per-stage timings (build, boot, mount→paint, sweep, per-screen); v1 enforces no numeric latency budget beyond the watchdog itself — #11's repair loop is expected to set empirical budgets from the timing data this harness now produces, not from a guess baked in here.
+
+**Verification:** `node synthrun/test/run.mjs` green — 75 checks: the build-contract drift tripwire (+ its red-check), trusted-vantage collectors/watchdog against hostile fixtures (throw-on-mount with a source-mapped line, never-settling mount, a legal forever-`interval`, a forged verdict, total-budget overrun — each with a non-vacuity red-check), capability wiring (swallowed denial still recorded, cross-candidate isolation, launch-failure-as-diagnostic, a granted capability's own red-check), the interaction sweep (state-minted elements swept once, unreachable-screen cold-mount, cross-run determinism), and the assembled `RunCandidate`'s own end-to-end acceptance: a clean multi-screen fixture (`sdk-navigation`'s `navigation-demo.app.tsx`) and a six-way-hostile fixture yielding exactly its expected diagnostic set, plus a non-vacuity red-check. `npm run checks:test` still green (`DIAGNOSTIC_KINDS`'s closed-vocabulary self-test updated for the eight additive runtime-observed kinds). Script wiring (`npm run` entry) is Class-2 `package.json` — flagged for human application, meanwhile runnable directly as `node synthrun/test/run.mjs`. **Applied attended 2026-07-31** (`synthrun:test` in `package.json`), which is what completed task 5.3; the suite stands at 82 checks. **Deviation from the record, deliberate:** the record said to add the `check` line to `scripts/gate.sh`, but `synthrun` launches headless Chromium (`chromium.launch()`, `synthrun/session.ts`) and `gate.sh`'s own contract is "NO Metro, NO headless Chromium — those live in gate-full.sh". The check went into `scripts/gate-full.sh` instead, beside `invariants`/`bridge-invariants`/`generation-e2e` — matching how #56's own browser-backed suite was wired, and keeping the `mount_timeout` race above off the inner loop.
+
+**Recorded limitation:** chain 2's `mount_timeout` hostile fixture (a synchronous top-level hang long enough to itself block the outer page's `load` event) races `EarlyObservers.finish()`'s async relay setup against the candidate's own double-rAF paint message — a race independent of `mountBudgetMs`, so no budget widening fully eliminates it; a stability widening (500ms→800ms) was applied and reduces but does not guarantee-eliminate the flake. A structural fix (moving relay setup earlier, into the CDP-only phase) is out of scope for the chain that found it and is left for a future pass. **Sharpened 2026-07-31 (closure):** the race framing understates it. `FIXTURE_MOUNT_HANG`'s hang is *bounded* at `HANG_MS = 1200` (deliberately, so a failed assertion cannot wedge the suite), and `page.goto` does not resolve until the hang is over — so the observation window opens at hang-end and the candidate posts its double-rAF `paint` roughly two frames later, comfortably *inside* the 800ms budget. The assertion "no paint frame had arrived when the budget fired" is therefore true only when the relay override is installed too late to receive that paint: **the test passes because a message is lost, not because no paint occurs.** Widening the budget cannot help (the window always opens at hang-end, no matter how large `HANG_MS` is) — which is why the 500→800ms widening did not eliminate it. A real fix has to open the trusted-vantage relay *before* navigation (e.g. `waitUntil: 'commit'` plus early relay install) so an unbounded, genuinely never-painting fixture becomes usable. Until then the suite runs in `gate-full.sh`, not `gate.sh` (below), so the flake gates once per change rather than once per attempt.
+
+**Not in this change:** behavioral ("does the counter actually count") assertions — eval Tier B, #12; device execution or any pipeline/server wiring — #11; a `data-*` enumeration marker, should CDP-role enumeration ever prove ambiguous for some SDK component (flagged to a human, not smuggled in here).
+
+### 56. `generation-loop` built — the real, bounded generation pipeline replaces the stub behind the unchanged `Pipeline` seam `[BUILT — desktop gates green; on-device acceptance (task 7.6) PENDING]`
+
+Roadmap #11. Wires everything #7 (`prompt-flow-ux`), #8 (`generation-contract`/`generation-server` skeleton),
+#10 (`synthetic-run-harness`), and `static-checks` already built into one composition: `server/src/
+generation/` — `model.ts` (the OpenRouter-backed `ModelClient` seam + env-sourced `ModelRoster`), `prompts/`
+(disk-backed SDK reference + curated few-shot inputs, four message builders), `plan.ts` (the internal,
+mechanically-validated `Plan`), `machine.ts` (the bounded state machine over injected `CheckStage`/
+`BuildStage`/`RunStage`/`Clock`), `stages/{check,build,run}.ts` (the concrete stages), `record.ts` (one-
+extraction `WireAppRecord` assembly), `reconcile.ts` (post-abort usage reconciliation), and `index.ts`
+(chain 7's composition root).
+
+**D1/D2 — the pipeline is a new subtree behind the unchanged `Pipeline` interface; only the composition
+root imports concrete implementations.** `server/src/pipeline.ts` is untouched — its `Pipeline` interface
+and `createStubPipeline` stay verbatim, keeping the LAN UI lane alive behind `WHIM_PIPELINE=stub`. `machine.
+ts` depends on nothing concrete; `server/src/generation/index.ts` is the one file wiring the real
+`OpenRouterClient`, `runStaticChecks`, `buildCandidateSource`, and one process-lifetime `SynthRunSession`.
+
+**D3/D4 — one LLM seam, one bounded state machine.** `ModelClient`/`ModelRoster` are the only way the
+pipeline reaches a model, read from the environment (`WHIM_REWRITE_MODEL`/`WHIM_ENGINEER_MODEL`/
+`OPENROUTER_API_KEY`) with typed, actionable errors (`ModelRosterEnvError`, `MissingApiKeyError`) naming
+every missing variable — never a hard-coded id. `PLAN → GENERATE → CHECK/RUN ⇄ REPAIR → DELIVER/FAILED` is
+structural: `planAttempts=2`, `repairAttempts=3` (at most 4 candidates), both constructor parameters.
+
+**D5 — rewrite stays unary, real-model-backed, honest on failure.** No `rewrite` stage joins the closed
+`GenerationEvent` union. `/v1/rewrite` now calls the configured rewrite model for real, meters through the
+same `UsageStore`, and returns `502`+`ApiError` on a model failure — it NEVER falls back to echoing the
+input prompt as a rewrite (chain 7 red-checked this with an observed edit-run-revert cycle).
+
+**D6 — warnings-delivery divergence, recorded.** A literal reading of harness-diagnostics' "severity SHALL
+NOT gate shipping" would let a residual warning fail a run; the resolution instead repairs warnings for at
+most one attempt, then delivers a green, warnings-only candidate with the residual `diagnostic` events
+already streamed — nothing is suppressed, nothing silently dropped.
+
+**D7/D8 — containment failure is terminal; cancellation is threaded, not raced.** A negative containment
+verdict short-circuits immediately, feeding nothing back to the model. The pipeline factory launches one
+`SynthRunSession` per process; `synthrun`'s `RunOptions.signal` threads into the SAME cleanup path the
+total-budget watchdog uses, so an abort during a run disposes the page/context/slot exactly like a budget
+overrun, never leaking one.
+
+**D9 — usage: the route stays the crediting authority; reconciliation closes cancellation carryover (b).**
+`Pipeline.run`'s real implementation accepts an optional third `trace: RunTrace` out-parameter (widened
+locally in `routes/generate.ts` rather than editing `pipeline.ts`, keeping D1's "untouched" literal); the
+pipeline appends each model call's provider generation id as it resolves. The normal path is unchanged
+(`interceptUsage` stays the sole crediting authority). On abort — gated on whether `interceptUsage` has
+already taken (or started taking) ownership of crediting this run, a flag it sets *before* awaiting
+`usageStore.credit` so an abort mid-await is covered too — the route reconciles each recorded id against
+OpenRouter's generation-stats endpoint (`openRouterGenerationStatsTransport`) through `reconcile.ts`'s
+bounded retry, and credits the result exactly once. **Correction (2026-07-31):** the guard as originally
+shipped was "no terminal event was ever streamed," not credit ownership — since `emitCompletion` always
+yields `usage` before the terminal, a client disconnecting in that gap (after a normal run's usage was
+already credited, before its terminal was observed) hit `reachedTerminal === false` and was double-credited
+by reconciliation. Fixed in `routes/generate.ts` by gating on credit ownership directly; see
+`fix/double-credit-race`. This supersedes generation-server's prior guarantee ("a stream cancelled
+before its `usage` event credits nothing") with "a stream cancelled before any model call credits nothing,
+plus reconciliation, with the normal path's crediting never re-run" — cancellation carryover (b), closed.
+
+**D10-D14 — one source of truth per input; the two roadmap carryovers from #52/#53 closed.** Prompt inputs
+(SDK reference, few-shot fixtures) are read from disk once at composition-root time, never transcribed. The
+plan is internal, mechanically validated, and never crosses the wire. `WireAppRecord` has exactly one
+extraction (manifest/schema from the checker, bundle/source-map from the build, source passed through
+verbatim) — the model's own claims embedded in comments are never consulted. #52 D5 (the applied-schema
+allocation floor) and #53 D7 (edit flow re-sending compiled bundle text as "current source") are both closed
+end to end by the chains preceding this one; chain 7 wires `preflightSource` (chain 5's exported-but-unwired
+honest-edit predicate) into the composition root so a supplied `app.source` that fails the parse-and-
+`defineApp` check is treated as absent, never as "current code."
+
+**D15 — two test lanes.** `npm run server:test` stays Node-only, no browser — 458 checks passed (contract,
+server-core, metering, OpenRouter wrapper, prompts, machine, stages), 0 failed. A second, browser-backed
+suite (`server/test/e2e.ts`, 31 checks, chain 6) runs the pipeline against the real checker/build/run stages
+with a scripted model; it needs Chromium and its `package.json`/`gate-full.sh` wiring is Class-2, recorded in
+`pending-class2.md` for human application — run directly meanwhile via `node server/test/e2e.run.mjs`.
+**Applied attended 2026-07-31** (`server:e2e` in `package.json`, `check "generation-e2e"` in
+`scripts/gate-full.sh`, after `bridge-invariants`); it passes inside the full gate, 31 checks.
+
+**Verification:** `npm run server:test` green (458 checks, up from 152 — the machine/stage/prompt suites
+registered for the first time, task 7.5). `./scripts/gate.sh` green. On-device acceptance (task 7.6 — a real
+device against a real key generating an app end to end, then killed mid-generation to confirm the server
+observes the abort and `/v1/usage` reflects the reconciled count, closing roadmap cancellation carryover
+(a)) is attended/human-run and updates this entry's status tag once performed.
+
+**Not in this change:** the model bakeoff / eval scoring (#12, `eval-harness`, which consumes this
+pipeline); prompt caching, a direct non-router provider API, deployment, or TLS; any change to the sandbox,
+CSP, bridge, or runtime.
+
+### 57. `eval-harness` built — an on-demand, holdout-safe corpus eval runner makes generation quality measurable `[BUILT — desktop gates green; no on-device component (Node/Chromium dev-tooling, not an app-facing change); a holdout run is attended and user-supplied by construction]`
+
+Roadmap #12 / decision #42. Lands as `evals/`, a plain top-level directory (D1 — the `checks/`/`synthrun/`
+precedent: no npm workspace, so `guard:metro`'s byte-size surface and `server/`'s closed dependency budget
+are untouched). Answers the question #25 leaves open and #42 makes a bakeoff: *did this prompt/SDK/model
+change make generation better or worse?* Three tiers over a supplied eval set, one report file per run,
+`diff` and `compare` over report files.
+
+**The holdout is a runtime input, never a repo artifact (D2).** The eval set resolves from `--eval-set
+<path>` or `WHIM_EVAL_SET`, flag winning; there is no embedded default and no network fetch, and with no
+location supplied the runner refuses and exits nonzero. This is the structural answer to spec.md §16.4's
+reward-hacking trap: an implementing agent can overfit only to prompts it can read, so the set that decides
+the bakeoff is one no agent in this repo has ever seen. The user holds it and supplies it attended.
+
+**Redaction is keyed off the set's declared `visibility`, at one choke point (D3).** Under `holdout`,
+closed-vocabulary and numeric fields survive (`kind`, `severity`, `status`, `score`, `rubricVersion`, prompt
+SHA-256 digests) and every free-text field is **dropped, not hashed** — so a holdout report is safe to keep,
+diff, and share beside a visible one. **Correction (2026-07-31):** the single-choke-point property was
+claimed before it was true. `buildCaseResult` redacted only the `case` sub-object; `tierA`/`tierB`/`tierC`
+passed through verbatim, and `Diagnostic.symbol` is documented as "the offending identifier/specifier/field
+name" — literal candidate source, from an LLM generated against the secret prompt, on the tier that always
+runs. Three rounds each closed a *different channel of the same property*: tier free text in
+`serializeReport`; `diff.ts`'s regression objects and `renderDiff`'s rendered line; and the CLI's own
+`console.error` sourcing/generation messages, which the spec's redaction sentence names explicitly. The
+claim is now actually true because all three were fixed at the same constructor, not beside it.
+
+**Gating semantics (D4).** Tier A (deterministic: `runStaticChecks` from #9 plus `synthrun`'s trusted-vantage
+boot/containment verdict from #10, normalized behind one adapter into a `RunObservation`, D6) is the only
+tier that short-circuits — its failure records B and C as `skipped: tier_a_failed`. Tier B gates the verdict.
+**Tier C never gates**: an LLM judge scores, it does not decide, so a judge outage or a rubric disagreement
+can never turn a green corpus red.
+
+**Assertions are inert data, never code (D5).** An eval set is an untrusted user-supplied directory, so Tier
+B specs are declarative assertions over the closed `ASSERTION_KINDS` vocabulary carried beside an English
+statement — the runner never executes anything the set contains. The rubric (D8) is a committed English
+document with a version and a checked-in content hash of its scored section, so editing the criteria without
+bumping the version is red-checkable rather than silent.
+
+**Verification:** `node evals/test/run.mjs` green — 263 checks (254 at merge; +9 at closure, below). The
+Class-2 wiring recorded in `pending-class2.md` (D13 — recorded by the change, never applied by a chain) was
+applied attended on 2026-07-31: `evals:test`/`evals` in `package.json`, `evals/test` in `tsconfig.json`'s
+`exclude`, `check "corpus-eval"` in `scripts/gate.sh`, and `evals/` in `knip.json`'s `"."` workspace. Chain
+F's gate-configuration check was built tri-state precisely so it would stay green across that transition,
+and it did.
+
+**What wiring knip revealed.** Until the Class-2 edits landed, knip had never looked at `evals/` — a silent
+gap, not a false negative. Pointing it there surfaced three findings, all actioned at closure: the
+`evals/judge/index.ts` barrel was dead (kept on a prediction that Tier C wiring would give it a consumer;
+that prediction was already falsified — `tiers/tier-c.ts` imports `../judge/judge` directly) and was
+deleted; `RUBRIC_CRITERION_IDS` shipped without ever gaining a caller and was deleted; and
+`redactSourcingError` was a **false positive** — it is imported and called by `evals/cli.mjs`, but only from
+inside the `FACADE_SOURCE` template literal, which no static analyzer can follow. That last one is a
+standing property of D12's design, recorded here so nobody "cleans it up": **any export consumed only
+through the facade string reads as dead to knip.** It was resolved with a direct unit test rather than a
+suppression, which also closed a real gap — the subprocess cases only ever drove the `kind`-present branch,
+so the `kind`-absent branch (a harness-internal defect, whose message carries no candidate text and must
+survive even under `holdout`) had no coverage at all.
+
+**Not in this change:** the bakeoff itself (a decision, not code — #25's model choice stays open until a
+holdout run decides it); any change to the generation pipeline (#11), the sandbox, CSP, bridge, or runtime;
+and the holdout eval set, which is deliberately never created, referenced by path, or described in this
+repo.
+
+### 58. `fix-generate-stream-transport` corrects a false premise: RN's `fetch` cannot stream, so `/v1/generate` moves to an XHR-backed transport `[FIXED — corrects generation-client.ts:139-145 and contract/src/index.ts:8-11, both of which asserted RN's fetch streams responses]`
+
+**The premise was false, twice recorded as fact.** RN 0.85.3's global `fetch` is `whatwg-fetch` over
+`XMLHttpRequest` (`react-native/Libraries/Network/fetch.js` just `require`s it); that polyfill has no
+`ReadableStream` implementation, so `response.body` is `undefined` and every on-device generation hit
+`generation-client.ts:290`'s guard and failed silently behind the caught-and-rendered error path. `fetch`
+also resolves only in `xhr.onload` — no `onprogress` handler is registered — so the promise settles at
+readyState 4 with the whole body already buffered; there is no partial-response state to recover after the
+fact. RN's own `XMLHttpRequest` does stream (`XMLHttpRequest.js:370`'s `__didReceiveIncrementalData`, auto-
+enabled once `onreadystatechange`/`onprogress` is set), so `POST /v1/generate` now runs over an XHR-backed
+transport that satisfies the existing `ResponseBodyReader` seam, leaving `generateApp`'s SSE framing and
+event validation untouched. `POST /v1/rewrite` is unary JSON and is unaffected.
+
+**Why the transport is chosen up front, never after inspecting a response.** Because `whatwg-fetch` only
+settles once the server has already run the full pipeline and closed the stream, a post-hoc fallback
+(`await fetch(...)`, retry over XHR if `response.body` is missing) would issue a **second**
+`POST /v1/generate` on every generation that needs the fallback — doubling LLM spend and latency, and
+double-counting against `usage-store`. Shimming a `body` onto the fetch response was rejected for a
+different reason: the bytes exist only once the response is complete, so events would arrive in one final
+burst rather than incrementally, defeating `GeneratingScreen`'s purpose. A `Platform.OS === 'android'`
+branch was rejected as the wrong predicate (streaming capability, not OS) and as a pattern the repo does not
+otherwise use — no `Platform.OS` branch or `.native.ts`/`.android.ts` file exists anywhere in `src/host`.
+Adding a streams polyfill (`web-streams-polyfill`) was rejected too: it supplies a `ReadableStream` type but
+cannot make `whatwg-fetch` itself produce a streaming body, so it does not address the cause. The transport
+is instead selected by a module-level capability probe before any request is issued, guaranteeing exactly
+one `POST /v1/generate` per generation attempt regardless of runtime.
+
+**Not in this change:** anything about `generation-contract`'s schemas, which are transport-agnostic; the
+generation pipeline itself (#56); the sandbox, CSP, bridge, or runtime.

@@ -21,7 +21,7 @@ This project exists to demonstrate harness engineering — the unglamorous machi
 2. **Govern what that code can touch.** Storage and physical feedback (haptics, sound) aren't ambient capabilities — they're syscalls over an append-only registry with a fixed-order gate, reachable only from a channel a mini-app can't forge.
 3. **Design an SDK for a model, not a human.** A small, fully-documented component surface that fits in a system prompt, accepts semantic tokens instead of raw values, and makes hallucinated imports structurally impossible. Because apps only ever speak tokens, one user-chosen theme re-skins every app ever generated — retroactively.
 4. **Version control nobody can see.** Every generation is snapshotted with full history, rollback, pinning, and forking — backed by real git, on-device, with zero git vocabulary reaching the user (a build guard fails if a hash or ref leaks into the API surface).
-5. **A self-healing generation loop** *(in progress)*: the wire contract, SSE streaming, and a stub Hono server are live; plan → generate → **static-check** → run → observe → repair still needs the static-check stage (proposed, not built) and a real model behind the harness — the quality of the structured diagnostics fed back, not the model, is what's meant to make this good.
+5. **A self-healing generation loop** *(in progress)*: the wire contract, SSE streaming, the static-check pipeline (pure AST checks over a closed diagnostic vocabulary), and a server-side **synthetic-run harness** (headless Chromium boots each candidate in the *unmodified* production sandbox page, sweeps its interactive surface, and emits one deterministic run report from trusted vantage only) are all live. The pipeline itself — plan → generate → check → run → repair as a bounded state machine behind an injectable model client — is mid-build; the quality of the structured diagnostics fed back, not the model, is what's meant to make this good.
 
 ## Architecture
 
@@ -116,7 +116,7 @@ Everything below was measured on the real target — Android System WebView / He
 The process is as much the portfolio piece as the code:
 
 - **Spike-driven de-risking.** Every risky unknown (can a WebView contain a hostile bundle? does isomorphic-git run under Hermes? what's the bundle delivery channel?) got a throwaway spike with explicit hypotheses and an on-device verdict. Spike scaffolds are deleted; findings outlive them in [`docs/`](docs/).
-- **A numbered decision log.** [`docs/decisions.md`](docs/decisions.md) records 43+ decisions *with their rejected alternatives* — including the reversals, kept on the record.
+- **A numbered decision log.** [`docs/decisions.md`](docs/decisions.md) records every decision *with its rejected alternatives* — including the reversals, kept on the record.
 - **Adversarial verification.** The bundle contract was pen-tested (T1–T8 + F4) before being productionized; the attacks that landed became carry-forward constraints, and the constraints became CI.
 - **Spec-driven changes.** Work flows through [OpenSpec](openspec/) proposals → design → tasks → archive, with capability specs as the source of truth.
 - **A raw devlog.** [`DEVLOG.md`](DEVLOG.md) captures the dead ends and "I was wrong about X" lessons before they evaporate.
@@ -133,9 +133,13 @@ The process is as much the portfolio piece as the code:
 | ✅ | **Effects & cues (v0.3)** — web-resident timers + native haptic/sound feedback, accepted on-device |
 | ✅ | **Launcher shell** — home grid, full-screen launch, system-back exit, fork/delete, first-run seeding |
 | ✅ | **SDK design system** — themeable token contract (6 presets, accent/shape knobs, dark mode), ~35-export component kit, theme delivered into the sandbox as inert data; verified on-emulator (release build) |
-| 🔜 | **Generation harness** — skeleton live (Hono server, SSE wire contract, durable token metering); the real plan→generate→**check**→run→repair loop and a model behind it aren't wired yet |
-| 🔜 | **Static check pipeline** — proposed, not yet built; closes the one open pen-test finding (token-scan checks miss prototype-pollution) |
-| ⏳ | Voice input, iOS |
+| ✅ | **Static check pipeline** — pure AST checks (parse, import allowlist, forbidden globals, schema rules) over a closed diagnostic vocabulary; closes the prototype-pollution pen-test finding |
+| ✅ | **Version history UX** — per-app History screen: restore-before-prompt, roll-forward, named pins, fork-from-point; snapshot lineage identity fixed for shared-repo forks |
+| ✅ | **Prompt flow UX** — two-stage prompt → rewrite preview → SSE progress in the launcher, device-identity metering, tip-routed delivery (install / update / silent fork) |
+| ✅ | **Synthetic-run harness** — server-side Chromium run-and-observe: candidate boots in the unmodified production sandbox page, interaction sweep + screen coverage, trusted-vantage diagnostics, one deterministic run report |
+| 🔶 | **Eval harness** — corpus runner: Tier-A deterministic gate + Tier-B inert-data assertions + Tier-C LLM judge (never gates); loader refuses without a user-supplied eval set — the holdout set never enters the repo |
+| 🔶 | **Generation loop** — wire shapes, injectable ModelClient + prompt assembly, and the device seam are merged; the bounded plan→generate→check→run→repair state machine is mid-build |
+| ⏳ | End-to-end v1 acceptance (fresh AVD + real device over LAN), voice input, iOS |
 
 ```mermaid
 flowchart LR
@@ -153,6 +157,9 @@ server/       @whim/server — Hono harness server skeleton (SSE generation, tok
 src/runtime/  the WebView sandbox runtime (neutralize · resolver · probes · loader · syscall)
 src/sdk/      vc-sdk — the private SDK mini-apps are written against
 src/host/     RN shell — launcher, capability bridge, storage engine, version store
+checks/       static check pipeline — pure AST checks + the central diagnostic vocabulary
+synthrun/     synthetic-run harness — headless-Chromium run-and-observe for generated candidates
+evals/        corpus eval runner — three-tier gating, offline judges, user-held holdout sets
 invariants/   never-regress containment suites (blocking CI gate)
 fixtures/     sample mini-apps (incl. the Style Gallery showcase) + adversarial bundles that attack the sandbox
 docs/         spec · numbered decision log · spike findings · build-harness design · prompt-ready SDK reference

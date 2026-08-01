@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // A phone-home-style grid of installed apps (derived monogram + deterministic color, example
 // badge, fork provenance) + a "make your first app" CTA tile. Tap a tile to launch full-screen;
-// long-press for the action sheet (Open / Fork / Delete-with-confirmation). Every visible string
+// long-press for the action sheet (Open / Fork / History / Prompt again / Delete-with-
+// confirmation — prompt-flow-ux). Every visible string
 // comes from `copy.ts` and passes the product-verbs guard (#5 spec). A long-press on the title
 // opens the __DEV__ probe surface (D6). Every color comes from `shellPalette(theme)` (design
 // sdk-design-system D4/D7) — the per-app tile identity colors (`tiles.ts` TILE_COLORS) are the
@@ -42,6 +43,10 @@ export interface HomeScreenProps {
   onDelete: (app: InstalledApp) => void;
   /** Opens the app's full-screen history surface (version-history-ux). */
   onHistory: (app: InstalledApp) => void;
+  /** Opens the prompt flow scoped to re-prompting this app (design D1, `app-launcher` spec's
+   *  "create affordance and per-app re-prompt action" requirement). */
+  onPromptAgain: (app: InstalledApp) => void;
+  /** Opens the prompt flow's new-app entry point (same spec requirement). */
   onCreate: () => void;
   /** Opens the theme picker (design sdk-design-system D7). */
   onSettings: () => void;
@@ -49,7 +54,7 @@ export interface HomeScreenProps {
   onOpenDevProbe?: () => void;
 }
 
-export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
+export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, onPromptAgain, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
@@ -61,11 +66,6 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
       { text: COPY.cancel, style: 'cancel' },
       { text: COPY.deleteConfirm, style: 'destructive', onPress: () => onDelete(app) },
     ]);
-  };
-
-  const showCreate = () => {
-    onCreate();
-    Alert.alert(COPY.createTitle, COPY.createBody, [{ text: COPY.createDismiss }]);
   };
 
   return (
@@ -116,12 +116,12 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
           </View>
         ))}
 
-        {/* "make your first app" CTA tile (destination is #7's prompt screen). */}
+        {/* "make your first app" CTA tile — opens the prompt flow's new-app entry point. */}
         <View style={styles.cell}>
           <TouchableOpacity
             activeOpacity={0.85}
             style={[styles.tile, styles.createTile, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-            onPress={showCreate}
+            onPress={onCreate}
           >
             <Text style={[styles.createPlus, { color: p.accent }]}>＋</Text>
           </TouchableOpacity>
@@ -137,6 +137,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
             <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
             <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
+            <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
             <SheetRow label={COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} onPress={() => confirmDelete(selected!)} />
             <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
           </Pressable>

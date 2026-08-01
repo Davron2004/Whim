@@ -22,6 +22,11 @@ import { runHistoryLogicTests } from './history-logic.suite';
 import { runForkQuestionUiTests } from './fork-question-ui.suite';
 import { runSharedStorageTests } from './shared-storage.suite';
 import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
+import { runPromptFlowScreensTests } from './prompt-flow-screens.suite';
+import { runGenerationClientTests } from './generation-client.suite';
+import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
+import { runGenerationRequestTests } from './generation-request.suite';
+import { runXhrTransportTests } from './xhr-transport.suite';
 
 const h = new Harness();
 
@@ -41,6 +46,11 @@ await runHistoryLogicTests(h);
 await runForkQuestionUiTests(h);
 await runSharedStorageTests(h);
 await runLaunchFailureUiTests(h);
+await runPromptFlowScreensTests(h);
+await runGenerationClientTests(h);
+await runPromptFlowWiringTests(h);
+await runGenerationRequestTests(h);
+await runXhrTransportTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

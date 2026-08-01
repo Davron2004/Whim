@@ -32,6 +32,13 @@ check "dead code (knip)"  npx knip
 check "metro-guard"       npm run -s guard:metro
 check "invariants"        npm run -s invariants
 check "bridge-invariants" npm run -s bridge:invariants
+# synthetic-run launches headless Chromium (`chromium.launch()`, synthrun/session.ts), so it
+# belongs here and NOT in gate.sh, whose contract is "NO Metro, NO headless Chromium". The
+# synthetic-run-harness pending-class2 record said gate.sh; applying it there verbatim would
+# have contradicted the gate split (and put a documented intermittent mount_timeout race —
+# decision #55 — in front of every inner-loop attempt). Deviation recorded at closure.
+check "synthetic-run"     npm run -s synthrun:test
+check "generation-e2e"    npm run -s server:e2e
 check "deliver-by-source" npm run -s launcher:deliver-verify
 check "codex-sync"        node scripts/sync-codex.mjs --check
 # openspec is a required GLOBAL CLI (Homebrew) — NOT an npm package. Fail clearly if absent.

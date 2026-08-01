@@ -138,12 +138,12 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
   });
 
   // §20b same guarantee for timeline(), once the fork has diverged with its own snapshot.
-  // NOTE (verified, see handoff/store-access-history.md "known gap"): timeline()'s isSameLine
-  // check is DAG-ancestry-only, so on a fork that has NOT yet diverged (its tip is literally the
-  // same commit as the pre-fork tip), a snapshot committed later on the ORIGINAL's lineage is a
-  // descendant of that shared commit and DOES leak into the fork's timeline(). Diverging (this
-  // test) avoids it; this is an engine-level (chain-1) edge case, not fixable from the wrapper
-  // without new lineage-membership info from the engine.
+  // NOTE (see handoff/lineage-correctness.md, snapshot-lineage-identity): the engine's
+  // isSameLine gate now excludes sibling-lineage descendants — a candidate that is a DAG
+  // descendant of the active tip is only kept if its stamped creating lineage matches the
+  // active lineage. The non-diverged-fork over-inclusion this NOTE used to describe is fixed
+  // at the engine level, so timeline() is correct here whether or not the fork has diverged;
+  // this test still diverges the fork to also exercise the ordinary case.
   await h.test('store-access §20b once diverged, fork entry timeline excludes the original\'s later edit', async () => {
     const { store, access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
@@ -271,6 +271,61 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
     await access.remove(orig);
     h.eq(deleted, ['wc'], 'never-shared entry: refcount 1 -> 0 in the same step');
+  });
+
+  // §34 update snapshots onto the same lineage and updates the index record
+  await h.test('store-access §34 update snapshots the same lineage, updates record, id/lineage/createdAt unchanged', async () => {
+    const { index, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const newRecord = REC('wc-v2');
+    const updated = await access.update(orig, { record: newRecord, bundleSource: 'V2', prompt: 'p2' });
+    h.eq(updated.id, orig.id, 'id unchanged');
+    h.eq(updated.lineageId, orig.lineageId, 'lineage unchanged');
+    h.eq(updated.createdAt, orig.createdAt, 'createdAt unchanged');
+    h.eq(updated.record, newRecord, 'record updated');
+    h.eq(index.get('wc')?.record, newRecord, 'index reflects the new record');
+    h.eq(await access.activeBundle(orig), 'V2', 'the new bundle is the active snapshot');
+    h.eq((await access.history(orig)).map(s => s.prompt), ['p2', 'p1'], 'update snapshots onto the same lineage (history grows)');
+  });
+
+  // §35 install/update write schema.json only when supplied
+  await h.test('store-access §35 install writes schema.json only when supplied', async () => {
+    const { store, access } = harnessAccess();
+    const withSchema = await access.install({ id: 'a', name: 'A', record: REC('a'), bundleSource: 'V1', prompt: 'p', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const withoutSchema = await access.install({ id: 'b', name: 'B', record: REC('b'), bundleSource: 'V1', prompt: 'p' });
+    const activeA = await store.active(storeIdOf(withSchema));
+    const activeB = await store.active(storeIdOf(withoutSchema));
+    h.eq(activeA?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to install');
+    h.eq(activeB?.artifacts['schema.json'], undefined, 'schema.json absent when omitted from install');
+  });
+
+  await h.test('store-access §35b update writes schema.json only when supplied', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: 'p2', schemaJson: '{"schemaVersion":1,"collections":{}}' });
+    const active = await store.active(storeIdOf(updated));
+    h.eq(active?.artifacts['schema.json'], '{"schemaVersion":1,"collections":{}}', 'schema.json written when supplied to update');
+    const updated2 = await access.update(updated, { record: orig.record, bundleSource: 'V3', prompt: 'p3' });
+    const active2 = await store.active(storeIdOf(updated2));
+    h.eq(active2?.artifacts['schema.json'], undefined, 'schema.json absent from a later update that omits it');
+  });
+
+  // §36 activeSource reads the genuine source.ts artifact (#52-D5 / D14), never bundle.js
+  await h.test('store-access §36 activeSource reads source.ts, never aliases the bundle', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'BUNDLE_V1', source: 'ORIGINAL_TS_V1', prompt: 'p1' });
+    h.eq(await access.activeSource(orig), 'ORIGINAL_TS_V1', 'activeSource reads the distinct source.ts artifact, not bundle.js');
+    h.ok((await store.active(storeIdOf(orig)))?.artifacts['source.ts'] === 'ORIGINAL_TS_V1', 'source.ts is tracked as its own snapshot file');
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'BUNDLE_V2', source: 'ORIGINAL_TS_V2', prompt: 'p2' });
+    h.eq(await access.activeSource(updated), 'ORIGINAL_TS_V2', 'activeSource reflects the latest update\'s source.ts');
+  });
+
+  await h.test('store-access §36b activeSource reports absence honestly for a legacy install (no source supplied)', async () => {
+    const { access } = harnessAccess();
+    const legacy = await access.install({ id: 'legacy', name: 'Legacy', record: REC('legacy'), bundleSource: 'BUNDLE_V1', prompt: 'p1' });
+    h.eq(await access.activeSource(legacy), undefined, 'no source.ts written -> activeSource reports absence, not the bundle');
+    const updatedNoSource = await access.update(legacy, { record: legacy.record, bundleSource: 'BUNDLE_V2', prompt: 'p2' });
+    h.eq(await access.activeSource(updatedNoSource), undefined, 'an update that omits source stays a legacy snapshot too');
   });
 
   // §diff smoke: diff wrapper ensures lineage and delegates through

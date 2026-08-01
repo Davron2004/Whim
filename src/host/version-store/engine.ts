@@ -60,6 +60,16 @@ const SNAP_TAG = (id: string) => `whim/snap/${id}`;
 const PIN_TAG = (label: string) => `whim/pin/${label}`;
 const AUTHOR = { name: 'Whim', email: 'whim@local' };
 
+/** Sentinel delimiting the lineage trailer appended to a commit message (design D1/D2).
+ *  ASCII Record Separator (0x1E) — a control character no user prompt can plausibly
+ *  type, so splitting on it never collides with prose that merely LOOKS like a
+ *  trailer. Internal only: never surfaces in `Snapshot.prompt` or any error. */
+const LINEAGE_SENTINEL = '\x1e';
+
+/** A pre-fix, un-stamped commit belongs to lineage 'main' — every seed path installs
+ *  on main (design D4), and this is a pure runtime fallback with no backfill. */
+const LEGACY_LINEAGE = 'main';
+
 function decodeUtf8(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes);
 }
@@ -68,6 +78,22 @@ function stripTrailingNewline(s: string): string {
   let out = s;
   while (out.endsWith('\n')) out = out.slice(0, -1);
   return out;
+}
+
+/**
+ * Split a raw commit message into its user-facing prompt and the stamped creating
+ * lineage (design D1/D2). A message with no trailer (pre-fix history, D4) yields the
+ * legacy fallback lineage untouched. The sentinel is a control character that cannot
+ * occur in ordinary prompt text, so a prompt that itself contains a trailer-shaped
+ * LINE of prose round-trips byte-identically — only our sentinel byte is ever split on.
+ */
+function splitLineageTrailer(message: string): { prompt: string; lineage: string } {
+  const idx = message.indexOf(LINEAGE_SENTINEL);
+  if (idx === -1) return { prompt: stripTrailingNewline(message), lineage: LEGACY_LINEAGE };
+  return {
+    prompt: message.slice(0, idx),
+    lineage: stripTrailingNewline(message.slice(idx + LINEAGE_SENTINEL.length)),
+  };
 }
 
 /** Classifies a diff() entry from its before/after oids. Missing-before wins over
@@ -215,11 +241,12 @@ export class VersionStore {
     }
 
     const ts = Math.floor(this.config.now() / 1000);
+    const lineage = (await git.currentBranch({ fs: this.client, gitdir, fullname: false })) || LEGACY_LINEAGE;
     const oid = await git.commit({
       fs: this.client,
       dir,
       gitdir,
-      message: prompt,
+      message: `${prompt}${LINEAGE_SENTINEL}${lineage}`,
       author: { ...AUTHOR, timestamp: ts, timezoneOffset: 0 },
     });
     const id = await this.nextSnapId(gitdir);
@@ -254,19 +281,19 @@ export class VersionStore {
       if (id === undefined) throw new Error(`invariant: commit ${c.oid} has no snap tag`);
       return {
         id,
-        prompt: stripTrailingNewline(c.commit.message),
+        prompt: splitLineageTrailer(c.commit.message).prompt,
         createdAt: c.commit.author.timestamp * 1000,
       };
     });
   }
 
   /**
-   * timeline(appId, {limit}) → same-line enumeration that survives rollback (design D2).
-   * Unlike history() (a tip-ancestry walk), this enumerates every snap tag and keeps the
-   * ones on the active lineage's line — ancestors AND tag-reachable descendants of the
-   * current tip — via the existing isSameLine predicate, so a snapshot rolled past
-   * remains listed (and thus a discoverable roll-forward target). Newest-first by commit
-   * timestamp, capped like history(). Same Snapshot shape; no git vocabulary crosses.
+   * timeline(appId, {limit}) → same-line enumeration that survives rollback (design D2),
+   * now lineage-correct (design D3, see isLineageCorrect): a sibling fork's commits, or
+   * the original's commits made after this lineage forked away, are never enumerated
+   * even though they are DAG descendants of a shared ancestor. Newest-first by commit
+   * timestamp, capped like history(). Same Snapshot shape; no git vocabulary or lineage
+   * id crosses.
    */
   async timeline(appId: string, opts?: { limit?: number }): Promise<Snapshot[]> {
     const { gitdir } = this.paths(appId);
@@ -279,15 +306,17 @@ export class VersionStore {
       if (err instanceof git.Errors.NotFoundError) return []; // unborn HEAD (repo exists, no commits)
       throw err;
     }
+    const activeLineage = (await git.currentBranch({ fs: this.client, gitdir, fullname: false })) || LEGACY_LINEAGE;
     const map = await this.oidToId(gitdir);
+    const cache = new Map<string, { message: string; timestamp: number }>();
     const onLine: Array<{ oid: string; id: string }> = [];
     for (const [oid, id] of map) {
-      if (await this.isSameLine(gitdir, oid, tip)) onLine.push({ oid, id });
+      if (await this.isLineageCorrect(gitdir, oid, tip, activeLineage, cache)) onLine.push({ oid, id });
     }
     const snaps: Snapshot[] = [];
     for (const { oid, id } of onLine) {
-      const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
-      snaps.push({ id, prompt: stripTrailingNewline(commit.message), createdAt: commit.author.timestamp * 1000 });
+      const { message, timestamp } = await this.readCommitCached(gitdir, oid, cache);
+      snaps.push({ id, prompt: splitLineageTrailer(message).prompt, createdAt: timestamp * 1000 });
     }
     snaps.sort((a, b) => b.createdAt - a.createdAt);
     return snaps.slice(0, limit);
@@ -324,24 +353,71 @@ export class VersionStore {
   }
 
   /**
-   * True iff `target` lies on the same line of history as `tip` (D4 — a "same line"
-   * predicate, not full lineage-membership): equal, `target` is an ancestor of `tip`
-   * (a rollback), or `tip` is an ancestor of `target` (a roll-forward).
+   * True iff `target` is on the active lineage's own line relative to `tip` (design D3,
+   * sharpening D4's DAG "same line" predicate with per-snapshot lineage identity):
+   *   - equal to `tip`, or an ANCESTOR of `tip` — shared history up to wherever this
+   *     lineage forked away, always ours regardless of what lineage it happened to be
+   *     stamped with (an ancestor predates any lineage split by definition, so its own
+   *     stamp says nothing about which lines inherit it);
+   *   - a DESCENDANT of `tip` (a roll-forward target) ONLY if it was actually stamped
+   *     as created on `activeLineage` — a sibling fork's commit, or the original's
+   *     commit made after this lineage forked away, can be DAG-reachable from a shared
+   *     ancestor without ever being a continuation of THIS line.
    */
-  private async isSameLine(gitdir: string, target: string, tip: string): Promise<boolean> {
+  private async isLineageCorrect(
+    gitdir: string,
+    target: string,
+    tip: string,
+    activeLineage: string,
+    cache: Map<string, { message: string; timestamp: number }>,
+  ): Promise<boolean> {
     if (target === tip) return true;
     const targetIsAncestorOfTip = await git.isDescendent({ fs: this.client, gitdir, oid: tip, ancestor: target });
     if (targetIsAncestorOfTip) return true;
-    return git.isDescendent({ fs: this.client, gitdir, oid: target, ancestor: tip });
+    const targetIsDescendantOfTip = await git.isDescendent({ fs: this.client, gitdir, oid: target, ancestor: tip });
+    if (!targetIsDescendantOfTip) return false;
+    return (await this.lineageOf(gitdir, target, cache)) === activeLineage;
   }
 
-  /** rollback(appId, snapshotId) → move lineage ref + checkout; non-destructive (task 3.4). */
+  /** Reads a commit's message + author timestamp once per (gitdir-scoped) `cache`,
+   *  shared across a single timeline()/rollback() call (design D5 — avoid re-reading
+   *  the same commit for both the lineage check and the Snapshot build). */
+  private async readCommitCached(
+    gitdir: string,
+    oid: string,
+    cache: Map<string, { message: string; timestamp: number }>,
+  ): Promise<{ message: string; timestamp: number }> {
+    const cached = cache.get(oid);
+    if (cached) return cached;
+    const { commit } = await git.readCommit({ fs: this.client, gitdir, oid });
+    const entry = { message: commit.message, timestamp: commit.author.timestamp };
+    cache.set(oid, entry);
+    return entry;
+  }
+
+  /** The lineage a snapshot was created on (design D3): the stamped trailer, or the
+   *  legacy fallback for a pre-fix, un-stamped commit (D4). Memoized per enumeration
+   *  call via the caller-supplied `cache`. */
+  private async lineageOf(
+    gitdir: string,
+    oid: string,
+    cache: Map<string, { message: string; timestamp: number }>,
+  ): Promise<string> {
+    const { message } = await this.readCommitCached(gitdir, oid, cache);
+    return splitLineageTrailer(message).lineage;
+  }
+
+  /** rollback(appId, snapshotId) → move lineage ref + checkout; non-destructive (task 3.4).
+   *  Gated identically to timeline() (design D3, see isLineageCorrect): a DAG-reachable
+   *  snapshot that was stamped as created on a different lineage is refused even though
+   *  pure ancestry would allow it. */
   async rollback(appId: string, snapshotId: string): Promise<{ activeId: string }> {
     const { dir, gitdir } = this.paths(appId);
     const oid = await this.resolveSnap(gitdir, snapshotId);
-    const branch = (await git.currentBranch({ fs: this.client, gitdir, fullname: false })) || 'main';
+    const branch = (await git.currentBranch({ fs: this.client, gitdir, fullname: false })) || LEGACY_LINEAGE;
     const tip = await git.resolveRef({ fs: this.client, gitdir, ref: `refs/heads/${branch}` });
-    if (!(await this.isSameLine(gitdir, oid, tip))) {
+    const cache = new Map<string, { message: string; timestamp: number }>();
+    if (!(await this.isLineageCorrect(gitdir, oid, tip, branch, cache))) {
       throw new Error(
         `snapshot ${snapshotId} is not in the active lineage — use fork or switchLineage to reach another lineage's history`,
       );
@@ -478,7 +554,7 @@ export class VersionStore {
     if (id === undefined) throw new Error(`invariant: commit ${oid} has no snap tag`);
     return {
       id,
-      prompt: stripTrailingNewline(commit.message),
+      prompt: splitLineageTrailer(commit.message).prompt,
       createdAt: commit.author.timestamp * 1000,
       artifacts,
     };
