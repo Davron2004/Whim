@@ -18,6 +18,7 @@ import type { UsageStore } from '../usage-store';
 import type { RunTrace } from '../generation/machine';
 import { reconcileAbortedUsage, type GenerationStatsTransport, type ReconcileBounds } from '../generation/reconcile';
 import { buildSseStream } from '../sse';
+import { logRequest } from '../dev-log';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -42,6 +43,13 @@ export function makeGenerateRoute(
   const { keepaliveMs, reconcile } = options;
 
   app.post('/', async (c) => {
+    // Dev logging (task 4.1, design D5): the stream's own body only finishes once it settles
+    // (close/error/cancel) — the outer app-level middleware (`app.ts`) returns from `next()` as
+    // soon as headers are sent, well before that, so this route logs itself exactly once, from
+    // `buildSseStream`'s `onSettled` hook below, instead.
+    const requestStart = performance.now();
+    const method = c.req.method;
+    const path = c.req.path;
     const deviceId = c.get('deviceId');
 
     // Validate request body
@@ -105,7 +113,11 @@ export function makeGenerateRoute(
         creditOwned = true;
       },
     );
-    const stream = buildSseStream(source, keepaliveMs, () => controller.abort());
+    const stream = buildSseStream(source, keepaliveMs, () => controller.abort(), () => {
+      // Status is always 200 here: the SSE response's headers are already committed by the time
+      // this fires, whether the stream drained normally, errored mid-stream, or was cancelled.
+      logRequest(method, path, 200, requestStart);
+    });
 
     return new Response(stream, {
       status: 200,

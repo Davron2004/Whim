@@ -854,3 +854,33 @@ survive even under `holdout`) had no coverage at all.
 holdout run decides it); any change to the generation pipeline (#11), the sandbox, CSP, bridge, or runtime;
 and the holdout eval set, which is deliberately never created, referenced by path, or described in this
 repo.
+
+### 58. `fix-generate-stream-transport` corrects a false premise: RN's `fetch` cannot stream, so `/v1/generate` moves to an XHR-backed transport `[FIXED — corrects generation-client.ts:139-145 and contract/src/index.ts:8-11, both of which asserted RN's fetch streams responses]`
+
+**The premise was false, twice recorded as fact.** RN 0.85.3's global `fetch` is `whatwg-fetch` over
+`XMLHttpRequest` (`react-native/Libraries/Network/fetch.js` just `require`s it); that polyfill has no
+`ReadableStream` implementation, so `response.body` is `undefined` and every on-device generation hit
+`generation-client.ts:290`'s guard and failed silently behind the caught-and-rendered error path. `fetch`
+also resolves only in `xhr.onload` — no `onprogress` handler is registered — so the promise settles at
+readyState 4 with the whole body already buffered; there is no partial-response state to recover after the
+fact. RN's own `XMLHttpRequest` does stream (`XMLHttpRequest.js:370`'s `__didReceiveIncrementalData`, auto-
+enabled once `onreadystatechange`/`onprogress` is set), so `POST /v1/generate` now runs over an XHR-backed
+transport that satisfies the existing `ResponseBodyReader` seam, leaving `generateApp`'s SSE framing and
+event validation untouched. `POST /v1/rewrite` is unary JSON and is unaffected.
+
+**Why the transport is chosen up front, never after inspecting a response.** Because `whatwg-fetch` only
+settles once the server has already run the full pipeline and closed the stream, a post-hoc fallback
+(`await fetch(...)`, retry over XHR if `response.body` is missing) would issue a **second**
+`POST /v1/generate` on every generation that needs the fallback — doubling LLM spend and latency, and
+double-counting against `usage-store`. Shimming a `body` onto the fetch response was rejected for a
+different reason: the bytes exist only once the response is complete, so events would arrive in one final
+burst rather than incrementally, defeating `GeneratingScreen`'s purpose. A `Platform.OS === 'android'`
+branch was rejected as the wrong predicate (streaming capability, not OS) and as a pattern the repo does not
+otherwise use — no `Platform.OS` branch or `.native.ts`/`.android.ts` file exists anywhere in `src/host`.
+Adding a streams polyfill (`web-streams-polyfill`) was rejected too: it supplies a `ReadableStream` type but
+cannot make `whatwg-fetch` itself produce a streaming body, so it does not address the cause. The transport
+is instead selected by a module-level capability probe before any request is issued, guaranteeing exactly
+one `POST /v1/generate` per generation attempt regardless of runtime.
+
+**Not in this change:** anything about `generation-contract`'s schemas, which are transport-agnostic; the
+generation pipeline itself (#56); the sandbox, CSP, bridge, or runtime.

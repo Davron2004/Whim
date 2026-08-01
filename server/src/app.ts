@@ -17,6 +17,7 @@ import type { GenerationStatsTransport, ReconcileBounds } from './generation/rec
 import { makeGenerateRoute } from './routes/generate';
 import { makeRewriteRoute } from './routes/rewrite';
 import { makeUsageRoute } from './routes/usage';
+import { logRequest } from './dev-log';
 
 /** A transport that never resolves a generation id — safe as the default: the stub pipeline
  *  never records a generation id on `RunTrace`, so `reconcileAbortedUsage` short-circuits before
@@ -51,6 +52,20 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const { pipeline, usageStore, keepaliveMs, model, roster } = options;
   const reconcile = options.reconcile ?? { transport: NO_OP_STATS_TRANSPORT };
   const app = new Hono<AppEnv>();
+
+  // Dev request logging (task 4.1, design D5): one line per request (method, path, status,
+  // duration) once the response settles — distinguishes "arrived and completed" from "never
+  // arrived". SSE (`text/event-stream`) responses are excluded here: `await next()` returns as
+  // soon as the route hands back its `Response`, before a streamed body has drained, so
+  // `/v1/generate` logs itself once the stream actually settles (see `routes/generate.ts`).
+  app.use('*', async (c, next) => {
+    const start = performance.now();
+    await next();
+    const contentType = c.res.headers.get('content-type') ?? '';
+    if (!contentType.startsWith('text/event-stream')) {
+      logRequest(c.req.method, c.req.path, c.res.status, start);
+    }
+  });
 
   // Health check — no auth
   app.get('/healthz', (c) => c.text('ok', 200));

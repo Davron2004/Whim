@@ -642,6 +642,82 @@ async function testAbortDoubleCreditRace(): Promise<void> {
   }
 }
 
+/**
+ * Dev request logging (task 4.1, design D5) — one console line per request (method, path,
+ * status, duration) so "arrived and completed" is distinguishable from "never arrived", without
+ * a log call per SSE frame and without leaking bodies/prompts/device ids.
+ */
+async function testDevRequestLogging(): Promise<void> {
+  section('Dev request logging (task 4.1)');
+
+  const LOG_LINE_RE = /^\[whim-server\] (\S+) (\S+) (\d+) (\d+)ms$/;
+  const realConsoleLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]): void => {
+    lines.push(args.map(String).join(' '));
+  };
+
+  try {
+    // Non-streaming: a plain 200 logs exactly once, on the way out of the middleware chain.
+    {
+      lines.length = 0;
+      const app = testApp();
+      await app.request('/healthz');
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('healthz logs exactly one line', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('healthz log method', m[1], 'GET');
+      eq('healthz log path', m[2], '/healthz');
+      eq('healthz log status', m[3], '200');
+    }
+
+    // Non-streaming error path: a validation 400 still logs exactly once with the real status.
+    {
+      lines.length = 0;
+      const app = testApp();
+      await post(app, '/v1/generate', { notPrompt: 'oops' }, DEVICE_HEADER);
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('invalid generate body logs exactly one line', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('invalid generate body log status', m[3], '400');
+    }
+
+    // Streaming: the log must not fire while the SSE body is still open — only once it settles —
+    // and even then exactly once (not once per frame).
+    {
+      lines.length = 0;
+      const app = testApp();
+      const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
+      check(
+        'no log line before the SSE stream has been drained',
+        lines.filter((l) => LOG_LINE_RE.test(l)).length === 0,
+      );
+
+      const { events } = await readSseResponse(res);
+      check('sanity: the stream actually produced events', events.length > 0);
+
+      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
+      eq('generate stream logs exactly one line once settled (not once per frame)', matches.length, 1);
+      const m = LOG_LINE_RE.exec(matches[0]!)!;
+      eq('generate stream log method', m[1], 'POST');
+      eq('generate stream log path', m[2], '/v1/generate');
+      eq('generate stream log status', m[3], '200');
+
+      // Privacy floor: never the prompt text or the device id in a log line.
+      check(
+        'no log line contains the prompt text',
+        !lines.some((l) => l.includes('hello')),
+      );
+      check(
+        'no log line contains the device id',
+        !lines.some((l) => l.includes(DEVICE_ID)),
+      );
+    }
+  } finally {
+    console.log = realConsoleLog;
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
@@ -649,4 +725,5 @@ export async function runServerCoreTests(): Promise<void> {
   await testSseCancelClearsKeepalive();
   await testSseCancelAbortsPipeline();
   await testAbortDoubleCreditRace();
+  await testDevRequestLogging();
 }
