@@ -15,11 +15,14 @@
  * frames.
  *
  * `fetchImpl` defaults to global `fetch` and is injectable so `launcher:test` can supply canned
- * `Response` objects with no real HTTP server.
+ * `Response` objects with no real HTTP server. `POST /v1/generate`'s stream additionally has its
+ * own `streamTransport` injection point (see `ClientOptions` in `transport-shared.ts`) — a
+ * module-level runtime capability determination picks the `fetch`-based path or the XHR-based one
+ * (`xhr-transport.ts`) by default, since not every `fetch` implementation streams a response
+ * body (design "fix-generate-stream-transport" D1).
  */
 
 import type {
-  DeviceIdError,
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
@@ -29,6 +32,16 @@ import type {
   WireAppRecord,
 } from '@whim/contract';
 
+import { openXhrGenerateStream } from './xhr-transport';
+import { GenerationClientError, httpErrorFrom, isNonEmptyString, isRecord, requestHeaders } from './transport-shared';
+import type { ClientOptions } from './transport-shared';
+
+/** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
+ *  the acceptance suites) — the canonical definitions now live in `transport-shared.ts`, shared
+ *  with `xhr-transport.ts` without either transport module importing the other. */
+export { GenerationClientError };
+export type { ClientOptions };
+
 /**
  * Hand-rolled structural guards standing in for `@whim/contract`'s zod schemas
  * (`DeviceIdError`/`RewriteResponse`/`GenerationEvent`.`safeParse`). `@whim/contract` is a
@@ -37,28 +50,12 @@ import type {
  * babel config doesn't transform (`guard:metro`). These guards mirror each schema's shape
  * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes.
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
 }
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === 'number';
-}
-
-function isDeviceIdError(value: unknown): value is DeviceIdError {
-  return (
-    isRecord(value) &&
-    (value.error === 'missing_device_id' || value.error === 'invalid_device_id') &&
-    isNonEmptyString(value.hint)
-  );
 }
 
 function isRewriteResponse(value: unknown): value is RewriteResponse {
@@ -136,74 +133,12 @@ function isGenerationEvent(value: unknown): value is GenerationEvent {
   }
 }
 
-/**
- * RN's shipped ambient fetch types (`react-native/src/types/globals.d.ts`) predate its actual
- * runtime capability: `fetch` on Hermes/new-arch DOES stream response bodies (RN 0.85), but the
- * project's `Body` interface has no `body` member (this project's `lib` list excludes `dom` —
- * same gap `src/host/version-store/env.d.ts` already ambient-declares for TextEncoder/
- * TextDecoder). Declares only the minimal reader shape `generateApp` needs, no `lib.dom` import.
- */
-declare global {
-  interface ResponseBodyReader {
-    read(): Promise<{ done: boolean; value?: Uint8Array }>;
-  }
-  interface Body {
-    readonly body: { getReader(): ResponseBodyReader } | null;
-  }
-}
-
-/** Per-request client config. `deviceId` is attached as the `x-whim-device` header on every
- *  call (spec "Every server request carries a persisted anonymous device identity"). */
-export interface ClientOptions {
-  baseUrl: string;
-  deviceId: string;
-  fetchImpl?: typeof fetch;
-}
-
-export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse';
-
-/**
- * - `network`    — the request itself failed (fetch threw, not an abort).
- * - `device_id`  — the server rejected the `x-whim-device` header (400, `DeviceIdError` body).
- * - `http`       — any other non-2xx response.
- * - `stream_parse` — a `generateApp` SSE frame failed JSON parsing or `GenerationEvent`
- *   validation.
- */
-export class GenerationClientError extends Error {
-  readonly kind: GenerationClientErrorKind;
-  readonly status?: number;
-  readonly hint?: string;
-
-  constructor(kind: GenerationClientErrorKind, opts?: { status?: number; hint?: string }) {
-    super(opts?.hint ?? kind);
-    this.name = 'GenerationClientError';
-    this.kind = kind;
-    this.status = opts?.status;
-    this.hint = opts?.hint;
-  }
-}
-
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** Build the `GenerationClientError` for a non-ok `Response`: `device_id` when the body matches
- *  the device-identity middleware's `DeviceIdError` shape, `http` otherwise (carrying `hint`
- *  when the body has one, e.g. the `invalid_request` shape the route handlers return). */
-async function httpErrorFrom(response: Response): Promise<GenerationClientError> {
-  const bodyJson: unknown = await response.json().catch(() => null);
-  if (isDeviceIdError(bodyJson)) {
-    return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint });
-  }
-  const hint =
-    bodyJson !== null && typeof bodyJson === 'object' && typeof (bodyJson as Record<string, unknown>).hint === 'string'
-      ? ((bodyJson as Record<string, unknown>).hint as string)
-      : undefined;
-  return new GenerationClientError('http', { status: response.status, hint });
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. */
@@ -213,7 +148,7 @@ export async function rewritePrompt(opts: ClientOptions, prompt: string): Promis
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/rewrite`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': opts.deviceId },
+      headers: requestHeaders(opts),
       body: JSON.stringify({ prompt } satisfies RewriteRequest),
     });
   } catch (err) {
@@ -261,9 +196,12 @@ function parseSseBlock(block: string): GenerationEvent | undefined {
   return dataJson;
 }
 
-/** Open the `POST /v1/generate` SSE stream and return its body reader, or `'aborted'` if
- *  `signal` fired before/during the request. Every other failure throws `GenerationClientError`. */
-async function openGenerateStream(
+/** Open the `POST /v1/generate` SSE stream over `fetch` and return its body reader, or
+ *  `'aborted'` if `signal` fired before/during the request. Every other failure throws
+ *  `GenerationClientError`. Only reachable when the runtime capability determination below has
+ *  decided this runtime's `fetch` actually streams (or a caller injects it directly via
+ *  `ClientOptions.streamTransport`). */
+async function openFetchGenerateStream(
   opts: ClientOptions,
   request: GenerateRequest,
   signal: AbortSignal | undefined,
@@ -273,7 +211,7 @@ async function openGenerateStream(
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/generate`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': opts.deviceId },
+      headers: requestHeaders(opts),
       body: JSON.stringify(request satisfies GenerateRequest),
       signal,
     });
@@ -291,6 +229,47 @@ async function openGenerateStream(
     throw new GenerationClientError('network', { hint: 'Response has no body' });
   }
   return response.body.getReader();
+}
+
+/**
+ * Runtime capability determination (design D1): does this runtime's `fetch` actually produce a
+ * `Response` that streams its body? Evaluated exactly ONCE, at module load, as a static
+ * feature-detection on `Response.prototype` — never by inspecting a `Response` INSTANCE after a
+ * request has been issued. A post-hoc check (`await fetch(...)`; retry over XHR if
+ * `response.body` is missing) is unviable, not merely inelegant: RN's `whatwg-fetch` polyfill
+ * settles its promise only in `xhr.onload`, by which point the server has already run the full
+ * generation pipeline to completion, so that fallback would issue a SECOND `POST /v1/generate`
+ * on every single generation, doubling LLM spend/latency and double-counting against
+ * `usage-store` (design D1).
+ *
+ * `whatwg-fetch`'s `Body` mixin (applied to `Response.prototype`, see `transport-shared.ts`'s
+ * `declare global` augmentation of `Body`) never defines a `body` accessor; a standards-compliant
+ * native `fetch` (Node's, in particular) does. This is a fixed property of the runtime's `fetch`
+ * implementation — not of any particular request or any particular OS — so it is knowable
+ * before any request is issued, correctly lands Node (`launcher:test`, real streaming `fetch`)
+ * and React Native (non-streaming `fetch`) on their respective default paths, and needs no
+ * `Platform.OS` branch (design D1: no such branch, or `.native.ts`/`.android.ts` suffix file,
+ * exists anywhere in `src/host`).
+ *
+ * Guarded against a `Response` whose `.prototype` is itself `undefined` (e.g. a runtime that
+ * defines `Response` as a plain factory function rather than a constructor) — not reachable in
+ * either real target runtime today, but this determination runs at module load, the worst
+ * possible place for a throw.
+ */
+const fetchCanStream = typeof Response !== 'undefined' && Response.prototype !== undefined && 'body' in Response.prototype;
+
+/** Open the `POST /v1/generate` stream via the caller-injected `streamTransport` when present,
+ *  otherwise via the runtime capability determination's chosen default: the `fetch`-based path
+ *  when this runtime's `fetch` can stream, the XHR transport (`xhr-transport.ts`) otherwise.
+ *  `readNext`/`generateApp`/`parseSseBlock` below consume whichever `ResponseBodyReader` comes
+ *  back identically — they never know which transport produced it. */
+async function openGenerateStream(
+  opts: ClientOptions,
+  request: GenerateRequest,
+  signal: AbortSignal | undefined,
+): Promise<ResponseBodyReader | 'aborted'> {
+  const transport = opts.streamTransport ?? (fetchCanStream ? openFetchGenerateStream : openXhrGenerateStream);
+  return transport(opts, request, signal);
 }
 
 type ReadOutcome = { done: boolean; value?: Uint8Array } | 'aborted';
