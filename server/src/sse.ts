@@ -30,16 +30,26 @@ const KEEPALIVE_FRAME = ': keepalive\n\n';
  *                      the stream — the caller wires this to abort the pipeline run producing
  *                      `source`. A source that then ends early still closes this stream cleanly
  *                      (no further enqueue/close calls reach the already-cancelled controller).
+ * @param onSettled   - Invoked exactly once, however the stream ends (drained to a normal close,
+ *                      errored, or cancelled by the consumer) — never once per event, so a caller
+ *                      can log "this request finished" without a line per SSE frame.
  */
 export function buildSseStream(
   source: AsyncIterable<GenerationEvent>,
   keepaliveMs?: number,
   onCancel?: () => void,
+  onSettled?: () => void,
 ): ReadableStream<Uint8Array> {
   let id = 0;
   const useKeepalive = typeof keepaliveMs === 'number' && keepaliveMs > 0;
   let keepaliveInterval: ReturnType<typeof setInterval> | undefined;
   let cancelled = false;
+  let settled = false;
+  function settleOnce(): void {
+    if (settled) return;
+    settled = true;
+    onSettled?.();
+  }
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -62,16 +72,19 @@ export function buildSseStream(
       } catch (err) {
         if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
         if (!cancelled) controller.error(err);
+        settleOnce();
         return;
       }
 
       if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
       if (!cancelled) controller.close();
+      settleOnce();
     },
     cancel() {
       cancelled = true;
       if (keepaliveInterval !== undefined) clearInterval(keepaliveInterval);
       onCancel?.();
+      settleOnce();
     },
   });
 }

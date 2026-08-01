@@ -6,9 +6,12 @@
  * server (esbuild), the device (Metro/Babel, #7), the eval CLI (#12) — all compile TS natively.
  *
  * Transport notes (documented here per design D4):
- *   - The generation stream rides a POST response (`fetch` + readable stream), NOT `EventSource`
- *     (GET-only); the request carries a body. RN's fetch streams responses, which is the only
- *     first-party client.
+ *   - The generation stream rides a POST response, NOT `EventSource` (GET-only); the request
+ *     carries a body. React Native's global `fetch` is the `whatwg-fetch` polyfill over
+ *     `XMLHttpRequest` and has no streaming response body (`response.body` is `undefined`), so it
+ *     cannot read this stream incrementally. The device consumes it over an XHR-backed transport
+ *     instead, which RN's `XMLHttpRequest` supports natively — see the `generation-stream-transport`
+ *     capability and decision #58.
  *   - A `GenerationEvent` stream that runs to completion carries EXACTLY ONE terminal event
  *     (`result` | `failure`), always last. That is a stream-level invariant enforced by the
  *     emitter — it is not (and cannot be) expressed in the per-event schema below. A stream
