@@ -21,4 +21,4 @@ export { default as LauncherRoot } from './LauncherRoot';
 export { default as HomeScreen } from './HomeScreen';
 export { default as MiniAppView } from './MiniAppView';
 export { default as DevProbeScreen } from './DevProbeScreen';
-export { default as FloatingExit } from './FloatingExit';
+export { default as Orb } from './Orb';
