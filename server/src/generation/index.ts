@@ -19,6 +19,7 @@ import { createCheckStage, preflightSource } from './stages/check';
 import { createBuildStage } from './stages/build';
 import { createRunStage } from './stages/run';
 import { GenerationMachine, type PipelineBounds, type RunTrace } from './machine';
+import { createModelSummariser } from './summarise';
 import type { GenerationStatsTransport } from './reconcile';
 import { createRunCandidate } from '../../../synthrun/report';
 import type { SynthRunSession } from '../../../synthrun/session';
@@ -133,6 +134,7 @@ export function createGenerationPipeline(options: CreatePipelineOptions): Pipeli
     build,
     run,
     clock,
+    summariser: createModelSummariser({ model, roster }),
     bounds: options.bounds,
   });
 

@@ -16,18 +16,51 @@
 import { runStaticChecks } from '../../../../checks/index';
 import type { ExtractedManifest } from '../../../../checks/contract';
 import type { AppliedSchema } from '../../../../src/host/storage-engine/schema';
+import { SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../../../src/sdk/theme';
 import type { CheckContext, CheckedManifest, CheckReport, CheckStage } from '../machine';
 import type { Diagnostic } from '@whim/contract';
 
+const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
+
+/** The hues a generated app may never claim as its own — the three status meanings (on both
+ *  backgrounds), the shell accent, and the `yours` brown. Read from the SDK's token module, never
+ *  re-typed here, so a token edit can never leave this gate asserting a stale palette. */
+const RESERVED_HUES: ReadonlySet<string> = new Set(
+  [
+    ...Object.values(STATUS_COLORS),
+    ...Object.values(STATUS_COLORS_ON_INK),
+    SHELL_COLORS.accent,
+    SHELL_COLORS.yours,
+    SHELL_COLORS.yoursOnDark,
+  ].map((hex) => hex.toLowerCase()),
+);
+
+/**
+ * The declared tile colour, or `undefined` when there is effectively no declaration. Dropped —
+ * never repaired, never reported — when it is not a `#rrggbb` literal or when it collides with a
+ * reserved shell hue (spec "A reserved or malformed colour is dropped": the host must not be handed
+ * a colour it would only reject). A surviving value is passed through VERBATIM, casing included.
+ */
+function validTileColor(declared: string | undefined): string | undefined {
+  if (declared === undefined) return undefined;
+  if (!HEX_COLOR_RE.test(declared)) return undefined;
+  return RESERVED_HUES.has(declared.toLowerCase()) ? undefined : declared;
+}
+
 /** `ExtractedManifest` (checker) → `CheckedManifest` (machine/wire): `name`/`schema` are pulled
  *  out to their own `WireAppRecord` top-level fields (design D12), so `manifest` here carries the
- *  rest (`initial`/`screens`/`capabilities`) — a strict superset of the bridge gate's own
- *  `AppManifest.capabilities` read, so the cast on the device side stays sound. */
+ *  rest (`initial`/`screens`/`capabilities`/`tileColor`) — a strict superset of the bridge gate's
+ *  own `AppManifest.capabilities` read, so the cast on the device side stays sound.
+ *
+ *  `tileColor` rides INSIDE `manifest` (design D4, decision #41 D4's "no second source of truth"):
+ *  it comes only from the one `defineApp` extraction above, and `assembleRecord` passes `manifest`
+ *  through untouched — there is no top-level `WireAppRecord.tileColor` to keep in sync. */
 function toCheckedManifest(m: ExtractedManifest): CheckedManifest {
-  const { name, schema, ...rest } = m;
+  const { name, schema, tileColor, ...rest } = m;
+  const validated = validTileColor(tileColor);
   return {
     name,
-    manifest: rest as Record<string, unknown>,
+    manifest: { ...rest, ...(validated !== undefined ? { tileColor: validated } : {}) } as Record<string, unknown>,
     schema: (schema as Record<string, unknown> | undefined) ?? {},
   };
 }

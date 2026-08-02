@@ -146,6 +146,13 @@ export interface AppSpec {
    *  truth, so a fixture cannot drift from its own declaration. The runtime gate reads only the
    *  host-held copy (design D6); this in-bundle declaration is what the build extracts. */
   schema?: SchemaArtifact;
+  /** The one thing the shell asks back from a generated app: its tile colour, as a `#rrggbb`
+   *  LITERAL. Extracted statically from this `defineApp` argument exactly as `capabilities` is —
+   *  never obtained by executing or introspecting the bundle, so a non-literal value is simply not
+   *  extracted. Absent, malformed, or equal to a reserved shell hue all mean "no declaration", and
+   *  the shell falls back to its deterministic `appColor(name)`. Nothing else about a generated
+   *  app's look is constrained by the shell. */
+  tileColor?: string;
 }
 
 /**

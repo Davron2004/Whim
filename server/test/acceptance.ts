@@ -12,6 +12,7 @@ import { runOpenRouterTests } from './openrouter.suite';
 import { runPromptsTests } from './prompts.suite';
 import { runMachineTests } from './machine.suite';
 import { runStagesTests } from './stages.suite';
+import { runWireV2Tests } from './wire-v2.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -20,5 +21,6 @@ await runOpenRouterTests();
 await runPromptsTests();
 await runMachineTests();
 await runStagesTests();
+await runWireV2Tests();
 
 report();

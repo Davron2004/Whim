@@ -59,6 +59,7 @@ const app = createApp({
   model: modelDeps?.model,
   roster: modelDeps?.roster,
   reconcile: modelDeps ? { transport: openRouterGenerationStatsTransport(modelDeps.apiKey) } : undefined,
+  stub: useStub,
 });
 
 const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {

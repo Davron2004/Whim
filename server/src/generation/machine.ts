@@ -11,6 +11,7 @@ import type {
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  RunSummary,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
@@ -18,6 +19,7 @@ import type { ModelClient, ModelMessage, ModelRoster } from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
+import type { Summariser } from './summarise';
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
@@ -115,6 +117,12 @@ export interface GenerationPipelineDeps {
   build: BuildStage;
   run: RunStage;
   clock: Clock;
+  /** Optional post-run step (spec "A post-run summariser…"). When absent — a fake-driven suite,
+   *  a server that runs without one — the `result` event simply carries no summary, which the
+   *  contract declares a legitimate state. It is invoked ONLY after a record has been chosen for
+   *  delivery, sees no part of that record (`SummariserInput` is record-free), and can neither
+   *  fail the run nor delay a terminal event past its own timeout. */
+  summariser?: Summariser;
   bounds?: Partial<PipelineBounds>;
 }
 
@@ -450,7 +458,7 @@ export class GenerationMachine {
       if (outcome.kind === 'aborted') return;
 
       if (outcome.kind === 'deliver') {
-        yield* this.emitCompletion(state, signal, { type: 'result', app: outcome.record });
+        yield* this.emitDelivery(request, outcome.record, state, signal);
         return;
       }
       if (outcome.kind === 'contained-failure') {
@@ -489,6 +497,58 @@ export class GenerationMachine {
       );
       if (repaired === undefined) return;
       source = repaired;
+    }
+  }
+
+  /** Summarise, then deliver: the summariser runs between the delivery decision and the terminal
+   *  event, so its token spend lands inside the `usage` event that immediately precedes `result`. */
+  private async *emitDelivery(
+    request: GenerateRequest,
+    record: WireAppRecord,
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<GenerationEvent, void> {
+    const summary = await this.summariseDelivery(request, record, state, signal);
+    yield* this.emitCompletion(state, signal, {
+      type: 'result',
+      app: record,
+      ...(summary ? { summary } : {}),
+    });
+  }
+
+  /**
+   * The post-run summariser (spec "A post-run summariser…"). Called once, only for a record that
+   * is already going to be delivered, and never allowed to change that: it is handed copied
+   * primitives (no record, no manifest object, no bundle), its token spend is folded into the run's
+   * usage before the `usage` event, and ANY failure — a rejection, a timeout, unusable prose —
+   * yields `undefined`, so the run still emits its `result` with the summary simply absent. No
+   * stage event narrates it: it is not a stage, and the enum is not widened.
+   */
+  private async summariseDelivery(
+    request: GenerateRequest,
+    record: WireAppRecord,
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): Promise<RunSummary | undefined> {
+    const summariser = this.deps.summariser;
+    if (!summariser || signal?.aborted) return undefined;
+    const capabilities = record.manifest.capabilities;
+    try {
+      const result = await summariser.summarise(
+        {
+          prompt: request.prompt,
+          isEdit: request.app !== undefined,
+          appName: record.name,
+          capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
+          attempts: state.candidatesProduced,
+          diagnostics: [...state.diagnostics],
+        },
+        signal,
+      );
+      if (result.usage) state.usage = sumUsage(state.usage, result.usage);
+      return result.summary;
+    } catch {
+      return undefined;
     }
   }
 
