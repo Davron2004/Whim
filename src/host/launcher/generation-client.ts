@@ -37,7 +37,14 @@ import type {
 } from '@whim/contract';
 
 import { openXhrGenerateStream } from './xhr-transport';
-import { GenerationClientError, httpErrorFrom, isNonEmptyString, isRecord, requestHeaders } from './transport-shared';
+import {
+  GenerationClientError,
+  httpErrorFrom,
+  isNonEmptyString,
+  isRecord,
+  logMappedError,
+  requestHeaders,
+} from './transport-shared';
 import type { ClientOptions } from './transport-shared';
 
 /** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
@@ -176,11 +183,12 @@ export async function clarifyPrompt(opts: ClientOptions, prompt: string): Promis
       body: JSON.stringify({ prompt } satisfies ClarifyRequest),
     });
   } catch (err) {
+    logMappedError('/v1/clarify', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
 
   if (!response.ok) {
-    throw await httpErrorFrom(response);
+    throw await httpErrorFrom(response, '/v1/clarify', opts.baseUrl);
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
@@ -210,11 +218,12 @@ export async function rewritePrompt(
       } satisfies RewriteRequest),
     });
   } catch (err) {
+    logMappedError('/v1/rewrite', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
 
   if (!response.ok) {
-    throw await httpErrorFrom(response);
+    throw await httpErrorFrom(response, '/v1/rewrite', opts.baseUrl);
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
@@ -277,11 +286,12 @@ async function openFetchGenerateStream(
     if (isAbortError(err)) {
       return 'aborted';
     }
+    logMappedError('/v1/generate', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
 
   if (!response.ok) {
-    throw await httpErrorFrom(response);
+    throw await httpErrorFrom(response, '/v1/generate', opts.baseUrl);
   }
   if (!response.body) {
     throw new GenerationClientError('network', { hint: 'Response has no body' });

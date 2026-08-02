@@ -22,7 +22,7 @@
  */
 
 import type { GenerateRequest } from '@whim/contract';
-import { GenerationClientError, httpErrorFrom, requestHeaders, type ClientOptions } from './transport-shared';
+import { GenerationClientError, httpErrorFrom, logMappedError, requestHeaders, type ClientOptions } from './transport-shared';
 
 /** One queued outcome for the reader's pull-based `read()`, produced by XHR's push-based
  *  events. Delivered strictly in arrival order and never dropped, even if several XHR events
@@ -191,6 +191,7 @@ export async function openXhrGenerateStream(
         return;
       }
       finished = true;
+      logMappedError('/v1/generate', opts.baseUrl, 'network', { readyState: xhr.readyState, message: hint });
       cleanupSignal();
       if (opened) {
         deliver({ kind: 'error', error: new Error(hint) });
@@ -219,7 +220,7 @@ export async function openXhrGenerateStream(
         status: xhr.status,
         json: async () => JSON.parse(xhr.responseText) as unknown,
       } as unknown as Response;
-      httpErrorFrom(fakeResponse).then((err) => {
+      httpErrorFrom(fakeResponse, '/v1/generate', opts.baseUrl).then((err) => {
         opened = true;
         if (signal?.aborted) {
           resolveOpen('aborted');
