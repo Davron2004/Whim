@@ -35,8 +35,9 @@ import { emitUiEvent } from './events';
 import { TAP_RESET, usePressed } from './press';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
-// crosses this seam beyond the resolvers above, which already read the active theme.
-export type { WhimTheme, ThemeShape } from './theme';
+// crosses this seam beyond the resolvers above, which already read the active theme. `shape`
+// is gone in v2 (the shell is fixed, not themeable — see theme.ts).
+export type { WhimTheme } from './theme';
 
 // The storage verb/param types are the `mini-app-storage-engine` D8 inter-change seam,
 // re-exported here so a mini-app author types its `schema` and storage calls against the

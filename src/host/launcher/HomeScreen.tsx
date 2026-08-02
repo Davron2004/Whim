@@ -7,8 +7,8 @@
 // confirmation — prompt-flow-ux). Every visible string
 // comes from `copy.ts` and passes the product-verbs guard (#5 spec). A long-press on the title
 // opens the __DEV__ probe surface (D6). Every color comes from `shellPalette(theme)` (design
-// sdk-design-system D4/D7) — the per-app tile identity colors (`tiles.ts` TILE_COLORS) are the
-// one deliberate exception, since they are app identity, not shell chrome.
+// sdk-design-system D4/D7) — the per-app tile identity colors (`tiles.ts#tileColor`, the SDK's
+// `appColor`) are the one deliberate exception, since they are app identity, not shell chrome.
 import React, { useState } from 'react';
 import {
   Alert,

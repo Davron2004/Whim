@@ -39,9 +39,10 @@ import PromptScreen from './PromptScreen';
 import RewritePreviewScreen from './RewritePreviewScreen';
 import GeneratingScreen from './GeneratingScreen';
 import FailureScreen from './FailureScreen';
-import { loadThemePref, saveThemePref, shellPalette } from './theme';
+import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
+import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, generateApp, rewritePrompt } from './generation-client';
 import type { ClientOptions } from './generation-client';
@@ -163,10 +164,8 @@ export default function LauncherRoot() {
     return { index: idx, access: acc, kv: launcherKv };
   }, []);
 
-  const initialThemePref = useMemo(() => loadThemePref(kv), [kv]);
-
   return (
-    <ThemeProvider initialPref={initialThemePref} onPrefChange={(pref) => saveThemePref(kv, pref)}>
+    <ThemeProvider>
       <LauncherShell index={index} access={access} kv={kv} />
     </ThemeProvider>
   );
@@ -180,6 +179,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [ready, setReady] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
+  const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
 
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
   const clientOptions = useMemo<ClientOptions | null>(
@@ -247,6 +247,11 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   const onServerUrlChange = (url: string) => {
     saveServerUrl(kv, url);
     setServerUrl(loadServerUrl(kv));
+  };
+
+  const onHighlightingChange = (enabled: boolean) => {
+    saveHighlighting(kv, enabled);
+    setHighlighting(enabled);
   };
 
   // ── Prompt flow orchestration (design D1) ──────────────────────────────────────────────────
@@ -333,7 +338,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     setScreen({ kind: 'prompt', editing, initialText: prompt });
   };
 
-  const statusBarStyle = theme.dark ? 'light-content' : 'dark-content';
+  // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
+  const statusBarStyle = 'dark-content';
 
   if (!ready) {
     return (
@@ -361,7 +367,15 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   } else if (screen.kind === 'dev') {
     content = <DevProbeScreen onExit={goHome} />;
   } else if (screen.kind === 'settings') {
-    content = <SettingsScreen onBack={goHome} serverUrl={serverUrl} onServerUrlChange={onServerUrlChange} />;
+    content = (
+      <SettingsScreen
+        onBack={goHome}
+        serverUrl={serverUrl}
+        onServerUrlChange={onServerUrlChange}
+        highlighting={highlighting}
+        onHighlightingChange={onHighlightingChange}
+      />
+    );
   } else if (screen.kind === 'history') {
     content = <HistoryScreen app={screen.app} access={access} onBack={goHome} />;
   } else if (screen.kind === 'prompt') {

@@ -1,33 +1,17 @@
 /**
  * tiles — derived tile visuals for the home grid (launcher-shell / #5 D6). A monogram + a
- * deterministic color per app, derived from its name — no icon assets, no SDK Icon set yet
- * (#3 may upgrade this later; cosmetic, non-contractual). Pure functions (no RN imports) so
+ * deterministic color per app, derived from its name via the SDK's `appColor` (placement pin:
+ * the grid, the tile fallback, and the Whim Syntax prose renderer's `app` spans all import this
+ * one symbol, so a tile and every prose mention of that app always agree) — no icon assets, no
+ * SDK Icon set yet (#3 may upgrade this later; cosmetic, non-contractual). Pure functions so
  * they are trivially unit-checkable.
  */
 
-/** A small, legible palette (dark-surface friendly). Index chosen deterministically by name. */
-export const TILE_COLORS = [
-  '#6366f1', // indigo
-  '#0ea5e9', // sky
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#ef4444', // red
-  '#ec4899', // pink
-  '#8b5cf6', // violet
-  '#14b8a6', // teal
-];
+import { appColor } from '../../sdk/theme';
 
-/** A stable string hash (djb2). Same name → same number, every run. */
-function hash(s: string): number {
-  let h = 5381;
-  // eslint-disable-next-line no-bitwise
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + (s.codePointAt(i) ?? 0)) >>> 0;
-  return h;
-}
-
-/** A deterministic tile color for an app name. */
+/** A deterministic tile color for an app name — delegates to the SDK's single `appColor`. */
 export function tileColor(name: string): string {
-  return TILE_COLORS[hash(name) % TILE_COLORS.length];
+  return appColor(name);
 }
 
 /**

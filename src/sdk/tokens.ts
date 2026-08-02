@@ -7,10 +7,13 @@
 // same `gap="lg"` could later be resolved by a native reconciler instead of these CSS
 // strings. v0.1 resolves them to CSS (React-to-DOM inside the WebView, hypothesis R1).
 //
-// v0.2 (sdk-design-system, decision D1/D2): `color()` and `radius()` now resolve through
-// the ACTIVE THEME (theme.ts) instead of one hardcoded palette — see theme.ts for how
-// `globalThis.__WHIM_THEME__` becomes a trusted `WhimTheme`. `space()`/`weight()`/
-// `textSize()` are theme-independent and behave exactly as before.
+// v0.2 (sdk-design-system, decision D1/D2): `color()` resolves through the ACTIVE THEME
+// (theme.ts) instead of one hardcoded palette — see theme.ts for how `globalThis.__WHIM_THEME__`
+// becomes a trusted `WhimTheme`. `space()`/`radius()`/`weight()`/`textSize()` are
+// theme-independent and behave exactly as before.
+//
+// v2 (shell redesign): the theme's `shape` dimension is gone along with the presets it came from
+// (theme.ts) — `RADIUS_SCALE` is now one flat scale, not one per shape.
 
 import { sanitizeTheme, RADIUS_SCALE, type WhimTheme } from './theme';
 
@@ -79,10 +82,7 @@ function activeTheme(): WhimTheme {
 // Resolvers — the single place a token becomes a value. A native-reconciler backend would
 // swap this module for one that maps the same token names to native style primitives.
 export const space = (t: SpaceToken = 'none'): string => SPACE[t] ?? SPACE.none;
-export const radius = (t: RadiusToken = 'none'): string => {
-  const scale = RADIUS_SCALE[activeTheme().shape];
-  return scale[t] ?? scale.none;
-};
+export const radius = (t: RadiusToken = 'none'): string => RADIUS_SCALE[t] ?? RADIUS_SCALE.none;
 export const color = (t: ColorToken = 'text'): string => activeTheme().colors[t] ?? activeTheme().colors.text;
 export const weight = (t: WeightToken = 'regular'): number => WEIGHT[t] ?? WEIGHT.regular;
 export const textSize = (t: TextSizeToken = 'body') => TEXT_SIZE[t] ?? TEXT_SIZE.body;

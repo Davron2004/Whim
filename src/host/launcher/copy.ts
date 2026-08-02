@@ -26,15 +26,8 @@ export const COPY = {
   emptyBody: 'Tap “make your first app” to get started.',
   settingsTitle: 'Settings',
   backLabel: 'Back',
-  themeSectionTitle: 'Theme',
-  accentSectionTitle: 'Accent',
-  cornersSectionTitle: 'Corners',
-  accentDefaultLabel: 'Default',
-  themeLightHint: 'Light',
-  themeDarkHint: 'Dark',
-  shapeSharp: 'Sharp',
-  shapeSoft: 'Soft',
-  shapeRound: 'Round',
+  highlightingSectionTitle: 'Highlighting',
+  highlightingHint: 'Colours and marks in what Whim tells you.',
   actionHistory: 'History',
   historyTitle: 'History',
   historyCurrentLabel: 'Current version',
@@ -90,23 +83,6 @@ export function forkedFromLabel(name: string): string {
 /** The delete confirmation body for a named app. */
 export function deleteBody(name: string): string {
   return `“${name}” and all its data will be removed. This can’t be undone.`;
-}
-
-/** Human label for a theme preset id ("ink" → "Ink"). Preset/accent ids are already plain
- *  English words (see src/sdk/theme.ts) so a straight capitalize is the whole mapping — no
- *  second name table to keep in sync with the SDK's curated lists. */
-function capitalize(id: string): string {
-  return id.length === 0 ? id : id[0].toUpperCase() + id.slice(1);
-}
-
-/** Display label for a theme preset id. */
-export function presetLabel(id: string): string {
-  return capitalize(id);
-}
-
-/** Display label for an accent id. */
-export function accentLabel(id: string): string {
-  return capitalize(id);
 }
 
 /** The History screen's data-shape annotation line (design D5): "Added: notes (text)". `fields`
