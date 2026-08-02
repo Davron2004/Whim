@@ -136,6 +136,19 @@ function errorReason(err: unknown): { reason: string; diagnostics: readonly { hi
   return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
 }
 
+/** Dev breadcrumb for a swallowed generation-path error — the taxonomy `errorReason()`
+ *  intentionally scrubs off the screen (constructor, GenerationClientError kind/status/hint,
+ *  message, stack). Never logs prompt text or generated source. */
+function logGenError(stage: string, err: unknown): void {
+  const isErr = err instanceof Error;
+  console.log('[whim:gen]', stage, {
+    ctor: isErr ? err.constructor.name : typeof err,
+    ...(err instanceof GenerationClientError ? { kind: err.kind, status: err.status, hint: err.hint } : {}),
+    message: isErr ? err.message : undefined,
+    stack: isErr ? err.stack : undefined,
+  });
+}
+
 /** D5's delivery routing: a brand-new install (no `editing`), an in-place update when `editing`
  *  is at the tip of its own history, or — when it has been restored behind its own tip — a
  *  silent shared continuation (fork with `shareData:true`, no question asked per decision #52 D2
@@ -309,6 +322,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       );
       setScreen((s) => (s.kind === 'plan' ? withPlan(s, response) : s));
     } catch (e) {
+      logGenError('rewrite failed', e);
       setScreen((s) => (s.kind === 'plan' ? failure(pending.editing, pending.text, e) : s));
     }
   };
@@ -323,6 +337,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       questions = acceptClarifyQuestions((await clarifyPrompt(clientOptions, from.text)).questions);
     } catch (e) {
       if (!isClarifySkip(e)) {
+        logGenError('clarify failed', e);
         setBusy(false);
         setScreen(failure(from.editing, from.text, e));
         return;
@@ -360,11 +375,17 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
+      const counts = { stage: 0, token: 0, diagnostic: 0 };
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
         if (event.type === 'stage') {
+          counts.stage++;
           setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
         } else if (event.type === 'result' || event.type === 'failure') {
           terminal = event;
+        } else if (event.type === 'token') {
+          counts.token++;
+        } else if (event.type === 'diagnostic') {
+          counts.diagnostic++;
         }
       }
 
@@ -373,6 +394,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
 
       if (terminal == null) {
         // Stream ended with no terminal event and no cancel — a stream error, not a crash.
+        console.log('[whim:gen]', 'stream ended with no terminal event', counts);
         setScreen({ kind: 'failure', editing, prompt: building.text, reason: GENERIC_STREAM_ERROR, diagnostics: [] });
         return;
       }
@@ -395,6 +417,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     } catch (e) {
       if (ctl.cancelled) return;
       genRef.current = null;
+      logGenError('build failed', e);
       setScreen(failure(editing, building.text, e));
     }
   };
