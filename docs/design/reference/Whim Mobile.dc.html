@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"><style>body{margin:0;background:#e8e5df;font-family:'Instrument Sans',system-ui,sans-serif}a{color:#3f3d8f}a:hover{color:#2e2c6f}@keyframes spin{to{transform:rotate(360deg)}}@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}</style></helmet>
+
+<section style="padding:44px 48px 36px;border-bottom:1px solid rgba(0,0,0,.09)" id="t4">
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px"><a href="#t4" style="font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#17171a;color:#fff;border-radius:4px;text-decoration:none">4</a><span style="font:600 13px/1.2 'Instrument Sans',sans-serif;color:#17171a">History — where a change came from, and what it did</span></div>
+<p style="max-width:700px;margin:0 0 24px;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">First principle: <b>the prompt is the headline.</b> It's the only thing in the whole system the user actually authored, and it's the thing they'll recognise a version by — not a title, not a hash, not a date. Everything else is supporting evidence. Second: a change is <b>classified from the plan diff</b>, not from vibes — see <a href="#4c">4c</a> for why that gives a small, honest set of classes, and why I'd label them with a word rather than an icon.</p>
+<div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+<div id="4a" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#4a" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">4a</a>Interactive — tap a version to open it</div>
+<div style="width:390px;height:800px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;box-shadow:0 26px 50px rgba(0,0,0,.2);overflow:hidden;position:relative;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 'IBM Plex Mono',monospace;color:#1c1917"><span>11:31</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+
+<div style="padding:12px 20px 0;display:flex;align-items:center;gap:14px">
+<div style="width:42px;height:42px;border-radius:21px;background:#f1efea;border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none" style-hover="background:#ece9e2"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1c1917" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4l-8 8 8 8"></path></svg></div>
+<div style="min-width:0"><div style="font:700 22px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917"><span style="color:#0d9488">Pour Timer</span> history</div><div style="margin-top:3px;font:400 11.5px/1.3 'Instrument Sans',sans-serif;color:#6b6560">7 versions · started 3 days ago</div></div>
+</div>
+
+<div style="flex:1;overflow:auto;padding:18px 20px 24px;position:relative">
+<div style="position:absolute;left:33px;top:24px;bottom:24px;width:1.5px;background:#e6e2da"></div>
+<sc-for list="{{ hxItems }}" as="h" hint-placeholder-count="5">
+<div style="position:relative;padding-left:26px;padding-bottom:10px;animation:rise .22s ease both">
+<span style="position:absolute;left:8px;top:16px;width:11px;height:11px;border-radius:6px;background:{{ h.dotBg }};box-shadow:0 0 0 4px #fbfaf8, 0 0 0 5.5px {{ h.dotRing }}"></span>
+<div onClick="{{ h.toggle }}" style="border-radius:18px;background:{{ h.cardBg }};border:1px solid {{ h.cardBorder }};padding:14px 15px;cursor:pointer" style-hover="border-color:#c9c3b8">
+<div style="display:flex;align-items:center;gap:8px">
+<span style="padding:4px 8px;border-radius:6px;background:{{ h.kindBg }};color:{{ h.kindFg }};font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase">{{ h.kind }}</span>
+<span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ h.when }}</span>
+<span style="margin-left:auto;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ h.v }}</span>
+</div>
+<div style="margin-top:10px;font:400 10px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:#a8a29a">{{ h.origin }}</div>
+<div style="margin-top:6px;font:500 15px/1.35 'Instrument Sans',sans-serif;color:#1c1917;text-wrap:pretty">{{ h.headline }}</div>
+<div style="display:{{ h.openDisplay }};margin-top:13px;border-top:1px solid #e6e2da;padding-top:13px">
+<div style="font:400 13px/1.55 'Instrument Sans',sans-serif;color:#6b6560;text-wrap:pretty">{{ h.body }}</div>
+<div style="margin-top:12px;font:400 10px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:#a8a29a">What it touched</div>
+<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+<sc-for list="{{ h.touched }}" as="t" hint-placeholder-count="2">
+<span style="padding:6px 10px;border-radius:8px;background:#f1efea;border:1px solid #e6e2da;font:400 11.5px/1 'Instrument Sans',sans-serif;color:#6b6560">{{ t }}</span>
+</sc-for>
+</div>
+<div style="margin-top:14px;display:flex;gap:8px">
+<sc-for list="{{ h.actions }}" as="a" hint-placeholder-count="2">
+<div onClick="{{ a.fire }}" style="padding:10px 14px;border-radius:12px;border:1px solid {{ a.border }};background:{{ a.bg }};color:{{ a.fg }};font:500 12.5px/1 'Instrument Sans',sans-serif;cursor:pointer">{{ a.label }}</div>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="display:{{ h.hereDisplay }};margin-top:8px;font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:#0d9488">↑ you're on this one</div>
+</div>
+</sc-for>
+</div>
+
+<sc-if value="{{ hxSheet }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ hxClose }}" style="position:absolute;inset:0;background:rgba(24,22,20,.5);backdrop-filter:blur(3px);animation:rise .16s ease both"></div>
+<div style="position:absolute;left:0;right:0;bottom:0;background:#fbfaf8;border-radius:28px 28px 0 0;padding:24px 24px 26px;box-shadow:0 -12px 40px rgba(0,0,0,.25);animation:rise .22s ease both">
+<div style="font:700 22px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917;text-wrap:pretty">{{ hxSheetTitle }}</div>
+<div style="margin-top:10px;font:400 13.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560;text-wrap:pretty">{{ hxSheetBody }}</div>
+<div style="margin-top:20px;display:flex;flex-direction:column;gap:9px">
+<div onClick="{{ hxClose }}" style="height:56px;border-radius:18px;background:#1c1917;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 16px/1 'Instrument Sans',sans-serif;color:#fff">Cancel</div>
+<div onClick="{{ hxConfirm }}" style="height:46px;display:flex;align-items:center;justify-content:center;cursor:pointer;font:500 14px/1 'Instrument Sans',sans-serif;color:#6b6560">{{ hxSheetCta }}</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ hxToast }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:24px;right:24px;bottom:34px;padding:13px 16px;border-radius:16px;background:#1c1917;font:500 13px/1.3 'Instrument Sans',sans-serif;color:#fff;animation:rise .2s ease both;z-index:7">{{ hxToast }}</div>
+</sc-if>
+
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+<div style="width:390px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Collapsed, every row answers "what did I ask for, and when". Open one and you get the plain-words result, what it touched, and the two things you'd want to do from there. Nothing destructive is one tap away.</div>
+<div style="width:390px;border:1px solid #e0dcd4;border-left:none;border-right:none;padding:12px 0;display:flex;flex-direction:column;gap:5px"><span style="font:600 10px/1 'IBM Plex Mono',monospace;color:#78350f;background:#fde68a;border-radius:5px;padding:3px 7px;align-self:flex-start;letter-spacing:.04em">TO BUILD</span><div style="font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">These plain-words summaries ("found the countdown running past zero, fixed it on the second try") are a real feature, not demo copy: after every completed run, the agent writes a short human commit message describing what it changed and what it learned. Needs to be generated post-response and stored with the change.</div></div>
+</div>
+
+<div id="4b" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#4b" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">4b</a><span style="font:600 10px/1 'IBM Plex Mono',monospace;padding:3px 7px;background:#fde68a;color:#78350f;border-radius:5px;letter-spacing:.04em">OPEN QUESTION</span>Not an alternative — the last change, undoable in place</div>
+<div style="width:390px;height:800px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;box-shadow:0 26px 50px rgba(0,0,0,.2);overflow:hidden;position:relative;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 'IBM Plex Mono',monospace;color:#1c1917"><span>11:31</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="flex:1;display:flex;flex-direction:column;padding:26px 24px 0;filter:saturate(.85)">
+<div style="display:flex;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:9px;background:#0d9488;color:#fff;display:flex;align-items:center;justify-content:center;font:600 11px/1 'Instrument Sans',sans-serif">PT</span><span style="font:500 14px/1 'Instrument Sans',sans-serif;color:#1c1917">Pour Timer</span></div>
+<div style="margin-top:44px;text-align:center">
+<div style="font:400 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:#6b6560">Step 2 of 4 · Bloom</div>
+<div style="margin-top:14px;font:500 76px/1 'Instrument Sans',sans-serif;letter-spacing:-.04em;color:#1c1917">0:45</div>
+</div>
+<div style="margin-top:34px;display:flex;flex-direction:column;gap:9px;opacity:.5">
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#f1efea;border:1px solid #e0dcd4"><span style="width:7px;height:7px;border-radius:4px;background:#c9c3b8"></span><span style="font:400 13.5px/1 'Instrument Sans',sans-serif;color:#6b6560">Rinse · 0:30</span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#0d9488;border:1px solid #0d9488"><span style="width:7px;height:7px;border-radius:4px;background:#fbfaf8"></span><span style="font:500 13.5px/1 'Instrument Sans',sans-serif;color:#fff">Bloom · 0:45</span></div>
+</div>
+</div>
+<div style="position:absolute;left:0;right:0;bottom:0;background:#fbfaf8;border-top:1px solid #e0dcd4;border-radius:26px 26px 0 0;padding:16px 0 26px;box-shadow:0 -12px 34px rgba(0,0,0,.14)">
+<div style="padding:0 22px;display:flex;align-items:baseline;justify-content:space-between"><span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Your last change</span><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">v7 · 2 min ago</span></div>
+<div style="margin-top:14px;padding:0 22px">
+<div style="border-radius:18px;background:#f1efea;border:1px solid #e0dcd4;padding:15px 16px">
+<span style="padding:4px 8px;border-radius:6px;background:rgba(124,58,237,.12);color:#7c3aed;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em">LOOK</span>
+<div style="margin-top:10px;font:500 16px/1.35 'Instrument Sans',sans-serif;color:#1c1917;text-wrap:pretty">“make the numbers bigger”</div>
+<div style="margin-top:8px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">The countdown is about twice the size. Nothing else moved.</div>
+</div>
+</div>
+<div style="margin-top:14px;padding:0 22px;display:flex;gap:9px">
+<div style="flex:1;height:50px;border-radius:15px;border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:center;font:500 14px/1 'Instrument Sans',sans-serif;color:#6b6560">Undo this</div>
+<div style="flex:1;height:50px;border-radius:15px;background:#1c1917;display:flex;align-items:center;justify-content:center;font:600 14px/1 'Instrument Sans',sans-serif;color:#fff">Change something</div>
+</div>
+<div style="margin-top:12px;text-align:center;font:500 12.5px/1 'Instrument Sans',sans-serif;color:#0d9488">All 7 versions</div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35);z-index:6"></div>
+</div>
+<div style="width:390px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Was a scrubbable filmstrip; that was solving the wrong problem (see the note below). Now it's one card — the change you just made, with the undo you actually came for — and a quiet link to the real history. Wheel-down lands here.</div>
+</div>
+
+<div id="4c" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#4c" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">4c</a>How a change gets classified — and icons vs words</div>
+<div style="width:400px;background:#fbfaf8;border:1px solid #e0dcd4;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:20px">
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">The reliable signal</div>
+<p style="margin:10px 0 0;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:#3f3b36;text-wrap:pretty">Don't ask a model "was this a buff or a nerf" — it has no ground truth. But you already have one: <b>the plan</b>. Every build has a structured plan before and after. Diff the two and the class falls out mechanically — a plan section appeared, disappeared, changed value, or only its look changed. Plus one class the system knows for certain: a build the repair loop had to rescue.</p>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Five classes, plus a start</div>
+<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(13,148,136,.12);color:#0d9488;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">ADDED</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">a plan section that wasn't there before</span></div>
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(79,70,229,.12);color:#3f3d8f;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">CHANGED</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">same section, different behaviour</span></div>
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(124,58,237,.12);color:#7c3aed;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">LOOK</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">only the appearance section moved</span></div>
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(180,83,9,.12);color:#b45309;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">FIXED</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">the repair loop ran — system-known, never guessed</span></div>
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(107,101,96,.14);color:#6b6560;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">REMOVED</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">a section disappeared</span></div>
+<div style="display:flex;align-items:flex-start;gap:11px"><span style="flex:none;padding:4px 8px;border-radius:6px;background:rgba(28,25,23,.1);color:#1c1917;font:600 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;width:64px;text-align:center">START</span><span style="font:400 12px/1.5 'Instrument Sans',sans-serif;color:#3f3b36">version one, only ever one of them</span></div>
+</div>
+<p style="margin:12px 0 0;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">When a build changes several sections, label it by the biggest one: added &gt; removed &gt; changed &gt; look. One badge per version — two badges and people stop reading them.</p>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Icons or words?</div>
+<div style="margin-top:12px;display:flex;gap:10px">
+<div style="flex:1;border-radius:14px;border:1px solid #e0dcd4;background:#f1efea;padding:13px">
+<div style="display:flex;gap:7px;align-items:center"><span style="width:22px;height:22px;border-radius:7px;background:rgba(13,148,136,.14);color:#0d9488;display:flex;align-items:center;justify-content:center;font:600 12px/1 'Instrument Sans',sans-serif">＋</span><span style="width:22px;height:22px;border-radius:7px;background:rgba(124,58,237,.14);color:#7c3aed;display:flex;align-items:center;justify-content:center;font:600 12px/1 'Instrument Sans',sans-serif">◐</span><span style="width:22px;height:22px;border-radius:7px;background:rgba(180,83,9,.14);color:#b45309;display:flex;align-items:center;justify-content:center;font:600 12px/1 'Instrument Sans',sans-serif">✚</span></div>
+<div style="margin-top:10px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Compact, but every one needs learning. GitHub gets away with it because merged/closed/failed are only ever three states with strong shapes.</div>
+</div>
+<div style="flex:1;border-radius:14px;border:1.5px solid #1c1917;background:#fbfaf8;padding:13px">
+<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap"><span style="padding:4px 7px;border-radius:6px;background:rgba(13,148,136,.12);color:#0d9488;font:600 9px/1 'IBM Plex Mono',monospace;letter-spacing:.1em">ADDED</span><span style="padding:4px 7px;border-radius:6px;background:rgba(124,58,237,.12);color:#7c3aed;font:600 9px/1 'IBM Plex Mono',monospace;letter-spacing:.1em">LOOK</span></div>
+<div style="margin-top:10px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#3f3b36"><b>My pick.</b> Six words, no legend, colour does the scanning and the word does the meaning. Also survives being read by someone who has never opened Whim before.</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="4d" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#4d" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">4d</a>The back button</div>
+<div style="width:340px;background:#fbfaf8;border:1px solid #e0dcd4;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:18px">
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Today</div>
+<div style="margin-top:10px;padding:12px 14px;border-radius:12px;border:1px dashed #e0dcd4;display:flex;align-items:center;gap:10px;font-family:Roboto,sans-serif"><span style="font:700 15px/1 Roboto,sans-serif;color:#3f3d8f">‹ Back</span><span style="font:800 17px/1 Roboto,sans-serif;color:#1c1917">Settings</span></div>
+<div style="margin-top:8px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Undersized chevron, word doing work it doesn't need to, and it competes with the title for the same weight.</div>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Chosen — used in 4a</div>
+<div style="margin-top:10px;padding:12px 14px;border-radius:12px;border:1px solid #e0dcd4;background:#f1efea;display:flex;align-items:center;gap:12px">
+<div style="width:42px;height:42px;border-radius:21px;background:#fbfaf8;border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:center;flex:none"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1c1917" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4l-8 8 8 8"></path></svg></div>
+<div><div style="font:700 17px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">Settings</div><div style="margin-top:2px;font:400 11px/1 'Instrument Sans',sans-serif;color:#6b6560">6 themes</div></div>
+</div>
+<div style="margin-top:8px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">42px target, drawn stroke instead of a glyph, no label. The title is unambiguously the loudest thing.</div>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Alternative — for sheets</div>
+<div style="margin-top:10px;padding:12px 14px;border-radius:12px;border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:space-between">
+<div style="font:700 17px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">What changed</div>
+<div style="width:34px;height:34px;border-radius:17px;background:#f1efea;display:flex;align-items:center;justify-content:center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b6560" strokeWidth="2.6" strokeLinecap="round"><path d="M5 5l14 14M19 5L5 19"></path></svg></div>
+</div>
+<div style="margin-top:8px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Anything that rose from the bottom gets a close, not a back — different gesture, different affordance.</div>
+</div>
+</div>
+</div>
+
+</div>
+<p style="margin:24px 0 0;font:400 12px/1.5 'Instrument Sans',sans-serif;color:rgba(0,0,0,.5)">Open questions I'd want your call on: should a version you rolled back <i>from</i> stay in the list (I kept it), and do failed builds that were never rescued deserve a row at all?</p>
+<div style="margin:22px 0 0;max-width:760px;border-left:2px solid #17171a;padding:2px 0 2px 16px">
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Why 4b changed shape</div>
+<p style="margin:9px 0 0;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.62);text-wrap:pretty">Five stories, ordered by how often they'll actually happen. <b>(1)</b> “I asked for one thing, it made the app worse” — seconds after a build, inside the app, and the user wants one button. <b>(2)</b> “It broke and Whim fixed it — what did it do to my app?” — needs one card, right after the repair. <b>(3)</b> “I'm about to ask for something else, what state is this in?” — needs the last two or three prompts, no more. <b>(4)</b> “This has drifted over a week, put it back to Tuesday” — rare, deliberate, wants the full list. <b>(5)</b> “I want a decaf copy of this” — rare, and it's a fork, not history.</p>
+<p style="margin:11px 0 0;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.62);text-wrap:pretty">1–3 are the same story: <i>the most recent change, and undo</i>. That's not browsing — a scrubber makes you navigate to reach a button you always want. Only 4 is real history, and it deserves the whole screen. So: not mutually exclusive, but not two views of the same thing either. <b>4b is undo with context; 4a is the archive.</b> The tell that this is right — 4b never needs to scroll, and 4a never needs to be fast.</p>
+</div>
+</section>
+
+<section style="padding:44px 48px 36px;border-bottom:1px solid rgba(0,0,0,.09)" id="t3">
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px"><a href="#t3" style="font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#17171a;color:#fff;border-radius:4px;text-decoration:none">3</a><span style="font:600 13px/1.2 'Instrument Sans',sans-serif;color:#17171a">The orb — changing an app after it's built · and when a build fails</span></div>
+<p style="max-width:680px;margin:0 0 24px;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">The home button becomes the one control inside every mini-app. <b>Tap</b> it and it opens a menu — reachable by anyone. <b>Press and hold</b> and the same four actions fan out as a wheel you flick to — the power-user path, same actions, same positions, so the menu teaches the wheel. Release in the middle, or tap anywhere else, and nothing happens.</p>
+<div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+<div id="3a" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#3a" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">3a</a>Interactive — tap the orb, or press and hold and drag</div>
+<div onMouseMove="{{ orbMove }}" onMouseUp="{{ orbUp }}" onMouseLeave="{{ orbUp }}" style="width:390px;height:800px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;box-shadow:0 26px 50px rgba(0,0,0,.2);overflow:hidden;position:relative;display:flex;flex-direction:column;user-select:none">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 'IBM Plex Mono',monospace;color:#1c1917"><span>11:24</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+
+<div style="flex:1;display:flex;flex-direction:column;padding:26px 24px 0">
+<div style="display:flex;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:9px;background:#0d9488;color:#fff;display:flex;align-items:center;justify-content:center;font:600 11px/1 'Instrument Sans',sans-serif">PT</span><span style="font:500 13px/1 'Instrument Sans',sans-serif;color:#1c1917">Pour Timer</span><span style="margin-left:auto;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#6b6560">v{{ version }}</span></div>
+<div style="margin-top:44px;text-align:center">
+<div style="font:400 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:#6b6560">Step 2 of 4 · Bloom</div>
+<div style="margin-top:14px;font:500 76px/1 'IBM Plex Mono',monospace;letter-spacing:-.04em;color:#1c1917">0:45</div>
+<div style="margin-top:12px;font:400 15px/1.4 'Instrument Sans',sans-serif;color:#6b6560">Pour 60 g, then wait</div>
+</div>
+<div style="margin-top:34px;display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#f1efea;border:1px solid #e0dcd4;opacity:.5"><span style="width:7px;height:7px;border-radius:4px;background:#0d9488"></span><span style="font:400 13.5px/1 'Instrument Sans',sans-serif;color:#1c1917">Rinse the filter</span><span style="margin-left:auto;font:400 11.5px/1 'IBM Plex Mono',monospace;color:#6b6560">0:20</span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#0d9488;border:1px solid #0d9488"><span style="width:7px;height:7px;border-radius:4px;background:#fff"></span><span style="font:500 13.5px/1 'Instrument Sans',sans-serif;color:#fff">Bloom</span><span style="margin-left:auto;font:400 11.5px/1 'IBM Plex Mono',monospace;color:rgba(255,255,255,.8)">0:45</span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="width:7px;height:7px;border-radius:4px;background:#e0dcd4"></span><span style="font:400 13.5px/1 'Instrument Sans',sans-serif;color:#1c1917">First pour</span><span style="margin-left:auto;font:400 11.5px/1 'IBM Plex Mono',monospace;color:#6b6560">1:15</span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:14px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="width:7px;height:7px;border-radius:4px;background:#e0dcd4"></span><span style="font:400 13.5px/1 'Instrument Sans',sans-serif;color:#1c1917">Second pour</span><span style="margin-left:auto;font:400 11.5px/1 'IBM Plex Mono',monospace;color:#6b6560">1:10</span></div>
+</div>
+</div>
+
+<sc-if value="{{ orbActive }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ orbDismiss }}" style="position:absolute;inset:0;background:rgba(24,22,20,.5);backdrop-filter:blur(3px);animation:rise .16s ease both"></div>
+</sc-if>
+
+<sc-if value="{{ orbMenu }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:24px;right:24px;bottom:196px;display:flex;flex-direction:column;gap:8px;animation:rise .18s ease both">
+<sc-for list="{{ menuItems }}" as="m" hint-placeholder-count="4">
+<div onClick="{{ m.fire }}" style="display:flex;align-items:center;gap:13px;padding:15px 16px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4;cursor:pointer" style-hover="background:#f1efea">
+<span style="width:30px;height:30px;border-radius:10px;background:{{ m.tint }};color:{{ m.glyphColor }};display:flex;align-items:center;justify-content:center;font:500 15px/1 'Instrument Sans',sans-serif">{{ m.glyph }}</span>
+<span style="font:500 14.5px/1 'Instrument Sans',sans-serif;color:#1c1917">{{ m.label }}</span>
+<span style="margin-left:auto;font:400 10px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ m.dir }}</span>
+</div>
+</sc-for>
+<div style="margin-top:2px;text-align:center;font:400 11px/1.4 'Instrument Sans',sans-serif;color:rgba(255,255,255,.65)">Hold the button next time to flick straight to one</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ orbWheel }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;animation:rise .14s ease both">
+<sc-for list="{{ wheelItems }}" as="w" hint-placeholder-count="4">
+<div style="position:absolute;left:{{ w.left }};top:{{ w.top }};width:78px;height:78px;border-radius:39px;background:{{ w.bg }};border:1px solid {{ w.border }};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transform:scale({{ w.scale }});transition:transform .12s ease,background .12s ease">
+<span style="font:500 16px/1 'Instrument Sans',sans-serif;color:{{ w.fg }}">{{ w.glyph }}</span>
+<span style="font:500 10px/1.1 'Instrument Sans',sans-serif;color:{{ w.fg }};text-align:center;padding:0 6px">{{ w.label }}</span>
+</div>
+</sc-for>
+<div style="position:absolute;left:0;right:0;top:120px;text-align:center;font:400 12px/1.5 'Instrument Sans',sans-serif;color:rgba(255,255,255,.7)">{{ wheelHint }}</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ sheetFork }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:0;right:0;bottom:0;background:#fbfaf8;border-radius:28px 28px 0 0;padding:24px 24px 26px;box-shadow:0 -12px 40px rgba(0,0,0,.25);animation:rise .22s ease both">
+<div style="font:700 22px/1.2 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">Make a copy of Pour Timer?</div>
+<div style="margin-top:10px;font:400 13.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">You'll have two apps. Changing the copy won't touch this one.</div>
+<div style="margin-top:18px;display:flex;flex-direction:column;gap:9px">
+<div onClick="{{ pickKeep }}" style="padding:15px 16px;border-radius:18px;border:1.5px solid {{ keepBorder }};background:{{ keepBg }};cursor:pointer"><div style="font:500 14.5px/1 'Instrument Sans',sans-serif;color:#1c1917">Bring my brews across</div><div style="margin-top:6px;font:400 12px/1.4 'Instrument Sans',sans-serif;color:#6b6560">The copy starts with the 14 brews you've saved.</div></div>
+<div onClick="{{ pickFresh }}" style="padding:15px 16px;border-radius:18px;border:1.5px solid {{ freshBorder }};background:{{ freshBg }};cursor:pointer"><div style="font:500 14.5px/1 'Instrument Sans',sans-serif;color:#1c1917">Start the copy empty</div><div style="margin-top:6px;font:400 12px/1.4 'Instrument Sans',sans-serif;color:#6b6560">No brews. This app keeps all 14.</div></div>
+</div>
+<div style="margin-top:16px;display:flex;flex-direction:column;gap:9px">
+<div onClick="{{ orbDismiss }}" style="height:56px;border-radius:18px;background:#1c1917;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 16px/1 'Instrument Sans',sans-serif;color:#fff">Cancel</div>
+<div onClick="{{ doFork }}" style="height:46px;display:flex;align-items:center;justify-content:center;cursor:pointer;font:500 14px/1 'Instrument Sans',sans-serif;color:#6b6560">Make the copy</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ sheetVersions }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:0;right:0;bottom:0;top:150px;background:#fbfaf8;border-radius:28px 28px 0 0;padding:22px 24px 24px;box-shadow:0 -12px 40px rgba(0,0,0,.25);display:flex;flex-direction:column;animation:rise .22s ease both">
+<div style="display:flex;align-items:baseline;justify-content:space-between"><div style="font:700 21px/1.2 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">How it changed</div><span onClick="{{ orbDismiss }}" style="font:500 13px/1 'Instrument Sans',sans-serif;color:#6b6560;cursor:pointer">Close</span></div>
+<div style="margin-top:20px;flex:1;overflow:auto;position:relative;padding-left:22px">
+<div style="position:absolute;left:5px;top:6px;bottom:14px;width:1.5px;background:#e0dcd4"></div>
+<sc-for list="{{ versions }}" as="v" hint-placeholder-count="4">
+<div style="position:relative;padding-bottom:22px">
+<span style="position:absolute;left:-22px;top:3px;width:11px;height:11px;border-radius:6px;background:{{ v.dot }};border:2px solid #fbfaf8;box-shadow:0 0 0 1.5px {{ v.dot }}"></span>
+<div style="display:flex;align-items:baseline;gap:8px"><span style="font:500 13.5px/1.2 'Instrument Sans',sans-serif;color:#1c1917">{{ v.title }}</span><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ v.when }}</span></div>
+<div style="margin-top:5px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560;text-wrap:pretty">{{ v.body }}</div>
+<div style="margin-top:9px;display:flex;gap:8px"><span style="padding:7px 12px;border-radius:999px;border:1px solid #e0dcd4;font:500 11.5px/1 'Instrument Sans',sans-serif;color:#1c1917;cursor:pointer" style-hover="background:#f1efea">{{ v.action }}</span></div>
+</div>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ sheetChange }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:0;right:0;bottom:0;background:#fbfaf8;border-radius:28px 28px 0 0;padding:22px 24px 24px;box-shadow:0 -12px 40px rgba(0,0,0,.25);animation:rise .22s ease both">
+<div style="display:flex;align-items:baseline;justify-content:space-between"><div style="font:700 21px/1.2 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">What should change?</div><span onClick="{{ orbDismiss }}" style="font:500 13px/1 'Instrument Sans',sans-serif;color:#6b6560;cursor:pointer">Close</span></div>
+<div style="margin-top:16px;min-height:74px;padding:15px;border-radius:18px;background:#f1efea;border:1px solid #e0dcd4;font:400 15.5px/1.45 'Instrument Sans',sans-serif;color:#1c1917">{{ changeText }}<span style="display:inline-block;width:2px;height:16px;vertical-align:-3px;background:#0d9488;animation:blink 1s step-end infinite"></span></div>
+<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+<sc-for list="{{ changeChips }}" as="c" hint-placeholder-count="3">
+<div onClick="{{ c.pick }}" style="padding:12px 14px;border-radius:14px;border:1px solid #e0dcd4;background:#fbfaf8;font:400 13.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917;cursor:pointer" style-hover="background:#f1efea">{{ c.text }}</div>
+</sc-for>
+</div>
+<div style="margin-top:16px;height:56px;border-radius:18px;background:#0d9488;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 16px/1 'Instrument Sans',sans-serif;color:#fff">Continue</div>
+<div style="margin-top:10px;text-align:center;font:400 11.5px/1.4 'Instrument Sans',sans-serif;color:#6b6560">Whim keeps this version until the new one works.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:24px;right:24px;bottom:200px;padding:13px 16px;border-radius:16px;background:#1c1917;font:500 13px/1.3 'Instrument Sans',sans-serif;color:#fff;animation:rise .2s ease both">{{ toast }}</div>
+</sc-if>
+
+<div onMouseDown="{{ orbDown }}" ref="{{ orbRef }}" style="position:absolute;left:50%;bottom:{{ orbBottom }};transform:translateX(-50%) scale({{ orbScale }});width:{{ orbSize }};height:{{ orbSize }};border-radius:50%;background:#1c1917;box-shadow:0 8px 24px rgba(0,0,0,.32);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .14s ease,box-shadow .14s ease;z-index:5">
+<span style="display:flex;flex-direction:column;gap:3px;align-items:center;transition:all .14s ease"><i style="display:block;width:{{ orbDotSize }};height:2px;border-radius:1px;background:{{ orbDot }};transition:all .14s ease"></i><i style="display:block;width:{{ orbDotSize }};height:2px;border-radius:1px;background:{{ orbDot }};transition:all .14s ease"></i><i style="display:block;width:{{ orbDotSize }};height:2px;border-radius:1px;background:{{ orbDot }};transition:all .14s ease"></i></span>
+</div>
+
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35);z-index:6"></div>
+</div>
+<div style="width:390px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Tap → menu. Press and hold ~0.3 s → wheel; drag out and release. Release in the centre → nothing. Same four actions in the same four positions in both.</div>
+</div>
+
+<div id="3b" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#3b" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">3b</a>When it doesn't work — interactive</div>
+<div style="width:390px;height:800px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;box-shadow:0 26px 50px rgba(0,0,0,.2);overflow:hidden;position:relative;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 'IBM Plex Mono',monospace;color:#1c1917"><span>11:26</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="flex:1;display:flex;flex-direction:column;padding:26px 24px 24px">
+<div style="font:700 26px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:{{ rpTitleColor }};text-wrap:pretty">{{ rpTitle }}</div>
+<div style="margin-top:9px;font:400 13.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560;text-wrap:pretty">{{ rpSub }}</div>
+
+<sc-if value="{{ rpShowAttempts }}" hint-placeholder-val="{{ false }}">
+<div style="margin-top:20px;display:flex;gap:7px">
+<sc-for list="{{ rpAttempts }}" as="a" hint-placeholder-count="3">
+<div style="flex:1;height:5px;border-radius:3px;background:{{ a.bg }}"></div>
+</sc-for>
+</div>
+<div style="margin-top:9px;font:400 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:#6b6560">{{ rpAttemptLabel }}</div>
+</sc-if>
+
+<div style="margin-top:22px;flex:1;border-radius:20px;background:{{ rpPanelBg }};border:1px solid {{ rpPanelBorder }};padding:18px;overflow:hidden;display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ rpRows }}" as="r" hint-placeholder-count="4">
+<div style="display:flex;align-items:flex-start;gap:11px;animation:rise .3s ease both">
+<span style="margin-top:1px;width:18px;height:18px;flex:none;border-radius:9px;border:1.5px solid {{ r.ring }};background:{{ r.fill }};display:flex;align-items:center;justify-content:center;font:600 9px/1 'Instrument Sans',sans-serif;color:#fff">{{ r.mark }}</span>
+<span style="font:400 13px/1.45 'Instrument Sans',sans-serif;color:{{ r.color }};text-wrap:pretty">{{ r.text }}</span>
+</div>
+</sc-for>
+</div>
+
+<div style="margin-top:16px;display:flex;flex-direction:column;gap:9px">
+<sc-for list="{{ rpActions }}" as="b" hint-placeholder-count="2">
+<div onClick="{{ b.fire }}" style="height:54px;border-radius:18px;background:{{ b.bg }};border:1px solid {{ b.border }};display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:{{ b.fg }}">{{ b.label }}</div>
+</sc-for>
+</div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+<div style="width:390px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Whim fixes it before telling you it's broken. The user never sees a stack trace — they see what it tried, in their own words, and always have a working version to fall back to.</div>
+</div>
+
+<div id="3c" style="display:flex;flex-direction:column;gap:9px;width:340px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#3c" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">3c</a>Why these four, and why nothing else</div>
+<div style="background:#fbfaf8;border:1px solid #e0dcd4;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:18px">
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">On the wheel</div>
+<div style="margin-top:10px;display:flex;flex-direction:column;gap:9px">
+<div style="font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#1c1917"><b>Up · Change it</b> — the most-used action, so it gets the easiest flick.</div>
+<div style="font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#1c1917"><b>Right · Home</b> — what the button does today; muscle memory survives.</div>
+<div style="font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#1c1917"><b>Down · Versions</b> — read-only. Restoring happens from inside, with a confirm.</div>
+<div style="font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#1c1917"><b>Left · Copy</b> — the only consequential one, so it opens a sheet rather than firing.</div>
+</div>
+</div>
+<div style="height:1px;background:#e0dcd4"></div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Deliberately not on it</div>
+<div style="margin-top:10px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Delete, rename, restore, share, export. Anything you can't undo with one tap lives in a full screen where it can be read. A flick should never be the last step of a decision.</div>
+</div>
+<div style="height:1px;background:#e0dcd4"></div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Four, not six</div>
+<div style="margin-top:10px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Cardinal directions are the only ones people hit reliably without looking. Eight sectors halves the target and kills the whole point of the gesture. If a fifth action earns its place, it goes in the tapped menu only — the menu can be longer than the wheel.</div>
+</div>
+<div style="height:1px;background:#e0dcd4"></div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">About your audience</div>
+<div style="margin-top:10px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">You don't have to decide. The tap-menu is the whole feature for a first-timer; the wheel is the same feature for you, faster. The menu labels each action with its direction, so the shortcut is discovered by using the slow path — no tutorial, no settings toggle.</div>
+</div>
+</div>
+</div>
+
+</div>
+<p style="margin:24px 0 0;font:400 12px/1.5 'Instrument Sans',sans-serif;color:rgba(0,0,0,.5)">Started the design system at <a href="Whim Design System.dc.html">Whim Design System</a> — tokens, tiles, buttons, busy and failure states, the orb spec. Marked unfinished; SDK components come later.</p>
+</section>
+
+<section style="padding:44px 48px 36px;border-bottom:1px solid rgba(0,0,0,.09)" id="t2">
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px"><a href="#t2" style="font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#17171a;color:#fff;border-radius:4px;text-decoration:none">2</a><span style="font:600 13px/1.2 'Instrument Sans',sans-serif;color:#17171a">Redesign — the make-an-app flow</span></div>
+<p style="max-width:640px;margin:0 0 24px;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Same tokens as the app today (paper preset, indigo primary) — the change is rhythm, not palette. Composer replaces the empty text wall, a clarifying step earns the plan, and the plan is a structured thing you can read at a glance. Every transition has a busy state.</p>
+<div style="display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start">
+
+<div id="2a" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#2a" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">2a</a>Interactive — tap through the whole flow</div>
+<div style="width:390px;height:800px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;box-shadow:0 26px 50px rgba(0,0,0,.2);overflow:hidden;position:relative;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 'IBM Plex Mono',monospace;color:#1c1917"><span>11:09</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+
+<sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+<div style="padding:20px 22px 14px;display:flex;align-items:flex-start;justify-content:space-between">
+<div><div style="font:700 34px/1 'Instrument Sans',sans-serif;letter-spacing:-.03em;color:#1c1917">Whim</div><div style="margin-top:7px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Your apps</div></div>
+<div style="width:38px;height:38px;border-radius:19px;background:#f1efea;border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:center;font:400 16px/1 'Instrument Sans',sans-serif;color:#1c1917">⚙</div>
+</div>
+<div style="flex:1;overflow:hidden;padding:4px 22px 0;display:grid;grid-template-columns:repeat(3,1fr);gap:18px 14px;align-content:start">
+<sc-for list="{{ apps }}" as="app" hint-placeholder-count="6">
+<div style="display:flex;flex-direction:column;gap:8px;animation:rise .3s ease both">
+<div style="position:relative;aspect-ratio:1;border-radius:{{ radTile }};background:{{ app.bg }};overflow:hidden;display:flex;align-items:flex-end;padding:10px;box-shadow:0 2px 6px rgba(0,0,0,.1)">
+<span style="position:absolute;right:-10px;top:-16px;font:700 76px/1 'Instrument Sans',sans-serif;color:rgba(255,255,255,.16);letter-spacing:-.05em">{{ app.mono }}</span>
+<span style="position:absolute;inset:0;border-radius:{{ radTile }};border:1px solid rgba(255,255,255,.3)"></span>
+<span style="position:relative;font:600 22px/1 'Instrument Sans',sans-serif;color:#fff;letter-spacing:-.02em">{{ app.mono }}</span>
+</div>
+<div style="font:500 11.5px/1.25 'Instrument Sans',sans-serif;color:#1c1917">{{ app.name }}</div>
+</div>
+</sc-for>
+</div>
+<div style="padding:14px 22px 22px">
+<div onClick="{{ goCompose }}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:20px;background:#f1efea;border:1px solid #e0dcd4;cursor:pointer" style-hover="background:#ece9e2">
+<span style="width:26px;height:26px;border-radius:13px;background:{{ accent }};color:#fff;display:flex;align-items:center;justify-content:center;font:400 17px/1 'Instrument Sans',sans-serif">+</span>
+<span style="flex:1;font:400 14px/1 'Instrument Sans',sans-serif;color:#6b6560">Describe an app…</span>
+<span style="font:400 14px/1 'Instrument Sans',sans-serif;color:#6b6560">🎙</span>
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isCompose }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+<div style="padding:16px 22px 0;display:flex;align-items:center;justify-content:space-between">
+<span onClick="{{ goHome }}" style="font:500 13px/1 'Instrument Sans',sans-serif;color:#6b6560;cursor:pointer">Back</span>
+<div style="display:flex;gap:6px;align-items:center"><i style="display:block;width:18px;height:3px;border-radius:2px;background:{{ accent }}"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i></div>
+</div>
+<div style="padding:34px 22px 0">
+<div style="font:700 30px/1.12 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#1c1917;text-wrap:pretty">What should<br>it do?</div>
+<div style="margin-top:22px;min-height:96px;padding:16px;border-radius:20px;background:#f1efea;border:1px solid #e0dcd4;font:400 16px/1.45 'Instrument Sans',sans-serif;color:#1c1917">{{ promptShown }}<span style="display:inline-block;width:2px;height:17px;vertical-align:-3px;background:{{ accent }};animation:blink 1s step-end infinite"></span></div>
+<div style="margin-top:10px;font:400 11.5px/1.4 'Instrument Sans',sans-serif;color:#6b6560">Plain words are enough. Whim will ask if something is unclear.</div>
+<div style="margin-top:24px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Or start from</div>
+<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+<sc-for list="{{ chips }}" as="chip" hint-placeholder-count="3">
+<div onClick="{{ chip.pick }}" style="padding:12px 14px;border-radius:14px;border:1px solid #e0dcd4;background:#fbfaf8;font:400 13.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917;cursor:pointer" style-hover="background:#f1efea">{{ chip.text }}</div>
+</sc-for>
+</div>
+</div>
+<div style="margin-top:auto;padding:16px 22px 24px">
+<div onClick="{{ toClarify }}" style="height:52px;border-radius:{{ radBtn }};background:{{ ctaBg }};display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#fff">
+<sc-if value="{{ busy }}" hint-placeholder-val="{{ false }}"><span style="width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite"></span></sc-if>
+{{ ctaLabel }}
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isClarify }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+<div style="padding:16px 22px 0;display:flex;align-items:center;justify-content:space-between">
+<span onClick="{{ goCompose }}" style="font:500 13px/1 'Instrument Sans',sans-serif;color:#6b6560;cursor:pointer">Back</span>
+<div style="display:flex;gap:6px;align-items:center"><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:{{ accent }}"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i></div>
+</div>
+<div style="padding:28px 22px 0;overflow:auto">
+<div style="font:700 26px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#1c1917">Two quick things</div>
+<div style="margin-top:8px;font:400 13px/1.5 'Instrument Sans',sans-serif;color:#6b6560">{{ promptEcho }}</div>
+<div style="margin-top:26px;display:flex;flex-direction:column;gap:22px">
+<sc-for list="{{ questions }}" as="q" hint-placeholder-count="2">
+<div style="animation:rise .3s ease both">
+<div style="font:500 15px/1.35 'Instrument Sans',sans-serif;color:#1c1917">{{ q.text }}</div>
+<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px">
+<sc-for list="{{ q.options }}" as="o" hint-placeholder-count="2">
+<div onClick="{{ o.pick }}" style="padding:10px 14px;border-radius:999px;border:1px solid {{ o.border }};background:{{ o.bg }};color:{{ o.fg }};font:500 13px/1 'Instrument Sans',sans-serif;cursor:pointer">{{ o.label }}</div>
+</sc-for>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:22px;font:400 12px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Skip these and Whim will pick sensible answers.</div>
+</div>
+<div style="margin-top:auto;padding:16px 22px 24px">
+<div onClick="{{ toPlan }}" style="height:52px;border-radius:{{ radBtn }};background:{{ ctaBg }};display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#fff">
+<sc-if value="{{ busy }}" hint-placeholder-val="{{ false }}"><span style="width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite"></span></sc-if>
+{{ ctaLabel }}
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isPlan }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+<div style="padding:16px 22px 0;display:flex;align-items:center;justify-content:space-between">
+<span onClick="{{ toClarifyBack }}" style="font:500 13px/1 'Instrument Sans',sans-serif;color:#6b6560;cursor:pointer">Back</span>
+<div style="display:flex;gap:6px;align-items:center"><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:#e0dcd4"></i><i style="display:block;width:18px;height:3px;border-radius:2px;background:{{ accent }}"></i></div>
+</div>
+<div style="padding:26px 22px 0;overflow:auto">
+<div style="font:700 26px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#1c1917">Here's the plan</div>
+<div style="margin-top:8px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Tap anything to change it before building.</div>
+<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ planRows }}" as="row" hint-placeholder-count="4">
+<div style="padding:14px 16px;border-radius:18px;background:#f1efea;border:1px solid #e0dcd4;cursor:pointer" style-hover="border-color:#c9c3b8">
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">{{ row.label }}</div>
+<div style="margin-top:8px;font:400 14px/1.45 'Instrument Sans',sans-serif;color:#1c1917;text-wrap:pretty">{{ row.value }}</div>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:14px;font:400 12px/1.5 'Instrument Sans',sans-serif;color:#6b6560">Nothing here is final — you can keep changing the app after it's built.</div>
+</div>
+<div style="margin-top:auto;padding:16px 22px 24px">
+<div onClick="{{ build }}" style="height:52px;border-radius:{{ radBtn }};background:{{ ctaBg }};display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#fff">
+<sc-if value="{{ busy }}" hint-placeholder-val="{{ false }}"><span style="width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite"></span></sc-if>
+{{ ctaLabel }}
+</div>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isBuilding }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;overflow:hidden;padding:26px 22px 24px">
+<div style="font:700 26px/1.15 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#1c1917">{{ buildTitle }}</div>
+<div style="margin-top:8px;font:400 12.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">{{ buildSub }}</div>
+<div style="margin-top:20px;height:4px;border-radius:2px;background:#e0dcd4;overflow:hidden"><div style="height:100%;background:{{ accent }};width:{{ pct }};transition:width .5s ease"></div></div>
+<div style="margin-top:24px;display:flex;flex-direction:column;gap:14px">
+<sc-for list="{{ stages }}" as="s" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:12px;opacity:{{ s.opacity }}">
+<span style="width:20px;height:20px;border-radius:10px;border:1.5px solid {{ s.ring }};background:{{ s.fill }};display:flex;align-items:center;justify-content:center;font:600 10px/1 'Instrument Sans',sans-serif;color:#fff">{{ s.mark }}</span>
+<span style="font:500 14px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ s.label }}</span>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:22px;flex:1;border-radius:18px;background:#17171a;padding:14px 16px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:6px">
+<sc-for list="{{ lines }}" as="l" hint-placeholder-count="5">
+<div style="font:400 11px/1.5 'IBM Plex Mono',monospace;color:{{ l.color }};animation:rise .25s ease both">{{ l.text }}</div>
+</sc-for>
+</div>
+<div onClick="{{ finishNow }}" style="margin-top:16px;height:52px;border-radius:{{ radBtn }};border:1px solid #e0dcd4;background:#fbfaf8;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#6b6560">{{ buildCta }}</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:26px 22px 24px;align-items:center;justify-content:center;gap:18px">
+<div style="width:120px;height:120px;border-radius:32px;background:#0d9488;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:14px;box-shadow:0 8px 22px rgba(13,148,136,.3);animation:rise .4s ease both">
+<span style="position:absolute;right:-12px;top:-20px;font:700 92px/1 'Instrument Sans',sans-serif;color:rgba(255,255,255,.16)">PT</span>
+<span style="position:absolute;inset:0;border-radius:32px;border:1px solid rgba(255,255,255,.3)"></span>
+<span style="position:relative;font:600 26px/1 'Instrument Sans',sans-serif;color:#fff">PT</span>
+</div>
+<div style="text-align:center"><div style="font:700 24px/1.2 'Instrument Sans',sans-serif;letter-spacing:-.02em;color:#1c1917">Pour Timer is ready</div><div style="margin-top:8px;font:400 13px/1.5 'Instrument Sans',sans-serif;color:#6b6560;max-width:250px">It's on your home screen. Open it, or tell Whim what to change.</div></div>
+<div style="width:100%;display:flex;flex-direction:column;gap:10px;margin-top:6px">
+<div onClick="{{ goHome }}" style="height:52px;border-radius:{{ radBtn }};background:{{ accent }};display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#fff">Open it</div>
+<div onClick="{{ goHome }}" style="height:52px;border-radius:{{ radBtn }};border:1px solid #e0dcd4;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px/1 'Instrument Sans',sans-serif;color:#6b6560">Back to your apps</div>
+</div>
+</div>
+</sc-if>
+
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+</div>
+
+<div id="2b" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#2b" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">2b</a>Tile identity — three treatments</div>
+<div style="width:340px;background:#fbfaf8;border:1px solid #e0dcd4;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:24px">
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Ghost letterform · in 2a</div>
+<div style="margin-top:12px;display:flex;gap:12px">
+<div style="width:88px;height:88px;border-radius:22px;background:#3f3d8f;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:9px"><span style="position:absolute;right:-8px;top:-13px;font:700 62px/1 'Instrument Sans',sans-serif;color:rgba(255,255,255,.16)">WC</span><span style="position:absolute;inset:0;border-radius:22px;border:1px solid rgba(255,255,255,.3)"></span><span style="position:relative;font:600 19px/1 'Instrument Sans',sans-serif;color:#fff">WC</span></div>
+<div style="width:88px;height:88px;border-radius:22px;background:#0d9488;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:9px"><span style="position:absolute;right:-8px;top:-13px;font:700 62px/1 'Instrument Sans',sans-serif;color:rgba(255,255,255,.16)">TS</span><span style="position:absolute;inset:0;border-radius:22px;border:1px solid rgba(255,255,255,.3)"></span><span style="position:relative;font:600 19px/1 'Instrument Sans',sans-serif;color:#fff">TS</span></div>
+<div style="width:88px;height:88px;border-radius:22px;background:#b45309;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:9px"><span style="position:absolute;right:-8px;top:-13px;font:700 62px/1 'Instrument Sans',sans-serif;color:rgba(255,255,255,.16)">MT</span><span style="position:absolute;inset:0;border-radius:22px;border:1px solid rgba(255,255,255,.3)"></span><span style="position:relative;font:600 19px/1 'Instrument Sans',sans-serif;color:#fff">MT</span></div>
+</div>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Paper chip · color as a stripe</div>
+<div style="margin-top:12px;display:flex;gap:12px">
+<div style="width:88px;height:88px;border-radius:22px;background:#f1efea;border:1px solid #e0dcd4;overflow:hidden;display:flex;flex-direction:column"><div style="height:9px;background:#3f3d8f"></div><div style="flex:1;display:flex;align-items:center;justify-content:center;font:600 22px/1 'Instrument Sans',sans-serif;color:#1c1917;letter-spacing:-.02em">WC</div></div>
+<div style="width:88px;height:88px;border-radius:22px;background:#f1efea;border:1px solid #e0dcd4;overflow:hidden;display:flex;flex-direction:column"><div style="height:9px;background:#0d9488"></div><div style="flex:1;display:flex;align-items:center;justify-content:center;font:600 22px/1 'Instrument Sans',sans-serif;color:#1c1917;letter-spacing:-.02em">TS</div></div>
+<div style="width:88px;height:88px;border-radius:22px;background:#f1efea;border:1px solid #e0dcd4;overflow:hidden;display:flex;flex-direction:column"><div style="height:9px;background:#b45309"></div><div style="flex:1;display:flex;align-items:center;justify-content:center;font:600 22px/1 'Instrument Sans',sans-serif;color:#1c1917;letter-spacing:-.02em">MT</div></div>
+</div>
+</div>
+<div>
+<div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Cut corner · monogram baseline-left</div>
+<div style="margin-top:12px;display:flex;gap:12px">
+<div style="width:88px;height:88px;border-radius:22px 22px 22px 6px;background:#3f3d8f;display:flex;align-items:flex-end;padding:10px;font:600 20px/1 'Instrument Sans',sans-serif;color:#fff;letter-spacing:-.02em">WC</div>
+<div style="width:88px;height:88px;border-radius:22px 22px 22px 6px;background:#0d9488;display:flex;align-items:flex-end;padding:10px;font:600 20px/1 'Instrument Sans',sans-serif;color:#fff;letter-spacing:-.02em">TS</div>
+<div style="width:88px;height:88px;border-radius:22px 22px 22px 6px;background:#b45309;display:flex;align-items:flex-end;padding:10px;font:600 20px/1 'Instrument Sans',sans-serif;color:#fff;letter-spacing:-.02em">MT</div>
+</div>
+</div>
+<p style="margin:0;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">All three keep the deterministic color from <code style="font:400 11px 'IBM Plex Mono',monospace">tiles.ts</code> — only the treatment changes.</p>
+</div>
+</div>
+
+<div id="2c" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#2c" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">2c</a>Build screen — quieter alternative to 2a's log</div>
+<div style="width:340px;background:#fbfaf8;border:1px solid #e0dcd4;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:16px">
+<div style="border-radius:18px;background:#f1efea;border:1px solid #e0dcd4;padding:20px">
+<div style="display:flex;align-items:center;gap:10px"><span style="width:8px;height:8px;border-radius:4px;background:#3f3d8f;animation:pulse 1.4s ease-in-out infinite"></span><span style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Building</span></div>
+<div style="margin-top:14px;font:400 20px/1.3 'Instrument Sans',sans-serif;color:#1c1917;letter-spacing:-.01em">Wiring the timer to the sound you picked</div>
+<div style="margin-top:16px;height:3px;border-radius:2px;background:#e0dcd4;overflow:hidden"><div style="height:100%;width:64%;background:#3f3d8f"></div></div>
+<div style="margin-top:10px;display:flex;justify-content:space-between;font:400 11px/1 'IBM Plex Mono',monospace;color:#6b6560"><span>step 3 of 4</span><span>~20s left</span></div>
+</div>
+<p style="margin:0;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">One sentence at a time, in the user's words — the same events that drive 2a's log, without the terminal. Good default; keep the log behind a "show details" tap for when the repair loop lands.</p>
+</div>
+</div>
+
+</div>
+<p style="margin:24px 0 0;font:400 12px/1.5 'Instrument Sans',sans-serif;color:rgba(0,0,0,.5)">Try next: "make the build screen more like <a href="#2c" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:2px 6px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">2c</a>" · "dark direction for the whole flow" · "now do history + fork"</p>
+</section>
+
+<section style="padding:44px 48px 40px" id="t1">
+<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 6px"><a href="#t1" style="font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#17171a;color:#fff;border-radius:4px;text-decoration:none">1</a><span style="font:600 13px/1.2 'Instrument Sans',sans-serif;color:#17171a">Today's UI, recreated from source</span></div>
+<p style="max-width:640px;margin:0 0 24px;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)">Baseline for comparison. Home and Settings are recreated from <code style="font:400 11.5px 'IBM Plex Mono',monospace">HomeScreen.tsx</code>, <code style="font:400 11.5px 'IBM Plex Mono',monospace">SettingsScreen.tsx</code>, <code style="font:400 11.5px 'IBM Plex Mono',monospace">tiles.ts</code> and <code style="font:400 11.5px 'IBM Plex Mono',monospace">sdk/theme.ts</code>; the two prompt screens aren't in the repo yet, so they're traced from your screenshots.</p>
+<div style="display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start">
+
+<div id="1a" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#1a" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">1a</a>Home grid</div>
+<div style="width:390px;height:720px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;overflow:hidden;position:relative;font-family:Roboto,system-ui,sans-serif">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 Roboto,system-ui,sans-serif;color:#1c1917"><span>11:09</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:8px 16px 12px">
+<div><div style="font:800 28px/1.1 Roboto,system-ui,sans-serif;color:#1c1917">Whim</div><div style="font-size:13px;margin-top:2px;color:#6b6560">Your apps</div></div>
+<div style="width:36px;height:36px;border-radius:18px;border:1px solid #e0dcd4;background:#f1efea;display:flex;align-items:center;justify-content:center;font-size:17px;color:#1c1917">⚙</div>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:12px;padding:0 16px">
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#0ea5e9;display:flex;align-items:center;justify-content:center;position:relative"><span style="color:#fff;font:800 30px/1 Roboto,system-ui,sans-serif">TS</span><span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.35);border-radius:6px;padding:1px 5px;color:#fff;font:700 9px/1.5 Roboto,sans-serif">Example</span></div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">Tip Splitter</div></div>
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#6366f1;display:flex;align-items:center;justify-content:center;position:relative"><span style="color:#fff;font:800 30px/1 Roboto,system-ui,sans-serif">WC</span><span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.35);border-radius:6px;padding:1px 5px;color:#fff;font:700 9px/1.5 Roboto,sans-serif">Example</span></div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">Water Counter</div></div>
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#8b5cf6;display:flex;align-items:center;justify-content:center;position:relative"><span style="color:#fff;font:800 30px/1 Roboto,system-ui,sans-serif">SG</span><span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.35);border-radius:6px;padding:1px 5px;color:#fff;font:700 9px/1.5 Roboto,sans-serif">Example</span></div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">Style Gallery</div></div>
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#6366f1;display:flex;align-items:center;justify-content:center"><span style="color:#fff;font:800 30px/1 Roboto,system-ui,sans-serif">MT</span></div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">Mood Tracker</div></div>
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#10b981;display:flex;align-items:center;justify-content:center"><span style="color:#fff;font:800 30px/1 Roboto,system-ui,sans-serif">CW</span></div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">Counter with Sound</div></div>
+<div style="width:111px"><div style="width:111px;height:111px;border-radius:18px;background:#f1efea;border:1px dashed #e0dcd4;display:flex;align-items:center;justify-content:center;font:300 34px/1 Roboto,sans-serif;color:#3f3d8f">＋</div><div style="font:600 12px/1.3 Roboto,sans-serif;margin-top:6px;color:#1c1917">make your first app</div></div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+</div>
+
+<div id="1b" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#1b" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">1b</a>Settings — theme picker</div>
+<div style="width:390px;height:720px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;overflow:hidden;position:relative;font-family:Roboto,system-ui,sans-serif">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 Roboto,system-ui,sans-serif;color:#1c1917"><span>11:11</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #e0dcd4"><span style="font:700 15px/1 Roboto,sans-serif;color:#3f3d8f">‹ Back</span><span style="font:800 18px/1 Roboto,sans-serif;color:#1c1917">Settings</span></div>
+<div style="padding:16px">
+<div style="font:700 12px/1 Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:#6b6560;margin:4px 0 10px">Server address</div>
+<div style="padding:14px;border-radius:12px;background:#f1efea;border:1px solid #e0dcd4;font-size:15px;color:#1c1917">http://localhost:8787</div>
+<div style="margin-top:8px;font-size:12.5px;color:#6b6560">Where Whim sends your prompts to build apps.</div>
+<div style="font:700 12px/1 Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:#6b6560;margin:20px 0 10px">Theme</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:2px solid #3f3d8f"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Paper</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#fbfaf8"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#f1efea"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#3f3d8f"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#1c1917"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Light</div></div>
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:1px solid #e0dcd4"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Ink</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#0b1020"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#171d31"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#8ab4ff"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#e7eaf3"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Dark</div></div>
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:1px solid #e0dcd4"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Neon</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#0a0a0f"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#16121f"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#d946ef"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#f2eefc"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Dark</div></div>
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:1px solid #e0dcd4"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Meadow</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#f6faf4"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#eaf3e6"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#15803d"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#1a2416"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Light</div></div>
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:1px solid #e0dcd4"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Sunset</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#fff8f2"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#ffeede"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#ea580c"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#33201a"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Light</div></div>
+<div style="border-radius:14px;padding:12px;background:#f1efea;border:1px solid #e0dcd4"><div style="font:700 14px/1 Roboto,sans-serif;color:#1c1917">Mono</div><div style="display:flex;gap:6px;margin-top:8px"><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#ffffff"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#f5f5f5"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#111111"></i><i style="display:block;width:16px;height:16px;border-radius:8px;border:1px solid #e0dcd4;background:#111111"></i></div><div style="margin-top:8px;font-size:11px;color:#6b6560">Light</div></div>
+</div>
+<div style="font:700 12px/1 Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:#6b6560;margin:20px 0 10px">Accent</div>
+<div style="display:flex;flex-wrap:wrap;gap:12px">
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#3f3d8f;border:2px solid #1c1917"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#3f3d8f"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#2563eb"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#0284c7"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#0d9488"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#16a34a"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#b45309"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#e11d48"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#c026d3"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#7c3aed"></i>
+<i style="display:block;width:34px;height:34px;border-radius:17px;background:#334155"></i>
+</div>
+<div style="font:700 12px/1 Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:#6b6560;margin:20px 0 10px">Corners</div>
+<div style="display:flex;gap:8px">
+<div style="flex:1;padding:10px;text-align:center;border-radius:10px;border:1px solid #e0dcd4;background:#f1efea;font:700 13px/1.2 Roboto,sans-serif;color:#1c1917">Sharp</div>
+<div style="flex:1;padding:10px;text-align:center;border-radius:10px;border:1px solid #e0dcd4;background:#3f3d8f;font:700 13px/1.2 Roboto,sans-serif;color:#fff">Soft</div>
+<div style="flex:1;padding:10px;text-align:center;border-radius:10px;border:1px solid #e0dcd4;background:#f1efea;font:700 13px/1.2 Roboto,sans-serif;color:#1c1917">Round</div>
+</div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+</div>
+
+<div id="1c" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#1c" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">1c</a>Describe your app</div>
+<div style="width:390px;height:720px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;overflow:hidden;position:relative;font-family:Roboto,system-ui,sans-serif;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 Roboto,system-ui,sans-serif;color:#1c1917"><span>11:10</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #e0dcd4"><span style="font:700 15px/1 Roboto,sans-serif;color:#3f3d8f">‹ Back</span><span style="font:800 18px/1 Roboto,sans-serif;color:#1c1917">Describe your app</span></div>
+<div style="flex:1;padding:16px;display:flex;flex-direction:column">
+<div style="flex:1;border-radius:14px;background:#f1efea;border:1px solid #e0dcd4;padding:16px;font-size:16px;line-height:1.45;color:#1c1917">big red button. clicking it increments a counter (starts from 0) and makes a sound</div>
+<div style="margin-top:10px;font-size:12.5px;color:#6b6560">Tip: tap the microphone on your keyboard to talk instead of typing.</div>
+<div style="margin-top:12px;height:56px;border-radius:14px;background:#3f3d8f;display:flex;align-items:center;justify-content:center;font:700 17px/1 Roboto,sans-serif;color:#fff">Continue</div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+</div>
+
+<div id="1d" style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55)"><a href="#1d" style="font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#17171a;border-radius:5px;text-decoration:none">1d</a>Review before building</div>
+<div style="width:390px;height:720px;border-radius:44px;background:#fbfaf8;border:9px solid #17171a;overflow:hidden;position:relative;font-family:Roboto,system-ui,sans-serif;display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 24px 4px;font:500 12px/1 Roboto,system-ui,sans-serif;color:#1c1917"><span>11:11</span><span style="width:11px;height:11px;border-radius:50%;background:#17171a"></span><span style="display:flex;gap:3px;align-items:flex-end"><i style="display:block;width:3px;height:7px;background:#1c1917"></i><i style="display:block;width:3px;height:10px;background:#1c1917"></i><i style="display:block;width:3px;height:13px;background:#1c1917"></i></span></div>
+<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #e0dcd4"><span style="font:700 15px/1 Roboto,sans-serif;color:#3f3d8f">‹ Back</span><span style="font:800 18px/1 Roboto,sans-serif;color:#1c1917">Review before building</span></div>
+<div style="flex:1;padding:16px;display:flex;flex-direction:column">
+<div style="font:700 12px/1 Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:#6b6560">You said</div>
+<div style="margin-top:8px;font-size:15px;line-height:1.4;color:#6b6560">big red button. clicking it increments a counter (starts from 0) and makes a sound</div>
+<div style="flex:1;margin-top:14px;border-radius:14px;background:#f1efea;border:1px solid #e0dcd4;padding:16px;font-size:16px;line-height:1.45;color:#1c1917">A simple web app with a large red button centered on the screen. A counter is displayed prominently, starting at 0. Each time the button is clicked, the counter increments by 1 and a short, satisfying click sound plays. No other controls or features are needed. The design is minimal, with the button and counter as the only elements.</div>
+<div style="margin-top:12px;height:56px;border-radius:14px;background:#3f3d8f;display:flex;align-items:center;justify-content:center;font:700 17px/1 Roboto,sans-serif;color:#fff">Build it</div>
+</div>
+<div style="position:absolute;left:50%;bottom:8px;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:rgba(0,0,0,.35)"></div>
+</div>
+</div>
+
+</div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#3f3d8f&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#3f3d8f&quot;,&quot;#0d9488&quot;,&quot;#b45309&quot;,&quot;#334155&quot;],&quot;section&quot;:&quot;Theme&quot;}}">
+const APPS = [
+  { name: 'Tip Splitter', mono: 'TS', bg: '#0284c7' },
+  { name: 'Water Counter', mono: 'WC', bg: '#3f3d8f' },
+  { name: 'Style Gallery', mono: 'SG', bg: '#7c3aed' },
+  { name: 'Mood Tracker', mono: 'MT', bg: '#b45309' },
+  { name: 'Counter with Sound', mono: 'CW', bg: '#16a34a' },
+];
+const CHIPS = [
+  'a timer with my pour-over recipe',
+  'a tracker for how often I water the plants',
+  'a dice roller for game night',
+];
+const QUESTIONS = [
+  { id: 'history', text: 'Should it remember past brews?', options: ['Keep a history', 'Just the last one'] },
+  { id: 'alert', text: 'How should it tell you a step is done?', options: ['Sound', 'Buzz', 'Both'] },
+];
+const STAGES = ['Reading your plan', 'Writing the app', 'Checking it runs safely', 'Putting it on your home screen'];
+const LOG = [
+  'reading the plan',
+  'four steps, 3m 30s total',
+  'laying out the timer screen',
+  'adding the step list',
+  'wiring start, pause and reset',
+  'saving each brew to history',
+  'checking it only touches its own data',
+  'no unexpected reach — clean',
+  'packaging the app',
+  'saving version 1',
+];
+const RADII = { sharp: { tile: '4px', btn: '8px' }, soft: { tile: '22px', btn: '16px' }, round: { tile: '30px', btn: '999px' } };
+
+class Component extends DCLogic {
+  state = { screen: 'home', prompt: '', busy: false, answers: {}, stage: 0, lines: [], installed: false,
+            orb: 'idle', sector: null, sheet: null, toast: '', keepData: true, version: 3, rp: 0, rpFate: 'fix' };
+
+  componentWillUnmount() { clearTimeout(this.t); clearInterval(this.iv); clearTimeout(this.ht); clearTimeout(this.tt); clearTimeout(this.rt); }
+
+  setOrbRef = el => { this.orbEl = el; };
+
+  onOrbDown = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.state.sheet) return;
+    this.held = false;
+    clearTimeout(this.ht);
+    this.ht = setTimeout(() => { this.held = true; this.setState({ orb: 'wheel', sector: null, sheet: null }); }, 300);
+    this.setState({ orb: this.state.orb === 'menu' ? 'idle' : this.state.orb });
+  };
+
+  onOrbMove = e => {
+    if (this.state.orb !== 'wheel' || !this.orbEl) return;
+    const r = this.orbEl.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const dist = Math.hypot(dx, dy);
+    if (dist < 34) { if (this.state.sector !== null) this.setState({ sector: null }); return; }
+    const a = Math.atan2(dy, dx) * 180 / Math.PI;
+    const s = a >= -45 && a < 45 ? 1 : a >= 45 && a < 135 ? 2 : a >= -135 && a < -45 ? 0 : 3;
+    if (this.state.sector !== s) this.setState({ sector: s });
+  };
+
+  onOrbUp = () => {
+    clearTimeout(this.ht);
+    if (this.state.orb === 'wheel') {
+      const s = this.state.sector;
+      if (s === null) this.setState({ orb: 'idle' });
+      else this.fire(['change', 'home', 'versions', 'fork'][s]);
+      return;
+    }
+    if (!this.held && this.state.orb === 'idle' && !this.state.sheet) this.setState({ orb: 'menu' });
+    this.held = false;
+  };
+
+  say(msg) {
+    clearTimeout(this.tt);
+    this.setState({ toast: msg });
+    this.tt = setTimeout(() => this.setState({ toast: '' }), 2200);
+  }
+
+  fire(action) {
+    if (action === 'home') { this.setState({ orb: 'idle', sector: null, sheet: null }); this.say('Back on your home screen'); return; }
+    this.setState({ orb: 'idle', sector: null, sheet: action, toast: '' });
+  }
+
+  playRepair(fate) {
+    clearTimeout(this.rt);
+    this.setState({ rp: 1, rpFate: fate });
+    const steps = fate === 'fix' ? [2, 3, 4] : [2, 3, 5];
+    steps.forEach((v, i) => { this.rt = setTimeout(() => this.setState({ rp: v }), 1400 * (i + 1)); });
+  }
+
+  go(screen) { this.setState({ screen, busy: false }); }
+
+  delay(next, ms) {
+    this.setState({ busy: true });
+    clearTimeout(this.t);
+    this.t = setTimeout(() => this.go(next), ms);
+  }
+
+  startBuild() {
+    this.setState({ screen: 'building', busy: false, stage: 0, lines: [] });
+    let i = 0;
+    clearInterval(this.iv);
+    this.iv = setInterval(() => {
+      if (i >= LOG.length) {
+        clearInterval(this.iv);
+        this.t = setTimeout(() => this.setState({ screen: 'done', installed: true }), 700);
+        return;
+      }
+      const text = LOG[i];
+      i += 1;
+      this.setState(s => ({
+        lines: [...s.lines, { text, color: i === LOG.length ? '#4ade80' : 'rgba(255,255,255,.72)' }].slice(-9),
+        stage: Math.min(STAGES.length - 1, Math.floor(i / 2.6)),
+      }));
+    }, 620);
+  }
+
+  hxVals() {
+    const HX = [
+      { v: 'v7', when: '2 min ago', kind: 'Look', origin: 'You said', headline: '“make the numbers bigger”', body: 'The countdown is about twice the size it was. Nothing else moved.', touched: ['The timer screen'], current: true },
+      { v: 'v6', when: 'Today, 9:14', kind: 'Added', origin: 'You said', headline: '“give me 30 seconds of warning before the last pour”', body: 'A chime now plays 30 seconds before the final pour, on top of the sound at the end of each step.', touched: ['Sounds', 'The timer screen'] },
+      { v: 'v5', when: 'Today, 9:02', kind: 'Fixed', origin: 'Whim, on its own', headline: 'The timer kept counting past zero', body: 'The app stopped opening after the last change. Whim found the countdown running past zero and fixed it on the second try. You did not lose anything.', touched: ['The timer screen'] },
+      { v: 'v4', when: 'Yesterday', kind: 'Changed', origin: 'You said', headline: '“let me change the times myself”', body: 'Each step time is now tappable, instead of being fixed at the recipe you first described.', touched: ['The timer screen', 'Your recipe'] },
+      { v: 'v3', when: 'Yesterday', kind: 'Added', origin: 'You said', headline: '“keep every brew so I can look back”', body: 'Finished brews are saved with the date and which recipe you used.', touched: ['Saved brews'] },
+      { v: 'v2', when: '2 days ago', kind: 'Removed', origin: 'You said', headline: '“drop the buzz, the sound is enough”', body: 'The phone no longer vibrates at the end of a step.', touched: ['Sounds'] },
+      { v: 'v1', when: '3 days ago', kind: 'Start', origin: 'You said', headline: '“a timer with my exact pour-over recipe”', body: 'A countdown, four steps and a start button.', touched: ['The timer screen'] },
+    ];
+    const KIND = {
+      Added: ['#0d9488', 'rgba(13,148,136,.12)'],
+      Changed: ['#3f3d8f', 'rgba(79,70,229,.12)'],
+      Look: ['#7c3aed', 'rgba(124,58,237,.12)'],
+      Fixed: ['#b45309', 'rgba(180,83,9,.12)'],
+      Removed: ['#6b6560', 'rgba(107,101,96,.14)'],
+      Start: ['#1c1917', 'rgba(28,25,23,.1)'],
+    };
+    const GROUP = { Added: 'features', Changed: 'features', Removed: 'features', Look: 'look', Fixed: 'fixes', Start: 'features' };
+    const s = this.state;
+    const filter = s.hxFilter ?? 'all';
+    const open = s.hx ?? 0;
+    const filters = [['all', 'All 7'], ['features', 'What it does'], ['look', 'Look'], ['fixes', 'Fixes']].map(([id, label]) => ({
+      label,
+      bg: filter === id ? '#1c1917' : '#fbfaf8',
+      fg: filter === id ? '#ffffff' : '#6b6560',
+      border: filter === id ? '#1c1917' : '#e0dcd4',
+      pick: () => this.setState({ hxFilter: id }),
+    }));
+    const shown = HX.filter(h => filter === 'all' || GROUP[h.kind] === filter);
+    const items = shown.map(h => {
+      const i = HX.indexOf(h);
+      const isOpen = open === i;
+      const [fg, bg] = KIND[h.kind];
+      const actions = h.current
+        ? [{ label: 'Change it from here', bg: '#1c1917', fg: '#ffffff', border: '#1c1917', fire: e => { e.stopPropagation(); this.setState({ hxToast: 'Opening the composer…' }); setTimeout(() => this.setState({ hxToast: null }), 1600); } }]
+        : [
+            { label: 'Go back to this', bg: '#1c1917', fg: '#ffffff', border: '#1c1917', fire: e => { e.stopPropagation(); this.setState({ hxSheet: h.v }); } },
+            { label: 'Start a copy here', bg: '#fbfaf8', fg: '#6b6560', border: '#e0dcd4', fire: e => { e.stopPropagation(); this.setState({ hxSheet: 'copy:' + h.v }); } },
+          ];
+      return {
+        v: h.v, when: h.when, kind: h.kind, origin: h.origin, headline: h.headline, body: h.body, touched: h.touched, actions,
+        kindFg: fg, kindBg: bg,
+        dotBg: h.current ? '#0d9488' : fg,
+        dotRing: h.current ? 'rgba(13,148,136,.3)' : '#e6e2da',
+        cardBg: isOpen ? '#f1efea' : '#fbfaf8',
+        cardBorder: isOpen ? '#c9c3b8' : '#e6e2da',
+        openDisplay: isOpen ? 'block' : 'none',
+        hereDisplay: h.current ? 'block' : 'none',
+        toggle: () => this.setState({ hx: isOpen ? -1 : i }),
+      };
+    });
+    const sheet = s.hxSheet;
+    const isCopy = typeof sheet === 'string' && sheet.startsWith('copy:');
+    const target = isCopy ? sheet.slice(5) : sheet;
+    const row = HX.find(h => h.v === target);
+    return {
+      hxFilters: filters,
+      hxItems: items,
+      hxSheet: sheet,
+      hxToast: s.hxToast,
+      hxSheetTitle: isCopy ? 'Start a second app from ' + target + '?' : row ? 'Go back to ' + target + '?' : '',
+      hxSheetBody: isCopy
+        ? 'You\'ll have two Pour Timers. The one you\'re using now stays exactly as it is.'
+        : row ? 'Everything after ' + target + ' comes off — including ' + (row.v === 'v6' ? 'the bigger numbers' : 'the last few changes') + '. Your saved brews stay. You can come forward again from this list.' : '',
+      hxSheetCta: isCopy ? 'Make the copy' : 'Go back to it',
+      hxClose: () => this.setState({ hxSheet: null }),
+      hxConfirm: () => { this.setState({ hxSheet: null, hxToast: isCopy ? 'Copy made — it\'s on your home screen' : 'You\'re on ' + target + ' now' }); setTimeout(() => this.setState({ hxToast: null }), 2200); },
+    };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const accent = this.props.accent ?? '#3f3d8f';
+    const rad = RADII[this.props.corners ?? 'soft'] ?? RADII.soft;
+    const apps = s.installed
+      ? [...APPS, { name: 'Pour Timer', mono: 'PT', bg: '#0d9488' }]
+      : APPS;
+
+    const questions = QUESTIONS.map(q => ({
+      text: q.text,
+      options: q.options.map(label => {
+        const on = s.answers[q.id] === label;
+        return {
+          label,
+          bg: on ? accent : '#fbfaf8',
+          fg: on ? '#ffffff' : '#1c1917',
+          border: on ? accent : '#e0dcd4',
+          pick: () => this.setState(st => ({ answers: { ...st.answers, [q.id]: label } })),
+        };
+      }),
+    }));
+
+    const alert = s.answers.alert ?? 'a sound';
+    const planRows = [
+      { label: 'What it is', value: 'A brew timer that walks you through your pour-over recipe, one step at a time.' },
+      { label: 'The screen', value: 'A big countdown, the current step under it, and a start button. Steps you have finished grey out.' },
+      { label: 'When a step ends', value: alert === 'Both' ? 'It plays a sound and buzzes.' : 'It plays ' + (alert === 'Buzz' ? 'a buzz.' : 'a sound.') },
+      { label: 'What it remembers', value: s.answers.history === 'Just the last one' ? 'Only your most recent brew.' : 'Every brew, so you can look back at them.' },
+    ];
+
+    const stages = STAGES.map((label, i) => ({
+      label,
+      opacity: i <= s.stage ? '1' : '0.35',
+      ring: i <= s.stage ? accent : '#e0dcd4',
+      fill: i < s.stage ? accent : 'transparent',
+      mark: i < s.stage ? '✓' : '',
+    }));
+
+    const WHEEL = [
+      { glyph: '✎', label: 'Change it', dir: 'up', pos: [147, 490] },
+      { glyph: '⌂', label: 'Home', dir: 'right', pos: [239, 582] },
+      { glyph: '↺', label: 'Versions', dir: 'down', pos: [147, 674] },
+      { glyph: '⧉', label: 'Copy', dir: 'left', pos: [55, 582] },
+    ];
+    const tints = ['#e6e4f7', '#e5e2db', '#e5e2db', '#e5e2db'];
+    const wheelItems = WHEEL.map((w, i) => {
+      const on = s.sector === i;
+      return { glyph: w.glyph, label: w.label,
+        left: w.pos[0] + 'px', top: w.pos[1] + 'px',
+        bg: on ? '#fbfaf8' : 'rgba(251,250,248,.16)',
+        border: on ? '#fbfaf8' : 'rgba(251,250,248,.3)',
+        fg: on ? '#1c1917' : 'rgba(255,255,255,.85)',
+        scale: on ? '1.14' : '1' };
+    });
+    const menuItems = WHEEL.map((w, i) => ({
+      glyph: w.glyph, label: w.label, dir: w.dir,
+      tint: tints[i], glyphColor: i === 0 ? '#3f3d8f' : '#1c1917',
+      fire: () => this.fire(['change', 'home', 'versions', 'fork'][i]),
+    }));
+
+    const RP = {
+      0: { title: 'Ready when you are', sub: 'Press one of the buttons below to see how a build that goes wrong is handled.', rows: [], panel: false },
+      1: { title: 'Making it', sub: 'Writing the timer screen and wiring the steps.', rows: [['run', 'Wrote the timer screen'], ['run', 'Wired start, pause and reset'], ['run', 'Adding the end-of-step sound']], panel: false },
+      2: { title: "That didn't run", sub: "Whim is looking at it. You don't need to do anything.", rows: [['done', 'The timer counts down correctly'], ['done', 'The step list works'], ['bad', "The end-of-step sound stops the timer"]], panel: 'bad' },
+      3: { title: 'Trying a fix', sub: 'Playing the sound without holding up the countdown.', rows: [['done', 'Found what broke it'], ['run', 'Rewriting the sound so it plays alongside the timer'], ['wait', 'Running it again']], panel: false },
+      4: { title: 'Fixed it', sub: 'The sound was interrupting the countdown. It plays over the top now.', rows: [['done', 'The timer counts down correctly'], ['done', 'The step list works'], ['done', 'The sound plays without pausing anything']], panel: 'good' },
+      5: { title: "I couldn't get it working", sub: 'Three tries and the sound still stops the timer. Your last working version is untouched.', rows: [['done', 'Version 2 still works and is still installed'], ['bad', 'The sound change is the part that fails'], ['wait', 'Describing it differently usually gets past this']], panel: 'bad' },
+    }[s.rp];
+    const rpMark = { done: ['#0d9488', '#0d9488', '✓'], bad: ['#dc2626', '#dc2626', '!'], run: [accent, 'transparent', ''], wait: ['#c9c3b8', 'transparent', ''] };
+    const rpActions = s.rp === 0
+      ? [{ label: 'Play — Whim fixes it', bg: '#1c1917', fg: '#fff', border: '#1c1917', fire: () => this.playRepair('fix') },
+         { label: 'Play — it gets stuck', bg: '#fbfaf8', fg: '#6b6560', border: '#e0dcd4', fire: () => this.playRepair('stuck') }]
+      : s.rp === 4
+      ? [{ label: 'Open Pour Timer', bg: '#0d9488', fg: '#fff', border: '#0d9488', fire: () => this.setState({ rp: 0 }) },
+         { label: 'Start over', bg: '#fbfaf8', fg: '#6b6560', border: '#e0dcd4', fire: () => this.setState({ rp: 0 }) }]
+      : s.rp === 5
+      ? [{ label: 'Say it a different way', bg: '#1c1917', fg: '#fff', border: '#1c1917', fire: () => this.setState({ rp: 0 }) },
+         { label: 'Keep version 2 as it is', bg: '#fbfaf8', fg: '#6b6560', border: '#e0dcd4', fire: () => this.setState({ rp: 0 }) }]
+      : [{ label: 'Leave it running', bg: '#fbfaf8', fg: '#6b6560', border: '#e0dcd4', fire: () => this.setState({ rp: 0 }) }];
+    const attemptN = s.rp >= 3 ? (s.rp === 5 ? 3 : 1) : 0;
+
+    return {
+      orbRef: this.setOrbRef,
+      orbDown: this.onOrbDown,
+      orbMove: this.onOrbMove,
+      orbUp: this.onOrbUp,
+      orbDismiss: () => this.setState({ orb: 'idle', sector: null, sheet: null }),
+      orbActive: s.orb !== 'idle' || !!s.sheet,
+      orbMenu: s.orb === 'menu',
+      orbWheel: s.orb === 'wheel',
+      orbSize: s.orb === 'wheel' ? '68px' : '62px',
+      orbBottom: s.orb === 'wheel' ? '127px' : '130px',
+      orbScale: s.orb === 'menu' ? '0.92' : '1',
+      orbDotSize: s.orb === 'idle' ? '12px' : '20px',
+      orbDot: s.orb === 'wheel' ? '#fbfaf8' : s.orb === 'menu' ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.75)',
+      wheelItems, menuItems,
+      wheelHint: s.sector === null ? 'Slide out to an action · let go in the middle to cancel' : 'Let go to ' + WHEEL[s.sector].label.toLowerCase(),
+      sheetFork: s.sheet === 'fork',
+      sheetVersions: s.sheet === 'versions',
+      sheetChange: s.sheet === 'change',
+      toast: s.toast,
+      version: s.version,
+      keepBg: s.keepData ? '#eef2ff' : '#fbfaf8',
+      keepBorder: s.keepData ? '#3f3d8f' : '#e0dcd4',
+      freshBg: s.keepData ? '#fbfaf8' : '#eef2ff',
+      freshBorder: s.keepData ? '#e0dcd4' : '#3f3d8f',
+      pickKeep: () => this.setState({ keepData: true }),
+      pickFresh: () => this.setState({ keepData: false }),
+      doFork: () => { this.setState({ sheet: null, orb: 'idle' }); this.say('Copied — “Pour Timer 2” is on your home screen'); },
+      changeText: s.prompt || 'give me 30 seconds of warning before the last pour',
+      changeChips: ['make the numbers bigger', 'add a step for a second cup', 'let me change the times'].map(text => ({ text, pick: () => this.setState({ prompt: text }) })),
+      ...this.hxVals(),
+      versions: [
+        { title: 'Warns before the last pour', when: 'now', body: 'You asked for a heads-up. It now chimes 30 seconds before the final pour.', action: 'This is the one you have', dot: '#0d9488' },
+        { title: 'Saves your brews', when: 'yesterday', body: 'Every finished brew is kept, so you can look back at them.', action: 'Go back to this', dot: '#c9c3b8' },
+        { title: 'Sound at the end of each step', when: 'yesterday', body: 'A short chime when a step finishes, instead of only a buzz.', action: 'Go back to this', dot: '#c9c3b8' },
+        { title: 'The first version', when: '3 days ago', body: 'A countdown, four steps and a start button.', action: 'Go back to this', dot: '#c9c3b8' },
+      ],
+      rpTitle: RP.title,
+      rpSub: RP.sub,
+      rpTitleColor: RP.panel === 'bad' ? '#1c1917' : RP.panel === 'good' ? '#0d9488' : '#1c1917',
+      rpPanelBg: RP.panel === 'bad' ? '#fef2f2' : RP.panel === 'good' ? '#f0fdf9' : '#f1efea',
+      rpPanelBorder: RP.panel === 'bad' ? '#fecaca' : RP.panel === 'good' ? '#99f6e4' : '#e0dcd4',
+      rpRows: RP.rows.map(([k, text]) => ({ text, mark: rpMark[k][2], ring: rpMark[k][0], fill: rpMark[k][1], color: k === 'wait' ? '#6b6560' : '#1c1917' })),
+      rpActions,
+      rpShowAttempts: s.rp >= 3,
+      rpAttempts: [0, 1, 2].map(i => ({ bg: i < attemptN ? '#dc2626' : i === attemptN ? accent : '#e0dcd4' })),
+      rpAttemptLabel: s.rp === 5 ? 'Tried 3 times' : 'Try ' + (attemptN + 1) + ' of 3',
+      accent,
+      radTile: rad.tile,
+      radBtn: rad.btn,
+      apps,
+      chips: CHIPS.map(text => ({ text, pick: () => this.setState({ prompt: text }) })),
+      questions,
+      planRows,
+      stages,
+      lines: s.lines,
+      busy: s.busy,
+      ctaBg: s.busy ? '#9d99e8' : accent,
+      ctaLabel: s.busy ? 'One moment' : (s.screen === 'plan' ? 'Build it' : 'Continue'),
+      promptShown: s.prompt || 'a timer with my exact pour-over recipe',
+      promptEcho: '“' + (s.prompt || 'a timer with my exact pour-over recipe') + '”',
+      pct: Math.round(((s.lines.length) / LOG.length) * 100) + '%',
+      buildTitle: 'Making it',
+      buildSub: 'This takes about a minute. You can leave and come back.',
+      buildCta: 'Leave it running',
+      isHome: s.screen === 'home',
+      isCompose: s.screen === 'compose',
+      isClarify: s.screen === 'clarify',
+      isPlan: s.screen === 'plan',
+      isBuilding: s.screen === 'building',
+      isDone: s.screen === 'done',
+      goHome: () => this.go('home'),
+      goCompose: () => this.go('compose'),
+      toClarify: () => this.delay('clarify', 900),
+      toClarifyBack: () => this.go('clarify'),
+      toPlan: () => this.delay('plan', 1100),
+      build: () => { this.setState({ busy: true }); clearTimeout(this.t); this.t = setTimeout(() => this.startBuild(), 600); },
+      finishNow: () => { clearInterval(this.iv); clearTimeout(this.t); this.setState({ screen: 'done', installed: true }); },
+    };
+  }
+}
+</script>
+</body>
+</html>

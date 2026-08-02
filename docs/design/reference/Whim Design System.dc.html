@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:ital,wght@0,400;1,400&display=swap" rel="stylesheet"><style>body{margin:0;background:#e8e5df;font-family:'Instrument Sans',system-ui,sans-serif}a{color:#3f3d8f}a:hover{color:#2e2c6f}@keyframes breathe{0%,100%{opacity:.34}50%{opacity:.72}}@keyframes spin{to{transform:rotate(360deg)}}</style></helmet>
+
+<div style="max-width:1100px;margin:0 auto;padding:56px 48px 90px">
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding-bottom:26px;border-bottom:1px solid rgba(0,0,0,.12)">
+<div>
+<div style="font:700 40px/1 'Instrument Sans',sans-serif;letter-spacing:-.03em;color:#17171a">Whim Design System</div>
+<div style="margin-top:12px;font:400 14px/1.65 'Instrument Sans',sans-serif;color:rgba(0,0,0,.55);max-width:600px">Second pass. The values in the repo were scaffolding — enough to build against, not thought through. This document argues for a system instead of listing one, and says plainly where it is still guessing.</div>
+</div>
+<div style="flex:none;padding:10px 14px;border-radius:8px;background:#fbfaf8;border:1px solid #e0dcd4;font:500 10.5px/1.5 'IBM Plex Mono',monospace;color:#6b6560;text-align:right">v2 · WORKING DRAFT<br><span style="font-weight:400;opacity:.7">v1 kept at <a href="Whim Design System v1.dc.html" style="color:#6b6560">v1</a></span></div>
+</div>
+
+<div style="margin-top:22px;display:flex;gap:10px;flex-wrap:wrap">
+<sc-for list="{{ legend }}" as="l" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:11px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="flex:none;padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:{{ l.bg }};color:{{ l.fg }}">{{ l.tag }}</span><span style="font:400 11.5px/1.4 'Instrument Sans',sans-serif;color:#6b6560;max-width:190px">{{ l.means }}</span></div>
+</sc-for>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">01 · The argument</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a;max-width:720px">Whim's interface is mostly prose. So the type system is the design system.</div>
+<p style="margin:14px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">Almost every screen in Whim is a machine talking: what it plans to do, what it is doing, what it did, why it failed. There are very few controls. That makes this product much closer to a reading interface than to a normal app, and it means the usual design-system output — a button inventory — is the least valuable part of the work.</p>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">The two decisions that actually determine whether Whim feels good are <b style="color:#1c1917">how that prose is voiced</b> and <b style="color:#1c1917">how it is typeset</b>. Everything in section 04 and 05 is that. The rest is housekeeping.</p>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">02 · Colour</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">Paper shell, three meanings, one quiet accent.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">Warm neutral surfaces so that saturated colour always means something. Three status hues, reserved. App tiles get the loud colours. The shell gets almost none.</p>
+<div style="margin-top:22px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+<sc-for list="{{ shellColors }}" as="c" hint-placeholder-count="8">
+<div style="border-radius:14px;overflow:hidden;border:1px solid #e0dcd4;background:#fbfaf8">
+<div style="height:60px;background:{{ c.hex }};border-bottom:1px solid #e0dcd4"></div>
+<div style="padding:11px 12px 13px"><div style="font:500 12.5px/1 'Instrument Sans',sans-serif;color:#1c1917">{{ c.name }}</div><div style="margin-top:5px;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ c.hex }}</div><div style="margin-top:7px;font:400 11px/1.45 'Instrument Sans',sans-serif;color:#6b6560">{{ c.use }}</div></div>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:24px;padding:20px 22px;border-radius:16px;background:#fbfaf8;border:1px dashed #d6d1c7">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#dcfce7;color:#14532d">SETTLED</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#17171a">Ink violet — an accent that behaves like furniture</span></div>
+<p style="margin:10px 0 0;max-width:660px;font:400 13px/1.65 'Instrument Sans',sans-serif;color:#6b6560"><code style="font:400 12px 'IBM Plex Mono',monospace">#3f3d8f</code> replaces the framework-default indigo. Low chroma, close to ink, quiet enough to sit under a screen full of app colours without competing — which is the job. It is the accent, not the identity; the brown in section 04 carries the identity.</p>
+<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ accents }}" as="a" hint-placeholder-count="3">
+<div style="width:210px;border-radius:13px;overflow:hidden;border:1px solid #e0dcd4;background:#fff"><div style="height:52px;background:{{ a.hex }};display:flex;align-items:center;padding:0 14px;font:600 13px/1 'Instrument Sans',sans-serif;color:#fff">{{ a.name }}</div><div style="padding:11px 13px 13px"><div style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ a.hex }}</div><div style="margin-top:7px;font:400 11.5px/1.5 'Instrument Sans',sans-serif;color:#6b6560">{{ a.note }}</div></div></div>
+</sc-for>
+</div>
+</div>
+<div style="margin-top:16px;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Status — the only three saturated meanings in the shell</div>
+<div style="margin-top:11px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ statusColors }}" as="c" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:11px;padding:11px 15px;border-radius:12px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="width:26px;height:26px;border-radius:8px;background:{{ c.hex }}"></span><span><span style="display:block;font:500 12.5px/1.2 'Instrument Sans',sans-serif;color:#1c1917">{{ c.name }}</span><span style="display:block;margin-top:3px;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ c.hex }}</span></span></div>
+</sc-for>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">03 · Type</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">Three faces: one speaks, one measures, one quotes.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)"><b style="color:#1c1917">Space Grotesk is retired.</b> It is the default pick of a popular design tool, which makes it a tell — and it will keep getting more prevalent, not less. <b style="color:#1c1917">Instrument Sans</b> replaces it: same plain, low-quirk temperament, slightly narrower, and unlike Grotesk it ships a real italic, so faked shear is never a risk anywhere in the product.</p>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">The third face is now confirmed: <b style="color:#1c1917">Newsreader italic, for quoted user text only.</b> It never appears upright, never in a heading, never for anything the system wrote. Its whole job is that the user's own words look different <i>in kind</i>, not merely in colour.</p>
+<div style="margin-top:20px;border-radius:16px;border:1px solid #e0dcd4;background:#fbfaf8;overflow:hidden">
+<sc-for list="{{ typeScale }}" as="t" hint-placeholder-count="7">
+<div style="display:flex;align-items:baseline;gap:24px;padding:15px 20px;border-bottom:1px solid #efece5"><div style="width:170px;flex:none"><div style="font:500 11.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ t.name }}</div><div style="margin-top:4px;font:400 10px/1.3 'IBM Plex Mono',monospace;color:#a8a29a">{{ t.spec }}</div></div><div style="font:{{ t.font }};color:#1c1917">{{ t.sample }}</div></div>
+</sc-for>
+</div>
+<div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:300px;padding:16px 18px;border-radius:14px;background:#fbfaf8;border:1px dashed #d6d1c7"><div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#dcfce7;color:#14532d">SETTLED</span><span style="font:600 13px/1.3 'Instrument Sans',sans-serif;color:#17171a">Newsreader italic — the quoting face</span></div><p style="margin:9px 0 0;font:400 12.5px/1.6 'Instrument Sans',sans-serif;color:#6b6560">Only ever in quotes, only ever the user's words: <span style="font:400 15px/1.6 Newsreader,serif;font-style:italic;color:#a15c07">a timer for pour-over coffee</span>. Italic and brown together — the one span in the product allowed two channels, because it is attribution rather than emphasis.</p></div>
+</div>
+
+<div style="margin-top:64px;padding:34px 34px 38px;border-radius:24px;background:#17171a">
+<div style="font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.45)">04 · Whim Syntax</div>
+<div style="margin-top:8px;font:600 28px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#fbfaf8;max-width:760px">Highlighting prose by what a word <i>does in the product</i> — not by what part of speech it is.</div>
+<p style="margin:14px 0 0;max-width:700px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">The instinct is right: syntax colouring makes code scannable, and Whim's messages are read the way code is read — skimmed for the one thing that changed. But an IDE does not colour by grammar. It colours by <i>role in the system</i>: this is a literal, this is a name, this is a keyword. Grammatical colouring — nouns blue, verbs red — colours everything, and colouring everything is colouring nothing.</p>
+<p style="margin:12px 0 0;max-width:700px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">So the proposal keeps the mechanism and changes the vocabulary. Six token classes, drawn from what actually varies in a Whim sentence.</p>
+
+<div style="margin-top:28px;display:flex;flex-direction:column;gap:14px">
+<sc-for list="{{ synExamples }}" as="ex" hint-placeholder-count="4">
+<div style="border-radius:16px;background:#fbfaf8;padding:20px 22px 18px">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:{{ ex.tagbg }};color:{{ ex.tagfg }}">{{ ex.tag }}</span><span style="font:600 13px/1.3 'Instrument Sans',sans-serif;color:#17171a">{{ ex.title }}</span></div>
+<div style="margin-top:14px;white-space:pre-wrap;max-width:640px"><sc-for list="{{ ex.tokens }}" as="tk" hint-placeholder-count="10"><span style="font:{{ tk.f }};color:{{ tk.c }}">{{ tk.t }}</span></sc-for></div>
+<div style="margin-top:14px;font:400 12px/1.6 'Instrument Sans',sans-serif;color:#6b6560;max-width:600px">{{ ex.note }}</div>
+</div>
+</sc-for>
+</div>
+
+<div style="margin-top:30px;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.45)">The six classes</div>
+<div style="margin-top:14px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,.14)">
+<div style="display:flex;gap:16px;padding:11px 20px;background:rgba(255,255,255,.06);font:500 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.45)"><span style="width:120px;flex:none">Class</span><span style="width:150px;flex:none">Channel</span><span style="width:170px;flex:none">Sample</span><span style="flex:1">Rule</span></div>
+<sc-for list="{{ classes }}" as="k" hint-placeholder-count="6">
+<div style="display:flex;gap:16px;padding:14px 20px;border-top:1px solid rgba(255,255,255,.09);align-items:baseline">
+<span style="width:120px;flex:none;font:500 12px/1.3 'IBM Plex Mono',monospace;color:#fbfaf8">{{ k.name }}</span>
+<span style="width:150px;flex:none;font:400 11.5px/1.4 'Instrument Sans',sans-serif;color:rgba(255,255,255,.55)">{{ k.channel }}</span>
+<span style="width:170px;flex:none;white-space:pre-wrap"><sc-for list="{{ k.parts }}" as="p" hint-placeholder-count="1"><span style="font:{{ p.f }};color:{{ p.c }}">{{ p.t }}</span></sc-for></span>
+<span style="flex:1;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">{{ k.rule }}</span>
+</div>
+</sc-for>
+</div>
+<p style="margin:14px 0 0;max-width:700px;font:400 12.5px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.5)">Note that two of the six are <i>reverse</i> highlights — muting rather than emphasising. Hedges and attempt-counts are honest, worth saying, and not worth reading twice. De-emphasis is the cheapest channel available and nobody uses it.</p>
+
+<div style="margin-top:24px;padding:22px 24px;border-radius:18px;background:rgba(224,167,94,.1);border:1px solid rgba(224,167,94,.3)">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#e0a75e;color:#3b2405">PROPOSED</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#fbfaf8">The brown is not a quote colour. It is the colour of you.</span></div>
+<p style="margin:11px 0 0;max-width:700px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">Every other colour in the shell is a shade of grey between paper and ink. The brown is the one hue that isn't, so it should carry something structural rather than an occasional inline quote. Proposal: brown marks <b style="color:#e0a75e">everything the user authored</b>, wherever it is re-presented back to them. That makes it frequent — it appears at the top of every history row, on every plan screen, in every clarifying question.</p>
+<div style="margin-top:16px;display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ brownUses }}" as="b" hint-placeholder-count="3">
+<div style="padding:14px 16px;border-radius:13px;background:rgba(255,255,255,.05)"><div style="font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,167,94,.75)">{{ b.where }}</div><div style="margin-top:9px;white-space:pre-wrap"><sc-for list="{{ b.parts }}" as="p" hint-placeholder-count="2"><span style="font:{{ p.f }};color:{{ p.c }}">{{ p.t }}</span></sc-for></div><div style="margin-top:9px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:rgba(255,255,255,.5)">{{ b.note }}</div></div>
+</sc-for>
+</div>
+<p style="margin:14px 0 0;max-width:700px;font:400 12.5px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.5)">Two forms, one meaning: <b style="color:#fbfaf8">upright brown</b> when your words stand on their own as a block, <b style="color:#fbfaf8">Newsreader italic brown</b> when they are set inside a sentence Whim wrote. The italic is what keeps a quote from being mistaken for the system's own emphasis.</p>
+</div>
+
+<div style="margin-top:30px;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.45)">Discipline — the rules that keep it from becoming a ransom note</div>
+<div style="margin-top:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+<sc-for list="{{ synRules }}" as="r" hint-placeholder-count="6">
+<div style="padding:15px 17px;border-radius:13px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)"><div style="font:500 12.5px/1.3 'Instrument Sans',sans-serif;color:#fbfaf8">{{ r.name }}</div><div style="margin-top:7px;font:400 12px/1.55 'Instrument Sans',sans-serif;color:rgba(255,255,255,.6)">{{ r.body }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:24px;padding:20px 22px;border-radius:16px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#0d9488;color:#fff">TO BUILD</span><span style="font:600 13.5px/1.3 'Instrument Sans',sans-serif;color:#fbfaf8">Who applies the highlighting?</span></div>
+<p style="margin:11px 0 0;max-width:700px;font:400 12.5px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">Four of the six classes are <b style="color:#fbfaf8">deterministic on the client</b> — app names come from the installed list, measures match a number/duration pattern, quoted text is stored verbatim from the prompt, and the three status words are a fixed vocabulary. A small lexer handles those with zero model involvement and zero risk of the model colouring the wrong thing.</p>
+<p style="margin:10px 0 0;max-width:700px;font:400 12.5px/1.7 'Instrument Sans',sans-serif;color:rgba(255,255,255,.62)">Only <span style="font:500 12.5px 'IBM Plex Mono',monospace;color:#fbfaf8">chg</span> and <span style="font:500 12.5px 'IBM Plex Mono',monospace;color:#fbfaf8">hedge</span> need the generator to mark them, and both are inside the same post-run summary step that writes the commit message. One tag pair in that prompt, capped at one of each per sentence.</p>
+</div>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">05 · Voice</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a;max-width:720px">Minimal is the voice. Whimsy is a word, never a sentence.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">The conversational middle register — "It now warns you before the last pour" — is <b style="color:#1c1917">retired</b>. It is the default voice of every assistant product, it pads every sentence with words that carry nothing, and it is slower to read than either neighbour. Minimal wins on speed and holds up under repetition, which matters when you will read hundreds of these.</p>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">The whimsical column reads as too much, and the reason is length, not personality: whimsy was buying its charm with extra clauses. The third column keeps minimal structure and spends the personality on <b style="color:#1c1917">one noun or verb</b>. Same word count as minimal, and it still sounds like something rather than nothing.</p>
+<div style="margin-top:22px;border-radius:18px;border:1px solid #e0dcd4;background:#fbfaf8;overflow:hidden">
+<div style="display:flex;padding:12px 22px;background:#f1efea;font:500 9.5px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:#6b6560"><span style="width:150px;flex:none">Moment</span><span style="flex:1">Minimal — house voice</span><span style="flex:1">Whimsical, as written</span><span style="flex:1">Minimal, plus one word</span></div>
+<sc-for list="{{ registers }}" as="r" hint-placeholder-count="4">
+<div style="display:flex;gap:0;padding:16px 22px;border-top:1px solid #efece5;align-items:flex-start">
+<span style="width:150px;flex:none;padding-right:16px"><span style="display:block;font:500 12.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ r.moment }}</span><span style="display:block;margin-top:5px;font:400 10.5px/1.4 'IBM Plex Mono',monospace;color:#a8a29a">{{ r.stakes }}</span></span>
+<span style="flex:1;padding-right:16px;font:400 13px/1.6 'Instrument Sans',sans-serif;color:#1c1917">{{ r.min }}</span>
+<span style="flex:1;padding-right:16px;font:400 13px/1.6 'Instrument Sans',sans-serif;color:#a8a29a">{{ r.whim }}</span>
+<span style="flex:1;font:400 13px/1.6 'Instrument Sans',sans-serif;color:#1c1917">{{ r.spark }}</span>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:16px;padding:20px 22px;border-radius:16px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#0d9488;color:#fff">PROPOSED</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#17171a">Minimal everywhere; one whim-word allowed, and never in failure</span></div>
+<p style="margin:11px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Minimal is the structure, always: what happened, what changed, full stop. Within that, a single vivid word is permitted while waiting, on first run, and in a recovery that ended well — the moments where personality costs nothing. In a failure that is staying broken, zero: the sentence gets shorter, not warmer.</p>
+</div>
+<div style="margin-top:14px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+<sc-for list="{{ voiceRules }}" as="v" hint-placeholder-count="6">
+<div style="padding:15px 17px;border-radius:13px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="font:500 12.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ v.name }}</div><div style="margin-top:7px;font:400 12px/1.6 'Instrument Sans',sans-serif;color:#6b6560">{{ v.body }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">06 · Absence</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">A skeleton is a promise. Only show one you can keep.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">Skeletons are right when something is genuinely coming and its shape is already known — the geometry must match the real thing exactly, or the layout jumps and the skeleton was a lie. They are wrong for an empty result and wrong for a state that may never fill.</p>
+<div style="margin-top:22px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+<div style="padding:20px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:#0d9488">Right</div>
+<div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+<sc-for list="{{ six }}" as="s" hint-placeholder-count="6"><div style="aspect-ratio:1;border-radius:16px;background:#e5e2db;animation:breathe 1.9s ease-in-out infinite;animation-delay:{{ s.d }}"></div></sc-for>
+</div>
+<div style="margin-top:14px;font:500 13px/1.3 'Instrument Sans',sans-serif;color:#1c1917">Loading a grid we have counted</div>
+<div style="margin-top:6px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">Exact tile geometry, exact count. Breathing opacity, never a diagonal shimmer — shimmer is a web trope and reads as decoration.</div>
+</div>
+<div style="padding:20px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:#0d9488">Right</div>
+<div style="margin-top:12px;display:flex;flex-direction:column;gap:9px">
+<sc-for list="{{ planSkel }}" as="p" hint-placeholder-count="4"><div style="height:44px;border-radius:12px;background:#e5e2db;animation:breathe 1.9s ease-in-out infinite;animation-delay:{{ p.d }};width:{{ p.w }}"></div></sc-for>
+</div>
+<div style="margin-top:14px;font:500 13px/1.3 'Instrument Sans',sans-serif;color:#1c1917">Plan rows arriving one at a time</div>
+<div style="margin-top:6px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">Rows resolve top-down as the model streams. Varying widths, because the real rows vary — a skeleton of identical bars reads as a progress bar.</div>
+</div>
+<div style="padding:20px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="font:500 12px/1 'IBM Plex Mono',monospace;letter-spacing:.1em;text-transform:uppercase;color:#b91c1c">Wrong</div>
+<div style="margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;opacity:.5">
+<sc-for list="{{ six }}" as="s" hint-placeholder-count="6"><div style="aspect-ratio:1;border-radius:16px;background:#e5e2db;border:1px dashed #b91c1c"></div></sc-for>
+</div>
+<div style="margin-top:14px;font:500 13px/1.3 'Instrument Sans',sans-serif;color:#1c1917">Skeletons standing in for nothing</div>
+<div style="margin-top:6px;font:400 11.5px/1.55 'Instrument Sans',sans-serif;color:#6b6560">A user with no apps waiting for six that will never load. Ghosts of hypothetical apps are the same failure with better intentions.</div>
+</div>
+</div>
+<div style="margin-top:16px;padding:20px 22px;border-radius:16px;background:#fbfaf8;border:1px dashed #d6d1c7">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#e0e7ff;color:#2e2c6f">FEEL IT</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#17171a">The tempting middle: the prophetic skeleton</span></div>
+<p style="margin:11px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">First run could show six greyed tiles already <i>labelled</i> — Pour Timer, Tip Splitter, Dice — as suggestions in the shape of the thing they'd become. It teaches the grid, makes the empty screen feel inhabited, and is arguably honest because tapping one really does make that app. It also risks looking like a broken load. This is not answerable at a desk; build both and live with each for a few days.</p>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">07 · Shape, space, motion</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">Radius says what a thing is. Motion says where it came from.</div>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+<sc-for list="{{ radii }}" as="r" hint-placeholder-count="5">
+<div style="padding:16px;border-radius:14px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="height:52px;border-radius:{{ r.value }};background:#e5e2db;border:1px solid #d6d1c7"></div><div style="margin-top:11px;font:500 12px/1.2 'Instrument Sans',sans-serif;color:#1c1917">{{ r.name }}</div><div style="margin-top:4px;font:400 10px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ r.value }}</div><div style="margin-top:6px;font:400 11px/1.45 'Instrument Sans',sans-serif;color:#6b6560">{{ r.use }}</div></div>
+</sc-for>
+</div>
+<div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ spacing }}" as="s" hint-placeholder-count="5">
+<div style="padding:12px 15px;border-radius:12px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="font:500 12px/1 'Instrument Sans',sans-serif;color:#1c1917">{{ s.name }}</span> <span style="font:400 11px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ s.value }}</span><div style="margin-top:5px;font:400 11px/1.4 'Instrument Sans',sans-serif;color:#6b6560">{{ s.use }}</div></div>
+</sc-for>
+</div>
+<div style="margin-top:16px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+<sc-for list="{{ motion }}" as="m" hint-placeholder-count="4">
+<div style="padding:15px 17px;border-radius:13px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="display:flex;align-items:baseline;gap:10px"><span style="font:500 12.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ m.name }}</span><span style="font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ m.spec }}</span></div><div style="margin-top:7px;font:400 12px/1.6 'Instrument Sans',sans-serif;color:#6b6560">{{ m.body }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">08 · Two systems, not one</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a;max-width:760px">The shell has a design system. Each app gets a design <i>philosophy</i>.</div>
+<p style="margin:14px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)"><b style="color:#1c1917">The six theme presets are cut.</b> They were scaffolding — something to generate against before there was a real system — and they solve a problem nobody has: nothing is improved by the launcher being mint instead of paper. Worse, they put the personality in the shell, where the apps should be carrying it.</p>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">The useful half of the idea survives. A generated app should have a coherent look of its own — and that is guidance at build time, not a dropdown at runtime.</p>
+<div style="margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+<div style="padding:20px 22px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:#3f3d8f">The shell — fixed</div><div style="margin-top:11px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Paper, ink, three status hues, brown for your words, two faces plus the quoting italic. Not themeable, not configurable, identical everywhere. It is the frame, and frames do not have opinions.</div></div>
+<div style="padding:20px 22px;border-radius:18px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="font:500 11px/1 'IBM Plex Mono',monospace;letter-spacing:.12em;text-transform:uppercase;color:#a15c07">Each app — its own</div><div style="margin-top:11px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">No contract, no slot count, no approved palette. An app picks colours that suit what it is for. A dice roller and a medication reminder should not look alike, and neither should have been handed the same four variables to fill in.</div></div>
+</div>
+<div style="margin-top:14px;padding:20px 22px;border-radius:16px;background:#fbfaf8;border:1px dashed #d6d1c7">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#e0e7ff;color:#2e2c6f">PROPOSED</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#17171a">The presets do not come back as a library either. Guidance teaches concepts, not answers.</span></div>
+<p style="margin:11px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">The tempting rescue for the six presets is to demote them into build-time reference — a curated library the generator picks from. That is worth resisting, and the reason is sharp: <b style="color:#1c1917">those palettes were themselves generated.</b> Feeding a model a list of colour sets a model produced adds no information; it only narrows the range while pretending to be expertise.</p>
+<p style="margin:9px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Guidance is worth writing when it teaches something the generator would not otherwise weigh — that colours in one app should sit well together, that a palette has to survive being shrunk to a single tile in the grid, that a medical app and a party trick should not read the same. Named hex sets are only worth including where a concept genuinely cannot be pointed at any other way, as an <i>example of a kind</i> rather than a menu to choose from.</p>
+<p style="margin:9px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Recommendations for the <b style="color:#1c1917">user</b> are a different question and a better one — someone choosing a look for their own app may well want bundles that go together. That is a feature with a person on the other end of it, not a constraint on the generator, and it is not designed yet.</p>
+</div>
+
+<div style="margin-top:22px;padding:20px 22px;border-radius:16px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="display:flex;align-items:center;gap:9px"><span style="padding:3px 7px;border-radius:5px;font:600 9.5px/1.4 'IBM Plex Mono',monospace;letter-spacing:.08em;background:#e0e7ff;color:#2e2c6f">PROPOSED</span><span style="font:600 14px/1.3 'Instrument Sans',sans-serif;color:#17171a">The orb holds one to five actions, and the geometry follows the count</span></div>
+<p style="margin:11px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Not four buttons — <i>n</i> buttons. Press and hold, then flick: each action owns a 360/<i>n</i> wedge of travel around the orb, so the gesture is a direction rather than a target. One to three keep fixed, memorable forms; four and five divide evenly. Above five, the wheel stops being blind-reachable and becomes a list.</p>
+<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ orbModes }}" as="o" hint-placeholder-count="5">
+<div style="width:132px;padding:14px;border-radius:14px;background:#f1efea;border:1px solid #e0dcd4;display:flex;flex-direction:column;align-items:center;gap:10px">
+<div style="position:relative;width:84px;height:84px"><sc-for list="{{ o.dots }}" as="d" hint-placeholder-count="3"><span style="position:absolute;left:{{ d.x }};top:{{ d.y }};width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:999px;background:#3f3d8f"></span></sc-for><span style="position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:999px;background:#17171a"></span></div>
+<div style="text-align:center"><div style="font:500 12px/1.2 'Instrument Sans',sans-serif;color:#1c1917">{{ o.name }}</div><div style="margin-top:4px;font:400 10px/1.3 'IBM Plex Mono',monospace;color:#a8a29a">{{ o.spec }}</div></div>
+</div>
+</sc-for>
+</div>
+<p style="margin:14px 0 0;max-width:680px;font:400 13px/1.7 'Instrument Sans',sans-serif;color:#6b6560">Which actions sit where is <b style="color:#1c1917">the user's choice</b>, set in a settings screen most people never open. The defaults matter far more than the customisation, and the defaults are still unknown — see section 10.</p>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">09 · Carried over from v1</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">Still holding: tiles, buttons, failure ladder.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">These survived the pass without changes. Full detail lives in <a href="Whim Design System v1.dc.html">v1</a>; the one-line version is here so this document is still complete.</p>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px">
+<sc-for list="{{ carried }}" as="c" hint-placeholder-count="6">
+<div style="padding:15px 17px;border-radius:13px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="font:500 12.5px/1.3 'Instrument Sans',sans-serif;color:#1c1917">{{ c.name }}</div><div style="margin-top:7px;font:400 12px/1.6 'Instrument Sans',sans-serif;color:#6b6560">{{ c.body }}</div></div>
+</sc-for>
+</div>
+<div style="margin-top:14px;padding:16px 18px;border-radius:14px;background:#fbfaf8;border:1px dashed #d6d1c7;font:400 12.5px/1.65 'Instrument Sans',sans-serif;color:#6b6560"><b style="color:#1c1917">One exception:</b> the orb no longer has four fixed actions — see the variable-count spec above. What survives from v1 is the rule that the wheel carries only cheap, undoable actions. See <a href="Whim Mobile.dc.html#3a">3a</a>.</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">10 · The hard questions</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">Most of these can't be answered at a desk.</div>
+<p style="margin:12px 0 0;max-width:680px;font:400 14px/1.7 'Instrument Sans',sans-serif;color:rgba(0,0,0,.6)">Split deliberately. <b style="color:#1c1917">Open</b> means a decision is available now and hasn't been made. <b style="color:#1c1917">Feel it</b> means the honest answer is to ship both and notice which one you stop resenting.</p>
+<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ questions }}" as="q" hint-placeholder-count="10">
+<div style="display:flex;gap:16px;padding:16px 18px;border-radius:14px;background:#fbfaf8;border:1px dashed #d6d1c7;align-items:flex-start">
+<span style="flex:none;width:62px;text-align:center;padding:3px 7px;border-radius:5px;font:600 9.5px/1.5 'IBM Plex Mono',monospace;letter-spacing:.06em;background:{{ q.bg }};color:{{ q.fg }}">{{ q.tag }}</span>
+<span style="flex:1"><span style="display:block;font:600 13px/1.4 'Instrument Sans',sans-serif;color:#17171a">{{ q.title }}</span><span style="display:block;margin-top:6px;font:400 12.5px/1.65 'Instrument Sans',sans-serif;color:#6b6560">{{ q.body }}</span></span>
+</div>
+</sc-for>
+</div>
+
+<div style="margin-top:56px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">11 · Consequences for the app</div>
+<div style="margin-top:8px;font:600 26px/1.25 'Instrument Sans',sans-serif;letter-spacing:-.025em;color:#17171a">What this document asks engineering for.</div>
+<div style="margin-top:20px;border-radius:16px;border:1px solid #e0dcd4;background:#fbfaf8;overflow:hidden">
+<sc-for list="{{ build }}" as="b" hint-placeholder-count="5">
+<div style="display:flex;gap:18px;padding:16px 20px;border-bottom:1px solid #efece5;align-items:flex-start"><span style="flex:none;width:74px;padding:3px 7px;text-align:center;border-radius:5px;font:600 9.5px/1.5 'IBM Plex Mono',monospace;letter-spacing:.06em;background:#0d9488;color:#fff">TO BUILD</span><span style="flex:1"><span style="display:block;font:600 13px/1.4 'Instrument Sans',sans-serif;color:#17171a">{{ b.name }}</span><span style="display:block;margin-top:6px;font:400 12.5px/1.65 'Instrument Sans',sans-serif;color:#6b6560">{{ b.body }}</span></span></div>
+</sc-for>
+</div>
+
+<div style="margin-top:44px;padding-top:22px;border-top:1px solid rgba(0,0,0,.12);font:400 12px/1.6 'Instrument Sans',sans-serif;color:rgba(0,0,0,.45)">Screens using this system: <a href="Whim Mobile.dc.html">Whim Mobile</a>. Previous pass: <a href="Whim Design System v1.dc.html">v1</a>. Repo values in <code style="font:400 11.5px 'IBM Plex Mono',monospace">src/sdk/theme.ts</code> are now treated as legacy scaffolding, not as source of truth.</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1200,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() {
+    const ink = '#17171a', body = '#1c1917', muted = '#6b6560', faint = '#a8a29a';
+    const teal = '#0d9488', red = '#b91c1c', amber = '#a15c07';
+    const G = (w, s) => `${w} ${s}px/1.75 'Instrument Sans',sans-serif`;
+    const M = (w, s) => `${w} ${s}px/1.75 'IBM Plex Mono',monospace`;
+    const base = G(400, 15);
+    const t = (text, f, c) => ({ t: text, f: f || base, c: c || body });
+
+    const sentencePlain = 'Found the countdown running past zero in Pour Timer, fixed on the second try. 0:45 still works.';
+
+    return {
+      legend: [
+        { tag: 'SETTLED', bg: '#dcfce7', fg: '#14532d', means: 'Decided, built against, not up for debate this cycle' },
+        { tag: 'PROPOSED', bg: '#e0e7ff', fg: '#2e2c6f', means: 'This pass argues for it; say no and it changes' },
+        { tag: 'OPEN', bg: '#fde68a', fg: '#78350f', means: 'Answerable now, nobody has answered it' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', means: 'Only answerable by using the thing for a week' },
+      ],
+      shellColors: [
+        { name: 'paper', hex: '#fbfaf8', use: 'Screen background' },
+        { name: 'surface', hex: '#f1efea', use: 'Cards, inputs, sheets' },
+        { name: 'border', hex: '#e0dcd4', use: 'Hairlines' },
+        { name: 'ink', hex: '#17171a', use: 'Orb, overlays, dark panels' },
+        { name: 'text', hex: '#1c1917', use: 'Everything readable' },
+        { name: 'muted', hex: '#6b6560', use: 'Secondary copy, hedges' },
+        { name: 'faint', hex: '#a8a29a', use: 'Units, de-emphasis' },
+        { name: 'literal', hex: '#a15c07', use: "The user's own words" },
+      ],
+      accents: [
+        { name: 'Ink violet — chosen', hex: '#3f3d8f', note: 'Low chroma, close to ink. Nearly furniture, which is right for a shell that should disappear behind the apps it holds.' },
+        { name: 'Was: framework indigo', hex: '#4f46e5', note: 'Retired. Anonymous, and loud enough to read as the product\'s personality when it never was.' },
+        { name: 'Was: deep moss', hex: '#3f5d3a', note: 'Retired. Distinctive, but a second warm colour crowds the brown that now carries attribution.' },
+      ],
+      statusColors: [
+        { name: 'Working / done', hex: '#0d9488' },
+        { name: 'Broken', hex: '#b91c1c' },
+        { name: 'Waiting', hex: '#c9c3b8' },
+      ],
+      typeScale: [
+        { name: 'Display', spec: 'Grotesk 700 · 34/1 · -3%', font: "700 34px/1 'Instrument Sans',sans-serif", sample: 'Whim' },
+        { name: 'Screen title', spec: 'Grotesk 700 · 26/1.15 · -2.5%', font: "700 26px/1.15 'Instrument Sans',sans-serif", sample: "Here's the plan" },
+        { name: 'Metric', spec: 'Mono 500 · 48/1 · -4%', font: "500 48px/1 'IBM Plex Mono',monospace", sample: '0:45' },
+        { name: 'Body', spec: 'Grotesk 400 · 15/1.7', font: "400 15px/1.7 'Instrument Sans',sans-serif", sample: 'It plays a sound and buzzes.' },
+        { name: 'Body emphatic', spec: 'Grotesk 500 · 15/1.7', font: "500 15px/1.7 'Instrument Sans',sans-serif", sample: 'the countdown running past zero' },
+        { name: 'Caption', spec: 'Grotesk 400 · 12/1.55', font: "400 12px/1.55 'Instrument Sans',sans-serif", sample: 'Nothing here is final.' },
+        { name: 'Eyebrow', spec: 'Mono 500 · 10.5 · +14% caps', font: "500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase", sample: 'What it remembers' },
+      ],
+      synExamples: [
+        {
+          tag: 'BASELINE', tagbg: '#f1efea', tagfg: '#6b6560', title: 'No highlighting',
+          tokens: [t(sentencePlain)],
+          note: 'Perfectly readable, and completely flat. You have to read all of it to find the one thing you cared about. This is the control.',
+        },
+        {
+          tag: 'REJECTED', tagbg: '#fee2e2', tagfg: '#7f1d1d', title: 'Grammatical — nouns, verbs, adjectives',
+          tokens: [
+            t('Found ', base, red), t('the ', base, faint), t('countdown ', base, '#1d4ed8'), t('running ', base, red), t('past ', base, faint), t('zero ', base, '#7c3aed'),
+            t('in ', base, faint), t('Pour Timer', base, '#1d4ed8'), t(', ', base, faint), t('fixed ', base, red), t('on ', base, faint), t('the ', base, faint),
+            t('second ', base, '#7c3aed'), t('try', base, '#1d4ed8'), t('. ', base, faint), t('0:45 ', base, '#7c3aed'), t('still ', base, faint), t('works', base, red), t('.', base, faint),
+          ],
+          note: 'This is what taking the IDE metaphor literally produces. Eleven coloured words out of nineteen — the eye has nowhere to land, and the colours encode grammar the reader already knows from word order. Worth building once just to feel how bad it is.',
+        },
+        {
+          tag: 'PROPOSED', tagbg: '#e0e7ff', tagfg: '#2e2c6f', title: 'By role in the product — the actual proposal',
+          tokens: [
+            t('Found the '), t('countdown running past zero', G(500, 15), body), t(' in '), t('Pour Timer', G(500, 15), teal),
+            t(', fixed on the '), t('second try', base, faint), t('. '), t('0:45', M(500, 15), body), t(' still works.'),
+          ],
+          note: 'Four marks, four different channels: weight for what changed, colour for the app (its own tile colour), de-emphasis for the attempt count, the mono face for the measure. You can find the app name and the symptom without reading the sentence — which is the entire point.',
+        },
+        {
+          tag: 'CEILING', tagbg: '#fde68a', tagfg: '#78350f', title: 'One class too many',
+          tokens: [
+            t('Found the '), t('countdown running past zero', G(500, 15), body), t(' in '), t('Pour Timer', G(500, 15), teal), t(' — you asked for '),
+            t('“a warning before the last pour”', "400 17px/1.6 Newsreader,serif;font-style:italic", amber), t(' — fixed on the '), t('second try', base, faint), t('. '), t('0:45', M(500, 15), body),
+            t(' still '), t('works', G(500, 15), teal), t('.'),
+          ],
+          note: 'Fair warning: this sentence is longer, so it was never a clean comparison — the extra clause buys room the shorter one never had. Read past that and only the second teal actually hurts. The quote does not: it is a different face entirely, and the eye files it as "something I said" rather than as another mark competing for attention. Hence the exemption below — both this and the proposed version are legal.',
+        },
+      ],
+      brownUses: [
+        {
+          where: 'History row — the prompt that caused it',
+          parts: [t('“add a warning before the last pour”', "400 17px/1.5 Newsreader,serif;font-style:italic", '#e0a75e'), t('\nIt now warns you one pour early.', G(400, 15), '#fbfaf8')],
+          note: 'Your words on top, the outcome underneath. This is the most frequent brown in the product — it is on every single row.',
+        },
+        {
+          where: 'Plan screen — what it thinks you asked for',
+          parts: [t('Building ', G(400, 15), '#fbfaf8'), t('a timer for pour-over coffee', "400 17px/1.5 Newsreader,serif;font-style:italic", '#e0a75e'), t('. Three steps.', G(400, 15), '#fbfaf8')],
+          note: 'Reading your own sentence back is how you catch a misunderstanding before it costs a build.',
+        },
+        {
+          where: 'Composer — after you send, never while you type',
+          parts: [t('a dice roller, but with two dice', "400 17px/1.5 Newsreader,serif;font-style:italic", '#e0a75e')],
+          note: 'The moment it is submitted it becomes yours-on-the-record, and takes the brown.',
+        },
+      ],
+      classes: [
+        { name: 'app', channel: "Colour — the app's own tile hue", parts: [t('Pour Timer', G(500, 14), '#2dd4bf')], rule: 'Always, everywhere, including inside lists. It is the strongest tie between prose and the grid.' },
+        { name: 'chg', channel: 'Weight 500, no colour', parts: [t('running past zero', G(500, 14), '#fbfaf8')], rule: 'The one thing that changed or broke. Exactly one per sentence — if there are two, write two sentences.' },
+        { name: 'yours', channel: 'Newsreader italic + brown', parts: [t('“before the last pour”', "400 16px/1.5 Newsreader,serif;font-style:italic", '#e0a75e')], rule: "Anything you wrote, echoed verbatim — never paraphrased. Exempt from the four-mark cap: it is attribution, not emphasis. The only span allowed two channels at once." },
+        { name: 'measure', channel: 'Mono face, no colour', parts: [t('0:45 · 3 taps · v4', M(500, 14), '#fbfaf8')], rule: 'Anything counted or timed. The face is the highlight; colouring numbers too is greedy.' },
+        { name: 'state', channel: 'Colour — the three status hues', parts: [t('working', G(500, 14), '#2dd4bf'), t(' · ', G(400, 14), 'rgba(255,255,255,.35)'), t('broken', G(500, 14), '#f87171'), t(' · ', G(400, 14), 'rgba(255,255,255,.35)'), t('waiting', G(500, 14), '#c9c3b8')], rule: 'Only the fixed vocabulary, each in its own hue. Never for a synonym, never when a status dot is already adjacent.' },
+        { name: 'hedge', channel: 'Muted — reverse highlight', parts: [t('on the second try', G(400, 14), 'rgba(255,255,255,.42)')], rule: 'Honest detail that is not the point: attempt counts, approximations, caveats. Say it, then get out of the way.' },
+      ],
+      synRules: [
+        { name: 'Four marks per sentence — quotes exempt', body: 'Above four system marks the reader stops trusting them and starts reading everything. Your own words do not count against it: they are attribution, in a face nothing else uses, and suppressing them to stay under a budget would be the wrong trade.' },
+        { name: 'One channel per span', body: 'Never bold and coloured. If a span deserves two channels it deserves its own sentence.' },
+        { name: 'One colour per sentence', body: 'Two coloured spans read as a comparison even when they are not related. Weight and face are unlimited by comparison.' },
+        { name: 'It must survive being switched off', body: 'Read every string in flat black before shipping it. If it becomes ambiguous, the highlighting was carrying meaning it should not have been.' },
+        { name: 'Never inside a field the user is typing', body: 'Live-lexing the composer is technically easy and feels like the keyboard is arguing with you. Highlight the prompt only after it is submitted.' },
+        { name: 'Agent prose only', body: 'Interface labels, buttons, settings and headings are never highlighted. The system marks what it is telling you, not what it is offering you.' },
+      ],
+      registers: [
+        { moment: 'Waiting', stakes: 'stakes: none', min: 'Building.', whim: 'Rummaging around in the timer.', spark: 'Rummaging.' },
+        { moment: 'Change landed', stakes: 'stakes: low', min: 'Warns before the last pour.', whim: 'One last heads-up before your final pour — in there now.', spark: 'Nudges you before the last pour.' },
+        { moment: 'Fixed after a stumble', stakes: 'stakes: medium', min: 'Countdown ran past zero. Fixed on attempt two.', whim: 'Your timer had a taste for negative numbers. Talked it out of that.', spark: 'Countdown had a taste for negative numbers. Fixed on attempt two.' },
+        { moment: 'Broken, and staying broken', stakes: 'stakes: high', min: "Didn't run. I've stopped trying. Your last working version is here.", whim: "Well, that went sideways! Let's give it another whirl, shall we?", spark: "Didn't run. I've stopped trying. Your last working version is here." },
+      ],
+      voiceRules: [
+        { name: 'Say what happened, not what the system did', body: '"Warns before the last pour", never "committed 4a3f21e". The user did not ask for a commit.' },
+        { name: 'Sentence case, no exclamation marks', body: 'One exception is not worth the rule it breaks. Enthusiasm is carried by what is said, not by punctuation.' },
+        { name: 'Never apologise twice', body: 'One acknowledgement, then the way forward. Repeated contrition reads as a system that expects to fail.' },
+        { name: 'Whimsy is in nouns, never in structure', body: 'A playful word choice inside a plain sentence stays scannable. A playful sentence shape does not.' },
+        { name: 'The agent may say "I", and has no name', body: 'Settled. "I\'ve stopped trying" is warmer and shorter than any subjectless version. It never introduces itself, never has a face, and never refers to itself in the third person.' },
+        { name: 'Whimsy costs no extra words', body: 'If the playful version is longer than the plain one, it is not wit, it is padding. Swap a word; do not add a clause.' },
+      ],
+      orbModes: (() => {
+        const R = 33, C = 42;
+        const label = { 1: 'One · flick up', 2: 'Two · up / down', 3: 'Three · 120°', 4: 'Four · 90°', 5: 'Five · 72°' };
+        const spec = { 1: 'fixed form', 2: 'fixed form', 3: 'fixed form', 4: '360/4', 5: '360/5' };
+        return [1, 2, 3, 4, 5].map(n => ({
+          name: label[n], spec: spec[n],
+          dots: Array.from({ length: n }, (_, i) => {
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+            return { x: (C + R * Math.cos(a)) + 'px', y: (C + R * Math.sin(a)) + 'px' };
+          }),
+        }));
+      })(),
+      six: [{ d: '0s' }, { d: '.12s' }, { d: '.24s' }, { d: '.36s' }, { d: '.48s' }, { d: '.6s' }],
+      planSkel: [{ d: '0s', w: '100%' }, { d: '.15s', w: '84%' }, { d: '.3s', w: '92%' }, { d: '.45s', w: '68%' }],
+      radii: [
+        { name: 'Chip', value: '999px', use: 'Answer pills' },
+        { name: 'Field', value: '14px', use: 'Rows, list items' },
+        { name: 'Card', value: '18px', use: 'Plan rows, buttons' },
+        { name: 'Tile', value: '22px', use: 'App icons' },
+        { name: 'Sheet', value: '28px', use: 'Bottom sheets' },
+      ],
+      spacing: [
+        { name: 'xs', value: '8px', use: 'Inside a row' },
+        { name: 'sm', value: '12px', use: 'Between siblings' },
+        { name: 'md', value: '16px', use: 'Card padding' },
+        { name: 'lg', value: '22px', use: 'Screen gutter' },
+        { name: 'xl', value: '34px', use: 'Between groups' },
+      ],
+      motion: [
+        { name: 'Breathe', spec: '1.9s ease-in-out, .34→.72', body: 'The only loading motion. Opacity only — no shimmer sweep, no travelling gradient.' },
+        { name: 'Sheet rise', spec: '260ms cubic-bezier(.2,.8,.2,1)', body: 'Sheets come from the edge they will return to. Nothing fades in from nowhere.' },
+        { name: 'Orb wheel', spec: '300ms hold, 180ms fan', body: 'Targets fan out fast enough to feel like they were already there.' },
+        { name: 'Text arriving', spec: 'no animation', body: 'Streamed prose is never faded or typed in per character. The words appearing is already the animation.' },
+      ],
+      carried: [
+        { name: 'Ghost letterform tiles', body: 'Solid tile colour, monogram small at bottom-left, the same monogram blown up and bleeding off the top-right at 16% white.' },
+        { name: 'One primary per screen', body: '52–56 px, full width, at the bottom. Busy states replace the label with plain words, never a bare spinner.' },
+        { name: 'Safe default is the big button', body: 'In any confirm sheet, Cancel is the large one and the consequential action is demoted to plain text.' },
+        { name: 'The failure ladder', body: 'Retry three times before saying "broken", name the symptom not the exception, keep the last working version, recover in teal.' },
+        { name: 'Nothing destructive by gesture', body: 'Delete, rename and restore need a screen and a sentence. The orb wheel carries cheap, undoable actions only.' },
+        { name: 'Mono means measured', body: 'Clocks, durations, versions, counters and eyebrows. Never prose.' },
+      ],
+      questions: [
+        { tag: 'OPEN', bg: '#fde68a', fg: '#78350f', title: 'How does an app hand the shell one tile colour?', body: 'The grid and the prose both need a single hue per app. If the SDK constrains nothing, that hue has to be derived — declared by the app, or picked from whatever it used most. This is the one place where "no contract" still owes the shell an answer.' },
+        { tag: 'OPEN', bg: '#fde68a', fg: '#78350f', title: 'What happens to an app built against the old presets?', body: 'Cutting themes leaves existing generated apps referencing values that no longer mean anything. Either they are pinned to a frozen copy of the old palette forever, or the first edit silently re-skins them. Neither is free.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'How long is a commit message?', body: 'The working idea is that a commit reminds you which prompt led to this outcome, and not much more — which argues for one line. Whether that survives a history of two hundred entries, or whether you start wanting a body, is not answerable before living with it. Build one line first; it is the cheaper thing to grow out of.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'How many actions belong on the orb, and which ones?', body: 'The geometry is settled; the defaults are not. You cannot pick the blind-reach set before you have reached for it blind. Instrument a plain tapped menu first, then ship the wheel with whatever the top two or three turn out to be — starting small, since an under-filled wheel is far easier to live with than a crowded one.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'Does highlighting stop being signal once it is everywhere?', body: 'Four marks per sentence is defensible on one sentence and possibly exhausting down a screen of twenty history rows. Only a real, long history answers this. Ship it behind a switch and try a week with it off.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'Should highlighting decay with age?', body: 'Recency as a fifth channel: today\'s entries fully marked, last week\'s flattening toward plain. Elegant on paper, possibly reads as things going stale or broken. Cheap to prototype.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'Do shell colours mean the same thing inside a mini-app?', body: 'If an app picks teal as its own colour and teal means "working" in the shell, the meaning leaks. Either the status hues are reserved globally — expensive, constrains every app — or meaning is scoped to the shell and users just cope. Unknowable until a few real apps exist.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'Does one whim-word per message stay charming at volume?', body: 'A single vivid verb reads well in isolation and may read as a tic across forty history rows — especially when the model reaches for the same three words. If it curdles, the fix is a frequency cap rather than a ban: whimsy on first run and on recovery only.' },
+        { tag: 'FEEL IT', bg: '#f1efea', fg: '#6b6560', title: 'Prophetic skeleton or one honest empty tile?', body: 'Section 06. Build both, live with each for a few days, keep the one that stops feeling like a trick.' },
+      ],
+      build: [
+        { name: 'Post-run summariser', body: 'After every completed run, generate a one-sentence plain-words description of what changed and what was learned, and store it with the change. This is the string every history row renders — it is a product feature, not demo copy.' },
+        { name: 'Highlight lexer (client)', body: 'Marks app names against the installed list, measures against a number/duration pattern, quoted prompt text against the stored prompt, and status words against a fixed vocabulary. No model involvement, deterministic, testable.' },
+        { name: 'Two model-side tags', body: 'The summariser emits at most one chg span and one hedge span per sentence. Everything else is the lexer\'s job. Cap enforced in the renderer, not just the prompt.' },
+        { name: 'Highlighting off-switch', body: 'A single flag that renders all prose flat. Needed both as an accessibility answer and as the only way to run the section-09 experiment honestly.' },
+        { name: 'Skeleton geometry shared with real components', body: 'Skeletons must be generated from the same size constants as the components they stand in for, or they drift and the layout jumps on load.' },
+        { name: 'Per-app colour available to the renderer', body: 'The app class colours a name in that app\'s own tile hue, so the prose renderer needs the same deterministic name-to-colour function the grid uses.' },
+        { name: 'One declared tile colour per app', body: 'The only thing the shell needs back from a generated app. Everything else about its look is the app\'s business — no slot count, no approved palette, no validation beyond legibility on paper.' },
+        { name: 'Orb wheel with variable arity', body: 'One to five actions; fixed forms for one to three, 360/n wedges for four and five; direction-of-travel hit-testing rather than tapping a target. Assignment stored per user and edited in settings.' },
+        { name: 'Quote provenance stored with every summary', body: 'The brown-and-italic class is only honest if the exact submitted prompt text is kept alongside the change, so it can be echoed verbatim rather than reconstructed.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>
