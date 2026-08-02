@@ -293,6 +293,9 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.ok(homeSrc.includes('COPY.actionHistory') && homeSrc.includes('onHistory(a)'), 'HomeScreen sheet has a History row wired to onHistory');
     const rootSrc = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/LauncherRoot.tsx'), 'utf8');
     h.ok(rootSrc.includes("{ kind: 'history'; app: InstalledApp }"), "LauncherRoot's Screen union has the history variant");
-    h.ok(rootSrc.includes('<HistoryScreen app={screen.app} access={access} onBack={goHome} />'), 'LauncherRoot renders HistoryScreen with the shared goHome (refreshes Home on return) — the existing props signature, unchanged');
+    h.ok(
+      /<HistoryScreen[\s\S]{0,160}app=\{screen\.app\}[\s\S]{0,160}access=\{access\}[\s\S]{0,160}onBack=\{goHome\}/.test(rootSrc),
+      'LauncherRoot renders HistoryScreen with the shared goHome (refreshes Home on return) — the existing props signature, unchanged apart from the additive onChangeIt group D wires',
+    );
   });
 }

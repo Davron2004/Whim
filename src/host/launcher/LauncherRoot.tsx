@@ -1,55 +1,77 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // LauncherRoot — the product shell's top-level screen switch (launcher-shell / #5 D6).
 // ─────────────────────────────────────────────────────────────────────────────
-// Plain RN state, no navigation library (three screens + a dev flip don't justify the dep): home
-// grid → full-screen mini-app → back to home; a __DEV__ entry reaches the containment/bridge
-// probe; a settings entry reaches the theme picker. The prompt flow (prompt-flow-ux) adds four
-// more screens — prompt → rewrite-preview → generating → (app | failure) — with all async
-// orchestration (rewrite call, SSE loop, abort wiring, delivery routing) living here, exactly
-// like the existing `onFork`/`onDelete` handlers (design D1). This is also the host wiring: the
-// MMKV-backed installed-apps index, the persistent version store, the sanctioned StoreAccess
-// path (with the device user-data delete), first-run seeding (D7), the fork/delete flows (D2),
-// the theme state (design sdk-design-system D7), and the persisted device id + server address
-// (prompt-flow-ux D2/D3) — the pref/id/address are all loaded once from the same `whim.launcher`
-// KVBackend the installed-apps index uses. One WebView == one realm == one app: launching reads
-// the active bundle source from the record and hands it to MiniAppView (keyed by launcher id, so
-// each launch is a fresh realm).
+// Plain RN state, no navigation library: home grid → full-screen mini-app → back to home; a
+// __DEV__ entry reaches the containment/bridge probe; a settings entry reaches the shell
+// settings. The prompt flow (shell-redesign-v2, group D) contributes the five steps of screen
+// `2a` — compose → clarify → plan → build → done — as members of the same union, with all async
+// orchestration (the clarify exchange, the rewrite call, the SSE loop, abort wiring, delivery
+// routing) living here: the step screens are presentational and the decisions between them are
+// the pure machine in `prompt-flow.ts`. This is also the host wiring: the MMKV-backed
+// installed-apps index, the persistent version store, the sanctioned StoreAccess path (with the
+// device user-data delete), first-run seeding (D7), the fork/delete flows (D2), the fixed theme,
+// the highlighting off-switch, and the persisted device id + server address — all read once from
+// the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
+// one app: launching reads the active bundle source from the record and hands it to MiniAppView
+// (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StatusBar, StyleSheet, View } from 'react-native';
+import { StatusBar, StyleSheet, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { GenerationEvent, WireAppRecord } from '@whim/contract';
+import type { GenerationEvent, RunSummary, WireAppRecord } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
+import { SPACING } from '../../sdk/theme';
 import type { AppManifest, AppRecord } from '../bridge';
 import type { SchemaArtifact } from '../storage-engine';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { deleteStorage, peekAppliedSchema } from '../storage-engine';
+import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
 import { buildGenerateRequest } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import HomeScreen from './HomeScreen';
+import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
 import SettingsScreen from './SettingsScreen';
 import HistoryScreen from './HistoryScreen';
-import PromptScreen from './PromptScreen';
-import RewritePreviewScreen from './RewritePreviewScreen';
-import GeneratingScreen from './GeneratingScreen';
+import ComposeStep from './ComposeStep';
+import ClarifyStep from './ClarifyStep';
+import PlanStep from './PlanStep';
+import BuildStep from './BuildStep';
+import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
+import { HomeGridSkeleton } from './flow-skeletons';
+import { liftManifestTileColor } from './manifest-tile-color';
+import { promptEnvelope } from './prompt-envelope';
+import {
+  acceptClarifyQuestions,
+  backFrom,
+  buildStep,
+  clarifyStep,
+  clarificationsFrom,
+  composeStep,
+  doneStep,
+  isClarifySkip,
+  planStep,
+  reopenCompose,
+  stepAfterClarifyExchange,
+  withAnswer,
+  withDelivering,
+  withPlan,
+  withStage,
+} from './prompt-flow';
+import type { ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen } from './prompt-flow';
 import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
-import { GenerationClientError, generateApp, rewritePrompt } from './generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
 import type { ClientOptions } from './generation-client';
 import { isAtTip } from './history-logic';
-
-/** The `stage` event's `stage` field (`GenerationEvent` is a discriminated union). */
-type Stage = Extract<GenerationEvent, { type: 'stage' }>['stage'];
 
 type Screen =
   | { kind: 'home' }
@@ -57,13 +79,9 @@ type Screen =
   | { kind: 'dev' }
   | { kind: 'settings' }
   | { kind: 'history'; app: InstalledApp }
-  // prompt-flow-ux (design D1). `editing` absent = new-app flow (home tile); present = the
-  // per-app "Prompt again" edit flow. `initialText` seeds the prompt input on re-entry — the
-  // failure screen's "rephrase" and the generating screen's cancel both preserve the user's text
-  // this way (PromptScreenProps already documents this exact use, prompt-flow-screens handoff).
-  | { kind: 'prompt'; editing?: InstalledApp; initialText?: string }
-  | { kind: 'rewrite-preview'; editing?: InstalledApp; originalPrompt: string; rewrittenPrompt: string }
-  | { kind: 'generating'; editing?: InstalledApp; prompt: string; stage: Stage | null }
+  // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
+  // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
+  | FlowScreen
   | { kind: 'failure'; editing?: InstalledApp; prompt: string; reason: string; diagnostics: readonly { hint: string }[] };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
@@ -80,13 +98,6 @@ function defaultSeeds(): SeedSpec[] {
     .map(s => ({ ...s, record: APP_RECORDS[s.id], bundleSource: APP_BUNDLES[s.id] }));
 }
 
-/** Wraps the approved prompt text in the `{v:1,text}` envelope every delivered generation's
- *  snapshot tracks (spec "structured prompt envelope"; matches `prompt-envelope.ts`'s
- *  `parsePromptEnvelope` expected shape, unchanged). */
-function envelope(text: string): string {
-  return JSON.stringify({ v: 1, text });
-}
-
 /** A fresh, sufficiently-unique launcher id for a brand-new install. Not a security-sensitive
  *  value (only used as a local index/store key), so a timestamp+random string is enough — no new
  *  dependency, mirrors `StoreAccess.fork`'s own cheap id construction in spirit. */
@@ -99,20 +110,22 @@ function freshAppId(): string {
  *  expect (design D5 "record: <mapped from wire>"). The wire's `manifest`/`schema` only need to
  *  round-trip on the wire (`ManifestShape`/`SchemaShape` are generic records) — they are
  *  structurally the same shapes `AppManifest`/`SchemaArtifact` describe, matching every fixture
- *  `APP_RECORDS` already ships. `schemaArtifact` is omitted entirely when the wire schema has no
- *  keys, the same "only when the app actually declares storage" convention every other record in
+ *  `APP_RECORDS` already ships. The declared tile colour is lifted onto the host record through
+ *  chain-F's one mapping function, so the grid, the history header and prose all resolve one app
+ *  to one colour. `schemaArtifact` is omitted entirely when the wire schema has no keys, the same
+ *  "only when the app actually declares storage" convention every other record in
  *  `app-records.ts` follows. */
 function mapWireRecord(appId: string, wire: WireAppRecord): AppRecord {
   const hasSchema = Object.keys(wire.schema).length > 0;
   return {
     appId,
     name: wire.name,
-    manifest: wire.manifest as unknown as AppManifest,
+    manifest: { ...(wire.manifest as unknown as AppManifest), ...liftManifestTileColor(wire.manifest) },
     ...(hasSchema ? { schemaArtifact: wire.schema as unknown as SchemaArtifact } : {}),
   };
 }
 
-/** Maps a thrown error from `rewritePrompt`/`generateApp` down to the failure screen's honest
+/** Maps a thrown error from the client calls down to the failure screen's honest
  *  `{reason, diagnostics}` shape — never the raw error kind/status, matching the "failure shown
  *  honestly" requirement's hint-only discipline (diagnostics stay empty here; only a terminal
  *  `failure` event ever carries real per-diagnostic hints). */
@@ -127,14 +140,18 @@ function errorReason(err: unknown): { reason: string; diagnostics: readonly { hi
  *  is at the tip of its own history, or — when it has been restored behind its own tip — a
  *  silent shared continuation (fork with `shareData:true`, no question asked per decision #52 D2
  *  / the `linked-apps` spec) followed by an update onto that fork. The ONLY three `StoreAccess`
- *  call shapes a `result` event may produce (spec "Delivery only through StoreAccess"). */
+ *  call shapes a `result` event may produce (spec "Delivery only through StoreAccess").
+ *
+ *  `text` is the user's VERBATIM prompt (not the rewritten one) and `summary` the run's summary
+ *  when it produced one — together the `{v:2, text, summary?}` envelope the snapshot tracks. */
 async function deliverResult(
   access: StoreAccess,
   editing: InstalledApp | undefined,
   text: string,
   wire: WireAppRecord,
+  summary?: RunSummary,
 ): Promise<InstalledApp> {
-  const prompt = envelope(text);
+  const prompt = promptEnvelope(text, summary);
   const schemaJson = Object.keys(wire.schema).length > 0 ? JSON.stringify(wire.schema) : undefined;
 
   if (!editing) {
@@ -153,9 +170,8 @@ async function deliverResult(
 
 export default function LauncherRoot() {
   // Construct the persistent host services once (device native modules — lazy under the hood).
-  // The theme pref, device id, and server address all read from the SAME `whim.launcher`
-  // KVBackend instance the installed-apps index uses (design D7 / prompt-flow-ux D2/D3 — one
-  // MMKV instance, several consumers).
+  // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
+  // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
   const { index, access, kv } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
@@ -178,6 +194,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
 
@@ -187,11 +204,15 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     [serverUrl, deviceId],
   );
 
-  // Tracks the in-flight generation's abort controller + the caller's own cancellation intent
-  // (generation-client's abort contract: the caller must track intent itself rather than infer
-  // it from the stream's output, since an abort and an unrelated truncated stream look
-  // identical). Cleared once the generation settles (success, failure, or a deliberate cancel).
-  const genRef = useRef<{ controller: AbortController; cancelled: boolean } | null>(null);
+  /** How many tiles the grid is known to be about to show — the skeleton's exact count. Read
+   *  synchronously from the index at mount, before first-run seeding resolves. */
+  const knownAppCount = useMemo(() => index.list().length, [index]);
+
+  // Tracks the in-flight generation's abort controller, the caller's own cancellation intent, and
+  // whether the user left it running (generation-client's abort contract: the caller must track
+  // intent itself rather than infer it from the stream's output, since an abort and an unrelated
+  // truncated stream look identical). Cleared once the generation settles.
+  const genRef = useRef<{ controller: AbortController; cancelled: boolean; detached: boolean } | null>(null);
 
   const refresh = () => setApps(index.list());
 
@@ -254,32 +275,86 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     setHighlighting(enabled);
   };
 
-  // ── Prompt flow orchestration (design D1) ──────────────────────────────────────────────────
-  // Submit → rewrite → preview → approve → generate (SSE) → deliver. Presentational screens
-  // (PromptScreen/RewritePreviewScreen/GeneratingScreen/FailureScreen) never touch fetch,
-  // StoreAccess, or AbortController — all of that lives here, per the prompt-flow-screens handoff.
+  // ── The `2a` flow (group D) ────────────────────────────────────────────────────────────────
+  // compose → clarify → plan → build → done. Every forward move is gated by a primary action and
+  // carries one request; every backward move is immediate (`prompt-flow.ts#backFrom`). The step
+  // screens never touch fetch, StoreAccess or AbortController — all of that lives here.
 
-  const onPromptSubmit = async (editing: InstalledApp | undefined, text: string) => {
-    if (!clientOptions) return; // PromptScreen only calls onSubmit when serverConfigured is true
+  const failure = (editing: InstalledApp | undefined, prompt: string, err: unknown): Screen => ({
+    kind: 'failure',
+    editing,
+    prompt,
+    ...errorReason(err),
+  });
+
+  const openCompose = (editing?: InstalledApp, text?: string) => setScreen(composeStep(editing, text ?? ''));
+
+  const goBack = (from: FlowScreen) => {
+    const target = backFrom(from);
+    if (target === 'home') goHome();
+    else if (target) setScreen(target);
+  };
+
+  /** Fetch the plan and show it: the step opens immediately under its row skeleton, and its own
+   *  primary action stays busy until the rewrite response lands. */
+  const openPlan = async (prev: ComposeScreen | ClarifyScreen) => {
+    if (!clientOptions) return;
+    const pending = planStep(prev);
+    setScreen(pending);
     try {
-      const rewritten = await rewritePrompt(clientOptions, text);
-      setScreen({ kind: 'rewrite-preview', editing, originalPrompt: text, rewrittenPrompt: rewritten.rewrittenPrompt });
+      const response = await rewritePrompt(
+        clientOptions,
+        pending.text,
+        clarificationsFrom(pending.questions, pending.answers),
+      );
+      setScreen((s) => (s.kind === 'plan' ? withPlan(s, response) : s));
     } catch (e) {
-      const { reason, diagnostics } = errorReason(e);
-      setScreen({ kind: 'failure', editing, prompt: text, reason, diagnostics });
+      setScreen((s) => (s.kind === 'plan' ? failure(pending.editing, pending.text, e) : s));
     }
   };
 
-  const onApprovePreview = async (editing: InstalledApp | undefined, text: string) => {
+  /** compose → clarify, or straight past it when the exchange has nothing to ask. A clarify
+   *  `502` means "skip to the plan step", not a dead end (`isClarifySkip`). */
+  const onComposeContinue = async (from: ComposeScreen) => {
     if (!clientOptions) return;
-    setScreen({ kind: 'generating', editing, prompt: text, stage: null });
+    setBusy(true);
+    let questions: FlowQuestion[] = [];
+    try {
+      questions = acceptClarifyQuestions((await clarifyPrompt(clientOptions, from.text)).questions);
+    } catch (e) {
+      if (!isClarifySkip(e)) {
+        setBusy(false);
+        setScreen(failure(from.editing, from.text, e));
+        return;
+      }
+    }
+    setBusy(false);
+    if (stepAfterClarifyExchange(questions) === 'clarify') {
+      setScreen(clarifyStep(from, questions));
+    } else {
+      await openPlan(from);
+    }
+  };
+
+  /** The approval gate's action — the first moment a generation request is sent. */
+  const onBuildIt = async (from: PlanScreen) => {
+    if (!clientOptions) return;
+    const building = buildStep(from);
+    setScreen(building);
 
     const controller = new AbortController();
-    const ctl = { controller, cancelled: false };
+    const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
+    const editing = building.editing;
 
     try {
-      const request = await buildGenerateRequest(access, (appId) => peekAppliedSchema({ appId }), editing, text);
+      const request = await buildGenerateRequest(
+        access,
+        (appId) => peekAppliedSchema({ appId }),
+        editing,
+        building.rewritten,
+        clarificationsFrom(building.questions, building.answers),
+      );
       let terminal: GenerationEvent | null = null;
 
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
@@ -287,7 +362,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       // held until the stream ends so the terminal-event handling below stays in one place.
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
         if (event.type === 'stage') {
-          setScreen((s) => (s.kind === 'generating' ? { ...s, stage: event.stage } : s));
+          setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
         } else if (event.type === 'result' || event.type === 'failure') {
           terminal = event;
         }
@@ -298,62 +373,69 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
 
       if (terminal == null) {
         // Stream ended with no terminal event and no cancel — a stream error, not a crash.
-        setScreen({ kind: 'failure', editing, prompt: text, reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+        setScreen({ kind: 'failure', editing, prompt: building.text, reason: GENERIC_STREAM_ERROR, diagnostics: [] });
         return;
       }
       if (terminal.type === 'failure') {
         setScreen({
           kind: 'failure',
           editing,
-          prompt: text,
+          prompt: building.text,
           reason: terminal.reason,
           diagnostics: terminal.diagnostics.map((d) => ({ hint: d.hint })),
         });
         return;
       }
 
-      const delivered = await deliverResult(access, editing, text, terminal.app);
+      setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
+      const delivered = await deliverResult(access, editing, building.text, terminal.app, terminal.summary);
       refresh();
-      const source = await access.activeBundle(delivered);
-      setScreen({ kind: 'app', app: delivered, record: delivered.record, source, engineAppId: access.engineAppId(delivered) });
+      if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
+      setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
       genRef.current = null;
-      const { reason, diagnostics } = errorReason(e);
-      setScreen({ kind: 'failure', editing, prompt: text, reason, diagnostics });
+      setScreen(failure(editing, building.text, e));
     }
   };
 
-  /** Hardware back AND the visible Cancel button both land here (design "cancel-on-navigate-away").
-   *  Aborts the in-flight request and returns to the prompt screen with the text preserved —
-   *  nothing is installed or updated, since the generation loop above bails out on `ctl.cancelled`
-   *  before ever reaching `deliverResult`. */
-  const onCancelGeneration = (editing: InstalledApp | undefined, prompt: string) => {
+  /** `Leave it running`: back to the shell WITHOUT cancelling — the run finishes and its result
+   *  is still delivered, it just no longer takes over the screen. */
+  const onLeaveRunning = () => {
+    const ctl = genRef.current;
+    if (ctl) ctl.detached = true;
+    goHome();
+  };
+
+  /** Hardware back out of the build step (design "cancel-on-navigate-away"): aborts the in-flight
+   *  request and returns to compose with the text preserved — nothing is installed or updated,
+   *  since the generation loop bails out on `ctl.cancelled` before ever reaching `deliverResult`. */
+  const onCancelGeneration = (editing: InstalledApp | undefined, text: string) => {
     const ctl = genRef.current;
     if (ctl) {
       ctl.cancelled = true;
       ctl.controller.abort();
       genRef.current = null;
     }
-    setScreen({ kind: 'prompt', editing, initialText: prompt });
+    openCompose(editing, text);
   };
 
   // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
   const statusBarStyle = 'dark-content';
 
-  if (!ready) {
-    return (
-      <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
-        <StatusBar barStyle={statusBarStyle} />
-        <View style={styles.loading}>
-          <ActivityIndicator color={palette.accent} />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   let content: React.ReactNode;
-  if (screen.kind === 'app') {
+  if (!ready) {
+    content = (
+      <View style={styles.loading}>
+        <HomeGridSkeleton
+          count={knownAppCount}
+          columns={HOME_GRID_COLUMNS}
+          gap={HOME_GRID_COLUMN_GAP}
+          color={palette.card}
+        />
+      </View>
+    );
+  } else if (screen.kind === 'app') {
     content = (
       <MiniAppView
         key={screen.app.id}
@@ -377,39 +459,73 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       />
     );
   } else if (screen.kind === 'history') {
-    content = <HistoryScreen app={screen.app} access={access} onBack={goHome} />;
-  } else if (screen.kind === 'prompt') {
-    const { editing, initialText } = screen;
     content = (
-      <PromptScreen
-        editing={editing}
-        initialText={initialText}
-        serverConfigured={clientOptions != null}
-        onSubmit={(text) => onPromptSubmit(editing, text)}
+      <HistoryScreen
+        app={screen.app}
+        access={access}
         onBack={goHome}
+        onChangeIt={(app) => openCompose(app)}
+      />
+    );
+  } else if (screen.kind === 'compose') {
+    const from = screen;
+    content = (
+      <ComposeStep
+        text={from.text}
+        serverConfigured={clientOptions != null}
+        busy={busy}
+        onChangeText={(text) => setScreen({ ...from, text })}
+        onContinue={() => onComposeContinue(from)}
+        onBack={() => goBack(from)}
         onOpenSettings={() => setScreen({ kind: 'settings' })}
       />
     );
-  } else if (screen.kind === 'rewrite-preview') {
-    const { editing, originalPrompt } = screen;
+  } else if (screen.kind === 'clarify') {
+    const from = screen;
     content = (
-      <RewritePreviewScreen
-        originalPrompt={originalPrompt}
-        rewrittenPrompt={screen.rewrittenPrompt}
-        onApprove={(text) => onApprovePreview(editing, text)}
-        onBack={() => setScreen({ kind: 'prompt', editing, initialText: originalPrompt })}
+      <ClarifyStep
+        prompt={from.text}
+        questions={from.questions}
+        answers={from.answers}
+        busy={false}
+        onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
+        onContinue={() => openPlan(from)}
+        onBack={() => goBack(from)}
       />
     );
-  } else if (screen.kind === 'generating') {
-    const { editing, prompt } = screen;
-    content = <GeneratingScreen stage={screen.stage} onCancel={() => onCancelGeneration(editing, prompt)} />;
+  } else if (screen.kind === 'plan') {
+    const from = screen;
+    content = (
+      <PlanStep
+        rows={from.rows}
+        loading={from.loading}
+        onEditRow={(row) => setScreen(reopenCompose(from, row))}
+        onBuild={() => onBuildIt(from)}
+        onBack={() => goBack(from)}
+      />
+    );
+  } else if (screen.kind === 'build') {
+    const from = screen;
+    content = (
+      <BuildStep
+        stage={from.stage}
+        delivering={from.delivering}
+        onLeaveRunning={onLeaveRunning}
+        onCancel={() => onCancelGeneration(from.editing, from.text)}
+      />
+    );
+  } else if (screen.kind === 'done') {
+    const from = screen;
+    content = (
+      <DoneStep app={from.app} onOpen={() => onOpen(from.app)} onBackToApps={goHome} />
+    );
   } else if (screen.kind === 'failure') {
     const { editing, prompt } = screen;
     content = (
       <FailureScreen
         reason={screen.reason}
         diagnostics={screen.diagnostics}
-        onRephrase={() => setScreen({ kind: 'prompt', editing, initialText: prompt })}
+        onRephrase={() => openCompose(editing, prompt)}
         onDismiss={goHome}
       />
     );
@@ -421,8 +537,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
         onFork={onFork}
         onDelete={onDelete}
         onHistory={onHistory}
-        onPromptAgain={(app) => setScreen({ kind: 'prompt', editing: app })}
-        onCreate={() => setScreen({ kind: 'prompt' })}
+        onPromptAgain={(app) => openCompose(app)}
+        onCreate={() => openCompose()}
         onSettings={() => setScreen({ kind: 'settings' })}
         onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
       />
@@ -430,14 +546,16 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   }
 
   return (
-    <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
-      <StatusBar barStyle={statusBarStyle} />
-      {content}
-    </SafeAreaView>
+    <HighlightingProvider enabled={highlighting}>
+      <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
+        <StatusBar barStyle={statusBarStyle} />
+        {content}
+      </SafeAreaView>
+    </HighlightingProvider>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loading: { flex: 1, padding: SPACING.lg },
 });

@@ -26,7 +26,6 @@ export const COPY = {
   homeSubtitle: 'Your apps',
   homeComposerPlaceholder: 'Describe an app…',
   exampleBadge: 'Example',
-  createTileLabel: 'make your first app',
   actionOpen: 'Open',
   actionFork: 'Fork',
   actionPromptAgain: 'Prompt again',
@@ -35,7 +34,6 @@ export const COPY = {
   deleteTitle: 'Delete this app?',
   deleteConfirm: 'Delete',
   emptyTitle: 'No apps yet',
-  emptyBody: 'Tap “make your first app” to get started.',
   settingsTitle: 'Settings',
   backLabel: 'Back',
   highlightingSectionTitle: 'Highlighting',
@@ -132,26 +130,10 @@ export const COPY = {
   promptOpenSettings: 'Open Settings',
 
   // ── retiring with the surfaces they belong to ───────────────────────────────
-  // The two-stage prompt flow (`PromptScreen`/`RewritePreviewScreen`/`GeneratingScreen`) and the
-  // pin/instant-restore history surface are replaced by this redesign. Their strings stay until
+  // The pin/instant-restore history surface is replaced by this redesign. Its strings stay until
   // the chain that deletes each screen deletes them with it — a key removed ahead of its screen
-  // is a typecheck break, not a cleanup.
-  promptTitleNew: 'Describe your app',
-  promptTitleEdit: 'Prompt again',
-  promptPlaceholder: 'What should this app do?',
-  promptDictationHint: 'Tip: tap the microphone on your keyboard to speak instead of typing.',
-  promptSubmit: 'Continue',
-  rewritePreviewTitle: 'Review before building',
-  rewritePreviewOriginalLabel: 'You said',
-  rewritePreviewApprove: 'Build it',
-  generatingTitle: 'Building your app',
-  generatingWaiting: 'Getting started…',
-  generatingStagePlan: 'Planning',
-  generatingStageGenerate: 'Writing the code',
-  generatingStageCheck: 'Checking the code',
-  generatingStageRun: 'Trying it out',
-  generatingStageRepair: 'Fixing a problem',
-  generatingCancel: 'Cancel',
+  // is a typecheck break, not a cleanup. (The two-stage prompt flow's own keys went with
+  // `PromptScreen`/`RewritePreviewScreen`/`GeneratingScreen` in group D.)
   historyCurrentLabel: 'Current version',
   historyRestoredToast: 'Restored this version',
   historyUndo: 'Undo',
