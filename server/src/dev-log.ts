@@ -11,3 +11,17 @@ export function logRequest(method: string, path: string, status: number, started
   const durationMs = Math.round(performance.now() - startedAt);
   console.log(`[whim-server] ${method} ${path} ${status} ${durationMs}ms`);
 }
+
+/**
+ * Per-run dev logging inside the generation pipeline (design D5 scope, extended for
+ * observability): one `[whim-server]`-prefixed line per breadcrumb — run start, stage
+ * transitions, model-call failures, repair triggers, and terminal outcomes — printed via plain
+ * `console.log` with the prefix centralized here.
+ *
+ * NEVER pass prompt text, generated source, the `x-whim-device` header value, the OpenRouter API
+ * key, or request/response bodies — the same privacy floor as `logRequest`. The internal
+ * (unscrubbed) failure reason is fine for stdout; the wire event's scrubbed reason is untouched.
+ */
+export function logRun(...parts: unknown[]): void {
+  console.log('[whim-server]', ...parts);
+}

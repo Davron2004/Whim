@@ -20,6 +20,7 @@ import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
 import type { Summariser } from './summarise';
+import { logRun } from '../dev-log';
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
@@ -203,6 +204,24 @@ function outcomeFromDecision(decision: Exclude<DiagnosticsDecision, { action: 'p
   return { kind: 'failed', reason: decision.reason };
 }
 
+/** Formats one `[whim-server]` breadcrumb for a `stage` transition — same fields the wire's
+ *  `stage` event itself carries (stage name, status, and attempt when present). */
+function logStage(stage: string, status: string, attempt?: number): void {
+  logRun(attempt !== undefined ? `stage ${stage} ${status} attempt=${attempt}` : `stage ${stage} ${status}`);
+}
+
+/** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
+ *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
+ *  called from inside the delta iteration loop (design D5 scope). */
+function throwLoggedModelCallFailure(which: 'usage' | 'id', error: unknown): never {
+  logRun(
+    `model call failed (${which}):`,
+    error instanceof Error ? error.constructor.name : typeof error,
+    error instanceof Error ? error.message : String(error),
+  );
+  throw error;
+}
+
 function schemaContextFor(request: GenerateRequest): string {
   const appliedSchema = request.app?.appliedSchema;
   if (!appliedSchema || Object.keys(appliedSchema).length === 0) return '';
@@ -259,6 +278,7 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0 };
 
+    logRun('run start');
     try {
       const schemaContext = schemaContextFor(request);
 
@@ -270,8 +290,14 @@ export class GenerationMachine {
       if (source === undefined) return;
 
       yield* this.runRepairLoop(request, plan, schemaContext, source, signal, trace, state);
-    } catch {
+    } catch (err) {
       if (signal?.aborted) return;
+      logRun(
+        'run failed:',
+        err instanceof Error ? err.constructor.name : typeof err,
+        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.stack : undefined,
+      );
       yield* this.emitCompletion(state, signal, {
         type: 'failure',
         reason: GENERIC_INTERNAL_ERROR_REASON,
@@ -291,6 +317,11 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     yield { type: 'usage', usage: state.usage };
     if (signal?.aborted) return;
+    if (terminal.type === 'failure') {
+      logRun('terminal failure:', terminal.reason);
+    } else {
+      logRun('terminal result');
+    }
     yield terminal;
   }
 
@@ -320,10 +351,10 @@ export class GenerationMachine {
     }
     if (signal?.aborted) return { text, aborted: true };
     const settledUsage = await usageResult;
-    if (!settledUsage.ok) throw settledUsage.error;
+    if (!settledUsage.ok) throwLoggedModelCallFailure('usage', settledUsage.error);
     state.usage = sumUsage(state.usage, settledUsage.value);
     const settledId = await idResult;
-    if (!settledId.ok) throw settledId.error;
+    if (!settledId.ok) throwLoggedModelCallFailure('id', settledId.error);
     return { text, aborted: signal?.aborted ?? false };
   }
 
@@ -349,6 +380,7 @@ export class GenerationMachine {
 
     for (let attempt = 1; attempt <= this.bounds.planAttempts; attempt++) {
       if (signal?.aborted) return undefined;
+      logStage('plan', 'start');
       yield { type: 'stage', stage: 'plan', status: 'start' };
       if (signal?.aborted) return undefined;
 
@@ -358,6 +390,7 @@ export class GenerationMachine {
 
       const { plan, failureReason } = this.resolvePlan(turn.text, request);
 
+      logStage('plan', 'done');
       yield { type: 'stage', stage: 'plan', status: 'done' };
       if (signal?.aborted) return undefined;
 
@@ -386,6 +419,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
+    logStage('generate', 'start');
     yield { type: 'stage', stage: 'generate', status: 'start' };
     if (signal?.aborted) return undefined;
 
@@ -393,6 +427,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
     if (turn.aborted) return undefined;
 
+    logStage('generate', 'done');
     yield { type: 'stage', stage: 'generate', status: 'done' };
     if (signal?.aborted) return undefined;
 
@@ -413,6 +448,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
+    logStage('repair', 'start', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'start', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -423,6 +459,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
     if (turn.aborted) return undefined;
 
+    logStage('repair', 'done', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'done', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -479,6 +516,10 @@ export class GenerationMachine {
         });
         return;
       }
+
+      const kindCounts: Record<string, number> = {};
+      for (const d of outcome.diagnostics) kindCounts[d.kind] = (kindCounts[d.kind] ?? 0) + 1;
+      logRun('repair triggered:', JSON.stringify(kindCounts), 'warningsOnly=' + String(outcome.warningsOnly));
 
       repairsUsed += 1;
       if (outcome.warningsOnly) warningRepairsUsed += 1;
@@ -547,7 +588,12 @@ export class GenerationMachine {
       );
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
       return result.summary;
-    } catch {
+    } catch (err) {
+      logRun(
+        'summariser failed:',
+        err instanceof Error ? err.constructor.name : typeof err,
+        err instanceof Error ? err.message : String(err),
+      );
       return undefined;
     }
   }
@@ -568,6 +614,7 @@ export class GenerationMachine {
       if (signal?.aborted) return;
     }
     if (signal?.aborted) return;
+    logStage(stage, 'done', attemptField.attempt);
     yield { type: 'stage', stage, status: 'done', ...attemptField };
   }
 
@@ -584,6 +631,7 @@ export class GenerationMachine {
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
     const attemptField = roundAttempt !== undefined ? { attempt: roundAttempt } : {};
 
+    logStage('check', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'check', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const checkReport = await this.deps.check.check(source, { appliedSchema: request.app?.appliedSchema }, signal);
@@ -614,6 +662,7 @@ export class GenerationMachine {
     attemptField: { attempt?: number },
     roundDiagnostics: Diagnostic[],
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
+    logStage('run', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'run', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const buildOutcome = await this.deps.build.build(source, signal);
@@ -635,6 +684,7 @@ export class GenerationMachine {
     if (signal?.aborted) return { kind: 'aborted' };
 
     if (!runOutcome.contained) {
+      logStage('run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
       return { kind: 'contained-failure' };
     }

@@ -732,7 +732,19 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     { role: 'engineer', deltas: [], error: new Error('provider secret MODEL-LEAK') },
   ]);
-  const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+
+  const realConsoleLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]): void => {
+    lines.push(args.map(String).join(' '));
+  };
+
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+  } finally {
+    console.log = realConsoleLog;
+  }
 
   assertCompletedEnvelope('model stream throws', events);
   const terminal = events.at(-1);
@@ -741,6 +753,19 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
     check('model stream throws: failure prose hides provider details', !terminal.reason.includes('MODEL-LEAK'));
     eq('model stream throws: no candidate was produced', terminal.attempts, 0);
   }
+
+  check(
+    'model stream throws: dev log carries the plan stage start',
+    lines.some((l) => l.includes('[whim-server]') && l.includes('stage plan start')),
+  );
+  check(
+    'model stream throws: dev log carries the model-call-failure error class and message',
+    lines.some((l) => l.includes('Error') && l.includes('provider secret MODEL-LEAK')),
+  );
+  check(
+    'model stream throws: dev log carries the runGenerator-catch line',
+    lines.some((l) => l.includes('run failed:') && l.includes('Error')),
+  );
 }
 
 async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
