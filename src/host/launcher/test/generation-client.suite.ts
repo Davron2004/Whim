@@ -22,7 +22,7 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { getDeviceId } from '../device-id';
-import { GenerationClientError, generateApp, rewritePrompt } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import type { GenerationEvent } from '@whim/contract';
 
@@ -256,4 +256,36 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(got, [startEvent], 'yields the events seen before the abort');
     h.eq(threw, undefined, 'does not throw');
   });
+
+  // clarifyPrompt: a mapped error logs a [whim:gen] dev breadcrumb before throwing
+  await h.test(
+    'clarifyPrompt: a non-2xx response still throws AND logs a [whim:gen] breadcrumb for the mapping site',
+    async () => {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as typeof fetch;
+
+      const originalLog = console.log;
+      const lines: unknown[][] = [];
+      try {
+        console.log = (...args: unknown[]) => {
+          lines.push(args);
+        };
+        await h.throws(
+          () => clarifyPrompt({ ...BASE, fetchImpl }, 'hi'),
+          '',
+          'clarifyPrompt still throws on a 404',
+        );
+      } finally {
+        console.log = originalLog;
+      }
+
+      const logged = lines.find((args) => args[0] === '[whim:gen]');
+      h.ok(logged !== undefined, 'logs a [whim:gen] breadcrumb at the httpErrorFrom mapping site');
+      if (logged) {
+        h.ok(logged.includes('/v1/clarify'), 'breadcrumb includes the request path');
+        h.ok(logged.includes('status=404'), 'breadcrumb includes the response status');
+        h.ok(logged.includes('kind=http'), 'breadcrumb includes the mapped error kind');
+      }
+    },
+  );
 }

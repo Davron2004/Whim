@@ -274,6 +274,34 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     },
   );
 
+  await h.test(
+    'openXhrGenerateStream: a transport failure logs a [whim:gen] breadcrumb for the mapping site',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const originalLog = console.log;
+      const lines: unknown[][] = [];
+      let caught: unknown;
+      try {
+        console.log = (...args: unknown[]) => {
+          lines.push(args);
+        };
+        const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+        fakeXhr.respondError(); // no respondHeaders() call first -- status stays 0, reader never handed back
+        caught = await expectThrow(first);
+      } finally {
+        console.log = originalLog;
+      }
+      h.ok(caught instanceof GenerationClientError, 'still throws GenerationClientError');
+
+      const logged = lines.find((args) => args[0] === '[whim:gen]');
+      h.ok(logged !== undefined, 'logs a [whim:gen] breadcrumb at the transport-error mapping site');
+      if (logged) {
+        h.ok(logged.includes('/v1/generate'), 'breadcrumb includes the request path');
+        h.ok(logged.includes('kind=network'), 'breadcrumb includes the mapped error kind');
+      }
+    },
+  );
+
   // --- task 3.4: cancellation ---
 
   await h.test('generateApp: aborting mid-stream ends iteration silently and actually aborts the underlying XHR', async () => {
