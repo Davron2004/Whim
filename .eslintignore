@@ -24,3 +24,9 @@ src/host/bridge/test/
 # forbidden globals (localStorage, Worker, …) by design to verify containment.
 src/runtime/web/
 build/react-inject.js
+
+# Design-handoff reference prototypes: browser-only HTML mockups + their bespoke runtime,
+# reference documents only — never built, imported or shipped. (The root folder is the
+# untracked original the docs/design copy was imported from.)
+docs/design/reference/
+whim-design-handoff/
