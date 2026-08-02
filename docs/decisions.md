@@ -884,3 +884,55 @@ one `POST /v1/generate` per generation attempt regardless of runtime.
 
 **Not in this change:** anything about `generation-contract`'s schemas, which are transport-agnostic; the
 generation pipeline itself (#56); the sandbox, CSP, bridge, or runtime.
+
+### 59. `shell-redesign-v2` adopted — the design handoff's fixed v2 tokens, Whim Syntax, declared tile colour, and the `2a`/`4a`/`2b` screens replace the placeholder shell `[DECIDED — openspec: shell-redesign-v2; answers the handoff's three OPEN questions, extends #45's token contract, reverses #53's rewrite-preview flow]`
+
+**Decided:** the shell adopts `docs/design/README.md` (design handoff v2) in full except the orb wheel
+gesture: a fixed, non-themeable v2 token set (`src/sdk/theme.ts`/`tokens.ts`) with three faces
+(Instrument Sans / IBM Plex Mono / Newsreader italic) replacing the AI-generated presets, `#4f46e5`
+and Space Grotesk; **Whim Syntax** as one shell-side shared renderer + deterministic lexer
+(`src/host/ui/whim-prose/`), never exported from `vc-sdk`, with its discipline caps enforced in the
+renderer rather than merely prompted for; a five-step `2a` prompt flow (`compose → clarify → plan →
+build → done`) replacing the two-stage rewrite-preview screen (#53); a `4a` history surface fed by
+stored per-run summaries rendered through Whim Syntax; and a `2b` ghost-letterform `AppTile`. Full
+design record: `openspec/changes/shell-redesign-v2/design.md` D1–D13.
+
+**The design's three OPEN questions, answered by the user (research.md §1):**
+
+- **Tile colour is declared**, not derived: `AppSpec.tileColor?` is extracted at build time into the
+  same single `CheckedManifest` extraction that already yields capabilities — no second source of
+  truth — with `appColor(name)` (one deterministic name→hue function, SDK theme module) demoted to a
+  fallback for an absent, malformed, or reserved-hue-colliding declaration (design D4, D6).
+- **The six presets and ten accents are cut with zero migration.** No frozen-palette snapshot, no
+  per-app colour pinning. Installed mini-apps re-skin automatically because the SDK speaks tokens,
+  never values (#13) — the zero-migration path was the user's deliberate choice, not a tolerated
+  side effect (design D5).
+- **Screen `4b` does not exist.** There is no dedicated "last change, undoable in place" screen; `4a`
+  is the whole history surface (design D5's sibling ruling, proposal "Out of scope").
+
+**Clarify is a pre-stream exchange, not a generation stage** (design D1). `POST /v1/clarify` is a new
+unary route gated by `x-whim-device` like every `/v1` route: prompt in, 0–3 questions out, answers
+threaded into `GenerateRequest.clarifications`. The ratified `GenerationEvent.stage` enum
+(`plan|generate|check|run|repair`, #56) is not widened — clarify precedes any generation request and
+would otherwise force every conforming server to emit an event for a question it may never ask. Zero
+questions is a legitimate response; the client skips straight from compose to plan.
+
+**The summary rides the terminal `result` event, not a new one** (design D2). `result.summary?: {
+text, kind, touched[], marks[] }` is optional in the schema, so the stub pipeline and older servers
+stay conforming and history survives its absence. A summariser failure or timeout must not fail the
+run — the run still emits `result` with `summary` absent. The prompt envelope bumps to `{v: 2, text,
+summary?}` (design D3): `text` keeps its exact current meaning so `yours` spans echo the verbatim
+prompt; every reader accepts `v1`, `v2`, and a raw non-JSON string; no migration.
+
+**The named-pins surface is withdrawn, not relocated** (design D11). The redesigned history row
+surfaces at most two next actions — restore/copy for a past version, one edit action for the current
+one — which leaves no room for a third, pin-related action. `version-history`'s pin requirement is
+removed from the delta rather than left describing a feature with no way to reach it; the store verbs
+and `StoreAccess` wrappers are untouched, so already-stored pins stay stored, merely unreachable from
+the UI. Flagged in the design as a judgment call the orchestrator's OPEN-question ruling did not
+cover.
+
+**Not in this change:** the orb wheel gesture (tapped menu ships instrumented instead, design D12);
+the repair ladder (`3b`); the raw terminal log / "show details" disclosure; colour bundles recommended
+to the user; and any change to the generation pipeline's `stage` enum, the sandbox, CSP, bridge, or
+runtime.
