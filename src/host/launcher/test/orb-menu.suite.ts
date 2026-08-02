@@ -23,7 +23,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   // ── the action set ─────────────────────────────────────────────────────────
   await h.test('orb-menu: the action set contains nothing destructive', async () => {
     const ids = ORB_ACTIONS.map((a) => a.id);
-    h.eq(ids, ['change', 'home', 'versions', 'copy'], 'exactly the 4 designed actions, in order');
+    h.eq(ids, ['change', 'home', 'versions'], 'exactly the 3 wired actions, in order — no placeholder "copy"');
     const destructive = ['delete', 'rename', 'restore'];
     for (const bad of destructive) {
       h.ok(!ids.includes(bad as OrbActionId), `"${bad}" must never be an orb menu action`);
@@ -38,7 +38,6 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(ORB_ACTIONS.find((a) => a.id === 'change')?.label, COPY.orbActionChangeIt, 'change label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'home')?.label, COPY.orbActionHome, 'home label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'versions')?.label, COPY.orbActionVersions, 'versions label');
-    h.eq(ORB_ACTIONS.find((a) => a.id === 'copy')?.label, COPY.orbActionCopy, 'copy label');
   });
 
   // ── instrumentation persists, cross-session, off-screen ───────────────────
@@ -59,14 +58,13 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(counts.change, 2, 'change counted twice');
     h.eq(counts.home, 1, 'home counted once');
     h.eq(counts.versions, 0, 'versions never fired, still readable as zero');
-    h.eq(counts.copy, 0, 'copy never fired, still readable as zero');
   });
 
   await h.test('orb-menu: instrumentation keys are namespaced, not the bare action id', async () => {
     const kv = new MapKVBackend();
-    recordOrbAction(kv, 'copy');
+    recordOrbAction(kv, 'versions');
     const keys = kv.getAllKeys();
-    h.ok(keys.some((k) => k.includes('copy') && k !== 'copy'), 'the persisted key is not the literal action id "copy"');
+    h.ok(keys.some((k) => k.includes('versions') && k !== 'versions'), 'the persisted key is not the literal action id "versions"');
   });
 
   await h.test('orb-menu: a tolerant, corrupt prior value is treated as zero, never throws', async () => {
@@ -113,11 +111,18 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   });
 
   await h.test('orb-menu: every action tap is instrumented before anything else happens', async () => {
-    const onActionBody = orbSource.slice(orbSource.indexOf('const onAction'), orbSource.indexOf('const overlayVisible'));
+    const onActionBody = orbSource.slice(orbSource.indexOf('const onAction'), orbSource.indexOf('return (', orbSource.indexOf('const onAction')));
     h.ok(/recordOrbAction\(kv, id\)/.test(onActionBody), 'onAction calls recordOrbAction first');
     const recordIdx = onActionBody.indexOf('recordOrbAction');
     const menuCloseIdx = onActionBody.indexOf('setMenuOpen(false)');
     h.ok(recordIdx >= 0 && menuCloseIdx > recordIdx, 'instrumentation happens before the menu closes');
+  });
+
+  await h.test('orb-menu: "versions" and "change" navigate to their real destinations, not a placeholder sheet', async () => {
+    const onActionBody = orbSource.slice(orbSource.indexOf('const onAction'), orbSource.indexOf('return (', orbSource.indexOf('const onAction')));
+    h.ok(/onVersions\(\)/.test(onActionBody), '"versions" calls the onVersions callback');
+    h.ok(/onChangeIt\(\)/.test(onActionBody), '"change" calls the onChangeIt callback');
+    h.ok(!/OrbSheetKind|sheetTitle|styles\.sheet\b/.test(orbSource), 'the orb-local placeholder sheet is gone entirely');
   });
 
   await h.test('orb-menu: dismissing (scrim tap) and re-tapping the orb never call recordOrbAction', async () => {

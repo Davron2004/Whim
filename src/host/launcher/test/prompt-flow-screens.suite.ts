@@ -274,8 +274,10 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(!composeSrc.includes('WhimProse'), 'a prompt is only marked up after submission (Whim Syntax rule 6)');
   });
 
-  await h.test('clarify: the submitted prompt is echoed as the user’s own words', () => {
-    h.ok(/storedPrompt=\{prompt\}/.test(clarifySrc), 'the echo resolves through the `yours` class, never a paraphrase');
+  await h.test('clarify: the submitted prompt is echoed as the user’s own words, upright and unmarked', () => {
+    h.ok(!clarifySrc.includes('WhimProse'), 'a standalone echoed block is never re-lexed by the shared renderer (no double-marking)');
+    h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
+    h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
     h.ok(/<PrimaryAction step="clarify" busy=\{busy\} enabled palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers');
   });

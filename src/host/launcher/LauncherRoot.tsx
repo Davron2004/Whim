@@ -444,6 +444,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
         engineAppId={screen.engineAppId}
         theme={theme}
         onExit={goHome}
+        onVersions={() => onHistory(screen.app)}
+        onChangeIt={() => openCompose(screen.app)}
       />
     );
   } else if (screen.kind === 'dev') {

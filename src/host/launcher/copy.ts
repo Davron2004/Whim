@@ -70,7 +70,6 @@ export const COPY = {
 
   // ── history (4a) ────────────────────────────────────────────────────────────
   actionHistory: 'History',
-  historyTitle: 'History',
   /** The header reads "<app name, in its own hue> history" — the name is a coloured span the
    *  screen composes, so only the trailing word lives here. */
   historyTitleSuffix: 'history',
@@ -99,15 +98,15 @@ export const COPY = {
   forkStartFresh: 'Start fresh',
 
   // ── inside a running app: the orb menu (3a) ─────────────────────────────────
+  // `versions` opens the real History screen and `change` opens the real compose step (review
+  // fix-pass, shell-redesign-v2) — there is no orb-local sheet left to title, so those two keys
+  // and the placeholder `copy` action's label are gone with it.
   orbActionChangeIt: 'Change it',
   orbActionHome: 'Home',
   orbActionVersions: 'Versions',
-  orbActionCopy: 'Copy',
-  orbClose: 'Close',
-  orbVersionsTitle: 'How it changed',
-  orbChangeTitle: 'What should change?',
-  orbChangeFooter: 'Whim keeps this version until the new one works.',
-  orbHomeToast: 'Back on your home screen',
+  orbMenuOpenLabel: 'Open the app menu',
+  orbMenuCloseLabel: 'Close the app menu',
+  orbMenuDismissLabel: 'Dismiss the app menu',
 
   // ── failure surfaces ────────────────────────────────────────────────────────
   launchFailedTitle: 'Couldn’t open this app',
@@ -128,20 +127,6 @@ export const COPY = {
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
   promptServerUnconfigured: 'Set your server’s address in Settings before making an app.',
   promptOpenSettings: 'Open Settings',
-
-  // ── retiring with the surfaces they belong to ───────────────────────────────
-  // The pin/instant-restore history surface is replaced by this redesign. Its strings stay until
-  // the chain that deletes each screen deletes them with it — a key removed ahead of its screen
-  // is a typecheck break, not a cleanup. (The two-stage prompt flow's own keys went with
-  // `PromptScreen`/`RewritePreviewScreen`/`GeneratingScreen` in group D.)
-  historyCurrentLabel: 'Current version',
-  historyRestoredToast: 'Restored this version',
-  historyUndo: 'Undo',
-  historyPinAction: 'Pin this version…',
-  historyPinPlaceholder: 'Label',
-  historyPinSave: 'Save',
-  historyForkAction: 'Make this version its own app',
-  historyMoreLabel: 'More',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */

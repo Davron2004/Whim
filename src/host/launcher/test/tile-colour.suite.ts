@@ -10,7 +10,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { monogram, tileColor } from '../tiles';
+import { tileColor } from '../tiles';
 import { liftManifestTileColor } from '../manifest-tile-color';
 import { appColor, STATUS_COLORS, STATUS_COLORS_ON_INK, SHELL_COLORS } from '../../../sdk/theme';
 import { lexProse } from '../../ui/whim-prose/lex';
@@ -143,7 +143,10 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(!/TILE_COLORS/.test(src), 'never restates a second name->colour mapping');
   });
 
-  await h.test('AppTile: exports its size constants and no other module restates them', async () => {
-    h.eq(monogram('Pour Timer'), 'PT', 'sanity: the shared monogram function is what AppTile delegates to');
-  });
+  // A prior version of this suite had a test named "AppTile: exports its size constants and no
+  // other module restates them" that only asserted `monogram('Pour Timer') === 'PT'` — tautological
+  // against its own name. `flow-skeletons.tsx` importing `APP_TILE_SIZE`/`APP_TILE_RADIUS` and
+  // using them directly (never restating a literal) is already covered by
+  // `prompt-flow-screens.suite.ts` ("skeletons: geometry is imported..."), so it is deleted here
+  // rather than fixed in place.
 }

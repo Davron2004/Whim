@@ -47,6 +47,29 @@ export const STATUS_COLORS_ON_INK = {
   waiting: '#c9c3b8',
 } as const;
 
+/**
+ * The `4a` history-row kind-badge hues (design prototype, `Whim Mobile.dc.html` §4a) — byte-exact
+ * literals lifted from the prototype, not derived from `SHELL_COLORS`/`STATUS_COLORS`. Scoped to
+ * this ONE surface (the history screen's per-row kind badge), not a second general-purpose
+ * palette. `Added`'s foreground is deliberately `#0d9488` — the same hue as the reserved
+ * `working`/`done` status colour — because the design prototype uses it there on purpose (a kind
+ * badge is a categorical label, not "a non-status role or a mini-app's declared colour" per
+ * `sdk-design-system`'s reserved-hue requirement, which this exemption records). Do not extend
+ * this reuse to any other role. Keyed by the wire `SummaryKind` string values, kept as plain
+ * string literals rather than importing the type from `@whim/contract` — this module stays free
+ * of any contract/zod dependency. */
+export const KIND_BADGE_COLORS: Record<
+  'Start' | 'Added' | 'Changed' | 'Removed' | 'Look' | 'Fixed',
+  { bg: string; fg: string }
+> = {
+  Start: { bg: 'rgba(28,25,23,.1)', fg: '#1c1917' },
+  Added: { bg: 'rgba(13,148,136,.12)', fg: '#0d9488' },
+  Changed: { bg: 'rgba(63,61,143,.12)', fg: '#3f3d8f' },
+  Removed: { bg: 'rgba(107,101,96,.14)', fg: '#6b6560' },
+  Look: { bg: 'rgba(124,58,237,.12)', fg: '#7c3aed' },
+  Fixed: { bg: 'rgba(180,83,9,.12)', fg: '#b45309' },
+} as const;
+
 /** The shell's radius scale (design doc "Radius"), one value per named UI element — not a
  *  generic none/sm/md/lg/full ramp. Pixels. */
 export const RADIUS = {
@@ -68,11 +91,14 @@ export const SPACING = {
 
 /** Motion constants (design doc "Motion"). `breathe` is the only loading motion — no shimmer,
  *  no travelling gradient. Consumers translate `easing`/`durationMs` into whatever animation
- *  primitive they use (RN `Animated`, Reanimated, CSS) — this module stays platform-neutral. */
+ *  primitive they use (RN `Animated`, Reanimated, CSS) — this module stays platform-neutral.
+ *  There is deliberately no `orbWheel` entry: this change ships no wheel geometry at all (design
+ *  D12 / `app-launcher` negative requirement — press-and-hold arming, directional flick, wedge
+ *  geometry). `sheetRise` is consumed by the orb menu's own entrance animation
+ *  (`src/host/launcher/Orb.tsx`). */
 export const MOTION = {
   breathe: { durationMs: 1900, easing: 'ease-in-out', opacityFrom: 0.34, opacityTo: 0.72 },
   sheetRise: { durationMs: 260, easing: 'cubic-bezier(.2,.8,.2,1)' },
-  orbWheel: { holdMs: 300, fanOutMs: 180 },
 } as const;
 
 /** Android asset filenames (android/app/src/main/assets/fonts/, canonical copies in

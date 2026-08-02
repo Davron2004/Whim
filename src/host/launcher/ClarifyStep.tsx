@@ -11,8 +11,7 @@
 
 import React, { useEffect } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import WhimProse from '../ui/whim-prose/WhimProse';
+import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyHeadline } from './copy';
 import { FlowHeader, PrimaryAction } from './flow-chrome';
 import type { FlowAnswers, FlowQuestion } from './prompt-flow';
@@ -58,7 +57,22 @@ export default function ClarifyStep({
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{clarifyHeadline(questions.length)}</Text>
 
-        <WhimProse text={prompt} storedPrompt={prompt} style={[TYPE_SCALE.quote, styles.echo]} />
+        {/*
+          The echoed prompt is a standalone block of the user's own words (design doc "`yours` —
+          the brown": "Upright brown when the user's words stand alone as a block"), NOT the
+          Newsreader-italic inline form the shared renderer applies mid-sentence. Rendered as
+          plain `Text` — not through `WhimProse` — so the renderer never gets a second chance to
+          mark this block up.
+        */}
+        <Text
+          style={[
+            TYPE_SCALE.body,
+            styles.echo,
+            { fontFamily: FONT_FAMILY.sansRegular, color: SHELL_COLORS.yours },
+          ]}
+        >
+          {prompt}
+        </Text>
 
         {questions.map((question) => (
           <View key={question.id} style={styles.question}>

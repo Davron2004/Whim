@@ -26,9 +26,22 @@ export interface MiniAppViewProps {
   /** The resolved launcher theme, forwarded opaquely into delivery (design sdk-design-system D8). */
   theme: WhimTheme;
   onExit: () => void;
+  /** Orb "Versions" — opens the real History screen for this running app. */
+  onVersions: () => void;
+  /** Orb "Change it" — opens the compose step prefilled for this running app (same path
+   *  History's own "Change it from here" row action uses). */
+  onChangeIt: () => void;
 }
 
-export default function MiniAppView({ record, bundleSource, engineAppId, theme, onExit }: Readonly<MiniAppViewProps>) {
+export default function MiniAppView({
+  record,
+  bundleSource,
+  engineAppId,
+  theme,
+  onExit,
+  onVersions,
+  onChangeIt,
+}: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
   const bg = shellPalette(theme).bg;
@@ -71,7 +84,7 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
         setSupportMultipleWindows={false}
         onError={(ev) => console.log('[whim] webview error', JSON.stringify(ev.nativeEvent))}
       />
-      <Orb onExit={host.exit} />
+      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>
   );
 }

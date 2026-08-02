@@ -6,11 +6,47 @@
  * `sanitizeTheme`/`appColor` behavior it depends on.
  */
 
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { Harness } from './harness';
 import { shellPalette } from '../theme';
 import { appColor, DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
 
+/** Every file under `src/`, recursively — no exclusions: `invariants/` (the owner-authored
+ *  negative-control fixtures) lives OUTSIDE `src/`, so there is nothing to carve out here. */
+function everySourceFile(dir: string): string[] {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...everySourceFile(full));
+    else files.push(full);
+  }
+  return files;
+}
+
+// The one file this check itself must name the retired values in, to look for them — excluded
+// from its own scan by path (never by content), the same way `invariants/`'s negative control is
+// exempted by living outside `src/` rather than by pattern.
+const SELF = path.join(process.cwd(), 'src/host/launcher/test/theme.suite.ts');
+
 export async function runThemeTests(h: Harness): Promise<void> {
+  // ── the retired indigo and the retired face are gone from source (sdk-design-system
+  // "The retired indigo is gone from source" / "Three faces carry the whole type system") ──────
+  await h.test('theme: `#4f46e5` and `Space Grotesk` appear nowhere under src/', async () => {
+    const root = path.join(process.cwd(), 'src');
+    let hexHits = 0;
+    let fontHits = 0;
+    for (const file of everySourceFile(root)) {
+      if (file === SELF) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      if (/#4f46e5/i.test(text)) hexHits++;
+      if (text.includes('Space Grotesk')) fontHits++;
+    }
+    h.eq(hexHits, 0, 'the retired framework-default indigo #4f46e5 must not be reintroduced under src/');
+    h.eq(fontHits, 0, 'the retired face Space Grotesk must not be reintroduced under src/');
+  });
+
   // shellPalette — maps every key from the correct color role, against the one fixed theme.
   await h.test('theme shellPalette: maps every key from the correct color role', async () => {
     const t = DEFAULT_THEME;

@@ -339,7 +339,7 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
       'historyCurrentMarker', 'historyTouchedEyebrow', 'historyChangeFromHere',
       'historyGoBackToThis', 'historyStartCopyHere', 'historyFilterWhatItDoes', 'historyFilterLook',
       'historyFilterFixes', 'historyRestoreConfirm', 'historyCopyConfirm', 'historyCopyToast',
-      'orbActionChangeIt', 'orbActionHome', 'orbActionVersions', 'orbActionCopy',
+      'orbActionChangeIt', 'orbActionHome', 'orbActionVersions',
     ] as const;
     for (const key of required) {
       h.ok(typeof COPY[key] === 'string' && COPY[key].length > 0, `COPY.${key} is seeded`);

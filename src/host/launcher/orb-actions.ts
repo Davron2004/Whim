@@ -6,8 +6,11 @@
  * The action set carries only cheap, undoable actions: delete, rename and restore are
  * deliberately absent — anything that cannot be undone with one tap belongs on a screen where it
  * can be read, not a menu row. Order matches the design-extract's cardinal ordering (up/right/
- * down/left = change/home/versions/copy), preserved here as metadata only — no wheel geometry is
- * built in this change.
+ * down = change/home/versions), preserved here as metadata only — no wheel geometry is built in
+ * this change. `copy` (the fourth cardinal action) is deliberately absent too (review fix-pass,
+ * shell-redesign-v2): there is no designed fork-from-orb sheet yet, and an under-filled menu beats
+ * a fake one. History's own "Start a copy here" row action (chain-E) covers forking a version
+ * until this gets a real design.
  *
  * Instrumentation persists through the SAME `whim.launcher` KVBackend every other launcher
  * setting uses (theme pref, highlighting flag, server address, device id — see
@@ -19,7 +22,7 @@
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { COPY } from './copy';
 
-export type OrbActionId = 'change' | 'home' | 'versions' | 'copy';
+export type OrbActionId = 'change' | 'home' | 'versions';
 
 export interface OrbAction {
   id: OrbActionId;
@@ -31,7 +34,6 @@ export const ORB_ACTIONS: readonly OrbAction[] = [
   { id: 'change', label: COPY.orbActionChangeIt },
   { id: 'home', label: COPY.orbActionHome },
   { id: 'versions', label: COPY.orbActionVersions },
-  { id: 'copy', label: COPY.orbActionCopy },
 ];
 
 const COUNT_KEY_PREFIX = 'orb-action-count:';

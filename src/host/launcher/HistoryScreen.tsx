@@ -16,7 +16,7 @@
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { KIND_BADGE_COLORS, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import type { Snapshot } from '../version-store';
 import { InstalledApp } from './app-index';
@@ -76,18 +76,10 @@ interface ToastState {
 
 const TOAST_TIMEOUT_MS = 2200;
 
-/** History-screen-specific badge tints, straight from the design (not shell tokens — like the
- *  extract's own `#e6e2da` hairline, these are decorative literals scoped to this one screen's
- *  kind badges, not a second themeable palette). `Changed`'s bg is recomputed from the CURRENT
- *  accent (`#3f3d8f`), not the retired indigo the original mock's tint drifted from. */
-const KIND_BADGE: Record<SummaryKind, { bg: string; fg: string }> = {
-  Start: { bg: 'rgba(28,25,23,.1)', fg: '#1c1917' },
-  Added: { bg: 'rgba(13,148,136,.12)', fg: '#0d9488' },
-  Changed: { bg: 'rgba(63,61,143,.12)', fg: '#3f3d8f' },
-  Removed: { bg: 'rgba(107,101,96,.14)', fg: '#6b6560' },
-  Look: { bg: 'rgba(124,58,237,.12)', fg: '#7c3aed' },
-  Fixed: { bg: 'rgba(180,83,9,.12)', fg: '#b45309' },
-};
+/** History-screen kind-badge tints — the `4a` design prototype's byte-exact hues, moved into the
+ *  tokens module (`KIND_BADGE_COLORS`, `src/sdk/design-tokens.ts`) so no inline hex lives on this
+ *  screen. */
+const KIND_BADGE = KIND_BADGE_COLORS;
 
 const KIND_LABEL: Record<SummaryKind, string> = {
   Start: COPY.historyKindStart,
@@ -352,13 +344,6 @@ function HistoryRowView({
 
         {expanded && (
           <View style={[styles.expandedBody, { borderTopColor: p.cardBorder }]}>
-            <WhimProse
-              text={row.headline}
-              apps={proseApps}
-              storedPrompt={row.promptText}
-              marks={row.marks}
-              style={[TYPE_SCALE.body, { color: p.textMuted }]}
-            />
             {row.touched.length > 0 && (
               <>
                 <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted, marginTop: SPACING.sm }]}>

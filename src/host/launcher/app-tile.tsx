@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { RADIUS, SHELL_COLORS } from '../../sdk/theme';
+import { FONT_FAMILY, RADIUS, SHELL_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
 import type { AppManifest } from '../bridge/contract';
 
@@ -67,16 +67,19 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -12,
     right: -8,
+    fontFamily: FONT_FAMILY.sansBold,
     fontSize: 62,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.16)',
   },
   foregroundMonogram: {
+    fontFamily: FONT_FAMILY.sansSemiBold,
     fontSize: 19,
     fontWeight: '600',
     color: '#ffffff',
   },
   name: {
+    fontFamily: FONT_FAMILY.sansMedium,
     fontSize: 11.5,
     lineHeight: 14,
     fontWeight: '500',

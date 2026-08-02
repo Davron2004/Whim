@@ -12,56 +12,69 @@
 // arming, directional flick, wedge/wheel geometry, per-row direction hints, and the "hold to
 // flick" caption — none of that gesture exists yet, and copy that advertises it is forbidden on
 // this surface.
-import React, { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+//
+// Review fix-pass (shell-redesign-v2): all three actions now navigate rather than opening a
+// placeholder sheet of their own — `home` already exited to the launcher; `versions` and `change`
+// now reach the REAL destinations (the History screen, the compose step) instead of a stand-in
+// title. There is nothing left for Orb.tsx itself to show once an action fires, so the orb-local
+// "sheet" concept (and the fourth, undesigned `copy` action) is gone.
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
 import { ORB_ACTIONS, recordOrbAction, type OrbActionId } from './orb-actions';
 
 const ORB_SIZE = 62;
 const ORB_BOTTOM = 130;
-
-type OrbSheetKind = 'change' | 'versions' | 'copy';
+// The menu rises from the bottom edge — the edge it collapses back to on close/dismiss (design
+// doc "Sheet rise": "Sheets enter from the edge they will return to").
+const MENU_RISE_DISTANCE = 24;
 
 export interface OrbProps {
   onExit: () => void;
+  /** Opens the real History screen for the running app ("Versions"). */
+  onVersions: () => void;
+  /** Opens the compose step prefilled for the running app ("Change it") — the same path
+   *  History's own "Change it from here" row action uses. */
+  onChangeIt: () => void;
 }
 
-function sheetTitle(sheet: OrbSheetKind): string {
-  if (sheet === 'versions') return COPY.orbVersionsTitle;
-  if (sheet === 'change') return COPY.orbChangeTitle;
-  return COPY.orbActionCopy;
-}
-
-export default function Orb({ onExit }: Readonly<OrbProps>) {
+export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProps>) {
   // Same `whim.launcher` KVBackend id every other launcher setting persists through (see
   // highlighting.ts) — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sheet, setSheet] = useState<OrbSheetKind | null>(null);
+  const riseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!menuOpen) {
+      riseAnim.setValue(0);
+      return;
+    }
+    Animated.timing(riseAnim, {
+      toValue: 1,
+      duration: MOTION.sheetRise.durationMs,
+      easing: Easing.bezier(0.2, 0.8, 0.2, 1),
+      useNativeDriver: true,
+    }).start();
+  }, [menuOpen, riseAnim]);
 
   const closeAll = () => {
     setMenuOpen(false);
-    setSheet(null);
   };
 
   const onOrbPress = () => {
-    if (sheet) return; // a sheet is already open; the orb itself is not the way to close it
     setMenuOpen((open) => !open);
   };
 
   const onAction = (id: OrbActionId) => {
     recordOrbAction(kv, id);
     setMenuOpen(false);
-    if (id === 'home') {
-      onExit();
-      return;
-    }
-    setSheet(id);
+    if (id === 'home') onExit();
+    else if (id === 'versions') onVersions();
+    else onChangeIt();
   };
-
-  const overlayVisible = menuOpen || sheet !== null;
 
   return (
     <>
@@ -69,39 +82,43 @@ export default function Orb({ onExit }: Readonly<OrbProps>) {
         onPress={onOrbPress}
         style={[styles.btn, menuOpen && styles.btnMenuOpen]}
         accessibilityRole="button"
-        accessibilityLabel={menuOpen ? 'Close the app menu' : 'Open the app menu'}
+        accessibilityLabel={menuOpen ? COPY.orbMenuCloseLabel : COPY.orbMenuOpenLabel}
       >
         <View style={[styles.bar, menuOpen && styles.barMenuOpen]} />
         <View style={[styles.bar, menuOpen && styles.barMenuOpen, styles.barGap]} />
         <View style={[styles.bar, menuOpen && styles.barMenuOpen]} />
       </Pressable>
 
-      {overlayVisible && (
+      {menuOpen && (
         <Pressable
           style={styles.scrim}
           onPress={closeAll}
           accessibilityRole="none"
-          accessibilityLabel="Dismiss the app menu"
+          accessibilityLabel={COPY.orbMenuDismissLabel}
         >
-          {menuOpen && (
-            <View style={styles.menu} onStartShouldSetResponder={() => true}>
-              {ORB_ACTIONS.map((action) => (
-                <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
-                  <Text style={styles.rowLabel}>{action.label}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-
-          {sheet !== null && (
-            <View style={styles.sheet} onStartShouldSetResponder={() => true}>
-              <Text style={styles.sheetTitle}>{sheetTitle(sheet)}</Text>
-              {sheet === 'change' && <Text style={styles.sheetFooter}>{COPY.orbChangeFooter}</Text>}
-              <Pressable style={styles.closeButton} onPress={closeAll}>
-                <Text style={styles.closeLabel}>{COPY.orbClose}</Text>
+          <Animated.View
+            style={[
+              styles.menu,
+              {
+                opacity: riseAnim,
+                transform: [
+                  {
+                    translateY: riseAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [MENU_RISE_DISTANCE, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            {ORB_ACTIONS.map((action) => (
+              <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
+                <Text style={styles.rowLabel}>{action.label}</Text>
               </Pressable>
-            </View>
-          )}
+            ))}
+          </Animated.View>
         </Pressable>
       )}
     </>
@@ -150,13 +167,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
   },
   rowLabel: { ...TYPE_SCALE.bodyEmphatic, color: SHELL_COLORS.text },
-  sheet: {
-    backgroundColor: SHELL_COLORS.paper,
-    borderRadius: RADIUS.sheet,
-    padding: SPACING.lg,
-  },
-  sheetTitle: { ...TYPE_SCALE.screenTitle, color: SHELL_COLORS.text, marginBottom: SPACING.xs },
-  sheetFooter: { ...TYPE_SCALE.caption, color: SHELL_COLORS.muted, marginBottom: SPACING.md },
-  closeButton: { alignSelf: 'flex-start', marginTop: SPACING.sm },
-  closeLabel: { ...TYPE_SCALE.bodyEmphatic, color: SHELL_COLORS.muted },
 });
