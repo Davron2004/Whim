@@ -29,7 +29,7 @@ The design system SHALL define exactly one shell token set, identical on every d
 
 Shell colours SHALL be: `paper` `#fbfaf8` (screen background), `surface` `#f1efea` (cards, inputs, sheets), `border` `#e0dcd4` (1px hairlines), `ink` `#17171a` (orb, overlays, dark panels), `text` `#1c1917` (readable body text), `muted` `#6b6560` (secondary copy, hedges), `faint` `#a8a29a` (units, de-emphasised spans), `accent` `#3f3d8f` (primary actions, links), `yours` `#a15c07` (the colour of the user), `yours-on-dark` `#e0a75e`.
 
-Status colours SHALL be exactly three and SHALL be reserved globally — no other role, and no generated mini-app's declared colour, may claim them: `working`/`done` `#0d9488`, `broken` `#b91c1c`, `waiting` `#c9c3b8`; on `ink` backgrounds `#2dd4bf`, `#f87171`, `#c9c3b8` respectively.
+Status colours SHALL be exactly three and SHALL be reserved globally — no other role, and no generated mini-app's declared colour, may claim them: `working`/`done` `#0d9488`, `broken` `#b91c1c`, `waiting` `#c9c3b8`; on `ink` backgrounds `#2dd4bf`, `#f87171`, `#c9c3b8` respectively. The one exemption is the history screen's `4a` kind-badge palette (`KIND_BADGE_COLORS`): a closed, categorical label set lifted byte-exact from the design prototype, which deliberately reuses `#0d9488` for its `Added` badge. That set is not a "role" or a "declared tile colour" in the sense this requirement reserves against — it never resolves through `appColor`/theme roles and never becomes selectable as an app's identity colour — so its reuse of the hue is scoped to that one closed set and does not reopen the hue elsewhere.
 
 Radii SHALL be: chip `999px`, field `14px`, card `18px`, tile `22px`, sheet `28px`. Spacing SHALL be: `xs` 8, `sm` 12, `md` 16, `lg` 22, `xl` 34 (px). Motion SHALL be: `breathe` `1.9s ease-in-out infinite` opacity `0.34 → 0.72` as the **only** loading motion (no shimmer sweep, no travelling gradient); sheet rise `260ms cubic-bezier(.2,.8,.2,1)`, entering from the edge the sheet will return to; and **no animation at all** for arriving text — streamed prose SHALL never be faded in or typed in per character.
 
@@ -43,7 +43,7 @@ The framework-default indigo `#4f46e5` SHALL NOT appear in any source token, and
 #### Scenario: Status hues are reserved
 
 - **WHEN** any non-status role, or a mini-app's declared tile colour, is resolved
-- **THEN** it SHALL NOT be any of `#0d9488`, `#b91c1c`, `#c9c3b8`
+- **THEN** it SHALL NOT be any of `#0d9488`, `#b91c1c`, `#c9c3b8`, **except** the history screen's closed `KIND_BADGE_COLORS` set, which is exempt by name (see above) and reuses `#0d9488` for its `Added` badge deliberately
 
 #### Scenario: There is nothing to choose between
 

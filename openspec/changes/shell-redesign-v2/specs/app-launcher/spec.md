@@ -69,7 +69,9 @@ Every surface that shows an app's colour — the grid tile, the history header, 
 
 All machine-written prose on the shell surface SHALL be rendered by a single shared renderer, never by per-screen highlighting. The renderer SHALL support exactly six classes, each on one channel: `app` (that app's own hue), `chg` (weight 500, no colour), `yours` (Newsreader italic + `yours`), `measure` (mono face, no colour), `state` (the three status hues, fixed vocabulary only), and `hedge` (`faint`, a reverse highlight).
 
-The renderer SHALL enforce the discipline rules itself rather than relying on the producer: at most **four** system marks per sentence; `yours` exempt from that cap and the only span permitted two channels at once; one channel per span; at most one coloured span per sentence; `state` never applied when a status indicator is already adjacent. Marks in excess of a cap SHALL be dropped to flat text, never truncated mid-span.
+The renderer SHALL enforce the discipline rules itself rather than relying on the producer: at most **four** system marks per sentence; `yours` exempt from that cap and the only span permitted two channels at once; one channel per span; at most one **hue** coloured per sentence; `state` never applied when a status indicator is already adjacent. Marks in excess of a cap SHALL be dropped to flat text, never truncated mid-span.
+
+The one-hue cap is per DISTINCT colour, not per span: two coloured spans that resolve to the SAME hue (e.g. two mentions of the same app in one sentence) SHALL both render coloured. Only a second, DIFFERENT hue in the same sentence is capped — that span renders flat.
 
 Only prose the product is telling the user SHALL be marked. Labels, buttons, settings, and headings SHALL never be marked. Prose SHALL never be lexed inside a field being typed — a prompt is highlighted only after submission.
 
@@ -78,10 +80,15 @@ Only prose the product is telling the user SHALL be marked. Labels, buttons, set
 - **WHEN** a sentence arrives carrying five or more system marks
 - **THEN** the rendered sentence carries at most four, and the dropped spans render as flat text with their words intact
 
-#### Scenario: One colour per sentence
+#### Scenario: One hue per sentence
 
-- **WHEN** a sentence would resolve two coloured spans
+- **WHEN** a sentence would resolve two coloured spans of two DIFFERENT hues
 - **THEN** only one renders coloured and the other renders flat
+
+#### Scenario: Repeated mentions of the same app keep their colour
+
+- **WHEN** a sentence would resolve two or more coloured spans that all resolve to the SAME hue (e.g. the same app named twice)
+- **THEN** every one of them renders coloured — the cap is on distinct hues, not on span count
 
 #### Scenario: Offering is never marked
 
