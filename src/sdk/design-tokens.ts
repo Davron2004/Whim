@@ -30,8 +30,6 @@ export const SHELL_COLORS = {
   yoursOnDark: '#e0a75e',
 } as const;
 
-export type ShellColorToken = keyof typeof SHELL_COLORS;
-
 /** The three reserved status hues (design doc "Colour — status") — global vocabulary, never
  *  claimable as a generated app's primary colour. `working` and `done` share one hue. */
 export const STATUS_COLORS = {
