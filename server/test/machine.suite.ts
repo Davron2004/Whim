@@ -758,13 +758,59 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
     'model stream throws: dev log carries the plan stage start',
     lines.some((l) => l.includes('[whim-server]') && l.includes('stage plan start')),
   );
+  // ScriptedModelClient's error turn throws from the delta iterator itself (deltas: []), so this
+  // exception is never observed via `settledUsage.error`/`settledId.error` — it propagates straight
+  // to runGenerator's top-level catch. The line below is that catch's log, carrying the same error
+  // class/message; it is NOT evidence that `throwLoggedModelCallFailure` ran (see
+  // testUsageRejectionAfterDeltasLogsAtThrowSite for that coverage).
   check(
-    'model stream throws: dev log carries the model-call-failure error class and message',
-    lines.some((l) => l.includes('Error') && l.includes('provider secret MODEL-LEAK')),
+    'model stream throws: dev log carries the runGenerator-catch line with error class and message',
+    lines.some((l) => l.includes('run failed:') && l.includes('Error') && l.includes('provider secret MODEL-LEAK')),
   );
+}
+
+/**
+ * Covers the actual `throwLoggedModelCallFailure` call site inside `runModelTurn` — reachable only
+ * when the delta stream completes normally but `stream.usage` rejects afterward (a genuine race the
+ * real provider client can hit, per `settle`'s doc comment), unlike `ScriptedModelClient`'s error
+ * turn, which always throws from the delta iterator itself before that point is ever reached.
+ */
+async function testUsageRejectionAfterDeltasLogsAtThrowSite(): Promise<void> {
+  section('machine — a usage rejection after a clean delta stream logs at its own throw site');
+
+  const model: ModelClient = {
+    stream(): ModelStream {
+      return {
+        deltas: (async function* () {
+          yield VALID_PLAN_JSON;
+        })(),
+        usage: Promise.reject(new Error('usage promise rejected after deltas')),
+        id: Promise.resolve('gen-usage-rejected'),
+      };
+    },
+  };
+
+  const realConsoleLog = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]): void => {
+    lines.push(args.map(String).join(' '));
+  };
+
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+  } finally {
+    console.log = realConsoleLog;
+  }
+
+  const terminal = events.at(-1);
+  check('usage rejection: terminal is still a failure', terminal?.type === 'failure');
+
   check(
-    'model stream throws: dev log carries the runGenerator-catch line',
-    lines.some((l) => l.includes('run failed:') && l.includes('Error')),
+    'usage rejection: dev log carries the throw-site model-call-failure line',
+    lines.some(
+      (l) => l.includes('model call failed (usage)') && l.includes('Error') && l.includes('usage promise rejected after deltas'),
+    ),
   );
 }
 
@@ -852,6 +898,7 @@ export async function runMachineTests(): Promise<void> {
   await testAbortAtEveryStageBoundary();
   await testAbortAtDiagnosticAndCompletionBoundaries();
   await testModelStreamThrowYieldsOneFailure();
+  await testUsageRejectionAfterDeltasLogsAtThrowSite();
   await testRepairBudgetsAreConstructorInjectable();
   await testRunTraceCollectsGenerationIds();
   await testBuildFailureBecomesADiagnosticAndIsRepairable();

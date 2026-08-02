@@ -19,8 +19,10 @@ export function logRequest(method: string, path: string, status: number, started
  * `console.log` with the prefix centralized here.
  *
  * NEVER pass prompt text, generated source, the `x-whim-device` header value, the OpenRouter API
- * key, or request/response bodies — the same privacy floor as `logRequest`. The internal
- * (unscrubbed) failure reason is fine for stdout; the wire event's scrubbed reason is untouched.
+ * key, or request/response bodies — the same privacy floor as `logRequest`. A logged failure
+ * reason is the same product-prose string the wire's `failure` event carries (there is no
+ * scrubbing step anywhere in this codebase) — the log line just adds error class/message/stack
+ * detail the wire event never carries.
  */
 export function logRun(...parts: unknown[]): void {
   console.log('[whim-server]', ...parts);
