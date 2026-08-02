@@ -578,11 +578,29 @@ async function testSummaryOnTerminalEvent(): Promise<void> {
         throw new Error('summariser exploded');
       },
     };
-    const events = await collect(new GenerationMachine(deliveringDeps(summariser)).run(REQUEST));
+
+    const realConsoleLog = console.log;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]): void => {
+      lines.push(args.map(String).join(' '));
+    };
+
+    let events: GenerationEvent[];
+    try {
+      events = await collect(new GenerationMachine(deliveringDeps(summariser)).run(REQUEST));
+    } finally {
+      console.log = realConsoleLog;
+    }
+
     const terminal = events.at(-1);
     eq('a throwing summariser still yields result', terminal?.type, 'result');
     check('the summary is simply absent', terminal?.type === 'result' && terminal.summary === undefined);
     check('the delivered record is untouched', terminal?.type === 'result' && deepEqual(terminal.app, WIRE_RECORD));
+
+    check(
+      'a throwing summariser logs its error constructor name and message',
+      lines.some((l) => l.includes('Error') && l.includes('summariser exploded')),
+    );
   }
 
   // A run that stays broken gets shorter prose, not warmer prose — and never a summary, because a
