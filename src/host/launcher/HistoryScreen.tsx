@@ -538,10 +538,17 @@ const styles = StyleSheet.create({
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },
   list: { paddingHorizontal: SPACING.md, paddingBottom: 40 },
   // The row's inter-row gap is PADDING, not margin, so the absolute timeline segment spans it and
-  // meets the next row's segment (design :30). The 26px gutter that clears the dot lives on the
-  // flow children (`card`, `currentMarker`) as `marginLeft` and never as `rowWrap` padding —
-  // whether Yoga measures an absolutely-positioned child's `left` from the border box or the
-  // padding box is version-dependent, and child margins keep the marker offsets unambiguous.
+  // meets the next row's segment (design :30). That continuity is guaranteed, not hoped for:
+  // Yoga's inset path (`ReactCommon/yoga/yoga/algorithm/AbsoluteLayout.cpp`,
+  // `positionAbsoluteChild`, and the both-insets sizing beneath it) resolves a child that defines
+  // its insets as inset + the containing node's BORDER + margin, never consulting padding and with
+  // no errata check at all. Padding only enters for an absolute child that defines NO inset —
+  // that is the case `Errata::AbsolutePositionWithoutInsetsExcludesPadding` is named after, and
+  // the only case where border-box-vs-padding-box resolution is version-dependent. `rowWrap` has
+  // no border, so `{top: 0, bottom: 0}` covers its full measured height, the 10px included.
+  // The 26px gutter clearing the dot therefore did NOT have to live on the flow children
+  // (`card`, `currentMarker`) as `marginLeft` — `paddingLeft: 26` here would render identically,
+  // matching the design's own CSS. It stays as-is because it is correct and churn is not free.
   rowWrap: { paddingBottom: 10 },
   // 12.75 + 1.5/2 = 13.5, the dot's centre line (design :28).
   timeline: { position: 'absolute', left: 12.75, width: 1.5 },
