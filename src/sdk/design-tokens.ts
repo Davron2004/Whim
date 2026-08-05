@@ -6,8 +6,27 @@
 // Pure data + one pure function. NO React import, NO DOM access, NO side effects.
 //
 // These are the SHELL's tokens: fixed, not themeable, identical on every device (the six theme
-// presets this module used to hold are cut — see theme.ts). Colours/type/radius/spacing/motion
-// values below are copied verbatim from the design doc; do not hand-tune them.
+// presets this module used to hold are cut — see theme.ts). Colour/radius/spacing/motion values
+// below are copied verbatim from the design doc's token tables; do not hand-tune them.
+//
+// TYPE_SCALE IS THE EXCEPTION, DELIBERATELY. Where the interactive mockups
+// (`docs/design/reference/Whim Mobile.dc.html`) disagree with the README token table, THE MOCKUPS
+// WIN — owner ruling R1, dated 2026-08-05, recorded in
+// `openspec/changes/fix-design-conformance/findings.md`. The mockups are the artifact the owner
+// reviewed and approved; splitting the difference per-value would leave the app matching neither
+// source. The specific divergences from the README table are:
+//   · `screenTitle` is 22, not the table's 26 (mockup `4a` :24 — the history/confirm-sheet title).
+//   · `body` is 13.5 / 1.55, not the table's 15 / 1.7 (mockup :41, :64, :307).
+//   · `headline`, `stepTitle`, `controlLabel`, `kindBadge`, `metaPlain`, `metaWide` have NO row in
+//     the README table at all; they exist only in the mockups, and they exist here because each is
+//     a distinct design role that screens were otherwise faking with the nearest legal token
+//     (ruling R2).
+// This is the reviewed state, not drift. Do NOT "correct" any of it back to the README table.
+//
+// NOT SETTLED — `kindBadge`, `metaWide`, `metaPlain` and `body` sit at the mockups' sizes, and the
+// mockups were only ever rendered in a desktop browser, never on a ~411dp Android device. Rulings
+// R4 and R5 bind all four to an explicit verdict in the on-device screenshot pass (R8). Until that
+// pass rules, they stay exactly as written: do not silently round them up.
 //
 // A generated mini-app never sees these values directly — the sandboxed WebView's CSP forbids
 // loading Instrument Sans/IBM Plex Mono/Newsreader remotely, and "two systems, not one" (design
@@ -130,21 +149,63 @@ export interface TypeFace {
   color?: string;
 }
 
-/** The type scale (design doc "Typography"). `em` letter-spacing values from the doc are
- *  pre-multiplied into px at each face's own size (RN `letterSpacing` is absolute px, not em).
- *  Line-heights come from the doc's ratio where given; `eyebrow` has none specified in the doc,
- *  so `1.2` is this module's own reasonable default, not a design-doc value. */
+/** The type scale. `em` letter-spacing values are pre-multiplied into px at each face's own size
+ *  (RN `letterSpacing` is absolute px, not em); `lineHeight` is `fontSize × ratio`, left unrounded.
+ *  Sources are mixed by ruling R1 (see the module header): faces with a README token-table row keep
+ *  it unless a mockup contradicts it, in which case the mockup wins; six roles below exist only in
+ *  the mockups. `eyebrow` has no ratio in the doc, so its `1.2` is this module's own reasonable
+ *  default, not a design-doc value.
+ *
+ *  This union is the only enumeration of type roles in the repo — extend it in lockstep with the
+ *  object below, and keep each new role beside its family. */
 export const TYPE_SCALE: Record<
-  'display' | 'screenTitle' | 'metric' | 'body' | 'bodyEmphatic' | 'caption' | 'eyebrow' | 'quote',
+  | 'display'
+  | 'headline'
+  | 'screenTitle'
+  | 'stepTitle'
+  | 'metric'
+  | 'body'
+  | 'bodyEmphatic'
+  | 'caption'
+  | 'controlLabel'
+  | 'eyebrow'
+  | 'kindBadge'
+  | 'metaPlain'
+  | 'metaWide'
+  | 'quote',
   TypeFace
 > = {
   display: { fontFamily: FONT_FAMILY.sansBold, fontSize: 34, lineHeight: 34, letterSpacing: -1.02, fontWeight: '700' },
-  screenTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
+  // The compose headline (mockup :417). No README table row.
+  headline: { fontFamily: FONT_FAMILY.sansBold, fontSize: 30, lineHeight: 33.6, letterSpacing: -0.75, fontWeight: '700' },
+  // R1/R11: 22, not the table's 26. Scoped to the history title and the confirm-sheet title
+  // (mockup :24, :63) — the flow steps' larger title face is `stepTitle` below, not this.
+  screenTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
+  // R11: the flow-step title face (mockup :443, :475, :498). Byte-identical to what `screenTitle`
+  // held before the retarget, so every site repointed here renders unchanged.
+  stepTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
   metric: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
-  body: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '400' },
+  // R1/R5: 13.5 / 1.55 per the mockups, not the table's 15 / 1.7. `20.925` is the exact product —
+  // do not round it. NOT SETTLED: deferred to the on-device pass (R8); `body` also sizes two
+  // `TextInput`s, so it shrinks what the user types, not just what they read (R13).
+  body: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 13.5, lineHeight: 20.925, letterSpacing: 0, fontWeight: '400' },
+  // Deliberately NOT retargeted with `body`: the design really does run a 500/15 face beside the
+  // 400/13.5 one (mockup :39).
   bodyEmphatic: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '500' },
   caption: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 12, lineHeight: 18.6, letterSpacing: 0, fontWeight: '400' },
+  // Back labels and answer pills (mockup :413, :439, :451, :471). No README table row.
+  controlLabel: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 13, lineHeight: 13, letterSpacing: 0, fontWeight: '500' },
   eyebrow: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 10.5, lineHeight: 12.6, letterSpacing: 1.47, fontWeight: '500', textTransform: 'uppercase' },
+  // ── mono microcopy (R2/R17): three distinct faces the history screen was previously collapsing
+  // onto `eyebrow`. All three are NOT SETTLED — R4 defers their sizes to the on-device pass.
+  // ASSET GAP, flagged not fixed: `kindBadge` wants mono 600 and only IBM Plex Mono Regular and
+  // Medium ship (assets/fonts/), so Android synthesizes the weight off `monoMedium`. Naming a
+  // nonexistent `IBMPlexMono-SemiBold` would fall back to the system font silently — RN resolves
+  // `fontFamily` by exact file base name. Judged in the R8 pass.
+  kindBadge: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
+  // The undecorated one (mockup :35, :36 — "when"/"version"): no uppercase, no tracking, on purpose.
+  metaPlain: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10.5, lineHeight: 10.5, letterSpacing: 0, fontWeight: '400' },
+  metaWide: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
   quote: { fontFamily: FONT_FAMILY.serifItalic, fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
 };
 
