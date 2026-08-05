@@ -76,7 +76,7 @@ export default function PlanStep({ rows, loading, onEditRow, onBuild, onBack }: 
       <FlowHeader step="plan" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{COPY.planHeadline}</Text>
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.planHeadline}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
 
         {loading ? (
@@ -106,7 +106,8 @@ export default function PlanStep({ rows, loading, onEditRow, onBuild, onBack }: 
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
+  // paddingTop 26: design `Whim Mobile.dc.html:474` — no SPACING counterpart (ruling R9).
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 26, paddingBottom: SPACING.xl },
   subhead: { marginTop: SPACING.xs, marginBottom: SPACING.md },
   row: {
     minHeight: PLAN_ROW_MIN_HEIGHT,
