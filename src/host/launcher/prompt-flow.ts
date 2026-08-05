@@ -303,12 +303,16 @@ export function buildStepStatuses(stage: Stage | null, delivering = false): Buil
  * before the done screen replaces it. It is derived from the same stage events the named steps are,
  * with no timer smoothing it to look busier — a bar that moves on its own would be reporting
  * progress that did not happen (ruling R21).
+ *
+ * There is always exactly one live step — `activeBuildStepIndex` returns an index inside the list
+ * for every input, delivery included — so the half-quarter is unconditional and 1.0 is unreachable
+ * by construction, not by a check that could be dropped.
  */
+const ACTIVE_STEP_CREDIT = 0.5;
+
 export function buildProgressFraction(stage: Stage | null, delivering = false): number {
-  const statuses = buildStepStatuses(stage, delivering);
-  const passed = statuses.filter((s) => s === 'passed').length;
-  const activeCredit = statuses.includes('active') ? 0.5 : 0;
-  return (passed + activeCredit) / BUILD_STEPS.length;
+  const passed = buildStepStatuses(stage, delivering).filter((s) => s === 'passed').length;
+  return (passed + ACTIVE_STEP_CREDIT) / BUILD_STEPS.length;
 }
 
 /** The one plain-words sentence describing what is happening right now, in the user's terms. */
