@@ -96,6 +96,71 @@ and the 10px icon radius have no `SHELL_COLORS` / `RADIUS` counterpart. They sta
 scoped exactly as `KIND_BADGE_COLORS` is scoped to the history badge. One consumer does not justify a
 shared role; revisit if a second surface wants the same shape. Consistent with R9's reasoning.
 
+**R16. Four residuals are ACCEPTED as-is. Do not mint roles for them.** (2026-08-05, on lane L4's
+analysis.) Each is a design face with no matching token, and each is within ~2px of a legitimate
+existing role. Adding a role per value would push `TYPE_SCALE` past the point where it means anything —
+the same reasoning as R9 and R15 — and all four sit in territory R4/R5 already flagged for on-device
+judgement, so minting roles now that the screenshot pass may overturn is churn. Land them on the nearest
+correct role, record them, and let R8 decide:
+- `HistoryScreen.tsx:383` (current-version marker) stays on `eyebrow`. Design html:55 wants
+  `500 11px/1 .1em upper mono`; `eyebrow` is 10.5/500/1.47-upper. V11 changes its colour only.
+- The toast face stays on `bodyEmphatic` (15/500). Design html:73 wants `500 13px/1.3`.
+- `HistoryScreen.tsx:449` (consequential-action label) inherits L1's `body` shrink. Design html:67
+  wants `500 14px/1`.
+- The confirm-sheet title takes `screenTitle`'s 1.15 line-height where html:63 wants 1.25. R3 already
+  ruled one role serves both titles; do NOT add a local `lineHeight` override to re-litigate it.
+
+**R17. V10's line list in the findings is imprecise — the design lines are authoritative.**
+`:365` is `TYPE_SCALE.caption`, not `eyebrow`, and has no design counterpart; leave it alone. `:323`
+(the kind badge) IS an `eyebrow` site and the finding's prose names it, but the line list omits it.
+The correct mapping is six sites → three roles plus one residual:
+`:323` → `kindBadge` (html:34) · `:326`, `:327` → `metaPlain` (html:35,36) ·
+`:329`, `:349` → `metaWide` (html:38 and html:42, which are character-identical) ·
+`:383` → stays `eyebrow` per R16.
+
+**R18. B2's restructure must keep a pre-existing test green.**
+`src/host/launcher/test/history-logic.suite.ts:284-289` reads `HistoryScreen.tsx` as *source* and
+asserts three literal substrings survive: `onPress={onToggle}`,
+`await access.rollback(app, row.id);`, `await access.fork(app, row.id);`. B2 restructures the component
+hosting the first. Preserve all three character-for-character — reformatting or rewrapping that
+`TouchableOpacity` turns a standing invariant red. This is not a test invented for this batch; it pins
+expand-not-restore, confirm-gated restore, and fork-from-the-viewed-version.
+
+**R19. V16 is two-sided — fix `primary` too.** (2026-08-05, lane L5.) The finding names only
+`DoneStep.tsx:70` `secondary.height: 46`, but design html:527-528 puts BOTH CTAs at 52 and `primary`
+is currently 54 — also off-spec, just unfiled. Moving only `secondary` to 52 leaves the pair mismatched
+at 52-vs-54, which is the visible defect the finding was actually pointing at. Fix both. Same file,
+same lane, no scope expansion beyond `DoneStep.tsx`.
+
+**R20. The done tile renders in `STATUS_COLORS.done`, not the app's own hue — flagged for R8.**
+(2026-08-05, lane L5.) Evidence for the status hue: the mockup writes `#0d9488` as a bare literal at
+html:520 where every other dynamic value on that screen is a `{{ }}` binding, and `RESERVED_TILE_HUES`
+/ `RESERVED_APP_COLORS` structurally forbid any real app's `tileColor()` from ever resolving to it —
+so the design reserved that hue from app identity on purpose. Under R1 the mockup wins, so implement it.
+
+**But this is not settled, and it must not be recorded as if it were.** It means the user sees their
+app as a teal tile on the done screen and in its own colour on the home grid moments later. That
+inconsistency is a product judgement the mockup cannot settle by itself, and it is exactly what the R8
+on-device pass is for — seeing both screens in sequence is the only way to judge it. Carry it there as
+an explicit question, not a checkbox.
+
+Also: `app-tile.tsx`'s header comment currently says "The delivered app's own tile in its own colour."
+That describes the code being changed and becomes false. Update it in the same edit — a stale comment
+asserting the opposite of the code is worse than no comment.
+
+**R21. `src/host/launcher/prompt-flow.ts` is granted to lane L5.** No lane claimed it and L3's allowlist
+(the only plausible competitor) does not include it. `buildProgressFraction` belongs beside its three
+sibling derivations (`activeBuildStepIndex`, `buildStepStatuses`, `currentActionSentence`) rather than
+duplicated inside a screen. It is also the only way the fraction gets a real test: `BuildStep.tsx`
+imports `react-native` at module scope and is therefore not importable under the Node harness — a
+constraint this repo already records at `tile-colour.suite.ts:5-7`. `prompt-flow.ts` has no RN import
+and is already behaviorally tested in `prompt-flow-screens.suite.ts`.
+
+The derivation must stay honest: each passed step is a full quarter, the active step a half quarter,
+so the bar reads 12.5 / 37.5 / 62.5 / 87.5 and **never fabricates 100% before the done screen replaces
+it**. Do not smooth it with a timer to look busier — that would misrepresent real progress, which is
+the whole failure mode `obs-v1` exists to end.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
