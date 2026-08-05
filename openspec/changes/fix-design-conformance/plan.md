@@ -41,15 +41,28 @@ left-aligned inside the larger box — worse than the current state, not a fix.
 `app-tile.tsx` belongs to L5, and L5's B3 (the 120×120 done tile) needs the *same* optional size
 prop. So one piece of work serves both findings. **L5 owns the contract; L2 consumes it.**
 
-**Cross-lane contract — L5 writes, L2 reads:**
-- L5 adds `size?: number` to `AppTileProps`, defaulting to `APP_TILE_SIZE` (88), threaded into
-  `root.width`, `tile.width`, `tile.height` in place of the hardcoded constant.
-- The prop MUST be optional and MUST NOT change default rendering — `HomeScreen` calls `AppTile`
-  today with no size and must render byte-identically until L2 lands.
-- L2 then computes cell width from `useWindowDimensions` minus horizontal padding and column gaps,
-  divided by 3, and passes `size={cellWidth}`.
-- Radius and monogram scaling are L5's call. Finding V3 is scoped to width only; the design's own
-  `{{ radTile }}` is templated and unspecified, so do not infer a radius rule from it.
+**Cross-lane contract — SUPERSEDED, see R23. L5 has landed; this is the delivered interface.**
+
+L5 shipped `size?: 'done'` — a string-literal VARIANT (120x120 preset, colour-matched glow, rise-in,
+no name label). It does NOT carry a numeric width, so L2's V3 fluid grid cannot consume it. The
+earlier prediction here (`size?: number` defaulting to 88) was wrong and is struck.
+
+**What L2 actually does** (ruling R23): add a SECOND, orthogonal prop `width?: number` to
+`AppTileProps`, optional, defaulting to `APP_TILE_SIZE` (88), threaded into `root.width`,
+`tile.width`, `tile.height`. Do NOT widen to `size?: number | 'done'` — one prop meaning both
+"which variant" and "how wide" reads fine at the call site and rots at the definition.
+L2 then computes cell width from `useWindowDimensions` minus horizontal padding and column gaps,
+divided by 3, and passes `width={cellWidth}`.
+
+L2's allowlist is therefore `HomeScreen.tsx`, `SettingsScreen.tsx`, `app-tile.tsx`. Safe because
+L2 runs after L5 merges, so no two lanes hold that file at once. The guarantee still binds: `width`
+optional, default rendering unchanged.
+
+**TRAP for L2 — `test/tile-colour.suite.ts:78-86` pins JSX SOURCE TEXT that L2 will edit.**
+It requires `size?: 'done';`, `const isDone = size === 'done';`, four `isDone ? styles.X : null`
+names each appearing EXACTLY ONCE, and `{!isDone && <Text style={styles.name}`. Adding `width?:
+number` is safe — none of those lines change — but any reformat of the tile's style arrays or of
+the name label goes red for a correct edit. Same class as R18 and `prompt-flow-screens.suite.ts:282`.
 
 - [ ] **L1 — token roles** · `src/sdk/design-tokens.ts`, `src/sdk/test/theme.acceptance.ts`
       Covers R3 **as corrected by R11**. Add: `headline` (30/33.6/-0.75/700),
