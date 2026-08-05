@@ -20,8 +20,14 @@ function read(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
 }
 
-/** One named `StyleSheet.create` entry, brace-balanced (so a nested `shadowOffset: { … }` does not
- *  truncate it). Empty when the entry does not exist, which fails the assertion that wanted it. */
+/** Source with its comments removed: a negative assertion is about what the code DOES, not about
+ *  prose that happens to name the very thing being forbidden (the `prompt-flow-screens` idiom). */
+function code(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
+/** One named `StyleSheet.create` entry, brace-balanced (so a nested object value does not truncate
+ *  it). Empty when the entry does not exist, which fails the assertion that wanted it. */
 function styleBlock(src: string, name: string): string {
   const start = src.indexOf(`${name}: {`);
   if (start < 0) return '';
@@ -183,15 +189,20 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(/width: DONE_TILE_SIZE,\s*height: DONE_TILE_SIZE,/.test(tileDone), 'and 120 tall, from the one constant');
     h.ok(/borderRadius: 32,/.test(tileDone), 'radius 32');
     h.ok(/padding: 14,/.test(tileDone), 'padded 14');
-    h.ok(/shadowOpacity: 0\.3,/.test(tileDone) && /shadowRadius: 22,/.test(tileDone), 'glow at 30% over a 22 blur');
-    h.ok(/shadowOffset: \{ width: 0, height: 8 \},/.test(tileDone), 'offset 8 down');
     const ghostDone = styleBlock(src, 'ghostMonogramDone');
     h.ok(/top: -20/.test(ghostDone) && /right: -12/.test(ghostDone) && /fontSize: 92/.test(ghostDone), 'the bled monogram is 92 at -20/-12');
     h.ok(/fontSize: 26/.test(styleBlock(src, 'foregroundMonogramDone')), 'the foreground monogram is 26');
+    // The glow is `boxShadow`, the one shadow primitive Android honours (`shadowOffset`,
+    // `shadowOpacity` and `shadowRadius` are iOS-only, and `elevation` draws Android's own default
+    // profile rather than this one). Asserted as the offset/blur/alpha the design specifies.
+    h.ok(/GLOW_OFFSET_Y = 8/.test(src) && /GLOW_BLUR = 22/.test(src), 'the glow falls 8 down over a 22 blur');
+    h.ok(/GLOW_ALPHA_HEX = '4d'/.test(src), 'at 30% alpha (0.3 x 255 = 0x4d)');
+    h.ok(/boxShadow: \[\{ offsetX: 0, offsetY: GLOW_OFFSET_Y, blurRadius: GLOW_BLUR/.test(src), 'delivered through boxShadow, which Android renders');
+    h.ok(!/shadowOpacity|shadowRadius|shadowOffset|elevation/.test(code(src)), 'never through the iOS-only shadow props or a default-profile elevation');
     // Ruling R20: the celebration tile keeps the app's identity across two adjacent screens — its
     // fill AND its glow are the app's own resolved colour, never a fixed status hue.
-    h.ok(/shadowColor: bg/.test(src), 'the glow is colour-matched to the tile’s own resolved colour');
-    h.ok(!/STATUS_COLORS/.test(src), 'no fixed status hue is imported for the done tile');
+    h.ok(/color: `\$\{bg\}\$\{GLOW_ALPHA_HEX\}`/.test(src), 'the glow is the tile’s own resolved colour');
+    h.ok(!/STATUS_COLORS/.test(code(src)), 'no fixed status hue is imported for the done tile');
   });
 
   await h.test('DoneStep: both CTAs stand at one height, the design’s 52', async () => {

@@ -25,9 +25,18 @@ export const APP_TILE_RADIUS = RADIUS.tile;
 
 /** The done step's celebration tile rises in once on mount (design html:524
  *  `animation: rise .4s ease both`: opacity 0→1, translateY 6→0). Local to this variant — the grid
- *  tile has no entrance motion at all. */
+ *  tile has no entrance motion at all. CSS `ease` is `cubic-bezier(.25,.1,.25,1)`, which
+ *  decelerates; RN's `Easing.ease` is `bezier(.42,0,1,1)` — CSS `ease-IN`, the opposite shape — so
+ *  the curve is spelled out, the same faithful translation `Orb.tsx:58` makes for `sheetRise`. */
 const RISE_DURATION_MS = 400;
 const RISE_TRANSLATE_Y = 6;
+const RISE_EASING = Easing.bezier(0.25, 0.1, 0.25, 1);
+
+/** The design's glow is the tile's own hue at 30% (html:520 `0 8px 22px rgba(13,148,136,.3)`).
+ *  `tiles.ts#tileColor` only ever yields `#rrggbb`, so the alpha is a suffix: 0.3 x 255 = 0x4d. */
+const GLOW_ALPHA_HEX = '4d';
+const GLOW_OFFSET_Y = 8;
+const GLOW_BLUR = 22;
 
 export interface AppTileProps {
   /** The app's display name — sources both monograms, the fallback colour, and the label below
@@ -53,7 +62,7 @@ export default function AppTile({ name, manifest, size }: Readonly<AppTileProps>
     const anim = Animated.timing(rise, {
       toValue: 1,
       duration: RISE_DURATION_MS,
-      easing: Easing.ease,
+      easing: RISE_EASING,
       useNativeDriver: true,
     });
     anim.start();
@@ -67,9 +76,17 @@ export default function AppTile({ name, manifest, size }: Readonly<AppTileProps>
       }
     : undefined;
 
+  /** Not `shadow*`/`elevation`: `shadowOffset`/`shadowOpacity`/`shadowRadius` are iOS-only, and
+   *  `elevation` draws Android's default shadow profile, not this one. `boxShadow` translates the
+   *  design's CSS literally on both platforms (Fabric, API 28+ — below that the tile simply has no
+   *  glow, which is why `elevation` is NOT also set: on API 28+ the two would double-draw). */
+  const glow = isDone
+    ? { boxShadow: [{ offsetX: 0, offsetY: GLOW_OFFSET_Y, blurRadius: GLOW_BLUR, color: `${bg}${GLOW_ALPHA_HEX}` }] }
+    : null;
+
   return (
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, riseStyle]}>
-      <View style={[styles.tile, isDone ? styles.tileDone : null, { backgroundColor: bg }, isDone ? { shadowColor: bg } : null]}>
+      <View style={[styles.tile, isDone ? styles.tileDone : null, { backgroundColor: bg }, glow]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
       </View>
@@ -105,13 +122,7 @@ const styles = StyleSheet.create({
     height: DONE_TILE_SIZE,
     borderRadius: 32,
     padding: 14,
-    // `box-shadow: 0 8px 22px rgba(<own hue>,.3)` (html:520). `shadowColor` is the tile's own
-    // resolved colour, set at the call site. Android has no box-shadow equivalent, so `elevation`
-    // is an approximation of the same weight — the honest gap `Orb.tsx:139-143` already lives with.
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 22,
-    elevation: 8,
+    // The glow itself is set at the call site — it is the tile's own resolved colour.
   },
   ghostMonogram: {
     position: 'absolute',
