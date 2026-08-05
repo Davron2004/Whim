@@ -30,6 +30,72 @@ Ground truth: `whim-design-handoff/reference/Whim Design System.dc.html` (token 
 
 **R7. Findings dropped by these rulings:** none. R1 means every size finding below stands as written. The two `FailureScreen`/`MiniAppView` findings are deferred, not dropped.
 
+**R9. R2 is scoped to TYPE_SCALE, not to SPACING.** (Added 2026-08-05 after lane L3 surfaced it.)
+Design values with no `SPACING` counterpart — 24, 26, 28 (L3), 20/22/14 (L2), 14/15 (L4) — are written
+as literals with an inline comment citing the design html line. Do NOT add one-off `SPACING` tokens for
+them and do NOT edit `design-tokens.ts` from a non-L1 lane. Rationale: R2 exists to kill the *wrong-role*
+bypass (one `eyebrow` doing four typographic jobs), which is a semantic defect. A one-off pixel pad is not
+a semantic role, and minting a token per value would inflate the scale past the point where it means
+anything. This matches the codebase's existing convention (`flow-chrome.tsx`'s `bar: { width: 18, height: 3 }`,
+`PlanStep.tsx`'s `PLAN_ROW_MIN_HEIGHT = 74`). Typography still follows R2 without exception.
+
+**R10. A finding that the L1 token retarget already resolves needs NO call-site edit.**
+Where a call site already references the correct semantic role and only the role's *value* was wrong,
+L1's retarget propagates automatically. Record it as `NO-OP: inherits L1 retarget` in the lane's plan and
+write no diff. Confirmed cases: S4 at `PlanStep.tsx:94` and `ClarifyStep.tsx:69` (both already on
+`TYPE_SCALE.body`). Check for the same at `HistoryScreen.tsx:204,440,441` before planning an edit there.
+
+**R11. CORRECTION to R3 — `screenTitle` was doing two jobs; split it.** (2026-08-05, after lane L1
+enumerated the call sites. This supersedes R3's `screenTitle` clause.)
+
+R3 retargeted `screenTitle` 26 → 22 on the strength of findings V8 and V13 alone. But the token has
+**six** call sites, and the mockups run a second, larger title face at `700 26px/1.15/-.025em` on the
+clarify (`:443`), plan (`:475`) and build (`:498`) screens — all three currently CORRECT at 26. The
+retarget would have shrunk them by 4px to fix the two that were broken. Same defect shape as V10's
+`eyebrow`: one token serving two design roles, and retargeting picks a winner instead of splitting.
+
+Resolution:
+- `screenTitle` → **22 / 25.3 / -0.44 / 700**, scoped to its two real users: `HistoryScreen.tsx:204`
+  (V8) and the confirm-sheet title `HistoryScreen.tsx:440` (V13).
+- **ADD `stepTitle` — 26 / 29.9 / -0.65 / 700.** Literally the numbers `screenTitle` holds today, so
+  every site repointed at it renders byte-identically to the current build. Call sites to repoint:
+  `ClarifyStep.tsx:58` and `PlanStep.tsx:79` (lane L3); `BuildStep.tsx:55` and `DoneStep.tsx:33`
+  (lane L5); `SettingsScreen.tsx:56` (lane L2, see R12).
+- `DoneStep.tsx:33` — the mockup wants 24/1.2/-.02em (`:525`), so `stepTitle` leaves it 2px large.
+  That is exactly the status quo and no finding was ever filed against it. Do NOT mint a one-off role;
+  note it for the R8 pass instead.
+- `obs-v1` owns `FailureScreen.tsx` (ruling R6) and design `3b:306` needs 26 — it uses `stepTitle` too.
+  Flagged to that change so it does not re-derive a literal.
+
+**R12. `SettingsScreen.tsx` joins lane L2.** It has no mockup and was owned by no lane, yet it consumes
+both retargeted tokens (`screenTitle` at `:56`, `body` at `:72,:83`) and would have silently inherited
+both with no design basis and no reviewer. L2 repoints its title at `stepTitle` to preserve current
+rendering. Its `body` inheritance is accepted — the token is shared and there is no reason to exempt one
+screen — but `:72` is a `TextInput`, so it goes on the R4/R5 deferred list.
+
+**R13. The `body` retarget shrinks typed text and carets.** `ComposeStep.tsx:81` and
+`SettingsScreen.tsx:72` are `TextInput`s sized off `body`. Dropping 15 → 13.5 shrinks what the user
+types, not just what they read. Land it per R1, but add it to the R4/R5 deferred list explicitly — it is
+a different legibility question from static prose and deserves its own look on-device.
+
+**R14. V15 is two findings; only one is real. Split it.** (2026-08-05, on lane L6's recommendation.)
+- **V15a — the 30×30 tinted glyph swatch per menu row: REAL.** Fix it. Note the design markup is
+  `border-radius:10px` — a rounded square, not the circle the finding's wording implies.
+- **V15b — the per-row direction hint: NOT A DEFECT. Do not build it, in any lane.** `Orb.tsx:11-14`
+  already names "per-row direction hints" as a deliberate negative requirement under design D12,
+  in the same breath as the "hold to flick" caption that `findings.md` itself lists under
+  *Not flagged*. An existing green test (`orb-menu.suite.ts:99-102`) asserts no `up|down|left|right`
+  literal appears in that file — implementing the hint breaks a standing invariant on day one. And
+  the design's stated purpose for it is "so the menu teaches the wheel"; with the wheel deferred,
+  the hint advertises a gesture that does not exist, which is worse than silence.
+  The auditor merged two items onto one line. Recording the split so a later pass does not read
+  V15b as unfinished scope.
+
+**R15. Two Orb values have no token and should NOT get one yet.** The row tints (`#e6e4f7`, `#e5e2db`)
+and the 10px icon radius have no `SHELL_COLORS` / `RADIUS` counterpart. They stay local to `Orb.tsx`,
+scoped exactly as `KIND_BADGE_COLORS` is scoped to the history badge. One consumer does not justify a
+shared role; revisit if a second surface wants the same shape. Consistent with R9's reasoning.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
