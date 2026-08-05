@@ -48,10 +48,14 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   });
 
   // ── the per-row swatch (design `3a`/`3b`/`3c`, html:220-224) ──────────────
-  await h.test('orb-menu: each row swatch takes its glyph colour from a token, never an inline hex', async () => {
-    h.eq(orbRowGlyphColor('change'), SHELL_COLORS.accent, 'change glyph uses the accent token, not a literal');
-    h.eq(orbRowGlyphColor('home'), SHELL_COLORS.text, 'home glyph uses the text token, not a literal');
-    h.eq(orbRowGlyphColor('versions'), SHELL_COLORS.text, 'versions glyph uses the text token, not a literal');
+  // Design html:931 `glyphColor: i === 0 ? '#3f3d8f' : '#1c1917'` — i.e. the accent role for the
+  // one accented action and the text role for the rest. That MAPPING is what is checked here; the
+  // two roles happen to be byte-equal to those hexes, so no assertion below can tell a token from
+  // an inlined hex, and none claims to.
+  await h.test('orb-menu: the row swatch maps each action onto its designed glyph-colour role', async () => {
+    h.eq(orbRowGlyphColor('change'), SHELL_COLORS.accent, 'change is the accented row');
+    h.eq(orbRowGlyphColor('home'), SHELL_COLORS.text, 'home takes the plain text colour');
+    h.eq(orbRowGlyphColor('versions'), SHELL_COLORS.text, 'versions takes the plain text colour');
   });
 
   // ── instrumentation persists, cross-session, off-screen ───────────────────
@@ -95,14 +99,26 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   });
 
   // ── negative assertions: no wheel, no counter on any surface ──────────────
-  // Scanned with `//` comment lines stripped: the file's own doc comments legitimately name the
-  // unbuilt gesture (to explain why it is absent) — the product concern is CODE and rendered
-  // copy, not documentation prose describing what was deliberately left out.
+  // Scanned with comments stripped (`//` lines and `/* */` blocks alike): these files' own doc
+  // comments legitimately name the unbuilt gesture (to explain why it is absent) — the product
+  // concern is CODE and rendered copy, not documentation prose describing what was deliberately
+  // left out.
+  const stripComments = (src: string): string =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n');
+
   const orbSource = read('Orb.tsx');
-  const orbCode = orbSource
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join('\n');
+  const orbCode = stripComments(orbSource);
+  // The no-direction-hint invariant is about the orb SURFACE, not one file. `orb-actions.ts` holds
+  // the per-row presentational tables (tint, glyph), so a direction table added beside them would
+  // reach the rendered row without ever appearing in `Orb.tsx`. Only the wheel/direction checks
+  // widen to it: the press-arm, hold-to-flick and tap-count checks stay component-scoped on
+  // purpose — `orb-actions.ts` legitimately owns the count vocabulary it persists, and "no count"
+  // means "none is rendered", not "the word never appears".
+  const orbActionsCode = stripComments(read('orb-actions.ts'));
 
   await h.test('orb-menu: no press-and-hold arming exists in the orb source', async () => {
     h.ok(!/setTimeout/.test(orbCode), 'no hold-timer scaffolding (setTimeout) in Orb.tsx');
@@ -110,9 +126,15 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.ok(!/onOrbMove|onPanResponderMove/.test(orbCode), 'no pointer-move / drag hit-testing in Orb.tsx');
   });
 
-  await h.test('orb-menu: no wheel/wedge geometry or direction hints in the orb source', async () => {
-    h.ok(!/wedge|sector|wheel/i.test(orbCode), 'no wheel/wedge/sector vocabulary in Orb.tsx code');
-    h.ok(!/["'`](up|down|left|right)["'`]/i.test(orbCode), 'no literal direction-hint strings in Orb.tsx');
+  await h.test('orb-menu: no wheel/wedge geometry or direction hints anywhere on the orb surface', async () => {
+    const surface = [
+      ['Orb.tsx', orbCode],
+      ['orb-actions.ts', orbActionsCode],
+    ] as const;
+    for (const [file, code] of surface) {
+      h.ok(!/wedge|sector|wheel/i.test(code), `no wheel/wedge/sector vocabulary in ${file} code`);
+      h.ok(!/["'`](up|down|left|right)["'`]/i.test(code), `no literal direction-hint strings in ${file}`);
+    }
   });
 
   await h.test('orb-menu: no "hold to flick" copy is advertised anywhere in the orb source', async () => {
@@ -122,6 +144,12 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   await h.test('orb-menu: no tap count is rendered on any user-facing surface', async () => {
     h.ok(!/loadOrbActionCounts/.test(orbSource), 'Orb.tsx never reads back the counts it writes');
     h.ok(!/\bcount\b/i.test(orbCode), 'no "count" vocabulary appears in the orb component code');
+  });
+
+  await h.test('orb-menu: the rendered row draws its swatch from the shared table, not a second one', async () => {
+    h.ok(/ORB_ROW_TINT\[/.test(orbCode), 'the swatch fill is looked up in ORB_ROW_TINT');
+    h.ok(/ORB_ROW_GLYPH\[/.test(orbCode), 'the swatch glyph is looked up in ORB_ROW_GLYPH');
+    h.ok(/orbRowGlyphColor\(/.test(orbCode), 'the glyph colour comes from orbRowGlyphColor');
   });
 
   await h.test('orb-menu: every action tap is instrumented before anything else happens', async () => {
