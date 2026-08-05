@@ -30,7 +30,7 @@ export function FlowHeader({ step, palette, onBack }: Readonly<FlowHeaderProps>)
   return (
     <View style={styles.header}>
       <TouchableOpacity onPress={onBack} hitSlop={10}>
-        <Text style={[TYPE_SCALE.caption, { color: palette.textMuted }]}>{COPY.backLabel}</Text>
+        <Text style={[TYPE_SCALE.controlLabel, { color: palette.textMuted }]}>{COPY.backLabel}</Text>
       </TouchableOpacity>
       <View style={styles.bars}>
         {INDICATOR_STEPS.map((s, i) => (
@@ -92,7 +92,7 @@ const styles = StyleSheet.create({
   primary: {
     height: 54,
     marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
+    marginBottom: 24, // design `Whim Mobile.dc.html:427,459,487` — no SPACING counterpart (ruling R9)
     borderRadius: RADIUS.card,
     borderWidth: 1,
     alignItems: 'center',

@@ -60,7 +60,7 @@ export default function ComposeStep({
       <FlowHeader step="compose" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[TYPE_SCALE.display, { color: p.text }]}>{COPY.composeHeadline}</Text>
+        <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{COPY.composeHeadline}</Text>
 
         {!serverConfigured && (
           <View style={[styles.notice, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
@@ -112,7 +112,7 @@ export default function ComposeStep({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
+  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
   notice: { borderWidth: 1, borderRadius: RADIUS.card, padding: SPACING.md, marginTop: SPACING.md },
   noticeAction: { marginTop: SPACING.xs },
   field: {
