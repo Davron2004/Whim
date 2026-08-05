@@ -1,9 +1,17 @@
 /**
- * history-logic — the RN-free decision logic behind HistoryScreen (version-history-ux, D1/D5/F1).
+ * history-logic — the RN-free decision logic behind HistoryScreen (version-history spec,
+ * shell-redesign-v2 chain-E). Rebuilt for the `4a` timeline: row derivation (summary-or-prompt
+ * headline, kind grouping for the filter pills, at-most-two next actions per row) plus the
+ * pre-existing schema-diff annotation and relative-timestamp helpers this module already carried
+ * (kept unchanged — D5's restore-reassurance path still reads through them).
  *
- * Kept separate from HistoryScreen.tsx so it is directly Node-testable (mirrors teardown.ts's
- * split for useMiniAppHost): the F1 listing guard, D1's restore-target-is-the-predecessor rule,
- * D5's lazy per-pair schema-diff annotation, and the relative-timestamp formatter.
+ * `RunSummary`/`SummaryKind`/`SummaryMark` are `@whim/contract` TYPE-ONLY imports (erased at
+ * compile — zod itself never enters the RN bundle). `storedSummary` below mirrors
+ * `generation-client.ts`'s established pattern of a hand-rolled structural guard standing in for
+ * the zod schema. A version's stored summary, when it has one, rides INSIDE its own `prompt`
+ * envelope JSON — chain-D bumps that envelope to `{v:2, text, summary?}` (`prompt-envelope.ts`,
+ * not this module's file); `storedSummary` reads the `summary` field structurally, by shape, so
+ * it keeps working whether or not that bump has landed yet.
  */
 
 // Imported from the specific submodules (not the `../storage-engine` barrel): the barrel also
@@ -14,7 +22,9 @@ import type { SchemaArtifact } from '../storage-engine/contract';
 import { diffSchemas, emptyApplied, type AppliedSchema } from '../storage-engine/schema';
 import type { Snapshot } from '../version-store';
 import type { InstalledApp } from './app-index';
+import { parsePromptEnvelope } from './prompt-envelope';
 import type { StoreAccess } from './store-access';
+import type { RunSummary, SummaryKind, SummaryMark } from '@whim/contract';
 
 /**
  * F1 fixed at the engine level (snapshot-lineage-identity, design D6; handoff/lineage-correctness.md):
@@ -36,16 +46,6 @@ export async function isAtTip(access: StoreAccess, app: InstalledApp): Promise<b
   const list = await listVersions(access, app);
   const active = await access.activeId(app);
   return list[0]?.id === active;
-}
-
-/**
- * D1: row `idx` (the prompt that produced `list[idx]`) restores to its predecessor, `list[idx+1]`
- * — the version active before that prompt. `list` is newest-first, so the predecessor is the next
- * (older) entry. The oldest row (the install event) has no predecessor and returns `null` — no
- * restore affordance.
- */
-export function restoreTargetId(list: readonly Snapshot[], idx: number): string | null {
-  return list[idx + 1]?.id ?? null;
 }
 
 function emptyArtifact(): SchemaArtifact {
@@ -134,4 +134,138 @@ export function formatRelativeTimestamp(createdAt: number, now: number = Date.no
   if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)}h ago`;
   if (diff < 7 * DAY_MS) return `${Math.floor(diff / DAY_MS)}d ago`;
   return new Date(createdAt).toLocaleDateString();
+}
+
+// ── the `4a` row model (E1/E2/E3/E5/E6/E9) ──────────────────────────────────
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const SUMMARY_KINDS: readonly SummaryKind[] = ['Start', 'Added', 'Changed', 'Removed', 'Look', 'Fixed'];
+
+function isSummaryMark(value: unknown): value is SummaryMark {
+  return (
+    isRecord(value) &&
+    (value.cls === 'chg' || value.cls === 'hedge') &&
+    typeof value.start === 'number' &&
+    typeof value.end === 'number'
+  );
+}
+
+function isRunSummary(value: unknown): value is RunSummary {
+  return (
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    typeof value.kind === 'string' &&
+    (SUMMARY_KINDS as readonly string[]).includes(value.kind) &&
+    Array.isArray(value.touched) &&
+    value.touched.every(t => typeof t === 'string') &&
+    Array.isArray(value.marks) &&
+    value.marks.every(isSummaryMark)
+  );
+}
+
+/** The stored summary for a version, when its prompt envelope carries one — `undefined` for an
+ *  older envelope, a raw legacy string, or a run that produced none (all three are legitimate
+ *  states, never an error). */
+export function storedSummary(raw: string): RunSummary | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed) && isRunSummary(parsed.summary)) return parsed.summary;
+  } catch {
+    // Not JSON at all — same as "this envelope carries no summary".
+  }
+  return undefined;
+}
+
+/** The three filter groups the seeded copy table has labels for (`historyFilterWhatItDoes` /
+ *  `Look` / `Fixes`) — there is no per-raw-kind pill copy, so grouping, not one pill per kind, is
+ *  the shape E6 settles on. */
+export type FilterGroup = 'features' | 'look' | 'fixes';
+
+const KIND_GROUP: Record<SummaryKind, FilterGroup> = {
+  Start: 'features',
+  Added: 'features',
+  Changed: 'features',
+  Removed: 'features',
+  Look: 'look',
+  Fixed: 'fixes',
+};
+
+export type HistoryOrigin = 'you-said' | 'whim-on-its-own';
+export type HistoryActionKind = 'change-from-here' | 'go-back' | 'start-copy';
+
+export interface HistoryRow {
+  id: string;
+  index: number;
+  /** A display ordinal, oldest = "v1" — never a git ref (product-verbs guard). */
+  version: string;
+  when: string;
+  kind: SummaryKind | null;
+  /** `null` = unclassified — stays reachable under the all-versions pill only (E6). */
+  group: FilterGroup | null;
+  /** The stored summary's text, falling back to the resolved prompt text (E2). */
+  headline: string;
+  /** The raw resolved prompt-envelope text, for the renderer's `yours`-class matching. */
+  promptText: string;
+  /** Producer `chg`/`hedge` marks for `headline` — `[]` when the version has no summary. */
+  marks: SummaryMark[];
+  touched: string[];
+  origin: HistoryOrigin;
+  isCurrent: boolean;
+  isInstall: boolean;
+  /** At most two, never three (E5/E9). */
+  actions: HistoryActionKind[];
+}
+
+/**
+ * The `4a` row model. `rows` newest-first (as `listVersions` returns); `activeId` the live
+ * current marker (E3 — derived from the store, never persisted on the app record).
+ */
+export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | null): HistoryRow[] {
+  const total = rows.length;
+  return rows.map((snapshot, index) => {
+    const summary = storedSummary(snapshot.prompt);
+    const promptText = parsePromptEnvelope(snapshot.prompt).text;
+    const isCurrent = snapshot.id === activeId;
+    const isInstall = index === total - 1;
+    let actions: HistoryActionKind[];
+    if (isCurrent) actions = ['change-from-here'];
+    else if (isInstall) actions = ['start-copy'];
+    else actions = ['go-back', 'start-copy'];
+    return {
+      id: snapshot.id,
+      index,
+      version: `v${total - index}`,
+      when: formatRelativeTimestamp(snapshot.createdAt),
+      kind: summary?.kind ?? null,
+      group: summary ? KIND_GROUP[summary.kind] : null,
+      headline: summary?.text ?? promptText,
+      promptText,
+      marks: summary?.marks ?? [],
+      touched: summary?.touched ?? [],
+      // No write path in this codebase yet produces a version the user did not prompt (`prompt`
+      // is a required field on every install/update spec) — an empty stored prompt is the only
+      // signal available on-device for "the product acted unprompted" today.
+      origin: promptText.length > 0 ? 'you-said' : 'whim-on-its-own',
+      isCurrent,
+      isInstall,
+      actions,
+    };
+  });
+}
+
+/** Live per-group counts (E6's "the count is live" scenario) — unclassified rows count toward
+ *  neither group, only the all-versions pill. */
+export function groupCounts(rows: readonly HistoryRow[]): Record<FilterGroup, number> {
+  const counts: Record<FilterGroup, number> = { features: 0, look: 0, fixes: 0 };
+  for (const row of rows) if (row.group) counts[row.group] += 1;
+  return counts;
+}
+
+/** Narrows `rows` to one filter pill's group; `'all'` (the default selection) returns every row,
+ *  unclassified included (E6's "unclassified versions are never hidden"). */
+export function filterRows(rows: readonly HistoryRow[], filter: 'all' | FilterGroup): HistoryRow[] {
+  return filter === 'all' ? [...rows] : rows.filter(row => row.group === filter);
 }

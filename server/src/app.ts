@@ -3,10 +3,15 @@
  *
  * Routes:
  *   GET  /healthz          — anonymous health check
- *   POST /v1/generate      — SSE generation stream (requires x-whim-device UUID)
- *   POST /v1/rewrite       — canned deterministic rewrite (requires x-whim-device UUID)
+ *   POST /v1/generate      — SSE generation stream
+ *   POST /v1/rewrite       — model-backed rewrite + optional plan rows
+ *   POST /v1/clarify       — unary pre-stream clarify exchange (0–3 questions)
+ *   GET  /v1/usage         — the calling device's accumulated token totals
  *
- * Middleware on /v1/* enforces the x-whim-device UUID header; missing/malformed → 400 JSON.
+ * The x-whim-device UUID gate is mounted ONCE, by path prefix over `/v1/*`, and never route by
+ * route: a route added under `/v1` later is gated by construction rather than by whoever
+ * remembers. Missing/malformed → 400 JSON before any handler runs. `/healthz` is outside the
+ * prefix and stays anonymous.
  */
 import { Hono } from 'hono';
 import type { DeviceIdError } from '@whim/contract';
@@ -16,6 +21,7 @@ import type { ModelClient, ModelRoster } from './generation/model';
 import type { GenerationStatsTransport, ReconcileBounds } from './generation/reconcile';
 import { makeGenerateRoute } from './routes/generate';
 import { makeRewriteRoute } from './routes/rewrite';
+import { makeClarifyRoute } from './routes/clarify';
 import { makeUsageRoute } from './routes/usage';
 import { logRequest } from './dev-log';
 
@@ -46,6 +52,10 @@ export interface AppOptions {
   /** Post-abort usage reconciliation transport for `/v1/generate` (design D9, task 7.3).
    *  Defaults to a no-op transport — safe with the stub pipeline (see `NO_OP_STATS_TRANSPORT`). */
   reconcile?: { transport: GenerationStatsTransport; bounds?: Partial<ReconcileBounds> };
+  /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. Today it only makes
+   *  `/v1/clarify` deterministic and model-free; the pipeline's own stub is selected by passing
+   *  `createStubPipeline()` above, not by this flag. */
+  stub?: boolean;
 }
 
 export function createApp(options: AppOptions): Hono<AppEnv> {
@@ -101,6 +111,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // Mount routes under /v1
   app.route('/v1/generate', makeGenerateRoute(pipeline, usageStore, { keepaliveMs, reconcile }));
   app.route('/v1/rewrite', makeRewriteRoute(model, roster, usageStore));
+  app.route('/v1/clarify', makeClarifyRoute(model, roster, usageStore, { stub: options.stub }));
   app.route('/v1/usage', makeUsageRoute(usageStore));
 
   return app;

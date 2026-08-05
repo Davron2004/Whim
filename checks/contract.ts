@@ -153,6 +153,10 @@ export interface ExtractedManifest {
   capabilities: string[];
   /** The raw `schema` literal, when declared — validated separately by the schema pass. */
   schema?: unknown;
+  /** The app's declared tile colour, when it was declared AS A STRING LITERAL. Carried through
+   *  this one extraction (never a second parse); a non-literal declaration is simply absent here,
+   *  and the colour's *validity* (hex shape, reserved-hue collision) is the consumer's call. */
+  tileColor?: string;
 }
 
 /**

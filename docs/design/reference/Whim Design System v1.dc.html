@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"><style>body{margin:0;background:#e8e5df;font-family:'Space Grotesk',system-ui,sans-serif}a{color:#4f46e5}a:hover{color:#3730a3}@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}</style></helmet>
+
+<div style="max-width:1080px;margin:0 auto;padding:56px 48px 80px">
+
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding-bottom:26px;border-bottom:1px solid rgba(0,0,0,.12)">
+<div>
+<div style="font:700 38px/1 'Space Grotesk',sans-serif;letter-spacing:-.03em;color:#17171a">Whim Design System</div>
+<div style="margin-top:11px;font:400 13.5px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55);max-width:560px">The rules the mobile app follows. Values are lifted from <code style="font:400 12.5px 'IBM Plex Mono',monospace">src/sdk/theme.ts</code> and <code style="font:400 12.5px 'IBM Plex Mono',monospace">tiles.ts</code> so design and code agree.</div>
+</div>
+<div style="flex:none;padding:9px 13px;border-radius:8px;background:#fef3c7;border:1px solid #fcd34d;font:500 10.5px/1.4 'IBM Plex Mono',monospace;color:#78350f;text-align:right">UNFINISHED<br><span style="font-weight:400;opacity:.75">SDK components pending</span></div>
+</div>
+
+<div style="margin-top:16px;padding:16px 18px;border-radius:14px;background:#fbfaf8;border:1px solid #e0dcd4;font:400 12.5px/1.6 'Space Grotesk',sans-serif;color:#6b6560">
+<b style="color:#1c1917">What's settled:</b> palette, radii, type, tile identity, buttons, busy and failure states, the orb, sheets, voice. <b style="color:#1c1917">What's open:</b> SDK component vocabulary, mini-app customisation, dark shell, whether the six theme presets survive.
+</div>
+
+<div style="margin-top:44px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">01 · Colour</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Paper is the shell. Colour belongs to apps.</div>
+<p style="margin:10px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">The launcher is warm neutral with one accent. Saturated colour is reserved for app tiles and status — so when something is coloured, it means something.</p>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+<sc-for list="{{ shellColors }}" as="c" hint-placeholder-count="8">
+<div style="border-radius:14px;overflow:hidden;border:1px solid #e0dcd4;background:#fbfaf8">
+<div style="height:66px;background:{{ c.hex }};border-bottom:1px solid #e0dcd4"></div>
+<div style="padding:11px 12px 13px">
+<div style="font:500 12.5px/1 'Space Grotesk',sans-serif;color:#1c1917">{{ c.name }}</div>
+<div style="margin-top:5px;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ c.hex }}</div>
+<div style="margin-top:7px;font:400 11px/1.4 'Space Grotesk',sans-serif;color:#6b6560">{{ c.use }}</div>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:22px;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Status — never decorative</div>
+<div style="margin-top:11px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ statusColors }}" as="c" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:11px;padding:11px 15px;border-radius:12px;background:#fbfaf8;border:1px solid #e0dcd4">
+<span style="width:26px;height:26px;border-radius:8px;background:{{ c.hex }}"></span>
+<span><span style="display:block;font:500 12.5px/1.2 'Space Grotesk',sans-serif;color:#1c1917">{{ c.name }}</span><span style="display:block;margin-top:3px;font:400 10.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ c.hex }}</span></span>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:22px;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560">Tile palette — assigned deterministically from the app name</div>
+<div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ tileColors }}" as="t" hint-placeholder-count="11">
+<div style="width:64px"><div style="height:46px;border-radius:11px;background:{{ t }}"></div><div style="margin-top:5px;font:400 9.5px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ t }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">02 · Type</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Two faces. Grotesk speaks, Mono measures.</div>
+<p style="margin:10px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">Space Grotesk for everything the user reads as language. IBM Plex Mono only for things that are literally counted or timed — clocks, durations, version numbers, step counters, section eyebrows. Never mono for prose.</p>
+<div style="margin-top:20px;border-radius:16px;border:1px solid #e0dcd4;background:#fbfaf8;overflow:hidden">
+<sc-for list="{{ typeScale }}" as="t" hint-placeholder-count="7">
+<div style="display:flex;align-items:baseline;gap:24px;padding:16px 20px;border-bottom:1px solid #efece5">
+<div style="width:160px;flex:none"><div style="font:500 11.5px/1.3 'Space Grotesk',sans-serif;color:#1c1917">{{ t.name }}</div><div style="margin-top:4px;font:400 10px/1.3 'IBM Plex Mono',monospace;color:#a8a29a">{{ t.spec }}</div></div>
+<div style="font:{{ t.font }};color:#1c1917">{{ t.sample }}</div>
+</div>
+</sc-for>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">03 · Shape &amp; space</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Radius says what a thing is.</div>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
+<sc-for list="{{ radii }}" as="r" hint-placeholder-count="5">
+<div style="padding:16px;border-radius:14px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="height:56px;border-radius:{{ r.value }};background:#e5e2db;border:1px solid #d6d1c7"></div>
+<div style="margin-top:11px;font:500 12px/1.2 'Space Grotesk',sans-serif;color:#1c1917">{{ r.name }}</div>
+<div style="margin-top:4px;font:400 10px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ r.value }}</div>
+<div style="margin-top:6px;font:400 11px/1.4 'Space Grotesk',sans-serif;color:#6b6560">{{ r.use }}</div>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap">
+<sc-for list="{{ spacing }}" as="s" hint-placeholder-count="6">
+<div style="padding:12px 15px;border-radius:12px;background:#fbfaf8;border:1px solid #e0dcd4"><span style="font:500 12px/1 'Space Grotesk',sans-serif;color:#1c1917">{{ s.name }}</span> <span style="font:400 11px/1 'IBM Plex Mono',monospace;color:#a8a29a">{{ s.value }}</span><div style="margin-top:5px;font:400 11px/1.4 'Space Grotesk',sans-serif;color:#6b6560">{{ s.use }}</div></div>
+</sc-for>
+</div>
+<p style="margin:16px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">Screen gutter is 22–24 px. Nothing interactive is under 44 px tall. The user's <b>Corners</b> setting scales tile and button radius together — <code style="font:400 12.5px 'IBM Plex Mono',monospace">sharp 4/8</code>, <code style="font:400 12.5px 'IBM Plex Mono',monospace">soft 22/16</code>, <code style="font:400 12.5px 'IBM Plex Mono',monospace">round 30/999</code>.</p>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">04 · Tile identity</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Ghost letterform</div>
+<p style="margin:10px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">A solid tile in the app's assigned colour, the monogram set small on the baseline at bottom-left, and the same monogram blown up to ~85% of the tile height bleeding off the top-right at 16% white. A 1 px inset white border at 30% keeps it from going flat. Placeholder until apps carry their own icons.</p>
+<div style="margin-top:20px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+<sc-for list="{{ tileDemo }}" as="t" hint-placeholder-count="5">
+<div style="width:112px"><div style="width:112px;height:112px;border-radius:26px;background:{{ t.bg }};position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:11px"><span style="position:absolute;right:-11px;top:-18px;font:700 80px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.16);letter-spacing:-.05em">{{ t.mono }}</span><span style="position:absolute;inset:0;border-radius:26px;border:1px solid rgba(255,255,255,.3)"></span><span style="position:relative;font:600 23px/1 'Space Grotesk',sans-serif;color:#fff;letter-spacing:-.02em">{{ t.mono }}</span></div><div style="margin-top:8px;font:500 12px/1.3 'Space Grotesk',sans-serif;color:#1c1917">{{ t.name }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">05 · Buttons &amp; busy</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Nothing is ever just there.</div>
+<p style="margin:10px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">Every action that waits on the network has a busy state on the control that started it. The label changes to plain words — never a bare spinner, never a greyed-out button with no explanation. Buttons are 52–56 px tall, full width, at the bottom of the screen.</p>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+<sc-for list="{{ buttons }}" as="b" hint-placeholder-count="6">
+<div style="padding:18px;border-radius:16px;background:#fbfaf8;border:1px solid #e0dcd4">
+<div style="height:54px;border-radius:{{ b.radius }};background:{{ b.bg }};border:1px solid {{ b.border }};display:flex;align-items:center;justify-content:center;gap:10px;font:600 15px/1 'Space Grotesk',sans-serif;color:{{ b.fg }}">
+<sc-if value="{{ b.spin }}" hint-placeholder-val="{{ false }}"><span style="width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite"></span></sc-if>
+{{ b.label }}
+</div>
+<div style="margin-top:11px;font:500 11.5px/1.2 'Space Grotesk',sans-serif;color:#1c1917">{{ b.name }}</div>
+<div style="margin-top:5px;font:400 11px/1.45 'Space Grotesk',sans-serif;color:#6b6560">{{ b.use }}</div>
+</div>
+</sc-for>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">06 · The orb</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">One control inside every mini-app</div>
+<div style="margin-top:20px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+<div style="width:300px;height:300px;border-radius:20px;background:#1c1917;position:relative;overflow:hidden;flex:none">
+<div style="position:absolute;left:150px;top:150px;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:32px;background:#fbfaf8;display:flex;align-items:center;justify-content:center"><span style="width:20px;height:20px;border-radius:10px;background:#1c1917"></span></div>
+<div style="position:absolute;left:150px;top:56px;width:74px;height:74px;margin:-37px 0 0 -37px;border-radius:37px;background:#fbfaf8;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px"><span style="font:500 15px/1 'Space Grotesk',sans-serif;color:#1c1917">✎</span><span style="font:500 10px/1 'Space Grotesk',sans-serif;color:#1c1917">Change it</span></div>
+<div style="position:absolute;left:244px;top:150px;width:74px;height:74px;margin:-37px 0 0 -37px;border-radius:37px;background:rgba(251,250,248,.16);border:1px solid rgba(251,250,248,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px"><span style="font:500 15px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">⌂</span><span style="font:500 10px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">Home</span></div>
+<div style="position:absolute;left:150px;top:244px;width:74px;height:74px;margin:-37px 0 0 -37px;border-radius:37px;background:rgba(251,250,248,.16);border:1px solid rgba(251,250,248,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px"><span style="font:500 15px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">↺</span><span style="font:500 10px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">Versions</span></div>
+<div style="position:absolute;left:56px;top:150px;width:74px;height:74px;margin:-37px 0 0 -37px;border-radius:37px;background:rgba(251,250,248,.16);border:1px solid rgba(251,250,248,.3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px"><span style="font:500 15px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">⧉</span><span style="font:500 10px/1 'Space Grotesk',sans-serif;color:rgba(255,255,255,.85)">Copy</span></div>
+</div>
+<div style="flex:1;min-width:340px;display:flex;flex-direction:column;gap:11px">
+<sc-for list="{{ orbRules }}" as="r" hint-placeholder-count="7">
+<div style="padding:14px 16px;border-radius:13px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="font:500 12.5px/1.2 'Space Grotesk',sans-serif;color:#1c1917">{{ r.name }}</div><div style="margin-top:6px;font:400 12px/1.5 'Space Grotesk',sans-serif;color:#6b6560">{{ r.body }}</div></div>
+</sc-for>
+</div>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">07 · Voice</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Say what happened, not what the system did.</div>
+<div style="margin-top:20px;border-radius:16px;border:1px solid #e0dcd4;background:#fbfaf8;overflow:hidden">
+<div style="display:flex;padding:12px 20px;background:#f1efea;font:500 10px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:#6b6560"><span style="flex:1">Never</span><span style="flex:1">Instead</span></div>
+<sc-for list="{{ voice }}" as="v" hint-placeholder-count="6">
+<div style="display:flex;gap:20px;padding:14px 20px;border-top:1px solid #efece5">
+<span style="flex:1;font:400 12.5px/1.5 'Space Grotesk',sans-serif;color:#a8a29a;text-decoration:line-through">{{ v.bad }}</span>
+<span style="flex:1;font:400 12.5px/1.5 'Space Grotesk',sans-serif;color:#1c1917">{{ v.good }}</span>
+</div>
+</sc-for>
+</div>
+<p style="margin:14px 0 0;max-width:620px;font:400 13px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.55)">Sentence case everywhere. No exclamation marks. No "oops", no apologising twice. Version history is written as what changed for the user, never as commits.</p>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">08 · Failure</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">Try first, tell after, always leave a way back.</div>
+<div style="margin-top:20px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+<sc-for list="{{ failure }}" as="f" hint-placeholder-count="6">
+<div style="padding:18px;border-radius:16px;background:#fbfaf8;border:1px solid #e0dcd4"><div style="width:28px;height:28px;border-radius:9px;background:{{ f.tint }};display:flex;align-items:center;justify-content:center;font:600 12px/1 'Space Grotesk',sans-serif;color:#fff">{{ f.n }}</div><div style="margin-top:12px;font:500 13px/1.3 'Space Grotesk',sans-serif;color:#1c1917">{{ f.name }}</div><div style="margin-top:7px;font:400 12px/1.5 'Space Grotesk',sans-serif;color:#6b6560">{{ f.body }}</div></div>
+</sc-for>
+</div>
+
+<div style="margin-top:52px;font:500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.16em;text-transform:uppercase;color:rgba(0,0,0,.45)">09 · Open questions</div>
+<div style="margin-top:6px;font:600 22px/1.2 'Space Grotesk',sans-serif;letter-spacing:-.02em;color:#17171a">What this system can't answer yet</div>
+<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ open }}" as="o" hint-placeholder-count="6">
+<div style="display:flex;gap:16px;padding:15px 18px;border-radius:14px;background:#fbfaf8;border:1px dashed #d6d1c7"><span style="flex:none;padding:3px 8px;border-radius:5px;background:#f1efea;font:500 9.5px/1.5 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;color:#6b6560">{{ o.tag }}</span><span style="font:400 12.5px/1.55 'Space Grotesk',sans-serif;color:#1c1917">{{ o.body }}</span></div>
+</sc-for>
+</div>
+
+<div style="margin-top:44px;padding-top:22px;border-top:1px solid rgba(0,0,0,.12);font:400 12px/1.6 'Space Grotesk',sans-serif;color:rgba(0,0,0,.45)">Screens using this system: <a href="Whim Mobile.dc.html">Whim Mobile</a>. Source of truth for values: <code style="font:400 11.5px 'IBM Plex Mono',monospace">src/sdk/theme.ts</code>, <code style="font:400 11.5px 'IBM Plex Mono',monospace">src/host/launcher/tiles.ts</code>.</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      shellColors: [
+        { name: 'bg', hex: '#fbfaf8', use: 'Screen background' },
+        { name: 'surface', hex: '#f1efea', use: 'Cards, inputs, sheets' },
+        { name: 'border', hex: '#e0dcd4', use: 'Hairlines, outlines' },
+        { name: 'primary', hex: '#4f46e5', use: 'One accent per screen' },
+        { name: 'text', hex: '#1c1917', use: 'Everything readable' },
+        { name: 'muted', hex: '#6b6560', use: 'Secondary copy' },
+        { name: 'faint', hex: '#a8a29a', use: 'Timestamps, units' },
+        { name: 'ink', hex: '#17171a', use: 'Orb, overlays, logs' },
+      ],
+      statusColors: [
+        { name: 'Working / done', hex: '#0d9488' },
+        { name: 'Broken', hex: '#dc2626' },
+        { name: 'Waiting', hex: '#c9c3b8' },
+      ],
+      tileColors: ['#4f46e5', '#2563eb', '#0284c7', '#0d9488', '#16a34a', '#b45309', '#e11d48', '#c026d3', '#7c3aed', '#334155'],
+      typeScale: [
+        { name: 'Display', spec: 'Grotesk 700 · 34/1 · -3%', font: "700 34px/1 'Space Grotesk',sans-serif", sample: 'Whim' },
+        { name: 'Screen title', spec: 'Grotesk 700 · 26/1.15 · -2.5%', font: "700 26px/1.15 'Space Grotesk',sans-serif", sample: "Here's the plan" },
+        { name: 'Metric', spec: 'Mono 500 · 48/1 · -4%', font: "500 48px/1 'IBM Plex Mono',monospace", sample: '0:45' },
+        { name: 'Body', spec: 'Grotesk 400 · 15/1.45', font: "400 15px/1.45 'Space Grotesk',sans-serif", sample: 'It plays a sound and buzzes.' },
+        { name: 'Label', spec: 'Grotesk 500 · 13.5/1', font: "500 13.5px/1 'Space Grotesk',sans-serif", sample: 'Bring my brews across' },
+        { name: 'Caption', spec: 'Grotesk 400 · 12/1.5', font: "400 12px/1.5 'Space Grotesk',sans-serif", sample: 'Nothing here is final.' },
+        { name: 'Eyebrow', spec: 'Mono 500 · 10.5 · +14% caps', font: "500 10.5px/1 'IBM Plex Mono',monospace;letter-spacing:.14em;text-transform:uppercase", sample: 'What it remembers' },
+      ],
+      radii: [
+        { name: 'Chip', value: '999px', use: 'Answer pills' },
+        { name: 'Field', value: '14px', use: 'Rows, list items' },
+        { name: 'Card', value: '18px', use: 'Plan rows, buttons' },
+        { name: 'Tile', value: '22px', use: 'App icons' },
+        { name: 'Sheet', value: '28px', use: 'Bottom sheets' },
+      ],
+      spacing: [
+        { name: 'xs', value: '8px', use: 'Inside a row' },
+        { name: 'sm', value: '12px', use: 'Between siblings' },
+        { name: 'md', value: '16px', use: 'Card padding' },
+        { name: 'lg', value: '22px', use: 'Screen gutter' },
+        { name: 'xl', value: '34px', use: 'Between groups' },
+      ],
+      tileDemo: [
+        { name: 'Pour Timer', mono: 'PT', bg: '#0d9488' },
+        { name: 'Water Counter', mono: 'WC', bg: '#4f46e5' },
+        { name: 'Mood Tracker', mono: 'MT', bg: '#b45309' },
+        { name: 'Tip Splitter', mono: 'TS', bg: '#0284c7' },
+        { name: 'Dice', mono: 'D', bg: '#7c3aed' },
+      ],
+      buttons: [
+        { name: 'Primary', use: 'One per screen, at the bottom', label: 'Continue', bg: '#4f46e5', border: '#4f46e5', fg: '#fff', radius: '18px', spin: false },
+        { name: 'Primary · busy', use: 'Desaturated, label says what is happening', label: 'One moment', bg: '#9d99e8', border: '#9d99e8', fg: '#fff', radius: '18px', spin: true },
+        { name: 'Secondary', use: 'The way out', label: 'Back to your apps', bg: '#fbfaf8', border: '#e0dcd4', fg: '#6b6560', radius: '18px', spin: false },
+        { name: 'Safe default', use: 'The big one in a confirm sheet is Cancel', label: 'Cancel', bg: '#1c1917', border: '#1c1917', fg: '#fff', radius: '18px', spin: false },
+        { name: 'Consequential', use: 'Demoted to plain text next to it', label: 'Make the copy', bg: 'transparent', border: 'transparent', fg: '#6b6560', radius: '18px', spin: false },
+        { name: 'Recovery', use: 'After a failure, teal not red', label: 'Open Pour Timer', bg: '#0d9488', border: '#0d9488', fg: '#fff', radius: '18px', spin: false },
+      ],
+      orbRules: [
+        { name: 'Tap → menu', body: 'Four actions as a list above the orb, each labelled with its direction. The slow path teaches the fast one.' },
+        { name: 'Hold 300 ms → wheel', body: 'The orb grows, the screen dims, four targets fan out at 92 px. Drag past 34 px to arm one, release to fire.' },
+        { name: 'Release in the centre → nothing', body: 'The gesture must always be abortable without looking. Same for tapping the dimmed backdrop.' },
+        { name: 'Four cardinal targets, never more', body: 'Diagonals are not reliably hit without looking. A fifth action goes in the tapped menu only.' },
+        { name: 'Positions are fixed forever', body: 'Up change, right home, down versions, left copy. Order never reorders by frequency — muscle memory beats optimisation.' },
+        { name: 'Cheap actions only', body: 'Everything on the wheel is free or undoable in one tap. Copy is the ceiling, and it opens a sheet rather than acting.' },
+        { name: 'Never destructive', body: 'Delete, rename and restore are not reachable by gesture. If it cannot be undone, it needs a screen and a sentence.' },
+      ],
+      voice: [
+        { bad: 'Error: build failed (exit 1)', good: "That didn't run" },
+        { bad: 'Committed 4a3f21e to main', good: 'Warns before the last pour' },
+        { bad: 'Fork repository', good: 'Make a copy' },
+        { bad: 'Retrying generation, attempt 2/3', good: 'Trying a fix' },
+        { bad: 'Sandbox permission violation', good: 'Checking it only touches its own data' },
+        { bad: 'Rollback to previous revision', good: 'Go back to this' },
+      ],
+      failure: [
+        { n: '1', tint: '#c9c3b8', name: 'Fix before telling', body: "Whim retries up to three times before the user sees the word broken. Most failures should never surface at all." },
+        { n: '2', tint: '#dc2626', name: 'Name the symptom', body: 'Say what the user would have noticed — "the sound stops the timer" — not what threw.' },
+        { n: '3', tint: '#dc2626', name: 'Show what it tried', body: 'Three attempt bars, and one plain sentence per attempt. Waiting is bearable when it looks like work.' },
+        { n: '4', tint: '#0d9488', name: 'The last good version stays', body: 'A broken build never replaces a working one. Say so explicitly on the failure screen.' },
+        { n: '5', tint: '#0d9488', name: 'Recovery is teal, not red', body: 'Red marks the problem only. The way out is coloured like success.' },
+        { n: '6', tint: '#c9c3b8', name: 'Give back the words', body: 'When stuck, offer to rephrase — with the original prompt still there, not an empty box.' },
+      ],
+      open: [
+        { tag: 'SDK', body: 'The component vocabulary mini-apps are built from. Needs to be expressive enough that two apps look genuinely different, constrained enough that every app inherits this system for free.' },
+        { tag: 'Themes', body: 'Whether the six presets survive. They read as fun rather than as the product. Alternative: apps get their own look, and the shell stays paper always.' },
+        { tag: 'Custom', body: 'How far mini-app customisation goes, and whether it is prompted ("make it darker") or picked. Prompted fits the product better but is harder to make feel deliberate.' },
+        { tag: 'Shell', body: 'A dark direction for the launcher itself. Not designed yet.' },
+        { tag: 'Voice', body: 'First-class voice input. The composer is already built around one big field, so it should absorb a waveform without redesign — unverified.' },
+        { tag: 'Home', body: 'What the grid looks like at 40 apps. Search, folders, or ordering by recency — none decided.' },
+        { tag: 'Empty', body: 'The true first-run state, before any app exists. Currently a dashed tile; it deserves better.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

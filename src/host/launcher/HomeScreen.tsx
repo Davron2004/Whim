@@ -1,37 +1,41 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// HomeScreen — the launcher home grid (launcher-shell / #5 D6).
+// HomeScreen — the `2a` home (shell-redesign-v2, task D9).
 // ─────────────────────────────────────────────────────────────────────────────
-// A phone-home-style grid of installed apps (derived monogram + deterministic color, example
-// badge, fork provenance) + a "make your first app" CTA tile. Tap a tile to launch full-screen;
-// long-press for the action sheet (Open / Fork / History / Prompt again / Delete-with-
-// confirmation — prompt-flow-ux). Every visible string
-// comes from `copy.ts` and passes the product-verbs guard (#5 spec). A long-press on the title
-// opens the __DEV__ probe surface (D6). Every color comes from `shellPalette(theme)` (design
-// sdk-design-system D4/D7) — the per-app tile identity colors (`tiles.ts` TILE_COLORS) are the
-// one deliberate exception, since they are app identity, not shell chrome.
+// The `Whim` title, the `Your apps` eyebrow, a three-column grid of ghost-letterform tiles
+// (chain-F's `AppTile`, per its contract — this screen never re-derives a colour or a monogram),
+// and the composer entry row that opens the prompt flow's compose step. Long-press a tile for the
+// action sheet (Open / Fork / History / Prompt again / Delete-with-confirmation); a long-press on
+// the title opens the __DEV__ probe surface. Every visible string comes from `copy.ts` and passes
+// the product-verbs guard.
 import React, { useState } from 'react';
 import {
   Alert,
-  Dimensions,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
-import { monogram, tileColor } from './tiles';
+import AppTile, { APP_TILE_SIZE } from './app-tile';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
+import {
+  HOME_GRID_COLUMN_GAP,
+  HOME_GRID_ROW_GAP,
+  HOME_GRID_SIDE_PADDING,
+  homeGridCellWidth,
+} from './home-grid';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
 
-const { width } = Dimensions.get('window');
-const COLS = 3;
-const PAD = 16;
-const GAP = 12;
-const TILE = Math.floor((width - PAD * 2 - GAP * (COLS - 1)) / COLS);
+/** The grid's geometry and its cell-width derivation live in `home-grid.ts` — a module free of
+ *  `react-native` so the arithmetic that decides whether the row wraps can be tested under Node.
+ *  Re-exported here so `LauncherRoot.tsx` keeps importing them from the screen that owns them. */
+export { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP, HOME_GRID_ROW_GAP } from './home-grid';
 
 export interface HomeScreenProps {
   apps: InstalledApp[];
@@ -43,12 +47,11 @@ export interface HomeScreenProps {
   onDelete: (app: InstalledApp) => void;
   /** Opens the app's full-screen history surface (version-history-ux). */
   onHistory: (app: InstalledApp) => void;
-  /** Opens the prompt flow scoped to re-prompting this app (design D1, `app-launcher` spec's
-   *  "create affordance and per-app re-prompt action" requirement). */
+  /** Opens the compose step scoped to re-prompting this app (`app-launcher` spec's "create
+   *  affordance and per-app re-prompt action" requirement). */
   onPromptAgain: (app: InstalledApp) => void;
-  /** Opens the prompt flow's new-app entry point (same spec requirement). */
+  /** The composer entry row: opens the compose step with no app being edited (same requirement). */
   onCreate: () => void;
-  /** Opens the theme picker (design sdk-design-system D7). */
   onSettings: () => void;
   /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
   onOpenDevProbe?: () => void;
@@ -59,6 +62,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
   const p = shellPalette(theme);
+  const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
   const confirmDelete = (app: InstalledApp) => {
     setSelected(null);
@@ -72,10 +76,10 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.header}>
         <View style={styles.headerText}>
-          <Text style={[styles.title, { color: p.text }]} onLongPress={onOpenDevProbe} suppressHighlighting>
+          <Text style={[TYPE_SCALE.display, { color: p.text }]} onLongPress={onOpenDevProbe} suppressHighlighting>
             {COPY.homeTitle}
           </Text>
-          <Text style={[styles.subtitle, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
+          <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
         </View>
         <TouchableOpacity
           onPress={onSettings}
@@ -86,54 +90,53 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.grid}>
+      <ScrollView contentContainerStyle={styles.scroll}>
         {apps.length === 0 && (
-          <View style={styles.empty}>
-            <Text style={[styles.emptyTitle, { color: p.text }]}>{COPY.emptyTitle}</Text>
-            <Text style={[styles.emptyBody, { color: p.textMuted }]}>{COPY.emptyBody}</Text>
-          </View>
+          <Text style={[TYPE_SCALE.body, styles.empty, { color: p.textMuted }]}>{COPY.emptyTitle}</Text>
         )}
 
-        {apps.map((app) => (
-          <View key={app.id} style={styles.cell}>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={[styles.tile, { backgroundColor: tileColor(app.name) }]}
-              onPress={() => onOpen(app)}
-              onLongPress={() => setSelected(app)}
-            >
-              <Text style={styles.monogram}>{monogram(app.name)}</Text>
-              {app.example && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{COPY.exampleBadge}</Text>
-                </View>
+        <View style={styles.grid}>
+          {apps.map((app) => (
+            <View key={app.id} style={{ width: cellWidth }}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => onOpen(app)}
+                onLongPress={() => setSelected(app)}
+              >
+                <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} />
+                {app.example && (
+                  <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+                    <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {app.forkedFrom && (
+                <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]} numberOfLines={1}>
+                  {forkedFromLabel(app.forkedFrom.name)}
+                </Text>
               )}
-            </TouchableOpacity>
-            <Text style={[styles.tileName, { color: p.text }]} numberOfLines={1}>{app.name}</Text>
-            {app.forkedFrom && (
-              <Text style={[styles.tileSub, { color: p.textMuted }]} numberOfLines={1}>{forkedFromLabel(app.forkedFrom.name)}</Text>
-            )}
-          </View>
-        ))}
-
-        {/* "make your first app" CTA tile — opens the prompt flow's new-app entry point. */}
-        <View style={styles.cell}>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={[styles.tile, styles.createTile, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-            onPress={onCreate}
-          >
-            <Text style={[styles.createPlus, { color: p.accent }]}>＋</Text>
-          </TouchableOpacity>
-          <Text style={[styles.tileName, { color: p.text }]} numberOfLines={2}>{COPY.createTileLabel}</Text>
+            </View>
+          ))}
         </View>
       </ScrollView>
 
-      {/* Action sheet (long-press): Open / Fork / Delete. */}
+      {/* The create affordance: one row, always reachable, opening the compose step. */}
+      <TouchableOpacity
+        onPress={onCreate}
+        accessibilityRole="button"
+        style={[styles.composer, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <View style={[styles.composerPlus, { backgroundColor: p.accent }]}>
+          <Text style={[styles.composerPlusGlyph, { color: p.onAccent }]}>{'＋'}</Text>
+        </View>
+        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{COPY.homeComposerPlaceholder}</Text>
+      </TouchableOpacity>
+
+      {/* Action sheet (long-press): Open / Fork / History / Prompt again / Delete. */}
       <Modal visible={selected != null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
         <Pressable style={styles.sheetScrim} onPress={() => setSelected(null)}>
           <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
+            <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
             <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
             <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
@@ -149,7 +152,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
       <Modal visible={forkTarget != null} transparent animationType="fade" onRequestClose={() => setForkTarget(null)}>
         <Pressable style={styles.sheetScrim} onPress={() => setForkTarget(null)}>
           <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            <Text style={[styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
+            <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
             <SheetRow label={COPY.forkShareData} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: true }); }} />
             <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: false }); }} />
             <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
@@ -163,42 +166,69 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
 function SheetRow({ label, onPress, color, borderColor }: Readonly<{ label: string; onPress: () => void; color: string; borderColor: string }>) {
   return (
     <TouchableOpacity style={[styles.sheetRow, { borderTopColor: borderColor }]} onPress={onPress}>
-      <Text style={[styles.sheetRowText, { color }]}>{label}</Text>
+      <Text style={[TYPE_SCALE.bodyEmphatic, { color }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: PAD, paddingTop: 8, paddingBottom: 12 },
-  headerText: { flexShrink: 1 },
-  title: { fontWeight: '800', fontSize: 28 },
-  subtitle: { fontSize: 13, marginTop: 2 },
-  settingsBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  settingsGlyph: { fontSize: 17 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: PAD, gap: GAP, paddingBottom: 40, flexGrow: 1, alignContent: 'flex-start' },
-  cell: { width: TILE, alignSelf: 'flex-start' },
-  tile: {
-    width: TILE,
-    height: TILE,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.lg,
+    // design html:384 `padding:20px 22px 14px`. 20 and 14 have no `SPACING` counterpart (the scale
+    // is 8/12/16/22/34) and get no one-off token (ruling R9) — they stay literals, cited.
+    paddingTop: 20,
+    paddingBottom: 14,
   },
-  monogram: { color: 'white', fontSize: 30, fontWeight: '800' },
-  badge: { position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 },
-  badgeText: { color: 'white', fontSize: 9, fontWeight: '700' },
-  tileName: { fontSize: 12, marginTop: 6, fontWeight: '600' },
-  tileSub: { fontSize: 10, marginTop: 1 },
-  createTile: { borderWidth: 1, borderStyle: 'dashed' },
-  createPlus: { fontSize: 34, fontWeight: '300' },
-  empty: { width: '100%', alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { fontSize: 16, fontWeight: '700' },
-  emptyBody: { fontSize: 13, marginTop: 4 },
+  headerText: { flexShrink: 1 },
+  eyebrow: { marginTop: SPACING.xs },
+  settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  /** design html:386 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
+   *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height
+   *  into a 38x38 circle the design gives `/1`. A one-off icon glyph is not a typographic role, so
+   *  it takes a local face, exactly like `composerPlusGlyph` below (V2). */
+  settingsGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 16, lineHeight: 16, fontWeight: '400' },
+  // `paddingHorizontal` is the term `homeGridCellWidth` subtracts — read from the one constant so
+  // the two cannot drift (a drift here overflows the row and wraps the grid to two columns).
+  scroll: { paddingHorizontal: HOME_GRID_SIDE_PADDING, paddingBottom: SPACING.lg, flexGrow: 1 },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: HOME_GRID_COLUMN_GAP,
+    rowGap: HOME_GRID_ROW_GAP,
+  },
+  badge: {
+    position: 'absolute',
+    top: SPACING.xs,
+    right: SPACING.xs,
+    borderWidth: 1,
+    borderRadius: RADIUS.chip,
+    paddingHorizontal: 6,
+  },
+  empty: { paddingVertical: SPACING.xl },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.lg,
+    // design html:401 `padding:14px 16px`; 14 has no `SPACING` counterpart, so it is a cited
+    // literal (ruling R9). The horizontal 16 is `SPACING.md` and already matched.
+    paddingVertical: 14,
+    paddingHorizontal: SPACING.md,
+    borderWidth: 1,
+    borderRadius: 20,
+  },
+  composerPlus: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  /** design html:402 `font:400 17px/1`. A one-off icon glyph is not a typographic role, so it gets
+   *  a local face rather than a new `TYPE_SCALE` entry (R2 is scoped to roles) — the same
+   *  precedent as `app-tile.tsx`'s monogram faces. */
+  composerPlusGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 17, lineHeight: 17, fontWeight: '400' },
   sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 8, paddingBottom: 28 },
-  sheetTitle: { fontSize: 13, fontWeight: '700', textAlign: 'center', paddingVertical: 10 },
-  sheetRow: { paddingVertical: 15, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
-  sheetRowText: { fontSize: 16, fontWeight: '600' },
+  sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
+  sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
+  sheetRow: { paddingVertical: SPACING.md, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
 });

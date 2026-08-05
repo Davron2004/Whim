@@ -27,6 +27,9 @@ import { runGenerationClientTests } from './generation-client.suite';
 import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
 import { runGenerationRequestTests } from './generation-request.suite';
 import { runXhrTransportTests } from './xhr-transport.suite';
+import { runWhimProseTests } from './whim-prose.suite';
+import { runTileColourTests } from './tile-colour.suite';
+import { runOrbMenuTests } from './orb-menu.suite';
 
 const h = new Harness();
 
@@ -51,6 +54,9 @@ await runGenerationClientTests(h);
 await runPromptFlowWiringTests(h);
 await runGenerationRequestTests(h);
 await runXhrTransportTests(h);
+await runWhimProseTests(h);
+await runTileColourTests(h);
+await runOrbMenuTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

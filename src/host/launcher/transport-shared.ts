@@ -107,17 +107,45 @@ export function requestHeaders(opts: ClientOptions): Record<string, string> {
   return { 'content-type': 'application/json', 'x-whim-device': opts.deviceId };
 }
 
+/** route path only (no query/body) */
+function hostPortOf(baseUrl: string): string {
+  return baseUrl.replace(/^https?:\/\//, '');
+}
+
+/** Dev breadcrumb for every GenerationClientError mapping site across both transports.
+ *  NEVER pass prompt/body text, the x-whim-device value, or the API key here. */
+export function logMappedError(
+  path: string,
+  baseUrl: string,
+  kind: GenerationClientErrorKind,
+  detail?: { status?: number; readyState?: number; message?: string },
+): void {
+  console.log(
+    '[whim:gen]',
+    path,
+    hostPortOf(baseUrl),
+    `kind=${kind}`,
+    detail?.status !== undefined ? `status=${detail.status}` : 'status=-',
+    detail?.readyState !== undefined ? `readyState=${detail.readyState}` : 'readyState=-',
+    detail?.message ? `detail=${detail.message}` : 'detail=-',
+  );
+}
+
 /** Build the `GenerationClientError` for a non-ok `Response`: `device_id` when the body matches
  *  the device-identity middleware's `DeviceIdError` shape, `http` otherwise (carrying `hint`
- *  when the body has one, e.g. the `invalid_request` shape the route handlers return). */
-export async function httpErrorFrom(response: Response): Promise<GenerationClientError> {
+ *  when the body has one, e.g. the `invalid_request` shape the route handlers return). Logs a
+ *  `[whim:gen]` dev breadcrumb immediately before returning either mapped error (`logMappedError`
+ *  above), attributed to `path`/`baseUrl` so both transports' call sites are traceable. */
+export async function httpErrorFrom(response: Response, path: string, baseUrl: string): Promise<GenerationClientError> {
   const bodyJson: unknown = await response.json().catch(() => null);
   if (isDeviceIdError(bodyJson)) {
+    logMappedError(path, baseUrl, 'device_id', { status: response.status, message: bodyJson.hint });
     return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint });
   }
   const hint =
     bodyJson !== null && typeof bodyJson === 'object' && typeof (bodyJson as Record<string, unknown>).hint === 'string'
       ? ((bodyJson as Record<string, unknown>).hint as string)
       : undefined;
+  logMappedError(path, baseUrl, 'http', { status: response.status, message: hint });
   return new GenerationClientError('http', { status: response.status, hint });
 }

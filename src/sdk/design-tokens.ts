@@ -1,0 +1,299 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// vc-sdk — shell design tokens v2 (docs/design/README.md "Design tokens" / "Two systems, not
+// one"). A sibling of theme.ts, re-exported from it so every downstream file keeps importing
+// from a single surface (`../../sdk/theme`), same as before this redesign.
+// ─────────────────────────────────────────────────────────────────────────────
+// Pure data + one pure function. NO React import, NO DOM access, NO side effects.
+//
+// These are the SHELL's tokens: fixed, not themeable, identical on every device (the six theme
+// presets this module used to hold are cut — see theme.ts). Colour/radius/spacing/motion values
+// below are copied verbatim from the design doc's token tables; do not hand-tune them.
+//
+// TYPE_SCALE IS THE EXCEPTION, DELIBERATELY. Where the interactive mockups
+// (`docs/design/reference/Whim Mobile.dc.html`) disagree with the README token table, THE MOCKUPS
+// WIN — owner ruling R1, dated 2026-08-05, recorded in
+// `openspec/changes/fix-design-conformance/findings.md`. The mockups are the artifact the owner
+// reviewed and approved; splitting the difference per-value would leave the app matching neither
+// source. The specific divergences from the README table are:
+//   · `screenTitle` is 22, not the table's 26 (mockup `4a` :24 — the history/confirm-sheet title).
+//   · `body` is 13.5 / 1.55, not the table's 15 / 1.7 (mockup :64, :307; the sibling face at :41
+//     runs the same ratio one step down at 13 / 1.55, which R5's 13–13.5 range covers).
+//   · The README's "Screen title" row (26 / 1.15 / -0.025em) IS still implemented — under the name
+//     `stepTitle`. Ruling R11 split one token into two roles because the mockups run two title
+//     faces; `stepTitle` keeps the README row's values verbatim and `screenTitle` is the retargeted
+//     one. Do not read `screenTitle: 22` as the README row going unimplemented.
+//   · `headline`, `controlLabel`, `kindBadge`, `metaPlain`, `metaWide` have NO row in the README
+//     table at all; they exist only in the mockups, and they exist here because each is a distinct
+//     design role that screens were otherwise faking with the nearest legal token (ruling R2).
+// This is the reviewed state, not drift. Do NOT "correct" any of it back to the README table.
+//
+// NOT SETTLED — `kindBadge`, `metaWide`, `metaPlain` and `body` sit at the mockups' sizes, and the
+// mockups were only ever rendered in a desktop browser, never on a ~411dp Android device. Rulings
+// R4 and R5 bind all four to an explicit verdict in the on-device screenshot pass (R8). Until that
+// pass rules, they stay exactly as written: do not silently round them up.
+//
+// A generated mini-app never sees these values directly — the sandboxed WebView's CSP forbids
+// loading Instrument Sans/IBM Plex Mono/Newsreader remotely, and "two systems, not one" (design
+// doc) keeps the shell's fixed look and each app's own look deliberately un-unified. `appColor`
+// below is the one exception: a pure name->hue function shared by the shell's grid, tile
+// fallback, and the Whim Syntax prose renderer (`app` spans), so an app's tile and every prose
+// mention of it always agree.
+
+/** The shell palette (design doc "Colour — the shell"). Not themeable. */
+export const SHELL_COLORS = {
+  paper: '#fbfaf8',
+  surface: '#f1efea',
+  border: '#e0dcd4',
+  ink: '#17171a',
+  text: '#1c1917',
+  muted: '#6b6560',
+  faint: '#a8a29a',
+  accent: '#3f3d8f',
+  yours: '#a15c07',
+  yoursOnDark: '#e0a75e',
+} as const;
+
+/** The three reserved status hues (design doc "Colour — status") — global vocabulary, never
+ *  claimable as a generated app's primary colour. `working` and `done` share one hue. */
+export const STATUS_COLORS = {
+  working: '#0d9488',
+  done: '#0d9488',
+  broken: '#b91c1c',
+  waiting: '#c9c3b8',
+} as const;
+
+/** The same three, recoloured for legibility on an `ink` background. */
+export const STATUS_COLORS_ON_INK = {
+  working: '#2dd4bf',
+  done: '#2dd4bf',
+  broken: '#f87171',
+  waiting: '#c9c3b8',
+} as const;
+
+/**
+ * The `4a` history-row kind-badge hues (design prototype, `Whim Mobile.dc.html` §4a) — byte-exact
+ * literals lifted from the prototype, not derived from `SHELL_COLORS`/`STATUS_COLORS`. Scoped to
+ * this ONE surface (the history screen's per-row kind badge), not a second general-purpose
+ * palette. `Added`'s foreground is deliberately `#0d9488` — the same hue as the reserved
+ * `working`/`done` status colour — because the design prototype uses it there on purpose (a kind
+ * badge is a categorical label, not "a non-status role or a mini-app's declared colour" per
+ * `sdk-design-system`'s reserved-hue requirement, which this exemption records). Do not extend
+ * this reuse to any other role. Keyed by the wire `SummaryKind` string values, kept as plain
+ * string literals rather than importing the type from `@whim/contract` — this module stays free
+ * of any contract/zod dependency. */
+export const KIND_BADGE_COLORS: Record<
+  'Start' | 'Added' | 'Changed' | 'Removed' | 'Look' | 'Fixed',
+  { bg: string; fg: string }
+> = {
+  Start: { bg: 'rgba(28,25,23,.1)', fg: '#1c1917' },
+  Added: { bg: 'rgba(13,148,136,.12)', fg: '#0d9488' },
+  Changed: { bg: 'rgba(63,61,143,.12)', fg: '#3f3d8f' },
+  Removed: { bg: 'rgba(107,101,96,.14)', fg: '#6b6560' },
+  Look: { bg: 'rgba(124,58,237,.12)', fg: '#7c3aed' },
+  Fixed: { bg: 'rgba(180,83,9,.12)', fg: '#b45309' },
+} as const;
+
+/** The shell's radius scale (design doc "Radius"), one value per named UI element — not a
+ *  generic none/sm/md/lg/full ramp. Pixels. */
+export const RADIUS = {
+  chip: 999,
+  field: 14,
+  card: 18,
+  tile: 22,
+  sheet: 28,
+} as const;
+
+/** The shell's spacing scale (design doc "Spacing"). Pixels. */
+export const SPACING = {
+  xs: 8,
+  sm: 12,
+  md: 16,
+  lg: 22,
+  xl: 34,
+} as const;
+
+/** Motion constants (design doc "Motion"). `breathe` is the only loading motion — no shimmer,
+ *  no travelling gradient. Consumers translate `easing`/`durationMs` into whatever animation
+ *  primitive they use (RN `Animated`, Reanimated, CSS) — this module stays platform-neutral.
+ *  There is deliberately no `orbWheel` entry: this change ships no wheel geometry at all (design
+ *  D12 / `app-launcher` negative requirement — press-and-hold arming, directional flick, wedge
+ *  geometry). `sheetRise` is consumed by the orb menu's own entrance animation
+ *  (`src/host/launcher/Orb.tsx`). */
+export const MOTION = {
+  breathe: { durationMs: 1900, easing: 'ease-in-out', opacityFrom: 0.34, opacityTo: 0.72 },
+  sheetRise: { durationMs: 260, easing: 'cubic-bezier(.2,.8,.2,1)' },
+} as const;
+
+/** Android asset filenames (android/app/src/main/assets/fonts/, canonical copies in
+ *  assets/fonts/) — RN/Android resolves `fontFamily` by exact file base name, never the family
+ *  display name. Newsreader ships only as its italic style (design doc: "Newsreader Italic —
+ *  Only the user's own quoted words. Never upright."). */
+export const FONT_FAMILY = {
+  sansRegular: 'InstrumentSans-Regular',
+  sansMedium: 'InstrumentSans-Medium',
+  sansSemiBold: 'InstrumentSans-SemiBold',
+  sansBold: 'InstrumentSans-Bold',
+  monoRegular: 'IBMPlexMono-Regular',
+  monoMedium: 'IBMPlexMono-Medium',
+  serifItalic: 'Newsreader-Italic',
+} as const;
+
+/** Field names match RN `TextStyle` exactly (fontFamily/fontSize/lineHeight/letterSpacing/
+ *  fontWeight/fontStyle/textTransform/color) so a consumer can spread a `TYPE_SCALE` entry
+ *  straight into a `Text` style array. This module does not import `react-native` (kept
+ *  platform-neutral, D4) — the shape is structural, not a real `TextStyle` import. */
+export interface TypeFace {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  fontWeight?: '400' | '500' | '600' | '700';
+  fontStyle?: 'italic';
+  textTransform?: 'uppercase';
+  color?: string;
+}
+
+/** The type scale. `em` letter-spacing values are pre-multiplied into px at each face's own size
+ *  (RN `letterSpacing` is absolute px, not em); `lineHeight` is `fontSize × ratio`, left unrounded.
+ *  Sources are mixed by ruling R1 (see the module header): faces with a README token-table row keep
+ *  it unless a mockup contradicts it, in which case the mockup wins; five roles below (`headline`,
+ *  `controlLabel`, `kindBadge`, `metaPlain`, `metaWide`) exist only in the mockups, and `stepTitle`
+ *  is the README's "Screen title" row carried over verbatim under a new name after R11 split that
+ *  one token into two roles. `eyebrow` has no ratio in the doc, so its `1.2` is this module's own
+ *  reasonable default, not a design-doc value.
+ *
+ *  This union is the only enumeration of type roles in the repo — extend it in lockstep with the
+ *  object below, and keep each new role beside its family. */
+export const TYPE_SCALE: Record<
+  | 'display'
+  | 'headline'
+  | 'screenTitle'
+  | 'stepTitle'
+  | 'metric'
+  | 'body'
+  | 'bodyEmphatic'
+  | 'caption'
+  | 'controlLabel'
+  | 'eyebrow'
+  | 'kindBadge'
+  | 'metaPlain'
+  | 'metaWide'
+  | 'quote',
+  TypeFace
+> = {
+  display: { fontFamily: FONT_FAMILY.sansBold, fontSize: 34, lineHeight: 34, letterSpacing: -1.02, fontWeight: '700' },
+  // The compose headline (mockup :417). No README table row.
+  headline: { fontFamily: FONT_FAMILY.sansBold, fontSize: 30, lineHeight: 33.6, letterSpacing: -0.75, fontWeight: '700' },
+  // R1/R11: 22, not the table's 26. Scoped to the history title and the confirm-sheet title
+  // (mockup :24, :63) — the flow steps' larger title face is `stepTitle` below, not this.
+  screenTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
+  // R11: the flow-step title face (mockup :443, :475, :498), and the README table's "Screen title"
+  // row (26 / 1.15 / -0.025em) verbatim. Byte-identical to what `screenTitle` held before the
+  // retarget, so every site repointed here renders unchanged.
+  stepTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
+  metric: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
+  // R1/R5: 13.5 / 1.55 per the mockups, not the table's 15 / 1.7. `20.925` is the exact product —
+  // do not round it. NOT SETTLED: deferred to the on-device pass (R8); `body` also sizes two
+  // `TextInput`s, so it shrinks what the user types, not just what they read (R13).
+  body: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 13.5, lineHeight: 20.925, letterSpacing: 0, fontWeight: '400' },
+  // Deliberately NOT retargeted with `body`: the design really does run a 500/15 face beside the
+  // 400/13.5 one (mockup :39).
+  bodyEmphatic: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 15, lineHeight: 25.5, letterSpacing: 0, fontWeight: '500' },
+  caption: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 12, lineHeight: 18.6, letterSpacing: 0, fontWeight: '400' },
+  // Back labels and answer pills (mockup :413, :439, :451, :471). No README table row.
+  controlLabel: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 13, lineHeight: 13, letterSpacing: 0, fontWeight: '500' },
+  eyebrow: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 10.5, lineHeight: 12.6, letterSpacing: 1.47, fontWeight: '500', textTransform: 'uppercase' },
+  // ── mono microcopy (R2/R17): three distinct faces the history screen was previously collapsing
+  // onto `eyebrow`. All three are NOT SETTLED — R4 defers their sizes to the on-device pass.
+  // ASSET GAP, flagged not fixed: `kindBadge` wants mono 600 and only IBM Plex Mono Regular and
+  // Medium ship (assets/fonts/), so Android synthesizes the weight off `monoMedium`. Naming a
+  // nonexistent `IBMPlexMono-SemiBold` would fall back to the system font silently — RN resolves
+  // `fontFamily` by exact file base name. Judged in the R8 pass.
+  kindBadge: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
+  // The undecorated one (mockup :35, :36 — "when"/"version"): no uppercase, no tracking, on purpose.
+  metaPlain: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10.5, lineHeight: 10.5, letterSpacing: 0, fontWeight: '400' },
+  metaWide: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
+  quote: { fontFamily: FONT_FAMILY.serifItalic, fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
+};
+
+/** The mini-app SDK's generic radius scale (`tokens.ts#radius()`, `RadiusToken`). Independent
+ *  of the shell's own named radius steps above (`RADIUS`) — a generated app is free-form ("no
+ *  contract, no slot count, no approved palette", design doc "Two systems, not one"). Values
+ *  carried over unchanged from the pre-v2 per-shape model (its `soft` shape, the old default) —
+ *  the shape dimension itself is gone along with the presets it came from. */
+export interface MiniAppRadiusScale {
+  none: string;
+  sm: string;
+  md: string;
+  lg: string;
+  full: string;
+}
+
+export const RADIUS_SCALE: MiniAppRadiusScale = {
+  none: '0',
+  sm: '6px',
+  md: '12px',
+  lg: '20px',
+  full: '999px',
+};
+
+// ── appColor ──────────────────────────────────────────────────────────────────
+// A fixed palette of saturated hues, deliberately excluding every reserved shell meaning: the
+// three status hues (in both their paper- and ink-background forms), the accent, and `yours`.
+// Reusing any of those for an app's identity colour would let a generated app's tile accidentally
+// claim a shell meaning it doesn't have (design doc "Colour — status": "a generated mini-app may
+// not claim these as its primary colour, or the meanings leak").
+
+const RESERVED_APP_COLORS: ReadonlySet<string> = new Set(
+  [
+    STATUS_COLORS.working,
+    STATUS_COLORS.broken,
+    STATUS_COLORS.waiting,
+    STATUS_COLORS_ON_INK.working,
+    STATUS_COLORS_ON_INK.broken,
+    SHELL_COLORS.accent,
+    SHELL_COLORS.yours,
+    SHELL_COLORS.yoursOnDark,
+  ].map((hex) => hex.toLowerCase()),
+);
+
+/** A small, legible, saturated palette — deliberately clear of the reserved hues above. Index
+ *  chosen deterministically by app name in `appColor`. */
+const APP_COLOR_PALETTE: readonly string[] = [
+  '#2563eb', // blue
+  '#0284c7', // sky
+  '#ca8a04', // gold
+  '#f97316', // orange
+  '#65a30d', // olive
+  '#16a34a', // green
+  '#db2777', // magenta
+  '#c026d3', // fuchsia
+  '#475569', // slate
+  '#0f766e', // deep teal — distinct hue-family from the reserved `working`/`done` teal
+];
+
+if (APP_COLOR_PALETTE.some((hex) => RESERVED_APP_COLORS.has(hex.toLowerCase()))) {
+  // Should be unreachable — a guard against a future hand-edit reintroducing a reserved hue.
+  throw new Error('appColor palette collides with a reserved shell hue');
+}
+
+/** A stable string hash (djb2). Same name -> same number, every run. */
+function hashName(name: string): number {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) {
+    // eslint-disable-next-line no-bitwise
+    h = ((h << 5) + h + (name.codePointAt(i) ?? 0)) >>> 0;
+  }
+  return h;
+}
+
+/**
+ * A pure, deterministic name -> colour mapping (placement pin: lives in the SDK theme module;
+ * the home grid, the tile fallback, and the Whim Syntax prose renderer's `app` spans all import
+ * this one symbol, so an app's tile and every prose mention of it always agree). Draws from a
+ * fixed palette that excludes the three status hues, the accent, and the `yours` brown — see
+ * `APP_COLOR_PALETTE` above.
+ */
+export function appColor(name: string): string {
+  return APP_COLOR_PALETTE[hashName(name) % APP_COLOR_PALETTE.length];
+}

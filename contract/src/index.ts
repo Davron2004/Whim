@@ -55,7 +55,12 @@ const SchemaShape = z.record(z.string(), z.unknown());
 /** The verified-bundle payload a generation delivers. Deliberately install-state-FREE: no app-id,
  *  install timestamp, or launcher position. The *stored* record (those fields) is the launcher's
  *  concern (#5); the *wire* record is this contract's. P3: the stored record adds install state on
- *  top of this set — the only naming seam is wire `schema` ↔ stored `schemaArtifact`. */
+ *  top of this set — the only naming seam is wire `schema` ↔ stored `schemaArtifact`.
+ *
+ *  An app's declared tile colour rides INSIDE `manifest` (`manifest.tileColor`, a `#rrggbb`
+ *  literal) — the same statically extracted structure that already carries capabilities — and is
+ *  deliberately NOT a second top-level field: manifest data has exactly one source. `manifest`
+ *  stays an untyped record on the wire; the host validates the colour where it consumes it. */
 export const WireAppRecord = z.object({
   name: z.string(),
   source: z.string(),
@@ -66,8 +71,42 @@ export const WireAppRecord = z.object({
 });
 export type WireAppRecord = z.infer<typeof WireAppRecord>;
 
+/** One answered clarify question, carried BY VALUE into the generate/rewrite request: the server
+ *  holds no per-device state between the clarify exchange and the request that follows it. The
+ *  `question` text rides along so a server never has to look one up. */
+export const Clarification = z.object({
+  id: z.string(),
+  question: z.string(),
+  answer: z.string(),
+});
+export type Clarification = z.infer<typeof Clarification>;
+
+/** One question the clarify exchange asks, with the answer options the device renders as
+ *  single-select pills. `options` is non-empty: a question with nothing to pick is not a question. */
+export const ClarifyQuestion = z.object({
+  id: z.string(),
+  question: z.string(),
+  options: z.array(z.string()).min(1),
+});
+export type ClarifyQuestion = z.infer<typeof ClarifyQuestion>;
+
+/** `POST /v1/clarify` request. Unary — clarify happens BEFORE any generation request exists, so it
+ *  is deliberately NOT a `GenerationEvent` stage and opens no stream (design D1). */
+export const ClarifyRequest = z.object({ prompt: z.string() });
+export type ClarifyRequest = z.infer<typeof ClarifyRequest>;
+
+/** `POST /v1/clarify` response: an ORDERED list of AT MOST THREE questions. An empty list is valid
+ *  and means "nothing needs clarifying" — the common case, a success, never a degraded mode. Four
+ *  or more questions fails to parse. */
+export const ClarifyResponse = z.object({ questions: z.array(ClarifyQuestion).max(3) });
+export type ClarifyResponse = z.infer<typeof ClarifyResponse>;
+
 /** Generation request. The edit flow re-sends the FULL current source inside `app` (never a wire
  *  diff — Model 1, #33).
+ *
+ *  `clarifications` is OPTIONAL: the answers the user gave to the clarify exchange's questions.
+ *  Absent and empty both mean "the user answered nothing" — a legitimate, common state (the user
+ *  skipped, or the clarifier had nothing to ask).
  *
  *  `app.source` is OPTIONAL (#52-D5 / D14): it carries the app's original TypeScript when the
  *  device has it. Its absence means exactly "the device has no original source for this app" —
@@ -83,6 +122,7 @@ export type WireAppRecord = z.infer<typeof WireAppRecord>;
  *  that can legitimately differ. */
 export const GenerateRequest = z.object({
   prompt: z.string(),
+  clarifications: z.array(Clarification).optional(),
   app: z
     .object({
       source: z.string().optional(),
@@ -94,11 +134,59 @@ export const GenerateRequest = z.object({
 });
 export type GenerateRequest = z.infer<typeof GenerateRequest>;
 
-/** Rewrite is fast and unary — plain JSON, no stream. */
-export const RewriteRequest = z.object({ prompt: z.string() });
+/** Rewrite is fast and unary — plain JSON, no stream. `clarifications` carries the clarify
+ *  exchange's answers so the rewrite (and the plan rows it returns) reflect them; absent and empty
+ *  both mean "the user answered nothing". */
+export const RewriteRequest = z.object({
+  prompt: z.string(),
+  clarifications: z.array(Clarification).optional(),
+});
 export type RewriteRequest = z.infer<typeof RewriteRequest>;
-export const RewriteResponse = z.object({ rewrittenPrompt: z.string() });
+
+/** One labelled row of the plan the device renders as its approval gate (design D10). */
+export const PlanRow = z.object({ label: z.string(), text: z.string() });
+export type PlanRow = z.infer<typeof PlanRow>;
+
+/** `plan` is OPTIONAL: its absence means "this server produced no structured breakdown", and the
+ *  device renders `rewrittenPrompt` as a single row — so a server that returns no rows (and an
+ *  empty list, which means the same thing) stays conforming. */
+export const RewriteResponse = z.object({
+  rewrittenPrompt: z.string(),
+  plan: z.array(PlanRow).optional(),
+});
 export type RewriteResponse = z.infer<typeof RewriteResponse>;
+
+/** The closed set of change kinds the device groups history by. Closed on purpose: a history
+ *  screen groups by these and nothing else. */
+export const SummaryKind = z.enum(['Start', 'Added', 'Changed', 'Removed', 'Look', 'Fixed']);
+export type SummaryKind = z.infer<typeof SummaryKind>;
+
+/** One highlight span over the summary's OWN `text`: `start`/`end` are character offsets into
+ *  `text` (`end` exclusive), never into anything else. `chg` marks what changed, `hedge` marks the
+ *  part the summariser is unsure about.
+ *
+ *  The producer-side budget — offsets in bounds, no two marks overlapping, at most one `chg` and
+ *  one `hedge` per sentence — is enforced by the PRODUCER (see the `generation-pipeline` spec), not
+ *  by this schema: a client must stay correct against a producer that violates it, which it cannot
+ *  do if the whole terminal event fails to parse. The renderer enforces its display caps
+ *  independently. */
+export const SummaryMark = z.object({
+  cls: z.enum(['chg', 'hedge']),
+  start: z.number().int(),
+  end: z.number().int(),
+});
+export type SummaryMark = z.infer<typeof SummaryMark>;
+
+/** The post-run summariser's output, carried ON the terminal `result` event and nowhere else
+ *  (design D2) — never its own event, never before the terminal, never on a run that produced no
+ *  record. `touched` names the plain-words AREAS a change affected (never file names or symbols). */
+export const RunSummary = z.object({
+  text: z.string(),
+  kind: SummaryKind,
+  touched: z.array(z.string()),
+  marks: z.array(SummaryMark),
+});
+export type RunSummary = z.infer<typeof RunSummary>;
 
 /** The SSE payload — a discriminated union on `type`. Unknown `type` is rejected (clients can trust
  *  the union is closed at a given contract version). `usage` is emitted before the terminal event on
@@ -113,7 +201,9 @@ export const GenerationEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('token'), text: z.string() }),
   z.object({ type: z.literal('diagnostic'), diagnostic: Diagnostic }),
   z.object({ type: z.literal('usage'), usage: Usage }),
-  z.object({ type: z.literal('result'), app: WireAppRecord }),
+  // `summary` is OPTIONAL so the stub pipeline, a server whose summariser failed, and an older
+  // server all stay conforming — a device is never blocked on its presence.
+  z.object({ type: z.literal('result'), app: WireAppRecord, summary: RunSummary.optional() }),
   z.object({
     type: z.literal('failure'),
     reason: z.string(),

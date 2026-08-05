@@ -1,7 +1,7 @@
 /**
  * static-check-pipeline — manifest extraction pass (task 5.1, spec "The app manifest is
  * extracted statically, literal-only"). Reads the single default-exported `defineApp({...})`
- * literal into `{name, initial, screens, capabilities, schema}`; any field that is not
+ * literal into `{name, initial, screens, capabilities, schema, tileColor}`; any REQUIRED field that is not
  * statically analyzable produces a `manifest_not_static` error. `ctx.manifest` is set ONLY
  * when the four required fields (name/initial/screens/capabilities) all extract cleanly —
  * `schema` stays optional (its own extraction failure is reported but does not block the rest
@@ -123,6 +123,20 @@ function extractSchemaField(
   return { ok: true, value: resolved.value };
 }
 
+/**
+ * `tileColor` is optional AND non-blocking: an absent or non-string-literal declaration extracts
+ * nothing and raises no diagnostic (the sdk-design-system spec: "a declared colour that is absent,
+ * not a valid hex, or equal to a reserved hue SHALL be treated as no declaration"). Only the
+ * literal value is lifted here — hex validity and the reserved-hue rule belong to whoever consumes
+ * the manifest, not to the parse.
+ */
+function extractTileColorField(obj: ts.ObjectLiteralExpression): string | undefined {
+  const prop = getProperty(obj, 'tileColor');
+  if (!prop || !ts.isPropertyAssignment(prop)) return undefined;
+  const conv = literalToJson(prop.initializer);
+  return conv.ok && typeof conv.value === 'string' ? conv.value : undefined;
+}
+
 export const manifestExtractionPass: Pass = (ctx: CheckContext) => {
   const { sourceFile } = ctx;
   const lookup = findDefineAppExport(sourceFile);
@@ -146,6 +160,7 @@ export const manifestExtractionPass: Pass = (ctx: CheckContext) => {
   const screens = extractScreensField(sourceFile, argument, errors);
   const capabilities = extractCapabilitiesField(sourceFile, argument, errors);
   const schema = extractSchemaField(sourceFile, argument, errors);
+  const tileColor = extractTileColorField(argument);
 
   for (const e of errors) ctx.report(e);
 
@@ -156,6 +171,7 @@ export const manifestExtractionPass: Pass = (ctx: CheckContext) => {
       screens: screens.value,
       capabilities: capabilities.value,
       ...(schema.ok ? { schema: schema.value } : {}),
+      ...(tileColor !== undefined ? { tileColor } : {}),
     };
   }
 };

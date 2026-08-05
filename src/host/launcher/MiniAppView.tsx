@@ -3,8 +3,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // One WebView == one realm == one app (#41 D2). The bundle is delivered BY SOURCE from the
 // installed record's active version-store snapshot (#5 D3) — the iframe-side contract is
-// byte-identical to the baked path. The floating affordance (D5) and Android system back (D4)
-// both exit to the launcher; the realm can reach neither. LauncherRoot keys this component by
+// byte-identical to the baked path. The orb menu's Home action (D5, shell-redesign-v2 D12) and
+// Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
+// keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -15,7 +16,7 @@ import type { WhimTheme } from '../../sdk/theme';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
 import { COPY } from './copy';
-import FloatingExit from './FloatingExit';
+import Orb from './Orb';
 
 export interface MiniAppViewProps {
   record: AppRecord;
@@ -25,9 +26,22 @@ export interface MiniAppViewProps {
   /** The resolved launcher theme, forwarded opaquely into delivery (design sdk-design-system D8). */
   theme: WhimTheme;
   onExit: () => void;
+  /** Orb "Versions" — opens the real History screen for this running app. */
+  onVersions: () => void;
+  /** Orb "Change it" — opens the compose step prefilled for this running app (same path
+   *  History's own "Change it from here" row action uses). */
+  onChangeIt: () => void;
 }
 
-export default function MiniAppView({ record, bundleSource, engineAppId, theme, onExit }: Readonly<MiniAppViewProps>) {
+export default function MiniAppView({
+  record,
+  bundleSource,
+  engineAppId,
+  theme,
+  onExit,
+  onVersions,
+  onChangeIt,
+}: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
   const bg = shellPalette(theme).bg;
@@ -70,7 +84,7 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
         setSupportMultipleWindows={false}
         onError={(ev) => console.log('[whim] webview error', JSON.stringify(ev.nativeEvent))}
       />
-      <FloatingExit onPress={host.exit} />
+      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>
   );
 }
