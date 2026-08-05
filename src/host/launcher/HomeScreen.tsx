@@ -23,28 +23,19 @@ import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
+import {
+  HOME_GRID_COLUMN_GAP,
+  HOME_GRID_ROW_GAP,
+  HOME_GRID_SIDE_PADDING,
+  homeGridCellWidth,
+} from './home-grid';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
 
-/** The grid's own geometry. Tile size itself is `AppTile`'s exported constant, never restated. */
-export const HOME_GRID_COLUMNS = 3;
-export const HOME_GRID_COLUMN_GAP = 14;
-export const HOME_GRID_ROW_GAP = 18;
-
-/** The grid is `grid-template-columns:repeat(3,1fr)` (design html:388) — it fills the frame, so a
- *  tile is not a fixed 88. One row is the frame minus the scroll wrapper's `SPACING.lg` on each
- *  side minus the two column gaps, split three ways: the design's 390pt frame yields exactly the
- *  106 the mockup renders. Pure (frame width in, cell width out) so the arithmetic is checkable
- *  without rendering RN.
- *
- *  A degenerate frame — 0 before the first layout pass, or a device narrower than the chrome it
- *  subtracts — falls back to `APP_TILE_SIZE` rather than laying tiles out at zero, a negative
- *  width, or NaN. */
-export function homeGridCellWidth(frameWidth: number): number {
-  const gutters = 2 * SPACING.lg + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
-  const cell = (frameWidth - gutters) / HOME_GRID_COLUMNS;
-  return Number.isFinite(cell) && cell > 0 ? cell : APP_TILE_SIZE;
-}
+/** The grid's geometry and its cell-width derivation live in `home-grid.ts` — a module free of
+ *  `react-native` so the arithmetic that decides whether the row wraps can be tested under Node.
+ *  Re-exported here so `LauncherRoot.tsx` keeps importing them from the screen that owns them. */
+export { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP, HOME_GRID_ROW_GAP } from './home-grid';
 
 export interface HomeScreenProps {
   apps: InstalledApp[];
@@ -71,7 +62,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
   const p = shellPalette(theme);
-  const cellWidth = homeGridCellWidth(useWindowDimensions().width);
+  const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
   const confirmDelete = (app: InstalledApp) => {
     setSelected(null);
@@ -95,7 +86,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
           accessibilityLabel={COPY.settingsTitle}
           style={[styles.settingsBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{'⚙'}</Text>
+          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -195,8 +186,14 @@ const styles = StyleSheet.create({
   headerText: { flexShrink: 1 },
   eyebrow: { marginTop: SPACING.xs },
   settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  // `paddingHorizontal` here is the term `homeGridCellWidth` subtracts — keep the two in step.
-  scroll: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg, flexGrow: 1 },
+  /** design html:385 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
+   *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height
+   *  into a 38x38 circle the design gives `/1`. A one-off icon glyph is not a typographic role, so
+   *  it takes a local face, exactly like `composerPlusGlyph` below (V2). */
+  settingsGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 16, lineHeight: 16, fontWeight: '400' },
+  // `paddingHorizontal` is the term `homeGridCellWidth` subtracts — read from the one constant so
+  // the two cannot drift (a drift here overflows the row and wraps the grid to two columns).
+  scroll: { paddingHorizontal: HOME_GRID_SIDE_PADDING, paddingBottom: SPACING.lg, flexGrow: 1 },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

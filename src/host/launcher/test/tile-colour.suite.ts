@@ -12,6 +12,12 @@ import * as path from 'node:path';
 import { Harness } from './harness';
 import { tileColor } from '../tiles';
 import { liftManifestTileColor } from '../manifest-tile-color';
+import {
+  HOME_GRID_COLUMNS,
+  HOME_GRID_COLUMN_GAP,
+  HOME_GRID_SIDE_PADDING,
+  homeGridCellWidth,
+} from '../home-grid';
 import { appColor, STATUS_COLORS, STATUS_COLORS_ON_INK, SHELL_COLORS } from '../../../sdk/theme';
 import { lexProse } from '../../ui/whim-prose/lex';
 import type { AppManifest } from '../../bridge/contract';
@@ -220,6 +226,74 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     const secondary = height('secondary');
     h.eq(primary, secondary, 'the two stacked actions are never a mismatched pair');
     h.eq(primary, '52', 'and both stand at the design’s 52 (html:527-528)');
+  });
+
+  // ── AppTile `width` — the grid dimension, orthogonal to the `done` variant (ruling R23) ──
+  await h.test('AppTile: `width` is optional, and omitting it keeps the default 88 geometry', async () => {
+    const src = read('app-tile.tsx');
+    h.ok(/\bwidth\?: number;/.test(src), '`width` is an OPTIONAL second prop, never a widening of `size`');
+    h.ok(!/size\?:[^;]*number/.test(src), '`size` stays the variant selector and never also means "how wide"');
+    // The guarantee L2 owed every existing caller: pass no `width` and nothing moves. 88 is
+    // supplied by the default parameter, so `root`/`tile` resolve exactly what the removed
+    // `width: APP_TILE_SIZE` / `height: APP_TILE_SIZE` style entries used to.
+    h.ok(/width = APP_TILE_SIZE \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
+    h.ok(/const fluidRoot = isDone \? null : \{ width \};/.test(src), 'the root takes its width from the prop');
+    h.ok(/const fluidTile = isDone \? null : \{ width, height: width \};/.test(src), 'and the tile stays square at that width');
+    // Ruling R23's stated precedence: the done tile is a fixed 120x120 preset and IGNORES `width`.
+    // Both overrides are `null` there, so `rootDone`/`tileDone` remain its only geometry — the
+    // outcome is decided in the code, not by where the overrides sit in the style arrays.
+    h.ok(!/width: APP_TILE_SIZE/.test(src), 'no style entry restates the size the prop now carries');
+  });
+
+  await h.test('HomeScreen: the grid asks for a cell width and hands the same value to the tile', async () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/HomeScreen.tsx'), 'utf8');
+    h.ok(/homeGridCellWidth\(useWindowDimensions\(\)\.width, APP_TILE_SIZE\)/.test(src), 'the frame width drives the cell, falling back to the tile default');
+    h.ok(/style=\{\{ width: cellWidth \}\}/.test(src), 'the grid cell is that width');
+    h.ok(/<AppTile name=\{app\.name\} manifest=\{app\.record\.manifest\} width=\{cellWidth\} \/>/.test(src), 'and the tile fills it — never an 88 tile left-aligned in a wider box');
+    h.ok(/paddingHorizontal: HOME_GRID_SIDE_PADDING/.test(src), 'the padding the derivation subtracts is the padding the style applies');
+  });
+
+  // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────
+  const FALLBACK = 88; // stands in for APP_TILE_SIZE, which lives in an RN module Node cannot load
+
+  await h.test('homeGridCellWidth: the design’s 390 frame yields the 106 the mockup renders', async () => {
+    // repeat(3,1fr) across 390 minus 22 either side minus two 14 gaps = 318, split three ways.
+    h.eq(homeGridCellWidth(390, FALLBACK), 106, 'the mockup’s own frame reproduces the mockup’s own tile');
+    h.ok(homeGridCellWidth(390, FALLBACK) > FALLBACK, 'and it is genuinely wider than the fixed 88 this replaces');
+  });
+
+  await h.test('homeGridCellWidth: a wider device gets proportionally wider tiles', async () => {
+    h.eq(homeGridCellWidth(411, FALLBACK), 113, 'a 411dp Android frame divides exactly');
+    h.ok(homeGridCellWidth(411, FALLBACK) > homeGridCellWidth(390, FALLBACK), 'wider frame, wider tile — the grid is fluid, not capped');
+  });
+
+  await h.test('homeGridCellWidth: a frame that does not divide evenly is FLOORED, never rounded up', async () => {
+    // 412 - 44 - 28 = 340; 340/3 = 113.33... Rounding up (or leaving the fraction) can put
+    // 3 tiles + 2 gaps over the row, and the grid is flexWrap:'wrap' — an overflow of any size
+    // drops the third tile onto its own row. Flooring gives up <=2dp at the right edge instead.
+    h.eq(homeGridCellWidth(412, FALLBACK), 113, '113.33 floors to 113');
+    h.eq(homeGridCellWidth(413, FALLBACK), 113, '113.66 floors to 113 as well — never 114');
+  });
+
+  await h.test('homeGridCellWidth: three tiles plus two gaps never overflow the row, at any width', async () => {
+    for (let frame = 240; frame <= 1280; frame++) {
+      const cell = homeGridCellWidth(frame, FALLBACK);
+      if (cell === FALLBACK) continue; // degenerate frames fall back and are covered below
+      const row = HOME_GRID_COLUMNS * cell + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
+      h.ok(row <= frame - 2 * HOME_GRID_SIDE_PADDING, `frame ${frame}: a row of ${HOME_GRID_COLUMNS} fits without wrapping`);
+      h.eq(cell, Math.floor(cell), `frame ${frame}: the width is whole dp`);
+    }
+  });
+
+  await h.test('homeGridCellWidth: a degenerate frame falls back, never <= 0 and never NaN', async () => {
+    // 0 is what a window-dimensions read can hand back before the first layout pass; a frame
+    // narrower than the chrome being subtracted makes the subtraction negative.
+    for (const frame of [0, -1, 40, 71, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const cell = homeGridCellWidth(frame, FALLBACK);
+      h.eq(cell, FALLBACK, `frame ${frame} falls back to the tile default`);
+      h.ok(Number.isFinite(cell) && cell > 0, `frame ${frame} never yields NaN or a non-positive width`);
+    }
+    h.eq(homeGridCellWidth(0, 999), 999, 'the fallback returned is the caller’s, not a second hardcoded 88');
   });
 
   // A prior version of this suite had a test named "AppTile: exports its size constants and no
