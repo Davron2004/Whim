@@ -53,7 +53,11 @@ export default function SettingsScreen({
         <TouchableOpacity onPress={onBack} hitSlop={10} style={styles.backBtn}>
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{'‹ ' + COPY.backLabel}</Text>
         </TouchableOpacity>
-        <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
+        {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
+            retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
+            screen has no mockup and no design basis for shrinking. `stepTitle` holds the numbers
+            `screenTitle` used to, so this renders exactly as it does today. */}
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
