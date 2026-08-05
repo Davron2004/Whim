@@ -16,11 +16,15 @@
 // reviewed and approved; splitting the difference per-value would leave the app matching neither
 // source. The specific divergences from the README table are:
 //   · `screenTitle` is 22, not the table's 26 (mockup `4a` :24 — the history/confirm-sheet title).
-//   · `body` is 13.5 / 1.55, not the table's 15 / 1.7 (mockup :41, :64, :307).
-//   · `headline`, `stepTitle`, `controlLabel`, `kindBadge`, `metaPlain`, `metaWide` have NO row in
-//     the README table at all; they exist only in the mockups, and they exist here because each is
-//     a distinct design role that screens were otherwise faking with the nearest legal token
-//     (ruling R2).
+//   · `body` is 13.5 / 1.55, not the table's 15 / 1.7 (mockup :64, :307; the sibling face at :41
+//     runs the same ratio one step down at 13 / 1.55, which R5's 13–13.5 range covers).
+//   · The README's "Screen title" row (26 / 1.15 / -0.025em) IS still implemented — under the name
+//     `stepTitle`. Ruling R11 split one token into two roles because the mockups run two title
+//     faces; `stepTitle` keeps the README row's values verbatim and `screenTitle` is the retargeted
+//     one. Do not read `screenTitle: 22` as the README row going unimplemented.
+//   · `headline`, `controlLabel`, `kindBadge`, `metaPlain`, `metaWide` have NO row in the README
+//     table at all; they exist only in the mockups, and they exist here because each is a distinct
+//     design role that screens were otherwise faking with the nearest legal token (ruling R2).
 // This is the reviewed state, not drift. Do NOT "correct" any of it back to the README table.
 //
 // NOT SETTLED — `kindBadge`, `metaWide`, `metaPlain` and `body` sit at the mockups' sizes, and the
@@ -152,9 +156,11 @@ export interface TypeFace {
 /** The type scale. `em` letter-spacing values are pre-multiplied into px at each face's own size
  *  (RN `letterSpacing` is absolute px, not em); `lineHeight` is `fontSize × ratio`, left unrounded.
  *  Sources are mixed by ruling R1 (see the module header): faces with a README token-table row keep
- *  it unless a mockup contradicts it, in which case the mockup wins; six roles below exist only in
- *  the mockups. `eyebrow` has no ratio in the doc, so its `1.2` is this module's own reasonable
- *  default, not a design-doc value.
+ *  it unless a mockup contradicts it, in which case the mockup wins; five roles below (`headline`,
+ *  `controlLabel`, `kindBadge`, `metaPlain`, `metaWide`) exist only in the mockups, and `stepTitle`
+ *  is the README's "Screen title" row carried over verbatim under a new name after R11 split that
+ *  one token into two roles. `eyebrow` has no ratio in the doc, so its `1.2` is this module's own
+ *  reasonable default, not a design-doc value.
  *
  *  This union is the only enumeration of type roles in the repo — extend it in lockstep with the
  *  object below, and keep each new role beside its family. */
@@ -181,8 +187,9 @@ export const TYPE_SCALE: Record<
   // R1/R11: 22, not the table's 26. Scoped to the history title and the confirm-sheet title
   // (mockup :24, :63) — the flow steps' larger title face is `stepTitle` below, not this.
   screenTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 22, lineHeight: 25.3, letterSpacing: -0.44, fontWeight: '700' },
-  // R11: the flow-step title face (mockup :443, :475, :498). Byte-identical to what `screenTitle`
-  // held before the retarget, so every site repointed here renders unchanged.
+  // R11: the flow-step title face (mockup :443, :475, :498), and the README table's "Screen title"
+  // row (26 / 1.15 / -0.025em) verbatim. Byte-identical to what `screenTitle` held before the
+  // retarget, so every site repointed here renders unchanged.
   stepTitle: { fontFamily: FONT_FAMILY.sansBold, fontSize: 26, lineHeight: 29.9, letterSpacing: -0.65, fontWeight: '700' },
   metric: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 48, lineHeight: 48, letterSpacing: -1.92, fontWeight: '500' },
   // R1/R5: 13.5 / 1.55 per the mockups, not the table's 15 / 1.7. `20.925` is the exact product —
