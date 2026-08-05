@@ -14,9 +14,15 @@
 
 import React, { useEffect } from 'react';
 import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
-import { BUILD_STEPS, buildStepStatuses, currentActionSentence, type Stage } from './prompt-flow';
+import {
+  BUILD_STEPS,
+  buildProgressFraction,
+  buildStepStatuses,
+  currentActionSentence,
+  type Stage,
+} from './prompt-flow';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
 
@@ -40,6 +46,7 @@ export default function BuildStep({ stage, delivering, onLeaveRunning, onCancel 
   const { theme } = useTheme();
   const p = shellPalette(theme);
   const statuses = buildStepStatuses(stage, delivering);
+  const pct = buildProgressFraction(stage, delivering);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -52,8 +59,12 @@ export default function BuildStep({ stage, delivering, onLeaveRunning, onCancel 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.content}>
-        <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{COPY.buildTitle}</Text>
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.buildTitle}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>{COPY.buildSubtitle}</Text>
+
+        <View style={[styles.progressTrack, { backgroundColor: SHELL_COLORS.border }]}>
+          <View style={[styles.progressFill, { backgroundColor: p.accent, width: `${pct * 100}%` }]} />
+        </View>
 
         <Text style={[TYPE_SCALE.body, styles.current, { color: p.text }]}>
           {currentActionSentence(stage, delivering)}
@@ -93,6 +104,11 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   content: { flex: 1, paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl },
   subtitle: { marginTop: SPACING.xs },
+  // The 4px track and its fill (design html:500). 20/4/2 have no `SPACING`/`RADIUS` counterpart and
+  // get no one-off token (ruling R9) — rounding them to the nearest scale value would itself be the
+  // conformance defect.
+  progressTrack: { marginTop: 20, height: 4, borderRadius: 2, overflow: 'hidden' },
+  progressFill: { height: '100%' },
   current: { marginTop: SPACING.xl },
   steps: { marginTop: SPACING.lg, gap: SPACING.sm },
   step: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
@@ -100,7 +116,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    borderWidth: 2,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },

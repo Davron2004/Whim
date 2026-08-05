@@ -19,6 +19,7 @@ import {
   BUILD_STEPS,
   acceptClarifyQuestions,
   backFrom,
+  buildProgressFraction,
   buildStep,
   buildStepStatuses,
   clarificationsFrom,
@@ -245,6 +246,23 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(currentActionSentence(null), COPY.buildStepReading, 'the first sentence is the first step');
     h.eq(currentActionSentence('generate'), COPY.buildStepWriting, 'the sentence follows the live stage');
     h.eq(currentActionSentence('run', true), COPY.buildStepInstalling, 'delivery has its own sentence');
+  });
+
+  await h.test('build: the progress bar reports real stage progress and never fabricates 100%', () => {
+    // A passed step is a full quarter, the live one a half quarter — so the bar tracks the same
+    // stage events the named steps do, with nothing invented in between.
+    h.eq(buildProgressFraction(null, false), 0.125, 'an unstarted stream sits half-way into the first step');
+    h.eq(buildProgressFraction('plan', false), 0.125, 'reading the request');
+    h.eq(buildProgressFraction('generate', false), 0.375, 'writing the app: one step passed, one live');
+    h.eq(buildProgressFraction('check', false), 0.625, 'checking it runs safely');
+    for (const stage of ['plan', 'generate', 'check', 'run', 'repair'] as const) {
+      h.eq(buildProgressFraction(stage, true), 0.875, `delivering (${stage}) is the last step, still not full`);
+    }
+    for (const stage of [null, 'plan', 'generate', 'check', 'run', 'repair'] as const) {
+      for (const delivering of [false, true]) {
+        h.ok(buildProgressFraction(stage, delivering) < 1, `${stage}/${delivering} never reads as finished`);
+      }
+    }
   });
 
   await h.test('build: only a stage event ever changes the screen’s state', () => {

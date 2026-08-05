@@ -297,6 +297,24 @@ export function buildStepStatuses(stage: Stage | null, delivering = false): Buil
   });
 }
 
+const ACTIVE_STEP_CREDIT = 0.5;
+
+/**
+ * How full the build screen's progress bar reads, 0..1. Each passed step is a full quarter and the
+ * live one a half quarter, so the bar reads 12.5 / 37.5 / 62.5 / 87.5 and NEVER fabricates 100%
+ * before the done screen replaces it. It is derived from the same stage events the named steps are,
+ * with no timer smoothing it to look busier — a bar that moves on its own would be reporting
+ * progress that did not happen (ruling R21).
+ *
+ * There is always exactly one live step — `activeBuildStepIndex` returns an index inside the list
+ * for every input, delivery included — so the half-quarter is unconditional and 1.0 is unreachable
+ * by construction, not by a check that could be dropped.
+ */
+export function buildProgressFraction(stage: Stage | null, delivering = false): number {
+  const passed = buildStepStatuses(stage, delivering).filter((s) => s === 'passed').length;
+  return (passed + ACTIVE_STEP_CREDIT) / BUILD_STEPS.length;
+}
+
 /** The one plain-words sentence describing what is happening right now, in the user's terms. */
 export function currentActionSentence(stage: Stage | null, delivering = false): string {
   return BUILD_STEPS[activeBuildStepIndex(stage, delivering)];
