@@ -54,7 +54,11 @@ earlier prediction here (`size?: number` defaulting to 88) was wrong and is stru
 L2 then computes cell width from `useWindowDimensions` minus horizontal padding and column gaps,
 divided by 3, and passes `width={cellWidth}`.
 
-L2's allowlist is therefore `HomeScreen.tsx`, `SettingsScreen.tsx`, `app-tile.tsx`. Safe because
+L2's allowlist is `HomeScreen.tsx`, `SettingsScreen.tsx`, `app-tile.tsx`, plus two paths granted
+mid-lane after it stopped CLASS B rather than skip a test: **`home-grid.ts`** (NEW — the cell-width
+derivation needs a Node-importable home, and all three original files import `react-native` at module
+scope) and **`test/tile-colour.suite.ts`** (the assertions belong beside the existing `AppTile`
+geometry pins). Safe because
 L2 runs after L5 merges, so no two lanes hold that file at once. The guarantee still binds: `width`
 optional, default rendering unchanged.
 

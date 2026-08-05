@@ -248,6 +248,37 @@ contributed to F3's one observed failure. F3 and F4 are the same problem from op
 wall-clock budget converts resource sloppiness anywhere into a failure attributed to whatever was
 running when the clock ran out.
 
+**R25. The `⚙` glyph regression is fixed in L2 — a regression WE caused is not a scope question.**
+(2026-08-05. **Recorded late** — this ruling was issued to the L2 worker in dispatch and cited in a
+source comment before it was written down here. The record gap is the orchestrator's error; the
+substance was already authorized by `plan.md:91-92`.)
+
+`HomeScreen.tsx`'s settings glyph rode `TYPE_SCALE.body`. Design **html:386** is `font:400 16px/1`.
+Before this batch the glyph was 15 against 16 — 1px off. L1's retarget to 13.5 made it 2.5px off and
+dragged a 20.925 line-height into a 38x38 circle where the design specifies `/1`.
+
+Fixed in L2 with a local face `{ sansRegular, 16, lineHeight 16, '400' }` citing html:386, beside
+`composerPlusGlyph` — same shape as V2, which was filed while this was not.
+
+**Why this is folded in when F1 and F2 are not.** F1 and F2 are pre-existing defects the audit missed;
+leaving those is discipline, because a batch that grows whenever a reviewer notices something loses the
+property that makes its ledger trustworthy. This one exists *because of a change this batch made*, in a
+file the lane already had open. The test is: would the defect exist if the batch had never run? For F1
+and F2, yes. For this, no. A batch may decline unrelated work; it may not leave a screen worse than it
+found it and call that discipline.
+
+**F5 — NEW, UNFILED FINDING (not fixed this batch).** The home tile is now design 2a's *size* with 2b's
+*interior*. V3 grows it 88 -> 106, but the interior stays tuned for 88: `padding: 9`, ghost `62px` at
+`top:-13/right:-8`, foreground `19px`. Design 2a's own markup for a tile that size (html:391-394)
+specifies `padding:10px`, ghost `76px` at `top:-16px/right:-10px`, foreground `22px`, plus a
+`box-shadow:0 2px 6px rgba(0,0,0,.1)` the implementation has never carried.
+
+**L2 was right not to touch it.** Finding S1 and L5's source pins both cite the 2b swatch
+(html:543-546) as authoritative, so changing the interior would break green tests and exceed the filed
+finding. But V3 creates a residual that matched neither mockup before and matches neither now — the
+proportions were coherent at 88 and are not at 106. Route it through the rulings process; it needs a
+decision about which mockup governs the home tile, which is the same question R1 answered for type.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
