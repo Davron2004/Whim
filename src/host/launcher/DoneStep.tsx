@@ -29,8 +29,8 @@ export default function DoneStep({ app, onOpen, onBackToApps }: Readonly<DoneSte
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.content}>
-        <AppTile name={app.name} manifest={app.record.manifest} />
-        <Text style={[TYPE_SCALE.screenTitle, styles.title, { color: p.text }]}>{readyTitle(app.name)}</Text>
+        <AppTile name={app.name} manifest={app.record.manifest} size="done" />
+        <Text style={[TYPE_SCALE.stepTitle, styles.title, { color: p.text }]}>{readyTitle(app.name)}</Text>
         <Text style={[TYPE_SCALE.body, styles.body, { color: p.textMuted }]}>{COPY.doneBody}</Text>
       </View>
 
@@ -58,8 +58,9 @@ const styles = StyleSheet.create({
   content: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.lg },
   title: { marginTop: SPACING.lg, textAlign: 'center' },
   body: { marginTop: SPACING.sm, textAlign: 'center', maxWidth: 250 },
+  // Both CTAs stand at one height (design html:527-528) — a 52-vs-54 pair is the visible defect.
   primary: {
-    height: 54,
+    height: 52,
     marginHorizontal: SPACING.lg,
     borderRadius: RADIUS.card,
     borderWidth: 1,
@@ -67,7 +68,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondary: {
-    height: 46,
+    height: 52,
     margin: SPACING.lg,
     marginTop: SPACING.sm,
     borderRadius: RADIUS.card,
