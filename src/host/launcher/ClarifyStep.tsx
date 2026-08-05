@@ -55,7 +55,7 @@ export default function ClarifyStep({
       <FlowHeader step="clarify" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{clarifyHeadline(questions.length)}</Text>
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{clarifyHeadline(questions.length)}</Text>
 
         {/*
           The echoed prompt is a standalone block of the user's own words (design doc "`yours` —
@@ -94,7 +94,7 @@ export default function ClarifyStep({
                       },
                     ]}
                   >
-                    <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.text }]}>{option}</Text>
+                    <Text style={[TYPE_SCALE.controlLabel, { color: selected ? p.onAccent : p.text }]}>{option}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -112,7 +112,8 @@ export default function ClarifyStep({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.xl },
+  // paddingTop 28: design `Whim Mobile.dc.html:442` — no SPACING counterpart (ruling R9).
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 28, paddingBottom: SPACING.xl },
   echo: { marginTop: SPACING.sm },
   question: { marginTop: SPACING.lg },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.sm },

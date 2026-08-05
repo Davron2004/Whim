@@ -30,7 +30,7 @@ export function FlowHeader({ step, palette, onBack }: Readonly<FlowHeaderProps>)
   return (
     <View style={styles.header}>
       <TouchableOpacity onPress={onBack} hitSlop={10}>
-        <Text style={[TYPE_SCALE.caption, { color: palette.textMuted }]}>{COPY.backLabel}</Text>
+        <Text style={[TYPE_SCALE.controlLabel, { color: palette.textMuted }]}>{COPY.backLabel}</Text>
       </TouchableOpacity>
       <View style={styles.bars}>
         {INDICATOR_STEPS.map((s, i) => (
@@ -84,15 +84,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.sm,
-    paddingBottom: SPACING.md,
+    // design `Whim Mobile.dc.html:412,438,470` is `padding:16px 22px 0` — the bottom is ZERO, so the
+    // whole gap above each headline is the step's own `content.paddingTop` (34/28/26), not a stack.
+    paddingTop: SPACING.md,
+    paddingBottom: 0,
   },
   bars: { flexDirection: 'row', gap: 5 },
   bar: { width: 18, height: 3, borderRadius: 2 },
   primary: {
-    height: 54,
+    height: 52, // design `Whim Mobile.dc.html:428,460,488` — matches DoneStep's pair (ruling R19/R22)
     marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
+    marginBottom: 24, // design `Whim Mobile.dc.html:427,459,487` — no SPACING counterpart (ruling R9)
     borderRadius: RADIUS.card,
     borderWidth: 1,
     alignItems: 'center',
