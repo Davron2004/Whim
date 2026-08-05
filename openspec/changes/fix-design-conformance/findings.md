@@ -167,6 +167,38 @@ so the bar reads 12.5 / 37.5 / 62.5 / 87.5 and **never fabricates 100% before th
 it**. Do not smooth it with a timer to look busier — that would misrepresent real progress, which is
 the whole failure mode `obs-v1` exists to end.
 
+**R22. `flow-chrome.tsx`'s `primary.height` 54 → 52, and the header's padding is part of V6.**
+(2026-08-05, lane L3's review.) Two corrections beyond what was filed:
+- **The header leg of V6.** Design html:412/438/470 is `padding:16px 22px 0` — bottom padding ZERO. The
+  whole gap above each headline is the content wrapper's 34/28/26. `flow-chrome.tsx` kept
+  `paddingBottom: 16`, so adding the content padding shipped 50/44/42 — the finding inverted, not
+  closed. Set `header.paddingBottom: 0` and `header.paddingTop: SPACING.md` (16). The finding's own
+  text names the header as part of the defect site, so this is in scope, not scope creep.
+- **`primary.height` 54 → 52** (html:428/460/488). Unfiled, but R19 moves DoneStep's CTAs to 52, so
+  leaving this at 54 ships the same visual control at two heights one screen apart — exactly the
+  mismatch R19 exists to prevent.
+
+**R23. Lane L2 gains `src/host/launcher/app-tile.tsx` and adds `width?: number`.**
+(2026-08-05, from L5's delivered contract.) L5 implemented `size?: 'done'` — a string-literal VARIANT
+(120x120 preset, glow, rise-in, no label). L2's V3 fluid 3-up grid needs a numeric width, which that
+prop cannot express. `plan.md` had predicted `size?: number`; the two are not reconcilable in one prop.
+
+Resolution: **two orthogonal props, each with one job.** `size?: 'done'` stays as the variant selector.
+L2 adds `width?: number` for the grid dimension. Do NOT widen to `size?: number | 'done'` — a prop
+meaning both "which variant" and "how wide" is the kind of overload that reads fine at the call site
+and rots at the definition.
+
+This is safe because L2 runs AFTER L5 merges (the wave order already required that), so no two lanes
+hold `app-tile.tsx` at once. L2's allowlist becomes `HomeScreen.tsx`, `SettingsScreen.tsx`,
+`app-tile.tsx`. The same guarantee still binds: `width` optional, default rendering unchanged.
+
+**R24. `buildProgressFraction(null, false)` is 0.125, not 0 — the orchestrator's spec contradicted
+itself.** (2026-08-05, lane L5.) The spec's assertion list said 0, but the verbatim function body it
+also gave yields 0.125, because `activeBuildStepIndex(null, ...)` is 0 — identical to `'plan'` — so
+step 1 already reads `active`. The worker implemented the body and asserted 0.125. That is correct:
+special-casing null to 0 would render an empty bar beside an already-active first step. R21's binding
+constraint is unaffected — the bar must never reach 100% before the done screen replaces it.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
