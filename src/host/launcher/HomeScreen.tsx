@@ -16,9 +16,10 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
@@ -29,6 +30,21 @@ import { useTheme } from './theme-context';
 export const HOME_GRID_COLUMNS = 3;
 export const HOME_GRID_COLUMN_GAP = 14;
 export const HOME_GRID_ROW_GAP = 18;
+
+/** The grid is `grid-template-columns:repeat(3,1fr)` (design html:388) — it fills the frame, so a
+ *  tile is not a fixed 88. One row is the frame minus the scroll wrapper's `SPACING.lg` on each
+ *  side minus the two column gaps, split three ways: the design's 390pt frame yields exactly the
+ *  106 the mockup renders. Pure (frame width in, cell width out) so the arithmetic is checkable
+ *  without rendering RN.
+ *
+ *  A degenerate frame — 0 before the first layout pass, or a device narrower than the chrome it
+ *  subtracts — falls back to `APP_TILE_SIZE` rather than laying tiles out at zero, a negative
+ *  width, or NaN. */
+export function homeGridCellWidth(frameWidth: number): number {
+  const gutters = 2 * SPACING.lg + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
+  const cell = (frameWidth - gutters) / HOME_GRID_COLUMNS;
+  return Number.isFinite(cell) && cell > 0 ? cell : APP_TILE_SIZE;
+}
 
 export interface HomeScreenProps {
   apps: InstalledApp[];
@@ -55,6 +71,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const { theme } = useTheme();
   const p = shellPalette(theme);
+  const cellWidth = homeGridCellWidth(useWindowDimensions().width);
 
   const confirmDelete = (app: InstalledApp) => {
     setSelected(null);
@@ -89,13 +106,13 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
 
         <View style={styles.grid}>
           {apps.map((app) => (
-            <View key={app.id} style={styles.cell}>
+            <View key={app.id} style={{ width: cellWidth }}>
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => onOpen(app)}
                 onLongPress={() => setSelected(app)}
               >
-                <AppTile name={app.name} manifest={app.record.manifest} />
+                <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} />
                 {app.example && (
                   <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
                     <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>
@@ -119,7 +136,7 @@ export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, 
         style={[styles.composer, { backgroundColor: p.card, borderColor: p.cardBorder }]}
       >
         <View style={[styles.composerPlus, { backgroundColor: p.accent }]}>
-          <Text style={[TYPE_SCALE.caption, { color: p.onAccent }]}>{'＋'}</Text>
+          <Text style={[styles.composerPlusGlyph, { color: p.onAccent }]}>{'＋'}</Text>
         </View>
         <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{COPY.homeComposerPlaceholder}</Text>
       </TouchableOpacity>
@@ -170,12 +187,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.xs,
-    paddingBottom: SPACING.md,
+    // design html:384 `padding:20px 22px 14px`. 20 and 14 have no `SPACING` counterpart (the scale
+    // is 8/12/16/22/34) and get no one-off token (ruling R9) — they stay literals, cited.
+    paddingTop: 20,
+    paddingBottom: 14,
   },
   headerText: { flexShrink: 1 },
   eyebrow: { marginTop: SPACING.xs },
   settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  // `paddingHorizontal` here is the term `homeGridCellWidth` subtracts — keep the two in step.
   scroll: { paddingHorizontal: SPACING.lg, paddingBottom: SPACING.lg, flexGrow: 1 },
   grid: {
     flexDirection: 'row',
@@ -183,7 +203,6 @@ const styles = StyleSheet.create({
     columnGap: HOME_GRID_COLUMN_GAP,
     rowGap: HOME_GRID_ROW_GAP,
   },
-  cell: { width: APP_TILE_SIZE },
   badge: {
     position: 'absolute',
     top: SPACING.xs,
@@ -199,12 +218,18 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
     marginHorizontal: SPACING.lg,
     marginBottom: SPACING.lg,
-    paddingVertical: SPACING.sm,
+    // design html:401 `padding:14px 16px`; 14 has no `SPACING` counterpart, so it is a cited
+    // literal (ruling R9). The horizontal 16 is `SPACING.md` and already matched.
+    paddingVertical: 14,
     paddingHorizontal: SPACING.md,
     borderWidth: 1,
     borderRadius: 20,
   },
   composerPlus: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  /** design html:402 `font:400 17px/1`. A one-off icon glyph is not a typographic role, so it gets
+   *  a local face rather than a new `TYPE_SCALE` entry (R2 is scoped to roles) — the same
+   *  precedent as `app-tile.tsx`'s monogram faces. */
+  composerPlusGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 17, lineHeight: 17, fontWeight: '400' },
   sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
   sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
