@@ -199,6 +199,21 @@ step 1 already reads `active`. The worker implemented the body and asserted 0.12
 special-casing null to 0 would render an empty bar beside an already-active first step. R21's binding
 constraint is unaffected — the bar must never reach 100% before the done screen replaces it.
 
+**F1 — NEW, UNFILED FINDING (not fixed this batch).** The CTA sits 18px lower than the design on all
+three flow screens. Design html:427/459/487 puts 16px above the CTA with the content wrapper's bottom
+at zero; RN instead carries `content.paddingBottom: SPACING.xl` (34) on each step with no `marginTop`
+on `primary`. Present at BASE `f4eee30`, found by L3's reviewer while re-deriving V6's arithmetic.
+
+Deliberately NOT folded into L3, and the distinction is the point: V6's header leg was in scope because
+the finding explicitly named `flow-chrome.tsx:82-89` as part of the defect site. F1 is named by no
+finding. Widening an accepted lane on the strength of a reviewer's incidental observation is how scope
+discipline erodes — it goes to a later pass through the same rulings process everything else did.
+
+Worth noting what it implies about the audit: this is the same defect shape as V6 (a wrapper's padding
+doing a sibling's job) one element lower in the same file, and the audit caught the 16px instance and
+missed the 18px one. The pass found what was *visible*, not what was *wrong*. Remaining drift of this
+magnitude is probably not zero.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
