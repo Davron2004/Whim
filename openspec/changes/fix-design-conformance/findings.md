@@ -228,6 +228,26 @@ pattern was copied. Worth grepping the whole launcher for `shadowOpacity|shadowR
 in that pass rather than fixing the two known sites — and worth a lint rule, since the props
 typecheck fine and are invisible to every check the harness runs.
 
+**F3 — `generation-e2e`'s mount assertion is wall-clock sensitive.** (2026-08-05, found during L5's
+gate.) `a clean fixture produces no diagnostics` fails with `mount_timeout — no nonce-authenticated
+paint frame within the 8000ms mount budget` when the host is loaded. Evidence: passed twice standalone
+on the staging tip, passed twice in-gate, failed once in-gate immediately after a SIGTERM'd run reset
+Metro's transform cache. Not broken — load-dependent.
+
+Why it deserves a fix rather than tolerance: the assertion runs immediately after three heavy browser
+suites (invariants, bridge-invariants, synthetic-run) inside the same gate, so it will eventually fail
+on a loaded CI runner. And its failure points at the **sandbox mount path** — containment code — so
+every occurrence costs a real investigation before it can be dismissed. Either scale the budget with
+observed load, or stop sharing a process with the Chromium suites.
+
+**F4 — worktree teardown was skipped after each merge.** (2026-08-05, orchestrator process defect.)
+The runbook makes teardown part of step 8; this run merged and regated, then moved to the next gate,
+leaving four worktrees mounted. No correctness harm — every branch was verified an ancestor before
+removal — but four live worktrees during a Metro-heavy gate is real resource pressure, and plausibly
+contributed to F3's one observed failure. F3 and F4 are the same problem from opposite ends: a
+wall-clock budget converts resource sloppiness anywhere into a failure attributed to whatever was
+running when the clock ran out.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
