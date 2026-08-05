@@ -297,6 +297,8 @@ export function buildStepStatuses(stage: Stage | null, delivering = false): Buil
   });
 }
 
+const ACTIVE_STEP_CREDIT = 0.5;
+
 /**
  * How full the build screen's progress bar reads, 0..1. Each passed step is a full quarter and the
  * live one a half quarter, so the bar reads 12.5 / 37.5 / 62.5 / 87.5 and NEVER fabricates 100%
@@ -308,8 +310,6 @@ export function buildStepStatuses(stage: Stage | null, delivering = false): Buil
  * for every input, delivery included — so the half-quarter is unconditional and 1.0 is unreachable
  * by construction, not by a check that could be dropped.
  */
-const ACTIVE_STEP_CREDIT = 0.5;
-
 export function buildProgressFraction(stage: Stage | null, delivering = false): number {
   const passed = buildStepStatuses(stage, delivering).filter((s) => s === 'passed').length;
   return (passed + ACTIVE_STEP_CREDIT) / BUILD_STEPS.length;

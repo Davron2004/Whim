@@ -178,6 +178,9 @@ export async function runTileColourTests(h: Harness): Promise<void> {
       h.eq((src.match(new RegExp(`styles\\.${variant}`, 'g')) ?? []).length, 1, `styles.${variant} is applied in exactly one place`);
       h.ok(src.includes(`isDone ? styles.${variant} : null`), `styles.${variant} is reachable only through the done variant`);
     }
+    // The glow is the one done-only style that is NOT a `styles.*` entry — it is built at the call
+    // site because it carries the app's resolved colour — so it needs its own gate assertion.
+    h.ok(src.includes('const glow = isDone'), 'the glow is reachable only through the done variant');
     h.ok(/\{!isDone && <Text style=\{styles\.name\}/.test(src), 'the name label renders for the grid tile and never for the done tile');
   });
 
@@ -195,14 +198,19 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // The glow is `boxShadow`, the one shadow primitive Android honours (`shadowOffset`,
     // `shadowOpacity` and `shadowRadius` are iOS-only, and `elevation` draws Android's own default
     // profile rather than this one). Asserted as the offset/blur/alpha the design specifies.
-    h.ok(/GLOW_OFFSET_Y = 8/.test(src) && /GLOW_BLUR = 22/.test(src), 'the glow falls 8 down over a 22 blur');
-    h.ok(/GLOW_ALPHA_HEX = '4d'/.test(src), 'at 30% alpha (0.3 x 255 = 0x4d)');
+    h.ok(/GLOW_OFFSET_Y = 8;/.test(src) && /GLOW_BLUR = 22;/.test(src), 'the glow falls 8 down over a 22 blur');
+    h.ok(/GLOW_ALPHA_HEX = '4d';/.test(src), 'at 30% alpha (0.3 x 255, rounded to 0x4d)');
     h.ok(/boxShadow: \[\{ offsetX: 0, offsetY: GLOW_OFFSET_Y, blurRadius: GLOW_BLUR/.test(src), 'delivered through boxShadow, which Android renders');
     h.ok(!/shadowOpacity|shadowRadius|shadowOffset|elevation/.test(code(src)), 'never through the iOS-only shadow props or a default-profile elevation');
     // Ruling R20: the celebration tile keeps the app's identity across two adjacent screens — its
     // fill AND its glow are the app's own resolved colour, never a fixed status hue.
     h.ok(/color: `\$\{bg\}\$\{GLOW_ALPHA_HEX\}`/.test(src), 'the glow is the tile’s own resolved colour');
     h.ok(!/STATUS_COLORS/.test(code(src)), 'no fixed status hue is imported for the done tile');
+    // The design's `rise` uses CSS `ease` = cubic-bezier(.25,.1,.25,1), which DECELERATES. RN's
+    // `Easing.ease` is bezier(.42,0,1,1) — CSS `ease-in`, the opposite shape — so the curve is
+    // spelled out rather than named, the same translation `Orb.tsx:58` makes for `sheetRise`.
+    h.ok(/RISE_EASING = Easing\.bezier\(0\.25, 0\.1, 0\.25, 1\);/.test(src), 'the rise decelerates on the design’s own curve');
+    h.ok(/easing: RISE_EASING,/.test(src), 'and that curve is the one the entrance actually runs on');
   });
 
   await h.test('DoneStep: both CTAs stand at one height, the design’s 52', async () => {
