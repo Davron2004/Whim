@@ -26,21 +26,58 @@ The runbook dispatches one worker per finding. This batch groups findings into
 handful of files. Each lane below owns a disjoint file set — no two lanes name the
 same path in their allowlist, which is what makes them safe to run in parallel.
 
-Ordering: **L1 merges before any other lane starts.** L2–L6 consume the token roles
-L1 adds; they are mutually independent and run as one parallel wave.
+Ordering: **L1 merges before any other lane starts.** L2–L6 consume the token roles L1 adds.
 
-- [ ] **L1 — token roles** · `src/sdk/design-tokens.ts`
-      Covers R3 in full: add `headline` (30/1.12/-.025em/700), `controlLabel` (13/1/500),
-      `kindBadge` (9.5/.1em/upper/600), `metaPlain` (10.5/1/400, no upper, no tracking),
-      `metaWide` (10/.12em/upper/400); RETARGET `screenTitle` 26 → 22/1.15/-.02em/700;
-      RETARGET `body` to the design's 13–13.5/1.5–1.55. Add the R1 header comment recording
-      that this file is deliberately no longer byte-exact to the README token table.
+**Revised wave order (updated 2026-08-05 after the L2 plan surfaced a cross-lane dependency):**
+
+    L1  →  [L3, L4, L5, L6]  →  L2
+
+L2 is no longer in the parallel wave. Its V3 finding (fluid 3-up grid) cannot be closed from
+`HomeScreen.tsx` alone: the 88px is hardcoded three times inside `app-tile.tsx`
+(`root.width` `:52`, `tile.width`/`tile.height` `:56-57`) and `AppTileProps` `:26-33` exposes no
+size prop. Widening only `HomeScreen`'s `cell` wrapper leaves the tile pinned at 88px and
+left-aligned inside the larger box — worse than the current state, not a fix.
+
+`app-tile.tsx` belongs to L5, and L5's B3 (the 120×120 done tile) needs the *same* optional size
+prop. So one piece of work serves both findings. **L5 owns the contract; L2 consumes it.**
+
+**Cross-lane contract — L5 writes, L2 reads:**
+- L5 adds `size?: number` to `AppTileProps`, defaulting to `APP_TILE_SIZE` (88), threaded into
+  `root.width`, `tile.width`, `tile.height` in place of the hardcoded constant.
+- The prop MUST be optional and MUST NOT change default rendering — `HomeScreen` calls `AppTile`
+  today with no size and must render byte-identically until L2 lands.
+- L2 then computes cell width from `useWindowDimensions` minus horizontal padding and column gaps,
+  divided by 3, and passes `size={cellWidth}`.
+- Radius and monogram scaling are L5's call. Finding V3 is scoped to width only; the design's own
+  `{{ radTile }}` is templated and unspecified, so do not infer a radius rule from it.
+
+- [ ] **L1 — token roles** · `src/sdk/design-tokens.ts`, `src/sdk/test/theme.acceptance.ts`
+      Covers R3 **as corrected by R11**. Add: `headline` (30/33.6/-0.75/700),
+      `stepTitle` (26/29.9/-0.65/700 — **added by R11**), `controlLabel` (13/13/0/500),
+      `kindBadge` (9.5/9.5/0.95/600/upper), `metaPlain` (10.5/10.5/0/400, no upper, no tracking),
+      `metaWide` (10/10/1.2/400/upper). RETARGET `screenTitle` 26 → 22/25.3/-0.44/700 and
+      `body` 15/25.5 → 13.5/20.925. Add the R1 header comment, and AMEND the existing line-10
+      claim that values are "copied verbatim" — it now asserts the opposite of R1.
+      Test: STANDING INVARIANT (not behavioral, not no-test) — pin that the four microcopy roles
+      stay four distinguishable faces and that every face names a shipped `FONT_FAMILY` asset.
+      Pin the role vocabulary, never the mockup numbers; those are still under R4/R5 review.
       Adds no call-site changes. `after:` — none.
 
-- [ ] **L2 — home** · `src/host/launcher/HomeScreen.tsx`
-      V1 header paddingTop 8 → 20/22/14 · V2 `+` glyph 12 → 17/400 ·
-      V3 fixed 88px cell → 3-up fluid grid · S2 composer row paddingVertical 12 → 14/16.
-      `after:` L1.
+      **Known asset gap, flagged not fixed:** `kindBadge` wants mono 600, but only IBM Plex Mono
+      Regular and Medium ship. Android will synthesize the weight off `monoMedium`. Do NOT name a
+      nonexistent `IBMPlexMono-SemiBold` — RN resolves by exact file base name and would fall back
+      to the system font silently. Judged in the R8 pass.
+
+- [ ] **L2 — home and settings** · `src/host/launcher/HomeScreen.tsx`,
+      `src/host/launcher/SettingsScreen.tsx`
+      V1 header paddingTop 8 → 20/22/14 · V2 `+` glyph 12 → 17/400 (local style, not a new
+      TYPE_SCALE role — no role fits a one-off icon glyph, matching the `app-tile.tsx:71,77`
+      precedent) · S2 composer row paddingVertical 12 → 14/16 · V3 fluid 3-up grid, which
+      consumes L5's `size` prop · **R12**: repoint `SettingsScreen.tsx:56` at `stepTitle` to
+      preserve its current rendering.
+      Also eyeball `HomeScreen.tsx:81` — the `⚙` glyph is sized off `body` and shrinks 1.5px
+      with L1's retarget.
+      `after:` **L5** (not L1 — see the wave order above).
 
 - [ ] **L3 — flow chrome and steps** · `src/host/launcher/flow-chrome.tsx`,
       `ComposeStep.tsx`, `ClarifyStep.tsx`, `PlanStep.tsx`
