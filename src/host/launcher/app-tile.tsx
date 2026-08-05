@@ -17,7 +17,8 @@ import { FONT_FAMILY, RADIUS, SHELL_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
 import type { AppManifest } from '../bridge/contract';
 
-/** The tile's geometry (design-extract §2b: 88x88, tile radius). Exported so a loading skeleton
+/** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
+ *  caller that passes no `width` gets, not a ceiling. Exported so a loading skeleton
  *  (group D, sdk-design-system "Loading skeletons derive their geometry from exported component
  *  constants") imports these rather than restating them, guaranteeing no layout jump on load. */
 export const APP_TILE_SIZE = 88;
@@ -49,12 +50,29 @@ export interface AppTileProps {
    *  glow colour-matched to the app's own hue, a one-shot rise-in, and no name label — the done
    *  step writes its own headline instead. Omitted is the grid tile, unchanged. */
   size?: 'done';
+  /** How wide the grid tile stands, so the home grid can be fluid 3-up (design html:388
+   *  `repeat(3,1fr)`) instead of three fixed 88s. Omitted is `APP_TILE_SIZE` — every caller that
+   *  passes nothing renders exactly as before.
+   *
+   *  Orthogonal to `size`, and deliberately a second prop rather than widening `size` to
+   *  `number | 'done'` (ruling R23): one prop meaning both "which variant" and "how wide" reads
+   *  fine at the call site and rots at the definition. Where they meet, **`size='done'` wins and
+   *  `width` is ignored** — the done tile is a fixed 120x120 preset, and a preset a caller could
+   *  silently resize is not a preset. `DoneStep` never passes a `width`; the two overrides below
+   *  are simply not built for that variant, so the outcome is stated in the code rather than
+   *  decided by style-array ordering. */
+  width?: number;
 }
 
-export default function AppTile({ name, manifest, size }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
+
+  /** See `width` above: the done variant ignores it, so these are `null` there and `rootDone`/
+   *  `tileDone` remain the only source of that variant's 120x120. */
+  const fluidRoot = isDone ? null : { width };
+  const fluidTile = isDone ? null : { width, height: width };
 
   const rise = useRef(new Animated.Value(isDone ? 0 : 1)).current;
   useEffect(() => {
@@ -85,8 +103,8 @@ export default function AppTile({ name, manifest, size }: Readonly<AppTileProps>
     : null;
 
   return (
-    <Animated.View style={[styles.root, isDone ? styles.rootDone : null, riseStyle]}>
-      <View style={[styles.tile, isDone ? styles.tileDone : null, { backgroundColor: bg }, glow]}>
+    <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
+      <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
       </View>
@@ -102,13 +120,10 @@ const DONE_TILE_SIZE = 120;
 
 const styles = StyleSheet.create({
   root: {
-    width: APP_TILE_SIZE,
     alignItems: 'flex-start',
   },
   rootDone: { width: DONE_TILE_SIZE },
   tile: {
-    width: APP_TILE_SIZE,
-    height: APP_TILE_SIZE,
     borderRadius: APP_TILE_RADIUS,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.3)',
