@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
   headerText: { flexShrink: 1 },
   eyebrow: { marginTop: SPACING.xs },
   settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  /** design html:385 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
+  /** design html:386 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
    *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height
    *  into a 38x38 circle the design gives `/1`. A one-off icon glyph is not a typographic role, so
    *  it takes a local face, exactly like `composerPlusGlyph` below (V2). */

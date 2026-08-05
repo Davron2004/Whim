@@ -232,7 +232,7 @@ export async function runTileColourTests(h: Harness): Promise<void> {
   await h.test('AppTile: `width` is optional, and omitting it keeps the default 88 geometry', async () => {
     const src = read('app-tile.tsx');
     h.ok(/\bwidth\?: number;/.test(src), '`width` is an OPTIONAL second prop, never a widening of `size`');
-    h.ok(!/size\?:[^;]*number/.test(src), '`size` stays the variant selector and never also means "how wide"');
+    h.ok(!/size\?:[^;]*number/.test(code(src)), '`size` stays the variant selector and never also means "how wide"');
     // The guarantee L2 owed every existing caller: pass no `width` and nothing moves. 88 is
     // supplied by the default parameter, so `root`/`tile` resolve exactly what the removed
     // `width: APP_TILE_SIZE` / `height: APP_TILE_SIZE` style entries used to.
@@ -242,11 +242,11 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // Ruling R23's stated precedence: the done tile is a fixed 120x120 preset and IGNORES `width`.
     // Both overrides are `null` there, so `rootDone`/`tileDone` remain its only geometry — the
     // outcome is decided in the code, not by where the overrides sit in the style arrays.
-    h.ok(!/width: APP_TILE_SIZE/.test(src), 'no style entry restates the size the prop now carries');
+    h.ok(!/width: APP_TILE_SIZE/.test(code(src)), 'no style entry restates the size the prop now carries');
   });
 
   await h.test('HomeScreen: the grid asks for a cell width and hands the same value to the tile', async () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/HomeScreen.tsx'), 'utf8');
+    const src = read('HomeScreen.tsx');
     h.ok(/homeGridCellWidth\(useWindowDimensions\(\)\.width, APP_TILE_SIZE\)/.test(src), 'the frame width drives the cell, falling back to the tile default');
     h.ok(/style=\{\{ width: cellWidth \}\}/.test(src), 'the grid cell is that width');
     h.ok(/<AppTile name=\{app\.name\} manifest=\{app\.record\.manifest\} width=\{cellWidth\} \/>/.test(src), 'and the tile fills it — never an 88 tile left-aligned in a wider box');
@@ -276,9 +276,13 @@ export async function runTileColourTests(h: Harness): Promise<void> {
   });
 
   await h.test('homeGridCellWidth: three tiles plus two gaps never overflow the row, at any width', async () => {
+    const gutters = 2 * HOME_GRID_SIDE_PADDING + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
     for (let frame = 240; frame <= 1280; frame++) {
+      // A DOMAIN guard, not a value guard. Skipping on `cell === FALLBACK` would excuse any
+      // regression that returns the fallback for a perfectly good frame — and would silently skip
+      // frame 336, where floor(264/3) legitimately equals 88 and collides with the sentinel.
+      if (frame <= gutters) continue;
       const cell = homeGridCellWidth(frame, FALLBACK);
-      if (cell === FALLBACK) continue; // degenerate frames fall back and are covered below
       const row = HOME_GRID_COLUMNS * cell + (HOME_GRID_COLUMNS - 1) * HOME_GRID_COLUMN_GAP;
       h.ok(row <= frame - 2 * HOME_GRID_SIDE_PADDING, `frame ${frame}: a row of ${HOME_GRID_COLUMNS} fits without wrapping`);
       h.eq(cell, Math.floor(cell), `frame ${frame}: the width is whole dp`);
@@ -288,7 +292,11 @@ export async function runTileColourTests(h: Harness): Promise<void> {
   await h.test('homeGridCellWidth: a degenerate frame falls back, never <= 0 and never NaN', async () => {
     // 0 is what a window-dimensions read can hand back before the first layout pass; a frame
     // narrower than the chrome being subtracted makes the subtraction negative.
-    for (const frame of [0, -1, 40, 71, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    //
+    // 72/73/74 are the band where the division lands on exactly zero (gutters are 2*22 + 2*14 =
+    // 72), which is the one case the `cell > 0` predicate exists for. Without them a `>= 0`
+    // regression ships a zero-width tile and every other case here still passes.
+    for (const frame of [0, -1, 40, 71, 72, 73, 74, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
       const cell = homeGridCellWidth(frame, FALLBACK);
       h.eq(cell, FALLBACK, `frame ${frame} falls back to the tile default`);
       h.ok(Number.isFinite(cell) && cell > 0, `frame ${frame} never yields NaN or a non-positive width`);
