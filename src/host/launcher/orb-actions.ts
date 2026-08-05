@@ -20,6 +20,7 @@
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
+import { SHELL_COLORS } from '../../sdk/theme';
 import { COPY } from './copy';
 
 export type OrbActionId = 'change' | 'home' | 'versions';
@@ -35,6 +36,34 @@ export const ORB_ACTIONS: readonly OrbAction[] = [
   { id: 'home', label: COPY.orbActionHome },
   { id: 'versions', label: COPY.orbActionVersions },
 ];
+
+// ── the per-row swatch (design `3a`/`3b`/`3c`, html:220-224) ─────────────────
+// Each menu row carries a 30×30 tinted swatch left of its label. These three lookups live beside
+// the action set — the orb's own private data module, never `src/sdk/design-tokens.ts` — because
+// one consumer does not justify a shared `SHELL_COLORS`/`RADIUS` role (fix-design-conformance
+// R15). They sit here rather than inside `Orb.tsx` only because that file imports `react-native`
+// and so can never be loaded by the Node acceptance suite; the scoping is unchanged.
+
+/** Per-action swatch fill. No token has this role yet (R15) — literal until a second surface asks. */
+export const ORB_ROW_TINT: Record<OrbActionId, string> = {
+  change: '#e6e4f7',
+  home: '#e5e2db',
+  versions: '#e5e2db',
+};
+
+/** Per-action swatch glyph. `⌂` (U+2302) is pending Android glyph-coverage verification on the
+ *  on-device screenshot pass — do not substitute a replacement before that check runs. */
+export const ORB_ROW_GLYPH: Record<OrbActionId, string> = {
+  change: '✎',
+  home: '⌂',
+  versions: '↺',
+};
+
+/** Swatch glyph colour. The design's `m.glyphColor` (`i === 0 ? '#3f3d8f' : '#1c1917'`) is exactly
+ *  the accent and text tokens, so this resolves through them rather than repeating the hexes. */
+export function orbRowGlyphColor(id: OrbActionId): string {
+  return id === 'change' ? SHELL_COLORS.accent : SHELL_COLORS.text;
+}
 
 const COUNT_KEY_PREFIX = 'orb-action-count:';
 

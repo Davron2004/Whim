@@ -20,10 +20,17 @@
 // "sheet" concept (and the fourth, undesigned `copy` action) is gone.
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
-import { ORB_ACTIONS, recordOrbAction, type OrbActionId } from './orb-actions';
+import {
+  ORB_ACTIONS,
+  ORB_ROW_GLYPH,
+  ORB_ROW_TINT,
+  orbRowGlyphColor,
+  recordOrbAction,
+  type OrbActionId,
+} from './orb-actions';
 
 const ORB_SIZE = 62;
 const ORB_BOTTOM = 130;
@@ -115,6 +122,11 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
           >
             {ORB_ACTIONS.map((action) => (
               <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
+                <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
+                  <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
+                    {ORB_ROW_GLYPH[action.id]}
+                  </Text>
+                </View>
                 <Text style={styles.rowLabel}>{action.label}</Text>
               </Pressable>
             ))}
@@ -159,6 +171,10 @@ const styles = StyleSheet.create({
   },
   menu: { gap: SPACING.xs },
   row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // design html:220 `gap:13px` — no SPACING step equals 13, so it stays a literal (R9).
+    gap: 13,
     backgroundColor: SHELL_COLORS.paper,
     borderWidth: 1,
     borderColor: SHELL_COLORS.border,
@@ -166,5 +182,8 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
   },
+  // design html:221 `border-radius:10px` on a 30×30 box — a rounded SQUARE, not a full circle.
+  rowIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  rowIconGlyph: { fontFamily: FONT_FAMILY.sansMedium, fontSize: 15, lineHeight: 15 },
   rowLabel: { ...TYPE_SCALE.bodyEmphatic, color: SHELL_COLORS.text },
 });
