@@ -13,6 +13,7 @@ import {
   SPACING,
   MOTION,
   TYPE_SCALE,
+  FONT_FAMILY,
 } from '../theme';
 
 function fail(message: string): never {
@@ -187,5 +188,46 @@ equal('orbWheel' in MOTION, false, 'MOTION carries no wheel-geometry entry');
 
 equal(TYPE_SCALE.quote.color, SHELL_COLORS.yours, 'TYPE_SCALE.quote is coloured yours (the only face the doc pins a colour to)');
 equal(TYPE_SCALE.quote.fontStyle, 'italic', 'TYPE_SCALE.quote is italic');
+
+// ── standing invariants on the type-role vocabulary ───────────────────────────
+// These pin the SHAPE of the scale, never the mockups' numbers: `kindBadge`/`metaPlain`/
+// `metaWide`/`body` sizes are still under review (findings.md rulings R4/R5, decided in the
+// on-device screenshot pass), so asserting their pixel values here would fight that pass.
+
+// R2: the history screen's four mono microcopy roles are four DISTINCT design faces. They were
+// once collapsed onto a single over-weighted, over-spaced `eyebrow`; nothing but this assertion
+// stops that from recurring the next time someone "tidies" near-identical entries together.
+{
+  const microcopy = ['eyebrow', 'kindBadge', 'metaPlain', 'metaWide'] as const;
+  const signatures = new Set(
+    microcopy.map((role) => {
+      const face = TYPE_SCALE[role];
+      return [face.fontSize, face.letterSpacing, face.textTransform ?? 'none', face.fontWeight ?? 'none'].join('/');
+    }),
+  );
+  equal(
+    signatures.size,
+    microcopy.length,
+    `the mono microcopy roles must stay distinguishable faces (${microcopy.join(', ')} collapsed to ${describe([...signatures])})`,
+  );
+}
+
+// `metaPlain` is the deliberately undecorated one (design "when"/"version"): plain lowercase mono
+// with no tracking. It is the role most likely to be quietly restyled back into eyebrow's look.
+equal(TYPE_SCALE.metaPlain.textTransform, undefined, 'TYPE_SCALE.metaPlain is not uppercased');
+equal(TYPE_SCALE.metaPlain.letterSpacing, 0, 'TYPE_SCALE.metaPlain carries no letter-spacing');
+
+// Every face must name a font asset that actually ships. RN/Android resolves `fontFamily` by exact
+// file base name, so a face naming a weight variant that is not in `assets/fonts/` falls back to
+// the system font SILENTLY — no crash, no warning, wrong render on device.
+{
+  const shipped = new Set<string>(Object.values(FONT_FAMILY));
+  for (const [role, face] of Object.entries(TYPE_SCALE)) {
+    ok(
+      shipped.has(face.fontFamily),
+      `TYPE_SCALE.${role}.fontFamily "${face.fontFamily}" must be a shipped FONT_FAMILY asset (one of ${describe([...shipped])})`,
+    );
+  }
+}
 
 console.log('SDK theme (v2) acceptance: PASS');
