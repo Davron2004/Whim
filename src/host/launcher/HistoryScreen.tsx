@@ -16,7 +16,7 @@
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { KIND_BADGE_COLORS, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import type { Snapshot } from '../version-store';
 import { InstalledApp } from './app-index';
@@ -80,6 +80,25 @@ const TOAST_TIMEOUT_MS = 2200;
  *  tokens module (`KIND_BADGE_COLORS`, `src/sdk/design-tokens.ts`) so no inline hex lives on this
  *  screen. */
 const KIND_BADGE = KIND_BADGE_COLORS;
+
+/** The ring around the current version's timeline dot — design `4a` writes it as
+ *  `rgba(13,148,136,.3)` (`Whim Mobile.dc.html:848`), which is exactly the reserved done/working
+ *  hue at 30% alpha. Derived from the token rather than re-typed as a second hex literal:
+ *  `0x4d` = 77/255 ≈ .302. Every other dot ring is the plain `cardBorder` hairline. */
+const CURRENT_DOT_RING = STATUS_COLORS.done + '4d';
+
+/** The dot's centre, measured down from the row wrapper's top edge — `styles.marker`'s `top` plus
+ *  half its height. The timeline segment starts or stops here on the list's terminal rows. */
+const DOT_CENTRE = 21.5;
+
+/** Where a row's timeline segment begins and ends: an interior row's spans the whole wrapper, the
+ *  first row's drops from the dot, the last row's rises to it. A list of one renders no segment at
+ *  all — the caller checks that, since there is no extent that expresses "absent". */
+function timelineExtent(isFirst: boolean, isLast: boolean) {
+  if (isFirst) return { top: DOT_CENTRE, bottom: 0 };
+  if (isLast) return { top: 0, height: DOT_CENTRE };
+  return { top: 0, bottom: 0 };
+}
 
 const KIND_LABEL: Record<SummaryKind, string> = {
   Start: COPY.historyKindStart,
@@ -178,7 +197,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
     { key: 'fixes', label: COPY.historyFilterFixes },
   ];
 
-  const renderRow = ({ item }: { item: HistoryRow }) => (
+  const renderRow = ({ item, index }: { item: HistoryRow; index: number }) => (
     <HistoryRowView
       row={item}
       app={app}
@@ -186,6 +205,8 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
       appHue={appHue}
       predecessorId={snapshots[item.index + 1]?.id}
       expanded={item.id === expandedId}
+      isFirst={index === 0}
+      isLast={index === filtered.length - 1}
       palette={p}
       onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
       onChangeIt={() => onChangeIt?.(app)}
@@ -197,10 +218,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-        <TouchableOpacity onPress={onBack} hitSlop={10} style={styles.backBtn}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{'‹ ' + COPY.backLabel}</Text>
+        <TouchableOpacity
+          onPress={onBack}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={COPY.backLabel}
+          style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <View style={[styles.backChevron, { borderColor: p.text }]} />
         </TouchableOpacity>
-        <View>
+        <View style={styles.headerText}>
           <Text style={TYPE_SCALE.screenTitle}>
             <Text style={{ color: appHue }}>{app.name}</Text>
             <Text style={{ color: p.text }}>{' ' + COPY.historyTitleSuffix}</Text>
@@ -236,8 +263,8 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
       <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
 
       {toast && (
-        <View style={[styles.toast, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{toast.text}</Text>
+        <View style={[styles.toast, { backgroundColor: p.text }]}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{toast.text}</Text>
         </View>
       )}
 
@@ -269,6 +296,11 @@ interface HistoryRowViewProps {
   appHue: string;
   predecessorId: string | undefined;
   expanded: boolean;
+  /** Timeline-segment terminators: the first row's line starts at the dot, the last row's ends
+   *  there, and a lone row draws no line at all. Derived from the `FlatList` index, so a filter
+   *  change re-terminates the visible list rather than the unfiltered one. */
+  isFirst: boolean;
+  isLast: boolean;
   palette: ReturnType<typeof shellPalette>;
   onToggle: () => void;
   onChangeIt: () => void;
@@ -283,6 +315,8 @@ function HistoryRowView({
   appHue,
   predecessorId,
   expanded,
+  isFirst,
+  isLast,
   palette: p,
   onToggle,
   onChangeIt,
@@ -292,6 +326,13 @@ function HistoryRowView({
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
   const badge = row.kind ? KIND_BADGE[row.kind] : null;
   const proseApps = useMemo(() => [{ name: app.name, color: appHue }], [app.name, appHue]);
+
+  // The `4a` timeline (design :28, :31), painted as a per-row segment rather than one absolute
+  // overlay across the list: a bar spanning a scrolling `FlatList` either does not scroll with the
+  // content or needs measurement, and it re-breaks every time a filter changes the row count.
+  // Segments abut because `rowWrap` carries its 10px gap as padding, which the line spans.
+  const dotColor = row.isCurrent ? STATUS_COLORS.done : (badge?.fg ?? p.textMuted);
+  const ringColor = row.isCurrent ? CURRENT_DOT_RING : p.cardBorder;
 
   useEffect(() => {
     if (!expanded || predecessorId == null) {
@@ -309,6 +350,12 @@ function HistoryRowView({
 
   return (
     <View style={styles.rowWrap}>
+      {!(isFirst && isLast) && (
+        <View style={[styles.timeline, timelineExtent(isFirst, isLast), { backgroundColor: p.cardBorder }]} />
+      )}
+      <View style={[styles.marker, { backgroundColor: p.bg, borderColor: ringColor }]}>
+        <View style={[styles.markerDot, { backgroundColor: dotColor }]} />
+      </View>
       <TouchableOpacity
         style={[
           styles.card,
@@ -320,13 +367,13 @@ function HistoryRowView({
         <View style={styles.cardHeader}>
           {badge && row.kind && (
             <View style={[styles.kindBadge, { backgroundColor: badge.bg }]}>
-              <Text style={[TYPE_SCALE.eyebrow, { color: badge.fg }]}>{KIND_LABEL[row.kind]}</Text>
+              <Text style={[TYPE_SCALE.kindBadge, { color: badge.fg }]}>{KIND_LABEL[row.kind]}</Text>
             </View>
           )}
-          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.when}</Text>
-          <Text style={[TYPE_SCALE.eyebrow, styles.versionLabel, { color: p.textMuted }]}>{row.version}</Text>
+          <Text style={[TYPE_SCALE.metaPlain, { color: p.textMuted }]}>{row.when}</Text>
+          <Text style={[TYPE_SCALE.metaPlain, styles.versionLabel, { color: p.textMuted }]}>{row.version}</Text>
         </View>
-        <Text style={[TYPE_SCALE.eyebrow, styles.originLine, { color: p.textMuted }]}>
+        <Text style={[TYPE_SCALE.metaWide, styles.originLine, { color: p.textMuted }]}>
           {row.origin === 'you-said' ? COPY.historyOriginYouSaid : COPY.historyOriginUnprompted}
         </Text>
         <WhimProse
@@ -346,7 +393,7 @@ function HistoryRowView({
           <View style={[styles.expandedBody, { borderTopColor: p.cardBorder }]}>
             {row.touched.length > 0 && (
               <>
-                <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted, marginTop: SPACING.sm }]}>
+                <Text style={[TYPE_SCALE.metaWide, { color: p.textMuted, marginTop: SPACING.sm }]}>
                   {COPY.historyTouchedEyebrow}
                 </Text>
                 <View style={styles.chipRow}>
@@ -380,7 +427,7 @@ function HistoryRowView({
         )}
       </TouchableOpacity>
       {row.isCurrent && (
-        <Text style={[TYPE_SCALE.eyebrow, styles.currentMarker, { color: p.accent }]}>
+        <Text style={[TYPE_SCALE.eyebrow, styles.currentMarker, { color: STATUS_COLORS.done }]}>
           {COPY.historyCurrentMarker}
         </Text>
       )}
@@ -437,7 +484,7 @@ function ConfirmBody({
 
   return (
     <>
-      <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{title}</Text>
+      <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{title}</Text>
       <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{body}</Text>
       {isRestore && leaving.length > 0 && (
         <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>
@@ -462,19 +509,65 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { paddingVertical: 2 },
+  // Design :23 — a 42x42 circular button, no text label. There is no SVG library in this app, so
+  // the chevron is a 10x10 box wearing two borders, rotated 45°. RN renders square line-caps where
+  // the design asks for round ones; that is an accepted, unavoidable gap, NOT something to
+  // compensate for with a different stroke width.
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.chip,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  backChevron: {
+    width: 10,
+    height: 10,
+    borderLeftWidth: 2.4,
+    borderBottomWidth: 2.4,
+    transform: [{ rotate: '45deg' }],
+    marginLeft: 2,
+  },
+  // Design :24's `min-width:0`: without it a long app name pushes the title past the now
+  // fixed-width back button instead of wrapping inside the header.
+  headerText: { flex: 1 },
   subtitle: { marginTop: 2 },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },
   list: { paddingHorizontal: SPACING.md, paddingBottom: 40 },
-  rowWrap: { marginBottom: SPACING.sm },
-  card: { borderRadius: RADIUS.card, borderWidth: 1, padding: SPACING.sm },
+  // The row's inter-row gap is PADDING, not margin, so the absolute timeline segment spans it and
+  // meets the next row's segment (design :30). The 26px gutter that clears the dot lives on the
+  // flow children (`card`, `currentMarker`) as `marginLeft` and never as `rowWrap` padding —
+  // whether Yoga measures an absolutely-positioned child's `left` from the border box or the
+  // padding box is version-dependent, and child margins keep the marker offsets unambiguous.
+  rowWrap: { paddingBottom: 10 },
+  // 12.75 + 1.5/2 = 13.5, the dot's centre line (design :28).
+  timeline: { position: 'absolute', left: 12.75, width: 1.5 },
+  // 2.5 + 22/2 = 13.5 across, 10.5 + 22/2 = 21.5 down — the same centre. The 19px paper-coloured
+  // interior is what makes the line appear to pass behind the dot (design :31's
+  // `box-shadow: 0 0 0 4px #fbfaf8`); the 1.5px border is the ring outside it.
+  marker: {
+    position: 'absolute',
+    left: 2.5,
+    top: 10.5,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerDot: { width: 11, height: 11, borderRadius: 6 },
+  // 14/15 is design :32; no SPACING step matches, so it stays a cited literal (ruling R9).
+  card: { borderRadius: RADIUS.card, borderWidth: 1, marginLeft: 26, paddingVertical: 14, paddingHorizontal: 15 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   versionLabel: { marginLeft: 'auto' },
   originLine: { marginTop: 4 },
   headline: { marginTop: 4 },
   installLabel: { marginTop: 4, fontStyle: 'italic' },
-  currentMarker: { marginTop: 4, marginLeft: SPACING.sm },
+  currentMarker: { marginTop: 8, marginLeft: 26 },
   kindBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   expandedBody: { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: StyleSheet.hairlineWidth },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
@@ -483,9 +576,11 @@ const styles = StyleSheet.create({
   actionBtn: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   actionBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
   actionBtnLabel: { fontWeight: '600' },
-  toast: { position: 'absolute', left: 24, right: 24, bottom: 34, borderRadius: 12, borderWidth: 1, padding: 14 },
+  // Design :73 — dark ink face, white text, no border. `16` is deliberate and has no RADIUS step
+  // between `field` (14) and `card` (18); do not "correct" it to a token.
+  toast: { position: 'absolute', left: 24, right: 24, bottom: 34, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16 },
   scrim: { flex: 1, backgroundColor: 'rgba(24,22,20,0.5)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 24 },
-  sheetSafeBtn: { borderRadius: 14, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
+  sheetSafeBtn: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
   sheetConsequentialBtn: { height: 46, alignItems: 'center', justifyContent: 'center' },
 });
