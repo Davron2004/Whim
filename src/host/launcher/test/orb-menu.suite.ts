@@ -12,8 +12,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store/fs/kv-fs';
-import { ORB_ACTIONS, recordOrbAction, loadOrbActionCounts, type OrbActionId } from '../orb-actions';
+import {
+  ORB_ACTIONS,
+  recordOrbAction,
+  loadOrbActionCounts,
+  orbRowGlyphColor,
+  type OrbActionId,
+} from '../orb-actions';
 import { COPY } from '../copy';
+import { SHELL_COLORS } from '../../../sdk/theme';
 
 function read(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
@@ -38,6 +45,13 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(ORB_ACTIONS.find((a) => a.id === 'change')?.label, COPY.orbActionChangeIt, 'change label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'home')?.label, COPY.orbActionHome, 'home label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'versions')?.label, COPY.orbActionVersions, 'versions label');
+  });
+
+  // ── the per-row swatch (design `3a`/`3b`/`3c`, html:220-224) ──────────────
+  await h.test('orb-menu: each row swatch takes its glyph colour from a token, never an inline hex', async () => {
+    h.eq(orbRowGlyphColor('change'), SHELL_COLORS.accent, 'change glyph uses the accent token, not a literal');
+    h.eq(orbRowGlyphColor('home'), SHELL_COLORS.text, 'home glyph uses the text token, not a literal');
+    h.eq(orbRowGlyphColor('versions'), SHELL_COLORS.text, 'versions glyph uses the text token, not a literal');
   });
 
   // ── instrumentation persists, cross-session, off-screen ───────────────────
