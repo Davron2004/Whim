@@ -68,7 +68,7 @@ names each appearing EXACTLY ONCE, and `{!isDone && <Text style={styles.name}`. 
 number` is safe — none of those lines change — but any reformat of the tile's style arrays or of
 the name label goes red for a correct edit. Same class as R18 and `prompt-flow-screens.suite.ts:282`.
 
-- [ ] **L1 — token roles** · `src/sdk/design-tokens.ts`, `src/sdk/test/theme.acceptance.ts`
+- [x] **L1 — token roles** · `src/sdk/design-tokens.ts`, `src/sdk/test/theme.acceptance.ts`
       Covers R3 **as corrected by R11**. Add: `headline` (30/33.6/-0.75/700),
       `stepTitle` (26/29.9/-0.65/700 — **added by R11**), `controlLabel` (13/13/0/500),
       `kindBadge` (9.5/9.5/0.95/600/upper), `metaPlain` (10.5/10.5/0/400, no upper, no tracking),
@@ -85,7 +85,7 @@ the name label goes red for a correct edit. Same class as R18 and `prompt-flow-s
       nonexistent `IBMPlexMono-SemiBold` — RN resolves by exact file base name and would fall back
       to the system font silently. Judged in the R8 pass.
 
-- [ ] **L2 — home and settings** · `src/host/launcher/HomeScreen.tsx`,
+- [x] **L2 — home and settings** · `src/host/launcher/HomeScreen.tsx`,
       `src/host/launcher/SettingsScreen.tsx`
       V1 header paddingTop 8 → 20/22/14 · V2 `+` glyph 12 → 17/400 (local style, not a new
       TYPE_SCALE role — no role fits a one-off icon glyph, matching the `app-tile.tsx:71,77`
@@ -96,14 +96,14 @@ the name label goes red for a correct edit. Same class as R18 and `prompt-flow-s
       with L1's retarget.
       `after:` **L5** (not L1 — see the wave order above).
 
-- [ ] **L3 — flow chrome and steps** · `src/host/launcher/flow-chrome.tsx`,
+- [x] **L3 — flow chrome and steps** · `src/host/launcher/flow-chrome.tsx`,
       `ComposeStep.tsx`, `ClarifyStep.tsx`, `PlanStep.tsx`
       V4 compose headline → `headline` · V5 Back label → `controlLabel` ·
       V6 headline top padding 34/28/26 per step · V7 clarify pill → `controlLabel` ·
       S3 primary marginBottom 22 → 24 · S4 (compose/clarify/plan share of the body role).
       `after:` L1.
 
-- [ ] **L4 — history** · `src/host/launcher/HistoryScreen.tsx`
+- [x] **L4 — history** · `src/host/launcher/HistoryScreen.tsx`
       B2 timeline motif (connecting line + per-row dot marker with ring) ·
       V8 title → retargeted `screenTitle` · V9 text Back → 42×42 circular chevron button ·
       V10 split the one `eyebrow` into `kindBadge`/`metaPlain`/`metaWide` ·
@@ -112,7 +112,7 @@ the name label goes red for a correct edit. Same class as R18 and `prompt-flow-s
       V14 sheetSafeBtn radius 14 → 18 · S4 (history share) · S5 row card padding → 14/15.
       Largest lane; nine findings, one file. `after:` L1.
 
-- [ ] **L5 — build, done, tile** · `src/host/launcher/BuildStep.tsx`, `DoneStep.tsx`,
+- [x] **L5 — build, done, tile** · `src/host/launcher/BuildStep.tsx`, `DoneStep.tsx`,
       `app-tile.tsx`
       B3 done tile 120×120/radius 32/colour-matched glow/rise animation · B4 build progress
       bar (4px track `#e0dcd4`, accent fill) · V16 secondary button height 46 → 52 ·
@@ -120,7 +120,7 @@ the name label goes red for a correct edit. Same class as R18 and `prompt-flow-s
       `app-tile.tsx` is in this lane, not its own, because B3 likely needs an AppTile size
       variant — keeping both in one lane avoids a cross-lane write. `after:` L1.
 
-- [ ] **L6 — orb** · `src/host/launcher/Orb.tsx`
+- [x] **L6 — orb** · `src/host/launcher/Orb.tsx`
       V15 menu rows gain a 30×30 tinted icon-glyph circle per action and a right-aligned
       direction hint. Do NOT build the wheel gesture — design D12 defers it deliberately and
       `Orb.tsx`'s own header comment records that as a negative requirement.
