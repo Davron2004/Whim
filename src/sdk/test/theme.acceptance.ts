@@ -2,6 +2,8 @@
 // systems, not one"). Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)`
 // under this directory) — no shared harness import, following the `chart-geometry.acceptance.ts`
 // idiom of local `fail`/`equal`/`ok` helpers.
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   appColor,
   DEFAULT_THEME,
@@ -13,6 +15,7 @@ import {
   SPACING,
   MOTION,
   TYPE_SCALE,
+  FONT_FAMILY,
 } from '../theme';
 
 function fail(message: string): never {
@@ -187,5 +190,75 @@ equal('orbWheel' in MOTION, false, 'MOTION carries no wheel-geometry entry');
 
 equal(TYPE_SCALE.quote.color, SHELL_COLORS.yours, 'TYPE_SCALE.quote is coloured yours (the only face the doc pins a colour to)');
 equal(TYPE_SCALE.quote.fontStyle, 'italic', 'TYPE_SCALE.quote is italic');
+
+// ── standing invariants on the type-role vocabulary ───────────────────────────
+// These pin the SHAPE of the scale, never the mockups' numbers: `kindBadge`/`metaPlain`/
+// `metaWide`/`body` sizes are still under review (findings.md rulings R4/R5, decided in the
+// on-device screenshot pass), so asserting their pixel values here would fight that pass.
+
+// R2: the history screen's four mono microcopy roles are four DISTINCT design faces. They were
+// once collapsed onto a single over-weighted, over-spaced `eyebrow`; nothing but this assertion
+// stops that from recurring the next time someone "tidies" near-identical entries together.
+{
+  const microcopy = ['eyebrow', 'kindBadge', 'metaPlain', 'metaWide'] as const;
+  const signatures = new Set(
+    microcopy.map((role) => {
+      const face = TYPE_SCALE[role];
+      return [face.fontSize, face.letterSpacing, face.textTransform ?? 'none', face.fontWeight ?? 'none'].join('/');
+    }),
+  );
+  equal(
+    signatures.size,
+    microcopy.length,
+    `the mono microcopy roles must stay distinguishable faces (${microcopy.join(', ')} collapsed to ${describe([...signatures])})`,
+  );
+}
+
+// `metaPlain` is the deliberately undecorated one (design "when"/"version"): plain lowercase mono
+// with no tracking. It is the role most likely to be quietly restyled back into eyebrow's look.
+equal(TYPE_SCALE.metaPlain.textTransform, undefined, 'TYPE_SCALE.metaPlain is not uppercased');
+equal(TYPE_SCALE.metaPlain.letterSpacing, 0, 'TYPE_SCALE.metaPlain carries no letter-spacing');
+
+// Every font name must correspond to a .ttf that ACTUALLY EXISTS ON DISK. RN/Android resolves
+// `fontFamily` by exact file base name, so naming a weight variant that was never bundled falls
+// back to the system font SILENTLY — no crash, no warning, wrong render on device. Checking
+// `TYPE_SCALE` against `FONT_FAMILY` alone would not catch it: both live in one module, so adding
+// a bogus `monoSemiBold: 'IBMPlexMono-SemiBold'` entry and pointing a face at it would still pass.
+// Hence this reads `assets/fonts/` and checks BOTH tables against the directory listing.
+// (Reading repo files from a suite is an established idiom here — see
+// `src/host/launcher/test/history-logic.suite.ts`, which reads a `.tsx` as source.)
+{
+  // The suite is bundled to a temp file before it runs, so no source path survives — derive the
+  // repo root by walking up for the `package.json` that owns `assets/fonts/`, rather than trusting
+  // the CWD. A miss throws instead of quietly checking an empty set.
+  function findRepoRoot(from: string): string {
+    let dir = from; // `process.cwd()` is always absolute, so no resolve step is needed.
+    for (;;) {
+      if (fs.existsSync(path.join(dir, 'package.json')) && fs.existsSync(path.join(dir, 'assets', 'fonts'))) return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) fail(`could not locate the repo root (no ancestor of "${from}" holds package.json + assets/fonts)`);
+      dir = parent;
+    }
+  }
+
+  const fontsDir = path.join(findRepoRoot(process.cwd()), 'assets', 'fonts');
+  const onDisk = new Set(
+    fs
+      .readdirSync(fontsDir)
+      .filter((name) => name.toLowerCase().endsWith('.ttf'))
+      .map((name) => name.slice(0, -'.ttf'.length)),
+  );
+  ok(onDisk.size > 0, `assets/fonts/ holds no .ttf files — the shipped-font check would be vacuous (${fontsDir})`);
+
+  for (const [key, family] of Object.entries(FONT_FAMILY)) {
+    ok(onDisk.has(family), `FONT_FAMILY.${key} = "${family}" has no ${family}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`);
+  }
+  for (const [role, face] of Object.entries(TYPE_SCALE)) {
+    ok(
+      onDisk.has(face.fontFamily),
+      `TYPE_SCALE.${role}.fontFamily "${face.fontFamily}" has no ${face.fontFamily}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`,
+    );
+  }
+}
 
 console.log('SDK theme (v2) acceptance: PASS');
