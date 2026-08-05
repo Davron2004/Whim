@@ -2,6 +2,8 @@
 // systems, not one"). Auto-discovered by `src/sdk/test/run.mjs` (every `*.acceptance.ts(x)`
 // under this directory) — no shared harness import, following the `chart-geometry.acceptance.ts`
 // idiom of local `fail`/`equal`/`ok` helpers.
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   appColor,
   DEFAULT_THEME,
@@ -217,15 +219,44 @@ equal(TYPE_SCALE.quote.fontStyle, 'italic', 'TYPE_SCALE.quote is italic');
 equal(TYPE_SCALE.metaPlain.textTransform, undefined, 'TYPE_SCALE.metaPlain is not uppercased');
 equal(TYPE_SCALE.metaPlain.letterSpacing, 0, 'TYPE_SCALE.metaPlain carries no letter-spacing');
 
-// Every face must name a font asset that actually ships. RN/Android resolves `fontFamily` by exact
-// file base name, so a face naming a weight variant that is not in `assets/fonts/` falls back to
-// the system font SILENTLY — no crash, no warning, wrong render on device.
+// Every font name must correspond to a .ttf that ACTUALLY EXISTS ON DISK. RN/Android resolves
+// `fontFamily` by exact file base name, so naming a weight variant that was never bundled falls
+// back to the system font SILENTLY — no crash, no warning, wrong render on device. Checking
+// `TYPE_SCALE` against `FONT_FAMILY` alone would not catch it: both live in one module, so adding
+// a bogus `monoSemiBold: 'IBMPlexMono-SemiBold'` entry and pointing a face at it would still pass.
+// Hence this reads `assets/fonts/` and checks BOTH tables against the directory listing.
+// (Reading repo files from a suite is an established idiom here — see
+// `src/host/launcher/test/history-logic.suite.ts`, which reads a `.tsx` as source.)
 {
-  const shipped = new Set<string>(Object.values(FONT_FAMILY));
+  // The suite is bundled to a temp file before it runs, so no source path survives — derive the
+  // repo root by walking up for the `package.json` that owns `assets/fonts/`, rather than trusting
+  // the CWD. A miss throws instead of quietly checking an empty set.
+  function findRepoRoot(from: string): string {
+    let dir = from; // `process.cwd()` is always absolute, so no resolve step is needed.
+    for (;;) {
+      if (fs.existsSync(path.join(dir, 'package.json')) && fs.existsSync(path.join(dir, 'assets', 'fonts'))) return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) fail(`could not locate the repo root (no ancestor of "${from}" holds package.json + assets/fonts)`);
+      dir = parent;
+    }
+  }
+
+  const fontsDir = path.join(findRepoRoot(process.cwd()), 'assets', 'fonts');
+  const onDisk = new Set(
+    fs
+      .readdirSync(fontsDir)
+      .filter((name) => name.toLowerCase().endsWith('.ttf'))
+      .map((name) => name.slice(0, -'.ttf'.length)),
+  );
+  ok(onDisk.size > 0, `assets/fonts/ holds no .ttf files — the shipped-font check would be vacuous (${fontsDir})`);
+
+  for (const [key, family] of Object.entries(FONT_FAMILY)) {
+    ok(onDisk.has(family), `FONT_FAMILY.${key} = "${family}" has no ${family}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`);
+  }
   for (const [role, face] of Object.entries(TYPE_SCALE)) {
     ok(
-      shipped.has(face.fontFamily),
-      `TYPE_SCALE.${role}.fontFamily "${face.fontFamily}" must be a shipped FONT_FAMILY asset (one of ${describe([...shipped])})`,
+      onDisk.has(face.fontFamily),
+      `TYPE_SCALE.${role}.fontFamily "${face.fontFamily}" has no ${face.fontFamily}.ttf in assets/fonts/ (on disk: ${describe([...onDisk])})`,
     );
   }
 }
