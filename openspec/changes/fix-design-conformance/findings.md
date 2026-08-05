@@ -132,21 +132,27 @@ is currently 54 — also off-spec, just unfiled. Moving only `secondary` to 52 l
 at 52-vs-54, which is the visible defect the finding was actually pointing at. Fix both. Same file,
 same lane, no scope expansion beyond `DoneStep.tsx`.
 
-**R20. The done tile renders in `STATUS_COLORS.done`, not the app's own hue — flagged for R8.**
-(2026-08-05, lane L5.) Evidence for the status hue: the mockup writes `#0d9488` as a bare literal at
-html:520 where every other dynamic value on that screen is a `{{ }}` binding, and `RESERVED_TILE_HUES`
-/ `RESERVED_APP_COLORS` structurally forbid any real app's `tileColor()` from ever resolving to it —
-so the design reserved that hue from app identity on purpose. Under R1 the mockup wins, so implement it.
+**R20. The done tile renders in THE APP'S OWN HUE. SETTLED — owner decision, 2026-08-05.**
 
-**But this is not settled, and it must not be recorded as if it were.** It means the user sees their
-app as a teal tile on the done screen and in its own colour on the home grid moments later. That
-inconsistency is a product judgement the mockup cannot settle by itself, and it is exactly what the R8
-on-device pass is for — seeing both screens in sequence is the only way to judge it. Carry it there as
-an explicit question, not a checkbox.
+**This ruling was reversed by the owner and is now closed. It is NOT an R8 question.**
 
-Also: `app-tile.tsx`'s header comment currently says "The delivered app's own tile in its own colour."
-That describes the code being changed and becomes false. Update it in the same edit — a stale comment
-asserting the opposite of the code is worse than no comment.
+The earlier reading — that the celebration tile takes the fixed `STATUS_COLORS.done` teal — was
+inferred from the mockup writing `#0d9488` as a bare literal at html:520 where every sibling value is
+a `{{ }}` binding, reinforced by `RESERVED_TILE_HUES` forbidding any app's `tileColor()` from resolving
+to that hue. The owner overruled it. **Continuity of app identity across two adjacent screens wins over
+the mockup's literal.** A prototype hardcodes whatever colour its example app happened to have; the
+binding pattern is evidence about the prototype's plumbing, not about product intent.
+
+What L5 implements:
+- Fill stays `tileColor(name, manifest)` — the app's own colour, exactly as today. **No `STATUS_COLORS`
+  import is needed for the done tile's fill.**
+- The glow is colour-matched to **the app's own hue**, not teal. The design's
+  `box-shadow: 0 8px 22px rgba(13,148,136,.3)` is its teal at 30%, so the RN translation is
+  `shadowColor: <the tile's own resolved colour>` with `shadowOpacity: 0.3` — which is what
+  "colour-matched glow" meant in the first place.
+- Everything else in B3 is unchanged: 120×120, radius 32, the rise-in entrance, no name label.
+- **`app-tile.tsx`'s header comment — "The delivered app's own tile in its own colour" — is CORRECT.
+  Leave it exactly as it is.** The earlier instruction to rewrite it as false is WITHDRAWN.
 
 **R21. `src/host/launcher/prompt-flow.ts` is granted to lane L5.** No lane claimed it and L3's allowlist
 (the only plausible competitor) does not include it. `buildProgressFraction` belongs beside its three
