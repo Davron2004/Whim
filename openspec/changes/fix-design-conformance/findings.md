@@ -214,6 +214,20 @@ doing a sibling's job) one element lower in the same file, and the audit caught 
 missed the 18px one. The pass found what was *visible*, not what was *wrong*. Remaining drift of this
 magnitude is probably not zero.
 
+**F2 — NEW, UNFILED FINDING (not fixed this batch).** `src/host/launcher/Orb.tsx:139-143` carries
+`shadowOpacity` / `shadowRadius` / `shadowOffset` plus `elevation: 8` — **the exact iOS-only-props
+defect L5 was corrected for**, on the orb instead of the tile. On Android those three props are inert,
+so the orb ships a default-profile elevation shadow rather than whatever the design specifies.
+
+Found by L5's reviewer while verifying the `boxShadow` replacement. Named by no finding, outside L5's
+allowlist, and left alone for the same reason as F1: widening an accepted lane on a reviewer's
+incidental observation is how scope discipline erodes. It goes to a later pass.
+
+Note this is now the second instance of the same platform gap in the codebase, which suggests the
+pattern was copied. Worth grepping the whole launcher for `shadowOpacity|shadowRadius|shadowOffset`
+in that pass rather than fixing the two known sites — and worth a lint rule, since the props
+typecheck fine and are invisible to every check the harness runs.
+
 **R8. The final screenshot pass** renders the `.dc.html` screens as the baseline (no PNGs ship in the handoff) and compares against the Android emulator. It is also where OpenSpec task `I1` in `shell-redesign-v2` — on-device verification, never done, the reason that change is unarchived — gets ticked.
 
 ---
