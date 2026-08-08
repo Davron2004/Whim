@@ -15,12 +15,14 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, View, Alert } from 'react-native';
+import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { GenerationEvent, RunSummary, WireAppRecord } from '@whim/contract';
+import type { Diagnostic, GenerationEvent, RunSummary, WireAppRecord } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { SPACING } from '../../sdk/theme';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import type { AppManifest, AppRecord } from '../bridge';
 import type { SchemaArtifact } from '../storage-engine';
 import { createPersistentStore } from '../version-store';
@@ -43,6 +45,10 @@ import PlanStep from './PlanStep';
 import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
+import ScreenBoundary from './ScreenBoundary';
+import ScreenErrorFallback from './ScreenErrorFallback';
+import DevLogOverlay from './DevLogOverlay';
+import { devLogOverlayEnabled } from './dev-log-view';
 import { HomeGridSkeleton } from './flow-skeletons';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { promptEnvelope } from './prompt-envelope';
@@ -82,9 +88,33 @@ type Screen =
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
   | FlowScreen
-  | { kind: 'failure'; editing?: InstalledApp; prompt: string; reason: string; diagnostics: readonly { hint: string }[] };
+  // `observedRepairAttempts` is how many repair attempts THIS device watched go past on the
+  // stream (never a wire field), and `hasWorkingVersion` says whether the app already had a
+  // working snapshot installed — both are the failure screen's honest-only rows.
+  | {
+      kind: 'failure';
+      editing?: InstalledApp;
+      prompt: string;
+      reason: string;
+      diagnostics: readonly { hint: string }[];
+      observedRepairAttempts: number;
+      hasWorkingVersion: boolean;
+    };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
+
+/** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
+ *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
+const DEV_LOG_LABEL = 'Logs';
+
+/**
+ * The build-time flag that lets the seam DELIVER records to the dev server, in the `RUN_*_PROBE`
+ * idiom (App.tsx): flipped by hand in a local working copy and never committed as `true`.
+ * Deliberately separate from the overlay's flag — reading the ring buffer on-device is local and
+ * free, while the sink is a network transport that must not switch itself on because a build
+ * happens to be a dev build (design D5, `logging/sink.ts`).
+ */
+const SEND_DEV_LOGS = false;
 
 /** The first-run example set, built from the generated host records + bundle sources (D7). */
 function defaultSeeds(): SeedSpec[] {
@@ -136,17 +166,76 @@ function errorReason(err: unknown): { reason: string; diagnostics: readonly { hi
   return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
 }
 
-/** Dev breadcrumb for a swallowed generation-path error — the taxonomy `errorReason()`
- *  intentionally scrubs off the screen (constructor, GenerationClientError kind/status/hint,
- *  message, stack). Never logs prompt text or generated source. */
-function logGenError(stage: string, err: unknown): void {
+/** The taxonomy `errorReason()` intentionally scrubs off the screen, as named fields: constructor,
+ *  GenerationClientError kind/status/hint, message, stack. Never prompt text or generated source. */
+function errorFields(err: unknown): Record<string, unknown> {
   const isErr = err instanceof Error;
-  console.log('[whim:gen]', stage, {
+  return {
     ctor: isErr ? err.constructor.name : typeof err,
     ...(err instanceof GenerationClientError ? { kind: err.kind, status: err.status, hint: err.hint } : {}),
     message: isErr ? err.message : undefined,
     stack: isErr ? err.stack : undefined,
+  };
+}
+
+/** Breadcrumb for a swallowed generation-path error, on the generation channel. */
+function logGenError(stage: string, err: unknown): void {
+  log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
+}
+
+/** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
+ *  "The failure is recoverable from the log"): the error class, message, stack and mapped kind,
+ *  plus each diagnostic's `kind`/`symbol`/`message` — precisely the taxonomy the screen scrubs,
+ *  since it may show nothing but a diagnostic's `hint`. A terminal `failure` event has no thrown
+ *  error, so its own class name stands in for one and its `reason` for the message. */
+function logGenFailureShown(input: {
+  stage: string;
+  reason: string;
+  observedRepairAttempts: number;
+  err?: unknown;
+  /** The class name to record when nothing was thrown (the two stream-shaped failures). */
+  failureClass?: string;
+  diagnostics?: readonly Diagnostic[];
+}): void {
+  log.error(CHANNELS.gen, 'failure screen shown', {
+    stage: input.stage,
+    reason: input.reason,
+    observedRepairAttempts: input.observedRepairAttempts,
+    ...(input.err === undefined
+      ? {
+          ctor: input.failureClass ?? 'GenerationFailure',
+          kind: input.diagnostics?.[0]?.kind,
+          message: input.reason,
+          stack: undefined,
+        }
+      : errorFields(input.err)),
+    ...(input.diagnostics
+      ? { diagnostics: input.diagnostics.map((d) => ({ kind: d.kind, symbol: d.symbol, message: d.message })) }
+      : {}),
   });
+}
+
+/** What the device OBSERVED on one generation stream. `repair` counts repair-stage starts — the
+ *  attempts the device actually watched go past, which is the only thing the failure screen's
+ *  attempt row is allowed to show. */
+interface EventCounts {
+  stage: number;
+  token: number;
+  diagnostic: number;
+  repair: number;
+}
+
+/** Tally one stream event. Kept out of the build orchestration so that reading `onBuildIt` shows
+ *  the flow rather than the arithmetic; no event field reaches UI state from here. */
+function countEvent(counts: EventCounts, event: GenerationEvent): void {
+  if (event.type === 'stage') {
+    counts.stage++;
+    if (event.stage === 'repair' && event.status === 'start') counts.repair++;
+  } else if (event.type === 'token') {
+    counts.token++;
+  } else if (event.type === 'diagnostic') {
+    counts.diagnostic++;
+  }
 }
 
 /** D5's delivery routing: a brand-new install (no `editing`), an in-place update when `editing`
@@ -200,6 +289,31 @@ export default function LauncherRoot() {
   );
 }
 
+/**
+ * The developer log surface: the affordance and the overlay it opens, GATED TOGETHER on the same
+ * predicate the overlay gates itself on — the spec asks for no affordance in a shipping build,
+ * not merely a dead route. It is a modal above the live screen rather than a `Screen` variant, so
+ * a developer reads the log of the screen they are looking at without navigating away from it.
+ */
+function DevLogTools({ palette }: Readonly<{ palette: ReturnType<typeof shellPalette> }>) {
+  const [open, setOpen] = useState(false);
+  if (!devLogOverlayEnabled(__DEV__)) {
+    return null;
+  }
+  return (
+    <>
+      <TouchableOpacity
+        onPress={() => setOpen(true)}
+        accessibilityLabel={DEV_LOG_LABEL}
+        style={[styles.devLogBtn, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.eyebrow, { color: palette.textMuted }]}>{DEV_LOG_LABEL}</Text>
+      </TouchableOpacity>
+      <DevLogOverlay visible={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
 function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access: StoreAccess; kv: KVBackend }>) {
   const { theme } = useTheme();
   const palette = shellPalette(theme);
@@ -229,12 +343,19 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
 
   const refresh = () => setApps(index.list());
 
+  // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
+  // D4) — no second setting. It stays inert until both the flag and an address are set, so this
+  // runs on every address change and is a no-op in every build that ships.
+  useEffect(() => {
+    log.sink.configure({ enabled: SEND_DEV_LOGS, baseUrl: serverUrl });
+  }, [serverUrl]);
+
   useEffect(() => {
     (async () => {
       try {
         await seedFirstRun(index, access, defaultSeeds());
       } catch (e) {
-        console.log('[whim] seed failed:', (e as Error)?.message);
+        log.warn(CHANNELS.app, 'first-run seeding failed', { operation: 'seed', ...errorFields(e) });
       }
       refresh();
       setReady(true);
@@ -247,6 +368,9 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       const source = await access.activeBundle(app);
       setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app) });
     } catch (e) {
+      // The user still gets the alert; the class/message/stack of what actually failed is only
+      // recoverable from the seam (host-observability "The alert paths now log").
+      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
       Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
     }
   };
@@ -256,6 +380,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       await access.fork(app, undefined, opts);
       refresh();
     } catch (e) {
+      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) });
       Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));
     }
   };
@@ -269,6 +394,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       await access.remove(app);
       refresh();
     } catch (e) {
+      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
       Alert.alert('Could not delete this app', (e as Error)?.message ?? String(e));
     }
   };
@@ -293,12 +419,30 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   // carries one request; every backward move is immediate (`prompt-flow.ts#backFrom`). The step
   // screens never touch fetch, StoreAccess or AbortController — all of that lives here.
 
-  const failure = (editing: InstalledApp | undefined, prompt: string, err: unknown): Screen => ({
-    kind: 'failure',
-    editing,
-    prompt,
-    ...errorReason(err),
-  });
+  /** The ONE construction of the failure screen from a thrown error: it records the failure on the
+   *  generation channel on the way, so no path can reach the screen without a log record. Always
+   *  called OUTSIDE the `setScreen` updater — an updater is not pure and React may run it twice.
+   *  `observed` defaults to 0: the clarify and rewrite steps fail before any generation stream
+   *  exists, and a count is never invented for a run that never reached repair. */
+  const failure = (
+    editing: InstalledApp | undefined,
+    prompt: string,
+    err: unknown,
+    stage: string,
+    observed = 0,
+  ): Screen => {
+    const reasoned = errorReason(err);
+    logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err });
+    return {
+      kind: 'failure',
+      editing,
+      prompt,
+      ...reasoned,
+      observedRepairAttempts: observed,
+      // The app being edited already has a working version installed; a brand-new app has none.
+      hasWorkingVersion: editing != null,
+    };
+  };
 
   const openCompose = (editing?: InstalledApp, text?: string) => setScreen(composeStep(editing, text ?? ''));
 
@@ -323,7 +467,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       setScreen((s) => (s.kind === 'plan' ? withPlan(s, response) : s));
     } catch (e) {
       logGenError('rewrite failed', e);
-      setScreen((s) => (s.kind === 'plan' ? failure(pending.editing, pending.text, e) : s));
+      const failed = failure(pending.editing, pending.text, e, 'rewrite failed');
+      setScreen((s) => (s.kind === 'plan' ? failed : s));
     }
   };
 
@@ -339,7 +484,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
         setBusy(false);
-        setScreen(failure(from.editing, from.text, e));
+        setScreen(failure(from.editing, from.text, e, 'clarify failed'));
         return;
       }
     }
@@ -361,6 +506,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
     const editing = building.editing;
+    // Declared outside the try so a throw mid-stream still knows what the device observed.
+    const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
 
     try {
       const request = await buildGenerateRequest(
@@ -375,17 +522,12 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
-      const counts = { stage: 0, token: 0, diagnostic: 0 };
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
+        countEvent(counts, event);
         if (event.type === 'stage') {
-          counts.stage++;
           setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
         } else if (event.type === 'result' || event.type === 'failure') {
           terminal = event;
-        } else if (event.type === 'token') {
-          counts.token++;
-        } else if (event.type === 'diagnostic') {
-          counts.diagnostic++;
         }
       }
 
@@ -394,17 +536,40 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
 
       if (terminal == null) {
         // Stream ended with no terminal event and no cancel — a stream error, not a crash.
-        console.log('[whim:gen]', 'stream ended with no terminal event', counts);
-        setScreen({ kind: 'failure', editing, prompt: building.text, reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+        log.error(CHANNELS.gen, 'stream ended with no terminal event', { ...counts });
+        logGenFailureShown({
+          stage: 'stream ended with no terminal event',
+          reason: GENERIC_STREAM_ERROR,
+          observedRepairAttempts: counts.repair,
+          failureClass: 'StreamEndedWithoutTerminalEvent',
+        });
+        setScreen({
+          kind: 'failure',
+          editing,
+          prompt: building.text,
+          reason: GENERIC_STREAM_ERROR,
+          diagnostics: [],
+          observedRepairAttempts: counts.repair,
+          hasWorkingVersion: editing != null,
+        });
         return;
       }
       if (terminal.type === 'failure') {
+        logGenFailureShown({
+          stage: 'terminal failure event',
+          reason: terminal.reason,
+          observedRepairAttempts: counts.repair,
+          failureClass: 'GenerationFailureEvent',
+          diagnostics: terminal.diagnostics,
+        });
         setScreen({
           kind: 'failure',
           editing,
           prompt: building.text,
           reason: terminal.reason,
           diagnostics: terminal.diagnostics.map((d) => ({ hint: d.hint })),
+          observedRepairAttempts: counts.repair,
+          hasWorkingVersion: editing != null,
         });
         return;
       }
@@ -418,7 +583,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       if (ctl.cancelled) return;
       genRef.current = null;
       logGenError('build failed', e);
-      setScreen(failure(editing, building.text, e));
+      setScreen(failure(editing, building.text, e, 'build failed', counts.repair));
     }
   };
 
@@ -550,6 +715,8 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       <FailureScreen
         reason={screen.reason}
         diagnostics={screen.diagnostics}
+        observedRepairAttempts={screen.observedRepairAttempts}
+        hasWorkingVersion={screen.hasWorkingVersion}
         onRephrase={() => openCompose(editing, prompt)}
         onDismiss={goHome}
       />
@@ -570,11 +737,19 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     );
   }
 
+  // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen
+  // that throws loses its own subtree, while the safe-area frame and the status-bar inset — the
+  // blank-screen failure mode this exists to remove — still render. `screen.kind` is both the
+  // failing-screen identifier in the log record and the reset key, so navigating away and back
+  // re-attempts a screen that failed once.
   return (
     <HighlightingProvider enabled={highlighting}>
       <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
         <StatusBar barStyle={statusBarStyle} />
-        {content}
+        <ScreenBoundary screen={screen.kind} FallbackComponent={ScreenErrorFallback}>
+          {content}
+        </ScreenBoundary>
+        <DevLogTools palette={palette} />
       </SafeAreaView>
     </HighlightingProvider>
   );
@@ -583,4 +758,13 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
 const styles = StyleSheet.create({
   root: { flex: 1 },
   loading: { flex: 1, padding: SPACING.lg },
+  devLogBtn: {
+    position: 'absolute',
+    right: SPACING.md,
+    bottom: SPACING.md,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    borderWidth: 1,
+    borderRadius: RADIUS.chip,
+  },
 });

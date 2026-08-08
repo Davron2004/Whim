@@ -25,6 +25,8 @@ import { getDeviceId } from '../device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import type { GenerationEvent } from '@whim/contract';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -257,34 +259,32 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(threw, undefined, 'does not throw');
   });
 
-  // clarifyPrompt: a mapped error logs a [whim:gen] dev breadcrumb before throwing
+  // clarifyPrompt: a mapped error records a generation-channel breadcrumb before throwing.
+  // obs-v1: the breadcrumb is a SEAM record, not a console line — so this reads the seam's ring
+  // buffer and asserts NAMED FIELDS (spec "A breadcrumb carries structure, not a formatted
+  // string"), which is also what makes the assertion independent of any formatting.
   await h.test(
-    'clarifyPrompt: a non-2xx response still throws AND logs a [whim:gen] breadcrumb for the mapping site',
+    'clarifyPrompt: a non-2xx response still throws AND records a structured breadcrumb on the generation channel',
     async () => {
       const fetchImpl = (async () =>
         new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as typeof fetch;
 
-      const originalLog = console.log;
-      const lines: unknown[][] = [];
-      try {
-        console.log = (...args: unknown[]) => {
-          lines.push(args);
-        };
-        await h.throws(
-          () => clarifyPrompt({ ...BASE, fetchImpl }, 'hi'),
-          '',
-          'clarifyPrompt still throws on a 404',
-        );
-      } finally {
-        console.log = originalLog;
-      }
+      const before = log.buffer.snapshot().length;
+      await h.throws(
+        () => clarifyPrompt({ ...BASE, fetchImpl }, 'hi'),
+        '',
+        'clarifyPrompt still throws on a 404',
+      );
 
-      const logged = lines.find((args) => args[0] === '[whim:gen]');
-      h.ok(logged !== undefined, 'logs a [whim:gen] breadcrumb at the httpErrorFrom mapping site');
+      const logged = log.buffer
+        .snapshot()
+        .slice(before)
+        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/clarify');
+      h.ok(logged !== undefined, 'records a breadcrumb at the httpErrorFrom mapping site');
       if (logged) {
-        h.ok(logged.includes('/v1/clarify'), 'breadcrumb includes the request path');
-        h.ok(logged.includes('status=404'), 'breadcrumb includes the response status');
-        h.ok(logged.includes('kind=http'), 'breadcrumb includes the mapped error kind');
+        h.eq(logged.fields.status, 404, 'the response status is a named field');
+        h.eq(logged.fields.kind, 'http', 'the mapped error kind is a named field');
+        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
       }
     },
   );

@@ -17,6 +17,8 @@ import type { ClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import type { GenerationEvent } from '@whim/contract';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -274,30 +276,26 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     },
   );
 
+  // obs-v1: the breadcrumb is a SEAM record on the generation channel, not a console line — read
+  // back off the seam's ring buffer and asserted as named fields.
   await h.test(
-    'openXhrGenerateStream: a transport failure logs a [whim:gen] breadcrumb for the mapping site',
+    'openXhrGenerateStream: a transport failure records a structured breadcrumb on the generation channel',
     async () => {
       const fakeXhr = new FakeXMLHttpRequest();
-      const originalLog = console.log;
-      const lines: unknown[][] = [];
-      let caught: unknown;
-      try {
-        console.log = (...args: unknown[]) => {
-          lines.push(args);
-        };
-        const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
-        fakeXhr.respondError(); // no respondHeaders() call first -- status stays 0, reader never handed back
-        caught = await expectThrow(first);
-      } finally {
-        console.log = originalLog;
-      }
+      const before = log.buffer.snapshot().length;
+      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+      fakeXhr.respondError(); // no respondHeaders() call first -- status stays 0, reader never handed back
+      const caught = await expectThrow(first);
       h.ok(caught instanceof GenerationClientError, 'still throws GenerationClientError');
 
-      const logged = lines.find((args) => args[0] === '[whim:gen]');
-      h.ok(logged !== undefined, 'logs a [whim:gen] breadcrumb at the transport-error mapping site');
+      const logged = log.buffer
+        .snapshot()
+        .slice(before)
+        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/generate');
+      h.ok(logged !== undefined, 'records a breadcrumb at the transport-error mapping site');
       if (logged) {
-        h.ok(logged.includes('/v1/generate'), 'breadcrumb includes the request path');
-        h.ok(logged.includes('kind=network'), 'breadcrumb includes the mapped error kind');
+        h.eq(logged.fields.kind, 'network', 'the mapped error kind is a named field');
+        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
       }
     },
   );

@@ -28,6 +28,8 @@ import {
 import { CapabilityRegistry } from './registry';
 import { StorageEngineError } from '../storage-engine/contract';
 import { PermissionHook, ALLOW_ALL, runGate } from './gate';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 const DEFAULT_DEDUP_LIMIT = 256;
 
@@ -158,8 +160,12 @@ function safeParse(s: string): object | undefined {
   try {
     const v = JSON.parse(s);
     return v && typeof v === 'object' ? v : undefined;
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed dedup key JSON treated as unparseable
-  } catch {
+  } catch (e) {
+    // The input is bundle-controlled, so unparseable is an ORDINARY case, not a fault — `debug`,
+    // and the caller's behaviour is unchanged (it falls back to treating the key as opaque).
+    log.debug(CHANNELS.app, 'dedup key is not JSON', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
     return undefined;
   }
 }

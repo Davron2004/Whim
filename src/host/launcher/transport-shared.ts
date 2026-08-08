@@ -23,6 +23,8 @@
  */
 
 import type { DeviceIdError, GenerateRequest } from '@whim/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 declare global {
   interface ResponseBodyReader {
@@ -112,29 +114,30 @@ function hostPortOf(baseUrl: string): string {
   return baseUrl.replace(/^https?:\/\//, '');
 }
 
-/** Dev breadcrumb for every GenerationClientError mapping site across both transports.
- *  NEVER pass prompt/body text, the x-whim-device value, or the API key here. */
+/** Breadcrumb for every GenerationClientError mapping site across both transports, on the seam's
+ *  generation channel: path, host:port, kind, status, readyState and detail are NAMED FIELDS, not
+ *  a formatted line, so a reader can filter on them (spec "A breadcrumb carries structure, not a
+ *  formatted string"). NEVER pass prompt/body text, the x-whim-device value, or the API key here. */
 export function logMappedError(
   path: string,
   baseUrl: string,
   kind: GenerationClientErrorKind,
   detail?: { status?: number; readyState?: number; message?: string },
 ): void {
-  console.log(
-    '[whim:gen]',
+  log.error(CHANNELS.gen, 'transport failed', {
     path,
-    hostPortOf(baseUrl),
-    `kind=${kind}`,
-    detail?.status !== undefined ? `status=${detail.status}` : 'status=-',
-    detail?.readyState !== undefined ? `readyState=${detail.readyState}` : 'readyState=-',
-    detail?.message ? `detail=${detail.message}` : 'detail=-',
-  );
+    host: hostPortOf(baseUrl),
+    kind,
+    status: detail?.status,
+    readyState: detail?.readyState,
+    detail: detail?.message,
+  });
 }
 
 /** Build the `GenerationClientError` for a non-ok `Response`: `device_id` when the body matches
  *  the device-identity middleware's `DeviceIdError` shape, `http` otherwise (carrying `hint`
  *  when the body has one, e.g. the `invalid_request` shape the route handlers return). Logs a
- *  `[whim:gen]` dev breadcrumb immediately before returning either mapped error (`logMappedError`
+ *  generation-channel dev breadcrumb immediately before returning either mapped error (`logMappedError`
  *  above), attributed to `path`/`baseUrl` so both transports' call sites are traceable. */
 export async function httpErrorFrom(response: Response, path: string, baseUrl: string): Promise<GenerationClientError> {
   const bodyJson: unknown = await response.json().catch(() => null);

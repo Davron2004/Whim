@@ -26,6 +26,8 @@ import {
   SyscallFrame,
   SysretFrame,
 } from './index';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 const REGISTRY = createDefaultRegistry();
 const engineFactory = (appId: string) => createStorageEngine({ appId, mode: 'persistent' });
@@ -78,9 +80,13 @@ function resetAppDb(appId: string): void {
     const tables = exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'`);
     for (const t of tables) exec(`DROP TABLE IF EXISTS "${typeof t.name === 'string' ? t.name : JSON.stringify(t.name)}"`);
     db.close();
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: no prior db to reset on first run
-  } catch {
-    /* first run */
+  } catch (e) {
+    // Expected on a first run — there is no prior database to drop. Recorded at debug so a real
+    // failure to reset (which would silently taint the probe's verdict) is still readable.
+    log.debug(CHANNELS.app, 'probe db reset skipped', {
+      appId,
+      detail: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -113,6 +119,30 @@ async function runInjectionChecks(
   }
   check(identifiersRejected, 'crafted identifiers not rejected');
   return { valuesInert, identifiersRejected };
+}
+
+/** The registry is append-only (#41): re-registering an existing verb MUST throw. The throw is
+ *  the observation, so this returns whether the guard held. A failure to even build the probe
+ *  registry returns `false` — the check fails — and says why on the seam rather than vanishing. */
+function probeAppendOnly(): boolean {
+  try {
+    const reg = new CapabilityRegistry();
+    registerStorageRows(reg);
+    try {
+      reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) });
+    } catch (duplicate) {
+      log.debug(CHANNELS.app, 'append-only guard rejected a duplicate registration', {
+        detail: duplicate instanceof Error ? duplicate.message : String(duplicate),
+      });
+      return true;
+    }
+    return false;
+  } catch (e) {
+    log.warn(CHANNELS.app, 'append-only probe setup failed', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
+    return false;
+  }
 }
 
 export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
@@ -173,15 +203,7 @@ export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
   const { valuesInert, identifiersRejected } = await runInjectionChecks(d, check);
 
   // ── registry append-only ──────────────────────────────────────────────────────
-  let appendOnly = false;
-  try {
-    const reg = new CapabilityRegistry();
-    registerStorageRows(reg);
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: duplicate-registration throw confirms append-only guard
-    try { reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) }); } catch { appendOnly = true; }
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: registry-setup failure during append-only probe is ignored
-  } catch { /* ignore */ }
-  check(appendOnly, 'duplicate registration did not throw');
+  const appendOnly = check(probeAppendOnly(), 'duplicate registration did not throw');
 
   // ── per-verb latency (gate + engine round-trip) + pure-pipe echo (task 1.3) ──
   await timeN('diag.echo (pure pipe)', 50, () => dDiag().handle(frame('diag.echo', { payload: 1 })));

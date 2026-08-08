@@ -91,7 +91,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     let threw = false;
     try {
       recordOrbAction(kv, 'home');
-      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: test probe records whether recordOrbAction threw, discards the error itself
+      // eslint-disable-next-line no-restricted-syntax -- intentional: the assertion IS "did it throw"; the thrown value is deliberately discarded and h.ok below reports the outcome
     } catch {
       threw = true;
     }
