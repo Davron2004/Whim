@@ -84,21 +84,21 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## C. Boundary and overlay components
 
-- [ ] C1 Add `src/host/launcher/ScreenBoundary.tsx` on `react-error-boundary@6.1.2`: accepts a
+- [x] C1 Add `src/host/launcher/ScreenBoundary.tsx` on `react-error-boundary@6.1.2`: accepts a
   reset key, reports the caught error (class, message, stack, failing-screen identifier) through
   the seam **before** rendering its fallback, and exposes a reset the fallback can call. Delta:
   `host-observability` §"Every screen renders inside a recoverable error boundary".
-- [ ] C2 Add `src/host/launcher/ScreenErrorFallback.tsx`: a recoverable error screen in plain
+- [x] C2 Add `src/host/launcher/ScreenErrorFallback.tsx`: a recoverable error screen in plain
   English with a retry affordance, styled from the v2 tokens only — no hex, no numeric font-size or
   radius literal — with every string from `copy.ts`.
-- [ ] C3 Add `src/host/launcher/DevLogOverlay.tsx`: hand-rolled `View`/`Text`/`FlatList` over the
+- [x] C3 Add `src/host/launcher/DevLogOverlay.tsx`: hand-rolled `View`/`Text`/`FlatList` over the
   ring buffer's snapshot, newest-first, one row per record (timestamp, level, channel, message,
   structured fields), filterable by channel and by minimum level. No third-party overlay package.
   Delta: §"The dev log overlay reads the ring buffer and cannot reach a shipping build".
-- [ ] C4 Gate the overlay: reachable when `__DEV__` **or** the explicit build-time flag (default
+- [x] C4 Gate the overlay: reachable when `__DEV__` **or** the explicit build-time flag (default
   `false`) is set — never on `__DEV__` alone, because this project's builds are release builds
   (design D5). Delta: `app-launcher` §"Production builds hide developer diagnostics surfaces".
-- [ ] C5 Add `src/host/launcher/test/observability-ui.suite.ts`, registered in
+- [x] C5 Add `src/host/launcher/test/observability-ui.suite.ts`, registered in
   `test/acceptance.ts`: a throwing child renders the fallback instead of unmounting; the boundary
   logs before it renders; retry remounts; a changed reset key clears the error state; the overlay
   lists what the buffer holds, filters without mutating, and is unreachable with both gates off.
