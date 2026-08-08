@@ -393,3 +393,8 @@ Owner decisions resolved and executed:
   `recovered` unset. `COPY.failureHintsTitle` now unread (kept; existing-key edits forbidden) —
   reviewer may flag for a later cleanup. Red-checks: 11 seeded failures incl. self-asserting
   source-scan fixtures. Contract: handoff/failure-screen.md (94 lines). Regate: below.
+- `regate-pass` — chain-D merged tip (f2faff8), FAST GATE PASSED. D worktree/branch cleaned.
+
+### wave 5
+
+- `dispatched` — **chain-E** (shell wiring + call-site migration, all 22 interim markers), BASE `f2faff8`, worktree `.claude/worktrees/obs-v1-E`, branch `chain/obs-v1-E`, model opus.
