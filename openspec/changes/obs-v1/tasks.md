@@ -136,27 +136,27 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## E. Shell wiring and call-site migration
 
-- [ ] E1 `LauncherRoot.tsx`: wrap the `content` value produced by the `screen.kind` chain
+- [x] E1 `LauncherRoot.tsx`: wrap the `content` value produced by the `screen.kind` chain
   (`:461–570`) in `ScreenBoundary`, keyed by `screen.kind` so navigating away resets it. Do **not**
   wrap above `SafeAreaView`/`HighlightingProvider` — the shell frame must survive a screen failure
   (design D1). Add the overlay's screen route and its developer affordance beside the existing
   `onOpenDevProbe` (`:568`).
-- [ ] E2 `LauncherRoot.tsx`: migrate `logGenError` (`:142–149`) onto the seam's generation channel,
+- [x] E2 `LauncherRoot.tsx`: migrate `logGenError` (`:142–149`) onto the seam's generation channel,
   field-for-field, dropping the `console.log` and the `[whim:gen]` literal. Report the failure
   screen's failure through the same channel (delta: `prompt-flow`, scenario "The failure is
   recoverable from the log"), and pass `FailureScreen` the observed repair-attempt count and
   whether a prior working snapshot exists, per `handoff/failure-screen.md`.
-- [ ] E3 `LauncherRoot.tsx`: the `onOpen` / `onFork` / `onDelete` catch blocks (`:244–273`) keep
+- [x] E3 `LauncherRoot.tsx`: the `onOpen` / `onFork` / `onDelete` catch blocks (`:244–273`) keep
   their `Alert.alert` and gain a seam record carrying error class, message, stack, and the failing
   operation. Delta: `host-observability` §"No error is swallowed silently", scenario "The alert
   paths now log".
-- [ ] E4 `transport-shared.ts`: migrate `logMappedError` (`:117–132`) onto the generation channel
+- [x] E4 `transport-shared.ts`: migrate `logMappedError` (`:117–132`) onto the generation channel
   with path, host:port, kind, status, readyState and detail as **named fields** rather than a
   formatted string; the `[whim:gen]` literal goes away.
-- [ ] E5 `useMiniAppHost.ts`: route the `[whim:page]` relay (`:167` region) onto the sandbox-page
+- [x] E5 `useMiniAppHost.ts`: route the `[whim:page]` relay (`:167` region) onto the sandbox-page
   channel; make the untrusted-frame `JSON.parse` catch (`:167`) and the best-effort engine close
   (`:115`) log at the appropriate level instead of returning silently. Same for `teardown.ts:40`.
-- [ ] E6 Resolve every remaining `obs-v1-interim` site (the full 22-site list is in A5's applied
+- [x] E6 Resolve every remaining `obs-v1-interim` site (the full 22-site list is in A5's applied
   patch; grep the token). Non-test code — `app-index.ts:62,77`, `deliver.ts:29`,
   `history-logic.ts:87,176`, `prompt-envelope.ts:62`, `src/host/cue-backend.ts:35,45`,
   `src/host/bridge/device-acceptance.ts:81,179,180`, `src/host/bridge/dispatcher.ts:161`,
@@ -166,7 +166,7 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
   permanent documented `-- intentional:` disable where logging inside the harness is demonstrably
   noise. Also give `server/src/routes/generate.ts:97–101` a log line while leaving it
   fire-and-forget (it is a `.catch(fn)`, outside the tripwire's selector — design D9).
-- [ ] E7 Delete **every** `obs-v1-interim` marker (group A5) and extend
+- [x] E7 Delete **every** `obs-v1-interim` marker (group A5) and extend
   `src/host/logging/test/logging.suite.ts` with: zero `obs-v1-interim` tokens remain anywhere in
   the repo; no diagnostic `console.*` call remains in `src/host/` outside the seam; and the three
   retired prefix literals appear at no call site.
