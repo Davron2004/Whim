@@ -6,6 +6,7 @@
  * the abort-mid-stream cases) and the whole file passes with `OPENROUTER_API_KEY` unset.
  */
 import { check, eq, section } from './harness';
+import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { parsePlan, validatePlan, type Plan } from '../src/generation/plan';
 import {
@@ -733,17 +734,12 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
     { role: 'engineer', deltas: [], error: new Error('provider secret MODEL-LEAK') },
   ]);
 
-  const realConsoleLog = console.log;
-  const lines: string[] = [];
-  console.log = (...args: unknown[]): void => {
-    lines.push(args.map(String).join(' '));
-  };
-
+  const capture = captureLogs();
   let events: GenerationEvent[];
   try {
     events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
   } finally {
-    console.log = realConsoleLog;
+    capture.stop();
   }
 
   assertCompletedEnvelope('model stream throws', events);
@@ -755,17 +751,21 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
   }
 
   check(
-    'model stream throws: dev log carries the plan stage start',
-    lines.some((l) => l.includes('[whim-server]') && l.includes('stage plan start')),
+    'model stream throws: the run log carries the plan stage start, as named fields',
+    withMessage(capture, 'stage').some(
+      (r) => r.scope === 'run' && r.stage === 'plan' && r.status === 'start',
+    ),
   );
   // ScriptedModelClient's error turn throws from the delta iterator itself (deltas: []), so this
   // exception is never observed via `settledUsage.error`/`settledId.error` — it propagates straight
-  // to runGenerator's top-level catch. The line below is that catch's log, carrying the same error
+  // to runGenerator's top-level catch. The record below is that catch's log, carrying the same error
   // class/message; it is NOT evidence that `throwLoggedModelCallFailure` ran (see
   // testUsageRejectionAfterDeltasLogsAtThrowSite for that coverage).
   check(
-    'model stream throws: dev log carries the runGenerator-catch line with error class and message',
-    lines.some((l) => l.includes('run failed:') && l.includes('Error') && l.includes('provider secret MODEL-LEAK')),
+    'model stream throws: the run log carries the runGenerator-catch record with error class and detail',
+    withMessage(capture, 'run failed').some(
+      (r) => r.errorClass === 'Error' && r.detail === 'provider secret MODEL-LEAK',
+    ),
   );
 }
 
@@ -790,26 +790,22 @@ async function testUsageRejectionAfterDeltasLogsAtThrowSite(): Promise<void> {
     },
   };
 
-  const realConsoleLog = console.log;
-  const lines: string[] = [];
-  console.log = (...args: unknown[]): void => {
-    lines.push(args.map(String).join(' '));
-  };
-
+  const capture = captureLogs();
   let events: GenerationEvent[];
   try {
     events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
   } finally {
-    console.log = realConsoleLog;
+    capture.stop();
   }
 
   const terminal = events.at(-1);
   check('usage rejection: terminal is still a failure', terminal?.type === 'failure');
 
   check(
-    'usage rejection: dev log carries the throw-site model-call-failure line',
-    lines.some(
-      (l) => l.includes('model call failed (usage)') && l.includes('Error') && l.includes('usage promise rejected after deltas'),
+    'usage rejection: the run log carries the throw-site model-call-failure record',
+    withMessage(capture, 'model call failed').some(
+      (r) =>
+        r.which === 'usage' && r.errorClass === 'Error' && r.detail === 'usage promise rejected after deltas',
     ),
   );
 }

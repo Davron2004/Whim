@@ -20,7 +20,16 @@ import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
 import type { Summariser } from './summarise';
-import { logRun } from '../dev-log';
+import { log } from '../logger';
+
+/** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
+ *  triggers and terminal outcomes — as one child logger carrying its scope as a field. Everything
+ *  variable is a NAMED FIELD, never interpolated into the message, and the root logger's `redact`
+ *  config is what keeps prompt text / generated source / the API key out of these records: it is
+ *  enforced at the serializer, not by a rule a future author has to remember.
+ *
+ *  Nothing here is called from inside a delta-iteration or token-emission loop. */
+const runLog = log.child({ scope: 'run' });
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
@@ -204,20 +213,23 @@ function outcomeFromDecision(decision: Exclude<DiagnosticsDecision, { action: 'p
   return { kind: 'failed', reason: decision.reason };
 }
 
-/** Formats one `[whim-server]` breadcrumb for a `stage` transition — same fields the wire's
- *  `stage` event itself carries (stage name, status, and attempt when present). */
+/** One breadcrumb for a `stage` transition — same fields the wire's `stage` event itself carries
+ *  (stage name, status, and attempt when present). */
 function logStage(stage: string, status: string, attempt?: number): void {
-  logRun(attempt !== undefined ? `stage ${stage} ${status} attempt=${attempt}` : `stage ${stage} ${status}`);
+  runLog.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
 }
 
 /** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
  *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
  *  called from inside the delta iteration loop (design D5 scope). */
 function throwLoggedModelCallFailure(which: 'usage' | 'id', error: unknown): never {
-  logRun(
-    `model call failed (${which}):`,
-    error instanceof Error ? error.constructor.name : typeof error,
-    error instanceof Error ? error.message : String(error),
+  runLog.error(
+    {
+      which,
+      errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      detail: error instanceof Error ? error.message : String(error),
+    },
+    'model call failed',
   );
   throw error;
 }
@@ -278,7 +290,7 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0 };
 
-    logRun('run start');
+    runLog.info('run start');
     try {
       const schemaContext = schemaContextFor(request);
 
@@ -292,11 +304,13 @@ export class GenerationMachine {
       yield* this.runRepairLoop(request, plan, schemaContext, source, signal, trace, state);
     } catch (err) {
       if (signal?.aborted) return;
-      logRun(
-        'run failed:',
-        err instanceof Error ? err.constructor.name : typeof err,
-        err instanceof Error ? err.message : String(err),
-        err instanceof Error ? err.stack : undefined,
+      runLog.error(
+        {
+          errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          detail: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        },
+        'run failed',
       );
       yield* this.emitCompletion(state, signal, {
         type: 'failure',
@@ -318,9 +332,9 @@ export class GenerationMachine {
     yield { type: 'usage', usage: state.usage };
     if (signal?.aborted) return;
     if (terminal.type === 'failure') {
-      logRun('terminal failure:', terminal.reason);
+      runLog.info({ reason: terminal.reason }, 'terminal failure');
     } else {
-      logRun('terminal result');
+      runLog.info('terminal result');
     }
     yield terminal;
   }
@@ -519,7 +533,7 @@ export class GenerationMachine {
 
       const kindCounts: Record<string, number> = {};
       for (const d of outcome.diagnostics) kindCounts[d.kind] = (kindCounts[d.kind] ?? 0) + 1;
-      logRun('repair triggered:', JSON.stringify(kindCounts), 'warningsOnly=' + String(outcome.warningsOnly));
+      runLog.info({ kindCounts, warningsOnly: outcome.warningsOnly }, 'repair triggered');
 
       repairsUsed += 1;
       if (outcome.warningsOnly) warningRepairsUsed += 1;
@@ -589,10 +603,12 @@ export class GenerationMachine {
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
       return result.summary;
     } catch (err) {
-      logRun(
-        'summariser failed:',
-        err instanceof Error ? err.constructor.name : typeof err,
-        err instanceof Error ? err.message : String(err),
+      runLog.error(
+        {
+          errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        'summariser failed',
       );
       return undefined;
     }

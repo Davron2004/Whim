@@ -4,6 +4,7 @@
  */
 import { check, eq, section } from './harness';
 import { readSseResponse } from './sse-reader';
+import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
@@ -643,78 +644,71 @@ async function testAbortDoubleCreditRace(): Promise<void> {
 }
 
 /**
- * Dev request logging (task 4.1, design D5) — one console line per request (method, path,
- * status, duration) so "arrived and completed" is distinguishable from "never arrived", without
- * a log call per SSE frame and without leaking bodies/prompts/device ids.
+ * Per-request logging — one structured record per request carrying method, path, status and
+ * duration as NAMED FIELDS (obs-v1; spec "A request line carries fields"), so "arrived and
+ * completed" is distinguishable from "never arrived", without a log call per SSE frame and without
+ * leaking bodies/prompts/device ids.
  */
-async function testDevRequestLogging(): Promise<void> {
-  section('Dev request logging (task 4.1)');
+async function testRequestLogging(): Promise<void> {
+  section('Per-request logging (spec "A request line carries fields")');
 
-  const LOG_LINE_RE = /^\[whim-server\] (\S+) (\S+) (\d+) (\d+)ms$/;
-  const realConsoleLog = console.log;
-  const lines: string[] = [];
-  console.log = (...args: unknown[]): void => {
-    lines.push(args.map(String).join(' '));
-  };
-
+  const capture = captureLogs();
   try {
     // Non-streaming: a plain 200 logs exactly once, on the way out of the middleware chain.
     {
-      lines.length = 0;
+      capture.records.length = 0;
       const app = testApp();
       await app.request('/healthz');
-      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
-      eq('healthz logs exactly one line', matches.length, 1);
-      const m = LOG_LINE_RE.exec(matches[0]!)!;
-      eq('healthz log method', m[1], 'GET');
-      eq('healthz log path', m[2], '/healthz');
-      eq('healthz log status', m[3], '200');
+      const matches = withMessage(capture, 'request');
+      eq('healthz logs exactly one record', matches.length, 1);
+      eq('healthz record scope', matches[0]!.scope, 'request');
+      eq('healthz record method field', matches[0]!.method, 'GET');
+      eq('healthz record path field', matches[0]!.path, '/healthz');
+      eq('healthz record status field', matches[0]!.status, 200);
+      check('healthz record carries a duration field', typeof matches[0]!.durationMs === 'number');
     }
 
     // Non-streaming error path: a validation 400 still logs exactly once with the real status.
     {
-      lines.length = 0;
+      capture.records.length = 0;
       const app = testApp();
       await post(app, '/v1/generate', { notPrompt: 'oops' }, DEVICE_HEADER);
-      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
-      eq('invalid generate body logs exactly one line', matches.length, 1);
-      const m = LOG_LINE_RE.exec(matches[0]!)!;
-      eq('invalid generate body log status', m[3], '400');
+      const matches = withMessage(capture, 'request');
+      eq('invalid generate body logs exactly one record', matches.length, 1);
+      eq('invalid generate body record status', matches[0]!.status, 400);
     }
 
-    // Streaming: the log must not fire while the SSE body is still open — only once it settles —
-    // and even then exactly once (not once per frame).
+    // Streaming: the record must not fire while the SSE body is still open — only once it settles
+    // — and even then exactly once (not once per frame). That is what the duration measures.
     {
-      lines.length = 0;
+      capture.records.length = 0;
+      capture.raw.length = 0;
       const app = testApp();
       const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
-      check(
-        'no log line before the SSE stream has been drained',
-        lines.filter((l) => LOG_LINE_RE.test(l)).length === 0,
-      );
+      eq('no request record before the SSE stream has been drained', withMessage(capture, 'request').length, 0);
 
       const { events } = await readSseResponse(res);
       check('sanity: the stream actually produced events', events.length > 0);
 
-      const matches = lines.filter((l) => LOG_LINE_RE.test(l));
-      eq('generate stream logs exactly one line once settled (not once per frame)', matches.length, 1);
-      const m = LOG_LINE_RE.exec(matches[0]!)!;
-      eq('generate stream log method', m[1], 'POST');
-      eq('generate stream log path', m[2], '/v1/generate');
-      eq('generate stream log status', m[3], '200');
+      const matches = withMessage(capture, 'request');
+      eq('generate stream logs exactly one record once settled (not once per frame)', matches.length, 1);
+      eq('generate stream record method', matches[0]!.method, 'POST');
+      eq('generate stream record path', matches[0]!.path, '/v1/generate');
+      eq('generate stream record status', matches[0]!.status, 200);
+      check('generate stream record carries a duration field', typeof matches[0]!.durationMs === 'number');
 
-      // Privacy floor: never the prompt text or the device id in a log line.
+      // Privacy floor: never the prompt text or the device id in an emitted record.
       check(
-        'no log line contains the prompt text',
-        !lines.some((l) => l.includes('hello')),
+        'no emitted record contains the prompt text',
+        !capture.raw.some((l) => l.includes('hello')),
       );
       check(
-        'no log line contains the device id',
-        !lines.some((l) => l.includes(DEVICE_ID)),
+        'no emitted record contains the device id',
+        !capture.raw.some((l) => l.includes(DEVICE_ID)),
       );
     }
   } finally {
-    console.log = realConsoleLog;
+    capture.stop();
   }
 }
 
@@ -725,5 +719,5 @@ export async function runServerCoreTests(): Promise<void> {
   await testSseCancelClearsKeepalive();
   await testSseCancelAbortsPipeline();
   await testAbortDoubleCreditRace();
-  await testDevRequestLogging();
+  await testRequestLogging();
 }
