@@ -15,7 +15,9 @@
 import React, { useEffect, useState } from 'react';
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import type { DevLogRecord } from '../../../contract/src/dev-log';
+// `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
+// zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
+import type { DevLogRecord } from '@whim/contract';
 import type { LogLevel } from '../logging';
 import { LEVELS, log } from '../logging';
 import type { LogRing } from '../logging/ring-buffer';

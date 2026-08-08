@@ -25,7 +25,10 @@ export function captureLogs(): LogCapture {
 
   const write: WriteFn = ((chunk: unknown, ...rest: unknown[]): boolean => {
     const text = typeof chunk === 'string' ? chunk : String(chunk);
-    let captured = false;
+    // A single write can carry a log line AND harness output (pino and the harness share stdout,
+    // and Node coalesces). So the chunk is split: log lines are captured, everything else is
+    // forwarded verbatim — swallowing the whole chunk would lose a suite's own results.
+    const passthrough: string[] = [];
     for (const line of text.split('\n')) {
       if (line.length === 0) continue;
       let parsed: unknown;
@@ -35,16 +38,23 @@ export function captureLogs(): LogCapture {
         // A parse failure means "not a log line" (harness output, or a partial write): leave the
         // text for the real stdout. Any other throw is not ours to swallow.
         if (!(err instanceof SyntaxError)) throw err;
+        passthrough.push(line);
         continue;
       }
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         records.push(parsed as Record<string, unknown>);
         raw.push(line);
-        captured = true;
+      } else {
+        passthrough.push(line);
       }
     }
-    if (captured) return true;
-    return (realWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+    if (passthrough.length === 0) return true;
+    // The chunk is only reassembled when something was actually filtered out of it; an untouched
+    // chunk is forwarded byte-for-byte with its original arguments (encoding/callback).
+    if (passthrough.length === text.split('\n').filter((l) => l.length > 0).length) {
+      return (realWrite as (...args: unknown[]) => boolean)(chunk, ...rest);
+    }
+    return realWrite(passthrough.join('\n') + '\n');
   }) as WriteFn;
 
   process.stdout.write = write;
