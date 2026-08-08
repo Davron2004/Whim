@@ -24,6 +24,11 @@ import { z } from 'zod';
 
 export type { DiagnosticKind } from '../../checks/contract';
 
+/** The dev-only log envelope (obs-v1, design D6): plain types, no zod value, no runtime export.
+ *  Re-exported type-only so consumers keep importing the package entry — the exception stays one
+ *  module wide (`dev-log.ts`) and nothing runtime crosses with it. */
+export type { DevLogBatch, DevLogLevel, DevLogRecord, DevLogSinkPath } from './dev-log';
+
 /** Integer token counts. ONE shape, used identically by the SSE `usage` event, `/v1/usage`, and
  *  the OpenRouter wrapper's captured usage — imported by reference, never re-declared. */
 export const Usage = z.object({
