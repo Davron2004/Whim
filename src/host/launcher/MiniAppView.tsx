@@ -15,7 +15,7 @@ import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
-import { CHANNELS } from '../logging/channels';
+import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
 import { COPY } from './copy';
@@ -85,16 +85,7 @@ export default function MiniAppView({
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}
-        onError={(ev) => {
-          const native = ev.nativeEvent;
-          log.error(CHANNELS.app, 'mini-app webview failed to load', {
-            appId: record.appId,
-            code: native.code,
-            detail: native.description,
-            domain: native.domain,
-            url: native.url,
-          });
-        }}
+        onError={(ev) => logWebViewError(log, ev.nativeEvent, { appId: record.appId })}
       />
       <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>

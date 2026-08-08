@@ -36,7 +36,7 @@ import {
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 import { LogRing } from '../../logging/ring-buffer';
-import type { DevLogRecord } from '../../../../contract/src/dev-log';
+import type { DevLogRecord } from '@whim/contract';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -283,8 +283,16 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     h.ok(/FlatList/.test(src) && /\bView\b/.test(src) && /\bText\b/.test(src), 'built from View/Text/FlatList');
     h.ok(/visibleRecords\(/.test(src), 'the list it renders is the filtered, newest-first view');
 
+    // `@whim/contract` is exempt only because it is imported TYPE-ONLY (asserted here, and locked
+    // tree-wide in `logging.suite.ts`): the statement is erased, so no package reaches the bundle.
+    h.ok(
+      /import type \{[^}]*\} from '@whim\/contract';/.test(src),
+      'the wire types come in type-only, so the contract package never reaches the bundle',
+    );
     const imports = [...src.matchAll(/from '([^']+)'/g)].map(m => m[1]);
-    const thirdParty = imports.filter(spec => !spec.startsWith('.') && spec !== 'react' && spec !== 'react-native');
+    const thirdParty = imports.filter(
+      spec => !spec.startsWith('.') && spec !== 'react' && spec !== 'react-native' && spec !== '@whim/contract',
+    );
     h.eq(thirdParty, [], 'no third-party overlay package — react and react-native only');
   });
 }

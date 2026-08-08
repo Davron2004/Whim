@@ -109,6 +109,49 @@ function testRedactionAtTheSerializer(): void {
   }
 }
 
+/** Spec: "A sensitive field cannot be logged" — the device seam matches field names
+ *  case-insensitively to depth 4, so the server's exact-match paths must not be defeated by a
+ *  capitalized spelling or by one more level of nesting. */
+function testRedactionSurvivesCasingAndDepth(): void {
+  section('logging — redaction is not defeated by casing or by one more level of nesting');
+
+  const lines: string[] = [];
+  const log = loggerInto(lines);
+  log.info(
+    {
+      Prompt: 'CAPITALIZED-PROMPT-SECRET',
+      DeviceId: 'CAPITALIZED-DEVICE-SECRET',
+      ApiKey: 'CAPITALIZED-KEY-SECRET',
+      Source: 'CAPITALIZED-SOURCE-SECRET',
+      fields: { detail: { headers: { apiKey: 'DEPTH-THREE-KEY-SECRET', status: 401 } } },
+    },
+    'sensitive casing',
+  );
+
+  eq('exactly one record was serialized', lines.length, 1);
+  const out = lines[0]!;
+  const parsed = JSON.parse(out) as Record<string, unknown>;
+  eq('a capitalized prompt is the marker', parsed.Prompt, REDACTED);
+  eq('a capitalized device id is the marker', parsed.DeviceId, REDACTED);
+  eq('a capitalized api key is the marker', parsed.ApiKey, REDACTED);
+  eq('a capitalized source is the marker', parsed.Source, REDACTED);
+
+  const headers = ((parsed.fields as Record<string, unknown>).detail as Record<string, unknown>)
+    .headers as Record<string, unknown>;
+  eq('a thrice-nested api key is the marker', headers.apiKey, REDACTED);
+  eq('its non-sensitive sibling survives', headers.status, 401);
+
+  for (const secret of [
+    'CAPITALIZED-PROMPT-SECRET',
+    'CAPITALIZED-DEVICE-SECRET',
+    'CAPITALIZED-KEY-SECRET',
+    'CAPITALIZED-SOURCE-SECRET',
+    'DEPTH-THREE-KEY-SECRET',
+  ]) {
+    check(`the raw value ${secret} appears nowhere in the output`, !out.includes(secret));
+  }
+}
+
 /** Spec: "The old helpers are gone" — `[whim-server]` console logging is neither defined nor
  *  called anywhere under `server/src`, and its module no longer exists. */
 function testRetiredHelpersAreGone(): void {
@@ -249,6 +292,7 @@ async function testSinkRejectsWhole(): Promise<void> {
 
 export async function runLoggingTests(): Promise<void> {
   testRedactionAtTheSerializer();
+  testRedactionSurvivesCasingAndDepth();
   testRetiredHelpersAreGone();
   await testSinkIsOffByDefaultAndOutsideV1();
   await testSinkAppendsInOrder();

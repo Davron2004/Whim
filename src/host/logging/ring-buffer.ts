@@ -7,10 +7,9 @@
  * observe a half-written record and a snapshot it holds does not change when more records arrive.
  */
 
-// TYPE-ONLY import of the contract package's type-only dev-log module (design D6). Reached by
-// path rather than through `@whim/contract`'s entry so not even the barrel — and therefore
-// never zod — can enter the Metro graph; `import type` erases it entirely regardless.
-import type { DevLogRecord } from '../../../contract/src/dev-log';
+// `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
+// zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
+import type { DevLogRecord } from '@whim/contract';
 
 /** How many records the device keeps. Chosen to cover a whole generation round-trip's
  *  breadcrumbs while staying trivially bounded in memory. */
