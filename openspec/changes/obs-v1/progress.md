@@ -406,8 +406,29 @@ Owner decisions resolved and executed:
   flag (RUN_*_PROBE idiom) since B exported no sink flag; complexity extractions; E7 scans exclude
   openspec/, test dirs, and seven explicitly-listed probe surfaces (file-by-file, no glob).
   Derivations: observedRepairAttempts = repair-start count from the stream; hasWorkingVersion =
-  editing != null. 18 markers migrated to seam calls, 4 test-harness markers converted to
+  editing != null. 16 markers migrated to seam calls, 6 test-harness markers converted to
   documented `intentional:` (throw-is-the-answer probes). Red-checks non-vacuous (3 seeded
   breaks, each failing the exact assertion). Residual noted for review: DevProbeScreen.tsx:74
   still logs the retired `[whim]` prefix (probe surface, currently excluded). Regate: below.
 - `gate-full-pass` — FULL GATE PASSED on the staging tip c7fe341 (knip green post-E, guard:metro, Chromium invariants, openspec validate 39/39). Reviewer dispatched on 23b55525..tip.
+
+## Reviewer pass (whole-change diff 23b55525..56481fa)
+
+VERDICT: findings — 2 high, 5 medium, 7 low; full report adjudicated by the orchestrator.
+- Fix chain **R** dispatched for: the self-redacting `code` field in MiniAppView's WebView error
+  record (+ behavioral test replacing the source-grep); a tripwire lock test (the two selectors'
+  presence in `.eslintrc.js`); a type-only-import lock for the dev-log module + the five relative
+  imports switched to `@whim/contract` (now resolvable); server `REDACT_PATHS` case/depth
+  widening + tests; `log-capture` chunk-swallow fix; DevProbeScreen's retired `[whim]` prefix
+  migrated (shrinks E7's exclusion list by one).
+- Accepted residuals (recorded, no action): token-emission no-logging stays review-held (code
+  verified conformant today; a mechanical lock would be brittle); fallback offers retry only
+  (spec-conformant; UX call surfaced to owner); dead `recovered` branch (structurally unreachable
+  — a repaired run emits `result`); unread `failureHintsTitle`; module-global boundary dedupe
+  slot (single-boundary today); page-relay `line` field is bundle-controlled text (dev-only sink,
+  off by default); sink-channel threshold assumption noted.
+- Ledger correction: chain-E's marker split was 16 migrated / 6 converted (was recorded 18/4).
+- Report-honesty spot-checks passed: chain-A's comment-only claim verified across all six
+  subsystem groups; zero interim tokens; no protected-surface touches beyond the ratified batch
+  (which included two comment-only lines in `scripts/sync-codex.mjs` — a Class-2 file — applied
+  attended in the O-1 ratification; no checker weakened, assessment confirmed by the reviewer).
