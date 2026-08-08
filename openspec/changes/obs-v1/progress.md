@@ -348,3 +348,10 @@ Owner decisions resolved and executed:
   `handoff/logging-seam.md` (120 lines). A1–A6 boxes ticked retroactively (applied in the
   ratified batch). Regate: below.
 - `regate-pass` — chain-B merged tip (cfeeaa6), FAST GATE PASSED. B worktree/branch cleaned. Wave 3: C and F cut from cfeeaa6.
+
+### wave 3
+
+- `dispatched` — **chain-C** (boundary + overlay components), BASE `159bee4`, worktree
+  `.claude/worktrees/obs-v1-C`, branch `chain/obs-v1-C`, model opus.
+- `dispatched` — **chain-F** (server logging on pino), BASE `159bee4`, worktree
+  `.claude/worktrees/obs-v1-F`, branch `chain/obs-v1-F`, model opus. File-disjoint from C.
