@@ -31,6 +31,7 @@ import { runWhimProseTests } from './whim-prose.suite';
 import { runTileColourTests } from './tile-colour.suite';
 import { runOrbMenuTests } from './orb-menu.suite';
 import { runLoggingTests } from '../../logging/test/logging.suite';
+import { runObservabilityUiTests } from './observability-ui.suite';
 
 const h = new Harness();
 
@@ -59,6 +60,7 @@ await runWhimProseTests(h);
 await runTileColourTests(h);
 await runOrbMenuTests(h);
 await runLoggingTests(h);
+await runObservabilityUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

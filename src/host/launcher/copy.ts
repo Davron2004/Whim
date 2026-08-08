@@ -117,6 +117,11 @@ export const COPY = {
   failureHintsTitle: 'What to try',
   failureRephrase: 'Try rephrasing',
   failureDismiss: 'Back to your apps',
+  // The recoverable error screen the launcher's screen boundary renders (obs-v1) — plain
+  // English, never the thrown error itself.
+  screenErrorTitle: 'This screen stopped working',
+  screenErrorBody: 'Nothing you made was lost. Try again, and it should come back.',
+  screenErrorRetry: 'Try again',
 
   // ── settings ────────────────────────────────────────────────────────────────
   serverAddressSectionTitle: 'Server address',
