@@ -173,27 +173,27 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## F. Server logging on pino
 
-- [ ] F1 Add `server/src/logger.ts`: one `pino` root logger with `redact` paths covering prompt
+- [x] F1 Add `server/src/logger.ts`: one `pino` root logger with `redact` paths covering prompt
   text, generated source, the `x-whim-device` value and the model-provider API key, replaced with a
   fixed marker; children carry their scope as a field. Pretty transport in dev; plain JSON when
   `pino-pretty` is absent. Delta: `generation-server` §"Server logging is structured and redacted
   at the serializer".
-- [ ] F2 Delete `server/src/dev-log.ts` and migrate its two callers' call sites: the per-request
+- [x] F2 Delete `server/src/dev-log.ts` and migrate its two callers' call sites: the per-request
   line keeps method/path/status/duration as named fields (and keeps measuring the SSE body's drain,
   not the handler's return); the per-run breadcrumbs become a child logger. No wrapper is left
   behind — two ways to log is the failure being removed (design D3). No logging enters the
   token-emission path.
-- [ ] F3 Add `server/src/routes/dev-logs.ts`: accepts a batch of device records, validates it with a
+- [x] F3 Add `server/src/routes/dev-logs.ts`: accepts a batch of device records, validates it with a
   hand-written structural guard (design D6), and appends one JSON line per record to the log file
   after the logger's redaction. Bounded by body size and record count; an over-large or malformed
   batch is rejected whole with a structured error and writes nothing.
-- [ ] F4 Mount the route in `server/src/main.ts` **only** when its environment flag is set, and
+- [x] F4 Mount the route in `server/src/main.ts` **only** when its environment flag is set, and
   **not** under `/v1` — the "every `/v1` route is gated by `x-whim-device`" invariant must read the
   same afterwards. Disabled ⇒ `404`. Delta: `generation-server` §"A dev-only log-sink route
   persists batched device records".
-- [ ] F5 Add `server/logs-tail.mjs` — the target of the `whim:logs` script from A1 — tailing the log
+- [x] F5 Add `server/logs-tail.mjs` — the target of the `whim:logs` script from A1 — tailing the log
   file for a human reader, and add the log file's location to `.gitignore`.
-- [ ] F6 Extend the server suite (`server/test/run.mjs` entry): the dependency-budget test now
+- [x] F6 Extend the server suite (`server/test/run.mjs` entry): the dependency-budget test now
   admits `pino` and asserts `pino-pretty` is dev-only; a sensitive field passed to the logger comes
   out redacted; the retired `[whim-server]` helpers are neither defined nor called; the sink route
   is `404` when disabled, appends in order when enabled, rejects over-large and malformed batches
