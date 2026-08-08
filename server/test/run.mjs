@@ -50,12 +50,18 @@ await build({
   target: 'node22', // node:sqlite (DatabaseSync) needs Node 22+ — match dev.mjs, not a misleading node20
   logLevel: 'warning',
   // stages.suite.ts pulls in esbuild transitively (src/generation/stages/build.ts ->
-  // synthrun/builder.ts) and prompts.suite.ts imports the `typescript` package directly;
-  // both ship CJS `require()` calls that bundle into an unsupported dynamic require under
-  // esbuild's ESM output. Externalize rather than bundle them — Node resolves them from
-  // node_modules at runtime instead.
-  external: ['typescript', 'esbuild'],
+  // synthrun/builder.ts), prompts.suite.ts imports the `typescript` package directly, and
+  // `src/logger.ts` imports `pino`; all three ship CJS `require()` calls that bundle into an
+  // unsupported dynamic require under esbuild's ESM output (`pino` throws `Dynamic require of
+  // "node:os" is not supported` at import time). Externalize rather than bundle them — Node
+  // resolves them from node_modules at runtime instead.
+  external: ['typescript', 'esbuild', 'pino'],
 });
+
+// The logger's pretty transport (dev default) writes from a worker thread, which no in-process
+// test can read back. Force the structured-JSON-on-stdout mode `log-capture.ts` reads — and which
+// is also the mode the server runs in wherever `pino-pretty` is absent.
+process.env.WHIM_LOG_JSON = '1';
 
 try {
   await import(pathToFileURL(outfile));

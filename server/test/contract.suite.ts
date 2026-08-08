@@ -197,4 +197,14 @@ export function runContractTests(): void {
     'pino',
   ]);
   check('server has no React-adjacent dep', !serverDeps.some(isReactAdjacent));
+
+  // The pretty printer is a HUMAN convenience, not part of the service: the server must run with
+  // structured JSON where it is absent (spec "The service runs without the pretty printer"), so it
+  // may never appear under `dependencies`.
+  const serverPkg = JSON.parse(readFileSync(path.join(root, 'server/package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  check('pino-pretty is not a server runtime dependency', !('pino-pretty' in (serverPkg.dependencies ?? {})));
+  check('pino-pretty is a server dev dependency', 'pino-pretty' in (serverPkg.devDependencies ?? {}));
 }
