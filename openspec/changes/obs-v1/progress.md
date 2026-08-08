@@ -366,3 +366,14 @@ Owner decisions resolved and executed:
   block must treat these as present. Red-checks non-vacuous (8 + 2 failures on seeded breaks; an
   early double-log defect was caught by the once-only assertion). Regate: below.
 - `regate-pass` — chain-C merged tip (f2bcabb), FAST GATE PASSED. C worktree/branch cleaned. Awaiting chain-F (still running); D dispatches after C+F.
+- `merged` — **chain-F** (`474af99`, 6/6, gate PASS, server suite 664 checks). Integrity exit 0;
+  all changes in server/ + .gitignore. Class-A accepted: pino added to the esbuild `external`
+  arrays of `server/dev.mjs` / `server/test/e2e.run.mjs` (bundling pino throws at import — same
+  class as the existing typescript external); `WHIM_LOG_JSON=1` in run.mjs (real feature, pretty
+  transport writes from a worker thread); three console-capture tests migrated to JSON capture
+  (would otherwise be vacuous); main.ts console lines moved to the logger. Sink:
+  `POST /dev/logs`, env-gated (`WHIM_DEV_LOG_SINK=1`), outside /v1, 204/400/413, path pinned via
+  the `DevLogSinkPath` type. Red-checks 7-way non-vacuous; one check exposed a weak channel
+  clause, closed with three malformed cases. Note for gate-full: knip was already red at BASE
+  (`react-error-boundary`, seam `log` unused) — resolves when D/E wire them; watch it at step 10.
+  Regate: below.
