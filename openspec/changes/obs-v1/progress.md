@@ -382,3 +382,14 @@ Owner decisions resolved and executed:
 ### wave 4
 
 - `dispatched` — **chain-D** (failure screen 3b + mini-app container), BASE `16f4fbb`, worktree `.claude/worktrees/obs-v1-D`, branch `chain/obs-v1-D`, model opus.
+- `merged` — **chain-D** (`d2f42dc`, 6/6, gate PASS). Integrity exit 0; scope exactly the owns
+  list; copy.ts additive (zero deletions), keys failureRecoveredTitle/RowLastVersionWorks/
+  RowSayItDifferently. Class-A accepted: pure row/attempt composition lives in copy.ts (house
+  helper precedent, RN-free for Node tests); panel tints are alpha washes of the outcome hue
+  (HistoryScreen `+ '4d'` idiom) since no v2 token exists — no hex added; "Tried N times" label
+  (terminal screen, countdown would misreport); nearest-token rounding with three named
+  non-colour geometry locals; rpActions ink/paper buttons. New optional props
+  observedRepairAttempts/hasWorkingVersion/recovered — E supplies the first two, may leave
+  `recovered` unset. `COPY.failureHintsTitle` now unread (kept; existing-key edits forbidden) —
+  reviewer may flag for a later cleanup. Red-checks: 11 seeded failures incl. self-asserting
+  source-scan fixtures. Contract: handoff/failure-screen.md (94 lines). Regate: below.
