@@ -355,3 +355,14 @@ Owner decisions resolved and executed:
   `.claude/worktrees/obs-v1-C`, branch `chain/obs-v1-C`, model opus.
 - `dispatched` — **chain-F** (server logging on pino), BASE `159bee4`, worktree
   `.claude/worktrees/obs-v1-F`, branch `chain/obs-v1-F`, model opus. File-disjoint from C.
+- `merged` — **chain-C** (`183dc05`, 5/5, gate PASS, launcher suite 5440 checks). Integrity exit 0.
+  Class-A deviations accepted: `dev-log-view.ts` added as an RN-free pure sibling (house
+  `home-grid.ts` precedent — overlay logic testable under Node); `FallbackComponent` is a required
+  prop, not a defaulted import (keeps the boundary RN-free/testable — chain-E must pass
+  `ScreenErrorFallback` explicitly); report-once dedupe is module-scope keyed
+  screen|class|message (React 19 re-mounts the boundary on its recovery retry — useRef cannot
+  dedupe); suite renders real trees with the existing react-test-renderer devDependency.
+  copy.ts: three keys appended (screenErrorTitle/Body/Retry), verified zero deletions — chain-D's
+  block must treat these as present. Red-checks non-vacuous (8 + 2 failures on seeded breaks; an
+  early double-log defect was caught by the once-only assertion). Regate: below.
+- `regate-pass` — chain-C merged tip (f2bcabb), FAST GATE PASSED. C worktree/branch cleaned. Awaiting chain-F (still running); D dispatches after C+F.
