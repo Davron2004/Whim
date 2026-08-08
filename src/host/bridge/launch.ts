@@ -13,6 +13,8 @@
 
 import { AppRecord, RealmRecord } from './contract';
 import { StorageEngine, StorageEngineError } from '../storage-engine/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /** Builds a fresh per-app engine handle for the given app id. Device → op-sqlite persistent;
  *  tests → `:memory:`. */
@@ -21,6 +23,18 @@ export type EngineFactory = (appId: string) => StorageEngine;
 export type LaunchResult =
   | { ok: true; realm: RealmRecord }
   | { ok: false; error: { kind: string; hint: string } };
+
+/** The structured launch error below is what the caller acts on; closing the engine after a
+ *  refused open is best-effort cleanup. A failed close leaks a handle, so it is recorded rather
+ *  than swallowed — never turned into a second error the caller has to reconcile. */
+function logCloseFailure(appId: string, err: unknown): void {
+  log.warn(CHANNELS.app, 'storage engine close failed', {
+    operation: 'failed-open-cleanup',
+    appId,
+    errorClass: err instanceof Error ? err.constructor.name : typeof err,
+    detail: err instanceof Error ? err.message : String(err),
+  });
+}
 
 /**
  * Launch an app into a bound realm record. If the app declares storage, the engine is created
@@ -44,9 +58,8 @@ export function launchApp(app: AppRecord, createEngine: EngineFactory, generatio
     } catch (err) {
       try {
         engine.close();
-        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: best-effort engine close after a failed schema open
-      } catch {
-        /* best effort */
+      } catch (closeErr) {
+        logCloseFailure(app.appId, closeErr);
       }
       if (err instanceof StorageEngineError) {
         return { ok: false, error: err.detail };
