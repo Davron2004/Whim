@@ -122,6 +122,11 @@ export const COPY = {
   screenErrorTitle: 'This screen stopped working',
   screenErrorBody: 'Nothing you made was lost. Try again, and it should come back.',
   screenErrorRetry: 'Try again',
+  // The `3b` failure checklist (obs-v1) — the two rows the screen writes itself. Every other row
+  // is a diagnostic's own `hint`, so no mechanism vocabulary can reach the panel.
+  failureRecoveredTitle: 'Fixed it',
+  failureRowLastVersionWorks: 'The version you already had still works and is still installed',
+  failureRowSayItDifferently: 'Describing it differently usually gets past this',
 
   // ── settings ────────────────────────────────────────────────────────────────
   serverAddressSectionTitle: 'Server address',
@@ -195,6 +200,63 @@ export function restoreSheetTitle(version: string): string {
  */
 export function restoreSheetBody(version: string, losing = 'the last few changes'): string {
   return `Everything after ${version} comes off — including ${losing}. Your saved data stays. You can come forward again from this list.`;
+}
+
+// ── the `3b` failure checklist and attempt row (obs-v1) ──────────────────────
+// The failure screen's rows ARE copy: which table strings and which diagnostic hints become the
+// checklist, in what order. It lives here rather than in `FailureScreen.tsx` for the same reason
+// `home-grid.ts` holds the grid arithmetic — this module imports no `react-native`, so the
+// composition is exercised under Node (`test/failure-screen.suite.ts`) instead of grepped for.
+
+/** A checklist row's outcome (design `3b`, html:943): a completed check, a failed check, or a
+ *  muted advisory line. The design's fourth kind, `run`, belongs to the in-flight build states,
+ *  which this terminal screen never shows. */
+export type FailureRowKind = 'done' | 'bad' | 'wait';
+
+/** One checklist row. `text` is ALWAYS a diagnostic's `hint` or a `COPY` string — a diagnostic's
+ *  `kind`, `symbol` or `message` never reaches it. */
+export interface FailureRow {
+  readonly kind: FailureRowKind;
+  readonly text: string;
+}
+
+/**
+ * The terminal failure state's rows (design `3b` RP[5]): the reassurance that the last working
+ * version survived — OMITTED when the app has none, because there is nothing honest to reassure
+ * about — then one row per diagnostic hint, then the advisory line.
+ */
+export function failureChecklistRows(input: {
+  readonly diagnostics: readonly { hint: string }[];
+  readonly hasWorkingVersion: boolean;
+}): readonly FailureRow[] {
+  const rows: FailureRow[] = [];
+  if (input.hasWorkingVersion) rows.push({ kind: 'done', text: COPY.failureRowLastVersionWorks });
+  for (const diagnostic of input.diagnostics) rows.push({ kind: 'bad', text: diagnostic.hint });
+  rows.push({ kind: 'wait', text: COPY.failureRowSayItDifferently });
+  return rows;
+}
+
+/** How many repair attempts a run is permitted — one attempt-row segment each (design `3b`). */
+export const REPAIR_ATTEMPT_LIMIT = 3;
+
+/** A segment of the attempt row: an attempt already spent, the one the run was on when it ended,
+ *  or one that was never reached. */
+export type AttemptSegment = 'spent' | 'current' | 'remaining';
+
+/** The attempt row, one segment per permitted attempt (html:1001): the attempts the device
+ *  actually observed are spent, the next one is the current one, the rest were never reached. */
+export function attemptSegments(observed: number, limit = REPAIR_ATTEMPT_LIMIT): readonly AttemptSegment[] {
+  const spent = Math.max(0, Math.min(Math.floor(observed), limit));
+  return Array.from({ length: limit }, (_unused, i) => {
+    if (i < spent) return 'spent';
+    return i === spent ? 'current' : 'remaining';
+  });
+}
+
+/** The attempt row's label — how many attempts were used, never how many are left. */
+export function attemptsUsedLabel(observed: number): string {
+  const spent = Math.max(0, Math.floor(observed));
+  return spent === 1 ? 'Tried once' : `Tried ${spent} times`;
 }
 
 /** The toast after a restore: "You're on v4 now". */
