@@ -105,30 +105,30 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## D. Failure screen `3b` and the mini-app container
 
-- [ ] D1 Rebuild `src/host/launcher/FailureScreen.tsx` to design `3b`
+- [x] D1 Rebuild `src/host/launcher/FailureScreen.tsx` to design `3b`
   (`docs/design/reference/Whim Mobile.dc.html:306–333` — the tracked copy; the untracked
   `whim-design-handoff/` twin is byte-identical but absent from worktrees): a 26px title with the dynamic
   outcome colour, the sub-line, and every value resolved from the v2 tokens. No hex and no numeric
   font-size/radius literal survives in its stylesheet (it imports no tokens today —
   `research.md` §5). Delta: `prompt-flow` §"Failure is shown honestly, never as a crash".
-- [ ] D2 Add the attempt-progress row (`rpShowAttempts` / `rpAttempts`, html:309–316): equal
+- [x] D2 Add the attempt-progress row (`rpShowAttempts` / `rpAttempts`, html:309–316): equal
   segments — spent attempts in the failure hue, current in the accent, remainder in the neutral
   border tone — under a small uppercase mono label. Rendered **only** when the caller reports
   observed repair attempts; hidden otherwise, never invented (design D7).
-- [ ] D3 Replace the bulleted `FlatList` with the bordered large-radius panel of checklist rows
+- [x] D3 Replace the bulleted `FlatList` with the bordered large-radius panel of checklist rows
   (`rpRows`, html:318–324): each row an 18×18 ring/mark icon plus text — `done` filled ring with a
   check mark, `bad` filled ring with an alert mark, `wait` muted ring outline with no mark and
   muted text. Panel fill and border follow the run's outcome tone.
-- [ ] D4 Compose the three rows from data the screen already has: a `done` reassurance row (omitted
+- [x] D4 Compose the three rows from data the screen already has: a `done` reassurance row (omitted
   when the app has no prior working snapshot), one `bad` row per diagnostic `hint`, and a muted
   `wait` advisory row. Every string is a `hint` or a `copy.ts` key — no `kind`, `symbol`, or
   `message` reaches the screen. Add the new `copy.ts` keys this needs and edit no existing key.
-- [ ] D5 `src/host/launcher/MiniAppView.tsx`: resolve the launch-failure stylesheet's literals
+- [x] D5 `src/host/launcher/MiniAppView.tsx`: resolve the launch-failure stylesheet's literals
   (`:92–99` — font sizes, radius, paddings, margins) to tokens, and route its WebView `onError`
   (`:85`) through the seam's mini-app channel with the native payload as structured fields, instead
   of `console.log('[whim] webview error', …)`. Delta: `app-launcher` §"The mini-app container
   styles its failure state from tokens".
-- [ ] D6 Add `src/host/launcher/test/failure-screen.suite.ts`, registered in `test/acceptance.ts`:
+- [x] D6 Add `src/host/launcher/test/failure-screen.suite.ts`, registered in `test/acceptance.ts`:
   the attempt row appears with observed attempts and is absent without them; each row's text is a
   hint or a copy key and never a `kind`/`symbol`/`message`; the reassurance row is omitted with no
   prior snapshot; and neither `FailureScreen.tsx` nor `MiniAppView.tsx` contains a hex colour or a
