@@ -453,3 +453,49 @@ Deviations: all class-A (each adjudicated in its merge entry); no class-B unreso
 Reviewer verdict: findings → chain-R fixed 2 high + 3 medium + 2 low; accepted residuals are
 enumerated in the reviewer-pass entry above. Remaining before closure: **chain-H (attended
 on-device acceptance)** and the closure lane (steps 12a–g) — PR targets `redesign` per D-1.
+
+## chain-H — on-device acceptance (attended, 2026-08-08) — PASSED 5/5
+
+Run on the Pixel_10_Pro_XL AVD (Android 17), debug-signed **release** build (`gradlew
+installRelease`; the `npm run android:release` CLI form dies on an interactive port-8081 prompt in
+a scripted session — the Gradle task is the same build without the prompt), `adb reverse
+tcp:8787 tcp:8787`, server `WHIM_PIPELINE=stub WHIM_DEV_LOG_SINK=1` with the root `.env` model
+roster sourced (rewrite has no stub **by design** — `server/src/main.ts:9–12`; without the model
+env the flow terminates at the failure screen on the rewrite 502, which was itself observed
+rendering correctly).
+
+Temporary scaffolding, all reverted before this commit (tree verified clean, clean APK
+reinstalled): `SHOW_DEV_LOG_OVERLAY=true`, `SEND_DEV_LOGS=true`, a **two-attempt** render throw in
+`HistoryScreen` (a one-shot throw is invisible: React 19 auto-retries a thrown render once and the
+retry succeeded before the fallback ever painted — the seam logged the catch, the user saw
+nothing), and a stub-pipeline failure override (`WHIM_STUB_FAIL=1` env + two repair start/done
+cycles before the terminal failure), needed because the `[[fail]]` prompt marker does not survive:
+the generate request is built from `building.rewritten`, and the live rewrite model strips the
+marker.
+
+The five verdicts:
+
+1. **Overlay in a release build** — PASS. LOGS affordance present with `__DEV__` false, overlay
+   opens with channel chips (all / gen / whim / page / screen / sink), level chips, structured
+   records with fields + stacks, newest-first.
+2. **Sink + `whim:logs`** — PASS. Device batches landed in `server/.logs/device.jsonl` over the
+   reverse bridge, and `whim:logs` streamed a new record live (tail-from-EOF semantics: it shows
+   records that arrive after it starts, nothing retroactive).
+3. **Boundary + retry** — PASS. Deliberate render throw in History → "This screen stopped
+   working" fallback (shell frame + LOGS affordance intact, no blank frame, no crash), seam record
+   `whim:screen error screen render failed {screen: history}` delivered to the sink, once-only
+   dedupe held (one record per mount round, not per throw); Try again → History renders.
+4. **Failure screen `3b` on a real failed generation** — PASS. Real SSE stream (stub pipeline,
+   forced failure): title, reason, **attempt segment row "TRIED 2 TIMES"** driven by
+   `observedRepairAttempts=2` counted from the stream's repair-start events, tinted diagnostics
+   panel with hint row, ink/paper actions; reassurance row correctly absent (new app, no working
+   version). The device record confirming it (`failure screen shown`,
+   `observedRepairAttempts: 2`) arrived through the sink.
+5. **Ring capacity** — CONFIRMED at 500, no adjustment. A clean full run (compose → clarify →
+   plan → build → installed) emits **zero** device records — the seam logs failures, not routine
+   progress — and the busiest observed state (rewrite-502 failure) held 3 records. Capacity is
+   ~2 orders of magnitude above observed volume.
+
+Incidental finding, no action taken: two identical successful runs installed two identically-named
+`stub-app` tiles (launcher ids differ). Not an obs-v1 surface; noted for a future launcher UX
+pass.
