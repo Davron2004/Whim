@@ -37,6 +37,7 @@ export function tearDownLiveRealm(
   }
   if (live.current) {
     tearDownRealm(live.current.realm);
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: best-effort engine close during teardown
     try { live.current.realm.engine?.close(); } catch { /* best effort */ }
     live.current = null;
   }

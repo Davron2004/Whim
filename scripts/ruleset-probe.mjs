@@ -39,6 +39,7 @@ try {
     // The list endpoint omits rules/conditions; fetch the ruleset detail when needed.
     let detail = r;
     if (!Array.isArray(r.rules) || !r.conditions) {
+      // eslint-disable-next-line no-restricted-syntax -- intentional: detail fetch failure keeps the already-fetched ruleset summary, per the comment below
       try { detail = ghApiJson(`repos/{owner}/{repo}/rulesets/${r.id}`); } catch { /* keep summary */ }
     }
     const ruleTypes = new Set((detail.rules || []).map((x) => x.type));

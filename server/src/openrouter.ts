@@ -137,6 +137,7 @@ function parseSseLine(line: string): ParsedSseFrame | null {
   try {
     const parsed = JSON.parse(payload) as Record<string, unknown>;
     return { id: idFrom(parsed), usage: usageFrom(parsed), content: contentFrom(parsed) };
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed SSE data line is just not a usable frame — returns null
   } catch {
     return null;
   }

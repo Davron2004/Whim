@@ -61,6 +61,7 @@ function jsonValueError(value: JsonValue): string | null {
   try {
     JSON.stringify(value);
     return null;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: converts JSON.stringify's throw (e.g. a BigInt/cycle) into this validator's error-string return
   } catch {
     return 'expected a JSON-serializable value';
   }

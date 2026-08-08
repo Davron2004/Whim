@@ -44,6 +44,7 @@ export function launchApp(app: AppRecord, createEngine: EngineFactory, generatio
     } catch (err) {
       try {
         engine.close();
+        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: best-effort engine close after a failed schema open
       } catch {
         /* best effort */
       }

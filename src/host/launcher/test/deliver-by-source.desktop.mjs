@@ -67,6 +67,7 @@ async function run(browser, file, drive, waitForVerdict = true) {
           publicSdk = typeof window.__whimRequire === 'function'
             ? window.__whimRequire('vc-sdk')
             : null;
+          // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: vc-sdk not yet loaded in the sandboxed iframe, probe treats it as absent
         } catch {}
         return {
           text: root.innerText,
@@ -80,6 +81,7 @@ async function run(browser, file, drive, waitForVerdict = true) {
         };
       });
       if (state) iframeState = state;
+      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: a non-sandbox frame throwing on evaluate is skipped, not fatal to the probe
     } catch {}
   }
   await page.close();

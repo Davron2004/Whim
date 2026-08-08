@@ -8,6 +8,17 @@ module.exports = {
         selector: 'CallExpression[callee.type="MemberExpression"][callee.property.name="sort"][arguments.length=0]',
         message: 'Pass an explicit comparator to sort(); use String.localeCompare for alphabetic strings or numeric subtraction for numbers.',
       },
+      {
+        selector: 'CatchClause[body.body.length=0]',
+        message:
+          'No error is swallowed silently: an empty catch discards the error. Rethrow, log through the seam in src/host/logging/, or add a disable comment stating why silence is intentional.',
+      },
+      {
+        selector:
+          'CatchClause[param=null][body.body.length>0]:not(:has(ThrowStatement)):not(:has(CallExpression[callee.object.name="log"])):not(:has(CallExpression[callee.name=/^log[A-Z]/]))',
+        message:
+          'No error is swallowed silently: this catch never binds the error and neither rethrows nor logs. Bind and handle it, log through the seam in src/host/logging/ (a level method on the seam logger `log`, or a log-prefixed helper), or add a disable comment stating why silence is intentional.',
+      },
     ],
   },
   overrides: [

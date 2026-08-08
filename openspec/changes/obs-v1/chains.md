@@ -34,14 +34,13 @@
 
 ## chain-A: protected-config bootstrap — lands first
 
-> **Enforcement status, verified 2026-08-05.** Class-2 protection is NOT active on this branch:
-> `.claude/hooks/protect-harness.sh` is present and executable, but no `PreToolUse` hook is wired
-> in `.claude/settings.json` or `.claude/settings.local.json`. Confirmed with the owner. So the
-> edits below are ordinary edits in this run and chain-A is **dispatchable** — it is not a
-> HUMAN-BOOTSTRAP chain as originally planned. Its position first in the order is unchanged, and
-> that ordering is technical, not procedural (see rationale). If hook enforcement is restored
-> before this change lands, chain-A becomes a ratification point again and the grant flow in
-> `docs/harness.md` applies to it unmodified.
+> **Chain-A is HUMAN-BOOTSTRAP — not dispatchable** (corrected 2026-08-05, HALT-1 in
+> `progress.md`). The earlier note here claimed dispatchability from the unwired `PreToolUse`
+> hook; that checked the wrong mechanism. `gate.sh`'s `CONFIG_SET` tripwire is independent of the
+> hook, fully active, consults no grant, and refuses to run when verification config differs from
+> the pinned BASE — so an agent editing these files can never gate green. A human applies A1–A5 as
+> one patch, commits it deliberately on the staging branch, and that commit becomes the BASE every
+> later chain is cut from. Applied attended on 2026-08-08.
 
 - tasks: A1, A2, A3, A4, A5, A6
 - rationale: Every dependency this change adds, the one new npm script, the
@@ -61,7 +60,14 @@
   - `.eslintrc.js` — one additional `no-restricted-syntax` entry (selector + message), core rule
     only, legacy config
   - `knip.json` — `+pino-pretty` in `ignoreDependencies`; the other three only if knip flags them
-  - eight one-line `obs-v1-interim` disable comments at the sites listed verbatim in task A5
+  - comment-only insertions at the 62 empirical tripwire fires (task A5): 22 `obs-v1-interim`
+    markers in the launcher/bridge/cue-backend jurisdiction, 40 permanent `intentional:` disables
+    in untouched subsystems
+  - `server/test/contract.suite.ts` — one line: `pino` admitted to the dependency-budget allowed
+    set. Same D8 logic as the markers: the budget test polices `server/package.json`, so the
+    admission must land with the dependency or every later chain's self-gate is red. Chain-F's F6
+    obligations on this suite (pino-pretty dev-only, redaction, sink-route assertions) are
+    untouched and remain F's.
 - protection class: all five config files are **Class 1** in `protect-harness.sh:109–112`
   (nominally: grantable in a worktree, blocked for a subagent without a grant, `ask` for the main
   thread — but see the enforcement note above; none of that is live on this branch today).
@@ -165,10 +171,17 @@
 - after: chain-D
 - owns: `src/host/launcher/LauncherRoot.tsx`, `src/host/launcher/transport-shared.ts`,
   `src/host/launcher/useMiniAppHost.ts`, `src/host/launcher/teardown.ts`,
-  `src/host/bridge/device-acceptance.ts`, `synthrun/test/acceptance.ts`,
-  `src/host/launcher/test/deliver-by-source.desktop.mjs`, `server/src/routes/generate.ts` (the one
+  `src/host/launcher/app-index.ts`, `src/host/launcher/deliver.ts`,
+  `src/host/launcher/history-logic.ts`, `src/host/launcher/prompt-envelope.ts`,
+  `src/host/cue-backend.ts`, `src/host/bridge/device-acceptance.ts`,
+  `src/host/bridge/dispatcher.ts`, `src/host/bridge/launch.ts`,
+  `src/host/launcher/test/deliver-by-source.desktop.mjs`,
+  `src/host/launcher/test/orb-menu.suite.ts`, `src/host/launcher/test/prompt-flow-wiring.suite.ts`,
+  `src/host/launcher/test/theme.suite.ts`, `server/src/routes/generate.ts` (the one
   log line at `:97–101`), and the assertions it appends to
   `src/host/logging/test/logging.suite.ts`
+  (`synthrun/test/acceptance.ts` left the list: its two supposed sites are inside template-literal
+  fixtures, invisible to lint — nothing to migrate there)
 
 ## chain-F: server logging on pino
 

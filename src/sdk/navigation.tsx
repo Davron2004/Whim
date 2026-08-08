@@ -88,6 +88,7 @@ export function NavRoot({ spec }: NavRootProps): React.ReactElement {
       let frame: unknown;
       try {
         frame = JSON.parse(event.data);
+      // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed nav message is simply not the __whimNavBack frame this handler looks for
       } catch {
         return;
       }

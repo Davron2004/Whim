@@ -29,7 +29,8 @@
     "server:dev": "node server/dev.mjs",
     "server:test": "node server/test/run.mjs",
     "server:e2e": "node server/test/e2e.run.mjs",
-    "guard:metro": "node server/guard-metro.mjs"
+    "guard:metro": "node server/guard-metro.mjs",
+    "whim:logs": "node server/logs-tail.mjs"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^16.2.0",
@@ -39,7 +40,9 @@
     "isomorphic-git": "1.38.4",
     "pako": "^2.1.0",
     "react": "19.2.3",
+    "react-error-boundary": "6.1.2",
     "react-native": "0.85.3",
+    "react-native-logs": "5.6.0",
     "react-native-mmkv": "^4.3.1",
     "react-native-nitro-modules": "^0.35.9",
     "react-native-safe-area-context": "^5.5.2",

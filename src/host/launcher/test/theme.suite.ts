@@ -103,6 +103,7 @@ export async function runThemeTests(h: Harness): Promise<void> {
       let threw = false;
       try {
         sanitizeTheme(value);
+        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: test probe records whether garbage input threw, discards the error itself
       } catch {
         threw = true;
       }

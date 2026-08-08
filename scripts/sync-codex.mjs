@@ -35,6 +35,7 @@ function assertLink(linkPath, wantTarget) {
     if (!lstatSync(abs).isSymbolicLink()) { problems.push(`${linkPath}: not a symlink (want -> ${wantTarget})`); return; }
     const got = readlinkSync(abs);
     if (got !== wantTarget) problems.push(`${linkPath}: points to ${got}, want ${wantTarget}`);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: lstat/readlink failure means the symlink is missing, already reported via problems.push below
   } catch {
     problems.push(`${linkPath}: missing (want symlink -> ${wantTarget})`);
   }
@@ -50,6 +51,7 @@ function assertExecutableFile(filePath) {
     // Unix executable permissions are represented as a bit mask; bitwise AND is the native test.
     // eslint-disable-next-line no-bitwise
     else if ((stat.mode & 0o111) === 0) problems.push(`${filePath}: provider adapter is not executable`);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: lstat failure means the file is missing, already reported via problems.push below
   } catch {
     problems.push(`${filePath}: missing provider adapter`);
   }

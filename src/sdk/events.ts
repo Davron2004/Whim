@@ -18,6 +18,7 @@ export function emitUiEvent(type: string, label?: string): void {
     if (rnww && typeof rnww.postMessage === 'function') {
       rnww.postMessage(JSON.stringify({ __whimUiEvent: true, type, label }));
     }
+  // eslint-disable-next-line no-restricted-syntax -- intentional: fire-and-forget UI telemetry; a postMessage failure must never break the app's render
   } catch {
     /* one-way, best-effort: never let telemetry break the render */
   }

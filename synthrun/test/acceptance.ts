@@ -271,6 +271,7 @@ async function testCapabilityWiring(): Promise<void> {
               return doc.getElementById('whim-root')?.innerText ?? null;
             });
             if (t) text = t;
+          // eslint-disable-next-line no-restricted-syntax -- intentional: cross-origin/opaque frames may refuse evaluate; probing every frame and ignoring refusals is the point.
           } catch {
             /* cross-origin/opaque frames may refuse evaluate — ignore */
           }

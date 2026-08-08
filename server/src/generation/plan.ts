@@ -110,6 +110,7 @@ export function parsePlan(text: string): PlanParseResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(candidate);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: unparseable JSON is reported via the ok:false reason, not an exception
   } catch {
     return { ok: false, reason: 'The plan response was not valid JSON.' };
   }

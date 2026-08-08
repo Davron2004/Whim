@@ -32,6 +32,7 @@ export function createCueBackend(): CueBackend {
     haptic(kind: HapticKind): void {
       try {
         Vibration.vibrate(HAPTIC_PATTERN[kind] ?? HAPTIC_PATTERN.tap);
+        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: fire-and-forget haptic cue, missing/disabled vibrator is not the bundle's concern
       } catch {
         /* fire-and-forget: a missing/disabled vibrator is not the bundle's concern */
       }
@@ -42,6 +43,7 @@ export function createCueBackend(): CueBackend {
         // closed token straight through. Null when the native module isn't present (e.g. a
         // codegen-less dev build) → sound is a no-op, haptics still fire.
         WhimTone?.play(name);
+        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: fire-and-forget sound cue, tone playback failure is not the bundle's concern
       } catch {
         /* fire-and-forget */
       }

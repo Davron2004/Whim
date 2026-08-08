@@ -112,6 +112,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     (record: AppRecord, displayName: string, engineAppId: string): RealmRecord | null => {
       if (live.current) {
         tearDownRealm(live.current.realm); // fence the old realm's late results
+        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: best-effort engine close when rebinding to a new realm
         try { live.current.realm.engine?.close(); } catch { /* best effort */ }
       }
       live.current = null;
@@ -164,6 +165,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const onMessage = useCallback((data: string) => {
     // UNTRUSTED DATA. Parse defensively; act on nothing; never trust a frame by its `kind`.
     let m: any;
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: untrusted frame is not valid JSON, dropped without acting on it
     try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
 

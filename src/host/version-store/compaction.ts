@@ -50,6 +50,7 @@ export async function collectReachable(client: GitFs, gitdir: string): Promise<S
   }
   try {
     startOids.add(await git.resolveRef({ fs: client, gitdir, ref: 'HEAD' }));
+  // eslint-disable-next-line no-restricted-syntax -- intentional: an unborn HEAD (repo with no commits yet) has nothing reachable to add
   } catch {
     // unborn HEAD (no commits yet) — nothing to add
   }

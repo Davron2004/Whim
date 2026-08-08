@@ -276,3 +276,48 @@ untouched. Delete, archive, or keep — owner's call.
   protected config") or pre-coach blanket sandbox overrides get refused by the background
   auto-mode classifier. State file allowlists as allowlists; treat sandbox overrides as
   per-command and reportable.
+
+## run-resume — 2026-08-08 (attended, primary tree)
+
+Owner decisions resolved and executed:
+
+- **O-3**: `integration/design-conformance` verified truly stale — `git diff` vs `redesign` empty
+  (byte-identical trees) and `git cherry` shows zero non-patch-equivalent commits — then deleted
+  locally and on origin. The one-active-staging-branch precondition now holds.
+- **O-1**: chain-A applied attended in the primary tree (orchestrator prepared, owner ratified;
+  the `obs-v1-orchestrator` worktree was retired and `integration/obs-v1` checked out here).
+- **O-2**: superseded by measurement before application. The D9 selector as spec'd ("neither
+  throws nor logs") fires **108×** repo-wide — mostly on legitimate handlers (error-to-state,
+  test expect-blocks). Owner decision: **narrowed, discard-shaped, repo-wide** — two selectors
+  (`CatchClause[body.body.length=0]`; bindingless non-empty catch with no throw/log), firing
+  **62×**, all verified real silent swallows. Split: **22 `obs-v1-interim` markers** in the
+  launcher/bridge/cue-backend jurisdiction (chain-E resolves every one — its migration list
+  widened from 8 to 22, `tasks.md` E6 amended); **40 permanent `-- intentional:` disables** with
+  site-specific reasons in untouched subsystems (sanctioned by the delta spec's documented-disable
+  clause; spec amended to define discard-shaped). The two `synthrun` fixture "sites" (202/665)
+  are template-literal text, invisible to lint — dropped. `LauncherRoot.tsx` fires **zero** times
+  under the narrowed rule (its alert catches bind and display the error); E3 unchanged.
+  Reason-drafting fanned out to four comment-only subagents (one flagged nothing as a bug;
+  clarify/rewrite's 502-conversion catches noted as handling-shaped, disables kept).
+
+### chain-A — applied
+
+- Edits exactly per the (amended) chain block: `package.json` (+`react-error-boundary@6.1.2`,
+  +`react-native-logs@5.6.0`, +`whim:logs` → `server/logs-tail.mjs`), `package-lock.json` (real
+  `npm install`, run by the owner), `server/package.json` (+`pino@10.3.1`, dev
+  `pino-pretty@13.1.3`), `.eslintrc.js` (the two discard-shaped tripwire entries), `knip.json`
+  (+`pino-pretty`), and the 62 comment-only insertions (verified: zero non-comment added lines,
+  zero removed lines in source files).
+- Artifact amendments in the same batch: `tasks.md` A1 (G→F slip), A3/A5 (narrowed rule +
+  empirical set), D1 (C-1 path), E6 (widened list); `chains.md` (stale dispatchability note
+  replaced with the HALT-1 correction, chain-A edit list, chain-E owns extended — collision-free
+  against B/C/D); delta `host-observability` spec (discard-shaped definition, two disable
+  species); `handoff/deps-and-lint.md` written (chain-B MUST name the seam logger `log`).
+- A6 verification: `npm run lint` **green**, `npm run typecheck` **clean**, `npm run guard:metro`
+  **exit 0** (1,999,600 bytes, floor cleared with both device deps in the graph).
+- **BASE for chains B–G = the commit carrying this entry** (the ratified chain-A batch on
+  `integration/obs-v1`). Waves remaining: [B] → [C, F] → [D] → [E], [G] any time, [H] attended.
+- Gate note: the first fast-gate run at the batch failed on `server:test` — the dependency-budget
+  test pins the server's allowed runtime set and did not admit `pino`. Admission (one line in
+  `server/test/contract.suite.ts`) folded into this batch per the D8 green-at-every-commit rule;
+  F6's richer assertions on that suite remain chain-F's. Fast gate then **PASSED** at the batch.

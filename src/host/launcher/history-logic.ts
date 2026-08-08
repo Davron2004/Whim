@@ -84,6 +84,7 @@ export function addedFieldsBetween(beforeRaw: string | undefined, afterRaw: stri
       }
     }
     return names;
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed schema artifact yields no added-field names
   } catch {
     return [];
   }
@@ -173,6 +174,7 @@ export function storedSummary(raw: string): RunSummary | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isRecord(parsed) && isRunSummary(parsed.summary)) return parsed.summary;
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: not JSON at all, treated as an envelope with no summary
   } catch {
     // Not JSON at all — same as "this envelope carries no summary".
   }

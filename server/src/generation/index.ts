@@ -89,6 +89,7 @@ export function openRouterGenerationStatsTransport(
         const completionTokens = Number(data.tokens_completion ?? data.native_tokens_completion ?? 0);
         if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens)) return null;
         return { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens };
+      // eslint-disable-next-line no-restricted-syntax -- intentional: per this function's contract above, any failure resolves null, never throws
       } catch {
         return null;
       }

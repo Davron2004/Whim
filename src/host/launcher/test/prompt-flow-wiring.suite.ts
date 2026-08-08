@@ -299,6 +299,7 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     let result: boolean | undefined;
     try {
       result = loadHighlighting(kv);
+      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: test probe records whether a corrupt value threw, discards the error itself
     } catch {
       threw = true;
     }
@@ -312,6 +313,7 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     let threw = false;
     try {
       loadHighlighting(nullish);
+      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: test probe records whether a null read threw, discards the error itself
     } catch {
       threw = true;
     }

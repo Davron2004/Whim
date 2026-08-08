@@ -59,6 +59,7 @@ export class AppIndex {
     try {
       const v = JSON.parse(raw);
       return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed stored order list treated as empty
     } catch {
       return [];
     }
@@ -74,6 +75,7 @@ export class AppIndex {
     if (!raw) return null;
     try {
       return JSON.parse(raw) as InstalledApp;
+      // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed stored app record treated as missing
     } catch {
       return null;
     }

@@ -220,6 +220,7 @@ function isGitTracked(absPath) {
     // eslint-disable-next-line sonarjs/no-os-command-from-path
     execFileSync('git', ['-C', repoRoot, 'ls-files', '--error-unmatch', rel], { stdio: 'pipe' });
     return true; // git found it in the index — a tracked file
+  // eslint-disable-next-line no-restricted-syntax -- intentional: git exits non-zero for untracked paths — that's the expected "not tracked" signal
   } catch {
     return false; // non-zero exit ⇒ not tracked (or not a git repo at all, which never applies here)
   }
@@ -235,6 +236,7 @@ function directoryHasTrackedFiles(absDir) {
     // eslint-disable-next-line sonarjs/no-os-command-from-path -- see isGitTracked above
     const out = execFileSync('git', ['-C', repoRoot, 'ls-files', '--', rel], { stdio: ['ignore', 'pipe', 'ignore'] });
     return out.toString('utf8').trim().length > 0;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: git failure here just means no tracked files, the safe default
   } catch {
     return false;
   }

@@ -13,7 +13,8 @@
     "@babel/runtime",
     "@react-native/new-app-screen",
     "react-test-renderer",
-    "@types/react-test-renderer"
+    "@types/react-test-renderer",
+    "pino-pretty"
   ],
   "ignoreExportsUsedInFile": true,
   "workspaces": {

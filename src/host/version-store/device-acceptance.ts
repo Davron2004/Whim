@@ -208,6 +208,7 @@ async function runPersistenceSection(
       for (const snap of priorHistory) {
         try {
           await store.getSnapshot(PERSIST, snap.id);
+        // eslint-disable-next-line no-restricted-syntax -- intentional: converts a snapshot read failure into the allReadable flag this cross-restart check reports
         } catch {
           allReadable = false;
         }

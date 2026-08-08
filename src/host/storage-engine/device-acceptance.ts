@@ -102,6 +102,7 @@ function resetAppDb(appId: string): void {
     const tables = exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'`);
     for (const t of tables) exec(`DROP TABLE IF EXISTS "${typeof t.name === 'string' ? t.name : JSON.stringify(t.name)}"`);
     db.close();
+  // eslint-disable-next-line no-restricted-syntax -- intentional: first run has no prior DB file, so the drop attempt throws and is expected to
   } catch {
     /* first run: nothing to reset */
   }
@@ -121,6 +122,7 @@ function dbSizeBytes(appId: string): number | null {
     const bytes = run('PRAGMA page_count') * run('PRAGMA page_size');
     db.close();
     return bytes;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: dbSizeBytes is best-effort only; a failed pragma read just yields "unknown size"
   } catch {
     return null;
   }
@@ -250,6 +252,7 @@ function safe(fn: () => void): boolean {
   try {
     fn();
     return true;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: converts an expected schema-open failure into the boolean this probe's check() consumes
   } catch {
     return false;
   }

@@ -41,6 +41,7 @@ async function sonarGet(fetchImpl, base, token, apiPath, params) {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   let json = null;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a non-JSON body becomes null; the caller checks status/ok, not this parse
   try { json = await res.json(); } catch { json = null; }
   return { status: res.status, ok: res.ok, json };
 }
