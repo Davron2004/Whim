@@ -398,3 +398,15 @@ Owner decisions resolved and executed:
 ### wave 5
 
 - `dispatched` — **chain-E** (shell wiring + call-site migration, all 22 interim markers), BASE `f2faff8`, worktree `.claude/worktrees/obs-v1-E`, branch `chain/obs-v1-E`, model opus.
+- `merged` — **chain-E** (`012d3d2`, 7/7, gate PASS). Integrity exit 0; zero `obs-v1-interim`
+  tokens repo-wide (verified here). Class-A accepted: two console-capture suites
+  (generation-client, xhr-transport) rewritten against the ring buffer — they asserted the retired
+  `[whim:gen]` literal, unfixable otherwise; overlay reached via gated `DevLogTools` modal
+  (HomeScreen closed to E, and a modal reads over a failing screen); local `SEND_DEV_LOGS=false`
+  flag (RUN_*_PROBE idiom) since B exported no sink flag; complexity extractions; E7 scans exclude
+  openspec/, test dirs, and seven explicitly-listed probe surfaces (file-by-file, no glob).
+  Derivations: observedRepairAttempts = repair-start count from the stream; hasWorkingVersion =
+  editing != null. 18 markers migrated to seam calls, 4 test-harness markers converted to
+  documented `intentional:` (throw-is-the-answer probes). Red-checks non-vacuous (3 seeded
+  breaks, each failing the exact assertion). Residual noted for review: DevProbeScreen.tsx:74
+  still logs the retired `[whim]` prefix (probe surface, currently excluded). Regate: below.
