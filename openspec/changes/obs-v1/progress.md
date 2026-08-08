@@ -329,3 +329,10 @@ Owner decisions resolved and executed:
   the primary tree, `npm run build` run in the worktree.
 - `dispatched` — **chain-G** (docs), BASE `913ec6c`, worktree `.claude/worktrees/obs-v1-G`,
   branch `chain/obs-v1-G`, model sonnet. File-disjoint from every code chain.
+- `merged` — **chain-G** at merge commit on top of `913ec6c` (+ ledger commit `7ea356d`). Report:
+  complete 2/2, gate PASS at `4492434`. Integrity exit 0 (allowlist: the two docs files; note —
+  `fixloop.sh integrity` takes an allowlist **file**, not inline paths). One class-A deviation,
+  self-corrected: the implementer first edited the primary tree's docs by absolute path, reverted
+  it cleanly, reapplied in the worktree (primary tree verified clean here too). Decision **#60**
+  appended (a/b/c). Regate on the merged tip: below.
+- `regate-pass` — chain-G merged tip, FAST GATE PASSED. Worktree and branch cleaned.
