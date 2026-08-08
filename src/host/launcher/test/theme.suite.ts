@@ -103,7 +103,7 @@ export async function runThemeTests(h: Harness): Promise<void> {
       let threw = false;
       try {
         sanitizeTheme(value);
-        // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: test probe records whether garbage input threw, discards the error itself
+        // eslint-disable-next-line no-restricted-syntax -- intentional: the assertion IS "did it throw" for each garbage input; the thrown value is deliberately discarded and h.ok below reports the outcome
       } catch {
         threw = true;
       }

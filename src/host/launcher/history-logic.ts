@@ -25,6 +25,8 @@ import type { InstalledApp } from './app-index';
 import { parsePromptEnvelope } from './prompt-envelope';
 import type { StoreAccess } from './store-access';
 import type { RunSummary, SummaryKind, SummaryMark } from '@whim/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /**
  * F1 fixed at the engine level (snapshot-lineage-identity, design D6; handoff/lineage-correctness.md):
@@ -84,8 +86,12 @@ export function addedFieldsBetween(beforeRaw: string | undefined, afterRaw: stri
       }
     }
     return names;
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed schema artifact yields no added-field names
-  } catch {
+  } catch (e) {
+    // The row simply loses its data-shape annotation. Recorded because an unreadable schema
+    // artifact is corrupted stored state, not an expected shape.
+    log.warn(CHANNELS.app, 'schema artifact is unreadable, no added-field names', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
     return [];
   }
 }
@@ -174,9 +180,12 @@ export function storedSummary(raw: string): RunSummary | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isRecord(parsed) && isRunSummary(parsed.summary)) return parsed.summary;
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: not JSON at all, treated as an envelope with no summary
-  } catch {
-    // Not JSON at all — same as "this envelope carries no summary".
+  } catch (e) {
+    // Not JSON at all — a raw legacy prompt, which is a legitimate stored state and NOT an error;
+    // `debug` so the fallback is visible in a log without reading as a fault.
+    log.debug(CHANNELS.app, 'stored prompt is not an envelope, no summary', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
   }
   return undefined;
 }

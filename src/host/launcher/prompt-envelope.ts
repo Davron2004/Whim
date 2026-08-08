@@ -17,6 +17,8 @@
  */
 
 import type { RunSummary } from '@whim/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /** The envelope version this build writes. Monotonic: a new field bumps it (design D3). */
 export const PROMPT_ENVELOPE_VERSION = 2;
@@ -59,9 +61,12 @@ export function parsePromptEnvelope(raw: string): PromptEnvelope {
     ) {
       return { text: (parsed as { text: string }).text };
     }
-    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: not JSON at all, falls through to the raw-text fallback
-  } catch {
-    // not JSON at all — fall through to the raw fallback below.
+  } catch (e) {
+    // A raw legacy string is a LEGITIMATE stored state, not a fault — hence `debug`: the record
+    // exists so the fallback is visible when reading a log, not to report a problem.
+    log.debug(CHANNELS.app, 'stored prompt is not an envelope, read as raw text', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
   }
   return { text: raw };
 }

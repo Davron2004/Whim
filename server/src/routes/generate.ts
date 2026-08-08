@@ -98,11 +98,16 @@ export function makeGenerateRoute(
         if (creditOwned) return;
         // `reconcileAbortedUsage` never throws/rejects (`../generation/reconcile.ts`'s own
         // contract) — fire-and-forget is intentional, the SSE response has already ended.
+        // `.catch(fn)` is not a `CatchClause`, so the silent-catch tripwire cannot see this one
+        // (design D9) — it stays fire-and-forget by hand, and the rejection is recorded rather
+        // than discarded, since a reconciliation that failed means usage went uncredited.
         reconcileAbortedUsage(deviceId, trace.generationIds, {
           transport: reconcile.transport,
           usageStore,
           bounds: reconcile.bounds,
-        }).catch(() => {});
+        }).catch((err: unknown) => {
+          log.warn({ err, generationIds: trace.generationIds.length }, 'aborted-usage reconciliation failed');
+        });
       },
       { once: true },
     );

@@ -45,6 +45,87 @@ async function settle(): Promise<void> {
   await new Promise<void>(resolve => setTimeout(resolve, 0));
 }
 
+/** The interim disable token, assembled rather than written: the scan below reads this very file,
+ *  and a literal here would make the assertion report itself. */
+const INTERIM_TOKEN = ['obs', 'v1', 'interim'].join('-');
+
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js'];
+
+/**
+ * The FLAG-GATED on-device acceptance probe surfaces. Their `console.*` calls are not diagnostics:
+ * they are how a probe reports its verdict on a device (CLAUDE.md, "Android build & run" — the
+ * verdict is read from logcat `ReactNativeJS`), each one is off by default behind a `RUN_*_PROBE`
+ * flag, and none is on the product's path. Written out one by one, never as a glob, so the
+ * carve-out cannot silently widen.
+ */
+const PROBE_SURFACES: readonly string[] = [
+  path.join('src', 'host', 'BridgeProbeScreen.tsx'),
+  path.join('src', 'host', 'StorageProbeScreen.tsx'),
+  path.join('src', 'host', 'VersionStoreProbeScreen.tsx'),
+  path.join('src', 'host', 'launcher', 'DevProbeScreen.tsx'),
+  path.join('src', 'host', 'bridge', 'device-acceptance.ts'),
+  path.join('src', 'host', 'storage-engine', 'device-acceptance.ts'),
+  path.join('src', 'host', 'version-store', 'device-acceptance.ts'),
+];
+
+/** Every source file under the given repo-relative roots, recursively. */
+function sourceFiles(roots: readonly string[]): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of fs.readdirSync(dir)) {
+      if (name === 'node_modules' || name.startsWith('.')) {
+        continue;
+      }
+      const full = path.join(dir, name);
+      if (SOURCE_EXTENSIONS.some(ext => name.endsWith(ext))) {
+        out.push(full);
+        continue;
+      }
+      // This repo's ambient Node surface (`evals/env.d.ts`) has no `statSync`, so reading the
+      // entry as a directory IS the directory test: `ENOTDIR` means it was a file. Any OTHER
+      // read failure is real and rethrown — a skipped directory would silently weaken the scans.
+      try {
+        walk(full);
+      } catch (notADirectory) {
+        if (!String(notADirectory).includes('ENOTDIR')) {
+          throw notADirectory;
+        }
+      }
+    }
+  };
+  for (const root of roots) {
+    const full = path.join(process.cwd(), root);
+    if (fs.existsSync(full)) {
+      walk(full);
+    }
+  }
+  return out;
+}
+
+/** Repo-relative, for readable failure output (no `path.relative` in the ambient surface). */
+function rel(file: string): string {
+  const root = process.cwd() + '/';
+  return file.startsWith(root) ? file.slice(root.length) : file;
+}
+
+/** The seam itself — the ONE place allowed to reach the console, plus its own tests. */
+function isSeamModule(file: string): boolean {
+  return rel(file).startsWith(path.join('src', 'host', 'logging'));
+}
+
+/**
+ * A Node acceptance suite or its runner. Their `console.*` calls ARE their output — a suite prints
+ * its results to a terminal, and there is no device, no logcat and no ring buffer in that process.
+ * The requirement is about device diagnostics, so the scan stops at the test boundary.
+ */
+function isNodeSuite(file: string): boolean {
+  return rel(file).split('/').includes('test');
+}
+
+function isProbeSurface(file: string): boolean {
+  return PROBE_SURFACES.includes(rel(file));
+}
+
 export async function runLoggingTests(h: Harness): Promise<void> {
   await h.test('levels are ordered lowest-first and the threshold filters below it', () => {
     h.eq([...LEVELS], ['debug', 'info', 'warn', 'error'], 'level order');
@@ -347,5 +428,65 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     seam.sink.configure({ enabled: false });
     await new Promise<void>(resolve => setTimeout(resolve, 40));
     h.eq(sent.length, 0, 'a disabled sink sends nothing');
+  });
+
+  // ── The migration is complete (chain-E) ──────────────────────────────────────────────────
+  // Three source-scanned standing invariants, each locking a state the migration reached and a
+  // regression that would otherwise be invisible: the interim lint markers are gone, the seam is
+  // the only console caller, and no retired prefix survives as a literal.
+
+  await h.test(`no ${INTERIM_TOKEN} marker survives anywhere in the source tree`, () => {
+    // `openspec/` is excluded on purpose and nowhere else is: the change folder is the RECORD of
+    // this migration and necessarily spells the token out (tasks.md, chains.md, the handoffs).
+    const offenders = sourceFiles(['src', 'server', 'contract', 'synthrun', 'scripts', 'build'])
+      .filter(file => fs.readFileSync(file, 'utf8').includes(INTERIM_TOKEN))
+      .map(rel);
+    h.eq(offenders, [], 'every interim disable was resolved into a seam call, a rethrow or a documented intentional disable');
+  });
+
+  await h.test('the seam is the only diagnostic console caller in src/host', () => {
+    const offenders = sourceFiles([path.join('src', 'host')])
+      .filter(file => !isSeamModule(file) && !isProbeSurface(file) && !isNodeSuite(file))
+      .filter(file => /\bconsole\s*\.\s*(log|warn|error|info|debug)\s*\(/.test(fs.readFileSync(file, 'utf8')))
+      .map(rel);
+    h.eq(offenders, [], 'no module outside the seam logs a diagnostic through console');
+  });
+
+  await h.test('the three retired prefixes survive at no call site', () => {
+    // `whim:gen` / `whim` / `whim:page` are CHANNELS now (asserted verbatim above). A call site
+    // that pastes one back into a message string has reinvented the thing this change removed.
+    const prefixes = ['[whim:gen]', '[whim:page]', '[whim]'];
+    const offenders = sourceFiles([path.join('src', 'host')])
+      .filter(file => !isSeamModule(file) && !isProbeSurface(file))
+      .filter(file => {
+        const src = fs.readFileSync(file, 'utf8');
+        return prefixes.some(prefix => src.includes(prefix));
+      })
+      .map(rel);
+    h.eq(offenders, [], 'no source file writes a retired log prefix');
+  });
+
+  await h.test('the launcher wraps its screen switch in the boundary, below the shell frame', () => {
+    // `LauncherRoot.tsx` is RN and cannot be rendered under Node (the boundary's own behaviour is
+    // exercised in `observability-ui.suite.ts`), so the WIRING is asserted statically — the
+    // repo's established idiom for this file (`prompt-flow-wiring.suite.ts`).
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'host', 'launcher', 'LauncherRoot.tsx'), 'utf8');
+    h.ok(
+      /<ScreenBoundary screen=\{screen\.kind\} FallbackComponent=\{ScreenErrorFallback\}>/.test(src),
+      'the boundary is keyed by the active screen and given the launcher fallback explicitly',
+    );
+    const frame = src.slice(src.indexOf('<SafeAreaView'), src.indexOf('</SafeAreaView>'));
+    h.ok(frame.includes('<ScreenBoundary'), 'the boundary sits INSIDE the safe-area frame (design D1) — a screen failure keeps the shell');
+    h.ok(
+      src.indexOf('<ScreenBoundary') < src.indexOf('{content}'),
+      'and it wraps the screen switch’s content value',
+    );
+    const devTools = src.slice(src.indexOf('function DevLogTools'), src.indexOf('function LauncherShell'));
+    h.ok(src.includes('<DevLogTools '), 'the developer log surface is mounted in the shell');
+    h.ok(
+      devTools.includes('if (!devLogOverlayEnabled(__DEV__))') && devTools.includes('return null'),
+      'the affordance AND the overlay are gated on the same predicate the overlay gates itself on',
+    );
+    h.ok(devTools.includes('<DevLogOverlay'), 'and that gate is the only route to the overlay');
   });
 }
