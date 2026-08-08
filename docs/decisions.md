@@ -936,3 +936,42 @@ cover.
 the repair ladder (`3b`); the raw terminal log / "show details" disclosure; colour bundles recommended
 to the user; and any change to the generation pipeline's `stage` enum, the sandbox, CSP, bridge, or
 runtime.
+
+### 60. `obs-v1` corrects the "dead Metro NAT" note's scope, adds one bounded type-only exception to `generation-contract`'s zod-only rule, and rules `__DEV__`-only gating a no-op in this project's builds `[DECIDED/FIXED — openspec: obs-v1; corrects the scope of the note at CLAUDE.md "Android build & run" / this file's former line 441 (§56's roadmap notes), narrows #56's zod-only wire-contract rule]`
+
+**(a) `adb reverse` works from a release APK; the dead-NAT note is about Metro's dev-server protocol
+only.** `adb reverse tcp:<port> tcp:<port>` is proven working transport for plain HTTP from a release
+build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128`,
+chain-7's attended on-device verification, a release APK (`./gradlew assembleRelease`) on
+`emulator-5554`, a real generation over `adb reverse tcp:8787` logging `POST /v1/generate 200
+155815ms` (`obs-v1/research.md` §7). "The emulator's NAT route to Metro is dead" (CLAUDE.md "Android
+build & run") was never a claim about TCP port forwarding in general — it is Metro's own dev-server
+protocol that doesn't traverse, and the roadmap notes above already flagged this as unverified ("also
+retry `adb reverse` for plain HTTP — the Metro failure may have been dev-server-specific"). §7 is that
+retry, and it passed. Consequence: a device→host dev sink can reuse `adb reverse` and the address the
+device already persists for `/v1/generate` — no new transport, no new setting.
+
+**(b) `generation-contract`'s "schemas SHALL be zod values" rule gains one bounded, named exception.**
+`contract/src/dev-log.ts` (the shared device↔server dev-log envelope) declares its record/batch types
+and the sink route's path as **type-only** — no runtime value, no zod schema — because `zod` must
+never enter the Metro graph (every existing device-side `@whim/contract` import is already `import
+type` with an explicit comment saying so) and a zod value in the contract package is exactly the kind
+of thing a device-side author would reach for by reflex. The server validates incoming batches with
+its own hand-written structural guard. The exception is bound to this one module and does not extend
+to any other `contract/` file; `generation-contract`'s delta names it explicitly rather than leaving a
+silent contradiction between rule and code for a reviewer to find.
+
+**(c) `__DEV__`-only gating is a no-op in this project's builds; developer surfaces use an explicit
+flag instead.** `__DEV__` is `false` on the device this project actually runs on, because the working
+recipe is `npm run android:release` (the emulator's NAT route to Metro's dev server is dead, per (a)).
+Anything gated on `__DEV__` alone is therefore dead code on-device. The existing on-device acceptance
+probes already established the pattern — build-time boolean flags defaulting to `false`
+(`RUN_VSTORE_PROBE` #40, `RUN_STORAGE_PROBE` #40, `RUN_BRIDGE_PROBE` #41) — and `obs-v1`'s dev log
+overlay and batching HTTP sink follow it: the overlay gates on `__DEV__ || <explicit flag>`, the sink
+gates on the explicit flag alone, both default `false`, so a shipping build carries neither. Any future
+developer-diagnostics surface in this app should use the same pattern rather than re-deriving `__DEV__`
+as if it were the safe default.
+
+**Not in this change:** any change to `generation-contract`'s zod-only rule beyond the one named
+module; the sandbox, CSP, bridge, storage engine, or version store; and any wire schema (`obs-v1`'s
+migration plan is "none").
