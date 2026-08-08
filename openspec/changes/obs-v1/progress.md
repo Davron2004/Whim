@@ -336,3 +336,15 @@ Owner decisions resolved and executed:
   it cleanly, reapplied in the worktree (primary tree verified clean here too). Decision **#60**
   appended (a/b/c). Regate on the merged tip: below.
 - `regate-pass` — chain-G merged tip, FAST GATE PASSED. Worktree and branch cleaned.
+- `merged` — **chain-B** (`0890116`, 7/7, gate PASS in-worktree). Integrity exit 0; scope = owns
+  list + `contract/src/index.ts` (accepted class-A: 4-line type-only re-export, else the module is
+  a knip orphan and chain-F has no `@whim/contract` path). Other class-A deviations accepted:
+  device-side dev-log imports are relative (`../../../contract/src/dev-log`) because the worktree's
+  `node_modules/@whim/contract` resolves to the primary tree and TS dedupes by package id — flagged
+  for the end-of-change reviewer now that the types exist on the staging tree; one permanent
+  `intentional:` disable inside the sink's own failure reporter; `fireFlush()` instead of `void` for
+  sonarjs. Red-checks reported non-vacuous (recursion guard, redaction). Seam logger exported as
+  `log` per the deps-and-lint contract; sink path `/dev/logs` (not `/v1`). Contract:
+  `handoff/logging-seam.md` (120 lines). A1–A6 boxes ticked retroactively (applied in the
+  ratified batch). Regate: below.
+- `regate-pass` — chain-B merged tip (cfeeaa6), FAST GATE PASSED. B worktree/branch cleaned. Wave 3: C and F cut from cfeeaa6.
