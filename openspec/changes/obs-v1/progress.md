@@ -410,3 +410,4 @@ Owner decisions resolved and executed:
   documented `intentional:` (throw-is-the-answer probes). Red-checks non-vacuous (3 seeded
   breaks, each failing the exact assertion). Residual noted for review: DevProbeScreen.tsx:74
   still logs the retired `[whim]` prefix (probe surface, currently excluded). Regate: below.
+- `gate-full-pass` — FULL GATE PASSED on the staging tip c7fe341 (knip green post-E, guard:metro, Chromium invariants, openspec validate 39/39). Reviewer dispatched on 23b55525..tip.
