@@ -194,6 +194,7 @@ export function runContractTests(): void {
     '@hono/node-server',
     '@whim/contract',
     'hono',
+    'pino',
   ]);
   check('server has no React-adjacent dep', !serverDeps.some(isReactAdjacent));
 }

@@ -19,6 +19,7 @@ export function parseJsonBlock(text: string): unknown {
   if (candidate.length === 0) return undefined;
   try {
     return JSON.parse(candidate) as unknown;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: unparseable JSON returns undefined per this module's documented contract
   } catch {
     return undefined;
   }

@@ -105,6 +105,7 @@ for (const bad of [undefined, null, 'a string', 42, [], () => {}, Symbol('x')]) 
   let threw = false;
   try {
     sanitizeTheme(bad);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: this test asserts sanitizeTheme never throws, so the catch only flips `threw` for the assertion below
   } catch {
     threw = true;
   }

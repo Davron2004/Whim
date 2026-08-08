@@ -158,6 +158,7 @@ function safeParse(s: string): object | undefined {
   try {
     const v = JSON.parse(s);
     return v && typeof v === 'object' ? v : undefined;
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: malformed dedup key JSON treated as unparseable
   } catch {
     return undefined;
   }

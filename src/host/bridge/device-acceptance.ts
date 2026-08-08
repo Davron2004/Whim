@@ -78,6 +78,7 @@ function resetAppDb(appId: string): void {
     const tables = exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'`);
     for (const t of tables) exec(`DROP TABLE IF EXISTS "${typeof t.name === 'string' ? t.name : JSON.stringify(t.name)}"`);
     db.close();
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: no prior db to reset on first run
   } catch {
     /* first run */
   }
@@ -176,7 +177,9 @@ export async function runBridgeDeviceAcceptance(): Promise<BridgeVerdict> {
   try {
     const reg = new CapabilityRegistry();
     registerStorageRows(reg);
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: duplicate-registration throw confirms append-only guard
     try { reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) }); } catch { appendOnly = true; }
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: registry-setup failure during append-only probe is ignored
   } catch { /* ignore */ }
   check(appendOnly, 'duplicate registration did not throw');
 

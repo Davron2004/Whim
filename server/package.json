@@ -10,6 +10,10 @@
   "dependencies": {
     "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0",
-    "@whim/contract": "*"
+    "@whim/contract": "*",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "pino-pretty": "13.1.3"
   }
 }

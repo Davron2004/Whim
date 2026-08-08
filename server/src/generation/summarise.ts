@@ -223,6 +223,7 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
         const settled = await Promise.race([turn.catch(() => undefined), timeout.promise]);
         if (settled === undefined) controller.abort(); // timed out (or threw) — stop the turn
         return settled ?? {};
+      // eslint-disable-next-line no-restricted-syntax -- intentional: mirrors the race/timeout no-throw contract this turn documents above
       } catch {
         return {};
       } finally {

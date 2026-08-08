@@ -356,6 +356,7 @@ async function testReconciliation(): Promise<void> {
     let threw = false;
     try {
       await reconcileAbortedUsage('device-6', ['gen-y'], { transport, usageStore: throwingStore });
+    // eslint-disable-next-line no-restricted-syntax -- intentional: the flag flip below is the assertion that credit failures never escape
     } catch {
       threw = true;
     }

@@ -26,6 +26,7 @@ export class BundleTooLargeError extends Error {
 function byteLength(s: string): number {
   try {
     return new TextEncoder().encode(s).length;
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: no TextEncoder, fall back to char-count length estimate
   } catch {
     return s.length;
   }

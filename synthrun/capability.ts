@@ -142,6 +142,7 @@ function methodOf(raw: string): string | undefined {
   try {
     const parsed = JSON.parse(raw) as { method?: unknown };
     return typeof parsed.method === 'string' ? parsed.method : undefined;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed dispatch payload just yields no method attribution, not a fatal error.
   } catch {
     return undefined;
   }

@@ -59,6 +59,7 @@ export function parsePromptEnvelope(raw: string): PromptEnvelope {
     ) {
       return { text: (parsed as { text: string }).text };
     }
+    // eslint-disable-next-line no-restricted-syntax -- obs-v1-interim: not JSON at all, falls through to the raw-text fallback
   } catch {
     // not JSON at all — fall through to the raw fallback below.
   }

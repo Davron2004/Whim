@@ -182,6 +182,7 @@ export function resolveOriginalLine(mapText: string, wrappedLine1Based: number):
   let map: DecodedSourceMap;
   try {
     map = JSON.parse(mapText) as DecodedSourceMap;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable source map just means no `line` resolution, per the doc comment above.
   } catch {
     return undefined;
   }
@@ -190,6 +191,7 @@ export function resolveOriginalLine(mapText: string, wrappedLine1Based: number):
   if (genLine0 < 0) return undefined;
   try {
     return originForGeneratedLine(map, genLine0);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: per the doc comment above, this resolver never throws — an unmapped line silently yields no `line`.
   } catch {
     return undefined;
   }
@@ -305,6 +307,7 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
         let msg: RelayFrame | null = null;
         try {
           msg = JSON.parse(raw) as RelayFrame;
+        // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed relay frame is dropped, not fatal to the observation session.
         } catch {
           return;
         }
@@ -327,6 +330,7 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
           postMessage(s: string) {
             try {
               relay(s);
+            // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort transport stub, mirrors the loader's own postMessage swallow.
             } catch {
               /* best-effort, matches the loader's own transport-stub swallow */
             }
