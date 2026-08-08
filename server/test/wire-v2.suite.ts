@@ -9,6 +9,7 @@
  */
 import { check, deepEqual, eq, section } from './harness';
 import { readSseResponse } from './sse-reader';
+import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { createApp } from '../src/app';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
@@ -579,17 +580,12 @@ async function testSummaryOnTerminalEvent(): Promise<void> {
       },
     };
 
-    const realConsoleLog = console.log;
-    const lines: string[] = [];
-    console.log = (...args: unknown[]): void => {
-      lines.push(args.map(String).join(' '));
-    };
-
+    const capture = captureLogs();
     let events: GenerationEvent[];
     try {
       events = await collect(new GenerationMachine(deliveringDeps(summariser)).run(REQUEST));
     } finally {
-      console.log = realConsoleLog;
+      capture.stop();
     }
 
     const terminal = events.at(-1);
@@ -598,8 +594,10 @@ async function testSummaryOnTerminalEvent(): Promise<void> {
     check('the delivered record is untouched', terminal?.type === 'result' && deepEqual(terminal.app, WIRE_RECORD));
 
     check(
-      'a throwing summariser logs its error constructor name and message',
-      lines.some((l) => l.includes('Error') && l.includes('summariser exploded')),
+      'a throwing summariser logs its error class and detail as named fields',
+      withMessage(capture, 'summariser failed').some(
+        (r) => r.errorClass === 'Error' && r.detail === 'summariser exploded',
+      ),
     );
   }
 

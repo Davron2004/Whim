@@ -31,7 +31,10 @@ await build({
   platform: 'node',
   format: 'esm',
   target: 'node22',
-  external: ['node:*', 'hono', '@hono/node-server', '@hono/*', 'esbuild', 'playwright', 'typescript'],
+  // `pino` (src/logger.ts) is external for the same reason: bundling it throws `Dynamic require of
+  // "node:os" is not supported` at import time, and its pretty transport resolves its worker
+  // relative to its own package directory.
+  external: ['node:*', 'hono', '@hono/node-server', '@hono/*', 'esbuild', 'playwright', 'typescript', 'pino'],
   logLevel: 'info',
 });
 
