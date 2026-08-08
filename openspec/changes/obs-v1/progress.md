@@ -321,3 +321,11 @@ Owner decisions resolved and executed:
   test pins the server's allowed runtime set and did not admit `pino`. Admission (one line in
   `server/test/contract.suite.ts`) folded into this batch per the D8 green-at-every-commit rule;
   F6's richer assertions on that suite remain chain-F's. Fast gate then **PASSED** at the batch.
+
+### wave 2
+
+- `dispatched` — **chain-B** (logging seam), BASE `913ec6c`, worktree
+  `.claude/worktrees/obs-v1-B`, branch `chain/obs-v1-B`, model opus. node_modules symlinked to
+  the primary tree, `npm run build` run in the worktree.
+- `dispatched` — **chain-G** (docs), BASE `913ec6c`, worktree `.claude/worktrees/obs-v1-G`,
+  branch `chain/obs-v1-G`, model sonnet. File-disjoint from every code chain.
