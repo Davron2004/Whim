@@ -432,3 +432,24 @@ VERDICT: findings — 2 high, 5 medium, 7 low; full report adjudicated by the or
   subsystem groups; zero interim tokens; no protected-surface touches beyond the ratified batch
   (which included two comment-only lines in `scripts/sync-codex.mjs` — a Class-2 file — applied
   attended in the O-1 ratification; no checker weakened, assessment confirmed by the reviewer).
+- `merged` — **chain-R** (`da1ad45`, 6/6 reviewer fixes, gate PASS in-worktree). Integrity exit 0.
+  R1: WebView error field renamed `errorCode` via new RN-free `webview-error.ts` helper +
+  behavioral test reading the seam buffer (with a redaction control). R2: tripwire-selector lock
+  test (red-checked against weakened in-memory copies — `.eslintrc.js` itself untouchable).
+  R3: six dev-log imports normalized to `import type` from `@whim/contract` + tree-wide type-only
+  lock + no-runtime-export lock. R4: server REDACT_PATHS now case-variant × depth-3 generated
+  list + tests (red-check: 10 raw-secret failures on seeded weakening). R5: log-capture forwards
+  non-JSON lines in mixed chunks. R6: DevProbeScreen migrated to the shared helper;
+  PROBE_SURFACES shrank by one. Class-A: the new helper file (authorized extraction); R6 reuses
+  R1's helper. guard:metro was unverifiable in the worktree (memory-confirmed constraint,
+  verified pre-existing at BASE) — closed by the main-tree full gate below.
+- `gate-full-pass` — FULL GATE PASSED on the final tip with chain-R merged (guard:metro included).
+
+## Closing summary
+
+Chains run: A (human-ratified attended), B, C, D, E, F, G, R (reviewer fix chain) — 8 of 8
+dispatchable units merged, zero redispatches, zero merge conflicts, zero parked branches.
+Deviations: all class-A (each adjudicated in its merge entry); no class-B unresolved; no class-C.
+Reviewer verdict: findings → chain-R fixed 2 high + 3 medium + 2 low; accepted residuals are
+enumerated in the reviewer-pass entry above. Remaining before closure: **chain-H (attended
+on-device acceptance)** and the closure lane (steps 12a–g) — PR targets `redesign` per D-1.
