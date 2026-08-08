@@ -201,10 +201,10 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## G. Docs
 
-- [ ] G1 `docs/capabilities.md`: add the `host-observability` line pointing at
+- [x] G1 `docs/capabilities.md`: add the `host-observability` line pointing at
   `openspec/specs/host-observability/spec.md`, and refresh the `generation-server` /
   `generation-contract` scope lines for the log sink and the type-only module.
-- [ ] G2 `docs/decisions.md`: record (a) the `adb reverse`-works-from-a-release-APK correction and
+- [x] G2 `docs/decisions.md`: record (a) the `adb reverse`-works-from-a-release-APK correction and
   that the dead-Metro-NAT note is about Metro's dev-server protocol only, citing the precedent in
   `research.md` §7; (b) the type-only contract-module exception and its bound; (c) that
   `__DEV__`-only gating is a no-op in this project's builds, so developer surfaces use an explicit
