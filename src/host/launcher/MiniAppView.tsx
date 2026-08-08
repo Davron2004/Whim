@@ -13,6 +13,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
 import { COPY } from './copy';
@@ -61,10 +64,10 @@ export default function MiniAppView({
     const p = shellPalette(theme);
     return (
       <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
-        <Text style={[styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
-        <Text style={[styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
+        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
         <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
-          <Text style={[styles.errorButtonLabel, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -82,7 +85,16 @@ export default function MiniAppView({
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}
-        onError={(ev) => console.log('[whim] webview error', JSON.stringify(ev.nativeEvent))}
+        onError={(ev) => {
+          const native = ev.nativeEvent;
+          log.error(CHANNELS.app, 'mini-app webview failed to load', {
+            appId: record.appId,
+            code: native.code,
+            detail: native.description,
+            domain: native.domain,
+            url: native.url,
+          });
+        }}
       />
       <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>
@@ -92,9 +104,8 @@ export default function MiniAppView({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  errorTitle: { fontSize: 20, fontWeight: '600', textAlign: 'center', marginBottom: 12 },
-  errorBody: { fontSize: 15, textAlign: 'center', marginBottom: 24 },
-  errorButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
-  errorButtonLabel: { fontSize: 15, fontWeight: '600' },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
+  errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
+  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field },
 });
