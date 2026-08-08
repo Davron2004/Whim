@@ -377,3 +377,8 @@ Owner decisions resolved and executed:
   clause, closed with three malformed cases. Note for gate-full: knip was already red at BASE
   (`react-error-boundary`, seam `log` unused) — resolves when D/E wire them; watch it at step 10.
   Regate: below.
+- `regate-pass` — chain-F merged tip (16f4fbb), FAST GATE PASSED. F worktree/branch cleaned.
+
+### wave 4
+
+- `dispatched` — **chain-D** (failure screen 3b + mini-app container), BASE `16f4fbb`, worktree `.claude/worktrees/obs-v1-D`, branch `chain/obs-v1-D`, model opus.
