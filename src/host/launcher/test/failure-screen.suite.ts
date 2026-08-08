@@ -20,6 +20,10 @@ import {
   attemptsUsedLabel,
   failureChecklistRows,
 } from '../copy';
+import { WEBVIEW_ERROR_MESSAGE, logWebViewError } from '../webview-error';
+import { createSeam } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
+import { REDACTED } from '../../logging/redact';
 
 function readSource(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
@@ -129,13 +133,38 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(RADIUS_LITERAL.test('{ borderRadius: 12 }'), 'the radius scan matches a numeric radius');
   });
 
-  await h.test('container: the WebView error goes to the seam as fields, never to console', () => {
-    const src = readSource('src/host/launcher/MiniAppView.tsx');
-    h.ok(!/console\.\w+\(/.test(src), 'no console call survives in the container');
-    h.ok(/log\.error\(CHANNELS\.app,/.test(src), 'the error is recorded on the mini-app channel through the seam');
-    for (const field of ['code', 'detail', 'domain', 'url']) {
-      h.ok(new RegExp(`${field}: native\\.`).test(src), `the native payload's ${field} is carried as a named field`);
+  await h.test('container: the WebView error reaches the seam with its diagnostic code intact', () => {
+    const seam = createSeam({ console: false });
+    logWebViewError(
+      seam,
+      { code: -6, description: 'net::ERR_CONNECTION_REFUSED', domain: 'about:blank', url: 'about:blank' },
+      { appId: 'tip-splitter' },
+    );
+
+    const [record] = seam.buffer.snapshot();
+    h.eq(record.channel, CHANNELS.app, 'the failure is recorded on the mini-app container channel');
+    h.eq(record.level, 'error', 'a load failure is an error');
+    h.eq(record.message, WEBVIEW_ERROR_MESSAGE, 'the message is the constant; the payload rides as fields');
+    h.eq(record.fields.errorCode, -6, 'the native code survives redaction — it is the most diagnostic field');
+    h.eq(record.fields.detail, 'net::ERR_CONNECTION_REFUSED', 'the native description is a named field');
+    h.eq(record.fields.domain, 'about:blank', 'the native domain is a named field');
+    h.eq(record.fields.url, 'about:blank', 'the native url is a named field');
+    h.eq(record.fields.appId, 'tip-splitter', 'the caller’s context rides alongside');
+    h.ok(!Object.hasOwn(record.fields, 'code'), 'nothing is emitted under the sensitive name `code`');
+
+    // Control: redaction is still on for this very record — `errorCode` survives because it is
+    // outside the sensitive set, not because the seam stopped censoring.
+    seam.error(CHANNELS.app, WEBVIEW_ERROR_MESSAGE, { code: -6 });
+    const control = seam.buffer.snapshot()[1];
+    h.eq(control.fields.code, REDACTED, 'a genuinely sensitive field name WOULD have been redacted');
+  });
+
+  await h.test('container: both WebView surfaces route onError through the seam, never console', () => {
+    for (const file of ['src/host/launcher/MiniAppView.tsx', 'src/host/launcher/DevProbeScreen.tsx']) {
+      const src = readSource(file);
+      h.ok(!/console\.\w+\(/.test(src), `${file}: no console call survives`);
+      h.ok(/onError=\{\(ev\) => logWebViewError\(log, ev\.nativeEvent,/.test(src), `${file}: onError goes through the one helper`);
+      h.ok(!/JSON\.stringify\(ev\.nativeEvent\)/.test(src), `${file}: the payload is structured, not stringified`);
     }
-    h.ok(!/JSON\.stringify\(ev\.nativeEvent\)/.test(src), 'the payload is structured, not stringified into the message');
   });
 }

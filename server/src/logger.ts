@@ -7,8 +7,9 @@
  *
  * Redaction happens at the SERIALIZER, not by convention at the call site: prompt text, generated
  * mini-app source, the `x-whim-device` value and the model-provider API key are replaced with
- * `REDACTED` even when a caller passes them, at the top level and up to two levels of nesting
- * (which covers `{ fields: { … } }` device records and `{ headers: { … } }` shapes).
+ * `REDACTED` even when a caller passes them, in any plausible casing, at the top level and up to
+ * three levels of nesting (which covers `{ fields: { … } }` device records, `{ headers: { … } }`
+ * shapes, and a record relayed inside a request-scoped child logger's bindings).
  *
  * Output: the pretty transport for human reading in development; plain structured JSON when
  * `pino-pretty` is not installed or `WHIM_LOG_JSON=1` is set (piping to a file, and the mode the
@@ -28,8 +29,8 @@ export const REDACTED = '[redacted]';
 /**
  * Field names whose VALUE is never allowed into emitted output. Mirrors the device seam's
  * sensitive set (`src/host/logging/redact.ts`) so a record relayed from a device is censored the
- * same way on both sides. Names are matched exactly (pino redaction is case-sensitive), so each
- * concept lists the casings this codebase actually writes.
+ * same way on both sides. pino matches a path exactly, so `caseVariants` below expands each name
+ * into the casings it can arrive in — this list carries one canonical spelling per concept.
  */
 const SENSITIVE_FIELD_NAMES: readonly string[] = [
   'prompt',
@@ -63,13 +64,46 @@ function pathSegment(name: string): string {
 }
 
 /**
- * Every sensitive name at the top level and beneath one or two wildcard levels — `fields.prompt`
- * (a relayed device record) and `fields.detail.prompt` are covered without enumerating carriers.
+ * The casings a sensitive name can plausibly arrive in. pino's redaction is exact-match, while the
+ * device seam compares case-insensitively — so each name is expanded here rather than trusting
+ * every present and future call site to pick the one spelling that happens to be listed.
+ * `deviceId` → `deviceId`, `DeviceId`, `deviceid`, `DEVICEID`; `api_key` → `API_KEY` too.
  */
-const REDACT_PATHS: readonly string[] = SENSITIVE_FIELD_NAMES.flatMap((name) => {
-  const segment = pathSegment(name);
-  return [segment, `*.${segment}`, `*.*.${segment}`];
-});
+function caseVariants(name: string): string[] {
+  const head = name.charAt(0);
+  return [
+    name,
+    head.toUpperCase() + name.slice(1),
+    head.toLowerCase() + name.slice(1),
+    name.toLowerCase(),
+    name.toUpperCase(),
+  ];
+}
+
+/** How deep a wildcard path reaches. Depth 3 covers `{ fields: { detail: { headers: { … } } } }`
+ *  — a relayed device record nested inside a request-scoped child logger's bindings. */
+const WILDCARD_DEPTH = 3;
+
+/** `['', '*.', '*.*.', '*.*.*.']` — the top level plus each wildcard depth. */
+const PATH_PREFIXES: readonly string[] = Array.from({ length: WILDCARD_DEPTH + 1 }, (_unused, depth) =>
+  '*.'.repeat(depth),
+);
+
+/**
+ * Every sensitive name, in every plausible casing, at the top level and beneath up to three
+ * wildcard levels — `fields.prompt` (a relayed device record) and `fields.detail.headers.apiKey`
+ * are covered without enumerating carriers. Generated, so widening the set widens every path.
+ */
+const REDACT_PATHS: readonly string[] = [
+  ...new Set(
+    SENSITIVE_FIELD_NAMES.flatMap((name) =>
+      caseVariants(name).flatMap((variant) => {
+        const segment = pathSegment(variant);
+        return PATH_PREFIXES.map((prefix) => `${prefix}${segment}`);
+      }),
+    ),
+  ),
+];
 
 export type ServerLogger = Logger;
 

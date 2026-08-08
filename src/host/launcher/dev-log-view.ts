@@ -9,7 +9,9 @@
  * is decided here.
  */
 
-import type { DevLogRecord } from '../../../contract/src/dev-log';
+// `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
+// zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
+import type { DevLogRecord } from '@whim/contract';
 import type { Channel } from '../logging/channels';
 import type { LogLevel } from '../logging';
 import { LEVEL_ORDER } from '../logging';

@@ -62,7 +62,6 @@ const PROBE_SURFACES: readonly string[] = [
   path.join('src', 'host', 'BridgeProbeScreen.tsx'),
   path.join('src', 'host', 'StorageProbeScreen.tsx'),
   path.join('src', 'host', 'VersionStoreProbeScreen.tsx'),
-  path.join('src', 'host', 'launcher', 'DevProbeScreen.tsx'),
   path.join('src', 'host', 'bridge', 'device-acceptance.ts'),
   path.join('src', 'host', 'storage-engine', 'device-acceptance.ts'),
   path.join('src', 'host', 'version-store', 'device-acceptance.ts'),
@@ -464,6 +463,55 @@ export async function runLoggingTests(h: Harness): Promise<void> {
       })
       .map(rel);
     h.eq(offenders, [], 'no source file writes a retired log prefix');
+  });
+
+  await h.test('the dev-log wire types cross the device seam type-only, and carry no runtime value', () => {
+    // The device may name these types freely; what must never happen is a VALUE import, which
+    // would put the contract package (and therefore zod) into the Metro graph.
+    const names = ['DevLogRecord', 'DevLogBatch', 'DevLogLevel', 'DevLogSinkPath'];
+    const offenders: string[] = [];
+    for (const file of sourceFiles(['src'])) {
+      const src = fs.readFileSync(file, 'utf8');
+      // Every import statement in the file, `import type` or not, split into clause + specifier.
+      for (const [statement, clause, specifier] of src.matchAll(/^import\s([\s\S]*?)from\s+'([^']+)';/gm)) {
+        const isDevLogModule = /(^|\/)dev-log$/.test(specifier);
+        const isWireTypeFromContract = specifier === '@whim/contract' && names.some(n => clause.includes(n));
+        if ((isDevLogModule || isWireTypeFromContract) && !/^import\s+type\s/.test(statement)) {
+          offenders.push(`${rel(file)}: ${statement.replace(/\s+/g, ' ')}`);
+        }
+      }
+    }
+    h.eq(offenders, [], 'every device-side dev-log import is an `import type`');
+
+    // Non-vacuity: the scan found the imports it is meant to police at all.
+    const seen = sourceFiles(['src']).filter(file =>
+      /^import\s+type\s[\s\S]*?DevLogRecord[\s\S]*?from\s+'@whim\/contract';/m.test(fs.readFileSync(file, 'utf8')),
+    );
+    h.ok(seen.length >= 3, 'the wire types are actually imported by the device, so the scan is not vacuous');
+
+    // …and the module on the other side of that import exports nothing executable.
+    const contractSrc = fs.readFileSync(path.join(process.cwd(), 'contract', 'src', 'dev-log.ts'), 'utf8');
+    const runtimeExports = [...contractSrc.matchAll(/^export\s+(?!type\b|interface\b)(\w+)/gm)].map(m => m[1]);
+    h.eq(runtimeExports, [], 'contract/src/dev-log.ts exports only types — a value export would let zod in');
+  });
+
+  await h.test('the silent-catch tripwire still has both discard-shaped selectors', () => {
+    // READ-ONLY: `.eslintrc.js` is protected config. The lint rules are what make "a swallowed
+    // error is a lint failure" true, and a weakened selector would silently un-enforce the whole
+    // migration — so the two shapes are asserted here rather than trusted.
+    const src = fs.readFileSync(path.join(process.cwd(), '.eslintrc.js'), 'utf8');
+    h.ok(
+      src.includes('CatchClause[body.body.length=0]'),
+      'the silent-catch tripwire was weakened: the empty-catch selector is gone from .eslintrc.js',
+    );
+    const paramless = src
+      .split('\n')
+      .filter(line => line.includes('CatchClause[param=null]'))
+      .filter(line => line.includes(':not(:has(ThrowStatement))'));
+    h.ok(
+      paramless.length > 0,
+      'the silent-catch tripwire was weakened: no `CatchClause[param=null]` selector excludes rethrows',
+    );
   });
 
   await h.test('the launcher wraps its screen switch in the boundary, below the shell frame', () => {

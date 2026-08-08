@@ -16,10 +16,9 @@
  *     into another delivery attempt.
  */
 
-// TYPE-ONLY import of the contract package's type-only dev-log module (design D6). Reached by
-// path rather than through `@whim/contract`'s entry so not even the barrel — and therefore
-// never zod — can enter the Metro graph; `import type` erases it entirely regardless.
-import type { DevLogBatch, DevLogRecord, DevLogSinkPath } from '../../../contract/src/dev-log';
+// `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
+// zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
+import type { DevLogBatch, DevLogRecord, DevLogSinkPath } from '@whim/contract';
 import { CHANNELS } from './channels';
 
 /** The one written statement of the route on the device side; the alias comes from the contract
