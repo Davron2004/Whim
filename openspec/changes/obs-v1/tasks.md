@@ -212,7 +212,7 @@ Every user-visible string comes from `src/host/launcher/copy.ts`; no screen inve
 
 ## H. On-device acceptance — ATTENDED ONLY
 
-- [ ] H1 On the emulator with `npm run android:release` and `adb reverse tcp:<port>`: the overlay
+- [x] H1 On the emulator with `npm run android:release` and `adb reverse tcp:<port>`: the overlay
   opens behind its flag in a **release** build and shows real records; the batching sink reaches
   `npm run server:dev` and `npm run whim:logs` shows the device's lines on the host; a deliberately
   thrown render error shows the recoverable error screen (not a blank frame) and retry recovers;
