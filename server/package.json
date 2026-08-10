@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
-    "@hono/node-server": "^1.13.0",
+    "@hono/node-server": "^2.0.5",
     "@whim/contract": "*",
     "pino": "10.3.1"
   },
