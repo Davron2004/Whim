@@ -26,7 +26,7 @@
     "evals": "node evals/cli.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
     "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
-    "server:dev": "node server/dev.mjs",
+    "server:dev": "node --env-file-if-exists=.env server/dev.mjs",
     "server:test": "node server/test/run.mjs",
     "server:e2e": "node server/test/e2e.run.mjs",
     "guard:metro": "node server/guard-metro.mjs",
