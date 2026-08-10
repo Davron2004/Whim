@@ -31,8 +31,9 @@ import {
   planRowsFrom,
   planStep,
   primaryActionLabel,
-  reopenCompose,
+  promptForBuild,
   stepAfterClarifyExchange,
+  updatePlanRow,
   withAnswer,
   withDelivering,
   withPlan,
@@ -151,12 +152,69 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     );
   });
 
-  await h.test('flow: tapping a plan row re-opens compose prefilled with that row’s text', () => {
-    const plan = plannedFlow([{ label: 'The screen', text: 'A big countdown.' }]);
-    const back = reopenCompose(plan, plan.rows[0]);
-    h.eq(back.kind, 'compose', 'a row tap lands on compose');
-    h.eq(back.text, 'A big countdown.', 'prefilled with that row’s text — nothing fancier');
-    h.eq(back.editing?.id, EDITED.id, 'still scoped to the app being re-prompted');
+  await h.test('flow: editing a plan row inline replaces only that row, everything else intact', () => {
+    const plan = plannedFlow([
+      { label: 'The screen', text: 'A big countdown.' },
+      { label: 'The alert', text: 'A buzz at zero.' },
+    ]);
+    const originalRowText = plan.rows[0].text; // captured BEFORE the call: a mutating implementation would move this too
+    const edited = updatePlanRow(plan, 0, 'A big countdown with the recipe steps.');
+    h.ok(edited !== plan, 'a new screen is returned, not the same object mutated in place');
+    h.ok(edited.rows !== plan.rows, 'a new rows array is returned, not the same array mutated in place');
+    h.eq(edited.kind, 'plan', 'still the plan step — nothing navigates away');
+    h.eq(edited.rows[0].text, 'A big countdown with the recipe steps.', 'the tapped row carries the new text');
+    h.eq(plan.rows[0].text, originalRowText, 'the original screen is untouched by the edit — pure, not in-place');
+    h.eq(edited.rows[1], plan.rows[1], 'the sibling row is untouched');
+    h.eq(edited.edited, true, 'the screen now knows a row was hand-edited');
+    h.eq(edited.text, plan.text, 'the original prompt survives the edit');
+    h.eq(edited.answers, plan.answers, 'the clarify answers survive the edit');
+    h.eq(edited.questions, plan.questions, 'the clarify questions survive the edit');
+    h.eq(edited.rewritten, plan.rewritten, 'the rewrite response itself is left alone — promptForBuild decides which one wins');
+    h.eq(edited.editing?.id, EDITED.id, 'still scoped to the app being re-prompted');
+  });
+
+  await h.test('flow: editing a row keeps its identity by position, even with duplicate row text', () => {
+    const plan = plannedFlow([
+      { label: 'The screen', text: 'Same words.' },
+      { label: 'The alert', text: 'Same words.' },
+    ]);
+    const edited = updatePlanRow(plan, 1, 'Now different.');
+    h.eq(edited.rows[0].text, 'Same words.', 'the untouched row keeps its text even though it once matched the edited one');
+    h.eq(edited.rows[1].text, 'Now different.', 'the row addressed by position is the one that changes');
+    h.eq(edited.rows[0].label, 'The screen', 'labels are untouched too');
+  });
+
+  await h.test('flow: promptForBuild trusts the rewrite response until a row is hand-edited', () => {
+    const plan = plannedFlow([{ label: '', text: 'a brew timer' }]);
+    h.eq(plan.edited, false, 'nothing has been edited yet');
+    h.eq(promptForBuild(plan), plan.rewritten, 'unedited, the build prompt is exactly the rewrite response’s prompt');
+
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(
+      promptForBuild(edited),
+      'a brew timer with a bell at the end',
+      'edited, the build prompt is assembled from the rows — here the single unlabelled row',
+    );
+  });
+
+  await h.test('flow: promptForBuild assembles every row, labelled, once any one of them is edited', () => {
+    const plan = plannedFlow([
+      { label: 'The screen', text: 'A big countdown.' },
+      { label: 'The alert', text: 'A buzz at zero.' },
+    ]);
+    const edited = updatePlanRow(plan, 1, 'A chime at zero.');
+    h.eq(
+      promptForBuild(edited),
+      'The screen: A big countdown.\nThe alert: A chime at zero.',
+      'every row is folded in, not just the edited one, each carrying its label',
+    );
+  });
+
+  await h.test('flow: an unlabelled fallback row assembles to exactly its own edited text', () => {
+    const plan = plannedFlow(); // no structured plan → planRowsFrom's single unlabelled row
+    h.eq(plan.rows, [{ label: '', text: 'a brew timer' }], 'the fallback row starts identical to the rewrite response');
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(promptForBuild(edited), 'a brew timer with a bell at the end', 'the lossless case: one unlabelled row assembles to just its text');
   });
 
   await h.test('flow: the build step starts from the plan and carries the answers with it', () => {
@@ -168,6 +226,20 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(build.rewritten, 'a brew timer', 'generation runs against the approved plan’s prompt');
     h.eq(build.text, plan.text, 'the user’s verbatim prompt is still carried, for the snapshot envelope');
     h.eq(clarificationsFrom(build.questions, build.answers).length, 1, 'the clarify answers reach generation');
+  });
+
+  await h.test('flow: an edited plan carries the assembled rows into the build step, not the stale rewrite', () => {
+    const plan = plannedFlow([
+      { label: 'The screen', text: 'A big countdown.' },
+      { label: 'The alert', text: 'A buzz at zero.' },
+    ]);
+    const edited = updatePlanRow(plan, 0, 'A big countdown with the recipe steps.');
+    const build = buildStep(edited);
+    h.eq(
+      build.rewritten,
+      'The screen: A big countdown with the recipe steps.\nThe alert: A buzz at zero.',
+      'generation runs against the edited plan, with the edit actually reflected',
+    );
   });
 
   await h.test('flow: the done step carries the delivered app', () => {
@@ -300,8 +372,12 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/<PrimaryAction step="clarify" busy=\{busy\} enabled palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers');
   });
 
-  await h.test('plan: rows are tappable and the step carries the approval copy', () => {
-    h.ok(/onPress=\{\(\) => onEditRow\(row\)\}/.test(planSrc), 'every row is tappable');
+  await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
+    h.ok(/onPress=\{\(\) => startEditing\(index, row\.text\)\}/.test(planSrc), 'tapping a row starts editing it in place');
+    h.ok(/onChangeRow: \(index: number, text: string\) => void/.test(planSrc), 'edits commit through an index-keyed onChangeRow prop, not a navigation callback');
+    h.ok(!/onEditRow|reopenCompose/.test(planSrc), 'the old reopen-compose wiring is gone');
+    h.ok(/<TextInput/.test(planSrc), 'the editing row renders a real text field, not a read-only card');
+    h.ok(planSrc.includes('COPY.planRowSave') && planSrc.includes('COPY.cancel'), 'the edit mode offers save and cancel, from the copy table');
     h.ok(planSrc.includes('COPY.planHeadline') && planSrc.includes('COPY.planSubhead') && planSrc.includes('COPY.planFooter'), 'headline, subhead and footer all come from the copy table');
     h.ok(!/generateApp|rewritePrompt|fetch\(/.test(planSrc), 'the approval screen never sends a request itself');
   });

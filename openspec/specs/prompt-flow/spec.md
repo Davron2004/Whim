@@ -19,8 +19,12 @@ Submitting a prompt SHALL first call the rewrite endpoint and present the rewrit
 - **THEN** a rewrite request is sent, its response is shown on an editable preview screen, and no generation request is sent until the user approves
 
 #### Scenario: User can edit the rewritten text
-- **WHEN** the user edits the previewed text and approves
-- **THEN** the generation request carries the edited text, not the original rewrite response
+- **WHEN** the user edits a plan piece inline, in place on the plan step, and approves
+- **THEN** the generation request carries the prompt assembled from the edited plan, not the original rewrite response
+
+#### Scenario: Unedited plan builds from the rewrite response
+- **WHEN** the user approves the plan without editing any piece of it
+- **THEN** the generation request carries the rewrite response's own prompt, unchanged
 
 ### Requirement: Generation progress is shown without exposing internals
 While a generation request streams, the UI SHALL render the current stage (plan, generate, check, run, or repair) from `stage` events. Raw `token` event text and raw `diagnostic.kind`/`diagnostic.symbol` values SHALL NOT be rendered to the user at any point during generation.

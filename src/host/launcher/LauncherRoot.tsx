@@ -62,8 +62,8 @@ import {
   doneStep,
   isClarifySkip,
   planStep,
-  reopenCompose,
   stepAfterClarifyExchange,
+  updatePlanRow,
   withAnswer,
   withDelivering,
   withPlan,
@@ -689,7 +689,7 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       <PlanStep
         rows={from.rows}
         loading={from.loading}
-        onEditRow={(row) => setScreen(reopenCompose(from, row))}
+        onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
         onBuild={() => onBuildIt(from)}
         onBack={() => goBack(from)}
       />

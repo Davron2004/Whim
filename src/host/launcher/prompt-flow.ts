@@ -68,12 +68,20 @@ export interface PlanScreen {
    *  when the clarify step was skipped — a back press then lands on compose. */
   questions: readonly FlowQuestion[];
   answers: FlowAnswers;
-  /** The rewrite endpoint's prompt — what generation is asked to build. Empty while loading. */
+  /** The rewrite endpoint's prompt — what generation is asked to build, UNLESS `edited` is true
+   *  (`promptForBuild` is the one place that decides between this and the rows). Empty while
+   *  loading. */
   rewritten: string;
   rows: readonly FlowPlanRow[];
   /** The rewrite request is still in flight: the rows are genuinely coming and their shape is
    *  known, which is the only state a skeleton may stand in for. */
   loading: boolean;
+  /** Set the moment any row is edited inline on this step, and never cleared. Flips
+   *  `promptForBuild` from trusting `rewritten` to assembling the prompt from `rows` instead —
+   *  the two are independent strings the rewrite endpoint returns together, so once a row has
+   *  been hand-edited only the rows still reflect what the user approved
+   *  (`prompt-flow` spec "Editing a plan piece"). */
+  edited: boolean;
 }
 
 export interface BuildScreen {
@@ -185,6 +193,7 @@ export function planStep(prev: ComposeScreen | ClarifyScreen): PlanScreen {
     rewritten: '',
     rows: [],
     loading: true,
+    edited: false,
   };
 }
 
@@ -196,9 +205,28 @@ export function withPlan(
   return { ...screen, rewritten: response.rewrittenPrompt, rows: planRowsFrom(response), loading: false };
 }
 
-/** Tapping a plan row re-opens the composer prefilled with that row's text — nothing fancier. */
-export function reopenCompose(screen: PlanScreen, row: FlowPlanRow): ComposeScreen {
-  return composeStep(screen.editing, row.text);
+/** Inline-editing one plan row, in place on the plan step: every other row, the original prompt
+ *  and the clarify answers are carried through untouched. `index` is the row's position — rows
+ *  are a stable, never-reordered array, so an index survives duplicate row text where the
+ *  `label:text` string the UI otherwise keys off of would collide. */
+export function updatePlanRow(screen: PlanScreen, index: number, text: string): PlanScreen {
+  const rows = screen.rows.map((row, i) => (i === index ? { ...row, text } : row));
+  return { ...screen, rows, edited: true };
+}
+
+/**
+ * The prompt generation is actually asked to build. `rewritten` and `rows` are two independent
+ * strings the rewrite endpoint returns together — not one derived from the other — so once the
+ * user has hand-edited a row inline, only the rows still reflect what they approved and
+ * `rewritten` is stale. Unedited, this is byte-identical to `screen.rewritten` (the common case,
+ * and the only case before this function existed). Edited, it assembles one line per row —
+ * `label: text` when the row has a label, the bare text otherwise — joined with newlines; the
+ * single-row fallback (`planRowsFrom`) collapses to exactly that row's text, which is the
+ * lossless case.
+ */
+export function promptForBuild(screen: PlanScreen): string {
+  if (!screen.edited) return screen.rewritten;
+  return screen.rows.map((row) => (row.label.length > 0 ? `${row.label}: ${row.text}` : row.text)).join('\n');
 }
 
 /** The build step. Generation starts here and nowhere earlier. */
@@ -207,7 +235,7 @@ export function buildStep(prev: PlanScreen): BuildScreen {
     kind: 'build',
     ...(prev.editing ? { editing: prev.editing } : {}),
     text: prev.text,
-    rewritten: prev.rewritten,
+    rewritten: promptForBuild(prev),
     answers: prev.answers,
     questions: prev.questions,
     stage: null,

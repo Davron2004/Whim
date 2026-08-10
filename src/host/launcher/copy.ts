@@ -57,6 +57,7 @@ export const COPY = {
   planSubhead: 'Tap anything to change it before building.',
   planFooter: 'Nothing here is final — you can keep changing the app after it’s built.',
   planBuild: 'Build it',
+  planRowSave: 'Save',
   buildTitle: 'Making it',
   buildSubtitle: 'This takes about a minute. You can leave and come back.',
   buildStepReading: 'Reading your plan',
