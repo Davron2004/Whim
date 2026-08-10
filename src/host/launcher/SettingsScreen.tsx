@@ -50,8 +50,14 @@ export default function SettingsScreen({
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-        <TouchableOpacity onPress={onBack} hitSlop={10} style={styles.backBtn}>
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{'‹ ' + COPY.backLabel}</Text>
+        <TouchableOpacity
+          onPress={onBack}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={COPY.backLabel}
+          style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <View style={[styles.backChevron, { borderColor: p.text }]} />
         </TouchableOpacity>
         {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
             retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
@@ -108,7 +114,27 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { paddingVertical: 2 },
+  // Design :23 — a 42x42 circular button, no text label. There is no SVG library in this app, so
+  // the chevron is a 10x10 box wearing two borders, rotated 45°. RN renders square line-caps where
+  // the design asks for round ones; that is an accepted, unavoidable gap, NOT something to
+  // compensate for with a different stroke width.
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.chip,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  backChevron: {
+    width: 10,
+    height: 10,
+    borderLeftWidth: 2.4,
+    borderBottomWidth: 2.4,
+    transform: [{ rotate: '45deg' }],
+    marginLeft: 2,
+  },
   content: { padding: 16, paddingBottom: 40 },
   sectionTitle: { marginTop: 24, marginBottom: 10 },
   serverInput: { borderWidth: 1, borderRadius: RADIUS.field, paddingHorizontal: 12, paddingVertical: 10 },
