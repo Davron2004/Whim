@@ -975,3 +975,24 @@ as if it were the safe default.
 **Not in this change:** any change to `generation-contract`'s zod-only rule beyond the one named
 module; the sandbox, CSP, bridge, storage engine, or version store; and any wire schema (`obs-v1`'s
 migration plan is "none").
+
+### 61. Plan pieces edit inline on the plan step; a hand-edited plan's rows become the build prompt's source of truth `[DECIDED — reverses #59's "tap re-opens the composer prefilled with that row's text" ruling; openspec/specs/prompt-flow updated in place]`
+
+**Tapping a plan card now opens an inline editor on the plan step itself** — one row at a time,
+Save/Cancel — instead of re-opening the composer prefilled with only the tapped row's text (#59's
+original `2a` ruling). The old path silently discarded the original prompt, the clarify answers, and
+every sibling row the user hadn't touched; a naive row-level edit wouldn't have reached generation at
+all, since rows were purely a display projection of the rewrite response, not an input to it. Two new
+pure transitions in `src/host/launcher/prompt-flow.ts` carry the change: `updatePlanRow` replaces one
+row and marks the plan `edited: true`; `promptForBuild` derives the actual generation prompt.
+`reopenCompose` is deleted.
+
+**The trust switch:** an unedited plan's build prompt is the rewrite response's `rewritten` string,
+byte-identical — the model's prose stays authoritative for as long as the user hasn't touched a row.
+The moment any row is hand-edited, that guarantee ends for the whole plan: `promptForBuild` instead
+deterministically assembles `label: text` lines from the current rows, and every subsequent edit stays
+on that path even if the user reverts the row's text back to the model's original wording. Per-edit
+re-invocation of the server rewrite was rejected — the model is free to rephrase or reorder rows the
+user never touched, which would make an edit to row 2 silently mutate row 1 out from under the user.
+Rows, once trusted, stay the single source of truth rather than being re-derived from a call the user
+didn't ask for.
