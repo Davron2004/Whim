@@ -164,7 +164,7 @@ export class PendingBuildStore {
   demoteBuildingToInterrupted(): void {
     for (const id of this.readOrder()) {
       const rec = this.get(id);
-      if (rec && rec.state === 'building') {
+      if (rec?.state === 'building') {
         const updated: PendingBuildRecord = { ...rec, state: 'interrupted', updatedAt: Date.now() };
         this.kv.set(PENDING_KEY(id), JSON.stringify(updated));
       }

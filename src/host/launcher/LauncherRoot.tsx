@@ -470,11 +470,24 @@ function LauncherShell({
     }
   };
 
+  /** A settling attempt releases ONLY the refs that still point at ITSELF. Two attempts can
+   *  overlap — "Leave it running" and then a Retry or a new build — and the newer one has already
+   *  overwritten both refs. Clearing the older attempt's way would strand the newer one:
+   *  uncancellable (`abortLiveAttempt` would see null) and with its `building` ghost tapping into
+   *  the "no live run to reattach to" branch forever. Cancel is the deliberate exception — it
+   *  clears whatever is live because that is what the user asked for. */
+  const releaseGenRef = (ctl: NonNullable<typeof genRef.current>) => {
+    if (genRef.current === ctl) genRef.current = null;
+  };
+  const releaseLiveRef = (attemptId: string) => {
+    if (liveRef.current?.id === attemptId) liveRef.current = null;
+  };
+
   /** A terminal `failure`, a stream that ended without one, or a throw: the record moves to
    *  `failed` and STAYS on the grid, so the attempt is still reachable after the screen is gone.
    *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. */
   const settleFailed = (id: string, reason: string, diagnostics: readonly { hint: string }[]) => {
-    liveRef.current = null;
+    releaseLiveRef(id);
     failPendingBuild(pending, id, reason, diagnostics);
     refresh();
   };
@@ -571,7 +584,7 @@ function LauncherShell({
       }
 
       if (ctl.cancelled) return; // cancel-on-navigate-away: the cancel path deleted the record
-      genRef.current = null;
+      releaseGenRef(ctl);
 
       if (terminal == null) {
         // Stream ended with no terminal event and no cancel — a stream error, not a crash.
@@ -624,13 +637,13 @@ function LauncherShell({
         wire: terminal.app,
         summary: terminal.summary,
       });
-      liveRef.current = null;
+      releaseLiveRef(attemptId);
       refresh();
       if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
       setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
-      genRef.current = null;
+      releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
       settleFailed(attemptId, reasoned.reason, reasoned.diagnostics);
@@ -692,9 +705,13 @@ function LauncherShell({
       return;
     }
     const live = liveRef.current;
-    if (live == null || live.id !== rec.id) {
-      // Unreachable by construction: a `building` record can only outlive its stream across a
-      // process restart, and launch-time demotion has already made such a record `interrupted`.
+    if (live?.id !== rec.id) {
+      // Reachable, and not only after a crash: `liveRef` holds ONE attempt, so two overlapping
+      // attempts (a "Leave it running" plus a Retry or a new build) leave the older one's
+      // `building` ghost pointing at a run this ref no longer names. The `releaseLiveRef` guards
+      // stop an older attempt stranding a NEWER one; they cannot make this branch unreachable.
+      // Nothing is lost either way — the run still delivers or settles on its own — so the honest
+      // response is a logged no-op rather than an invented screen.
       log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: rec.id });
       return;
     }

@@ -31,7 +31,7 @@ import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
 import type { BuildScreen } from './prompt-flow';
-import { workingTitleFromPrompt } from './prompt-flow';
+import { ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
@@ -52,13 +52,25 @@ export function freshAppId(): string {
  *  chain-F's one mapping function, so the grid, the history header and prose all resolve one app
  *  to one colour. `schemaArtifact` is omitted entirely when the wire schema has no keys, the same
  *  "only when the app actually declares storage" convention every other record in
- *  `app-records.ts` follows. */
-export function mapWireRecord(appId: string, wire: WireAppRecord): AppRecord {
+ *  `app-records.ts` follows.
+ *
+ *  `fallbackTileColor` is the colour to record when the wire declares NONE of its own — the one
+ *  seam `app-launcher`'s "ghost tile colour is stable across transmute" needs. Without it the
+ *  record carries no colour, every surface falls back to `tileColor`'s own `appColor(name)`, and
+ *  the hue visibly flips the instant a ghost becomes a tile. It is a PARAMETER rather than an
+ *  internal default because the right fallback differs per call site and only the caller knows it:
+ *  a new install passes its ghost's id hash (the hue the user has been watching), a rebuild passes
+ *  the colour ALREADY on the record it is rebuilding (which is preservation, not injection — an
+ *  id-hash stamped over an app the user already owns, whose colour has always been the name hash
+ *  and whose `record.appId` is for a fork the PARENT's, would move a colour that must not move).
+ *  A declared colour always wins over either. */
+export function mapWireRecord(appId: string, wire: WireAppRecord, fallbackTileColor?: string): AppRecord {
   const hasSchema = Object.keys(wire.schema).length > 0;
+  const tile = liftManifestTileColor(wire.manifest).tileColor ?? fallbackTileColor;
   return {
     appId,
     name: wire.name,
-    manifest: { ...(wire.manifest as unknown as AppManifest), ...liftManifestTileColor(wire.manifest) },
+    manifest: { ...(wire.manifest as unknown as AppManifest), ...(tile !== undefined ? { tileColor: tile } : {}) },
     ...(hasSchema ? { schemaArtifact: wire.schema as unknown as SchemaArtifact } : {}),
   };
 }
@@ -123,11 +135,29 @@ export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
   const schemaJson = Object.keys(wire.schema).length > 0 ? JSON.stringify(wire.schema) : undefined;
 
   if (!editing) {
-    const record = mapWireRecord(spec.appId, wire);
+    // NEW INSTALL ONLY. `spec.appId` is provably the ghost the user has been watching (D3 decided
+    // it before the request went out), so recording `ghostTileColorFor(spec.appId)` when the wire
+    // declared no colour is what makes `app-launcher`'s "ghost tile colour ... stable across
+    // transmute" true: the tile keeps the hue the ghost already had instead of jumping to
+    // `appColor(name)` at delivery. Deliberately NOT pushed inside `mapWireRecord` — the two edit
+    // branches below share that function and must keep their existing colour.
+    const record = mapWireRecord(spec.appId, wire, ghostTileColorFor(spec.appId));
     return access.install({ id: spec.appId, name: record.name, record, bundleSource: wire.bundle, source: wire.source, prompt, example: false, schemaJson });
   }
 
-  const record = mapWireRecord(editing.record.appId, wire);
+  // This preservation also depends on `StoreAccess.update` NOT refreshing `entry.name` from
+  // `record.name` (store-access.ts, `update`) — tile-colour resolution for a record with no
+  // declared/injected colour hashes `app.name`, not `app.record.name`, so if `update` ever adopted
+  // the new name, a rebuild that renames an app would silently move its hue. Pinned:
+  // store-access.suite.ts §34.
+  // Both edit branches PRESERVE, never stamp: the fallback is the colour already on the record
+  // being rebuilt, so a rebuild resolves exactly the colour it resolved before. Passing nothing
+  // here would not be neutral — `StoreAccess.update` replaces the record wholesale with the one
+  // built from the wire alone, and a wire that declares no colour would therefore DROP a colour
+  // the record had (an injected ghost hue, or an author-declared one a regenerated manifest forgot
+  // to restate). An app that never had a colour still gets none, so its `appColor(name)` fallback
+  // is untouched; a wire that declares one still wins.
+  const record = mapWireRecord(editing.record.appId, wire, editing.record.manifest.tileColor);
   if (await isAtTip(access, editing)) {
     return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
   }

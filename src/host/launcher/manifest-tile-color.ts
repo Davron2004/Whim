@@ -11,7 +11,8 @@
  * lands in `AppManifest.tileColor` regardless of where that value came from.)
  *
  * Pure and dependency-free — no React import — so it is unit-testable without mounting the shell.
- * Group D calls it from its own wire -> `AppRecord` mapping (`LauncherRoot.tsx#mapWireRecord`).
+ * Group D calls it from its own wire -> `AppRecord` mapping, `build-lifecycle.ts#mapWireRecord`
+ * (extracted out of `LauncherRoot.tsx` by `launcher-ghost-tiles` so it is Node-suite importable).
  */
 
 /** Lift a wire `WireAppRecord.manifest`'s declared tile colour, if any. `wireManifest` is the

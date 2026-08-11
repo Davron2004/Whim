@@ -275,7 +275,14 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!leaveFn.includes('abort()'), 'and never aborts the run');
     const abortFn = rootSrc.slice(rootSrc.indexOf('const abortLiveAttempt'), rootSrc.indexOf('const showStreamFailure'));
     h.ok(abortFn.includes('ctl.cancelled = true') && abortFn.includes('ctl.controller.abort()'), 'backing out marks intent and aborts');
-    const cancelFn = rootSrc.slice(rootSrc.indexOf('const onCancelGeneration'), rootSrc.indexOf('// ── Ghost-tile handlers'));
+    // Bounded by the next CODE declaration, never by the decorative banner that happens to sit
+    // between them: `indexOf` on a reworded banner returns -1, `slice(start, -1)` silently widens
+    // the region to the rest of the file, and `onCancelPending`'s own `abortLiveAttempt()` would
+    // keep the assertion below green while it tested nothing.
+    const cancelFn = rootSrc.slice(rootSrc.indexOf('const onCancelGeneration'), rootSrc.indexOf('const failureFromRecord'));
+    // The wiring link, not just the helper's existence: the assertions above prove `abortLiveAttempt`
+    // marks intent and aborts, and this proves the hardware-back handler is what reaches it.
+    h.ok(cancelFn.includes('abortLiveAttempt()'), 'the hardware-back handler is what invokes that abort');
     h.ok(cancelFn.includes('openCompose(editing, text)'), 'and returns to compose with the text preserved');
     h.ok(!cancelFn.includes('deliverAndSettle'), 'cancel itself never delivers');
     h.ok(/if \(ctl\.cancelled\) return;/.test(attemptFn), 'the loop bails out on a cancelled run before delivering');
@@ -296,6 +303,84 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
 
   await h.test('delivery: the declared tile colour is lifted onto the host record', () => {
     h.ok(read('build-lifecycle.ts').includes('liftManifestTileColor(wire.manifest)'), 'the wire manifest’s colour reaches the record through group F’s one mapping');
+  });
+
+  // ── the shell half of the ghost-tile feature (launcher-ghost-tiles) ─────────────────────────
+  // `build-lifecycle.ts` is exercised for real in `build-lifecycle.suite.ts`; what CANNOT be run
+  // here is the wiring in `LauncherRoot.tsx`, which imports `react-native`. These pin the call
+  // sites — each of which is deletable today with every behavioural suite still green.
+
+  /** The shell's mount effect: the one whose body ends the launch sequence with `setReady(true)`.
+   *  Sliced from that code landmark outwards, not from a banner comment. */
+  const mountEffect = (() => {
+    const readyAt = rootSrc.indexOf('setReady(true);');
+    return rootSrc.slice(rootSrc.lastIndexOf('useEffect(', readyAt), rootSrc.indexOf('}, []);', readyAt));
+  })();
+
+  await h.test('launch: a surviving `building` record is demoted to interrupted before the first render', () => {
+    // `pending-builds` spec: "A live `building` record is demoted to `interrupted` at launch."
+    // The store method is exercised directly in `pending-builds.suite.ts`; the REQUIREMENT is the
+    // call site. Without it a `building` ghost outlives the process that owned its stream, and
+    // `onOpenPending` can never reattach it — a permanently un-tappable tile.
+    const at = (needle: string): number => mountEffect.indexOf(needle);
+    h.ok(at('pending.demoteBuildingToInterrupted()') >= 0, 'the shell demotes at launch, in its mount effect');
+    h.ok(at('pending.demoteBuildingToInterrupted()') < at('seedFirstRun('), 'before first-run seeding');
+    h.ok(at('seedFirstRun(') < at('refresh();'), 'which is before the state the grid renders is read');
+    h.ok(at('refresh();') < at('setReady(true)'), 'and the whole sequence completes before the shell reports ready');
+    h.eq((rootSrc.match(/demoteBuildingToInterrupted\(/g) ?? []).length, 1, 'exactly once per process — not per refresh');
+    h.ok(/if \(!ready\) \{/.test(rootSrc), 'and the grid is gated on `ready`, so no record renders before the demotion');
+  });
+
+  await h.test('reattach: tapping a `building` ghost reads the live run back out — it never starts a second one', () => {
+    // `prompt-flow` spec: "tapping a `building` ghost reattaches, without starting a new request."
+    const openPendingFn = rootSrc.slice(rootSrc.indexOf('const onOpenPending'), rootSrc.indexOf('const onCancelPending'));
+    h.ok(openPendingFn.includes('liveRef.current'), 'the reattach reads the in-flight attempt out of liveRef');
+    h.ok(openPendingFn.includes('setScreen(live.screen)'), 'and is a screen-state change onto that run’s own build screen');
+    h.ok(!openPendingFn.includes('generateApp(') && !openPendingFn.includes('runAttempt('), 'no new generation is started');
+    h.ok(openPendingFn.includes('genRef.current.detached = false'), 'and reattaching un-detaches the run, so its done step still lands');
+    h.ok(openPendingFn.includes('setScreen(failureFromRecord(rec))'), 'a failed/interrupted ghost opens the hydrated failure screen instead');
+    h.ok(/onOpenPending=\{onOpenPending\}/.test(rootSrc), 'and the grid is actually handed the handler');
+  });
+
+  await h.test('failure hydration: a ghost’s failure screen is built from the PERSISTED payload, with Retry and Dismiss', () => {
+    // `prompt-flow` spec: "failure screens hydrate from the persisted payload, offering Retry and
+    // Dismiss." `hydratedDiagnostics`/`pendingFailure` round-trip for real in
+    // `build-lifecycle.suite.ts`; these pin that the shell actually reads them back into a screen.
+    const hydrateFn = rootSrc.slice(rootSrc.indexOf('const failureFromRecord'), rootSrc.indexOf('const onOpenPending'));
+    h.ok(hydrateFn.includes('hydratedDiagnostics(rec.failure)'), 'the hint rows come from the record’s own payload');
+    h.ok(hydrateFn.includes('rec.failure?.reason ?? COPY.interruptedBuildReason'), 'as does the reason — an interrupted record, which has none, says so instead');
+    h.ok(hydrateFn.includes('pendingId: rec.id'), 'and the screen remembers which record it came from');
+    h.ok(hydrateFn.includes('observedRepairAttempts: 0'), 'no live stream, so no repair count is invented');
+
+    const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
+    h.ok(actionsFn.includes('pending.get(s.pendingId)'), 'the actions are decided by whether the record is still there');
+    h.ok(actionsFn.includes('retryable: true'), 'a still-present record makes the primary action a Retry');
+    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Dismiss on that record');
+    h.ok(actionsFn.includes('retryable: false'), 'and a record dismissed in the meantime falls back to the live Rephrase/Back shape');
+    h.ok(rootSrc.includes('{...failureActions(screen)}'), 'the failure screen is rendered with those actions — without this the wiring is inert');
+    h.ok(/\{retryable \? COPY\.screenErrorRetry : COPY\.failureRephrase\}/.test(read('FailureScreen.tsx')), 'and `retryable` is what relabels the primary action');
+
+    const retryFn = rootSrc.slice(rootSrc.indexOf('const onRetryPending'), rootSrc.indexOf('const failureActions'));
+    h.ok(retryFn.includes('runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id)'), 'Retry re-runs the stored prompt under the SAME launcher id — one ghost, not a second');
+  });
+
+  await h.test('concurrent attempts: a settling attempt only ever clears refs that still point at itself', () => {
+    // Two attempts can overlap: "Leave it running" and then a Retry or a new build. An
+    // unconditional `genRef.current = null` / `liveRef.current = null` in the older attempt's
+    // settlement strands the newer one — uncancellable, and its `building` ghost taps into the
+    // "no live run to reattach to" branch forever.
+    const releases = rootSrc.slice(rootSrc.indexOf('const releaseGenRef'), rootSrc.indexOf('const settleFailed'));
+    h.ok(releases.includes('if (genRef.current === ctl) genRef.current = null;'), 'the abort controller is released only by the attempt that owns it');
+    h.ok(releases.includes('if (liveRef.current?.id === attemptId) liveRef.current = null;'), 'and the live build screen only by the attempt whose id it holds');
+    h.ok(attemptFn.includes('releaseGenRef(ctl)') && attemptFn.includes('releaseLiveRef(attemptId)'), 'runAttempt settles through those guarded releases');
+    h.ok(!/(?:genRef|liveRef)\.current = null;/.test(attemptFn), 'and never clears either ref unconditionally');
+    const settleFn = rootSrc.slice(rootSrc.indexOf('const settleFailed'), rootSrc.indexOf('const abortLiveAttempt'));
+    h.ok(settleFn.includes('releaseLiveRef(id)'), 'a failure settles only its own attempt’s live ref');
+    h.ok(!/(?:genRef|liveRef)\.current = null;/.test(settleFn), 'not whichever attempt happens to be live');
+    // The deliberate exception, asserted so it reads as a decision rather than an oversight: an
+    // explicit user cancel clears whatever is live, because that is exactly what was asked for.
+    const abortFn2 = rootSrc.slice(rootSrc.indexOf('const abortLiveAttempt'), rootSrc.indexOf('const showStreamFailure'));
+    h.ok(/genRef\.current = null;/.test(abortFn2) && /liveRef\.current = null;/.test(abortFn2), 'cancel remains the one unguarded clear');
   });
 
   await h.test('highlighting: the off-switch is mounted around the whole launcher tree', () => {

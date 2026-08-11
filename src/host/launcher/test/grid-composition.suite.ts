@@ -186,11 +186,15 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     h.ok(!ghostTileFn.includes('onOpen('), 'and never the installed-app onOpen — spec "A ghost tile does not launch an app"');
   });
 
-  await h.test('HomeScreen: the ghost tile’s colour is ghostTileColorFor(rec.id) — the same derivation path as a declared tile colour', async () => {
+  await h.test('HomeScreen: the ghost tile’s colour is ghostTileColorFor(rec.id), fed through AppTile’s declared-colour path', async () => {
     const src = read('HomeScreen.tsx');
+    // This pins the GHOST end only: the grid hashes the launcher id and hands it to `AppTile` as a
+    // declared colour, so no second resolver exists. That the DELIVERED tile then keeps the same
+    // hue is a property of delivery, not of this line — it is pinned in `build-lifecycle.suite.ts`
+    // ("colour: a delivered new install keeps the exact hue its ghost had").
     h.ok(
       /manifest=\{\{ tileColor: ghostTileColorFor\(rec\.id\) \}\}/.test(src),
-      'the ghost’s colour is hashed from the launcher id through the one declared-colour-wins path AppTile already resolves through',
+      'the ghost’s colour is the launcher-id hash, passed through the one declared-colour-wins path AppTile resolves through',
     );
   });
 
