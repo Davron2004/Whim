@@ -18,6 +18,7 @@ import type { Clarification, ClarifyQuestion, GenerationEvent, PlanRow, RewriteR
 import type { InstalledApp } from './app-index';
 import { COPY } from './copy';
 import { GenerationClientError } from './transport-shared';
+import { appColor } from '../../sdk/theme';
 
 /** The `stage` event's `stage` field (`GenerationEvent` is a discriminated union). */
 export type Stage = Extract<GenerationEvent, { type: 'stage' }>['stage'];
@@ -346,4 +347,27 @@ export function buildProgressFraction(stage: Stage | null, delivering = false): 
 /** The one plain-words sentence describing what is happening right now, in the user's terms. */
 export function currentActionSentence(stage: Stage | null, delivering = false): string {
   return BUILD_STEPS[activeBuildStepIndex(stage, delivering)];
+}
+
+/** A pending-build ghost tile's working title (`pending-builds` design D2): the first ~28 chars
+ *  of the prompt, truncated at the nearest word boundary at or before the limit so a word is
+ *  never cut mid-way. Internal whitespace runs collapse to a single space; a prompt already at or
+ *  under the limit passes through untouched (trimmed). Pure, computed once at record creation. */
+const WORKING_TITLE_MAX_CHARS = 28;
+
+export function workingTitleFromPrompt(text: string): string {
+  const collapsed = text.trim().replace(/\s+/g, ' ');
+  if (collapsed.length <= WORKING_TITLE_MAX_CHARS) return collapsed;
+  const cut = collapsed.slice(0, WORKING_TITLE_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(' ');
+  return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+}
+
+/** A ghost tile's colour (`pending-builds` design D6): a deterministic hash of the launcher id
+ *  onto the SAME palette every installed tile resolves through (`tiles.ts#tileColor`'s fallback,
+ *  `../../sdk/theme#appColor`) — never a second palette. `appColor` is itself already a pure
+ *  string->hue hash, so this is a direct reuse with the launcher id as the hashed input instead of
+ *  the app name. */
+export function ghostTileColorFor(id: string): string {
+  return appColor(id);
 }
