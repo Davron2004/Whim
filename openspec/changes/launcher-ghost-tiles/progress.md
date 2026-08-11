@@ -209,4 +209,51 @@ HUMAN-BOOTSTRAP.
   logic moving out to `build-lifecycle.ts`, not net new shell complexity.
 - **regate-pass** — `./scripts/gate.sh` on the merged tip: `FAST GATE PASSED`. Tasks 1.1–2.5 ticked
   (9 of 14).
+- **dispatched** — chain-3 (ui-grid-tiles, tasks 3.1–3.5), BASE `565cfac`,
+  worktree `.claude/worktrees/ghost-tiles-3`, branch `chain/ghost-tiles-3`.
+- **report** — chain-3 STATUS complete, GATE `FAST GATE PASSED` exit 0, suite 5940 passed / 0 failed.
+  Both mandatory red-checks real: removing the `ghostIds.has(app.id)` guard produced
+  `got 2, want 1`; making `editingAppId` records also emit a ghost produced four failures including
+  `no ghost for the rebuild attempt (got ["rebuild-1"], want [])`. Fixture honesty verified the way
+  the brief demanded — a scratchpad tsconfig with `exclude: []` and `types: ["node"]` over the new
+  suite, zero errors — because the gate provably cannot evidence it.
+- **composition module** — `src/host/launcher/grid-composition.ts`, RN-free, exporting
+  `composeGrid(pending, apps): GridTile[]` over a `GhostTile | InstalledTile` union. Rebuild
+  records never become their own tile; they attach to `InstalledTile.rebuild`.
+- **integrity** — exit 0, BASE `565cfac`, 8 files, all in boundary.
+- **merged** — `8ab5dc5`, 8 files, +595/−36. **regate-pass** — `FAST GATE PASSED`. Tasks 14/14.
+- **DEVIATION [CLASS B] — an ADDED spec requirement is NOT satisfied. Adjudication below.**
+  `specs/app-launcher/spec.md` requires: "Ghost tile color is a deterministic hash of the launcher
+  id, **stable across transmute**", with the scenario "a ghost tile with launcher id X ... delivered
+  as an installed app with id X → the tile color at that position is unchanged".
+  It is not. The ghost renders `ghostTileColorFor(rec.id)` = `appColor(id)`. The delivered tile,
+  when its manifest declares no `tileColor`, falls back to `appColor(app.name)`. Same function,
+  same palette, DIFFERENT hash input — so the hue changes at the moment the build completes.
+  This corrects an earlier claim in this very ledger: sharing `appColor` was recorded (at chain-1
+  merge) as making the guarantee "structural instead of coincidental". It does not. It guarantees
+  the same PALETTE, not the same COLOR. Chain-3 found it by tracing the delivered tile's fallback
+  rather than trusting the upstream contract's assertion, and correctly REPORTED instead of
+  reaching into `build-lifecycle.ts` (outside its boundary) to fix it.
+  Candidate fix: at delivery, when the wire manifest declares no `tileColor`, inject
+  `appColor(appId)` as the record's `tileColor` in `mapWireRecord`. Additive; leaves every existing
+  installed app's colour untouched (their names still hash as before). Blast radius under recon
+  before any fix chain is specced — the open question is whether History / whim-prose derive colour
+  via `appColor(name)` DIRECTLY, bypassing `tileColor(name, manifest)`, in which case the fix would
+  desync those surfaces from the grid and must cover them too.
+- **deviations [Class A] — chain-3**
+  - `test/tile-colour.suite.ts`: two brittle source-text assertions narrowed. A blanket
+    "`STATUS_COLORS` never appears in `app-tile.tsx`" is genuinely invalidated once ghost alert
+    accents correctly use `STATUS_COLORS.broken`; it was rescoped to the done-tile glow. An
+    exact-match regex on `AppTile`'s destructured params was widened by one prop. A third potential
+    break was avoided outright by destructuring inside the branch so the pinned JSX line stays
+    byte-identical. FLAGGED FOR THE STEP-11 REVIEWER: narrowing an existing assertion to make your
+    own change pass is the single highest-risk Class-A move in this whole run. The reasoning is
+    sound on its face; the reviewer must confirm neither narrowed assertion lost real force.
+  - `HomeScreen` empty-state guard widened from `apps.length === 0` to `tiles.length === 0`, so
+    "No apps yet" no longer shows while a ghost build is in flight. Correct.
+  - `RebuildBadge`'s failed/interrupted variant is a `TouchableOpacity` nested inside the tile's
+    outer `onOpen` responder, so the accent is independently tappable without stealing the tile's
+    own launch tap (design D8 requires exactly this).
+  - `INTERRUPTED_REASON` relocated into `copy.ts` as `COPY.interruptedBuildReason`, one reference
+    updated, one import added — exactly the move-plus-import the brief scoped, nothing more.
 

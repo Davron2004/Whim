@@ -43,6 +43,7 @@ import {
 } from './build-lifecycle';
 import { buildGenerateRequest } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
+import { COPY } from './copy';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -113,11 +114,6 @@ type Screen =
     };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
-
-/** What an `interrupted` record's failure screen says: it carries no failure payload, because
- *  nothing failed — the process that owned the stream went away. Stated plainly rather than
- *  borrowed from `GENERIC_STREAM_ERROR`, which would claim a failure that never happened. */
-const INTERRUPTED_REASON = 'This build stopped when the app closed. You can try it again.';
 
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
@@ -678,7 +674,7 @@ function LauncherShell({
       kind: 'failure',
       ...(edited ? { editing: edited } : {}),
       prompt: rec.prompt,
-      reason: rec.failure?.reason ?? INTERRUPTED_REASON,
+      reason: rec.failure?.reason ?? COPY.interruptedBuildReason,
       diagnostics: hydratedDiagnostics(rec.failure),
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,

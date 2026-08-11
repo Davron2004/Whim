@@ -17,8 +17,8 @@
 
 ## 3. Grid and tile rendering
 
-- [ ] 3.1 `HomeScreen` composes `pending.list()` + `apps` into one grid — ghosts newest-first before installed apps, defensive dedupe by id with the pending entry winning.
-- [ ] 3.2 `AppTile` ghost state: `ghost?: 'building' | 'failed' | 'interrupted'` prop — greyed/desaturated, non-launchable, working-title display, state caption, alert accent for failed/interrupted, hash-derived color stable across transmute, no cancel affordance on the tile face.
-- [ ] 3.3 Rebuild rendering: an installed tile with a `building` pending record (matching `editingAppId`) shows the building state; a failed/interrupted rebuild shows a failure accent while the tile stays launchable (design.md decision 8).
-- [ ] 3.4 Ghost state copy in `copy.ts` following existing tone conventions.
-- [ ] 3.5 Node suite coverage for grid composition (dedupe, ordering, rebuild flagging) via the pure composition logic; keep RN component imports out of the Node suite (pure logic in non-RN siblings).
+- [x] 3.1 `HomeScreen` composes `pending.list()` + `apps` into one grid — ghosts newest-first before installed apps, defensive dedupe by id with the pending entry winning.
+- [x] 3.2 `AppTile` ghost state: `ghost?: 'building' | 'failed' | 'interrupted'` prop — greyed/desaturated, non-launchable, working-title display, state caption, alert accent for failed/interrupted, hash-derived color stable across transmute, no cancel affordance on the tile face.
+- [x] 3.3 Rebuild rendering: an installed tile with a `building` pending record (matching `editingAppId`) shows the building state; a failed/interrupted rebuild shows a failure accent while the tile stays launchable (design.md decision 8).
+- [x] 3.4 Ghost state copy in `copy.ts` following existing tone conventions.
+- [x] 3.5 Node suite coverage for grid composition (dedupe, ordering, rebuild flagging) via the pure composition logic; keep RN component imports out of the Node suite (pure logic in non-RN siblings).
