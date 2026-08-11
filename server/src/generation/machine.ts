@@ -85,11 +85,23 @@ export interface RunInput {
 
 /** `contained: false` is TERMINAL (design D7): `diagnostics` and any assembled record are ignored
  *  entirely by the machine, no repair attempt is consumed, and nothing about the escape is fed back
- *  to the model. When `contained` is `true`, `record` is ALWAYS present (the harness-validated
- *  `WireAppRecord`, design D12) — the machine, not the stage, decides whether to deliver it or keep
- *  repairing, based on `diagnostics[].severity` (design D6). */
+ *  to the model.
+ *
+ *  `contained: null` — the harness observed no authenticated containment verdict at all — is its
+ *  own THIRD ARM (design D8-local), not a flag hung off either of the others: an arm makes every
+ *  non-exhaustive consumer a compile error, whereas a discriminant field would let a consumer that
+ *  handles both original arms keep compiling while silently mishandling the new state. It is
+ *  terminal on the same terms as `false` (no repair attempt, nothing fed back) but is a DISTINCT
+ *  outcome carrying its own user-facing reason, and is never re-run (design D3): it is NOT a
+ *  containment failure, and must never be reported as one — never heard back is not evidence of a
+ *  breach, and it is not evidence of containment either.
+ *
+ *  When `contained` is `true`, `record` is ALWAYS present (the harness-validated `WireAppRecord`,
+ *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
+ *  on `diagnostics[].severity` (design D6). */
 export type RunOutcome =
   | { contained: false; diagnostics: Diagnostic[] }
+  | { contained: null; diagnostics: Diagnostic[] }
   | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
 
 export interface RunStage {
@@ -145,6 +157,11 @@ const PLAN_FAILURE_FALLBACK_REASON =
 const REPAIR_EXHAUSTED_REASON =
   'Could not produce a working app after several attempts. Try describing it differently or more specifically.';
 const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and was not delivered.';
+/** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
+ *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
+ *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
+ *  rather than promising an automatic retry (design D3 declines to add one). */
+const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
 const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
 
 function sumUsage(a: Usage, b: Usage): Usage {
@@ -259,9 +276,47 @@ type CandidateOutcome =
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
   | { kind: 'failed'; reason: string }
-  | { kind: 'contained-failure' };
+  | { kind: 'contained-failure' }
+  | { kind: 'containment-unobserved' };
+
+/** Maps a non-affirmative containment verdict onto its own terminal outcome — the one place the
+ *  three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over the
+ *  verdict's literal type (design D8-local): `contained` is the discriminant, so a fourth
+ *  `RunOutcome` arm makes this a compile error at the call site instead of silently reusing one of
+ *  these two. Never collapse the two — `null` is absence of evidence, `false` is evidence. */
+function unverifiedRunOutcome(contained: false | null): CandidateOutcome {
+  switch (contained) {
+    case false:
+      return { kind: 'contained-failure' };
+    case null:
+      return { kind: 'containment-unobserved' };
+  }
+}
 
 type TerminalEvent = Extract<GenerationEvent, { type: 'result' | 'failure' }>;
+
+/** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
+ *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
+ *  without deciding what the user is told; and each arm decides its `diagnostics` independently.
+ *  Both containment terminals send `[]`: nothing about an escape attempt, and no unobserved-verdict
+ *  detail, is ever fed back (spec "The run stage is the synthetic harness…"). */
+function failureTerminalFor(
+  outcome: Extract<CandidateOutcome, { kind: 'failed' | 'contained-failure' | 'containment-unobserved' }>,
+  state: RunState,
+): TerminalEvent {
+  const attempts = state.candidatesProduced;
+  switch (outcome.kind) {
+    case 'contained-failure':
+      return { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] };
+    // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
+    // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
+    // prompt is built, and the candidate is never re-run.
+    case 'containment-unobserved':
+      return { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] };
+    case 'failed':
+      return { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics };
+  }
+}
 
 // ─── The machine ─────────────────────────────────────────────────────────────
 
@@ -512,22 +567,8 @@ export class GenerationMachine {
         yield* this.emitDelivery(request, outcome.record, state, signal);
         return;
       }
-      if (outcome.kind === 'contained-failure') {
-        yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: CONTAINMENT_FAILURE_REASON,
-          attempts: state.candidatesProduced,
-          diagnostics: [],
-        });
-        return;
-      }
-      if (outcome.kind === 'failed') {
-        yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: outcome.reason,
-          attempts: state.candidatesProduced,
-          diagnostics: state.diagnostics,
-        });
+      if (outcome.kind !== 'repair') {
+        yield* this.emitCompletion(state, signal, failureTerminalFor(outcome, state));
         return;
       }
 
@@ -699,10 +740,15 @@ export class GenerationMachine {
     );
     if (signal?.aborted) return { kind: 'aborted' };
 
-    if (!runOutcome.contained) {
+    // Only an affirmative verdict proceeds. `!runOutcome.contained` would be true for BOTH `false`
+    // and `null` and would report an unverified run as a containment failure; `=== false` alone
+    // would let `null` fall through to delivery. Both non-`true` verdicts still emit the `run`
+    // stage's `done` half — the bracket the wire opened above always closes — and neither streams a
+    // `diagnostic` event.
+    if (runOutcome.contained !== true) {
       logStage('run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
-      return { kind: 'contained-failure' };
+      return unverifiedRunOutcome(runOutcome.contained);
     }
 
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, diagnosticsAccum, signal);

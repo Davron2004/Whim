@@ -47,11 +47,21 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
     async run(input: RunInput, signal?: AbortSignal): Promise<RunOutcome> {
       const report = await runCandidate(input.source, { signal });
 
-      // Containment failure is TERMINAL (design D7, spec "Containment failure short-circuits"):
-      // the machine ignores `diagnostics` in this branch outright, but nothing about the escape
-      // attempt is even carried this far — `diagnostics` is explicitly `[]`, not a copy of the
-      // harness's report, so "feeds nothing back to the model" holds at the type level too.
+      // The harness's verdict is THREE-valued (`handoff/run-report-contract.md`): `false` is an
+      // authenticated breach, `null` is "no authenticated verdict was ever observed", `true` is the
+      // only value that lets a candidate proceed. All three are discriminated explicitly here: a
+      // bare `=== false` would let `null` fall through to the delivery path — treating an
+      // unverified run as "not a breach, proceed", which is the collapse this stage exists to
+      // prevent. Neither non-`true` verdict is recoverable, so neither reaches the code below.
+      //
+      // Containment failure is TERMINAL (design D7, spec "Containment failure short-circuits") and
+      // an unobserved verdict is TERMINAL too, as a DISTINCT outcome (spec "An unobserved verdict
+      // short-circuits with its own reason"; design D3 — it is never re-run). In both branches
+      // `diagnostics` is explicitly `[]`, not a copy of the harness's report: nothing about the
+      // escape attempt, and no `containment_unobserved` detail, is even carried this far, so
+      // "feeds nothing back to the model" holds at the type level too.
       if (report.contained === false) return { contained: false, diagnostics: [] };
+      if (report.contained === null) return { contained: null, diagnostics: [] };
 
       const diagnostics: Diagnostic[] = report.diagnostics.map(toWireDiagnostic);
 
