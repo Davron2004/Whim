@@ -239,7 +239,7 @@ and no agent may add an npm script.
 
 ## I. On-device verification (attended)
 
-- [ ] I1 Run the offline release build and confirm on-device: the three faces actually resolve (a
+- [x] I1 Run the offline release build and confirm on-device: the three faces actually resolve (a
   wrong filename falls back to Roboto silently, and no Node or Chromium suite can see it), the `2a`
   flow completes end to end against the dev server, a `4a` row renders a real stored summary through
   Whim Syntax, the off-switch flattens every screen, and the orb menu opens, counts and dismisses.

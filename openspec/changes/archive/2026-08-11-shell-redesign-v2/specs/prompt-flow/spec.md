@@ -46,15 +46,31 @@ The user's submitted prompt SHALL be echoed on this step as the user's own words
 
 Before any generation request is sent, the device SHALL show a plan step headed `Here's the plan` with the subhead `Tap anything to change it before building.`, the plan rendered as labelled rows, and the footer `Nothing here is final — you can keep changing the app after it's built.` Generation SHALL NOT start until the user takes the `Build it` action.
 
-Each plan row SHALL be tappable, and tapping SHALL re-open the compose step prefilled with that row's text. When the plan arrives as structured rows they SHALL render one row per entry with its label; when it arrives as a single rewritten string it SHALL render as one row. No SDK-specific or engineering-internal detail SHALL appear on this step.
+Each plan row SHALL be tappable, and tapping SHALL open an inline editor on the plan step itself — one row at a time, with Save and Cancel — and SHALL NOT re-open the compose step. An unedited plan's build prompt SHALL be the rewrite response's `rewritten` string byte-identical; once any row is hand-edited, the build prompt SHALL instead be deterministically assembled from the current rows, and SHALL stay on that path for every subsequent edit even if the row's text is reverted to the model's original wording. When the plan arrives as structured rows they SHALL render one row per entry with its label; when it arrives as a single rewritten string it SHALL render as one row. No SDK-specific or engineering-internal detail SHALL appear on this step.
+
+<!-- Amended at sync time from decision #59's original ruling ("tapping re-opens the compose step
+     prefilled with that row's text") to decision #61, which explicitly reverses it. #61 shipped
+     before this change was archived: `reopenCompose` is deleted from the repo, and `updatePlanRow`
+     / `promptForBuild` in `src/host/launcher/prompt-flow.ts` are locked by
+     `test/prompt-flow-screens.suite.ts`. The two scenarios below carrying the edited-vs-unedited
+     build-prompt rule are #61's, relocated here from the REMOVED two-stage requirement, which was
+     their only live home. -->
 
 #### Scenario: Nothing is generated before approval
 - **WHEN** the plan step is showing
 - **THEN** no generation request has been sent, and none is sent until the user takes the `Build it` action
 
-#### Scenario: Tapping a row returns to compose
+#### Scenario: Tapping a row opens an inline editor on the plan step
 - **WHEN** the user taps a plan row
-- **THEN** the compose step opens with that row's text prefilled
+- **THEN** an inline editor opens on the plan step for that row, and the compose step is not re-opened
+
+#### Scenario: A hand-edited plan's rows become the build prompt
+- **WHEN** the user edits a plan piece inline, in place on the plan step, and approves
+- **THEN** the generation request carries the prompt assembled from the edited plan, not the original rewrite response
+
+#### Scenario: Unedited plan builds from the rewrite response
+- **WHEN** the user approves the plan without editing any piece of it
+- **THEN** the generation request carries the rewrite response's own prompt, unchanged
 
 #### Scenario: An unstructured plan still renders
 - **WHEN** the plan arrives as a single rewritten string with no rows
