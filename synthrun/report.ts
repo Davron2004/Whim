@@ -58,11 +58,16 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       ...opts,
       appId,
       beforeNavigate: async (page, context) => {
+        // Every trusted-vantage collector — CDP, the frame relay, the console heartbeat — is live
+        // from here, i.e. before the delivered page's inline scripts run (`handoff/
+        // observation-phases.md`); nothing observation-side is attached after navigation.
         early = await attachObserversEarly(page, context); // chain 2
         await wiring.beforeNavigate(page, context); // chain 3
         if (opts.beforeNavigate) await opts.beforeNavigate(page, context);
       },
     });
+    // Installs nothing — hands the now-available `ctx.sourceMap` to the already-attached CDP
+    // collector and returns it.
     const obs = await early!.finish(ctx);
 
     const diagnostics: RuntimeDiagnostic[] = [];

@@ -65,7 +65,11 @@ export type ObservedFrameKind =
 export interface FrameEvent {
   kind: ObservedFrameKind;
   trusted: boolean;
-  /** ms since `RunContext.startedAt`. */
+  /** ms since the observation relay was installed — i.e. since `attachObserversEarly` ran,
+   *  immediately before navigation. NOT `RunContext.startedAt`: a frame can now legitimately
+   *  arrive before `finish(ctx)` has been called (that is the point of installing the relay
+   *  pre-navigation), so `ctx` is not guaranteed to exist when the first frame lands; one
+   *  attach-time anchor keeps every frame in a run mutually comparable. */
   atMs: number;
   /** The generation this event's payload claims, when present; else the last-seen one
    *  (starts at 1 — the loader's own `__whimGeneration` starting point). */
@@ -80,7 +84,8 @@ export interface ObservationState {
    *  other source (spec §Observation is trusted-vantage only, "Forged verdict attempt"). `null`
    *  until one authenticated probes frame has arrived. */
   contained: boolean | null;
-  /** ms (since `startedAt`) the nonce-authenticated `paint` frame arrived, else `null`. */
+  /** ms (on `FrameEvent.atMs`'s attach-time clock) the nonce-authenticated `paint` frame
+   *  arrived, else `null`. */
   paintAtMs: number | null;
   /** `Date.now()` of the most recent FrameEvent, CDP exception, or console message — the
    *  quiet-window heuristic's activity clock (design D2: "no new paint/console/telemetry
@@ -96,14 +101,16 @@ export interface AttachedObservers {
 }
 
 export interface EarlyObservers {
-  /** Live from the moment `attachObserversEarly` resolves — a mount-time throw recorded before
-   *  `finish()` is called still lands here (same object, mutated in place). */
+  /** Live from the moment `attachObserversEarly` resolves — EVERY collector (CDP exceptions, the
+   *  nonce-authenticated frame relay, the console heartbeat) is already attached, so a mount-time
+   *  throw, a `delivery`/`paint`/`probes` frame or a console line recorded before `finish()` is
+   *  called still lands here (same object, mutated in place). */
   state: ObservationState;
-  /** Completes attachment once `SynthRunSession.openRun` has returned (i.e. after navigation):
-   *  wires the nonce-authenticated frame relay (`window.ReactNativeWebView` override) and the
-   *  console activity heartbeat onto the now-navigated `ctx.page`. Call this exactly once,
-   *  immediately after `openRun` resolves — see `RunOptions.beforeNavigate`'s doc comment for
-   *  why the CDP half above cannot wait until then. */
+  /** Supplies the one value that cannot exist before navigation — `ctx.sourceMap`, which
+   *  `SynthRunSession.openRun` only hands back on return — and yields the attached collectors.
+   *  Attachment itself is already complete; this call installs NOTHING. Until it is made, a CDP
+   *  exception is still recorded, only without its resolved original-source `line`. Call it
+   *  exactly once, immediately after `openRun` resolves. */
   finish(ctx: RunContext): Promise<AttachedObservers>;
 }
 
@@ -254,16 +261,70 @@ function genericHint(kind: RuntimeObservedKind): string {
   }
 }
 
+/** The host relay binding `installRelayShim` below reads and then scrubs. Exported so a caller
+ *  (the suite's confinement assertion) names the SAME string this module installs rather than a
+ *  second copy that could drift. */
+export const RELAY_BINDING_NAME = '__whimSynthRelay';
+
 /**
- * Phase 1 (task 2.1): wire the CDP `Runtime.exceptionThrown` collector onto the FRESH
- * `page`/`context` — BEFORE navigation, via `RunOptions.beforeNavigate`. This is load-bearing,
- * not defensive style: a candidate can throw near-instantly once its module code starts
- * running, well before the nonce-authenticated `toRN()` frame handshake (hello→hostInit→ready→
- * deliver→mount→paint→probes, many event-loop turns) would ever catch it — attaching CDP AFTER
- * `SynthRunSession.openRun` returns (i.e. after navigation) measurably loses that race
- * intermittently. `ctx.sourceMap` (needed for `line` resolution) doesn't exist yet at this
- * point — the build already completed inside `openRun`, but `ctx` itself is only handed back on
- * return — so the exception handler closes over a mutable slot `finish()` fills in.
+ * The main-frame-confined transport install (spec §Observation is trusted-vantage only, "That
+ * installation SHALL be confined to the main frame"). Registered pre-navigation so it is already
+ * in place when the delivered page's inline scripts run, and it runs FIRST in every document —
+ * which is exactly what makes the confinement enforceable rather than merely intended:
+ *
+ *  - in EVERY realm it deletes the exposed relay binding from the global. Playwright's
+ *    `page.exposeFunction` defines its wrapper in every frame of the page, the opaque-origin
+ *    sandboxed iframe included (measured) — so scrubbing it here is what keeps the host relay
+ *    unreachable from the realm `loader.js`/`probes.js` rely on being free of it (#35/#37, F4);
+ *  - only in the MAIN frame does it define the `ReactNativeWebView` transport `assemble.mjs`'s
+ *    `toRN()`/`rnLog()` post through, closing over the captured reference. The sandbox realm
+ *    keeps `loader.js`'s own same-named stub, untouched.
+ *
+ * A pre-navigation `page.evaluate` cannot serve here: its global belongs to the pre-navigation
+ * `about:blank` document and is gone the moment the candidate page commits (measured).
+ */
+function installRelayShim(name: string): void {
+  const g = globalThis as unknown as Record<string, unknown> & { top?: unknown };
+  const relay = g[name] as ((s: string) => void) | undefined;
+  try {
+    delete g[name];
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a non-configurable binding just stays visible; nothing here can recover from that, and throwing would abort the document's first script.
+  } catch {
+    /* non-configurable — nothing further this script can do */
+  }
+  if (g.top !== g) return; // every non-main frame (the sandbox realm included) installs NOTHING
+  if (typeof relay !== 'function') return;
+  (g as { ReactNativeWebView?: { postMessage(s: string): void } }).ReactNativeWebView = {
+    postMessage(s: string) {
+      try {
+        relay(s);
+      // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort transport stub, mirrors the loader's own postMessage swallow.
+      } catch {
+        /* best-effort, matches the loader's own transport-stub swallow */
+      }
+    },
+  };
+}
+
+/**
+ * Attach EVERY trusted-vantage collector onto the FRESH `page`/`context` — BEFORE navigation,
+ * via `RunOptions.beforeNavigate`. All three halves are load-bearing here, not defensive style:
+ *
+ *  - CDP `Runtime.exceptionThrown`: a candidate can throw near-instantly once its module code
+ *    starts running, well before the nonce-authenticated `toRN()` frame handshake (hello→
+ *    hostInit→ready→deliver→mount→paint→probes, many event-loop turns) would ever catch it;
+ *  - the nonce-authenticated frame relay: the outer page emits `delivery` ~3ms and `paint`/
+ *    `probes` ~20ms after `page.goto`'s `load` resolves (measured), so a relay opened after
+ *    `openRun` returns races those frames and drops the ones it loses — `toRN()` discards a
+ *    frame at the source when no transport exists, so there is nothing to replay (spec: "no
+ *    frame the outer page emits between document commit and load is dropped");
+ *  - `page.on('console')`: `rnLog()`'s console fallback fires on that same pre-`load` timeline.
+ *
+ * Opening the transport earlier does NOT widen what is trusted: the nonce check happens in the
+ * outer page before any `toRN({trusted:true})`, and this collector consumes `msg.trusted`
+ * verbatim. `ctx.sourceMap` (needed for `line` resolution) doesn't exist yet at this point — the
+ * build already completed inside `openRun`, but `ctx` itself is only handed back on return — so
+ * the exception handler closes over a mutable slot `finish()` fills in.
  */
 export async function attachObserversEarly(page: Page, context: BrowserContext): Promise<EarlyObservers> {
   const state: ObservationState = {
@@ -274,6 +335,11 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     lastActivityAtMs: Date.now(),
   };
   let sourceMap = '';
+  // The one clock every FrameEvent is stamped against (`FrameEvent.atMs`) — fixed at attach, i.e.
+  // immediately pre-navigation, because a frame can now arrive before `finish(ctx)` supplies a
+  // `RunContext` at all.
+  const observationStartedAt = Date.now();
+  let generation = 1;
 
   const cdp: CDPSession = await context.newCDPSession(page);
   await cdp.send('Runtime.enable');
@@ -297,65 +363,51 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
   };
   cdp.on('Runtime.exceptionThrown', onException);
 
+  await page.exposeFunction(RELAY_BINDING_NAME, (raw: string) => {
+    state.lastActivityAtMs = Date.now();
+    type RelayFrame = { kind?: string; trusted?: boolean; payload?: unknown };
+    let msg: RelayFrame | null = null;
+    try {
+      msg = JSON.parse(raw) as RelayFrame;
+    // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed relay frame is dropped, not fatal to the observation session.
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg.kind !== 'string') return;
+    const kind = msg.kind as ObservedFrameKind;
+    const payload = msg.payload as RelayPayload;
+    if (payload && typeof payload.generation === 'number') generation = payload.generation;
+    const trusted = msg.trusted === true;
+    state.events.push({ kind, trusted, atMs: Date.now() - observationStartedAt, generation, payload: msg.payload });
+
+    if (!trusted) return;
+    if (kind === 'paint' && state.paintAtMs === null) state.paintAtMs = Date.now() - observationStartedAt;
+    else if (kind === 'probes') recordProbesOutcome(state, payload);
+    else if (kind === 'error') recordMountError(state, payload);
+  });
+  await page.addInitScript(installRelayShim, RELAY_BINDING_NAME);
+
+  const onConsole = (): void => {
+    state.lastActivityAtMs = Date.now();
+  };
+  page.on('console', onConsole);
+
+  const attached: AttachedObservers = {
+    state,
+    detach(): void {
+      page.off('console', onConsole);
+      cdp.off('Runtime.exceptionThrown', onException);
+      cdp.detach().catch(() => {
+        /* best-effort — the target may already be gone */
+      });
+    },
+  };
+
   return {
     state,
-    async finish(ctx: RunContext): Promise<AttachedObservers> {
+    finish(ctx: RunContext): Promise<AttachedObservers> {
       sourceMap = ctx.sourceMap;
-      let generation = 1;
-
-      const relayName = '__whimSynthRelay';
-      await ctx.page.exposeFunction(relayName, (raw: string) => {
-        state.lastActivityAtMs = Date.now();
-        type RelayFrame = { kind?: string; trusted?: boolean; payload?: unknown };
-        let msg: RelayFrame | null = null;
-        try {
-          msg = JSON.parse(raw) as RelayFrame;
-        // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed relay frame is dropped, not fatal to the observation session.
-        } catch {
-          return;
-        }
-        if (!msg || typeof msg.kind !== 'string') return;
-        const kind = msg.kind as ObservedFrameKind;
-        const payload = msg.payload as RelayPayload;
-        if (payload && typeof payload.generation === 'number') generation = payload.generation;
-        const trusted = msg.trusted === true;
-        state.events.push({ kind, trusted, atMs: Date.now() - ctx.startedAt, generation, payload: msg.payload });
-
-        if (!trusted) return;
-        if (kind === 'paint' && state.paintAtMs === null) state.paintAtMs = Date.now() - ctx.startedAt;
-        else if (kind === 'probes') recordProbesOutcome(state, payload);
-        else if (kind === 'error') recordMountError(state, payload);
-      });
-
-      await ctx.page.evaluate((fnName: string) => {
-        const relay = (globalThis as unknown as Record<string, (s: string) => void>)[fnName];
-        (globalThis as { ReactNativeWebView?: { postMessage(s: string): void } }).ReactNativeWebView = {
-          postMessage(s: string) {
-            try {
-              relay(s);
-            // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort transport stub, mirrors the loader's own postMessage swallow.
-            } catch {
-              /* best-effort, matches the loader's own transport-stub swallow */
-            }
-          },
-        };
-      }, relayName);
-
-      const onConsole = (): void => {
-        state.lastActivityAtMs = Date.now();
-      };
-      ctx.page.on('console', onConsole);
-
-      return {
-        state,
-        detach(): void {
-          ctx.page.off('console', onConsole);
-          cdp.off('Runtime.exceptionThrown', onException);
-          cdp.detach().catch(() => {
-            /* best-effort — the target may already be gone */
-          });
-        },
-      };
+      return Promise.resolve(attached);
     },
   };
 }
@@ -363,8 +415,12 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
 /**
  * Convenience composition of the two-phase attachment above for a caller that does NOT need to
  * combine `beforeNavigate` with another chain's hook (chain 3's `whimHostDispatch` exposure) —
- * this chain's own acceptance suite uses it. A composing caller (chain 5's assembly) instead
- * calls `attachObserversEarly` directly from its OWN combined `beforeNavigate`.
+ * this chain's own acceptance suite uses it. A composing caller (chain 5's assembly, `report.ts`)
+ * instead calls `attachObserversEarly` directly from its OWN combined `beforeNavigate`.
+ *
+ * Both compositions have the same shape and the same contract: attach inside `beforeNavigate`
+ * (every collector is live from there on), then call `finish(ctx)` once `openRun` returns purely
+ * to hand over `ctx.sourceMap`.
  */
 export async function openObservedRun(
   session: SynthRunSession,
