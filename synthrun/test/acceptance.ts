@@ -6,6 +6,12 @@
  * `build/build.mjs`'s own `bundleApp` for the same fixture, refreshed by `npm run build` on
  * every gate run. Reads `build/*` strictly read-only; never re-derives what production emits.
  *
+ * Also owns the containment-observation acceptance (`harden-containment-observation` §4): the
+ * mount gate against a genuinely never-painting candidate, the three-valued containment verdict
+ * separated end-to-end (`true` / `false` + `containment_failure` / `null` +
+ * `containment_unobserved`), the malformed-payload path, relay-binding confinement, and the
+ * bounded, payload-free forgery tally.
+ *
  *   node synthrun/test/run.mjs
  */
 import { readFile } from 'node:fs/promises';
@@ -13,8 +19,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build as esbuild } from 'esbuild';
 import { buildCandidateFile } from '../builder';
-import { awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, type AttachedObservers, type ObservedFrameKind } from '../observe';
-import { SynthRunSession } from '../session';
+import { awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, RELAY_BINDING_NAME, type AttachedObservers, type ObservedFrameKind } from '../observe';
+import { REJECTED_FORGERY_CAP } from '../contract';
+import { SynthRunSession, type RunContext } from '../session';
 import { wireCapabilityBridge } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
@@ -156,16 +163,21 @@ function Bomb() {
 export default defineApp({ name: 'Bomb', initial: 'Bomb', screens: { Bomb }, capabilities: [] });
 `;
 
-// A synchronous, bounded, top-level hang BEFORE the wrapped script ever reaches its trailing
-// `__whimAfterBundle()` call — the only way to keep the nonce-authenticated `paint` frame from
-// EVER posting under the CURRENT loader.js (double-rAF paint measurement is scheduled the
-// instant `render()` is CALLED, unconditionally, regardless of what the app's own React tree —
-// or an async-only hang via the SDK's `delay(Infinity)` — is doing). Self-terminating (bounded
-// at HANG_MS) so a failed watchdog assertion can't wedge the suite.
+// An UNBOUNDED synchronous top-level hang, entered before the wrapped script ever reaches its
+// trailing `__whimAfterBundle()` call — the only way to keep the nonce-authenticated `paint`
+// frame from EVER posting under the CURRENT loader.js (the double-rAF paint measurement is
+// scheduled the instant `render()` is CALLED, unconditionally, regardless of what the app's own
+// React tree — or an async-only hang via the SDK's `delay(Infinity)` — is doing).
+//
+// Genuinely never-terminating on purpose: a bounded hang eventually paints, and a test that
+// passes only while the paint frame is still in flight asserts a race, not a property. Wedging
+// the renderer forever is safe here because nothing this suite needs comes back out of that
+// realm — `page.goto(..., {waitUntil:'load'})` resolves in ~30ms regardless (the outer page's
+// `load` fires when the sandbox iframe's srcdoc loads; the candidate bundle is delivered
+// afterwards over postMessage, so a never-painting candidate cannot delay it) and `dispose()`
+// tears the wedged context down without waiting for it.
 const FIXTURE_MOUNT_HANG = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
-const HANG_MS = 1200;
-const start = Date.now();
-while (Date.now() - start < HANG_MS) { /* deliberate synchronous top-level hang */ }
+for (;;) { /* deliberate, unbounded synchronous top-level hang — this candidate never paints */ }
 function Slow() {
   return <Screen><Stack><Heading size="title">Slow</Heading></Stack></Screen>;
 }
@@ -189,6 +201,76 @@ function Ticker() {
 }
 export default defineApp({ name: 'Ticker', initial: 'Ticker', screens: { Ticker }, capabilities: [] });
 `;
+
+// The minimal well-formed candidate: mounts, paints, is contained, does nothing else. The
+// baseline every containment-verdict case below is read against.
+const FIXTURE_HARMLESS = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading></Stack></Screen>; }
+export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// CAUSES a genuine breach verdict rather than claiming one: planting a Node-style `process`
+// global makes probes.js's own escape-axis check `ambient process (Node env leak)` (§6,
+// `expectUnreachable`) reach a usable value, so `contained` — computed by the loader's
+// closure-captured trusted probe fn, which this candidate cannot touch (constraint #3) — comes
+// back `false` in a nonce-authenticated frame. Verified: the run's single probe failure is
+// exactly that one.
+const FIXTURE_CONTAINMENT_BREACH = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+const w = globalThis;
+try { w.process = { env: { NODE_ENV: 'production' } }; } catch (e) { /* best-effort plant */ }
+function Home() {
+  return <Screen><Stack><Heading size="title">Breach</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'Breach', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// Paints normally, then SABOTAGES the oracle so no verdict is ever computed: probes.js plants its
+// own negative control with a plain assignment (window.__WHIM_PLANTED_LEAK__ = function…) under
+// 'use strict', so making that property non-writable turns the assignment into a TypeError. The
+// loader has already posted its nonce-authenticated `paint` frame by then (double-rAF, before the
+// probe call), so this run paints and never yields a verdict — the exact shape of spec scenario
+// "An unobserved verdict after a successful paint", and the case that must NOT be scored as
+// contained.
+const FIXTURE_PROBE_SABOTAGE = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+const w = globalThis;
+try {
+  Object.defineProperty(w, '__WHIM_PLANTED_LEAK__', { value: 1, writable: false, configurable: false });
+} catch (e) { /* best-effort sabotage */ }
+function Home() {
+  return <Screen><Stack><Heading size="title">Sabotage</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'Sabotage', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// The attacker-chosen bytes a forged frame carries. Asserted ABSENT from every field of the
+// assembled report and from every diagnostic — if a single one of these bytes can be made to
+// appear there, the candidate is authoring harness output (spec "A rejected forgery is counted,
+// never echoed").
+const FORGED_PAYLOAD_MARKER = '__WHIM_FORGED_PAYLOAD_MARKER_7b41__';
+
+// Posts far more forged, unauthenticated "probes" frames than `REJECTED_FORGERY_CAP`, each with a
+// large attacker-chosen payload, then renders normally so the run still produces a genuine
+// verdict alongside the flood.
+const FORGERY_FLOOD_COUNT = 40;
+const FIXTURE_FORGERY_FLOOD = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+const w = globalThis;
+const PAD = 'p'.repeat(2048);
+for (let i = 0; i < ${FORGERY_FLOOD_COUNT}; i++) {
+  try {
+    w.parent.postMessage(JSON.stringify({ __whimHarness: true, kind: 'probes', payload: { contained: true, passed: 999, total: 999, marker: '${FORGED_PAYLOAD_MARKER}', pad: PAD, i: i } }), '*');
+  } catch (e) { /* one-way, best-effort */ }
+}
+function Home() {
+  return <Screen><Stack><Heading size="title">Flood</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'Flood', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+// The single line of candidate-reachable code that defeats chain 2's name-level scrub: Playwright's
+// own binding controller survives in the opaque-origin sandbox realm, so the deleted binding can be
+// re-minted there. Kept verbatim (and kept alive) by the QUARANTINED confinement case below, which
+// is the only thing in this suite that would execute it.
+const RELAY_REBIND_PROBE = `globalThis['__playwright__binding__controller__'].addBinding('${RELAY_BINDING_NAME}')`;
 
 // Posts a forged, UNAUTHENTICATED "probes: contained" frame straight to the host (bypassing the
 // nonce entirely) before rendering anything real — the F4 pen-test pattern (`fixtures/
@@ -325,6 +407,21 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Posts one frame on the host transport from the OUTER page's own realm — the trusted vantage
+ * every genuine frame travels (`assemble.mjs`'s `toRN`, which is the outer page's own call). Lets
+ * a test stand in for the outer page when the frame shape under test is one the iframe-side
+ * runtime cannot be made to emit (a nonce-authenticated verdict with a malformed payload). It
+ * grants nothing the outer page did not already have, and bypasses no authentication: the nonce
+ * check happens upstream, inside the outer page, before it ever calls `toRN`.
+ */
+async function relayFromOuterPage(ctx: RunContext, frame: { kind: string; trusted: boolean; payload: unknown }): Promise<void> {
+  await ctx.page.evaluate((raw: string) => {
+    const g = globalThis as unknown as { ReactNativeWebView?: { postMessage(s: string): void } };
+    g.ReactNativeWebView?.postMessage(raw);
+  }, JSON.stringify(frame));
+}
+
 function stubObservers(): AttachedObservers {
   return {
     state: { events: [], diagnostics: [], contained: null, rejectedForgeries: 0, paintAtMs: null, lastActivityAtMs: Date.now() },
@@ -359,36 +456,33 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // QUARANTINED at closure 2026-07-31 — this test is UNSOUND, not merely flaky, and the
-    // distinction is why it is parked rather than retried.
-    //
-    // `FIXTURE_MOUNT_HANG`'s hang is *bounded* at HANG_MS = 1200 (deliberately, so a failed
-    // assertion cannot wedge the suite), and the hang is long enough to block the OUTER page's
-    // own `load` event — the iframe's parser-blocking script delays its parent's `load` per the
-    // HTML spec — so `openObservedRun`'s `page.goto` does not resolve until the hang is already
-    // over. The observation window therefore opens at hang-end, and the candidate posts its
-    // double-rAF `paint` about two frames later: comfortably INSIDE the 800ms budget. So the
-    // fixture does eventually paint, and `paintAtMs === null` holds only when
-    // `EarlyObservers.finish()`'s relay override is installed too late to receive that paint.
-    // The test passed because a message was LOST, not because no paint occurred — and it fails
-    // precisely when the harness behaves BETTER (relay ready in time), which is why it reddens
-    // under gate load while passing standalone.
-    //
-    // Widening `mountBudgetMs` cannot fix this and never could (the 500→800ms widening did not):
-    // the window always opens at hang-end regardless of HANG_MS. A sound real-browser version
-    // needs the trusted-vantage relay opened BEFORE navigation (e.g. `waitUntil: 'commit'` plus
-    // early relay install) so an unbounded, genuinely never-painting fixture becomes usable —
-    // that is a change to production `observe.ts`'s attach ordering, i.e. the structural fix
-    // decision #55 defers, and it is not something to land unreviewed.
-    //
-    // Coverage is NOT zero meanwhile: `awaitMount`'s timeout path is asserted deterministically
-    // by the stub red-checks below ("awaitMount times out against a bare stub that never posts
-    // paint", plus its non-vacuity twin). What is parked is only the real-browser variant.
-    quarantined(
-      'mount_timeout: a synchronous top-level hang never posts paint (spec "Never-settling mount")',
-      'unsound: the bounded fixture DOES paint just after page.goto resolves, so the assertion only held when the relay missed the message. Needs observe.ts to open the relay before navigation (decision #55 structural fix); until then the stub red-checks carry awaitMount timeout coverage.',
-      FIXTURE_MOUNT_HANG,
-    );
+    // Un-quarantined once the relay was opened pre-navigation: the real-browser mount gate is now
+    // observable end-to-end. The fixture never paints at all (unbounded hang), so `paintAtMs`
+    // stays null because no paint EXISTS — not because a paint frame was lost racing the relay
+    // install, which is what the parked version of this test was actually measuring. The stub
+    // red-checks below stay as the non-vacuity anchor for `awaitMount`'s own timeout arithmetic.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('mount_timeout: an unbounded top-level hang never posts paint (spec "Never-settling mount")', async () => {
+      const { obs, dispose } = await openObservedRun(session, FIXTURE_MOUNT_HANG);
+      try {
+        const diagnostic = await awaitMount(obs, mergeBudgets({ mountBudgetMs: 600 }));
+        ok(diagnostic?.kind === 'mount_timeout', `the never-painting candidate times out with mount_timeout (got ${diagnostic?.kind ?? 'null'})`);
+        ok(diagnostic?.hint != null && diagnostic.hint.length > 0, 'the diagnostic carries a non-empty hint');
+        ok(obs.state.paintAtMs === null, `no paint was ever observed (got paintAtMs=${obs.state.paintAtMs})`);
+        // Non-vacuity for the fixture itself: a candidate wedged in its own top-level hang never
+        // reaches the loader's post-delivery frames, so the relay — live since before navigation —
+        // legitimately sees nothing. An empty buffer here means "nothing happened", not "the relay
+        // was late"; the tests below prove the same relay does receive a healthy candidate's frames.
+        ok(eventKinds(obs).length === 0, `the wedged realm emitted no frames at all (got ${eventKinds(obs).join(',')})`);
+        ok(obs.state.contained === null, 'no authenticated verdict was observed, so containment is unobserved — never false');
+        ok(!obs.state.diagnostics.some((d) => d.kind === 'containment_failure'), 'a never-painting run is NOT reported as a containment breach');
+      } finally {
+        obs.detach();
+        await dispose().catch(() => {
+          /* the renderer is wedged for good; teardown is best-effort */
+        });
+      }
+    });
 
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('legal interval: mounts fine, ticks forever, produces NO diagnostic (spec "Legal interval never fails the run")', async () => {
@@ -417,6 +511,117 @@ async function testObservers(): Promise<void> {
         const payload = realProbes?.payload as { __FORGED_BY_TEST?: boolean } | undefined;
         ok(payload?.__FORGED_BY_TEST !== true, "the genuine probes payload was NOT contaminated by the forgery's marker");
         ok(obs.state.contained === true, 'state.contained reflects only the trusted verdict (a harmless app IS contained)');
+        // The rejection is recorded as a FACT, not merely dropped (spec "A frame the outer page
+        // rejected as a forgery SHALL be recorded as the fact of a rejection plus a bounded
+        // count"). Not asserted as an exact number here: probes.js's own T6b pen test posts an
+        // unauthenticated spoof frame from inside every realm, so any run that reaches the oracle
+        // carries one rejection of its own. The cap arithmetic is the flood test's job.
+        ok(obs.state.rejectedForgeries > 0, `the rejection was tallied (got ${obs.state.rejectedForgeries})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // ── 4.2a: the confinement chain-2 actually achieved, pinned so a refactor cannot drop it ──
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('confinement: the host relay binding is undefined in the sandbox realm as installed (spec "The relay binding is not reachable from the sandbox realm")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await wait(150);
+        const frame = await findAppFrame(ctx.page);
+        const realm = await frame.evaluate((name: string) => {
+          const g = globalThis as unknown as Record<string, unknown> & { top?: unknown; ReactNativeWebView?: { postMessage?: unknown } };
+          return {
+            relay: typeof g[name],
+            isSubordinateRealm: g.top !== g,
+            transportKind: typeof g.ReactNativeWebView?.postMessage,
+          };
+        }, RELAY_BINDING_NAME);
+
+        // Non-vacuity first: an "everything is undefined here" bug (wrong frame, dead evaluate)
+        // must not be able to make the assertion below pass.
+        ok(realm.isSubordinateRealm, 'the evaluated realm really is the subordinate sandbox realm, not the outer page');
+        ok(realm.transportKind === 'function', `loader.js's own same-named transport stub IS present in that realm (got ${realm.transportKind})`);
+        ok(realm.relay === 'undefined', `${RELAY_BINDING_NAME} is not defined in the sandbox realm as installed (got ${realm.relay})`);
+
+        // …and that stub is loader.js's, NOT the host relay: what goes through it is subject to
+        // the outer page's nonce check, so a "probes" frame posted through it lands as a REJECTED
+        // forgery and changes no verdict. The host relay would have delivered it verbatim.
+        const forgeriesBefore = obs.state.rejectedForgeries;
+        await frame.evaluate((marker: string) => {
+          const g = globalThis as unknown as { ReactNativeWebView?: { postMessage(s: string): void } };
+          g.ReactNativeWebView?.postMessage(JSON.stringify({ __whimHarness: true, kind: 'probes', payload: { contained: false, marker } }));
+        }, FORGED_PAYLOAD_MARKER);
+        await wait(200);
+        ok(obs.state.rejectedForgeries === forgeriesBefore + 1, `the frame posted through the sandbox transport was rejected as a forgery (tally ${forgeriesBefore} → ${obs.state.rejectedForgeries})`);
+        ok(obs.state.contained === true, 'the verdict is untouched by a frame that travelled the sandbox realm transport');
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // ── 4.2b: the property the spec actually demands — QUARANTINED because it FAILS TODAY. ─────
+    //
+    // 4.2a above pins a NAME-level fact: `page.exposeFunction` defines its wrapper in every frame
+    // of the page (the opaque-origin sandbox iframe included), and chain 2's init-script shim
+    // deletes it there. That is real and worth locking. It is NOT the same property as the spec's
+    // "the host relay binding is unreachable from inside the sandboxed realm", and this suite must
+    // not let the weaker one stand in for the stronger.
+    //
+    // Verified by execution against this very build, not by reading: Playwright's own
+    // `__playwright__binding__controller__` survives in the sandbox realm as an `object`, and the
+    // single line held in `RELAY_REBIND_PROBE` below re-adds the binding — `typeof` goes back to
+    // `'function'`, calling it reaches the host relay callback, and a frame handed to it with
+    // `trusted: true` sets the run's containment verdict (forced to both `false` and `true` in
+    // separate reproductions, after the genuine verdict had already landed). Deleting the name
+    // does not remove the capability that mints it.
+    //
+    // The hole is PRE-EXISTING (it predates this change), is tracked by its own change, and is
+    // deliberately NOT fixed or weakened here. A quarantined honest test is the deliverable; a
+    // green one that asserted only the name would be the exact failure mode this change exists to
+    // eliminate. Un-quarantine it when the capability — not just the name — is gone from the
+    // realm (e.g. the relay no longer travels through a binding the candidate's realm can re-mint).
+    quarantined(
+      'confinement: the host relay is unreachable as a CAPABILITY from the sandbox realm (spec "The relay binding is not reachable from the sandbox realm")',
+      'FAILS TODAY, deliberately parked: the binding is scrubbed by NAME only. Playwright\'s __playwright__binding__controller__ survives in the sandbox realm and re-adds it (verified end-to-end: the re-minted binding reaches the host relay and can set the run\'s containment verdict). Pre-existing and tracked by its own change; sound again once the realm cannot re-mint the binding.',
+      RELAY_REBIND_PROBE,
+    );
+
+    // ── 4.3: a malformed authenticated verdict payload is UNOBSERVED, never a breach ───────────
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('malformed verdict payload: unobserved, not a breach (spec "A malformed verdict payload is unobserved, not a breach")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await wait(200);
+        ok(obs.state.contained === true, 'baseline: the genuine verdict landed first, so a change below is this test\'s own doing');
+
+        // Stands in for the OUTER PAGE emitting an authenticated frame whose payload is malformed.
+        // The outer container relays the iframe's probe result verbatim (`toRN({kind:'probes',
+        // trusted:true, payload:r})`) once its own nonce check passes, so this is that frame with
+        // a non-boolean `contained` — the one shape probes.js itself cannot be made to produce.
+        // The nonce check sits UPSTREAM of this seam and is exercised by the forgery tests above;
+        // what is under test here is what the harness does with an authenticated-but-malformed
+        // verdict. Posted from the main frame, i.e. the trusted vantage, exactly like every real
+        // frame on this transport.
+        await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: 'not-a-boolean' } });
+        await wait(200);
+        ok(obs.state.contained === null, `a non-boolean verdict field leaves containment unobserved (got ${JSON.stringify(obs.state.contained)})`);
+        ok(!obs.state.diagnostics.some((d) => d.kind === 'containment_failure'), 'absence of a boolean verdict is NOT evidence of a breach — no containment_failure');
+        const unobserved = obs.state.diagnostics.filter((d) => d.kind === 'containment_unobserved');
+        ok(unobserved.length === 1, `exactly one containment_unobserved diagnostic was minted (got ${unobserved.length})`);
+        ok((unobserved[0]?.hint.length ?? 0) > 0, 'the diagnostic carries a non-empty hint');
+        ok(!JSON.stringify(obs.state.diagnostics).includes('not-a-boolean'), 'the malformed payload is never echoed into a diagnostic');
+
+        // Red-check on the SAME seam: an authenticated `contained:false` DOES produce a breach.
+        // Without this, the assertions above would also pass against a dead injection channel.
+        await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: false } });
+        await wait(200);
+        ok(obs.state.contained === false, 'the same channel carrying an explicit false IS read as a breach (the seam is live)');
+        ok(obs.state.diagnostics.some((d) => d.kind === 'containment_failure'), 'an explicit false — and only an explicit false — earns containment_failure');
       } finally {
         obs.detach();
         await dispose();
@@ -713,6 +918,19 @@ async function testRunCandidate(): Promise<void> {
       ok(typeof report.timings.perScreenMs.List === 'number' && typeof report.timings.perScreenMs.Detail === 'number', 'both screens have their own per-screen timing entry');
       ok(report.trace.length === 0, `no capabilities are declared, so the trace is empty (got ${report.trace.length} entries)`);
       ok(report.budgets.mountBudgetMs === 5000, 'the applied budgets are recorded verbatim, merged with the caller override');
+      // Verdict `true` carries NEITHER containment diagnostic — the state is separated from the
+      // other two end to end, not merely at the field.
+      ok(
+        !report.diagnostics.some((d) => d.kind === 'containment_failure' || d.kind === 'containment_unobserved'),
+        'a contained run carries neither containment_failure nor containment_unobserved',
+      );
+      // The forgery tally is self-consistent, and NOT zero even for a candidate that forges
+      // nothing: probes.js's T6b pen test posts an unauthenticated spoof frame from inside every
+      // realm, so the outer page rejects one frame in every run that reaches the oracle. Pinned
+      // deliberately — `forgeries.rejected` therefore does NOT distinguish a hostile candidate
+      // from a clean one, and a consumer must not read it as if it did.
+      ok(report.forgeries.rejected === (report.forgeries.count > 0), 'rejected is exactly (count > 0)');
+      ok(report.forgeries.count === 1, `a clean candidate still tallies the oracle's own T6b spoof, and nothing more (got ${report.forgeries.count})`);
     });
 
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
@@ -756,6 +974,81 @@ async function testRunCandidate(): Promise<void> {
         [...report.screens.declared].sort((a, b) => a.localeCompare(b)).join(',') === 'Home,Orphan',
         `both declared screens are reported (got ${report.screens.declared.join(',')})`,
       );
+      ok(report.forgeries.rejected === true, 'the forgery attempt is recorded as a fact on the report');
+      ok(
+        !JSON.stringify(report).includes('__FORGED_BY_TEST'),
+        'no byte of the forged payload appears ANYWHERE in the report — not just in its diagnostics',
+      );
+    });
+
+    // ── 4.3: the three verdict states, separated end-to-end on the assembled report ────────────
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('verdict false: a genuine breach is a breach (spec "A negative verdict is still negative")', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_CONTAINMENT_BREACH, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.contained === false, `an authenticated breach verdict is reported as false (got ${JSON.stringify(report.contained)})`);
+      const breaches = report.diagnostics.filter((d) => d.kind === 'containment_failure');
+      ok(breaches.length === 1, `exactly one containment_failure diagnostic accompanies it (got ${breaches.length})`);
+      ok((breaches[0]?.hint.length ?? 0) > 0, 'the diagnostic carries a non-empty hint');
+      ok(
+        !report.diagnostics.some((d) => d.kind === 'containment_unobserved'),
+        'a breach is evidence, so it is never softened to containment_unobserved',
+      );
+      ok(!report.diagnostics.some((d) => d.kind === 'mount_timeout'), 'the candidate painted fine — a breach is not a mount timeout');
+      ok(report.ok === false, 'a breached run is not ok');
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('verdict null after a paint: unobserved, not negative (spec "An unobserved verdict after a successful paint")', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_PROBE_SABOTAGE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.contained === null, `no authenticated verdict was ever observed, so the verdict is null (got ${JSON.stringify(report.contained)})`);
+      const unobserved = report.diagnostics.filter((d) => d.kind === 'containment_unobserved');
+      ok(unobserved.length === 1, `exactly one containment_unobserved diagnostic is carried (got ${unobserved.length})`);
+      ok((unobserved[0]?.hint.length ?? 0) > 0, 'the diagnostic carries a non-empty hint');
+      ok(!report.diagnostics.some((d) => d.kind === 'containment_failure'), 'never heard back is NOT heard "breached" — no containment_failure');
+      // The mount budget never fired: this candidate paints. Reporting it as mount_timeout would
+      // name the wrong cause (`handoff/diagnostic-kind.md`, the no-substitution rule).
+      ok(!report.diagnostics.some((d) => d.kind === 'mount_timeout'), 'the candidate painted within budget, so NO mount_timeout is reported');
+      // Whole truth: sabotaging the oracle throws where the loader calls it, and that throw is
+      // observed at CDP level. Asserted so this case states everything the run produces.
+      ok(report.diagnostics.some((d) => d.kind === 'runtime_throw'), 'the sabotage itself surfaces as a runtime_throw');
+      ok(report.ok === false, 'an unverified run is not ok');
+    });
+
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('verdict null with no probes frame at all: mount_timeout AND containment_unobserved, neither standing in for the other', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_MOUNT_HANG, { budgets: { mountBudgetMs: 600, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.contained === null, `a run with no probes frame at all reports null, never false (got ${JSON.stringify(report.contained)})`);
+      ok(report.diagnostics.some((d) => d.kind === 'mount_timeout'), 'the never-painted cause is named on its own terms');
+      ok(report.diagnostics.filter((d) => d.kind === 'containment_unobserved').length === 1, 'and the unobserved verdict is named on its own terms — both, exactly once');
+      ok(!report.diagnostics.some((d) => d.kind === 'containment_failure'), 'a candidate that never even painted is not reported as a breach');
+      ok(report.forgeries.count === 0, `a realm that never ran the oracle produces no rejections at all (got ${report.forgeries.count})`);
+    });
+
+    // ── 4.4: a flood of forged frames costs a fixed-size, payload-free signal ──────────────────
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('forgery flood: the count saturates at the declared cap and no forged byte reaches the report (spec "A rejected forgery is counted, never echoed")', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_FORGERY_FLOOD, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(FORGERY_FLOOD_COUNT > REJECTED_FORGERY_CAP, 'precondition: the fixture posts more forgeries than the cap (otherwise saturation is untested)');
+      ok(report.forgeries.rejected === true, 'the fact of rejection is recorded');
+      ok(
+        report.forgeries.count === REJECTED_FORGERY_CAP,
+        `the count saturates at the cap — read as "at least ${REJECTED_FORGERY_CAP}", never as the true number ${FORGERY_FLOOD_COUNT} (got ${report.forgeries.count})`,
+      );
+      ok(
+        !JSON.stringify(report).includes(FORGED_PAYLOAD_MARKER),
+        'no byte of any forged payload appears anywhere in the report or its diagnostics',
+      );
+      ok(report.contained === true, 'the genuine nonce-authenticated verdict is unaffected by the flood');
+      ok(!report.diagnostics.some((d) => d.kind === 'containment_failure' || d.kind === 'containment_unobserved'), 'a rejected forgery is not a diagnostic and does not disturb the verdict axis');
     });
 
     // ── red-check (non-vacuity, task 5.3): a candidate with NO hostile behavior at all must
@@ -763,11 +1056,7 @@ async function testRunCandidate(): Promise<void> {
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('red-check: the assembled pipeline is non-vacuous — a trivially harmless candidate is clean too', async () => {
       const runCandidate = createRunCandidate(session);
-      const harmless = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
-function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading></Stack></Screen>; }
-export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
-`;
-      const report = await runCandidate(harmless, { budgets: { mountBudgetMs: 5000 } });
+      const report = await runCandidate(FIXTURE_HARMLESS, { budgets: { mountBudgetMs: 5000 } });
       ok(report.ok === true, `a harmless candidate is clean (got ${JSON.stringify(report.diagnostics)})`);
       ok(report.diagnostics.length === 0, 'no diagnostics leak in from the hostile fixture above being run in the same suite');
     });
