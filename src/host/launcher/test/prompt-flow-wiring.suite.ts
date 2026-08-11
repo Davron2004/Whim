@@ -231,6 +231,9 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   const rootSrc = read('LauncherRoot.tsx');
   const homeSrc = read('HomeScreen.tsx');
   const settingsSrc = read('SettingsScreen.tsx');
+  /** The shell's one generation runner (`runAttempt`), which the plan's `Build it` and a ghost's
+   *  Retry both enter through — the stream loop and its settlements all live inside it. */
+  const attemptFn = rootSrc.slice(rootSrc.indexOf('const runAttempt'), rootSrc.indexOf('const onBuildIt'));
 
   await h.test('home: the composer row and "Prompt again" both open the compose step', () => {
     h.ok(/onCreate=\{\(\) => openCompose\(\)\}/.test(rootSrc), 'the composer row opens compose with no app being edited');
@@ -245,49 +248,54 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   });
 
   await h.test('approve-order: nothing is generated before the plan’s Build it', () => {
-    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const onBuildIt'));
+    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
     h.ok(composeFn.includes('clarifyPrompt('), 'compose calls the clarify exchange');
     h.ok(!composeFn.includes('generateApp('), 'and never starts generation');
     const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
     h.ok(planFn.includes('rewritePrompt('), 'the plan step is the rewrite endpoint’s surface');
     h.ok(!planFn.includes('generateApp('), 'and still starts no generation');
+    // `runAttempt` is the shell's ONE generation call site; the plan's `Build it` and a ghost's
+    // Retry are its only two entries, so "generation starts at Build it" is now the stronger
+    // claim that nothing else in the shell can start one at all.
+    h.eq((rootSrc.match(/generateApp\(/g) ?? []).length, 1, 'exactly one generateApp call site exists in the shell');
+    h.ok(attemptFn.includes('generateApp('), 'and it is inside runAttempt');
     const buildFn = rootSrc.slice(rootSrc.indexOf('const onBuildIt'), rootSrc.indexOf('const onLeaveRunning'));
-    h.ok(buildFn.includes('generateApp('), 'only Build it starts generation');
+    h.ok(buildFn.includes('runAttempt(buildStep(from))'), 'Build it reaches generation only through that one runner');
   });
 
   await h.test('build: only `stage` reaches screen state — never token text or diagnostic fields', () => {
-    const buildFn = rootSrc.slice(rootSrc.indexOf('const onBuildIt'), rootSrc.indexOf('const onLeaveRunning'));
-    h.ok(/withStage\(s, event\.stage\)/.test(buildFn), 'a stage event is forwarded into screen state');
-    h.ok(!/event\.text\b/.test(buildFn), 'a token event’s text is never read');
-    h.ok(!/event\.diagnostic\.(kind|symbol)/.test(buildFn), 'a diagnostic’s kind/symbol is never read');
+    h.ok(/withStage\(s, event\.stage\)/.test(attemptFn), 'a stage event is forwarded into screen state');
+    h.ok(!/event\.text\b/.test(attemptFn), 'a token event’s text is never read');
+    h.ok(!/event\.diagnostic\.(kind|symbol)/.test(attemptFn), 'a diagnostic’s kind/symbol is never read');
   });
 
   await h.test('leave-it-running does not cancel; hardware back out of the build step does', () => {
     const leaveFn = rootSrc.slice(rootSrc.indexOf('const onLeaveRunning'), rootSrc.indexOf('const onCancelGeneration'));
     h.ok(leaveFn.includes('detached = true') && leaveFn.includes('goHome()'), 'leaving detaches and returns to the shell');
     h.ok(!leaveFn.includes('abort()'), 'and never aborts the run');
-    const cancelFn = rootSrc.slice(rootSrc.indexOf('const onCancelGeneration'), rootSrc.indexOf('// v2:'));
-    h.ok(cancelFn.includes('ctl.cancelled = true') && cancelFn.includes('ctl.controller.abort()'), 'backing out marks intent and aborts');
+    const abortFn = rootSrc.slice(rootSrc.indexOf('const abortLiveAttempt'), rootSrc.indexOf('const showStreamFailure'));
+    h.ok(abortFn.includes('ctl.cancelled = true') && abortFn.includes('ctl.controller.abort()'), 'backing out marks intent and aborts');
+    const cancelFn = rootSrc.slice(rootSrc.indexOf('const onCancelGeneration'), rootSrc.indexOf('// ── Ghost-tile handlers'));
     h.ok(cancelFn.includes('openCompose(editing, text)'), 'and returns to compose with the text preserved');
-    h.ok(!cancelFn.includes('deliverResult'), 'cancel itself never delivers');
-    const buildFn = rootSrc.slice(rootSrc.indexOf('const onBuildIt'), rootSrc.indexOf('const onLeaveRunning'));
-    h.ok(/if \(ctl\.cancelled\) return;/.test(buildFn), 'the loop bails out on a cancelled run before delivering');
-    h.ok(/if \(ctl\.detached\) return;/.test(buildFn), 'a detached run still delivers, it just does not take over the screen');
+    h.ok(!cancelFn.includes('deliverAndSettle'), 'cancel itself never delivers');
+    h.ok(/if \(ctl\.cancelled\) return;/.test(attemptFn), 'the loop bails out on a cancelled run before delivering');
+    h.ok(/if \(ctl\.detached\) return;/.test(attemptFn), 'a detached run still delivers, it just does not take over the screen');
   });
 
   await h.test('delivery (D5): result routes through isAtTip to install / update / fork-then-update', () => {
-    const deliverFn = rootSrc.slice(rootSrc.indexOf('async function deliverResult'), rootSrc.indexOf('export default function LauncherRoot'));
+    const deliverSrc = read('build-lifecycle.ts');
+    const deliverFn = deliverSrc.slice(deliverSrc.indexOf('export async function deliverResult'), deliverSrc.indexOf('export async function deliverAndSettle'));
     h.ok(deliverFn.includes('access.install(') && deliverFn.includes('!editing'), 'new-app case must call access.install');
     h.ok(deliverFn.includes('await isAtTip(access, editing)'), 'edit case must decide via isAtTip');
     h.ok(deliverFn.includes('access.update(editing,'), 'at-tip case must call access.update on the same entry');
     h.ok(deliverFn.includes('access.fork(editing, undefined, { shareData: true })'), 'behind-tip case must fork with shareData:true and no question');
     h.ok(deliverFn.includes('access.update(fork,'), 'behind-tip case must then update the new fork');
-    h.ok(deliverFn.includes('promptEnvelope(text, summary)'), 'every delivery writes the v2 envelope, summary included');
+    h.ok(deliverFn.includes('promptEnvelope(spec.text, spec.summary)'), 'every delivery writes the v2 envelope, summary included');
     h.ok(rootSrc.includes('terminal.summary'), 'the terminal event’s summary is what gets stored');
   });
 
   await h.test('delivery: the declared tile colour is lifted onto the host record', () => {
-    h.ok(rootSrc.includes('liftManifestTileColor(wire.manifest)'), 'the wire manifest’s colour reaches the record through group F’s one mapping');
+    h.ok(read('build-lifecycle.ts').includes('liftManifestTileColor(wire.manifest)'), 'the wire manifest’s colour reaches the record through group F’s one mapping');
   });
 
   await h.test('highlighting: the off-switch is mounted around the whole launcher tree', () => {

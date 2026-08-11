@@ -9,11 +9,11 @@
 
 ## 2. Generation flow wiring (LauncherRoot)
 
-- [ ] 2.1 Allocate the launcher id in `onBuildIt` for new installs, write the `building` pending record (prompt, working title, `editingAppId` for rebuilds) before the generation request is sent.
-- [ ] 2.2 Thread the up-front id into `deliverResult`; delete the pending record only *after* successful delivery (store-first ordering untouched; crash inside delivery leaves an `interrupted` ghost, never a lost app).
-- [ ] 2.3 Terminal failure and stream-error paths call `setFailed` with the persisted failure payload; explicit cancel (`onCancelGeneration`) deletes the record.
-- [ ] 2.4 Ghost handlers on the shell: tap building ghost → `setScreen` back to the build screen (reattach); tap failed/interrupted ghost → failure screen hydrated from the persisted payload with Retry (new generation, same id reused) and Dismiss (delete record); long-press quick actions Cancel/Dismiss.
-- [ ] 2.5 Node suite coverage: id threading (delivered app keeps the ghost's id), failure persistence, cancel deletion, retry reuses id, delivery-ordering test (pending deleted only post-install).
+- [x] 2.1 Allocate the launcher id in `onBuildIt` for new installs, write the `building` pending record (prompt, working title, `editingAppId` for rebuilds) before the generation request is sent.
+- [x] 2.2 Thread the up-front id into `deliverResult`; delete the pending record only *after* successful delivery (store-first ordering untouched; crash inside delivery leaves an `interrupted` ghost, never a lost app).
+- [x] 2.3 Terminal failure and stream-error paths call `setFailed` with the persisted failure payload; explicit cancel (`onCancelGeneration`) deletes the record.
+- [x] 2.4 Ghost handlers on the shell: tap building ghost → `setScreen` back to the build screen (reattach); tap failed/interrupted ghost → failure screen hydrated from the persisted payload with Retry (new generation, same id reused) and Dismiss (delete record); long-press quick actions Cancel/Dismiss.
+- [x] 2.5 Node suite coverage: id threading (delivered app keeps the ghost's id), failure persistence, cancel deletion, retry reuses id, delivery-ordering test (pending deleted only post-install).
 
 ## 3. Grid and tile rendering
 
