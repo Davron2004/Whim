@@ -327,7 +327,7 @@ function wait(ms: number): Promise<void> {
 
 function stubObservers(): AttachedObservers {
   return {
-    state: { events: [], diagnostics: [], contained: null, paintAtMs: null, lastActivityAtMs: Date.now() },
+    state: { events: [], diagnostics: [], contained: null, rejectedForgeries: 0, paintAtMs: null, lastActivityAtMs: Date.now() },
     detach(): void {
       /* no-op — nothing was attached */
     },
