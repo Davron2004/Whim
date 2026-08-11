@@ -73,8 +73,14 @@ export interface ForgeryTally {
   frame the outer page relays. The frame's `payload` is never read on that path.
 - A rejected forgery is **not** a diagnostic and does not affect `ok`, `contained`, or any verdict.
   A candidate that forges a verdict and is also genuinely contained still reports `contained: true`.
-- `null` + `rejected: true` is a distinguishable state: a candidate that withheld a real verdict
-  *and* tried to lie about its containment.
+- The tally is **not a hostility discriminator**. It counts every rejection, including the
+  harness's own T6b pen test: `src/runtime/web/probes.js` posts an unauthenticated
+  `{__whimHarness:true, kind:'spoof-probe'}` frame from **every** realm, and `assemble.mjs`
+  rejects it as `rejected-forgery`. So a perfectly clean candidate reports `rejected: true` and
+  `count >= 1` on every run that reaches the oracle, and the count rises further with realm resets
+  (`synthrun/sweep.ts`'s `reinject({reset:true})` re-runs the oracle per reset). What it IS good
+  for: a bounded, payload-free record that forgery rejection is happening at all, and a saturating
+  count that separates ordinary operation from a candidate flooding the channel.
 
 ## Invariant: payload-free, and never model-facing
 

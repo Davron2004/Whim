@@ -83,9 +83,11 @@ function capturingRunCandidate(candidate: RunCandidate): { candidate: RunCandida
  *  kind/message from the underlying `RunReport` — present even when `RunOutcome.diagnostics` was
  *  zeroed by the D7 short-circuit — so a `mount_timeout` (never reported back) reads differently
  *  from a genuine `containment_failure` in the CI log. The forgery TALLY is included too (a count,
- *  never a payload — `handoff/run-report-contract.md`'s payload-free invariant): `null` plus
- *  `rejected: true` is the distinguishable "withheld a real verdict AND tried to lie about it"
- *  state, and a CI log line is not a model-facing path. */
+ *  never a payload — `handoff/run-report-contract.md`'s payload-free invariant), and a CI log line
+ *  is not a model-facing path. The tally is NOT a hostility signal: the harness's own T6b spoof
+ *  probe is rejected on every run, so a clean candidate's baseline is `rejected: true` with
+ *  `count >= 1`, rising with realm resets. It reads as "forgery rejection is happening at all",
+ *  and a saturated count reads as a candidate flooding the channel. */
 function containedDetail(contained: unknown, capturedReport: RunReport | undefined): string {
   const diagnostics = capturedReport
     ? capturedReport.diagnostics.map((d) => {
