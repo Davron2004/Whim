@@ -40,7 +40,11 @@ function fakeReport(overrides: Partial<RunReport>): RunReport {
   return {
     ok: true,
     diagnostics: [],
+    // The harness's verdict is three-valued (`handoff/run-report-contract.md`); this default is the
+    // "we saw a clean run" stub. A stub meaning "we never heard back" must say `contained: null`
+    // explicitly — there is no value that stands in for it.
     contained: true,
+    forgeries: { rejected: false, count: 0 },
     truncated: false,
     timings: { buildMs: 0, bootMs: 0, mountToPaintMs: 0, sweepMs: 0, perScreenMs: {} },
     trace: [],
@@ -78,7 +82,10 @@ function capturingRunCandidate(candidate: RunCandidate): { candidate: RunCandida
  *  so `null` and `false` never collapse into the same rendered text) plus every diagnostic's
  *  kind/message from the underlying `RunReport` — present even when `RunOutcome.diagnostics` was
  *  zeroed by the D7 short-circuit — so a `mount_timeout` (never reported back) reads differently
- *  from a genuine `containment_failure` in the CI log. */
+ *  from a genuine `containment_failure` in the CI log. The forgery TALLY is included too (a count,
+ *  never a payload — `handoff/run-report-contract.md`'s payload-free invariant): `null` plus
+ *  `rejected: true` is the distinguishable "withheld a real verdict AND tried to lie about it"
+ *  state, and a CI log line is not a model-facing path. */
 function containedDetail(contained: unknown, capturedReport: RunReport | undefined): string {
   const diagnostics = capturedReport
     ? capturedReport.diagnostics.map((d) => {
@@ -87,7 +94,8 @@ function containedDetail(contained: unknown, capturedReport: RunReport | undefin
       })
     : ['<no report captured>'];
   const reportContained = capturedReport ? JSON.stringify(capturedReport.contained) : '<n/a>';
-  return `contained=${JSON.stringify(contained)}, report.contained=${reportContained}, diagnostics=${JSON.stringify(diagnostics)}`;
+  const forgeries = capturedReport ? JSON.stringify(capturedReport.forgeries) : '<n/a>';
+  return `contained=${JSON.stringify(contained)}, report.contained=${reportContained}, forgeries=${forgeries}, diagnostics=${JSON.stringify(diagnostics)}`;
 }
 
 // ── RunStage — containment failure is terminal (design D7, spec "Containment failure short-circuits") ──
@@ -114,6 +122,88 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   const stage2 = createRunStage(stubRunCandidate(positive));
   const outcome2 = await stage2.run({ source: 's', manifest: A_MANIFEST, build: { bundle: 'b' } });
   check('red-check: contained:true from the harness is NOT hardcoded away — it delivers', outcome2.contained === true);
+}
+
+// ── RunStage — an unobserved verdict is its own terminal outcome (design D3/D6/D8-local, spec
+//    "An unobserved verdict short-circuits with its own reason") ──
+
+/** The harness's own diagnostic for "no authenticated verdict was ever observed"
+ *  (`handoff/diagnostic-kind.md` — the kind string and the meaning of its hint are fixed there).
+ *  Never a `containment_failure`: never heard back is not evidence of a breach. */
+const UNOBSERVED_DIAG = {
+  kind: 'containment_unobserved',
+  severity: 'error',
+  message: 'no authenticated containment verdict was observed',
+  hint:
+    'no authenticated containment verdict was observed — this run proves nothing about containment; ' +
+    're-run it and treat the candidate as unverified, not as escaped',
+} as const;
+
+async function testUnobservedVerdictShortCircuit(): Promise<void> {
+  section('RunStage — an unobserved verdict maps to its OWN outcome, never to contained:false or true');
+
+  const unobserved = fakeReport({
+    ok: false,
+    contained: null,
+    diagnostics: [UNOBSERVED_DIAG],
+  });
+  const stage = createRunStage(stubRunCandidate(unobserved));
+  // No `manifest` supplied, exactly as in the containment-failure case above: the short-circuit
+  // must happen BEFORE the manifest requirement is consulted, so an unobserved verdict can never
+  // reach record assembly.
+  const outcome = await stage.run({ source: 'a candidate that never reported back', build: { bundle: '' } });
+
+  check(
+    'an unobserved report resolves to contained:null — NOT collapsed onto true (which would ship it)',
+    outcome.contained === null,
+    containedDetail(outcome.contained, unobserved),
+  );
+  check(
+    'an unobserved report is NOT reported as a containment failure — absence of evidence is not evidence',
+    outcome.contained !== false,
+    containedDetail(outcome.contained, unobserved),
+  );
+  eq(
+    'nothing is fed back — diagnostics is empty, so no containment_unobserved detail can reach a prompt',
+    outcome.diagnostics,
+    [],
+  );
+
+  // red-check (non-vacuity): the null mapping is a real conditional on the report's verdict, not a
+  // property of the diagnostic list — the SAME diagnostics with an affirmative verdict still deliver.
+  const affirmative = fakeReport({ ok: false, contained: true, diagnostics: [UNOBSERVED_DIAG] });
+  const outcome2 = await createRunStage(stubRunCandidate(affirmative)).run({
+    source: 's',
+    manifest: A_MANIFEST,
+    build: { bundle: 'b' },
+  });
+  check('red-check: contained:null is driven by the verdict, not by the diagnostics', outcome2.contained === true);
+}
+
+// ── RunStage — the forgery tally never crosses into a model-facing path (spec "Forgery detail
+//    never reaches the model"; `handoff/run-report-contract.md`'s payload-free invariant) ──
+
+async function testForgeryDetailNeverCrossesTheAdapter(): Promise<void> {
+  section('RunStage — no forgery detail (payload, count, or the fact of it) survives into the RunOutcome');
+
+  // A candidate that forged verdict frames AND produced a genuine runtime diagnostic: the
+  // diagnostics DO travel (they are the repair loop's input), so this is the exact path on which a
+  // forgery detail could ride into an assembled prompt.
+  const forged = fakeReport({
+    ok: false,
+    contained: true,
+    forgeries: { rejected: true, count: 16 },
+    diagnostics: [{ kind: 'runtime_throw', severity: 'error', message: 'boom', hint: 'fix it' }],
+  });
+  const outcome = await createRunStage(stubRunCandidate(forged)).run({ source: 's', manifest: A_MANIFEST, build: { bundle: 'b' } });
+
+  check('the outcome carries no forgery field at all', !('forgeries' in outcome));
+  if (outcome.contained !== true) return;
+  const serialized = JSON.stringify(outcome).toLowerCase();
+  for (const leak of ['forger', 'rejected', '16']) {
+    check(`no forgery detail rides along on the model-facing outcome (${leak})`, !serialized.includes(leak));
+  }
+  eq('the genuine runtime diagnostic still travels — the guard is scoped, not a blanket drop', outcome.diagnostics.length, 1);
 }
 
 // ── RunStage — truncation is never a silent pass (spec "Truncation is not a pass") ──
@@ -412,6 +502,8 @@ async function testReconciliation(): Promise<void> {
 
 async function main(): Promise<void> {
   await testContainmentFailureShortCircuit();
+  await testUnobservedVerdictShortCircuit();
+  await testForgeryDetailNeverCrossesTheAdapter();
   await testTruncationIsNotAPass();
   await testReconciliation();
 

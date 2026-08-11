@@ -467,6 +467,56 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   }
 }
 
+/** The settled copy for each terminal (design D6). Written out verbatim here rather than imported:
+ *  these two sentences are product decisions, and a test that reads the constant it is checking
+ *  would pass through any reword. */
+const CONTAINMENT_FAILURE_COPY = 'This app could not be safely run and was not delivered.';
+const UNVERIFIED_RUN_COPY = "We couldn't verify this app ran safely. Please try again.";
+
+async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> {
+  section('machine — an unobserved containment verdict is terminal, distinct, and consumes no repair (D3/D6)');
+
+  // Two scripted turns only — plan and generate. A repair round would ask the model for a third
+  // and blow up, so "no repair attempt is consumed" is enforced structurally as well as asserted.
+  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    // One outcome only: a second `run` call — a re-run of the same candidate — exhausts the script
+    // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
+    run: scriptedRun([{ contained: null, diagnostics: [] }]),
+  });
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('unobserved verdict', events);
+
+  eq('unobserved verdict: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
+  eq('unobserved verdict: the run stage bracket still closes', stageEvents(events, 'run').map((e) => e.status), ['start', 'done']);
+  eq('unobserved verdict: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
+  eq('unobserved verdict: no result is emitted — the candidate is never delivered', events.filter((e) => e.type === 'result').length, 0);
+
+  const terminal = events[events.length - 1];
+  check('unobserved verdict: the single terminal is a failure', terminal.type === 'failure');
+  if (terminal.type === 'failure') {
+    eq('unobserved verdict: the reason says we could not VERIFY, not that the app was unsafe', terminal.reason, UNVERIFIED_RUN_COPY);
+    check('unobserved verdict: the reason is NOT the containment-failure reason', terminal.reason !== CONTAINMENT_FAILURE_COPY);
+    eq('unobserved verdict: attempts is 1 — no repair attempt was spent', terminal.attempts, 1);
+    eq('unobserved verdict: diagnostics is empty — nothing fed back', terminal.diagnostics, []);
+  }
+
+  // spec "Forgery detail never reaches the model" / the unobserved half of the same guard: the
+  // pipeline assembled exactly the plan and generate prompts, and neither names the unobserved
+  // verdict, its diagnostic kind, or any forgery signal.
+  eq('unobserved verdict: only the plan and generate prompts were ever assembled', model.requests.length, 2);
+  const assembled = model.requests
+    .flatMap((r) => r.request.messages.map((m) => m.content))
+    .join('\n')
+    .toLowerCase();
+  for (const leak of ['containment_unobserved', 'unobserved', 'forger', 'contained']) {
+    check(`unobserved verdict: no assembled prompt mentions "${leak}"`, !assembled.includes(leak));
+  }
+}
+
 async function testStageThrowYieldsOneFailure(): Promise<void> {
   section('machine — a stage throwing still yields exactly one failure');
 
@@ -885,6 +935,7 @@ export async function runMachineTests(): Promise<void> {
   await testWarningsOnlyOneRepairThenDeliver();
   await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
   await testContainmentFailureShortCircuit();
+  await testUnobservedVerdictIsTerminalWithItsOwnReason();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();
   await testAbortDuringGenerateTokens();
