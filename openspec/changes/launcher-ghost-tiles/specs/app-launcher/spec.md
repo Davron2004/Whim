@@ -1,5 +1,33 @@
 # app-launcher Specification
 
+## MODIFIED Requirements
+
+### Requirement: A tile's colour is the app's declared colour, with a deterministic fallback
+
+The launcher SHALL take an app's tile colour from the host-held record's manifest when the app declared one, and next from a launcher-injected colour when the app declared none but the launcher recorded one (a new install's ghost-tile id hash, preserved across rebuilds per the "Ghost tile color is a deterministic hash of the launcher id" requirement below), and SHALL fall back to `appColor(name)` only when the record carries neither a declared nor a launcher-injected colour, when the declaration is malformed, or when it collides with a reserved status hue. The colour SHALL be read from the host-held record only — never from anything the running bundle reports about itself — and the launcher SHALL NOT hold a second name→colour mapping of its own.
+
+Every surface that shows an app's colour — the grid tile, the history header, and an `app`-class span in prose — SHALL resolve it through this one path, so a single app is one colour everywhere.
+
+#### Scenario: A declared colour wins
+
+- **WHEN** an installed app's record carries a valid declared tile colour
+- **THEN** its tile and every `app`-class mention of it render in that colour
+
+#### Scenario: A launcher-injected colour wins over the name hash
+
+- **WHEN** an installed app's record carries a launcher-injected tile colour (a new install with no declared colour of its own) rather than a declared one
+- **THEN** its tile and every `app`-class mention of it render in the injected colour, not `appColor(name)`
+
+#### Scenario: A pre-existing app keeps working
+
+- **WHEN** an app installed before declarations existed is rendered
+- **THEN** its colour resolves from `appColor(name)` and nothing in the grid, history, or prose errors or renders colourless
+
+#### Scenario: The bundle cannot recolour itself
+
+- **WHEN** a running mini-app reports a different colour than its host-held record carries
+- **THEN** the launcher SHALL use the record's value
+
 ## ADDED Requirements
 
 ### Requirement: The home grid renders ghost tiles for pending-build records
@@ -25,14 +53,24 @@ A ghost tile SHALL render a state caption and visual treatment that distinguishe
 - **WHEN** the grid renders one `building` ghost and one `failed` ghost
 - **THEN** their visual treatments differ, and each carries a state caption naming its own state
 
-### Requirement: Ghost tile color is a deterministic hash of the launcher id, stable across transmute
+### Requirement: Ghost tile color is a deterministic hash of the launcher id, stable across transmute and undeclared rebuilds
 
-A ghost tile's color SHALL be derived deterministically from its pending-build record's launcher id, using the same tile-color derivation the installed tile will use once delivered. The color MUST NOT change when the ghost transmutes into the delivered tile at the same grid position.
+A ghost tile's color SHALL be derived deterministically from its pending-build record's launcher id, using the same tile-color derivation the installed tile will use once delivered. When the delivered app's manifest declares no tile color of its own, the color MUST NOT change as the ghost transmutes into the delivered tile at the same grid position, nor across a later rebuild whose own manifest ALSO declares no tile color. A manifest that DOES declare a tile color — at delivery or on a later rebuild — is the app stating its own identity (`sdk-design-system`), and that declaration wins over the derived hash; a color change at delivery, or at a rebuild whose manifest declares a color, is then intended behavior, not a violation of this requirement.
 
 #### Scenario: Same id, same color, before and after delivery
 
-- **WHEN** a ghost tile with launcher id X is showing, and its generation is then delivered as an installed app with id X
+- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered as an installed app with id X whose manifest declares no tile color
 - **THEN** the tile color at that position is unchanged across the transmute
+
+#### Scenario: A manifest that declares its own color takes it at delivery
+
+- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered with a manifest that declares its own tile color
+- **THEN** the delivered tile renders the declared color rather than the id-derived one
+
+#### Scenario: Rebuilding does not move a delivered app's color
+
+- **WHEN** an app delivered under the id-derived color is re-prompted and rebuilt, and the rebuilt manifest declares no tile color of its own
+- **THEN** the tile still renders the color it has rendered since delivery, not a name-derived one
 
 #### Scenario: Color is deterministic for a given id
 

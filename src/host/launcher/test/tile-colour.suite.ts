@@ -210,13 +210,41 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.ok(!/shadowOpacity|shadowRadius|shadowOffset|elevation/.test(code(src)), 'never through the iOS-only shadow props or a default-profile elevation');
     // Ruling R20: the celebration tile keeps the app's identity across two adjacent screens — its
     // fill AND its glow are the app's own resolved colour, never a fixed status hue.
+    h.ok(/const bg = tileColor\(name, manifest\);/.test(src), 'one resolved colour per tile, from the one tiles.ts path');
     h.ok(/color: `\$\{bg\}\$\{GLOW_ALPHA_HEX\}`/.test(src), 'the glow is the tile’s own resolved colour');
-    // Scoped to the glow's own computation (not the whole file): `launcher-ghost-tiles` (design
-    // D6) legitimately imports `STATUS_COLORS` elsewhere in this file for the ghost tile's alert
-    // accent — an unrelated, sanctioned use of the reserved "broken" hue, not a regression of the
-    // done tile's own "always the app's own colour" guarantee this check exists to hold.
-    const glowRegion = src.slice(src.indexOf('const glow = isDone'), src.indexOf('return ('));
-    h.ok(!/STATUS_COLORS/.test(code(glowRegion)), 'no fixed status hue is imported for the done tile’s own glow');
+    // The FILL half of the same ruling, positively pinned: `bg` is the tile's background, and it
+    // is applied AFTER `styles.tileDone` in the style array, so no done-variant entry can override
+    // it (RN resolves a style array last-wins).
+    const tileStyleArray = /<View style=\{\[(.*?)\]\}>/.exec(code(src))?.[1] ?? '';
+    h.ok(tileStyleArray.includes('{ backgroundColor: bg }'), 'the tile’s fill is the app’s own resolved colour');
+    h.ok(
+      tileStyleArray.indexOf('{ backgroundColor: bg }') > tileStyleArray.indexOf('styles.tileDone'),
+      'and it is applied after the done-variant style, which therefore cannot repaint it',
+    );
+    // The negative half, over the WHOLE component rather than one expression: `launcher-ghost-tiles`
+    // (design D6) legitimately uses the reserved "broken" hue for the ghost tile's alert accent, so
+    // a blanket "STATUS_COLORS never appears" is no longer true — but the exemption is exactly two
+    // style entries plus the import that feeds them. Anywhere else (the fill, the glow, `tileDone`,
+    // a monogram) a fixed status hue would be the regression R20 exists to forbid.
+    const outsideAlertAccents = ['tileGhostAlert', 'ghostCaptionAlert'].reduce(
+      (rest, entry) => rest.replace(styleBlock(rest, entry), ''),
+      code(src).replace(/^import .*$/gm, ''),
+    );
+    h.ok(
+      !/STATUS_COLORS/.test(outsideAlertAccents),
+      'no fixed status hue anywhere in AppTile outside the two ghost alert-accent style entries',
+    );
+    // The exempted pair is not equally harmless. `ghostCaptionAlert` is a `Text` style and cannot
+    // repaint anything, but `tileGhostAlert` is applied AFTER `{ backgroundColor: bg }` in the same
+    // last-wins style array — a `backgroundColor: STATUS_COLORS.broken` added there would repaint
+    // the ghost tile's fill with a fixed status hue and sail through the exemption above. The
+    // accent is a BORDER; keeping it one is what makes the exemption safe.
+    const alertBlock = styleBlock(code(src), 'tileGhostAlert');
+    h.ok(alertBlock.includes('borderColor'), 'sanity: the exempted entry exists and is an accent, so the check below is not vacuous');
+    h.ok(
+      !alertBlock.includes('backgroundColor'),
+      'the alert accent never paints a fill, so the exemption cannot hide a repainted ghost tile',
+    );
     // The design's `rise` uses CSS `ease` = cubic-bezier(.25,.1,.25,1), which DECELERATES. RN's
     // `Easing.ease` is bezier(.42,0,1,1) — CSS `ease-in`, the opposite shape — so the curve is
     // spelled out rather than named, the same translation `Orb.tsx:58` makes for `sheetRise`.

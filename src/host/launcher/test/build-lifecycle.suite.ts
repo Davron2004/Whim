@@ -26,6 +26,9 @@ import {
   retryBuildScreen,
   startPendingBuild,
 } from '../build-lifecycle';
+import { ghostTileColorFor } from '../prompt-flow';
+import { tileColor } from '../tiles';
+import { appColor } from '../../../sdk/theme';
 import type { WireAppRecord } from '@whim/contract';
 
 const WIRE: WireAppRecord = {
@@ -135,6 +138,182 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(delivered.id, APP.id, 'the rebuilt app keeps its own identity');
     h.eq(updates.length, 1, 'and the delivery was an update');
     h.eq(updates[0].entry.id, APP.id, 'onto the entry being rebuilt');
+  });
+
+  // ── the ghost's hue survives transmute — on the NEW-INSTALL path, and only there ──────────────
+
+  /** A deterministic ghost id, so the two hashes below are fixed values rather than a coin flip
+   *  over a ten-colour palette. `reuseId` is the sanctioned way to pin one. */
+  const GHOST_ID = 'app-ghost-1';
+
+  await h.test('colour: a delivered new install keeps the exact hue its ghost had', async () => {
+    // `app-launcher` spec: "Ghost tile color is a deterministic hash of the launcher id, stable
+    // across transmute." The ghost renders `ghostTileColorFor(rec.id)`; the delivered tile resolves
+    // `tileColor(name, manifest)`, whose fallback hashes the NAME. Unless delivery records the id
+    // hash, the two are different inputs and the hue flips the instant the build completes.
+    h.ok(
+      ghostTileColorFor(GHOST_ID) !== appColor(WIRE.name),
+      'sanity: this id and this name genuinely hash to different hues, so the assertion below is not vacuous',
+    );
+    const store = new PendingBuildStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
+    const delivered = await deliverAndSettle(store, { access: fakeAccess({}), appId: id, text: 'a tip splitter', wire: WIRE });
+    h.eq(
+      tileColor(delivered.name, delivered.record.manifest),
+      ghostTileColorFor(GHOST_ID),
+      'the tile at that position renders the colour the ghost already had',
+    );
+  });
+
+  await h.test('colour: an injected hue survives tileColor’s own validity gate, rather than being silently dropped', async () => {
+    // `tileColor` only honours a declared colour that is `#rrggbb` and not a reserved shell hue —
+    // a value failing either is silently ignored and falls back to `appColor(name)`, i.e. the fix
+    // above would look applied and change nothing. So the recorded value is checked directly.
+    const store = new PendingBuildStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
+    const installs: InstallSpec[] = [];
+    await deliverAndSettle(store, { access: fakeAccess({ installs }), appId: id, text: 'a tip splitter', wire: WIRE });
+    h.eq(installs[0].record.manifest.tileColor, ghostTileColorFor(GHOST_ID), 'the id hash is what got recorded');
+    h.eq(tileColor('some other name', installs[0].record.manifest), ghostTileColorFor(GHOST_ID), 'and the resolver honours it over any name hash');
+  });
+
+  await h.test('colour: a wire manifest that DOES declare a tile colour still wins over the injection', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
+    const declared = { ...WIRE, manifest: { tileColor: '#2f6feb' } };
+    const delivered = await deliverAndSettle(store, { access: fakeAccess({}), appId: id, text: 'a tip splitter', wire: declared });
+    h.eq(delivered.record.manifest.tileColor, '#2f6feb', 'the app’s own declaration is never overwritten by the ghost hash');
+    h.eq(tileColor(delivered.name, delivered.record.manifest), '#2f6feb', 'and that is what every surface resolves');
+  });
+
+  await h.test('colour: rebuilding an app the user already owns does NOT move its hue', async () => {
+    // The trap this test exists for: injecting inside `mapWireRecord` (which both edit branches
+    // share) would stamp an id hash over an app whose colour has always been the NAME hash — and
+    // for a fork, `editing.record.appId` is the PARENT's id, giving a third hue again. An edit has
+    // no ghost to stay stable with, so it must record nothing.
+    const store = new PendingBuildStore(new MapKVBackend());
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
+    const atTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+    } as unknown as StoreAccess;
+    await deliverResult({ access: atTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
+    const rebuilt = updates[0].spec.record;
+    h.ok(rebuilt.manifest.tileColor === undefined, 'no colour is recorded on a rebuild');
+    h.eq(tileColor(APP.name, rebuilt.manifest), appColor(APP.name), 'so the app resolves exactly the hue it resolved before');
+    h.ok(tileColor(APP.name, rebuilt.manifest) !== ghostTileColorFor(APP.id), 'and specifically NOT the id hash a shared injection would have stamped');
+  });
+
+  await h.test('colour: a behind-tip rebuild forks and still does not move the hue', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    // A fork copies the parent's record wholesale, so `editing.record.appId` here is the PARENT's
+    // id — the case where a shared injection would produce a THIRD distinct hue.
+    const forked: InstalledApp = { ...APP, id: 'app-fork', name: APP.name };
+    const behindTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+      fork: async () => forked,
+    } as unknown as StoreAccess;
+    const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
+    await deliverResult({ access: behindTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
+    h.eq(updates.length, 1, 'sanity: the behind-tip branch forked and then updated the fork');
+    h.eq(updates[0].entry.id, forked.id, 'onto the fork, not the original');
+    h.ok(updates[0].spec.record.manifest.tileColor === undefined, 'and again records no colour');
+    h.eq(tileColor(forked.name, updates[0].spec.record.manifest), appColor(APP.name), 'the fork resolves the same name hash its parent does');
+  });
+
+  await h.test('colour: rebuilding an app that was INSTALLED with an injected hue keeps that hue', async () => {
+    // The regression this exists for, and the one shape the two tests above structurally cannot
+    // reach: they rebuild `APP`, which never carried a colour, so dropping one is invisible there.
+    // `StoreAccess.update` replaces the record WHOLESALE with the one built from the wire, and a
+    // typical wire declares no `tileColor` — so a rebuild that passes no fallback does not merely
+    // decline to stamp, it DELETES the hue injected at install and the tile flips back to
+    // `appColor(name)` on the very first edit. Install for real, then rebuild THAT app.
+    const store = new PendingBuildStore(new MapKVBackend());
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    const installId = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
+    const installed = await deliverAndSettle(store, {
+      access: fakeAccess({}),
+      appId: installId,
+      text: 'a tip splitter',
+      wire: WIRE,
+    });
+    h.eq(installed.record.manifest.tileColor, ghostTileColorFor(installId), 'precondition: the install injected the ghost hue');
+
+    const atTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+    } as unknown as StoreAccess;
+    const rebuildId = startPendingBuild(store, { editing: installed, text: 'add a dark mode' });
+    await deliverResult({ access: atTip, appId: rebuildId, editing: installed, text: 'add a dark mode', wire: WIRE });
+    const rebuilt = updates[0].spec.record;
+    h.eq(rebuilt.manifest.tileColor, ghostTileColorFor(installId), 'the rebuilt record carries the SAME hue forward');
+    h.eq(tileColor(rebuilt.name, rebuilt.manifest), ghostTileColorFor(installId), 'so the tile renders what it has rendered since install');
+    h.ok(
+      tileColor(rebuilt.name, rebuilt.manifest) !== appColor(WIRE.name),
+      'and specifically has NOT reverted to the name hash — the ghost-tile fix deferred by one rebuild',
+    );
+  });
+
+  await h.test('colour: a behind-tip rebuild of a genuinely-installed app forks WITH the parent’s injected hue', async () => {
+    // G2: the only existing behind-tip test (above) rebuilds `APP`, a fixture with no `tileColor`,
+    // so it cannot see whether a fork carries a colour forward — the exact blind spot that already
+    // hid one defect in this change. Install for real (so the id hash is genuinely injected), then
+    // drive the actual behind-tip `isAtTip -> fork -> update` path on THAT app.
+    const store = new PendingBuildStore(new MapKVBackend());
+    const installId = startPendingBuild(store, { text: 'a tip splitter', reuseId: GHOST_ID });
+    const installed = await deliverAndSettle(store, {
+      access: fakeAccess({}),
+      appId: installId,
+      text: 'a tip splitter',
+      wire: WIRE,
+    });
+    h.eq(installed.record.manifest.tileColor, ghostTileColorFor(installId), 'precondition: the install injected the ghost hue');
+
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    // A fork copies the parent's record wholesale (same shape the existing behind-tip test uses),
+    // so the forked entry starts out carrying the parent's injected `tileColor` too.
+    const forked: InstalledApp = { ...installed, id: 'app-fork-real', name: installed.name };
+    const behindTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+      fork: async () => forked,
+    } as unknown as StoreAccess;
+    const rebuildId = startPendingBuild(store, { editing: installed, text: 'add a dark mode' });
+    await deliverResult({ access: behindTip, appId: rebuildId, editing: installed, text: 'add a dark mode', wire: WIRE });
+    h.eq(updates.length, 1, 'sanity: the behind-tip branch forked and then updated the fork');
+    h.eq(updates[0].entry.id, forked.id, 'onto the fork, not the original');
+    const rebuilt = updates[0].spec.record;
+    h.eq(rebuilt.manifest.tileColor, ghostTileColorFor(installId), 'the forked record carries the parent’s injected hue forward');
+    h.eq(tileColor(rebuilt.name, rebuilt.manifest), ghostTileColorFor(installId), 'and the fork resolves to that same hue, not appColor(name)');
+  });
+
+  await h.test('colour: a rebuild whose wire DOES declare a colour takes the new declaration', async () => {
+    // Preservation is a FALLBACK, never an override: an app that re-declares its own tile colour
+    // (`sdk-design-system`: an app declares its own) must be able to change it by rebuilding.
+    const store = new PendingBuildStore(new MapKVBackend());
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    const coloured: InstalledApp = {
+      ...APP,
+      record: { appId: APP.id, name: APP.name, manifest: { capabilities: [], tileColor: '#7a3fd0' } },
+    };
+    const atTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+    } as unknown as StoreAccess;
+    const id = startPendingBuild(store, { editing: coloured, text: 'make it blue' });
+    const declared = { ...WIRE, manifest: { tileColor: '#2f6feb' } };
+    await deliverResult({ access: atTip, appId: id, editing: coloured, text: 'make it blue', wire: declared });
+    const rebuilt = updates[0].spec.record;
+    h.eq(rebuilt.manifest.tileColor, '#2f6feb', 'the new declaration replaces the old colour');
+    h.eq(tileColor(rebuilt.name, rebuilt.manifest), '#2f6feb', 'and that is what every surface resolves');
   });
 
   // ── the ordering that a crash mid-delivery depends on ────────────────────────────────────────

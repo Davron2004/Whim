@@ -29,3 +29,21 @@ Out of scope (deliberately deferred): mascot/animations, live per-tile progress 
 - `src/host/launcher/`: `LauncherRoot.tsx` (`onBuildIt`, `deliverResult`, `freshAppId` timing, `onLeaveRunning`), `app-index.ts` (or a sibling `pending-builds.ts` store on the same `KVBackend`), `HomeScreen.tsx`, `app-tile.tsx` (ghost visual state), `prompt-flow.ts` (pure-state additions), failure screen wiring.
 - Specs: `openspec/specs/app-launcher/`, `openspec/specs/prompt-flow/` (deltas), new `pending-builds` spec.
 - Tests: `launcher:test` suite additions (pending-record lifecycle, restart demotion, transmute-on-success, no-ghost-for-edits). No server, contract, sandbox, or storage-engine changes.
+
+## ⚠ ARCHIVE ORDER CONSTRAINT — read before `/opsx:archive`
+
+**`launcher-ghost-tiles` MUST be archived AFTER `shell-redesign-v2`.**
+
+This change's delta carries a `## MODIFIED Requirements` entry for *A tile's colour is the app's
+declared colour, with a deterministic fallback*. That requirement does **not** exist in
+`openspec/specs/app-launcher/spec.md` today — it exists only in `shell-redesign-v2`'s own
+unarchived delta. Archiving this change first would leave the MODIFIED block targeting nothing.
+
+Why the entry is needed at all: this change makes the launcher **inject** a tile colour
+(`ghostTileColorFor(appId)`) into `record.manifest.tileColor` for a new install whose generated
+manifest declares none, so the ghost tile's hue survives the transmute into the real tile. After
+that, `manifest.tileColor` no longer means "the app declared this" — it means "declared OR
+launcher-injected" — and the `appColor(name)` fallback is unreachable for every post-change
+install. The MODIFIED entry restates the requirement to cover both sources, keeping the archived
+live spec truthful about what the field holds. Its heading matches `shell-redesign-v2`'s verbatim
+so it resolves as a modification rather than adding a second, contradictory tile-colour requirement.

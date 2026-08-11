@@ -28,7 +28,7 @@ import type { PendingBuildRecord } from './pending-builds';
 
 | call | shell behaviour |
 | --- | --- |
-| `onOpenPending(rec)` where `rec.state === 'building'` | `setScreen` back to that run's own live build screen (current stage/delivering), un-detaches it. No new request. A `building` record with no live run logs a warning and does nothing — unreachable, since launch-time demotion has already made such a record `interrupted`. |
+| `onOpenPending(rec)` where `rec.state === 'building'` | `setScreen` back to that run's own live build screen (current stage/delivering), un-detaches it. No new request. A `building` record with no live run logs a warning and does nothing — reachable whenever two attempts overlap, since the shell tracks one live run at a time. |
 | `onOpenPending(rec)` where `rec.state !== 'building'` | Opens `FailureScreen` hydrated from `rec.failure` (an `interrupted` record has none and gets a plain "stopped when the app closed" reason). Its primary action is Retry (new generation, `rec.id` reused), its secondary is Dismiss (delete). |
 | `onCancelPending(rec)` | Aborts the in-flight request if this record owns it, deletes the record, refreshes. Stays on the grid. |
 | `onDismissPending(rec)` | Deletes the record and returns home. |
@@ -49,8 +49,17 @@ Retry/Dismiss are wired inside the shell's failure screen; chain-3 never calls t
   that id (`editingAppId === id` for these records): `building` → building state on that tile,
   `failed`/`interrupted` → a failure accent while the tile stays fully launchable (design D8).
   Its tap must remain `onOpen`; route the ghost interaction through the accent/long-press.
-- **Tile colour** comes from `ghostTileColorFor(rec.id)` (chain-1, `prompt-flow.ts`) — the same
-  palette the delivered tile resolves through, so the hue does not change on transmute.
+- **Tile colour** comes from `ghostTileColorFor(rec.id)` (chain-1, `prompt-flow.ts`) — the SAME
+  palette the delivered tile resolves through (`tiles.ts#tileColor`). Same palette is not the same
+  hue: `tileColor`'s fallback hashes the app NAME, so the hue survives transmute only where
+  delivery records the id hash on the record. It INJECTS one on exactly ONE path — a brand-new
+  install whose wire manifest declares no `tileColor` of its own
+  (`build-lifecycle.ts#deliverResult`, the `!editing` branch, which passes
+  `ghostTileColorFor(spec.appId)` to `mapWireRecord`). The edit/rebuild branches inject nothing but
+  do PRESERVE: they pass `editing.record.manifest.tileColor`, because `StoreAccess.update` replaces
+  the record wholesale and a wire declaring no colour would otherwise drop the one already
+  recorded. So a rebuild resolves the colour it resolved before — the injected hue if it had one,
+  and still `appColor(name)` if it never did. A wire-declared colour wins over both.
 - **Display text** is `rec.workingTitle` (already truncated at creation). Never re-derive it from
   `rec.prompt`, and never show `rec.id`.
 - **No live progress.** `PendingBuildRecord` carries no stage/fraction and never will (explicit

@@ -256,4 +256,203 @@ HUMAN-BOOTSTRAP.
     own launch tap (design D8 requires exactly this).
   - `INTERRUPTED_REASON` relocated into `copy.ts` as `COPY.interruptedBuildReason`, one reference
     updated, one import added — exactly the move-plus-import the brief scoped, nothing more.
+- **cleanup** — chain-3 worktree removed, branch deleted (unsandboxed), owner file cleared.
+
+## Step 10 — full gate
+
+- **gate-full PASS** on the merged tip `420e21d`: `FULL GATE PASSED`. Includes knip, `guard:metro`,
+  the three Chromium invariant suites, and `openspec validate` (43 items, 43 passed, 0 failed —
+  the three unrelated untracked change folders still validate, as the baseline check predicted).
+- **Fresh-clone risk ruled out.** IDE diagnostics repeatedly reported `Cannot find module` for
+  modules that demonstrably exist; established as stale-LSP noise (an independent verifier had
+  already shown `tsc --noEmit` exit 0 while the IDE showed errors). One of them was worth a real
+  check rather than dismissal, because the gate structurally CANNOT catch it: a module that exists
+  in the working tree but is untracked/gitignored would typecheck locally and break on a fresh
+  clone or in CI. Checked `src/host/launcher/home-grid.ts` — exists, TRACKED, dated Aug 5, i.e.
+  pre-existing layout constants, not something this change created. `git status --ignored` over
+  `src/host/launcher/` shows only `test/.deliver-pages/`. No untracked-module hazard.
+
+## Step 11 — colour-gap recon (blast radius established BEFORE speccing the fix)
+
+- **Verdict: NO surface bypasses the single resolver.** Every production render of a delivered
+  app's colour goes through `tiles.ts:41-47` `tileColor(name, manifest)`:
+  grid `HomeScreen.tsx:162`, celebration `DoneStep.tsx:32`, History header `HistoryScreen.tsx:115`,
+  and History's prose mention `HistoryScreen.tsx:328` (which pre-resolves `.color` from that same
+  `appHue`, so `lex.ts:87`'s `appColor(app.name)` fallback is never reached for a real installed app).
+  Therefore injecting `appColor(appId)` into `manifest.tileColor` at delivery makes ALL surfaces
+  agree on the id-hash; it cannot desync them. The fix is safe as proposed.
+- **Fix coordinates.** Delivery site `mapWireRecord`, `src/host/launcher/build-lifecycle.ts:56-64`.
+  Existing seam `liftManifestTileColor`, `src/host/launcher/manifest-tile-color.ts:21-24`, which
+  yields `{}` when the wire declared no colour — that is the branch to fill.
+- **Load-bearing constraint for the fix.** `tileColor()` only honours a declared colour if it
+  matches `HEX_COLOR_RE` (`^#[0-9a-f]{6}$/i`) AND is not in `RESERVED_TILE_HUES` (`tiles.ts:43`).
+  An injected value failing either test is SILENTLY rejected and falls back to `appColor(name)` —
+  i.e. the fix would appear to work and change nothing. The ghost tile already depends on this
+  path surviving the gate (`HomeScreen.tsx:270-276` passes a synthetic
+  `{ tileColor: ghostTileColorFor(rec.id) }`), so palette values evidently pass today, but the fix
+  MUST carry a test asserting the injected value survives the gate rather than assuming it.
+- **~~Forward-only by construction.~~ CORRECTION — this claim was WRONG, caught by the reviewer.**
+  I recorded that the fix "leaves every existing installed app's colour untouched (their names
+  still hash as before)". That holds only until the app's next REBUILD. `mapWireRecord` is called
+  from TWO sites in `deliverResult`: `:126` with `spec.appId` (new install) and `:130` with
+  `editing.record.appId` (both edit branches). Injecting inside `mapWireRecord` fires on both, so
+  the first rebuild of any existing app would stamp `appColor(appId)` over what had been
+  `appColor(name)` — a visible hue jump on an app the user already owns. Worse for a fork: a fork
+  copies the parent's `record` wholesale, so `editing.record.appId` is the PARENT's id, giving a
+  third distinct hue. Shipping that shape would have traded one instance of the exact
+  hue-instability class this requirement exists to eliminate for a broader one.
+  **Corrected shape: inject ONLY on the new-install branch**, where the id is provably the ghost's.
+  Edit branches stay untouched — they have no ghost to remain stable with, and their colours must
+  not move.
+## Step 11 — reviewer verdict: SHIP-WITH-FIXES
+
+- Report honesty checked against the diff: every claim in this ledger verified, no discrepancy.
+  No Class-1 config touched anywhere in `2bbef1e..HEAD`; no rule downgraded, no dependency added,
+  no gate script altered. The only weakening in the whole change was at the test-assertion layer
+  (findings F1/F2 below), never at the config layer.
+- Confirmations: store-first ordering CORRECTLY PRESERVED (`build-lifecycle.ts:145-149`, with the
+  strongest test in the change — it observes the record's state from INSIDE `access.install` via an
+  injected callback, then throws from install and rebuilds a fresh store over the same backing Map
+  to reproduce a real restart); single-writer discipline HELD (no render surface imports the store);
+  launch-time demotion HELD by construction (first synchronous statement of the mount effect, grid
+  gated on `ready`); cancel-during-delivery defect CONFIRMED pre-existing and NOT worsened, byte-for-
+  byte identical user-visible outcome to the pre-change code.
+
+## Step 11b — fix chain (chain-4), 8 findings
+
+- **dispatched** BASE `e33605b`, worktree `.claude/worktrees/ghost-tiles-4`, branch
+  `chain/ghost-tiles-4`. Frontier tier: F5 is where a wrong call reintroduces the exact bug.
+- **F1** restored assertion force in `tile-colour.suite.ts` — the narrowed version could not detect
+  a fixed status hue used as the done tile's `backgroundColor`. Now: positive pin that
+  `const bg = tileColor(name, manifest)` is the one fill source, positive pin that
+  `{ backgroundColor: bg }` sits AFTER `styles.tileDone` in the style array (RN is last-wins), and a
+  whole-component negative exempting only the two ghost alert-accent style blocks and the imports.
+- **F2** re-pinned the wiring link `onCancelGeneration` → `abortLiveAttempt()`.
+- **F3** four new tests covering the previously-uncovered shell half: demotion call site AND its
+  ordering, ghost-tap reattach via `liveRef` with no new request, failure hydration + Retry/Dismiss,
+  concurrent-attempt guards. All regions anchored on code, never on banner comments.
+- **F4** corrected the FALSE invariant shipped in `handoff/ghost-handlers.md` — it now states the
+  guarantee holds on exactly one path (a new install whose wire declares no `tileColor`).
+- **F5 CLOSED — the Class-B deviation is resolved.** `mapWireRecord` gained an OPTIONAL third
+  param applied only when no colour was declared; it is passed ONLY at the `!editing` call site as
+  `ghostTileColorFor(spec.appId)`. Both edit branches pass no third argument, so the fork case
+  (parent's id) is structurally untouched rather than untouched by convention. Five behavioural
+  tests, including the two that matter: a rebuild of an owned app does NOT move its hue, and a
+  behind-tip rebuild driving the real `isAtTip → fork → update` path also does not.
+- **F6** guarded the concurrent-attempt ref clobber. The agent found the defect BROADER than
+  reported — `settleFailed` and the catch path also cleared another attempt's ref — and guarded
+  those too; leaving them would have made the fix ineffective on the failure path.
+- **F7** stale doc reference, **F8** overclaiming test label — both corrected.
+- **red-checks (both mandatory, both real)**: removing the F5 injection produced
+  `got "#0284c7", want "#475569"` — literally the name-hash-vs-id-hash flip; deleting the
+  `demoteBuildingToInterrupted()` call produced two failures, closing the exact regression the
+  reviewer proved was previously undetectable. Both restored byte-identical.
+- **uncovered edge, REPORTED not improvised** — a wire manifest declaring a string-but-invalid
+  `tileColor` (bad hex or reserved hue) is lifted verbatim, wins over the injection, and then
+  `tileColor()` silently falls back to `appColor(name)`, so the hue still flips for that record.
+  Not fixed: the alternative is duplicating the server's validation into `manifest-tile-color.ts`,
+  which that module's doc comment explicitly refuses. Unreachable in production (the generation
+  server drops invalid declarations before the device sees them). Routed to the re-review.
+- **integrity** exit 0, BASE `e33605b`, 8 files in boundary. **merged** `8415a59` (+249/−20).
+- **gate-full PASS** on the merged tip: `FULL GATE PASSED`, `openspec validate` 43/43.
+
+## Step 11c — re-review of the fix chain, and chain-5
+
+The fix chain was RE-REVIEWED rather than accepted on its report, for a specific reason: the finding
+it was closing (F1) was "an agent narrowed a test constraint on its own code", and the remedy was
+"an agent restores a constraint on its own code" — the same trust structure. A green gate and a
+confident report cannot settle that; only an independent read can. The re-review confirmed F1's
+force genuinely restored and no assertion weakened anywhere in the range — and then found a real
+defect the fix chain had introduced.
+
+- **NEW DEFECT (found by the re-review, fixed in chain-5): the injected hue was destroyed by the
+  first rebuild.** `store-access.ts:149` writes `{ ...entry, record: spec.record }` — it replaces
+  the host `AppRecord` WHOLESALE from the wire. The edit branch built `spec.record` from the wire
+  alone, and a typical wire declares no `tileColor`, so the colour injected at install was DROPPED
+  on the first rebuild and the tile flipped back to `appColor(name)`. Every app installed after
+  this change would have changed colour the first time it was edited. **"Don't stamp" and
+  "preserve" are different fixes** — my chain-4 spec achieved only the first.
+  Why the tests missed it: the rebuild test used a fixture with NO `tileColor`, the one shape that
+  structurally cannot expose the loss. The uncovered case was the install-THEN-rebuild sequence,
+  which no single chain's diff touched at both ends.
+- **chain-5 (BASE `4db053b`, merged `86c7c23`, +113/−18)** — five items:
+  - **N1** edit branches now pass `editing.record.manifest.tileColor` (preserve, not stamp), plus
+    the install-then-rebuild test whose absence hid this. Red-check reverted the argument and
+    produced the real hues: `got "#0284c7" (appColor('Tip Splitter')), want "#475569"
+    (ghostTileColorFor('app-ghost-1'))`. Restored, SHA-256 verified byte-identical.
+    Side benefit: a regenerated manifest that forgets to re-declare an author-declared colour no
+    longer silently loses it.
+  - **N2** amended the change's own DELTA spec (`specs/app-launcher/spec.md`) — NOT anything under
+    `openspec/specs/`. The requirement forbade the hue changing across transmute *unconditionally*,
+    but a wire-declared colour legitimately wins (`sdk-design-system`: an app states its own
+    identity). Shipping a requirement the code knowingly violates is worse than scoping the
+    requirement to the real guarantee, so it now reads "when the delivered app's manifest declares
+    no tile color of its own", with a second scenario for the declared-colour case and a third for
+    rebuild stability. First line still leads with SHALL; `openspec validate --strict` green.
+  - **N3** corrected a comment claiming the "no live run to reattach" branch is "unreachable by
+    construction" — two overlapping attempts reach it. The agent also corrected the identical
+    falsehood in `handoff/ghost-handlers.md:31` (Class A, declared): leaving the contract asserting
+    the opposite of the code it documents would re-seed the same wrong belief.
+  - **N4** closed a residual hole in F1's own fix — `tileGhostAlert` is exempted from the
+    `STATUS_COLORS` scan AND applied after `{ backgroundColor: bg }`, so a `backgroundColor` added
+    there would repaint the ghost fill and pass. Now asserted absent, and proved to bite.
+  - **N5** re-anchored `cancelFn`'s region end on code instead of a decorative banner comment,
+    which would have silently widened the slice to the rest of the file if reworded — quietly
+    disarming the F2 fix.
+- **integrity** exit 0, 7 files in boundary. **gate-full PASS** on the merged tip.
+- **MEMORY SAVED** (durable, cost three rounds): `StoreAccess.update` is wholesale — any
+  host-injected `AppRecord` field must be passed back explicitly on the edit path, and the test
+  must exercise install-then-rebuild rather than a bare-fixture rebuild.
+
+## Step 11d — exhaustive state-space audit, and chain-6
+
+The colour behaviour had required three rounds of fixes, each shipping genuine red-checked tests
+and each still missing the next defect — always because the tests were written from the diff and
+covered only the cells that round had touched. So the final check was NOT another open-ended
+review: it enumerated the full matrix {new install, rebuild-at-tip, rebuild-behind-tip/fork, ghost
+render} × {wire declares a colour, wire silent} × {prior record has a colour, has none}, and every
+cell had to be **tested or reasoned** — "probably fine" disallowed.
+
+- **RESULT: no cell renders a wrong colour.** Every reachable combination resolves the intended
+  hue. Also confirmed: chain-5 did NOT buy its green by relaxing chain-4's constraints — chain-4's
+  `tileColor === undefined` assertions survive untouched and still hold. Suite 5995 → 6001 checks.
+- Remaining items were durability and spec honesty, not defects. **chain-6** (BASE `066ab4e`,
+  merged `06db7df`, +82/−2) closed four:
+  - **G1** pinned a load-bearing, undocumented dependency: the colour guarantee for PRE-change apps
+    holds only because `StoreAccess.update` does not refresh `entry.name` from the new record
+    (`store-access.ts:149`). `mapWireRecord` sets `record.name = wire.name`, so after a renaming
+    rebuild `app.name` ≠ `app.record.name` and the tile keeps hashing the ORIGINAL name. A future
+    "fix" adopting `spec.record.name` — entirely reasonable-looking — would move every pre-change
+    app's hue on rename. Now asserted in `store-access.suite.ts` with a failure message explaining
+    why, and cross-referenced by comments at both ends. Red-check made exactly that "reasonable"
+    edit and the assertion failed (`got "wc-v2", want "WC"`); restore checksum-verified.
+  - **G2** tested the fork-inherits-injected-hue cell — correct already, but covered only by a
+    fixture with no `tileColor`, i.e. structurally the same blind spot that hid the round-3 defect.
+  - **G3** removed the requirement's third overclaim: "nor when that app is later rebuilt" now
+    scoped to a rebuild whose own manifest also declares nothing, matching what the code and
+    `build-lifecycle.suite.ts:263` actually do. Heading made honest too.
+  - **G4** added a `## MODIFIED Requirements` entry so the archived live spec stops asserting that
+    `manifest.tileColor` means "the app declared it" when the launcher may now inject it.
+- **gate-full PASS** on the merged tip.
+
+## Dispatcher correction to G4 (one-line, made inline — a heading rename, not chain work)
+
+G4 shipped the MODIFIED block under a NEW heading, which would have modified nothing:
+`openspec/specs/app-launcher/spec.md` has **no tile-colour requirement at all** — it exists only in
+the concurrent, unarchived `shell-redesign-v2` delta (`specs/app-launcher/spec.md:47`). OpenSpec
+matches requirements by heading, so a non-matching heading yields an orphan or a duplicate
+contradictory requirement rather than a modification. `openspec validate --strict` passed
+throughout because it validates the delta's own schema, never cross-change or live-spec coherence.
+Owner chose: rename to match `shell-redesign-v2`'s heading verbatim and record the ordering
+constraint. Both done; headings now byte-identical, validate green.
+
+**→ `launcher-ghost-tiles` MUST be archived AFTER `shell-redesign-v2`.** Recorded prominently in
+`proposal.md` under "ARCHIVE ORDER CONSTRAINT", because that is the file `/opsx:archive` reads.
+
+- **Two gaps the recon flagged as unexamined**, both routed to the reviewer: (a) whether a FORK
+  propagates `manifest.tileColor` via `store-access.ts` (a fork would inherit the parent's injected
+  hue — plausibly fine, since that already happens for genuinely declared colours, but unverified);
+  (b) `whim-prose/lex.ts:87`'s `appColor(app.name)` fallback remains reachable in principle by a
+  future caller constructing a `ProseApp` without `.color`. No production caller does so today —
+  latent, not a live disagreement, and explicitly NOT patched by this fix.
 
