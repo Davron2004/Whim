@@ -11,6 +11,7 @@
  * diagnostic or verdict source.
  */
 import type { BrowserContext, CDPSession, Page } from 'playwright';
+import { REJECTED_FORGERY_CAP } from './contract';
 import type { RunBudgets, RunOptions } from './contract';
 import type { RunContext, SynthRunSession } from './session';
 
@@ -81,9 +82,16 @@ export interface ObservationState {
   events: FrameEvent[];
   diagnostics: ObservedDiagnostic[];
   /** Set ONLY from the nonce-authenticated `probes` frame's `payload.contained` — never any
-   *  other source (spec §Observation is trusted-vantage only, "Forged verdict attempt"). `null`
-   *  until one authenticated probes frame has arrived. */
+   *  other source (spec §Observation is trusted-vantage only, "Forged verdict attempt").
+   *  Three-valued and never collapsed (design D2): `true` held, `false` breach, `null` no
+   *  authenticated verdict was ever observed — either no authenticated probes frame arrived, or
+   *  the one that did carried no boolean verdict. */
   contained: boolean | null;
+  /** How many frames the outer page reported as REJECTED forgeries (`rejected-forgery`),
+   *  SATURATING at `REJECTED_FORGERY_CAP` — a fixed-size signal no matter how many frames a
+   *  candidate posts (design D5). The count only; a forged frame's attacker-chosen payload is
+   *  never read, never echoed into a diagnostic, and never carried onto the report. */
+  rejectedForgeries: number;
   /** ms (on `FrameEvent.atMs`'s attach-time clock) the nonce-authenticated `paint` frame
    *  arrived, else `null`. */
   paintAtMs: number | null;
@@ -221,13 +229,50 @@ function recordProbesOutcome(state: ObservationState, payload: RelayPayload): vo
   const contained = payload && typeof payload.contained === 'boolean' ? payload.contained : null;
   state.contained = contained;
   if (contained === false) {
+    // An authenticated verdict that reported a breach — evidence, and the ONLY thing that earns
+    // this kind (`handoff/diagnostic-kind.md`, the no-substitution rule).
     state.diagnostics.push({
       kind: 'containment_failure',
       severity: 'error',
       message: 'trusted-vantage containment probes reported a breach',
       hint: genericHint('containment_failure'),
     });
+  } else if (contained === null) {
+    // An authenticated frame arrived but carried no boolean verdict: absence of evidence in
+    // either direction, so NOT a `containment_failure` (spec "A malformed verdict payload is
+    // unobserved, not a breach"). The malformed payload itself is never read or echoed.
+    pushContainmentUnobserved(state, 'a nonce-authenticated probes frame carried no boolean containment verdict');
   }
+}
+
+/** The one place this kind is minted, so the accompanying-diagnostic invariant ("`null` never
+ *  travels without its diagnostic") holds from a single site — and so it can never be pushed
+ *  twice for one run. */
+function pushContainmentUnobserved(state: ObservationState, message: string): ObservedDiagnostic | null {
+  if (state.diagnostics.some((d) => d.kind === 'containment_unobserved')) return null;
+  const diagnostic: ObservedDiagnostic = {
+    kind: 'containment_unobserved',
+    severity: 'error',
+    message,
+    hint: genericHint('containment_unobserved'),
+  };
+  state.diagnostics.push(diagnostic);
+  return diagnostic;
+}
+
+/**
+ * Report-composition close-out (spec "An unobserved verdict is not a negative one"): a run that
+ * ends with `state.contained === null` never saw an authenticated verdict at all, so it carries
+ * `containment_unobserved` — appended to `state.diagnostics` before the caller copies them, never
+ * silent, and never a substitute for `mount_timeout` or `containment_failure` (both of which may
+ * legitimately sit beside it when their own conditions independently held).
+ *
+ * Idempotent: a malformed-payload frame already recorded the kind, and this returns `null` rather
+ * than duplicating it. Returns the diagnostic it appended, `null` when it appended none.
+ */
+export function finalizeContainmentVerdict(state: ObservationState): ObservedDiagnostic | null {
+  if (state.contained !== null) return null;
+  return pushContainmentUnobserved(state, 'the run ended with no nonce-authenticated probes frame — containment was never verified');
 }
 
 function recordMountError(state: ObservationState, payload: RelayPayload): void {
@@ -331,6 +376,7 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     events: [],
     diagnostics: [],
     contained: null,
+    rejectedForgeries: 0,
     paintAtMs: null,
     lastActivityAtMs: Date.now(),
   };
@@ -379,6 +425,11 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     if (payload && typeof payload.generation === 'number') generation = payload.generation;
     const trusted = msg.trusted === true;
     state.events.push({ kind, trusted, atMs: Date.now() - observationStartedAt, generation, payload: msg.payload });
+
+    // A frame the outer page REJECTED as a forgery (never trusted): record the fact via a count
+    // that saturates at the declared cap, and nothing else — no payload is read, so a flood of
+    // large attacker-chosen frames costs a fixed-size signal (design D5).
+    if (kind === 'rejected-forgery' && state.rejectedForgeries < REJECTED_FORGERY_CAP) state.rejectedForgeries++;
 
     if (!trusted) return;
     if (kind === 'paint' && state.paintAtMs === null) state.paintAtMs = Date.now() - observationStartedAt;
