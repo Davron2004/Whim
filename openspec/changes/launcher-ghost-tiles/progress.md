@@ -449,6 +449,53 @@ constraint. Both done; headings now byte-identical, validate green.
 **→ `launcher-ghost-tiles` MUST be archived AFTER `shell-redesign-v2`.** Recorded prominently in
 `proposal.md` under "ARCHIVE ORDER CONSTRAINT", because that is the file `/opsx:archive` reads.
 
+## Step 12 — CLOSURE (complete; awaiting the human's merge)
+
+- **12a ruleset** — `scripts/ruleset-probe.mjs` exit 0: "Protect main" requires PR, blocks
+  non-fast-forward and deletion. Note this run's PR targets `redesign`, not `main` (owner's
+  base-branch decision at run start), so that ruleset is not this PR's gate — but `gh pr merge` is
+  denied to every agent caller regardless, so the human's merge click remains the sole ratification.
+- **12b push + draft PR** — PR #24 → `redesign`.
+- **12c poll** — SETTLED PASS. **The verdict predicate had to be strengthened mid-run.** The
+  harness's `checkverdict` accepted a green reading while the `SonarCloud Code Analysis` row was
+  simply ABSENT from `gh pr checks` — the two Actions checks had passed and Sonar had not re-run.
+  A check that is not reporting is not a check that passed. Subsequent polls required green AND a
+  row matching `sonar` to be present; poll 4 of the final wait was exactly that case ("checks green
+  but SonarCloud row absent") and only poll 5 carried a real analysis.
+- **12d sonar round 1** — gate OK but 2 open MINOR `typescript:S6582` (prefer-optional-chain) at
+  `LauncherRoot.tsx:708` and `pending-builds.ts:167`. Ingested into
+  `openspec/critic/sonar-ledger.md`, fixed in `chain/ghost-tiles-sonar`, merged.
+  Both rewrites verified semantically identical, not merely rule-clearing: `live?.id !== rec.id`
+  yields `true` when `live` is null, matching the original `live == null ||` branch; `rec?.state`
+  compares against a string literal so the falsy-vs-undefined distinction is unobservable.
+  Immediately after that push the API still reported "issues: 2" — STALE, replaying the analysis of
+  `d9ea145`; the source was verified rewritten in the merged tree before proceeding. Resolved
+  definitively at 12f: a fresh analysis of the cleaned history reports **issues: 0**.
+- **12e history cleanup** — `/git-cleanup` on the staging branch. **24 commits → 5.**
+  CLEANUP GATE PASS: tip tree byte-identical to the pinned `f21a6e0e…`, target unmoved, backup ref
+  intact. Orchestrator applied the ref move (pure ref move — tree hash unchanged, zero file churn)
+  and `push --force-with-lease`. No standalone Sonar commit and no `chore(opsx): tick/ledger`
+  bookkeeping commit survived.
+  Cleaner deviation ACCEPTED: groups 4–6 collapsed into one commit rather than three. An index-only
+  rebuild can only cut at EXISTING commit boundaries, and every commit in that region changed colour
+  logic, its tests and spec text together — so no boundary isolates them. Splitting further would
+  have required resurrecting a wrong intermediate colour state or leaving a standalone Sonar commit,
+  both explicitly forbidden.
+- **PR SCOPE CORRECTION (owner-ratified).** The PR initially carried 7 commits, not 5: `redesign`
+  was 2 commits ahead of `origin/redesign`, so `1b73144` (owner's decision-#61 doc) and `a7bbc9e`
+  (the server-address fix committed at run start expressly to keep it OUT of this diff) rode along.
+  My earlier claim that the fix was "out of this change's diff" was therefore only half true.
+  Owner chose to push `redesign` first; end state identical either way, but the reviewed PR is now
+  only this change. GitHub did NOT recompute the PR on the base push — 20 polls over 5 minutes held
+  at 7 commits while the API's direct `compare` already reported `ahead_by=5, files=32`. The PR
+  object caches `baseRefOid`; `gh pr edit 24 --base redesign` forced the resync.
+- **12f ready flip** — fresh SonarCloud analysis of `bf17db6`: all three checks pass, **issues: 0**,
+  gate OK. `origin/redesign` confirmed an ancestor (no divergence). PR #24 marked ready for review,
+  `mergeable=MERGEABLE`.
+- **ROLLBACK STILL ARMED**: `backup/pre-cleanup-integration-launcher-ghost-tiles` (at `c4b1030`,
+  the pre-rewrite tip) is deliberately retained until the human merges. Delete it after.
+- **REMAINING HUMAN STEP**: review and merge PR #24. Then post-merge teardown per apply.md §12g.
+
 - **Two gaps the recon flagged as unexamined**, both routed to the reviewer: (a) whether a FORK
   propagates `manifest.tileColor` via `store-access.ts` (a fork would inherit the parent's injected
   hue — plausibly fine, since that already happens for genuinely declared colours, but unverified);
