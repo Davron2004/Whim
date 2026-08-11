@@ -56,6 +56,40 @@ function stubRunCandidate(r: RunReport): RunCandidate {
 
 const A_MANIFEST: CheckedManifest = { name: 'X', manifest: {}, schema: {} };
 
+/**
+ * Wraps a real `RunCandidate` so its raw `RunReport` (with `diagnostics` — a mount timeout, e.g.
+ * — survives even when `createRunStage`'s D7 short-circuit zeroes `RunOutcome.diagnostics` to
+ * `[]` on `contained:false`) is captured for a failing check's `detail`, without a second harness
+ * invocation and without touching the harness's own verdict or timing.
+ */
+function capturingRunCandidate(candidate: RunCandidate): { candidate: RunCandidate; lastReport: () => RunReport | undefined } {
+  let lastReport: RunReport | undefined;
+  return {
+    candidate: async (source, opts) => {
+      const r = await candidate(source, opts);
+      lastReport = r;
+      return r;
+    },
+    lastReport: () => lastReport,
+  };
+}
+
+/** Compact, non-lossy detail for a failing `contained` assertion: the raw verdict (`JSON.stringify`
+ *  so `null` and `false` never collapse into the same rendered text) plus every diagnostic's
+ *  kind/message from the underlying `RunReport` — present even when `RunOutcome.diagnostics` was
+ *  zeroed by the D7 short-circuit — so a `mount_timeout` (never reported back) reads differently
+ *  from a genuine `containment_failure` in the CI log. */
+function containedDetail(contained: unknown, capturedReport: RunReport | undefined): string {
+  const diagnostics = capturedReport
+    ? capturedReport.diagnostics.map((d) => {
+        const suffix = d.message ? `: ${d.message}` : '';
+        return `${d.kind}${suffix}`;
+      })
+    : ['<no report captured>'];
+  const reportContained = capturedReport ? JSON.stringify(capturedReport.contained) : '<n/a>';
+  return `contained=${JSON.stringify(contained)}, report.contained=${reportContained}, diagnostics=${JSON.stringify(diagnostics)}`;
+}
+
 // ── RunStage — containment failure is terminal (design D7, spec "Containment failure short-circuits") ──
 
 async function testContainmentFailureShortCircuit(): Promise<void> {
@@ -148,10 +182,15 @@ async function testHonestCandidateReachesResult(session: SynthRunSession): Promi
   check('the real build stage succeeds', buildOutcome.ok);
   if (!buildOutcome.ok) return;
 
-  const runStage = createRunStage(createRunCandidate(session));
+  const { candidate, lastReport } = capturingRunCandidate(createRunCandidate(session));
+  const runStage = createRunStage(candidate);
   const outcome = await runStage.run({ source, manifest: checkReport.manifest, build: buildOutcome.result });
 
-  check('the real run reaches contained:true', outcome.contained === true);
+  check(
+    'the real run reaches contained:true',
+    outcome.contained === true,
+    outcome.contained === true ? undefined : containedDetail(outcome.contained, lastReport()),
+  );
   if (!outcome.contained) return;
   eq('a clean fixture produces no diagnostics', outcome.diagnostics, []);
   eq('the delivered record name matches the extraction', outcome.record.name, 'Tip Splitter');
@@ -193,11 +232,16 @@ async function testHostileCandidateStaysContained(session: SynthRunSession): Pro
   check('setup: the hostile fixture still builds (esbuild neither type-checks nor gates on forbidden globals)', buildOutcome.ok);
   if (!buildOutcome.ok) return;
 
-  const runStage = createRunStage(createRunCandidate(session));
+  const { candidate, lastReport } = capturingRunCandidate(createRunCandidate(session));
+  const runStage = createRunStage(candidate);
   const manifest: CheckedManifest = { name: 'Evil App', manifest: { capabilities: [] }, schema: {} };
   const outcome = await runStage.run({ source: hostileSource, manifest, build: buildOutcome.result });
 
-  check('the sandbox genuinely contains every escape attempt in the fixture — contained stays true', outcome.contained === true);
+  check(
+    'the sandbox genuinely contains every escape attempt in the fixture — contained stays true',
+    outcome.contained === true,
+    outcome.contained === true ? undefined : containedDetail(outcome.contained, lastReport()),
+  );
 }
 
 // ── Cancellation mid-run: context disposed, concurrency slot released ──
