@@ -1,7 +1,14 @@
 {
-  "ok": true,
-  "diagnostics": [],
-  "contained": true,
+  "ok": false,
+  "diagnostics": [
+    {
+      "kind": "containment_failure",
+      "severity": "error",
+      "message": "an authenticated probes frame reported a breach",
+      "hint": "investigate the sandbox escape the probes frame reported"
+    }
+  ],
+  "contained": false,
   "forgeries": { "rejected": false, "count": 0 },
   "truncated": false,
   "timings": {
@@ -11,11 +18,7 @@
     "sweepMs": 95,
     "perScreenMs": { "Home": 95 }
   },
-  "trace": [
-    { "kind": "syscall", "method": "storage.get", "atMs": 210 },
-    { "kind": "cue", "method": "cues.haptic", "atMs": 260 },
-    { "kind": "syscall", "method": "storage.set", "atMs": 275 }
-  ],
+  "trace": [],
   "screens": { "declared": ["Home"], "visited": ["Home"] },
   "budgets": {
     "mountBudgetMs": 8000,
