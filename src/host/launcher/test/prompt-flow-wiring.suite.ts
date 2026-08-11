@@ -91,6 +91,24 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.eq(loadServerUrl(kv), undefined, 'a blank/whitespace-only value must clear to undefined');
   });
 
+  await h.test('server-address: a trailing slash is stripped on save round-trip', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, '10.0.2.2:8787/');
+    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'a single trailing slash must not survive the round-trip');
+  });
+
+  await h.test('server-address: multiple trailing slashes are all stripped', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, 'host:8787///');
+    h.eq(loadServerUrl(kv), 'host:8787', 'repeated trailing slashes collapse away entirely');
+  });
+
+  await h.test('server-address: a previously-persisted trailing slash heals on load', () => {
+    const kv = new MapKVBackend();
+    kv.set('whim.server-url:v1', '10.0.2.2:8787/');
+    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'an old install’s stored value is sanitized on read, not just on save');
+  });
+
   await h.test('server-address: never throws on a KVBackend returning null', () => {
     const kv = new MapKVBackend();
     // MapKVBackend.getString returns undefined for a missing key already, but the sanitizer must
