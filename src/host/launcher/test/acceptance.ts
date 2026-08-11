@@ -35,6 +35,7 @@ import { runObservabilityUiTests } from './observability-ui.suite';
 import { runFailureScreenTests } from './failure-screen.suite';
 import { runPendingBuildsTests } from './pending-builds.suite';
 import { runBuildLifecycleTests } from './build-lifecycle.suite';
+import { runGridCompositionTests } from './grid-composition.suite';
 
 const h = new Harness();
 
@@ -67,6 +68,7 @@ await runObservabilityUiTests(h);
 await runFailureScreenTests(h);
 await runPendingBuildsTests(h);
 await runBuildLifecycleTests(h);
+await runGridCompositionTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

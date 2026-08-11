@@ -211,7 +211,12 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // Ruling R20: the celebration tile keeps the app's identity across two adjacent screens — its
     // fill AND its glow are the app's own resolved colour, never a fixed status hue.
     h.ok(/color: `\$\{bg\}\$\{GLOW_ALPHA_HEX\}`/.test(src), 'the glow is the tile’s own resolved colour');
-    h.ok(!/STATUS_COLORS/.test(code(src)), 'no fixed status hue is imported for the done tile');
+    // Scoped to the glow's own computation (not the whole file): `launcher-ghost-tiles` (design
+    // D6) legitimately imports `STATUS_COLORS` elsewhere in this file for the ghost tile's alert
+    // accent — an unrelated, sanctioned use of the reserved "broken" hue, not a regression of the
+    // done tile's own "always the app's own colour" guarantee this check exists to hold.
+    const glowRegion = src.slice(src.indexOf('const glow = isDone'), src.indexOf('return ('));
+    h.ok(!/STATUS_COLORS/.test(code(glowRegion)), 'no fixed status hue is imported for the done tile’s own glow');
     // The design's `rise` uses CSS `ease` = cubic-bezier(.25,.1,.25,1), which DECELERATES. RN's
     // `Easing.ease` is bezier(.42,0,1,1) — CSS `ease-in`, the opposite shape — so the curve is
     // spelled out rather than named, the same translation `Orb.tsx:58` makes for `sheetRise`.
@@ -236,7 +241,9 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // The guarantee L2 owed every existing caller: pass no `width` and nothing moves. 88 is
     // supplied by the default parameter, so `root`/`tile` resolve exactly what the removed
     // `width: APP_TILE_SIZE` / `height: APP_TILE_SIZE` style entries used to.
-    h.ok(/width = APP_TILE_SIZE \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
+    // `launcher-ghost-tiles` adds one more destructured prop (`ghost`) after the default — the
+    // default itself, and every prop before it, are unchanged.
+    h.ok(/width = APP_TILE_SIZE(?:, \w+)? \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
     h.ok(/const fluidRoot = isDone \? null : \{ width \};/.test(src), 'the root takes its width from the prop');
     h.ok(/const fluidTile = isDone \? null : \{ width, height: width \};/.test(src), 'and the tile stays square at that width');
     // Ruling R23's stated precedence: the done tile is a fixed 120x120 preset and IGNORES `width`.

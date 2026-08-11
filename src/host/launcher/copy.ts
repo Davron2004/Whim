@@ -31,6 +31,23 @@ export const COPY = {
   actionPromptAgain: 'Prompt again',
   actionDelete: 'Delete',
   cancel: 'Cancel',
+  // ── ghost tiles (launcher-ghost-tiles) ──────────────────────────────────────
+  /** A ghost/rebuild tile's state caption — names its own state, distinguishing `building` from
+   *  the shared `failed`/`interrupted` alert treatment (spec "Building and failed/interrupted
+   *  ghosts are visually distinct"). */
+  ghostCaptionBuilding: 'Building…',
+  ghostCaptionFailed: 'Didn’t finish',
+  ghostCaptionInterrupted: 'Interrupted',
+  /** Long-press quick actions (spec "Long-press on a ghost tile offers Cancel or Dismiss, never
+   *  both"). Named distinctly from the sheet's own closing `cancel` row so the two never collide
+   *  in the same menu. */
+  actionCancelBuild: 'Cancel build',
+  actionDismissBuild: 'Dismiss',
+  /** What an `interrupted` pending-build record's failure screen says: it carries no failure
+   *  payload, because nothing failed — the process that owned the stream went away. Stated
+   *  plainly rather than borrowed from a generic stream-error string, which would claim a failure
+   *  that never happened. */
+  interruptedBuildReason: 'This build stopped when the app closed. You can try it again.',
   deleteTitle: 'Delete this app?',
   deleteConfirm: 'Delete',
   emptyTitle: 'No apps yet',
@@ -143,6 +160,15 @@ export const COPY = {
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
 export function forkedFromLabel(name: string): string {
   return `Forked from ${name}`;
+}
+
+/** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
+ *  union rather than importing `PendingBuildState` — `copy.ts` stays free of any non-`react` /
+ *  non-`react-native` module dependency). */
+export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'): string {
+  if (state === 'building') return COPY.ghostCaptionBuilding;
+  if (state === 'failed') return COPY.ghostCaptionFailed;
+  return COPY.ghostCaptionInterrupted;
 }
 
 /** The delete confirmation body for a named app. */

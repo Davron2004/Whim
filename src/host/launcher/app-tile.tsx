@@ -13,8 +13,9 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { FONT_FAMILY, RADIUS, SHELL_COLORS } from '../../sdk/theme';
+import { FONT_FAMILY, RADIUS, SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
+import { ghostStateCaption } from './copy';
 import type { AppManifest } from '../bridge/contract';
 
 /** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
@@ -62,12 +63,29 @@ export interface AppTileProps {
    *  are simply not built for that variant, so the outcome is stated in the code rather than
    *  decided by style-array ordering. */
   width?: number;
+  /** Ghost-tile state (`launcher-ghost-tiles` design D6): a `PendingBuildRecord`'s lifecycle
+   *  state, rendered as a greyed/desaturated, NON-LAUNCHABLE variant — reduced tile opacity, a
+   *  state caption naming its own state, and a shared alert accent for `failed`/`interrupted`
+   *  distinct from `building`'s neutral treatment. No cancel/dismiss control on the tile face
+   *  (long-press only — the caller's concern, same as every other press handler). Omitted renders
+   *  the ordinary launchable tile, unchanged. Never combined with `size='done'` — a ghost is
+   *  always grid-sized. */
+  ghost?: 'building' | 'failed' | 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE }: Readonly<AppTileProps>) {
+/** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
+ *  (spec "Building and failed/interrupted ghosts are visually distinct"). */
+function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
+  return ghost === 'failed' || ghost === 'interrupted';
+}
+
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
+  const alertGhost = ghost != null && isAlertGhost(ghost);
+  const ghostTileStyle = ghost ? [styles.tileGhost, alertGhost ? styles.tileGhostAlert : null] : null;
+  const ghostCaptionStyle = alertGhost ? [styles.ghostCaption, styles.ghostCaptionAlert] : styles.ghostCaption;
 
   /** See `width` above: the done variant ignores it, so these are `null` there and `rootDone`/
    *  `tileDone` remain the only source of that variant's 120x120. */
@@ -104,11 +122,14 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE }:
 
   return (
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
-      <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow]}>
+      <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}
+      {!isDone && ghost && (
+        <Text style={ghostCaptionStyle} numberOfLines={1}>{ghostStateCaption(ghost)}</Text>
+      )}
     </Animated.View>
   );
 }
@@ -164,4 +185,23 @@ const styles = StyleSheet.create({
     color: SHELL_COLORS.text,
     marginTop: 6,
   },
+  // ── ghost-tile treatment (launcher-ghost-tiles design D6) — a pending-build placeholder, not
+  // to be confused with the tile's own permanent "ghost-letterform" bled-monogram look above.
+  /** Reduced opacity over the tile's own resolved fill — "greyed/desaturated" (spec "The home
+   *  grid renders ghost tiles for pending-build records"), never a second fixed grey fill, so the
+   *  tile's colour identity still reads through faintly. */
+  tileGhost: { opacity: 0.45 },
+  /** `failed`/`interrupted`'s shared alert accent: the tile's own 30%-white inset border is
+   *  replaced by the reserved status "broken" hue, at the same 1px inset the ordinary tile keeps
+   *  (`building` keeps the ordinary white border — the neutral treatment). */
+  tileGhostAlert: { borderColor: STATUS_COLORS.broken },
+  ghostCaption: {
+    fontFamily: FONT_FAMILY.sansMedium,
+    fontSize: 10.5,
+    lineHeight: 13,
+    fontWeight: '500',
+    color: SHELL_COLORS.muted,
+    marginTop: 1,
+  },
+  ghostCaptionAlert: { color: STATUS_COLORS.broken },
 });
