@@ -84,4 +84,129 @@ HUMAN-BOOTSTRAP.
   but `ghostTileColorFor` is tile-colour vocabulary and `tiles.ts` is where `appColor` is already
   consumed. The implementer followed the task text exactly; flagging as a possible altitude nit
   for the reviewer, not a defect.
+- **cleanup** — chain-1 worktree removed, `chain/ghost-tiles-1` deleted (unsandboxed), owner file cleared.
+- **dispatched** — chain-2 (flow-shell-wiring, tasks 2.1–2.5), BASE `82034eb`,
+  worktree `.claude/worktrees/ghost-tiles-2`, branch `chain/ghost-tiles-2`. Dispatched at the
+  frontier tier: this chain rewires the live generation state machine and its correctness property
+  (crash-inside-delivery degrades to an interrupted ghost, never a lost app) is an ordering
+  invariant that tests can only catch if the ordering is written correctly in the first place.
+- **ADJUDICATION issued with the chain-2 brief (spec ↔ design tension, resolved by the dispatcher
+  rather than left to the agent):** the prompt-flow spec requires id allocation "for new-install
+  attempts as well as edit/rebuild attempts", while design decision 3 scopes `freshAppId()` to new
+  installs only and leaves edit/fork id semantics untouched. Resolution given: "allocate the
+  launcher id for the attempt" means *determine and record the id this attempt will write to*, not
+  *mint a fresh one*. New install → mint up front and have `deliverResult` consume it. Edit/rebuild
+  → the attempt's id IS the existing app's id; no fresh mint, `editingAppId` set. Left unresolved,
+  the plausible wrong reading (minting a fresh id for a rebuild) would silently fork the app
+  instead of updating it — a data-shaped bug that no listed test would necessarily catch.
+- **PARTITION NOTE (deliberate, safe):** chain-2 is permitted a narrow additive edit to
+  `HomeScreen.tsx` — prop declarations + threading only, no composition or rendering — because the
+  handlers it defines must reach the grid through a call site that lives in its own file
+  (`LauncherRoot.tsx`). chains.md's no-overlap rule protects *concurrent* chains; this DAG is
+  strictly serial, and chain-3 branches from a tip that already contains chain-2's merge, so the
+  overlap cannot race. Chain-3 retains all rendering/composition ownership of that file.
+- **report** — chain-2 STATUS complete, claims GATE `FAST GATE PASSED` exit 0 and
+  `launcher:test` → 5741 checks passed, 0 failed. Both mandatory red-checks executed with real
+  failure text: deleting the pending record BEFORE `deliverResult` produced
+  `got null, want "building"` plus a null-deref in the crash-degradation test; minting a fresh id
+  in `deliverResult` produced a four-assertion failure showing the delivered app, the version-store
+  write, the host record, and the retry path all disagreeing with the ghost's id.
+- **VERIFICATION IN FLIGHT (claim vs evidence conflict)** — the IDE reports
+  `test/build-lifecycle.suite.ts:70:57 Property 'capabilities' is missing in type '{}' but required
+  in type 'AppManifest' [2741]`, in a file chain-2 authored. A real type error and a passing
+  typecheck cannot both hold unless the gate's typecheck excludes that path. Dispatched an
+  independent verifier (NOT the author) to establish which: a genuine gate pass with a typecheck
+  coverage hole, an IDE artifact tsc does not reproduce, or a false claim. Merge is HELD until it
+  reports — an exit code beats prose, but only once someone other than the author has read it.
+- **extraction (sanctioned)** — `src/host/launcher/build-lifecycle.ts`, RN-free and Node-suite
+  importable. `freshAppId`, `mapWireRecord`, `deliverResult` moved verbatim out of
+  `LauncherRoot.tsx` (`deliverResult` now takes a `DeliverSpec` carrying the up-front `appId`),
+  plus new `startPendingBuild`/`deliverAndSettle`/`failPendingBuild`/`dropPendingBuild`/
+  `pendingFailure`/`hydratedDiagnostics`/`retryBuildScreen`. This was the point of pre-authorizing
+  the extraction: `LauncherRoot.tsx` imports `react-native`, so without it BOTH mandatory
+  red-checks would have been unrunnable and the ordering invariant would have shipped unproven.
+- **deviations (all Class A)** —
+  - Launch-time demotion wired into `LauncherShell`'s mount effect before `setReady(true)`. This
+    is the call site chain-1 was deliberately forbidden from touching; it lands here as designed.
+  - `FailureScreen` gained `retryable?: boolean`, relabelling the primary action to the existing
+    `COPY.screenErrorRetry`. No new copy string — `copy.ts` is chain-3's file and stayed untouched.
+  - New shell-local `INTERRUPTED_REASON`: an `interrupted` record carries no failure payload, and
+    reusing `GENERIC_STREAM_ERROR` would assert a failure that never occurred. Correct distinction.
+    CARRIED TO CHAIN-3: consider relocating it into `copy.ts` beside the ghost-state captions.
+  - `onBuildIt` now delegates to `runAttempt(building, reuseId?)`, collapsing the shell to a single
+    `generateApp` call site entered by both `Build it` and Retry. Four static assertions in
+    `prompt-flow-wiring.suite.ts` were retargeted and one STRENGTHENED to "exactly one generateApp
+    call site exists in the shell". Retargeting pre-existing assertions is the one move here that
+    could hide a weakening — flagged for the step-11 reviewer to confirm none lost force.
+  - `liveRef` holds `{id, screen}` so a `building` ghost tap reattaches to current progress rather
+    than a stale snapshot. Explicitly not an event bus: written by the same stream loop that
+    already calls `setScreen`, so it adds no second subscriber. Respects the design non-goal.
+  - Retry re-runs the record's VERBATIM stored prompt. The agent noted the record has no rewritten
+    text and declined to widen chain-1's contract to add one — it reported instead of self-serving,
+    which is the behavior the brief asked for.
+- **PRE-EXISTING DEFECT SURFACED (not fixed, deliberately out of scope)** — cancelling *during*
+  delivery still lets the in-flight `deliverAndSettle` complete and install, so an app can be
+  installed from a cancelled generation. That contradicts the standing prompt-flow requirement
+  "No app SHALL be installed or updated from a cancelled generation". Assessed as genuinely
+  pre-existing and NOT worsened here: the race predates the pending record, and the post-install
+  `pending.delete` degrades to a documented silent no-op on an already-deleted id, so this change
+  adds no new failure mode. Left alone to keep the diff honest. Recorded for the owner as a
+  candidate follow-up change; step-11 reviewer to confirm the pre-existing characterization.
+- **verification result — VERDICT (i): the implementer's claim is ACCURATE.** Independent verifier
+  (not the author) confirmed `./scripts/gate.sh` exit 0 and `launcher:test` exit 0 / 5741 checks in
+  the chain-2 worktree, and `npx tsc --noEmit` exit 0 with ZERO errors. The IDE's type error is
+  real in isolation but invisible to the gate.
+- **GATE COVERAGE HOLE (pre-existing, structural, worth the owner's attention).** `scripts/gate.sh:55`
+  runs `npm run -s typecheck` → `tsc --noEmit` against the ROOT `tsconfig.json`, whose `exclude`
+  contains `"src/host/launcher/test"` with a comment stating the omission is deliberate (the Node
+  acceptance suites use `process` and run via esbuild; the launcher MODULES stay typechecked).
+  Consequence: **no launcher test file is typechecked by anything, ever.** The suites are validated
+  by running them, so behavioral regressions are caught — but a fixture can be annotated with a type
+  it does not satisfy and nothing will say so. This is not a chain-2 defect and not new; it is a
+  standing property of the gate that this run happened to expose. `tsconfig.json` is Class-2
+  protected, so narrowing the exclusion is a human-ratified decision, not an agent's. Recorded, not
+  acted on.
+- **revision 1 → chain-2** (SendMessage, 1 of the 2 permitted): the fixture at
+  `test/build-lifecycle.suite.ts:70` declares `manifest: {}` against `AppManifest`, which requires
+  `capabilities`. Harmless today, but it would hand `undefined` to any future assertion reading
+  `manifest.capabilities`. Asked for the honest literal, a sweep of this chain's own new/modified
+  test files for the same class of defect, and — because a green gate CANNOT evidence a fix in an
+  unchecked directory — verification by a means other than the gate. Explicitly forbade editing
+  `tsconfig.json` and forbade fixing fixtures in files this chain did not already touch.
+- **revision 1 result** — fixed to `manifest: { capabilities: [] }`, correct per `AppManifest` at
+  `src/host/bridge/contract.ts:250-261` (`capabilities` required, `tileColor` optional). The sweep
+  found exactly one instance and, importantly, correctly did NOT over-fix: `WireAppRecord`'s
+  `manifest: {}` / `schema: {}` are honest, because those fields are
+  `z.record(z.string(), z.unknown())` in `contract/src/index.ts:57-58`. The three
+  `as unknown as StoreAccess` partial stubs were left alone with reasoning — a double cast is an
+  explicit "partial stub" claim rather than a literal failing its annotation, and it is the idiom
+  `prompt-flow-wiring.suite.ts` already uses.
+  Verified WITHOUT the gate, as required: a throwaway tsconfig (scratchpad only, never in the repo)
+  extending the project config with `exclude: []` reproduced
+  `build-lifecycle.suite.ts(70,57): error TS2741` before the fix and zero errors in that file after.
+- **WHY the test directory is excluded — refines the coverage-hole note above.** Running tsc over
+  the whole suite directory leaves only ambient-environment errors (`console`, `process`,
+  `node:fs`, `fetch`, `Response`) on pre-existing lines. So the exclusion is not laziness: these
+  files legitimately do not typecheck under the RN app's `lib`/types. Narrowing it is therefore not
+  a one-line tsconfig edit — it would need a SEPARATE tsconfig for the Node suites carrying Node
+  lib types. Still Class-2, still the owner's call, but the real cost is now recorded so nobody
+  re-derives it as "just delete the exclude entry".
+- **integrity** — `fixloop.sh integrity chain/ghost-tiles-2` exit 0, BASE `82034eb`. Eight changed
+  files, all inside the declared boundary (including the pre-authorized narrow `HomeScreen.tsx`
+  prop-threading edit); no protected paths.
+- **DISPATCHER PROCESS ERROR (caught, no damage) —** the first `git merge` of chain-2 reported
+  "Already up to date" and appeared to leave the staging tip on the chain branch. Cause: the Bash
+  tool's working directory PERSISTS between calls, and an earlier `cd` into
+  `.claude/worktrees/ghost-tiles-2` (to symlink `node_modules` and build) was still in effect — so
+  the merge ran INSIDE the worktree, on `chain/ghost-tiles-2`, merging that branch into itself.
+  A harmless no-op; `git worktree list` confirmed the primary tree still at `82034eb` on the
+  staging branch, untouched. Re-run with an explicit `git -C <primary>` and it merged correctly.
+  Same drift means the earlier "primary tree typecheck" actually executed in the worktree — the
+  verdict stood because the worktree was byte-identical to the primary tree at that moment, but the
+  label was wrong. STANDING RULE for the rest of this run: every git/gate command that must act on
+  the primary tree uses an explicit absolute `cd` or `git -C`, never an inherited CWD.
+- **merged** — `6230d66`, 8 files, +888/−120. `LauncherRoot.tsx` −120/+352 reflects the delivery
+  logic moving out to `build-lifecycle.ts`, not net new shell complexity.
+- **regate-pass** — `./scripts/gate.sh` on the merged tip: `FAST GATE PASSED`. Tasks 1.1–2.5 ticked
+  (9 of 14).
 

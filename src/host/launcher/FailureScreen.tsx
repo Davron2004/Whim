@@ -46,7 +46,15 @@ export interface FailureScreenProps {
   hasWorkingVersion?: boolean;
   /** True when a repair recovered the run; the title and panel take the success hue instead. */
   recovered?: boolean;
-  /** Returns to the prompt screen with the user's text preserved. */
+  /**
+   * The screen was hydrated from a persisted pending-build record rather than a live stream, so
+   * its primary action re-runs the stored prompt instead of reopening the composer, and takes the
+   * retry label (`prompt-flow` "Failure screens hydrate from the persisted failure payload").
+   * Absent = the live shape, unchanged.
+   */
+  retryable?: boolean;
+  /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
+   *  prompt screen with the user's text preserved. */
   onRephrase: () => void;
   /** Dismisses the failure screen (back to home). */
   onDismiss: () => void;
@@ -79,6 +87,7 @@ export default function FailureScreen({
   observedRepairAttempts,
   hasWorkingVersion = false,
   recovered = false,
+  retryable = false,
   onRephrase,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
@@ -150,7 +159,9 @@ export default function FailureScreen({
         accessibilityRole="button"
         style={[styles.action, { backgroundColor: p.text, borderColor: p.text }]}
       >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.failureRephrase}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
+          {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
+        </Text>
       </TouchableOpacity>
       <TouchableOpacity
         onPress={onDismiss}

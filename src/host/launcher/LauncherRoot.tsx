@@ -17,14 +17,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { Diagnostic, GenerationEvent, RunSummary, WireAppRecord } from '@whim/contract';
+import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
-import type { AppManifest, AppRecord } from '../bridge';
-import type { SchemaArtifact } from '../storage-engine';
+import type { AppRecord } from '../bridge';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
@@ -32,6 +31,16 @@ import { deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
+import { PendingBuildStore } from './pending-builds';
+import type { PendingBuildRecord } from './pending-builds';
+import {
+  deliverAndSettle,
+  dropPendingBuild,
+  failPendingBuild,
+  hydratedDiagnostics,
+  retryBuildScreen,
+  startPendingBuild,
+} from './build-lifecycle';
 import { buildGenerateRequest } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
@@ -50,8 +59,6 @@ import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import { HomeGridSkeleton } from './flow-skeletons';
-import { liftManifestTileColor } from './manifest-tile-color';
-import { promptEnvelope } from './prompt-envelope';
 import {
   acceptClarifyQuestions,
   backFrom,
@@ -69,7 +76,7 @@ import {
   withPlan,
   withStage,
 } from './prompt-flow';
-import type { ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen } from './prompt-flow';
 import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
@@ -77,7 +84,6 @@ import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
 import type { ClientOptions } from './generation-client';
-import { isAtTip } from './history-logic';
 
 type Screen =
   | { kind: 'home' }
@@ -99,9 +105,19 @@ type Screen =
       diagnostics: readonly { hint: string }[];
       observedRepairAttempts: number;
       hasWorkingVersion: boolean;
+      /** Set ONLY when this screen was opened from a `failed`/`interrupted` pending-build record
+       *  rather than from a live terminal event — the one thing that distinguishes the two, and
+       *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
+       *  "Failure screens hydrate from the persisted failure payload"). */
+      pendingId?: string;
     };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
+
+/** What an `interrupted` record's failure screen says: it carries no failure payload, because
+ *  nothing failed — the process that owned the stream went away. Stated plainly rather than
+ *  borrowed from `GENERIC_STREAM_ERROR`, which would claim a failure that never happened. */
+const INTERRUPTED_REASON = 'This build stopped when the app closed. You can try it again.';
 
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
@@ -126,33 +142,6 @@ function defaultSeeds(): SeedSpec[] {
   return seeds
     .filter(s => APP_RECORDS[s.id] && APP_BUNDLES[s.id])
     .map(s => ({ ...s, record: APP_RECORDS[s.id], bundleSource: APP_BUNDLES[s.id] }));
-}
-
-/** A fresh, sufficiently-unique launcher id for a brand-new install. Not a security-sensitive
- *  value (only used as a local index/store key), so a timestamp+random string is enough — no new
- *  dependency, mirrors `StoreAccess.fork`'s own cheap id construction in spirit. */
-function freshAppId(): string {
-  // eslint-disable-next-line sonarjs/pseudo-random -- local id only, not security-sensitive
-  return `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-/** Maps a `result` event's wire app record into the host-held `AppRecord` `install`/`update`
- *  expect (design D5 "record: <mapped from wire>"). The wire's `manifest`/`schema` only need to
- *  round-trip on the wire (`ManifestShape`/`SchemaShape` are generic records) — they are
- *  structurally the same shapes `AppManifest`/`SchemaArtifact` describe, matching every fixture
- *  `APP_RECORDS` already ships. The declared tile colour is lifted onto the host record through
- *  chain-F's one mapping function, so the grid, the history header and prose all resolve one app
- *  to one colour. `schemaArtifact` is omitted entirely when the wire schema has no keys, the same
- *  "only when the app actually declares storage" convention every other record in
- *  `app-records.ts` follows. */
-function mapWireRecord(appId: string, wire: WireAppRecord): AppRecord {
-  const hasSchema = Object.keys(wire.schema).length > 0;
-  return {
-    appId,
-    name: wire.name,
-    manifest: { ...(wire.manifest as unknown as AppManifest), ...liftManifestTileColor(wire.manifest) },
-    ...(hasSchema ? { schemaArtifact: wire.schema as unknown as SchemaArtifact } : {}),
-  };
 }
 
 /** Maps a thrown error from the client calls down to the failure screen's honest
@@ -238,53 +227,21 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
   }
 }
 
-/** D5's delivery routing: a brand-new install (no `editing`), an in-place update when `editing`
- *  is at the tip of its own history, or — when it has been restored behind its own tip — a
- *  silent shared continuation (fork with `shareData:true`, no question asked per decision #52 D2
- *  / the `linked-apps` spec) followed by an update onto that fork. The ONLY three `StoreAccess`
- *  call shapes a `result` event may produce (spec "Delivery only through StoreAccess").
- *
- *  `text` is the user's VERBATIM prompt (not the rewritten one) and `summary` the run's summary
- *  when it produced one — together the `{v:2, text, summary?}` envelope the snapshot tracks. */
-async function deliverResult(
-  access: StoreAccess,
-  editing: InstalledApp | undefined,
-  text: string,
-  wire: WireAppRecord,
-  summary?: RunSummary,
-): Promise<InstalledApp> {
-  const prompt = promptEnvelope(text, summary);
-  const schemaJson = Object.keys(wire.schema).length > 0 ? JSON.stringify(wire.schema) : undefined;
-
-  if (!editing) {
-    const id = freshAppId();
-    const record = mapWireRecord(id, wire);
-    return access.install({ id, name: record.name, record, bundleSource: wire.bundle, source: wire.source, prompt, example: false, schemaJson });
-  }
-
-  const record = mapWireRecord(editing.record.appId, wire);
-  if (await isAtTip(access, editing)) {
-    return access.update(editing, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
-  }
-  const fork = await access.fork(editing, undefined, { shareData: true });
-  return access.update(fork, { record, bundleSource: wire.bundle, source: wire.source, schemaJson, prompt });
-}
-
 export default function LauncherRoot() {
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
-  const { index, access, kv } = useMemo(() => {
+  const { index, access, pending, kv } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({ store, index: idx, deleteStorage: (appId) => deleteStorage({ appId }) });
-    return { index: idx, access: acc, kv: launcherKv };
+    return { index: idx, access: acc, pending: new PendingBuildStore(launcherKv), kv: launcherKv };
   }, []);
 
   return (
     <ThemeProvider>
-      <LauncherShell index={index} access={access} kv={kv} />
+      <LauncherShell index={index} access={access} pending={pending} kv={kv} />
     </ThemeProvider>
   );
 }
@@ -314,12 +271,18 @@ function DevLogTools({ palette }: Readonly<{ palette: ReturnType<typeof shellPal
   );
 }
 
-function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access: StoreAccess; kv: KVBackend }>) {
+function LauncherShell({
+  index,
+  access,
+  pending,
+  kv,
+}: Readonly<{ index: AppIndex; access: StoreAccess; pending: PendingBuildStore; kv: KVBackend }>) {
   const { theme } = useTheme();
   const palette = shellPalette(theme);
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [apps, setApps] = useState<InstalledApp[]>([]);
+  const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
@@ -341,7 +304,17 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   // truncated stream look identical). Cleared once the generation settles.
   const genRef = useRef<{ controller: AbortController; cancelled: boolean; detached: boolean } | null>(null);
 
-  const refresh = () => setApps(index.list());
+  // The build screen of the attempt currently in flight, kept live even while the user is
+  // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
+  // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
+  // -state change — reading the screen back out of here — and not a second subscriber, an event
+  // bus or per-tile progress. Cleared the moment the attempt settles.
+  const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+
+  const refresh = () => {
+    setApps(index.list());
+    setPendingBuilds(pending.list());
+  };
 
   // The sink's destination is the address the device ALREADY persists for `/v1/generate` (design
   // D4) — no second setting. It stays inert until both the flag and an address are set, so this
@@ -351,6 +324,11 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   }, [serverUrl]);
 
   useEffect(() => {
+    // Before the first grid render, and exactly once per process (`pending-builds` "A live
+    // building record is demoted to interrupted at launch"): the process that owned any surviving
+    // `building` stream is gone, so that state can no longer be truthful. The grid is gated on
+    // `ready`, which this effect sets at its end — so nothing has rendered a record yet.
+    pending.demoteBuildingToInterrupted();
     (async () => {
       try {
         await seedFirstRun(index, access, defaultSeeds());
@@ -456,18 +434,18 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
    *  primary action stays busy until the rewrite response lands. */
   const openPlan = async (prev: ComposeScreen | ClarifyScreen) => {
     if (!clientOptions) return;
-    const pending = planStep(prev);
-    setScreen(pending);
+    const plan = planStep(prev);
+    setScreen(plan);
     try {
       const response = await rewritePrompt(
         clientOptions,
-        pending.text,
-        clarificationsFrom(pending.questions, pending.answers),
+        plan.text,
+        clarificationsFrom(plan.questions, plan.answers),
       );
       setScreen((s) => (s.kind === 'plan' ? withPlan(s, response) : s));
     } catch (e) {
       logGenError('rewrite failed', e);
-      const failed = failure(pending.editing, pending.text, e, 'rewrite failed');
+      const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
       setScreen((s) => (s.kind === 'plan' ? failed : s));
     }
   };
@@ -496,10 +474,65 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     }
   };
 
-  /** The approval gate's action — the first moment a generation request is sent. */
-  const onBuildIt = async (from: PlanScreen) => {
+  /** A terminal `failure`, a stream that ended without one, or a throw: the record moves to
+   *  `failed` and STAYS on the grid, so the attempt is still reachable after the screen is gone.
+   *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. */
+  const settleFailed = (id: string, reason: string, diagnostics: readonly { hint: string }[]) => {
+    liveRef.current = null;
+    failPendingBuild(pending, id, reason, diagnostics);
+    refresh();
+  };
+
+  /** The abort + record deletion both cancel routes share: the build step's own back press and a
+   *  Cancel chosen from a `building` ghost's quick actions. */
+  const abortLiveAttempt = () => {
+    const ctl = genRef.current;
+    if (ctl) {
+      ctl.cancelled = true;
+      ctl.controller.abort();
+      genRef.current = null;
+    }
+    const live = liveRef.current;
+    liveRef.current = null;
+    if (live) dropPendingBuild(pending, live.id);
+    refresh();
+  };
+
+  /** The ONE settlement for a generation that ended without a deliverable result — a terminal
+   *  `failure` event, or a stream that ended without any terminal event. The record is persisted
+   *  as `failed` with its payload AND the failure screen is shown from the same values, so what
+   *  the grid keeps and what the user just read can never disagree. */
+  const showStreamFailure = (input: {
+    attemptId: string;
+    editing: InstalledApp | undefined;
+    prompt: string;
+    reason: string;
+    hints: readonly { hint: string }[];
+    observed: number;
+  }) => {
+    settleFailed(input.attemptId, input.reason, input.hints);
+    setScreen({
+      kind: 'failure',
+      editing: input.editing,
+      prompt: input.prompt,
+      reason: input.reason,
+      diagnostics: input.hints,
+      observedRepairAttempts: input.observed,
+      // The app being edited already has a working version installed; a brand-new app has none.
+      hasWorkingVersion: input.editing != null,
+    });
+  };
+
+  /**
+   * ONE generation attempt, end to end: the launcher id and its `building` record are written
+   * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
+   * settlements follows — delivered (record deleted, after the store and index are both written),
+   * failed (record persisted with its payload, never deleted), or cancelled (record deleted by the
+   * cancel path itself). The plan's `Build it` and a ghost's Retry are its only two entries, so
+   * this stays the shell's single `generateApp` call site.
+   */
+  const runAttempt = async (building: BuildScreen, reuseId?: string) => {
     if (!clientOptions) return;
-    const building = buildStep(from);
     setScreen(building);
 
     const controller = new AbortController();
@@ -508,6 +541,14 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
     const editing = building.editing;
     // Declared outside the try so a throw mid-stream still knows what the device observed.
     const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
+
+    // The id this attempt writes to, decided and persisted before the request exists: a new
+    // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
+    const attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+    // The live screen a `building` ghost taps back into; kept in step with the stream below.
+    let live = building;
+    liveRef.current = { id: attemptId, screen: live };
+    refresh();
 
     try {
       const request = await buildGenerateRequest(
@@ -525,13 +566,15 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
         countEvent(counts, event);
         if (event.type === 'stage') {
+          live = withStage(live, event.stage);
+          liveRef.current = { id: attemptId, screen: live };
           setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
         } else if (event.type === 'result' || event.type === 'failure') {
           terminal = event;
         }
       }
 
-      if (ctl.cancelled) return; // cancel-on-navigate-away: nothing installed/updated
+      if (ctl.cancelled) return; // cancel-on-navigate-away: the cancel path deleted the record
       genRef.current = null;
 
       if (terminal == null) {
@@ -543,14 +586,13 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
           observedRepairAttempts: counts.repair,
           failureClass: 'StreamEndedWithoutTerminalEvent',
         });
-        setScreen({
-          kind: 'failure',
+        showStreamFailure({
+          attemptId,
           editing,
           prompt: building.text,
           reason: GENERIC_STREAM_ERROR,
-          diagnostics: [],
-          observedRepairAttempts: counts.repair,
-          hasWorkingVersion: editing != null,
+          hints: [],
+          observed: counts.repair,
         });
         return;
       }
@@ -562,20 +604,31 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
           failureClass: 'GenerationFailureEvent',
           diagnostics: terminal.diagnostics,
         });
-        setScreen({
-          kind: 'failure',
+        showStreamFailure({
+          attemptId,
           editing,
           prompt: building.text,
           reason: terminal.reason,
-          diagnostics: terminal.diagnostics.map((d) => ({ hint: d.hint })),
-          observedRepairAttempts: counts.repair,
-          hasWorkingVersion: editing != null,
+          hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
+          observed: counts.repair,
         });
         return;
       }
 
+      live = withDelivering(live);
+      liveRef.current = { id: attemptId, screen: live };
       setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
-      const delivered = await deliverResult(access, editing, building.text, terminal.app, terminal.summary);
+      // Store first, index second, pending record deleted LAST (design D5) — a process death
+      // anywhere inside this await leaves the record behind to surface as `interrupted`.
+      const delivered = await deliverAndSettle(pending, {
+        access,
+        appId: attemptId,
+        editing,
+        text: building.text,
+        wire: terminal.app,
+        summary: terminal.summary,
+      });
+      liveRef.current = null;
       refresh();
       if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
       setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
@@ -583,12 +636,20 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       if (ctl.cancelled) return;
       genRef.current = null;
       logGenError('build failed', e);
+      const reasoned = errorReason(e);
+      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics);
       setScreen(failure(editing, building.text, e, 'build failed', counts.repair));
     }
   };
 
+  /** The approval gate's action — the first moment a generation request is sent. */
+  const onBuildIt = async (from: PlanScreen) => {
+    await runAttempt(buildStep(from));
+  };
+
   /** `Leave it running`: back to the shell WITHOUT cancelling — the run finishes and its result
-   *  is still delivered, it just no longer takes over the screen. */
+   *  is still delivered, it just no longer takes over the screen. Its record stays `building`, so
+   *  the grid keeps showing the ghost for as long as the stream is in flight. */
   const onLeaveRunning = () => {
     const ctl = genRef.current;
     if (ctl) ctl.detached = true;
@@ -596,16 +657,99 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
   };
 
   /** Hardware back out of the build step (design "cancel-on-navigate-away"): aborts the in-flight
-   *  request and returns to compose with the text preserved — nothing is installed or updated,
-   *  since the generation loop bails out on `ctl.cancelled` before ever reaching `deliverResult`. */
+   *  request, deletes the attempt's pending record and returns to compose with the text preserved
+   *  — nothing is installed or updated, since the generation loop bails out on `ctl.cancelled`
+   *  before ever reaching delivery, and no ghost or failure record is left behind. */
   const onCancelGeneration = (editing: InstalledApp | undefined, text: string) => {
-    const ctl = genRef.current;
-    if (ctl) {
-      ctl.cancelled = true;
-      ctl.controller.abort();
-      genRef.current = null;
-    }
+    abortLiveAttempt();
     openCompose(editing, text);
+  };
+
+  // ── Ghost-tile handlers (design D7) ────────────────────────────────────────────────────────
+  // The grid's four entry points into a pending-build record. Chain-3's tiles bind them;
+  // `handoff/ghost-handlers.md` is their contract.
+
+  /** The failure screen for a `failed`/`interrupted` record, hydrated from what was PERSISTED —
+   *  no live stream is involved, so the observed-repair count is zero rather than invented, and an
+   *  `interrupted` record (which never carried a payload, because nothing failed) says so. */
+  const failureFromRecord = (rec: PendingBuildRecord): Screen => {
+    const edited = rec.editingAppId ? index.get(rec.editingAppId) : null;
+    return {
+      kind: 'failure',
+      ...(edited ? { editing: edited } : {}),
+      prompt: rec.prompt,
+      reason: rec.failure?.reason ?? INTERRUPTED_REASON,
+      diagnostics: hydratedDiagnostics(rec.failure),
+      observedRepairAttempts: 0,
+      hasWorkingVersion: edited != null,
+      pendingId: rec.id,
+    };
+  };
+
+  /** Tap a ghost. `building` reattaches to the run's own build-progress screen — the stream is
+   *  still in this shell's closure, so this is a screen-state change and no new request is sent;
+   *  reattaching also un-detaches it, so its done step lands as if the user had never left.
+   *  `failed`/`interrupted` opens the hydrated failure screen instead. */
+  const onOpenPending = (rec: PendingBuildRecord) => {
+    if (rec.state !== 'building') {
+      setScreen(failureFromRecord(rec));
+      return;
+    }
+    const live = liveRef.current;
+    if (live == null || live.id !== rec.id) {
+      // Unreachable by construction: a `building` record can only outlive its stream across a
+      // process restart, and launch-time demotion has already made such a record `interrupted`.
+      log.warn(CHANNELS.gen, 'building ghost has no live run to reattach to', { pendingId: rec.id });
+      return;
+    }
+    if (genRef.current) genRef.current.detached = false;
+    setScreen(live.screen);
+  };
+
+  /** Cancel from a `building` ghost's quick actions: the same abort + delete the build step's own
+   *  back press does, without taking the user off the grid. */
+  const onCancelPending = (rec: PendingBuildRecord) => {
+    if (liveRef.current?.id === rec.id) {
+      abortLiveAttempt();
+      return;
+    }
+    dropPendingBuild(pending, rec.id);
+    refresh();
+  };
+
+  /** Dismiss a `failed`/`interrupted` record, from its quick actions or its failure screen: the
+   *  record is deleted and its ghost stops rendering. */
+  const onDismissPending = (rec: PendingBuildRecord) => {
+    dropPendingBuild(pending, rec.id);
+    goHome();
+  };
+
+  /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
+   *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
+  const onRetryPending = async (rec: PendingBuildRecord) => {
+    const edited = rec.editingAppId ? index.get(rec.editingAppId) : null;
+    await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
+  };
+
+  /** The failure screen's two actions. Hydrated from a `failed`/`interrupted` record, they are
+   *  Retry (same launcher id) and Dismiss (delete the record); shown live off a terminal event,
+   *  they stay Rephrase and Back — and the record that failure just persisted keeps its ghost on
+   *  the grid either way. A record dismissed elsewhere in the meantime falls back to the live
+   *  shape rather than acting on a ghost that is no longer there. */
+  const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
+    const ghost = s.pendingId != null ? pending.get(s.pendingId) : null;
+    if (ghost != null) {
+      return {
+        retryable: true,
+        onRephrase: () => onRetryPending(ghost),
+        onDismiss: () => onDismissPending(ghost),
+      };
+    }
+    return {
+      retryable: false,
+      onRephrase: () => openCompose(s.editing, s.prompt),
+      onDismiss: goHome,
+    };
   };
 
   // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
@@ -710,21 +854,20 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
       <DoneStep app={from.app} onOpen={() => onOpen(from.app)} onBackToApps={goHome} />
     );
   } else if (screen.kind === 'failure') {
-    const { editing, prompt } = screen;
     content = (
       <FailureScreen
         reason={screen.reason}
         diagnostics={screen.diagnostics}
         observedRepairAttempts={screen.observedRepairAttempts}
         hasWorkingVersion={screen.hasWorkingVersion}
-        onRephrase={() => openCompose(editing, prompt)}
-        onDismiss={goHome}
+        {...failureActions(screen)}
       />
     );
   } else {
     content = (
       <HomeScreen
         apps={apps}
+        pending={pendingBuilds}
         onOpen={onOpen}
         onFork={onFork}
         onDelete={onDelete}
@@ -733,6 +876,9 @@ function LauncherShell({ index, access, kv }: Readonly<{ index: AppIndex; access
         onCreate={() => openCompose()}
         onSettings={() => setScreen({ kind: 'settings' })}
         onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
+        onOpenPending={onOpenPending}
+        onCancelPending={onCancelPending}
+        onDismissPending={onDismissPending}
       />
     );
   }

@@ -34,6 +34,7 @@ import { runLoggingTests } from '../../logging/test/logging.suite';
 import { runObservabilityUiTests } from './observability-ui.suite';
 import { runFailureScreenTests } from './failure-screen.suite';
 import { runPendingBuildsTests } from './pending-builds.suite';
+import { runBuildLifecycleTests } from './build-lifecycle.suite';
 
 const h = new Harness();
 
@@ -65,6 +66,7 @@ await runLoggingTests(h);
 await runObservabilityUiTests(h);
 await runFailureScreenTests(h);
 await runPendingBuildsTests(h);
+await runBuildLifecycleTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

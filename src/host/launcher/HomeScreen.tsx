@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
+import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
 import {
@@ -55,6 +56,24 @@ export interface HomeScreenProps {
   onSettings: () => void;
   /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
   onOpenDevProbe?: () => void;
+
+  // ── Pending builds (launcher-ghost-tiles; contract `handoff/ghost-handlers.md`) ─────────────
+  // The shell supplies all four together or none of them. The grid composition and the ghost
+  // visuals that consume them are their own chain's work; declared here so the shell has exactly
+  // one place to hand them over.
+
+  /** Every in-flight / failed / interrupted generation attempt, NEWEST FIRST, straight from
+   *  `PendingBuildStore.list()`. Records carrying `editingAppId` are rebuilds and must not become
+   *  their own tile — they belong to the installed tile of that id. */
+  pending?: readonly PendingBuildRecord[];
+  /** Tap: `building` reattaches to its build-progress screen, `failed`/`interrupted` opens the
+   *  failure screen hydrated from the record. Never call this for a rebuild record's tile — that
+   *  tile is a launchable installed app and its tap belongs to `onOpen`. */
+  onOpenPending?: (rec: PendingBuildRecord) => void;
+  /** Quick action on a `building` record: aborts the run and deletes the record. */
+  onCancelPending?: (rec: PendingBuildRecord) => void;
+  /** Quick action on a `failed`/`interrupted` record: deletes the record. */
+  onDismissPending?: (rec: PendingBuildRecord) => void;
 }
 
 export default function HomeScreen({ apps, onOpen, onFork, onDelete, onHistory, onPromptAgain, onCreate, onSettings, onOpenDevProbe }: Readonly<HomeScreenProps>) {
