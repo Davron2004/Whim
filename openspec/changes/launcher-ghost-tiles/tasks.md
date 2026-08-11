@@ -2,10 +2,10 @@
 
 ## 1. Pending-build store and pure helpers
 
-- [ ] 1.1 Create `src/host/launcher/pending-builds.ts`: `PendingBuildStore` on the shared `KVBackend` (keys `pending:<id>`, `pending:order`), record shape per design.md decision 2 (`id, prompt, workingTitle, state, createdAt, updatedAt, failure?, editingAppId?`), API: `create`, `get`, `list` (newest first), `setFailed`, `delete`, `demoteBuildingToInterrupted`. Corrupt-record tolerance mirroring `AppIndex.get`'s try/catch.
-- [ ] 1.2 Add pure helpers to `prompt-flow.ts`: `workingTitleFromPrompt(text)` (~28 chars, word-boundary truncation) and `ghostTileColorFor(id)` (deterministic hash of launcher id onto the existing tile palette).
-- [ ] 1.3 Launch-time demotion: `demoteBuildingToInterrupted()` runs before first grid render (per pending-builds spec — a `building` record can never be truthful across a cold start).
-- [ ] 1.4 Node suite coverage in the launcher tests: record lifecycle round-trips, list ordering, demotion, corrupt-record tolerance, working-title truncation, hash-color determinism (same id → same color).
+- [x] 1.1 Create `src/host/launcher/pending-builds.ts`: `PendingBuildStore` on the shared `KVBackend` (keys `pending:<id>`, `pending:order`), record shape per design.md decision 2 (`id, prompt, workingTitle, state, createdAt, updatedAt, failure?, editingAppId?`), API: `create`, `get`, `list` (newest first), `setFailed`, `delete`, `demoteBuildingToInterrupted`. Corrupt-record tolerance mirroring `AppIndex.get`'s try/catch.
+- [x] 1.2 Add pure helpers to `prompt-flow.ts`: `workingTitleFromPrompt(text)` (~28 chars, word-boundary truncation) and `ghostTileColorFor(id)` (deterministic hash of launcher id onto the existing tile palette).
+- [x] 1.3 Launch-time demotion: `demoteBuildingToInterrupted()` runs before first grid render (per pending-builds spec — a `building` record can never be truthful across a cold start).
+- [x] 1.4 Node suite coverage in the launcher tests: record lifecycle round-trips, list ordering, demotion, corrupt-record tolerance, working-title truncation, hash-color determinism (same id → same color).
 
 ## 2. Generation flow wiring (LauncherRoot)
 
