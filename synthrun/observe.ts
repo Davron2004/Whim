@@ -29,6 +29,7 @@ export const RUNTIME_OBSERVED_KINDS = [
   'mount_timeout',
   'run_truncated',
   'containment_failure',
+  'containment_unobserved',
 ] as const;
 export type RuntimeObservedKind = (typeof RUNTIME_OBSERVED_KINDS)[number];
 
@@ -248,6 +249,8 @@ function genericHint(kind: RuntimeObservedKind): string {
       return 'raise totalBudgetMs or investigate a stuck interaction; the page was hard-killed to bound harness cost';
     case 'containment_failure':
       return 'the sandbox containment probes reported a breach — see the probes payload for which check failed';
+    case 'containment_unobserved':
+      return 'no authenticated containment verdict was observed — this run proves nothing about containment; re-run it and treat the candidate as unverified, not as escaped';
   }
 }
 
