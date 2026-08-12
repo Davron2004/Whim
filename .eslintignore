@@ -15,6 +15,10 @@ src/runtime/generated/
 fixtures/adversarial/
 invariants/
 
+# Node-only demo-filming tool (Playwright, same standing as invariants/): drives the built
+# runtime in Chromium and injects overlay DOM by design — not RN/app source.
+demo/
+
 # Node-only acceptance runners (also tsconfig-excluded): use process / node:fs / dynamic import.
 src/host/version-store/test/
 src/host/storage-engine/test/

@@ -24,6 +24,7 @@
     "synthrun:test": "node synthrun/test/run.mjs",
     "evals:test": "node evals/test/run.mjs",
     "evals": "node evals/cli.mjs",
+    "demo:film": "node demo/cli.mjs",
     "invariants": "node invariants/sandbox-isolation/run-against-build.mjs",
     "bridge:invariants": "node invariants/sandbox-isolation/bridge/runner.mjs",
     "server:dev": "node --env-file-if-exists=.env server/dev.mjs",
