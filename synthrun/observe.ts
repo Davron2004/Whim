@@ -116,9 +116,10 @@ export interface EarlyObservers {
   state: ObservationState;
   /** Supplies the one value that cannot exist before navigation — `ctx.sourceMap`, which
    *  `SynthRunSession.openRun` only hands back on return — and yields the attached collectors.
-   *  Attachment itself is already complete; this call installs NOTHING. Until it is made, a CDP
-   *  exception is still recorded, only without its resolved original-source `line`. Call it
-   *  exactly once, immediately after `openRun` resolves. */
+   *  Attachment itself is already complete; this call installs NOTHING. A CDP exception that
+   *  arrived first is not left anchorless: its raw wrapped line was kept, and this call resolves
+   *  it, so a diagnostic's `line` never depends on whether the throw or the map came first. Call
+   *  it exactly once, immediately after `openRun` resolves. */
   finish(ctx: RunContext): Promise<AttachedObservers>;
 }
 
@@ -369,7 +370,9 @@ function installRelayShim(name: string): void {
  * outer page before any `toRN({trusted:true})`, and this collector consumes `msg.trusted`
  * verbatim. `ctx.sourceMap` (needed for `line` resolution) doesn't exist yet at this point — the
  * build already completed inside `openRun`, but `ctx` itself is only handed back on return — so
- * the exception handler closes over a mutable slot `finish()` fills in.
+ * the exception handler closes over a mutable slot `finish()` fills in, and resolves each
+ * exception's anchor against that slot's eventual value rather than its value on arrival (see
+ * `anchorOriginalLine` below).
  */
 export async function attachObserversEarly(page: Page, context: BrowserContext): Promise<EarlyObservers> {
   const state: ObservationState = {
@@ -381,6 +384,22 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     lastActivityAtMs: Date.now(),
   };
   let sourceMap = '';
+  // A CDP exception can legitimately land BEFORE `finish(ctx)` fills the slot above: `openRun`'s
+  // navigation awaits the OUTER page's `load`, and the candidate's own deliver→mount→throw races
+  // it — with four concurrent contexts the throw wins ~37% of runs (measured). Resolving the
+  // anchor from whatever the slot happened to hold on arrival therefore dropped `line` at random.
+  // Instead the raw wrapped line is retained and the anchor is resolved once, whenever the map
+  // becomes available — so a diagnostic's `line` is a function of the evidence, never of arrival
+  // order. Nothing is retried and no window is widened: `finish()` drains this exactly once.
+  const unanchored: { diagnostic: ObservedDiagnostic; wrappedLine: number }[] = [];
+  const anchorOriginalLine = (diagnostic: ObservedDiagnostic, wrappedLine: number): void => {
+    if (!sourceMap) {
+      unanchored.push({ diagnostic, wrappedLine });
+      return;
+    }
+    const origin = resolveOriginalLine(sourceMap, wrappedLine);
+    if (origin) diagnostic.line = origin.line;
+  };
   // The one clock every FrameEvent is stamped against (`FrameEvent.atMs`) — fixed at attach, i.e.
   // immediately pre-navigation, because a frame can now arrive before `finish(ctx)` supplies a
   // `RunContext` at all.
@@ -396,16 +415,13 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     const description = details.exception?.description ?? details.text ?? 'uncaught exception';
     const message = description.split('\n')[0];
     const topFrame = details.stackTrace?.callFrames?.[0];
-    let line: number | undefined;
+    const diagnostic: ObservedDiagnostic = { kind, severity: 'error', message, hint: genericHint(kind) };
+    state.diagnostics.push(diagnostic);
     // Only the candidate's own dynamically-inserted script reports an empty `url` (an
     // "anonymous" script, distinct from the runtime parts' parser-inserted `about:srcdoc`
     // scripts) — resolving anything else would misattribute a host/runtime-internal frame to
     // the candidate's source.
-    if (topFrame && topFrame.url === '' && sourceMap) {
-      const origin = resolveOriginalLine(sourceMap, topFrame.lineNumber + 1);
-      if (origin) line = origin.line;
-    }
-    state.diagnostics.push({ kind, severity: 'error', message, hint: genericHint(kind), line });
+    if (topFrame && topFrame.url === '') anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
   };
   cdp.on('Runtime.exceptionThrown', onException);
 
@@ -458,6 +474,9 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     state,
     finish(ctx: RunContext): Promise<AttachedObservers> {
       sourceMap = ctx.sourceMap;
+      // Every exception that beat the map to the collector gets its anchor now — the map is
+      // certainly present from here on, so later exceptions resolve inline and this drains empty.
+      for (const pending of unanchored.splice(0)) anchorOriginalLine(pending.diagnostic, pending.wrappedLine);
       return Promise.resolve(attached);
     },
   };

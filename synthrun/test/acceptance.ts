@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build as esbuild } from 'esbuild';
 import { buildCandidateFile } from '../builder';
-import { awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, RELAY_BINDING_NAME, type AttachedObservers, type ObservedFrameKind } from '../observe';
+import { attachObserversEarly, awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, RELAY_BINDING_NAME, type AttachedObservers, type EarlyObservers, type ObservedFrameKind } from '../observe';
 import { REJECTED_FORGERY_CAP } from '../contract';
 import { SynthRunSession, type RunContext } from '../session';
 import { wireCapabilityBridge } from '../capability';
@@ -502,6 +502,39 @@ async function testObservers(): Promise<void> {
         ok(thrown?.line === 4, `the diagnostic's line resolves through the source map to original line 4 (got ${thrown?.line})`);
       } finally {
         obs.detach();
+        await dispose();
+      }
+    });
+
+    // The SAME spec scenario, under the ONE arrival order that used to silently lose the anchor:
+    // the CDP `Runtime.exceptionThrown` is recorded BEFORE `finish(ctx)` supplies the source map.
+    // That order is not hypothetical — it is what the outer page's `load` event racing the
+    // candidate's deliver→mount→throw produces, and it was measured at ~37% of runs with four
+    // concurrent contexts, which is exactly how this assertion flaked under a loaded gate run.
+    // Forced here instead of raced, so the anchor's independence from arrival order is asserted
+    // deterministically rather than sampled. The `recorded` assertion is the non-vacuity anchor:
+    // without it the test would silently degrade into a second copy of the one above.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('source anchor: a throw recorded BEFORE finish() supplies the map still resolves (spec §Diagnostics, "Throw with a source anchor")', async () => {
+      let early: EarlyObservers | undefined;
+      const { ctx, dispose } = await session.openRun(FIXTURE_THROW_ON_MOUNT, {
+        beforeNavigate: async (page, context) => {
+          early = await attachObserversEarly(page, context);
+        },
+      });
+      let obs: AttachedObservers | undefined;
+      try {
+        // `finish(ctx)` is deliberately WITHHELD until the throw has landed — the adverse order.
+        await waitUntil(() => early!.state.diagnostics.some((d) => d.kind === 'runtime_throw'), 3000);
+        ok(
+          early!.state.diagnostics.some((d) => d.kind === 'runtime_throw'),
+          'the CDP collector recorded the mount-time throw while no source map had been supplied yet',
+        );
+        obs = await early!.finish(ctx);
+        const thrown = obs.state.diagnostics.find((d) => d.kind === 'runtime_throw');
+        ok(thrown?.line === 4, `the pre-finish throw still carries its original-source anchor, line 4 (got ${thrown?.line})`);
+      } finally {
+        obs?.detach();
         await dispose();
       }
     });
