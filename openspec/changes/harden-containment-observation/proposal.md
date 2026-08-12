@@ -34,9 +34,12 @@ and cannot be made sound until the ordering is corrected.
 - **Make rejected forgeries observable, and treat them as a distinct signal.** `assemble.mjs`
   already emits a `rejected-forgery` frame when the nonce check fails, but that frame travels the
   same relay and is droppable on the same race — so the tamper signal is unreliable today for
-  exactly the same reason the verdict is. Once the ordering is fixed, an unobserved verdict
-  *accompanied by* a rejected forgery SHALL be distinguishable from a plain unobserved verdict:
-  the first is a candidate that tried to lie about its own containment, the second is silence.
+  exactly the same reason the verdict is. Once the ordering is fixed, the rejection SHALL be
+  recorded reliably. It is **not** a hostility signal: the harness's own T6b pen test
+  (`probes.js`'s unauthenticated `spoof-probe`, rejected by `assemble.mjs`) trips it from every
+  realm, so the baseline for a clean candidate is at least one and rises with realm resets. What
+  the signal buys is a bounded, payload-free record that forgery rejection is occurring at all,
+  plus a saturating count that separates ordinary operation from a candidate flooding the channel.
   Constraints on that signal, because a forged frame's contents are attacker-controlled input:
   - Record the **fact** of rejection and a **bounded** count. The forged payload SHALL NOT be
     echoed into diagnostics, logs, or the report — otherwise the candidate chooses what lands

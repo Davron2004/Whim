@@ -39,6 +39,9 @@ import {
   SDK_LINT_RULES,
 } from '../contract';
 import { runStaticChecks } from '../index';
+// Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
+// pulls no Playwright/runtime dependency into the Node bundle).
+import { RUNTIME_OBSERVED_KINDS } from '../../synthrun/observe';
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
 import { SchemaArtifact } from '../../src/host/storage-engine/contract';
 
@@ -139,6 +142,7 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
       'mount_timeout',
       'run_truncated',
       'containment_failure',
+      'containment_unobserved',
       'unreachable_screen',
       'missing_schema',
       'launch_failed',
@@ -150,6 +154,32 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     for (const k of expected) {
       assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verbatim-reused/authored kind "${k}"`);
     }
+  });
+
+  await test('B §contract: unobserved, failed and timed-out containment are three distinct kinds', () => {
+    // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: a verdict that was
+    // never observed, a verdict that reported a breach, and a candidate that never painted are
+    // three separate members — collapsing any two loses the distinction the repair loop reads.
+    const trio: DiagnosticKind[] = ['containment_unobserved', 'containment_failure', 'mount_timeout'];
+    for (const k of trio) {
+      assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing containment kind "${k}"`);
+    }
+    assert(new Set<string>(trio).size === 3, 'the three containment-related kinds must be distinct strings');
+  });
+
+  await test('B §contract: the synthetic run mints no kind of its own — its roster is a subset of DIAGNOSTIC_KINDS', () => {
+    // Downstream stages extend the vocabulary additively THROUGH `checks/contract.ts`, never by
+    // minting an ad-hoc kind string at the producer (same requirement).
+    for (const k of RUNTIME_OBSERVED_KINDS) {
+      assert(
+        (DIAGNOSTIC_KINDS as readonly string[]).includes(k),
+        `synthrun kind "${k}" is not declared in the closed DIAGNOSTIC_KINDS union (kinds are declared centrally, never minted at the producer)`,
+      );
+    }
+    assert(
+      (RUNTIME_OBSERVED_KINDS as readonly string[]).includes('containment_unobserved'),
+      'the synthetic run must know the containment_unobserved kind',
+    );
   });
 
   await test('B §contract: GLOBAL_ROOTS + FORBIDDEN_DIRECT_NAMES tables are well-formed', () => {
