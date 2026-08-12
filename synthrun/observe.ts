@@ -87,10 +87,12 @@ export interface ObservationState {
    *  authenticated verdict was ever observed — either no authenticated probes frame arrived, or
    *  the one that did carried no boolean verdict. */
   contained: boolean | null;
-  /** How many frames the outer page reported as REJECTED forgeries (`rejected-forgery`),
-   *  SATURATING at `REJECTED_FORGERY_CAP` — a fixed-size signal no matter how many frames a
-   *  candidate posts (design D5). The count only; a forged frame's attacker-chosen payload is
-   *  never read, never echoed into a diagnostic, and never carried onto the report. */
+  /** How many frame-forgery rejections were observed — the outer page's `rejected-forgery`
+   *  events plus the host's own provenance refusals folded into the same tally (see
+   *  `hostProvenanceRefusals`), SATURATING at `REJECTED_FORGERY_CAP` — a fixed-size signal no
+   *  matter how many frames a candidate posts (design D5). The count only; a forged frame's
+   *  attacker-chosen payload is never read, never echoed into a diagnostic, and never carried
+   *  onto the report. */
   rejectedForgeries: number;
   /** How many of those rejections the HOST itself made on provenance: a frame that arrived on the
    *  relay binding from a frame other than `page.mainFrame()` — i.e. straight from the candidate's

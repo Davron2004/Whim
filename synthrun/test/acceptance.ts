@@ -774,7 +774,11 @@ async function testObservers(): Promise<void> {
     // while `breach → true` is refused.
     //
     // RED-CHECKED (task 2.4) by neutering the monotonicity fence: the later frame then flips the
-    // verdict back to `true` and no refusal diagnostic is recorded — a silent replacement.
+    // verdict back to `true` and no refusal diagnostic is recorded — a silent replacement. Red-
+    // checked a SECOND time against a fence that is merely WEAKER rather than absent —
+    // `state.contained === false && contained === true`, i.e. keyed on the cell instead of on the
+    // permanent record — because that is the implementation this case used to be unable to tell
+    // apart from the shipped one; the interposed malformed frame below is what discriminates them.
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('an observed verdict is not overridden by a later frame (spec "An observed verdict is not overridden by a later frame")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
@@ -789,9 +793,34 @@ async function testObservers(): Promise<void> {
         const breaches = obs.state.diagnostics.filter((d) => d.kind === 'containment_failure');
         ok(breaches.length === 1, `the breach is recorded exactly once (got ${breaches.length})`);
 
+        // ── the laundering route, interposed: breach → MALFORMED → `true` ──────────────────────
+        // The direct `breach → true` hop below is refused by any fence keyed on either the
+        // diagnostic or the `state.contained` cell, so on its own it does not pin WHICH. This hop
+        // does: a malformed authenticated payload is the one input that moves the cell off `false`
+        // without recording a new verdict (`null`, on the first-observation path). A fence keyed on
+        // the cell would let it through and then read `null → true` as a legal first-ish write —
+        // the `false → null → true` route — ending the run at `contained: true`, i.e. an unsafe
+        // candidate reported as contained. Keyed on the permanent record (a `containment_failure`
+        // diagnostic), the malformed frame is a no-op instead, which is what is asserted here.
+        const beforeMalformed = obs.state.events.length;
+        await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: 'not-a-boolean' } });
+        // Every main-frame frame is appended to `state.events` in the same synchronous relay
+        // callback that then applies the verdict rule, so a +1 here means this frame has been fully
+        // handled — the arrival signal a "nothing moved" assertion otherwise cannot wait on, and the
+        // non-vacuity evidence that what follows is the frame's effect rather than a lost frame.
+        await waitUntil(() => obs.state.events.length > beforeMalformed, 2000);
+        ok(obs.state.events.length === beforeMalformed + 1, `the malformed authenticated frame really did reach the observation state (events ${beforeMalformed} → ${obs.state.events.length})`);
+        ok(obs.state.contained === false, `a malformed authenticated payload arriving after an observed breach never softens the verdict to "unobserved" — the step that would re-open the false → null → true route (got ${JSON.stringify(obs.state.contained)})`);
+        ok(
+          !obs.state.diagnostics.some((d) => d.kind === 'containment_unobserved'),
+          'and it mints no containment_unobserved: an observed breach is never substituted by an absence-of-evidence finding',
+        );
+
+        const beforeOverride = obs.state.events.length;
         await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: true } });
-        await wait(200);
-        ok(obs.state.contained === false, `a later authenticated frame claiming containment held does NOT replace the observed breach on the authenticated probes channel (got ${JSON.stringify(obs.state.contained)})`);
+        await waitUntil(() => obs.state.events.length > beforeOverride, 2000);
+        ok(obs.state.events.length === beforeOverride + 1, `the override frame reached the observation state too, so its refusal below is the verdict rule's doing (events ${beforeOverride} → ${obs.state.events.length})`);
+        ok(obs.state.contained === false, `a later authenticated frame claiming containment held does NOT replace the observed breach on the authenticated probes channel — not even one arriving after a malformed frame (got ${JSON.stringify(obs.state.contained)})`);
         // "Not silently": the refusal is a diagnostic, so a suppressed override reads off the report
         // instead of being inferred from its absence. Found by MESSAGE — the refusal deliberately
         // reuses `containment_failure`, since a refused override is still exactly the breach this

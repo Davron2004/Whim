@@ -146,4 +146,121 @@ Ledger. Appended as it happens, never batched.
     `synthrun/session.ts:16`. Three occurrences across two chains is a pattern, so it is dispatched as
     chain-3 rather than left as a reviewer note.
 - `integrity-ok` (chain-2) — exactly the two declared files; guards byte-identical.
-- `merged` — `c39e043`. All 11 tasks in tasks.md ticked.
+- `merged` + `regate-pass` — `c39e043`; `./scripts/gate.sh` exit 0 on the merged tip. All 11 tasks ticked.
+  Worktree/branch cleaned up unsandboxed.
+- `dispatched` — chain-3 `stale-transport-comment`, BASE `c2f1a13`, one file
+  (`synthrun/session.ts`), comment text only. Raised from the tripwire candidate above rather than left
+  as a reviewer note, because the comment actively misdescribes a security seam: it names
+  `exposeFunction` as the dispatch transport, which is the exact call this change replaced.
+  Two other `exposeFunction` mentions were checked by the dispatcher and are **correct as-is**, so are
+  explicitly out of chain-3's scope: `synthrun/test/acceptance.ts:861` is accurate *history* (it
+  describes the pre-fix code during an earlier red-check), and the "`exposeBinding`, never
+  `exposeFunction`" lines in `observe.ts`/`capability.ts`/`contract.ts` are deliberate contrasts.
+- `closure-precondition` — **runbook step 12a is satisfied only partially, and the gap is recorded rather
+  than papered over.** `node scripts/ruleset-probe.mjs` exits 0: the default branch `main` is protected by
+  ruleset "Protect main" (`pull_request`, `non_fast_forward`, `deletion`, `required_linear_history`,
+  `required_status_checks`). But the probe validates the DEFAULT branch, and this run's base is
+  `redesign` by user instruction. `gh api repos/…/rules/branches/redesign` returns `[]` — **no protection
+  rules at all.** So for this run the property the precondition exists to guarantee — "no agent path can
+  reach the base branch; the server-side ruleset IS the human gate" — **does not hold**. It still holds
+  for `main`, which is what `redesign` itself merges into via the pre-existing PR #21.
+  Compensating controls, both weaker than a ruleset and stated as such: the user's explicit "don't
+  merge", `gh pr merge` being denied for every caller, and this orchestrator not pushing to `redesign`
+  directly at any point. **Recommendation for the human: add a ruleset to `redesign`** if agent runs are
+  going to keep targeting it as a base.
+- `report-received` — chain-3 STATUS complete, GATE PASS, one file. Verified comment-only by the
+  dispatcher (`git diff` filtered to non-comment lines was empty) before merging. One Class-A note: the
+  added clause pushed past the block's wrap width, so that clause was rewrapped across two extra lines.
+- `integrity-ok` + `merged` — `3e309be`. Worktree/branch cleaned unsandboxed; no stranded config.
+- `gate-full-pass` — `./scripts/gate-full.sh` exit 0 on the merged tip: `FULL GATE PASSED`, including
+  `✓ synthrun acceptance: 165 checks passed` and `openspec validate --all --strict` green across every
+  spec and change. The fast regate after chain-3 was skipped as subsumed — `gate-full.sh` runs `gate.sh`
+  in full and is strictly stronger.
+- `pushed` + `draft-pr` — `integration/harden-synthrun-binding-isolation` pushed; draft PR **#25** opened
+  against **`redesign`** (not `main`, per instruction).
+- `checks-settled-pass` — the poll reached an asserted verdict, not an inferred one: `gh pr checks 25` +
+  `fixloop.sh checkverdict` → **exit 0, SETTLED PASS**, both required checks explicitly passing
+  (`isolation-suite` 2m12s, `quality-gate` 39s). The loop treated only exit 8 as pending, so the
+  post-push "no checks reported" window — where `gh` itself exits 0 — could not be misread as green.
+  That misreading is finding F1 in this repo's history.
+- `sonar-round-1` — `node scripts/sonar-pr-issues.mjs --pr 25` exit 0, **`gate: NONE`, 0 issues**
+  (`findings-sonar-1.md`). **This is NOT recorded as a Sonar pass.** `gate: NONE` means SonarCloud did
+  not analyze this PR at all — automatic analysis covers the default branch and PRs into it, and this PR
+  targets `redesign`. An empty result from an analyzer that never ran carries no information. So no
+  lines were appended to `openspec/critic/sonar-ledger.md` (there are no findings to ingest) and **no
+  nested fix-loop round was run** — running one over zero findings would have been theatre. Sonar will
+  see this work when `redesign` reaches `main` via the pre-existing PR #21. This is the second coverage
+  gap of the run, alongside `synthrun:test` being absent from CI.
+- `reviewer-verdict` — **sound; no must-fix blockers.** The reviewer attempted to break the guard and
+  could not find a path to state mutation or `dispatcher.handle` that skips the frame check, nor any
+  laundering route back to `contained: true` after a breach. Load-bearing confirmations, each derived
+  from the code rather than from the chains' claims: `state.contained` has exactly **one** write site;
+  `containment_failure` has exactly two mint sites and **nothing anywhere filters, splices or removes
+  diagnostics**, so `breachAlreadyObserved` is a genuinely permanent record; `msg.trusted` is still
+  AND-ed rather than substituted; `page.mainFrame()` is stable across navigation, so there is no window
+  where the comparison targets a replaced object; a wholly absent `source` throws inside Playwright
+  before any mutation, so the guard fails closed both ways. Report-vs-diff: matches commit-for-commit.
+  Spec conformance: conforms, all three scenarios mapped to one real test each.
+- `findings-dispositioned` — 7 findings, none blocking. Dispositions:
+  - **F1 (MED) → FIXED via chain-4.** The sharpest finding of the run: **the A3 hardening had no
+    regression test.** Test 2.3 exercised only `breach → true`, which the *weaker* narrow-transition
+    keying also refuses — so the fence could have been silently rewritten to
+    `state.contained === false && contained === true`, the whole 165-check suite would stay green, and
+    the `false → null → true` laundering route would reopen. A defence indistinguishable from its weaker
+    form is a defence that gets refactored away. Dispatched with a mandatory discriminating red-check
+    against the weakened fence.
+  - **F2 (LOW-MED) → FIXED via chain-4** (`contract.ts` prose): `forgeries` is documented as counting
+    only outer-page rejections, but host-side provenance refusals are now folded in, so a run where the
+    outer page rejected nothing can report `forgeries.rejected === true`. Ironic given chain-3 existed
+    solely to fix a stale comment. `observe.ts:90-94` carries the same stale prose and was out of
+    chain-4's scope — see the follow-up list.
+  - **F3 (LOW, out of scope) → ESCALATED, and it is the most important thing this run found.**
+    `invariants/sandbox-isolation/bridge/runner.mjs:72` still does an unguarded
+    `page.exposeFunction('whimHostDispatch', host.dispatch)` — no provenance check, no scrub. **The
+    identical vulnerability this change just fixed is still live there**, which means that suite's
+    invariant #1 ("storage reachable only as syscalls") is not proving its property against a hostile
+    bundle. Correctly untouched: `invariants/` is owner-authored Class-2 (CLAUDE.md never-violate list),
+    and `research.md` cited that exact line only as *precedent* for context-level exposure without
+    noticing it shares the flaw. **Needs its own change.** Surfaced in the PR body, not left in a diff.
+  - **F4 (LOW) → FIXED in `design.md`'s risk register.** D2's claim that page-level exposure "would buy
+    no guarantee" was too strong: `context.exposeBinding` covers every page in the context, so a
+    candidate-opened page's own main frame would pass the guard. Unreachable today only because the
+    iframe is `sandbox="allow-scripts"` without `allow-popups`. Recorded as a standing dependency:
+    if `allow-popups` is ever added, the guard must move to `page.exposeBinding` in the same change.
+  - **F7 (LOW) → FIXED via chain-4**: a fixed `wait(200)` in the new verdict test replaced with the
+    file's `waitUntil` poll idiom. Fails safe today, but this suite has recent flake history and the
+    standing instruction is to fix flake surfaces on sight.
+  - **F5, F6 (LOW) → NOTED, not fixed.** F5: the refusal diagnostic is uncapped where its sibling
+    counter saturates — not candidate-drivable (it needs nonce-authenticated frames the sandbox cannot
+    mint) and unbounded diagnostics from authenticated frames is a pre-existing class. F6:
+    `HANDOFF-v1-sprint.md` documents the quarantine mechanism chain-2 deleted — already stale before
+    this change, and outside every declared scope.
+  - **Doc drift → FIXED by the dispatcher**: `tasks.md` 1.5 still stated D3's pre-strengthening table
+    (drift in the harmless direction — the ticked text was weaker than what shipped); `chains.md`
+    declared only chains 1–2 while 3 and 4 were dispatched. Both corrected so those files remain the
+    truthful record rather than `progress.md` being the only accurate one.
+- `dispatched` + `report-received` — chain-4 `reviewer-findings`, BASE `b8ced2c`. STATUS complete,
+  GATE PASS, `synthrun:test` **169 checks passed** (was 165; +4 assertions), 0 quarantined. Commit
+  `ad59223`.
+  **The F1 red-check discriminated, which was the whole point.** With the fence rewritten to the weaker
+  cell-keyed form `state.contained === false && contained === true`, the suite reported 6 failures, and
+  the output shows the laundering route executing end to end — `(got null)` after the malformed frame,
+  then `(got true)` after the override. Three of those six were *pre-existing* assertions that only
+  fall once the malformed frame is interposed, which confirms the reviewer's premise exactly: without
+  the interposition, the weaker fence kept every one of them green.
+  Class-A deviation, accepted: also corrected `ForgeryTally.rejected`'s doc at `synthrun/contract.ts:95`
+  — same staleness, same file, one line outside the named range. Leaving it wrong beside a corrected
+  `RunReport.forgeries` would have been self-contradictory.
+  Also of note: the implementer replaced the fixed sleep by polling `obs.state.events.length` rather
+  than a diagnostic, because the shipped behaviour for a malformed post-breach frame is that *nothing
+  moves* — there is no positive observable to wait on. Polling the event count doubles as a
+  non-vacuity check, distinguishing "refused" from "never arrived".
+- `integrity-ok` + `merged` — chain-4 `a765bfb`. Guards verified untouched before merge: `git diff` of
+  `synthrun/observe.ts` and `synthrun/capability.ts` across the chain is empty, and the fence still
+  reads `if (breachAlreadyObserved(state))` at `observe.ts:258`. Checked explicitly because a stale
+  editor diagnostic (`'breachAlreadyObserved' is declared but never read`) is precisely what a
+  left-behind weakened fence would look like — it was residue from the red-check edit, not the tree.
+- `dispatched` — chain-5 `forgery-tally-doc`, BASE `a765bfb`, one file (`synthrun/observe.ts`), the
+  last stale comment of the class the reviewer flagged twice: `rejectedForgeries` is still documented as
+  counting only what the outer page rejected, while the field directly below it documents host
+  provenance refusals as a *subset* of it. The two comments contradict each other in the same struct.

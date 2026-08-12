@@ -31,6 +31,11 @@ Design decisions referenced as D1–D6 are in `design.md`. Evidence for every cl
       `containment_unobserved` diagnostic, `pushContainmentUnobserved` stays the single minting site,
       `finalizeContainmentVerdict` still closes out, and a malformed payload still yields `null` rather
       than a substituted `false`.
+      > **Shipped stronger than this text.** The transition table above keys on the *current value*,
+      > which leaves `false → null` a legal downgrade and therefore a `false → null → true` laundering
+      > route. The implementation keys on `breachAlreadyObserved(state)` — the permanent
+      > `containment_failure` diagnostic — so a breach is softened by neither a later `true` nor a
+      > malformed payload. See `design.md` D3's amendment and `handoff/host-provenance.md`.
 - [x] 1.6 `./scripts/gate.sh` green. Note that `synthrun:test` is **not** in the fast gate (decision
       #55) — chain-1 is not self-proving; chain-2 supplies the acceptance evidence.
 

@@ -12,9 +12,11 @@
  * `delivery`/`paint`/`probes` within milliseconds of `load`, so anything attached after `openRun`
  * returns races those frames and silently drops the ones it loses (measured, not theoretical);
  * chain 3 (capability wiring) uses the SAME hook
- * for `context.exposeFunction('whimHostDispatch', host.dispatch)` — which MUST happen before
- * navigation for the exposed function to be available when the page's inline scripts run (`page.
- * ts` already sets `syscallSink:'exposed'` expecting this); chain 4 (the sweep) drives `ctx.
+ * for `context.exposeBinding('whimHostDispatch', host.dispatch)` — which MUST happen before
+ * navigation for the binding to be available when the page's inline scripts run (`page.
+ * ts` already sets `syscallSink:'exposed'` expecting this), and it's `exposeBinding` rather
+ * than `exposeFunction` that carries the caller's frame through to the main-frame guard;
+ * chain 4 (the sweep) drives `ctx.
  * page`; chain 5 (task 5.2) composes all of the above plus `dispose()` into the full
  * `RunCandidate` entry point `contract.ts` declares.
  */

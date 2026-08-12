@@ -165,6 +165,20 @@ recommendation for a separate change.
 - **Playwright upgrades.** If a future version changes `exposeBinding`'s `source` shape or frame
   identity semantics, the guard degrades silently. The D5 tests are the tripwire; they exercise the real
   binding against real Chromium, so a version bump that breaks the assumption goes red rather than quiet.
+- **The dispatch guard's soundness depends on the iframe's `sandbox` attribute** (found by the reviewer;
+  D2 overstated the case). `context.exposeBinding` installs on *every* page in the context, and a
+  candidate-opened page's own main frame would satisfy `source.frame === source.page.mainFrame()` and
+  pass the guard. That is unreachable today **only** because the iframe is `sandbox="allow-scripts"`
+  with no `allow-popups` and no `allow-top-navigation` (`build/assemble.mjs:131`). So D2's claim that
+  page-level exposure "would buy no guarantee" is too strong: page-level exposure would remove this
+  dependency entirely. It was still correct not to churn the exposure level inside a security fix, but
+  **if `allow-popups` is ever added to that sandbox attribute, this guard must move to `page.exposeBinding`
+  in the same change.**
+- **The identical hole is still live in `invariants/sandbox-isolation/bridge/runner.mjs:72`** — an
+  unguarded `page.exposeFunction('whimHostDispatch', host.dispatch)` with no provenance check and no
+  scrub. `research.md` cited that line only as *precedent* for context-level exposure and did not notice
+  it carries the same vulnerability. It is owner-authored Class-2 and correctly untouched here; it needs
+  its own change. See the closing summary — this is the most important follow-up this run produced.
 - **`deliverBindingResult` runs in the caller's realm** (`coreBundle.js:20461`) — so a refused call still
   causes the host to evaluate a delivery expression inside the attacker's realm, with errors swallowed.
   Unavoidable in this Playwright version, and harmless provided the refusal value carries nothing

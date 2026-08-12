@@ -22,6 +22,12 @@ File partition (no two chains without a declared `after:` share a file):
 
 - chain-1 — `synthrun/observe.ts`, `synthrun/capability.ts`
 - chain-2 — `synthrun/test/acceptance.ts`, `synthrun/contract.ts` (one stale doc comment, task 2.5)
+- chain-3 — `synthrun/session.ts` (comment only; raised mid-run from a tripwire candidate, `after: chain-2`)
+- chain-4 — `synthrun/test/acceptance.ts`, `synthrun/contract.ts` (reviewer findings, `after: chain-3`)
+
+chain-3 and chain-4 were added mid-run and are recorded here rather than only in `progress.md`, so this
+file stays the truthful partition. Both are strictly serial after the chains above; chain-4 re-enters
+chain-2's two files, which is safe only because nothing else was in flight.
 
 The two are strictly serial (`after: chain-1`): chain-2's assertions are the acceptance criterion for
 chain-1's guard and cannot be red-checked before it exists. They are file-disjoint, so the serialization
