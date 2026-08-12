@@ -407,6 +407,14 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Polls until `predicate` holds or `budgetMs` expires, then returns regardless — for waiting on a
+ *  frame the RUN emits on its own schedule (a fixed sleep would either be a race or be slow). The
+ *  caller asserts the property itself; this only bounds the wait. */
+async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline && !predicate()) await wait(15);
+}
+
 /**
  * Posts one frame on the host transport from the OUTER page's own realm — the trusted vantage
  * every genuine frame travels (`assemble.mjs`'s `toRN`, which is the outer page's own call). Lets
@@ -420,6 +428,48 @@ async function relayFromOuterPage(ctx: RunContext, frame: { kind: string; truste
     const g = globalThis as unknown as { ReactNativeWebView?: { postMessage(s: string): void } };
     g.ReactNativeWebView?.postMessage(raw);
   }, JSON.stringify(frame));
+}
+
+// The two halves of the pre-/post-`load` comparison below. Carried in the frame's `where` field,
+// so each one's diagnostic is identifiable by message without reading anything else.
+const PRE_LOAD_FRAME_WHERE = 'whim-pre-load-frame-probe';
+const POST_LOAD_FRAME_WHERE = 'whim-post-load-frame-probe';
+
+/**
+ * Registered as a page init script, so it runs in the DELIVERED document at document-start — after
+ * the document has committed and before any of its own inline scripts, hence long before `load`.
+ * That is the exact window spec scenario "A frame emitted before load is not dropped" names, and
+ * the one a relay installed after navigation cannot see.
+ *
+ * It posts ONE authenticated frame through `window.ReactNativeWebView` — the outer page's own
+ * transport, the same one `assemble.mjs`'s `toRN()` posts every genuine frame through — standing in
+ * for the outer page emitting a frame in that window (the same seam, and the same standing-in, as
+ * `relayFromOuterPage` above; the nonce check sits upstream of it either way). Two properties are
+ * load-bearing and deliberate:
+ *
+ *  - main frame only (`g.top !== g` bails), so it never posts from the opaque-origin sandbox realm;
+ *  - `?.` on the transport reproduces `toRN()`'s own `if (window.ReactNativeWebView)` guard: with no
+ *    transport installed yet the frame is DROPPED AT SOURCE with nothing to replay. That is the
+ *    regression this test exists to catch, expressed in the production page's own terms.
+ *
+ * `document.readyState` is captured at post time and travels in the payload, so the assertion that
+ * the frame really was emitted pre-`load` is made from in-band evidence rather than from harness
+ * wall-clock timing.
+ */
+function postAuthenticatedFrameAtDocumentStart(where: string): void {
+  const g = globalThis as unknown as {
+    top?: unknown;
+    document?: { readyState?: string };
+    ReactNativeWebView?: { postMessage(s: string): void };
+  };
+  if (g.top !== g) return;
+  g.ReactNativeWebView?.postMessage(
+    JSON.stringify({ kind: 'error', trusted: true, payload: { where, message: 'emitted between document commit and load', readyState: g.document?.readyState } }),
+  );
+}
+
+function framePayload(event: { payload: unknown } | undefined): { where?: string; readyState?: string } {
+  return (event?.payload ?? {}) as { where?: string; readyState?: string };
 }
 
 function stubObservers(): AttachedObservers {
@@ -622,6 +672,64 @@ async function testObservers(): Promise<void> {
         await wait(200);
         ok(obs.state.contained === false, 'the same channel carrying an explicit false IS read as a breach (the seam is live)');
         ok(obs.state.diagnostics.some((d) => d.kind === 'containment_failure'), 'an explicit false — and only an explicit false — earns containment_failure');
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // ── the pre-`load` window: the ordering this whole change turns on ─────────────────────────
+    //
+    // Every frame a HEALTHY candidate emits lands after `openRun` returns (measured: `delivery`
+    // @33ms, `probes` @58ms, with `page.goto`'s `load` resolving before either), so no natural
+    // fixture exercises the window between document commit and `load` — which is precisely why the
+    // dropped-verdict regression was intermittent rather than deterministic. This test constructs
+    // that window directly: one authenticated frame emitted from the outer page's realm at
+    // document-start, i.e. before `load`, plus the SAME frame emitted after `load` as the control
+    // for the scenario's "exactly as a post-load frame would".
+    //
+    // Red-checked against the actual regression (task 8.2): with relay installation moved back into
+    // `EarlyObservers.finish()` — `exposeFunction` + a post-navigation `page.evaluate` installing
+    // the transport, i.e. the pre-fix ordering verbatim — the pre-`load` frame is never observed and
+    // this test goes red, while the post-`load` control still lands.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('a frame emitted before load is not dropped (spec "A frame emitted before load is not dropped")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS, {
+        beforeNavigate: async (page) => {
+          await page.addInitScript(postAuthenticatedFrameAtDocumentStart, PRE_LOAD_FRAME_WHERE);
+        },
+      });
+      try {
+        // The frame is emitted during navigation itself, so it is already in flight by the time
+        // `openRun` returns; the mount gate returns immediately here (its early-exit-on-diagnostic
+        // path), so wait on the run's own genuine frames rather than on a fixed sleep.
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await waitUntil(() => obs.state.contained !== null && obs.state.paintAtMs !== null, 3000);
+
+        const preLoad = obs.state.events.find((e) => e.kind === 'error' && framePayload(e).where === PRE_LOAD_FRAME_WHERE);
+        ok(!!preLoad, 'the frame emitted between document commit and load was observed at all (a relay installed after navigation never sees it — the regression)');
+        ok(framePayload(preLoad).readyState === 'loading', `it really was emitted before load — document.readyState at emit time (got ${framePayload(preLoad).readyState})`);
+        ok(preLoad?.trusted === true, 'its trusted flag is consumed verbatim, exactly as for a post-load frame');
+        const preDiag = obs.state.diagnostics.find((d) => d.message.includes(PRE_LOAD_FRAME_WHERE));
+        ok(!!preDiag, 'the pre-load frame CONTRIBUTED to the report — it produced its diagnostic, not merely an event');
+
+        // The post-`load` control on the same transport: same frame shape, same authenticated
+        // vantage, emitted after `load` instead of before. Without it, "contributes exactly as a
+        // post-load frame would" would be asserted against nothing.
+        await relayFromOuterPage(ctx, { kind: 'error', trusted: true, payload: { where: POST_LOAD_FRAME_WHERE, message: 'emitted after load', readyState: 'complete' } });
+        await waitUntil(() => obs.state.diagnostics.some((d) => d.message.includes(POST_LOAD_FRAME_WHERE)), 2000);
+        const postDiag = obs.state.diagnostics.find((d) => d.message.includes(POST_LOAD_FRAME_WHERE));
+        ok(!!postDiag, 'the post-load control frame contributed too (both halves of the comparison exist)');
+        ok(
+          !!preDiag && preDiag.kind === postDiag?.kind && preDiag.severity === postDiag.severity && preDiag.hint === postDiag.hint,
+          `the pre-load frame contributes EXACTLY as the post-load one does — same kind/severity/hint (pre=${preDiag?.kind}/${preDiag?.severity}, post=${postDiag?.kind}/${postDiag?.severity})`,
+        );
+
+        // Non-vacuity for the run itself: opening the transport before navigation did not disturb
+        // the genuine pipeline, so an absent pre-load frame above would mean "dropped", never
+        // "this run emitted nothing".
+        ok(obs.state.paintAtMs !== null, 'the run still painted (the genuine nonce-authenticated paint frame landed)');
+        ok(obs.state.contained === true, `the run's own genuine verdict still landed unchanged (got ${JSON.stringify(obs.state.contained)})`);
       } finally {
         obs.detach();
         await dispose();
