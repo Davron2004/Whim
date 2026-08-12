@@ -80,6 +80,38 @@ A frame the outer page rejected as a forgery SHALL be recorded as the **fact** o
 - **WHEN** a candidate posts more forged frames with large attacker-chosen payloads than the harness's declared cap
 - **THEN** the report records that forgeries were rejected and a count saturated at that cap rather than the true number, and no byte of any forged payload appears in the report, its diagnostics, or any log line
 
+### Requirement: Host observation channels are unreachable from the candidate realm
+
+The harness SHALL ensure that every host-side channel it opens for observation or capability dispatch is unreachable **as a capability** from the candidate's opaque-origin sandboxed realm — not merely undefined by name. A channel whose name has been deleted from the sandbox realm's global while the underlying binding machinery remains reachable there SHALL NOT be considered isolated, because candidate code can restore the name from that machinery in one call.
+
+This strengthens "Observation is trusted-vantage only" above. That requirement guarantees the *absence of the host transport global* from the sandbox realm, and that guarantee still holds and is still asserted. It is not sufficient on its own: the binding machinery beneath the global is installed by the browser on every execution context and cannot be scoped away, so absence of the name is a hardening measure while host-side refusal is the guarantee.
+
+The harness SHALL establish the provenance of a frame arriving at its host relay rather than accepting the frame's own claim to be trusted. A frame SHALL be attributable to the main frame before it is treated as a nonce-authenticated observation; the outer page's nonce check governs which frames it posts, and the harness SHALL NOT treat a frame that never transited the outer page as though it had. Provenance is an additional necessary condition and SHALL NOT replace the trusted flag: a frame must be both main-frame-attributable and trusted.
+
+An authenticated containment verdict, once observed, SHALL NOT be silently replaceable by a later frame. The harness SHALL NOT resolve competing verdicts by last-writer-wins, because that converts any writable channel into a verdict override. A verdict SHALL only ever move in the fail-closed direction: once a breach has been observed, neither a later passing verdict nor a later malformed payload SHALL soften it, and a refused transition SHALL be recorded rather than dropped.
+
+The harness's own suite SHALL assert capability-level unreachability for each such channel, and that assertion SHALL fail — naming the reachable channel — while any channel remains reachable.
+
+#### Scenario: The relay cannot be re-acquired from inside the sandbox
+
+- **WHEN** candidate code inside the opaque-origin sandboxed realm attempts to restore the host relay binding from the underlying binding machinery and post a frame claiming to be trusted
+- **THEN** the frame does not reach the harness's observation state, and the run's containment verdict is unaffected by it
+
+#### Scenario: Host syscall dispatch cannot be reached from inside the sandbox
+
+- **WHEN** candidate code inside the opaque-origin sandboxed realm hand-rolls a syscall frame to the host dispatch channel, bypassing the sandbox-side syscall shim and its generation fence
+- **THEN** the call is refused, no host capability is invoked, and no syscall is recorded host-side as legitimate
+
+#### Scenario: An observed verdict is not overridden by a later frame
+
+- **WHEN** a nonce-authenticated `probes` frame has established a containment verdict and a later frame reports a different verdict
+- **THEN** the run's verdict is not silently replaced by the later frame
+
+#### Scenario: An observed breach is not laundered through a malformed frame
+
+- **WHEN** a breach has been observed and a later authenticated frame carries a malformed containment payload, followed by a frame claiming containment held
+- **THEN** the breach verdict stands, is not softened to an unobserved verdict, and the later claim is refused
+
 ### Requirement: Interaction sweep covers the interactive surface with fingerprint dedup
 
 Per rendered screen the harness SHALL enumerate interactive SDK elements from outside the realm (CDP), fingerprint each as (component kind, label/accessible text, DOM path), and act on each fingerprint exactly once in sorted order: tap `Button`/`Card`/`ListItem`; type canonical values into `TextInput`/`NumberInput`; toggle `Switch`/`Checkbox` on and off; select each `SegmentedControl` option; drag `Slider` to min and max; interact inside a present `Modal` before backdrop-dismissing it. The harness SHALL re-enumerate after every action and SHALL terminate the per-screen sweep on no-unvisited-fingerprints, the per-screen action cap, or the global budget — whichever comes first. A truncated sweep SHALL be marked in the report, never silently reported as complete.

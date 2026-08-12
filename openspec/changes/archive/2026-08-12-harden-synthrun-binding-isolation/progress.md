@@ -264,3 +264,69 @@ Ledger. Appended as it happens, never batched.
   last stale comment of the class the reviewer flagged twice: `rejectedForgeries` is still documented as
   counting only what the outer page rejected, while the field directly below it documents host
   provenance refusals as a *subset* of it. The two comments contradict each other in the same struct.
+- `report-received` + `integrity-ok` + `merged` — chain-5 `forgery-tally-doc`, commit `8555640`, merged
+  `377ce40`. Comment-only, verified by the dispatcher.
+- `gate-full-pass` (final) — `./scripts/gate-full.sh` exit 0 on the final merged tip:
+  `FULL GATE PASSED`, `✓ synthrun acceptance: 169 checks passed`.
+- `specs-synced` — `openspec validate --all --strict` 43 passed / 0 failed. Commit `b2fe821`.
+
+## Closing summary
+
+**Chains run:** 5. chain-1 `host-frame-provenance` (the fix), chain-2 `capability-reachability-acceptance`
+(the red-checked acceptance suite), chain-3 `stale-transport-comment`, chain-4 `reviewer-findings`,
+chain-5 `forgery-tally-doc`. **Redispatches: 0** — every chain came back complete and gate-green on its
+first attempt. **Merge conflicts: 0. Halts: 0. Parked branches: 0.**
+
+**Deviations by class:** 12 Class-A across five chains, all accepted and each argued above. **Zero Class-B
+(no chain was blocked or needed adjudication against the spec). Zero Class-C.** No protected or Class-2
+file was touched by any chain; every integrity check returned exit 0 against its declared allowlist.
+
+**Reviewer verdict:** sound, no must-fix blockers. 7 findings — 5 fixed (F1, F2, F4, F7 plus the
+dispatcher's doc drift), 2 noted as pre-existing and out of scope (F5, F6), 1 escalated (F3).
+
+**Two Class-A deviations improved on the design rather than merely departing from it**, and both are the
+kind of thing only the person holding the actual state machine can see:
+- chain-1's A3 closed a `false → null → true` laundering route that D3's transition table, keyed on the
+  current value, left open.
+- chain-4 then proved A3 was **untested** — the shipped fence was indistinguishable from a weaker one
+  that reopened that exact route, and the whole 165-check suite would have stayed green through the
+  regression. Its discriminating red-check is the single most valuable artifact this run produced.
+
+**What shipped:** `139 checks passed, 1 QUARANTINED` → **`169 checks passed, 0 QUARANTINED`**. The
+quarantined assertion that named this change is now a live acceptance test, joined by three siblings —
+one per spec scenario plus the laundering case.
+
+### Follow-ups this run produced, in priority order
+
+1. **`invariants/sandbox-isolation/bridge/runner.mjs:72` carries the identical vulnerability.** Unguarded
+   `page.exposeFunction('whimHostDispatch', host.dispatch)`, no provenance check, no scrub. A hostile
+   bundle in the bridge-invariants suite can reach the real dispatcher from the opaque-origin realm, so
+   that suite's invariant #1 ("storage reachable only as syscalls") is not currently proving its property.
+   Owner-authored Class-2, correctly untouched here. **Needs its own change.** Sobering detail: this
+   run's own research read that exact line, cited it as *precedent* for the exposure pattern, and did
+   not notice it shared the flaw.
+2. **`synthrun:test` is absent from CI** (`.github/workflows/invariants.yml`), along with `vstore:test`,
+   `sdk:test`, `server:e2e`, `launcher:deliver-verify`. So CI does not exercise this fix; `gate-full.sh`
+   locally is the only verification. CLAUDE.md's "CI is effectively `gate-full.sh` on every push" is
+   inaccurate today. The file is unprotected — deliberately not closed here (D6).
+3. **SonarCloud does not analyze PRs based on `redesign`** — the Sonar round returned `gate: NONE`, which
+   is no analysis rather than a pass.
+4. **`redesign` has no branch-protection ruleset** while `main` has a full one. Worth adding if agent
+   runs keep targeting it as a base.
+5. **A refused verdict override is found by diagnostic *message*, not kind** — brittle. A dedicated
+   `DiagnosticKind` would be cleaner but touches `checks/contract.ts`'s closed union.
+6. `observe.ts`'s refusal diagnostic is uncapped where its sibling counter saturates (F5, not
+   candidate-drivable today); `HANDOFF-v1-sprint.md` documents the quarantine mechanism chain-2 deleted
+   (F6, stale before this change).
+7. **If `allow-popups` is ever added to the iframe's `sandbox` attribute**, the dispatch guard must move
+   to `page.exposeBinding` in the same change — see design.md's risk register.
+
+### MEMORY proposals collected from implementer reports
+
+Two, both deduped and judged durable; applied by the dispatcher:
+- Playwright's `exposeFunction` is `exposeBinding` with a wrapper that discards the browser-supplied
+  `{context, page, frame}` source. Any host channel a sandboxed realm can reach must use `exposeBinding`
+  + a `source.frame !== page.mainFrame()` guard; name-scrubbing cannot substitute, because the raw CDP
+  binding is global to the target and re-mintable in-realm.
+- A test that passes against two different implementations proves neither. The discriminating red-check
+  is against the plausible *weaker variant* of a guard, not merely against the guard removed.
