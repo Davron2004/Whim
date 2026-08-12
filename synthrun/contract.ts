@@ -114,8 +114,11 @@ export interface RunOptions {
    *  navigation — the seam for setup that must be live before the delivered page's inline
    *  scripts run: chain 2's CDP `Runtime.enable` (a candidate can throw before the
    *  nonce-handshake's slower `toRN()` frame channel would ever catch it — `handoff/
-   *  observe-api.md`'s `attachObserversEarly`); chain 3's `context.exposeFunction(
-   *  'whimHostDispatch', ...)`. Multiple concerns compose by wrapping: `session.openRun(source,
+   *  observe-api.md`'s `attachObserversEarly`); chain 3's `context.exposeBinding(
+   *  'whimHostDispatch', ...)` — `exposeBinding`, never `exposeFunction`, because only the former
+   *  keeps the calling frame's browser-derived identity, which is what refuses a syscall frame
+   *  hand-rolled inside the candidate's own realm (`capability.ts`, design D2). Multiple concerns
+   *  compose by wrapping: `session.openRun(source,
    *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
   beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
   /** Cancellation (chain 6, design D8, generation-loop spec "Cancellation aborts the pipeline at

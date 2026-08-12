@@ -115,3 +115,35 @@ Ledger. Appended as it happens, never batched.
   `synthrun/contract.ts:118`, which chain-1 flagged but could not reach inside its declared scope.
   chains.md updated to declare `synthrun/contract.ts` in chain-2's partition. Safe because chain-2 is
   `after: chain-1` — file-disjointness constrains *concurrent* chains, and nothing else is in flight.
+- `dispatched` — chain-2 `capability-reachability-acceptance`, BASE `6e6acd7`, worktree
+  `.claude/worktrees/synthrun-binding-2`, branch `chain/synthrun-binding-2`.
+- `report-received` — chain-2 STATUS complete, GATE PASS, `synthrun:test` exit 0:
+  **`165 checks passed, 0 QUARANTINED`** (from `139 passed, 1 QUARANTINED`). Commit `36443d0`.
+  **The red-check evidence is the deliverable and it is real.** Each guard was neutered one at a time
+  per the contract's recipe and the suite re-run:
+  - 2.1 neutered → 5 failures, reproducing the contract's measured pre-fix numbers exactly (verdict
+    `true→false`, events +2, diagnostics 0→1, `hostProvenanceRefusals` stuck at 0).
+  - 2.2 neutered → 4 failures **reproducing the original exploit verbatim**, including the sysret
+    `{"ok":true}`, the `storage.kv.set` trace entry, and the written value readable back as `'yes'`.
+  - 2.3 neutered → 3 failures (a later `true` replaced the observed breach; no refusal diagnostic).
+  Guards verified restored: `git diff BASE..chain -- synthrun/observe.ts synthrun/capability.ts` empty,
+  and neither file appears in the commit.
+- `deviations-adjudicated` (chain-2) — four Class-A, all accepted:
+  - **A1** Test 2.1 posts a `{contained:false}` sibling alongside the specified `{contained:true}` frame.
+    Correct and necessary: on a harmless run the genuine verdict is already `true`, so "the verdict is
+    unaffected" would have been **vacuous** under a single-guard neuter. The sibling is what gives the
+    verdict axis teeth. This is the same vacuity trap that let the previous change ship a passing
+    assertion over a live vulnerability — caught here by the implementer, not by me.
+  - **A2** The `quarantined` helper became entirely unused and eslint's dead-code rule rejected it, so it
+    and the now-permanently-empty `quarantines` array / `QUARANTINED` summary suffix were removed. The
+    gate decided, which is the sanctioned way for this call to be made. **Recorded for retrieval**: a
+    future quarantine must re-add the helper; it is in git history at
+    `6e6acd7:synthrun/test/acceptance.ts`.
+  - **A3/A4** A stale comment above `RELAY_REBIND_PROBE` refreshed; test 2.2 placed in `testObservers()`
+    beside its siblings to reuse the existing session rather than launching another browser.
+  - **Tripwire candidate (pattern now seen in 2+ chains):** stale doc comments naming `exposeFunction`
+    as the transport. chain-1 fixed two and flagged one; chain-2 fixed that one and flagged another at
+    `synthrun/session.ts:16`. Three occurrences across two chains is a pattern, so it is dispatched as
+    chain-3 rather than left as a reviewer note.
+- `integrity-ok` (chain-2) — exactly the two declared files; guards byte-identical.
+- `merged` — `c39e043`. All 11 tasks in tasks.md ticked.

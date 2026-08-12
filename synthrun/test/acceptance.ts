@@ -42,7 +42,6 @@ const NAVIGATION_DEMO_FIXTURE = path.join(ROOT, 'fixtures/navigation-demo.app.ts
 
 let passed = 0;
 const failures: string[] = [];
-const quarantines: string[] = [];
 
 function ok(cond: boolean, msg: string): void {
   if (cond) {
@@ -61,24 +60,6 @@ async function test(name: string, fn: () => void | Promise<void>): Promise<void>
     failures.push(`${name}: threw ${(err as Error).message}`);
     console.error(`  ✗ ${name} THREW: ${(err as Error).stack}`);
   }
-}
-
-/**
- * Registers a test that is NOT run, because it is currently unsound rather than merely broken —
- * it would assert a property this suite cannot construct today. Deliberately loud: it prints, it
- * is counted, and the summary line always names the total, so a quarantine cannot quietly become
- * permanent the way a commented-out test does. It never affects the exit code (a quarantined
- * test proves nothing, so it must not be able to fail OR to pass). `reason` must say what would
- * make the test sound again, not merely that it flakes.
- */
-function quarantined(name: string, reason: string, fixtureItNeeds: string): void {
-  quarantines.push(`${name} — ${reason}`);
-  console.warn(`⚠ QUARANTINED (not run): ${name}\n    ${reason}`);
-  // The parked test's fixture is otherwise unreferenced, so a tidy-up pass would delete it as
-  // dead code and the quarantine could never be lifted without reconstructing it. Naming it here
-  // both keeps it alive and asserts it is still present — the one thing about a parked test that
-  // can still silently rot.
-  ok(fixtureItNeeds.length > 0, `the quarantined test's fixture is still present: ${name}`);
 }
 
 async function main(): Promise<void> {
@@ -140,15 +121,13 @@ async function main(): Promise<void> {
   await testRunCandidate();
 
   console.log('');
-  const quarantineNote = quarantines.length === 0 ? '' : `, ${quarantines.length} QUARANTINED`;
   if (failures.length === 0) {
-    console.log(`✓ synthrun acceptance: ${passed} checks passed${quarantineNote}`);
-  } else {
-    console.error(`✗ synthrun acceptance: ${failures.length} FAILED, ${passed} passed${quarantineNote}`);
-    for (const f of failures) console.error('  - ' + f);
-    process.exit(1);
+    console.log(`✓ synthrun acceptance: ${passed} checks passed`);
+    return;
   }
-  for (const q of quarantines) console.warn('  ⚠ ' + q);
+  console.error(`✗ synthrun acceptance: ${failures.length} FAILED, ${passed} passed`);
+  for (const f of failures) console.error('  - ' + f);
+  process.exit(1);
 }
 
 // A component that throws SYNCHRONOUSLY on its first render. Line 4 (the `throw`) is the
@@ -266,10 +245,10 @@ function Home() {
 export default defineApp({ name: 'Flood', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
-// The single line of candidate-reachable code that defeats chain 2's name-level scrub: Playwright's
-// own binding controller survives in the opaque-origin sandbox realm, so the deleted binding can be
-// re-minted there. Kept verbatim (and kept alive) by the QUARANTINED confinement case below, which
-// is the only thing in this suite that would execute it.
+// The single line of candidate-reachable code that defeats the name-level scrub: Playwright's own
+// binding controller survives in the opaque-origin sandbox realm, so the deleted binding can be
+// re-minted there. Executed for real by the capability-level confinement case below, which asserts
+// that the re-minted binding — a live host channel — still reaches nothing.
 const RELAY_REBIND_PROBE = `globalThis['__playwright__binding__controller__'].addBinding('${RELAY_BINDING_NAME}')`;
 
 // Posts a forged, UNAUTHENTICATED "probes: contained" frame straight to the host (bypassing the
@@ -646,32 +625,189 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // ── 4.2b: the property the spec actually demands — QUARANTINED because it FAILS TODAY. ─────
+    // ── 4.2b: the property the spec actually demands, and the reason this case was quarantined ──
     //
-    // 4.2a above pins a NAME-level fact: `page.exposeFunction` defines its wrapper in every frame
-    // of the page (the opaque-origin sandbox iframe included), and chain 2's init-script shim
-    // deletes it there. That is real and worth locking. It is NOT the same property as the spec's
-    // "the host relay binding is unreachable from inside the sandboxed realm", and this suite must
-    // not let the weaker one stand in for the stronger.
+    // 4.2a above pins a NAME-level fact: the exposed binding's wrapper is defined in every frame of
+    // the page (the opaque-origin sandbox iframe included), and the init-script shim deletes it
+    // there. That is real and worth locking, but it is NOT the spec's "the relay cannot be
+    // re-acquired from inside the sandbox": Playwright's own `__playwright__binding__controller__`
+    // survives in that realm, and the single line held in `RELAY_REBIND_PROBE` re-mints the deleted
+    // binding — deleting a name never removed the capability that mints it. This case was
+    // QUARANTINED for exactly that reason and is un-quarantined here, unchanged in what it demands.
     //
-    // Verified by execution against this very build, not by reading: Playwright's own
-    // `__playwright__binding__controller__` survives in the sandbox realm as an `object`, and the
-    // single line held in `RELAY_REBIND_PROBE` below re-adds the binding — `typeof` goes back to
-    // `'function'`, calling it reaches the host relay callback, and a frame handed to it with
-    // `trusted: true` sets the run's containment verdict (forced to both `false` and `true` in
-    // separate reproductions, after the genuine verdict had already landed). Deleting the name
-    // does not remove the capability that mints it.
+    // What makes the channel inert is the HOST-SIDE provenance guard on the binding callback: frame
+    // identity is derived by the browser from the calling execution context, never from anything the
+    // page supplies, so a call that did not originate in `page.mainFrame()` is refused before one
+    // attacker-chosen byte is parsed. The candidate keeps the ability to CALL and loses the ability
+    // to be BELIEVED.
     //
-    // The hole is PRE-EXISTING (it predates this change), is tracked by its own change, and is
-    // deliberately NOT fixed or weakened here. A quarantined honest test is the deliverable; a
-    // green one that asserted only the name would be the exact failure mode this change exists to
-    // eliminate. Un-quarantine it when the capability — not just the name — is gone from the
-    // realm (e.g. the relay no longer travels through a binding the candidate's realm can re-mint).
-    quarantined(
-      'confinement: the host relay is unreachable as a CAPABILITY from the sandbox realm (spec "The relay binding is not reachable from the sandbox realm")',
-      'FAILS TODAY, deliberately parked: the binding is scrubbed by NAME only. Playwright\'s __playwright__binding__controller__ survives in the sandbox realm and re-adds it (verified end-to-end: the re-minted binding reaches the host relay and can set the run\'s containment verdict). Pre-existing and tracked by its own change; sound again once the realm cannot re-mint the binding.',
-      RELAY_REBIND_PROBE,
-    );
+    // RED-CHECKED against pre-fix behaviour (task 2.4) by neutering that guard: the two frames below
+    // then land in the observation state verbatim — events +2, diagnostics 0 → 1, the run's verdict
+    // driven true → false, and `hostProvenanceRefusals` stuck at 0.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('confinement: the RE-MINTED host relay is inert as a CAPABILITY from the sandbox realm (spec "The relay cannot be re-acquired from inside the sandbox")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await waitUntil(() => obs.state.contained !== null, 3000);
+        ok(obs.state.contained === true, `baseline: the run's own genuine verdict landed first, so any change below is this probe's doing (got ${JSON.stringify(obs.state.contained)})`);
+
+        const frame = await findAppFrame(ctx.page);
+        const before = {
+          events: obs.state.events.length,
+          diagnostics: obs.state.diagnostics.length,
+          paintAtMs: obs.state.paintAtMs,
+          refusals: obs.state.hostProvenanceRefusals ?? -1,
+        };
+        ok(before.refusals === 0, `baseline: no host-side provenance refusal has happened yet in this run (got ${before.refusals})`);
+
+        const relayBefore = await frame.evaluate((name: string) => typeof (globalThis as unknown as Record<string, unknown>)[name], RELAY_BINDING_NAME);
+        await frame.evaluate(RELAY_REBIND_PROBE);
+        const relayAfter = await frame.evaluate((name: string) => typeof (globalThis as unknown as Record<string, unknown>)[name], RELAY_BINDING_NAME);
+        ok(relayBefore === 'undefined', `${RELAY_BINDING_NAME} starts scrubbed in the sandbox realm (got ${relayBefore})`);
+        // NON-VACUITY, and the whole point of this case: the re-mint SUCCEEDS. Everything below is
+        // asserted against a live host binding the candidate really did re-acquire — not against an
+        // absent name, which is what 4.2a already covers.
+        ok(relayAfter === 'function', `the sandbox realm CAN re-mint ${RELAY_BINDING_NAME} from Playwright's binding controller — the assertions below run against a live host channel (got ${relayAfter})`);
+
+        // Both verdict directions over that re-minted binding, each tagged `trusted:true`: the first
+        // is the dangerous claim (containment held), the second is the one whose acceptance would be
+        // visible in `state.contained` — without it "the verdict is unaffected" would be vacuous
+        // here, since this run's genuine verdict is already `true`.
+        const posted = await frame.evaluate(
+          async ([name, marker]: [string, string]) => {
+            const g = globalThis as unknown as Record<string, (s: string) => Promise<unknown>>;
+            await g[name](JSON.stringify({ kind: 'probes', trusted: true, payload: { contained: true, marker } }));
+            await g[name](JSON.stringify({ kind: 'probes', trusted: true, payload: { contained: false, marker } }));
+            return 'posted';
+          },
+          [RELAY_BINDING_NAME, FORGED_PAYLOAD_MARKER] as [string, string],
+        );
+        ok(posted === 'posted', `both frames were actually handed to the re-minted ${RELAY_BINDING_NAME} binding and the host answered each call (got ${posted})`);
+        await wait(200);
+
+        ok(obs.state.contained === true, `a frame posted through the re-minted ${RELAY_BINDING_NAME} binding cannot move the run's containment verdict (got ${JSON.stringify(obs.state.contained)})`);
+        ok(obs.state.events.length === before.events, `no frame from the re-minted ${RELAY_BINDING_NAME} binding reached the observation state at all (events ${before.events} → ${obs.state.events.length})`);
+        ok(obs.state.diagnostics.length === before.diagnostics, `the re-minted ${RELAY_BINDING_NAME} binding produced no diagnostic — nothing it said was believed (diagnostics ${before.diagnostics} → ${obs.state.diagnostics.length})`);
+        ok(obs.state.paintAtMs === before.paintAtMs, `the re-minted ${RELAY_BINDING_NAME} binding could not restate the run's paint timing (got ${obs.state.paintAtMs})`);
+        // Refused, not merely dropped: the attempt is accounted for host-side, at fixed size.
+        ok(
+          obs.state.hostProvenanceRefusals === before.refusals + 2,
+          `both calls on the re-minted ${RELAY_BINDING_NAME} binding are counted as host-side provenance refusals (${before.refusals} → ${obs.state.hostProvenanceRefusals})`,
+        );
+        ok(!JSON.stringify(obs.state).includes(FORGED_PAYLOAD_MARKER), `no byte of the refused payload was read into the observation state — the refusal happens before parsing (${RELAY_BINDING_NAME})`);
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // ── the second host channel the candidate realm can name: `whimHostDispatch` ────────────────
+    //
+    // The legitimate path is `__whimSyscall.call` → the sandbox's one-way `parent.postMessage` →
+    // the outer page's `relaySyscall`, which source-verifies `ev.source === iframe.contentWindow`
+    // before it ever calls the host. This hand-rolls the syscall frame straight onto the host
+    // binding, skipping that shim entirely; the generation fence cannot catch it, because a
+    // hand-rolled `gen:1` frame MATCHES the fence rather than defeating it. Provenance is the layer
+    // that can, so provenance is what is asserted.
+    //
+    // RED-CHECKED (task 2.4) by neutering the same guard on the dispatch binding: the call then
+    // returns a real `ok:true` sysret, a `syscall` entry appears in the host-side trace, and
+    // `engine.kv.get('pwned')` reads back `'yes'` — the original exploit, verbatim.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('confinement: a hand-rolled syscall frame to whimHostDispatch from the sandbox realm invokes nothing (spec "Host syscall dispatch cannot be reached from inside the sandbox")', async () => {
+      const wiring = wireCapabilityBridge(APP_STORAGE);
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS, {
+        appId: APP_STORAGE.appId,
+        beforeNavigate: wiring.beforeNavigate,
+      });
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        const frame = await findAppFrame(ctx.page);
+        const probe = await frame.evaluate(async (raw: string) => {
+          const g = globalThis as unknown as {
+            top?: unknown;
+            whimHostDispatch?: (s: string) => Promise<string | null>;
+            __whimSyscall?: { call?: unknown };
+          };
+          const reachable = typeof g.whimHostDispatch;
+          const sysret = typeof g.whimHostDispatch === 'function' ? await g.whimHostDispatch(raw) : 'THE NAME WAS NOT REACHABLE';
+          return { isSubordinateRealm: g.top !== g, reachable, sysret, shimKind: typeof g.__whimSyscall?.call };
+        }, JSON.stringify({ whim: 'syscall', v: 1, id: 99, gen: 1, method: 'storage.kv.set', params: { key: 'pwned', value: 'yes' } }));
+
+        // Non-vacuity, both halves: this really is the candidate's own realm, the sandbox-side shim
+        // being bypassed really is installed there, and the host dispatch NAME really is reachable
+        // from it (it cannot be removed — the raw binding is installed on every execution context of
+        // the target). If the last of these ever goes red, the refusal assertions below stop meaning
+        // anything and must be re-derived rather than trusted.
+        ok(probe.isSubordinateRealm, 'the evaluated realm really is the subordinate sandbox realm, not the outer page');
+        ok(probe.shimKind === 'function', `the sandbox-side syscall shim __whimSyscall.call — the path this frame deliberately bypasses — is installed in that realm (got ${probe.shimKind})`);
+        ok(probe.reachable === 'function', `whimHostDispatch is reachable BY NAME from the sandbox realm, so what follows tests the capability rather than the name (got ${probe.reachable})`);
+
+        ok(probe.sysret === null, `the hand-rolled frame on whimHostDispatch is refused with no sysret at all (got ${JSON.stringify(probe.sysret)})`);
+        ok(wiring.trace.length === 0, `nothing was recorded host-side for the hand-rolled whimHostDispatch call — not even as a denial (got ${JSON.stringify(wiring.trace)})`);
+        ok(!wiring.trace.some((t) => t.kind === 'syscall' && t.method === 'storage.kv.set'), 'no storage.kv.set is recorded on whimHostDispatch as a legitimate syscall');
+        // The sharpest assertion available: the original exploit really wrote through to the
+        // storage engine, so read the engine back directly rather than trusting the trace.
+        ok(wiring.realm?.engine?.kv.get('pwned') === undefined, `no value written by the hand-rolled whimHostDispatch call is readable back from the run's storage engine (got ${JSON.stringify(wiring.realm?.engine?.kv.get('pwned'))})`);
+
+        // Red-check on the SAME wiring: the identical method, from the one legitimate vantage, IS
+        // dispatched and IS readable back. Without it, every assertion above would also pass against
+        // a dead engine or an unlaunched realm.
+        const hostSysretRaw = await wiring.dispatch(JSON.stringify({ whim: 'syscall', v: 1, id: 100, gen: 1, method: 'storage.kv.set', params: { key: 'host-write', value: 'ok' } }));
+        const hostSysret = hostSysretRaw ? (JSON.parse(hostSysretRaw) as { ok: boolean }) : null;
+        ok(hostSysret?.ok === true, `the same storage.kv.set from the host's own vantage succeeds (got ${hostSysretRaw})`);
+        ok(wiring.realm?.engine?.kv.get('host-write') === 'ok', 'and its value IS readable back — the engine and the method are live, only the sandbox-realm caller is refused');
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
+
+    // ── an observed verdict is not overridden by a later frame ──────────────────────────────────
+    //
+    // Posted from the OUTER page's own realm — the trusted vantage every genuine frame travels
+    // (`relayFromOuterPage` above), so nothing here is smuggled past the provenance guard or the
+    // nonce check: this is a frame the harness fully believes, arriving after a breach it already
+    // believed. The rule is fail-closed rather than first-write-wins, so `true → false` still
+    // passes straight through (asserted first, and it is what makes the second half non-vacuous)
+    // while `breach → true` is refused.
+    //
+    // RED-CHECKED (task 2.4) by neutering the monotonicity fence: the later frame then flips the
+    // verdict back to `true` and no refusal diagnostic is recorded — a silent replacement.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('an observed verdict is not overridden by a later frame (spec "An observed verdict is not overridden by a later frame")', async () => {
+      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
+      try {
+        await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await waitUntil(() => obs.state.contained !== null, 3000);
+        ok(obs.state.contained === true, `baseline: the run's genuine verdict is contained (got ${JSON.stringify(obs.state.contained)})`);
+
+        await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: false } });
+        await waitUntil(() => obs.state.contained === false, 2000);
+        ok(obs.state.contained === false, `a later authenticated breach still downgrades an earlier "contained" — the channel is live and monotonic downward (got ${JSON.stringify(obs.state.contained)})`);
+        const breaches = obs.state.diagnostics.filter((d) => d.kind === 'containment_failure');
+        ok(breaches.length === 1, `the breach is recorded exactly once (got ${breaches.length})`);
+
+        await relayFromOuterPage(ctx, { kind: 'probes', trusted: true, payload: { contained: true } });
+        await wait(200);
+        ok(obs.state.contained === false, `a later authenticated frame claiming containment held does NOT replace the observed breach on the authenticated probes channel (got ${JSON.stringify(obs.state.contained)})`);
+        // "Not silently": the refusal is a diagnostic, so a suppressed override reads off the report
+        // instead of being inferred from its absence. Found by MESSAGE — the refusal deliberately
+        // reuses `containment_failure`, since a refused override is still exactly the breach this
+        // run observed, never a different or softer finding.
+        const refusal = obs.state.diagnostics.filter((d) => d.kind === 'containment_failure' && d.message.includes('refused, the breach verdict stands'));
+        ok(refusal.length === 1, `the refused transition is visible as its own diagnostic, not silently dropped (got ${refusal.length})`);
+        ok((refusal[0]?.hint.length ?? 0) > 0, 'the refusal diagnostic carries a non-empty hint');
+        ok(
+          !obs.state.diagnostics.some((d) => d.kind === 'containment_unobserved'),
+          'a refused override never softens an observed breach to containment_unobserved',
+        );
+      } finally {
+        obs.detach();
+        await dispose();
+      }
+    });
 
     // ── 4.3: a malformed authenticated verdict payload is UNOBSERVED, never a breach ───────────
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.

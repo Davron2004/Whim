@@ -36,25 +36,25 @@ Design decisions referenced as D1–D6 are in `design.md`. Evidence for every cl
 
 ## 2. The quarantined assertion becomes the acceptance criterion
 
-- [ ] 2.1 In `synthrun/test/acceptance.ts`, replace the `quarantined(...)` call at the
+- [x] 2.1 In `synthrun/test/acceptance.ts`, replace the `quarantined(...)` call at the
       capability-reachability case with a real `await test(...)`: from inside the candidate realm
       (`findAppFrame` + `frame.evaluate`, the established idiom), re-mint the relay binding via the
       existing `RELAY_REBIND_PROBE` and post `{kind:'probes', trusted:true, payload:{contained:true}}`.
       Assert the harness's observation state is unaffected and the refusal is accounted for.
-- [ ] 2.2 Add the host-syscall case: from inside the candidate realm, hand-roll a syscall frame to
+- [x] 2.2 Add the host-syscall case: from inside the candidate realm, hand-roll a syscall frame to
       `whimHostDispatch`, bypassing `__whimSyscall` and its generation fence. Assert the call is
       refused, no host capability is invoked, nothing is recorded host-side as a legitimate syscall,
       and — the sharpest available assertion, since the original exploit really wrote through to the
       storage engine — that no such value is readable back afterwards.
-- [ ] 2.3 Add the verdict-override case: after an authenticated `contained:false`, a later
+- [x] 2.3 Add the verdict-override case: after an authenticated `contained:false`, a later
       authenticated `contained:true` does not flip the verdict, and the refused transition is visible
       as a diagnostic rather than silently dropped.
-- [ ] 2.4 **Red-check each of 2.1–2.3** against pre-fix behaviour — temporarily neuter the chain-1 guard
+- [x] 2.4 **Red-check each of 2.1–2.3** against pre-fix behaviour — temporarily neuter the chain-1 guard
       in the worktree, confirm each new assertion fails, then restore. A security test that has never
       been observed failing is indistinguishable from one firing at a dead channel. Report the observed
       red output for each. The existing name-level test (4.2a) and the `contained:false` negative
       control must both keep passing untouched, and the suite's `QUARANTINED` count must drop by one.
-- [ ] 2.5 Correct the stale doc comment at `synthrun/contract.ts:118`, which still names
+- [x] 2.5 Correct the stale doc comment at `synthrun/contract.ts:118`, which still names
       `exposeFunction` as the relay transport. Chain-1 corrected the equivalent comments in its own two
       files and flagged this one as outside its declared scope. Comment only — no behaviour change.
-- [ ] 2.6 `./scripts/gate.sh` green, plus `npm run synthrun:test` green in the worktree.
+- [x] 2.6 `./scripts/gate.sh` green, plus `npm run synthrun:test` green in the worktree.
