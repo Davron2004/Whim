@@ -55,16 +55,26 @@ The shim runs as the FIRST script of EVERY document, and in every realm it:
 - returns immediately unless `globalThis.top === globalThis`; only the main frame goes on to
   define `ReactNativeWebView = { postMessage }` closing over the captured reference.
 
-So after this chain, **`RELAY_BINDING_NAME` is `undefined` in every realm, the main frame
-included** — the transport reaches the host only through the closure. Measured facts behind that
+So after this chain, **`RELAY_BINDING_NAME` is `undefined` in every realm as installed, the main
+frame included** — the transport reaches the host only through the closure. Measured facts behind that
 shape, each verified in a real Chromium against the production page:
 
 - `page.exposeFunction` defines its wrapper in **every frame of the page, the opaque-origin
-  sandboxed iframe included** (`typeof __whimSynthRelay === 'function'` there). The scrub is what
-  makes the containment invariant true; without it, exposing the relay at all — before OR after
-  navigation, as the pre-D1 code did — leaks the host relay into the candidate's realm.
-- `page.addInitScript` likewise runs in every frame; the `top` guard, not the mechanism, is the
-  confinement.
+  sandboxed iframe included** (`typeof __whimSynthRelay === 'function'` there). The scrub is
+  **name-level only**: it makes `typeof __whimSynthRelay === 'undefined'` in the sandbox realm as
+  installed, so a future refactor that drops the scrub or the `top` guard is caught by the live
+  assertion in `synthrun/test/acceptance.ts`. It does **not** make the relay unreachable as a
+  *capability*: Playwright's `__playwright__binding__controller__` (`"object"`) and
+  `__playwright__binding__` (`"function"`) survive in the sandbox realm, and one line of candidate
+  code — `globalThis['__playwright__binding__controller__'].addBinding('__whimSynthRelay')` —
+  re-mints the binding, which then reaches the host relay callback and can set the run's
+  containment verdict (verified end-to-end, both directions). `whimHostDispatch`, exposed at
+  CONTEXT level in `synthrun/capability.ts`, is not scrubbed at all and is directly reachable from
+  the sandbox realm. That residual hole is **pre-existing**, is not fixed or weakened here, and is
+  tracked by the OpenSpec change **`harden-synthrun-binding-isolation`**; the executable record is
+  the single `quarantined(` case in `synthrun/test/acceptance.ts`.
+- `page.addInitScript` likewise runs in every frame; the `top` guard, not the mechanism, is what
+  confines `ReactNativeWebView` to the main frame.
 - A pre-navigation `page.evaluate` global does **not** survive navigation (it belongs to the
   `about:blank` document), so it cannot carry the shim across the commit.
 - The sandbox realm keeps `loader.js`'s own same-named `ReactNativeWebView` stub, untouched. Any

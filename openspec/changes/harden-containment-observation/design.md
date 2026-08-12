@@ -107,9 +107,17 @@ closed vocabulary governed by `harness-diagnostics`.
 
 `assemble.mjs` already emits `rejected-forgery`, and `acceptance.ts:409,719-749` already assert
 the forgery is recorded and the genuine verdict still wins. That signal travels the same relay, so
-D1 is what makes it *reliable*. Post-D1, `null` accompanied by a rejected forgery is
-distinguishable from `null` in silence: the first is a candidate that tried to lie about its own
-containment.
+D1 is what makes it *reliable*.
+
+The tally is **not** a hostility discriminator, and the decision does not rest on it being one.
+The harness's own T6b pen test trips it on every run: `src/runtime/web/probes.js` posts an
+unauthenticated `{__whimHarness:true, kind:'spoof-probe'}` frame from every realm and
+`assemble.mjs` rejects it as `rejected-forgery`, so a clean candidate reports `rejected: true` with
+`count >= 1`, and the count climbs with realm resets (`sweep.ts` calls `reinject({reset:true})`,
+which re-runs the oracle per reset) — it is partly a realm-reset counter. `acceptance.ts` pins
+this baseline. What the recorded signal is good for, and why D5 stands: it is a bounded,
+payload-free record that forgery rejection is occurring at all, and a saturating count that
+separates ordinary operation from a candidate flooding the channel.
 
 Because a forged frame's contents are attacker-controlled:
 
