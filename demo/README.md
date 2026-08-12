@@ -68,3 +68,27 @@ flow file *is* the shot list.
 
 `demo/out/` (rendered videos) and `demo/.pages/` (assembled HTML scratch) are build output —
 gitignored, regenerated on every run.
+
+## (d) Android variant
+
+`demo/android/film.mjs` films the REAL Whim app (the release APK) on a real Android emulator,
+instead of a Chromium rendering of one bundle in isolation:
+
+```sh
+npm run build && cd android && ./gradlew assembleRelease && cd ..   # once, or pass --rebuild
+node demo/android/film.mjs demo/android/flows/tip-splitter.yaml [--out demo/out/] [--rebuild] [--avd <name>]
+```
+
+It boots-or-reuses an emulator, installs the APK, `pm clear`s the app for a fresh seeded first
+run, runs `adb shell screenrecord` in the background while `maestro test` drives a `.yaml` flow
+(Maestro's UI-automation DSL — no Playwright, no `stage.mjs` director API), then pulls and
+remuxes the recording to `demo/out/<flow-name>-android.mp4`. Maestro has no first-class
+fixed-duration "sleep" command; flows use an `extendedWaitUntil: { visible: <never-appears>,
+timeout, optional: true }` idiom for human-paced beats instead.
+
+**WebView-visibility finding**: unlike Playwright/Chromium's cross-origin isolation, Android's
+accessibility tree (what `maestro hierarchy` reads) sees straight through the sandboxed
+opaque-origin iframe — mini-app text (`"Bill"`, `"Reset"`, computed `$` rows) is visible as
+ordinary node `text`, alongside `resource-id: "whim-iframe"`/`"whim-root"`. So the Android flow
+targets in-app content with plain text/relative selectors, no coordinate taps needed, no
+testIDs added.
