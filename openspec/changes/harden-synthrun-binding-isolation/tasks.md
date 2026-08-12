@@ -4,34 +4,34 @@ Design decisions referenced as D1–D6 are in `design.md`. Evidence for every cl
 
 ## 1. Host-side frame provenance for both channels, and a non-overridable verdict
 
-- [ ] 1.1 In `synthrun/observe.ts`, move the relay from `page.exposeFunction(RELAY_BINDING_NAME, …)` to
+- [x] 1.1 In `synthrun/observe.ts`, move the relay from `page.exposeFunction(RELAY_BINDING_NAME, …)` to
       `page.exposeBinding(RELAY_BINDING_NAME, (source, raw) => …)` (D1). Refuse the frame **before**
       parsing and before any mutation of `ObservationState` when `source.frame !== page.mainFrame()`.
       The refusal path must not touch `state.events`, `state.contained`, `state.diagnostics`,
       `state.paintAtMs`, `state.lastActivityAtMs`, or `generation`.
-- [ ] 1.2 Account for a refused frame rather than dropping it silently: increment the existing
+- [x] 1.2 Account for a refused frame rather than dropping it silently: increment the existing
       `rejected-forgery` accounting (respecting `REJECTED_FORGERY_CAP`) so a sandbox-origin attempt is
       visible in the report. Do **not** add a new member to `RUNTIME_OBSERVED_KINDS` — it is a closed
       union mirrored in `checks/contract.ts`; distinguish host-provenance refusals by an additive
       payload field instead (`research.md`, "Existing forgery accounting").
-- [ ] 1.3 Record the load-bearing ordering at the install site (D4): the `installRelayShim` init script
+- [x] 1.3 Record the load-bearing ordering at the install site (D4): the `installRelayShim` init script
       only scrubs the name because the binding is exposed *before* `page.addInitScript` is registered.
       A comment naming the consequence of reversing them. `installRelayShim` itself is retained
       unchanged as defence in depth.
-- [ ] 1.4 In `synthrun/capability.ts`, move `context.exposeFunction('whimHostDispatch', dispatch)` to
+- [x] 1.4 In `synthrun/capability.ts`, move `context.exposeFunction('whimHostDispatch', dispatch)` to
       `context.exposeBinding('whimHostDispatch', (source, raw) => …)` with the same main-frame guard
       (D2). Refuse **before** `dispatcher.handle(raw)` is called, so no capability is invoked and no
       trace entry is recorded as a legitimate syscall. Return the dispatcher's existing "no result"
       shape (`null`) — never an error string describing the guard. Exposure stays at **context** level;
       do not change it.
-- [ ] 1.5 Make the containment verdict monotonic and fail-closed in `recordProbesOutcome`
+- [x] 1.5 Make the containment verdict monotonic and fail-closed in `recordProbesOutcome`
       (`synthrun/observe.ts`) per D3's table: `null → true|false` accepted; `false → true` **refused**
       and recorded as a diagnostic; `true → false` accepted; equal values a no-op. Preserve the
       `boolean | null` tri-state exactly — `null` still never travels without a
       `containment_unobserved` diagnostic, `pushContainmentUnobserved` stays the single minting site,
       `finalizeContainmentVerdict` still closes out, and a malformed payload still yields `null` rather
       than a substituted `false`.
-- [ ] 1.6 `./scripts/gate.sh` green. Note that `synthrun:test` is **not** in the fast gate (decision
+- [x] 1.6 `./scripts/gate.sh` green. Note that `synthrun:test` is **not** in the fast gate (decision
       #55) — chain-1 is not self-proving; chain-2 supplies the acceptance evidence.
 
 ## 2. The quarantined assertion becomes the acceptance criterion
@@ -54,4 +54,7 @@ Design decisions referenced as D1–D6 are in `design.md`. Evidence for every cl
       been observed failing is indistinguishable from one firing at a dead channel. Report the observed
       red output for each. The existing name-level test (4.2a) and the `contained:false` negative
       control must both keep passing untouched, and the suite's `QUARANTINED` count must drop by one.
-- [ ] 2.5 `./scripts/gate.sh` green, plus `npm run synthrun:test` green in the worktree.
+- [ ] 2.5 Correct the stale doc comment at `synthrun/contract.ts:118`, which still names
+      `exposeFunction` as the relay transport. Chain-1 corrected the equivalent comments in its own two
+      files and flagged this one as outside its declared scope. Comment only — no behaviour change.
+- [ ] 2.6 `./scripts/gate.sh` green, plus `npm run synthrun:test` green in the worktree.

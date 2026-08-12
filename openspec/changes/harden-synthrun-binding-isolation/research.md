@@ -108,10 +108,14 @@ Alternatives considered and rejected:
   already does more than the proposal credits it for: it `delete`s the name **and** returns early unless
   `g.top === g`, so **no non-main frame ever gets the `ReactNativeWebView` transport**. The hole is
   entirely underneath it, in Playwright's binding machinery.
-- **Load-bearing ordering, currently undocumented and untested**: `allInitScripts()` orders binding
-  scripts before user scripts (`coreBundle.js:20343-20348`), so the scrub only works because
+- **Load-bearing ordering, currently undocumented and untested**: the scrub only works because
   `exposeFunction` (`observe.ts:428`) is awaited **before** `addInitScript` (`observe.ts:455`).
   **Reverse those two lines and the scrub silently no-ops.**
+  > **Correction (chain-1, verified during implementation).** R1 attributed this to `allInitScripts()`
+  > ordering (`coreBundle.js:20343-20348`). That is an over-read: that path applies only to *fresh frame
+  > sessions*. For this call path the guarantee is **CDP registration order** on the already-created
+  > page. The conclusion is unchanged — do not reorder the two lines — and the comment at the call site
+  > states the accurate reason rather than this one.
 - **Verdict**: `recordProbesOutcome` (`observe.ts:229-247`) assigns `state.contained = contained`
   **unconditionally** — the last-writer-wins mechanism. `state.paintAtMs` is the one field already
   guarded first-write-wins (`observe.ts:451`).

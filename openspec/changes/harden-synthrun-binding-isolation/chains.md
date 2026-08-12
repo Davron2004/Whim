@@ -21,7 +21,7 @@ chain is wrong: stop and report rather than self-marking HUMAN-BOOTSTRAP and pro
 File partition (no two chains without a declared `after:` share a file):
 
 - chain-1 — `synthrun/observe.ts`, `synthrun/capability.ts`
-- chain-2 — `synthrun/test/acceptance.ts`
+- chain-2 — `synthrun/test/acceptance.ts`, `synthrun/contract.ts` (one stale doc comment, task 2.5)
 
 The two are strictly serial (`after: chain-1`): chain-2's assertions are the acceptance criterion for
 chain-1's guard and cannot be red-checked before it exists. They are file-disjoint, so the serialization

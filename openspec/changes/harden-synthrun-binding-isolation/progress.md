@@ -81,3 +81,37 @@ Ledger. Appended as it happens, never batched.
   `synthrun/capability.ts`. Writes `handoff/host-provenance.md`. Instructed to run `npm run synthrun:test`
   as a regression check on top of the fast gate, since decision #55 keeps that suite out of `gate.sh` and
   a green fast gate therefore does not prove this chain.
+- `report-received` — chain-1 STATUS complete, GATE PASS (`gate.sh` exit 0), plus `synthrun:test` exit 0
+  (139 checks passed, 1 QUARANTINED — the 4.2b case chain-2 owns). The report carried **measured
+  before/after evidence against the real exploit**, not just a gate verdict: with guards neutered, a
+  forged frame flipped `contained` and a hand-rolled `whimHostDispatch` really wrote `pwned` into the
+  storage engine; with guards in place the same probe leaves state untouched, returns `null`, records no
+  trace entry, and writes nothing. Commit `9b145e9`.
+- `deviations-adjudicated` — three Class-A, all accepted:
+  - **A1** The 1.2 distinguisher landed as an additive `ObservationState` field
+    (`hostProvenanceRefusals?: number`) rather than a `FrameEvent.payload` field. Correct: task 1.1
+    forbids the refusal path touching `state.events`, so no payload could survive it. My task text was
+    internally inconsistent; the implementer resolved it the safe way.
+  - **A2** The refused `false → true` transition reuses `containment_failure` with a distinct message
+    rather than a new `DiagnosticKind` (the union is closed and mirrored in `checks/contract.ts`).
+    Accepted under the constraint. **Noted as a follow-up candidate**: finding a diagnostic by message
+    string is brittle; a dedicated kind would be cleaner but touches `checks/contract.ts`, outside scope.
+  - **A3 — an improvement on my design, accepted gratefully.** D3's table keyed transitions on the
+    *current value*, which left `false → null` (malformed) a legal downgrade and therefore a two-step
+    **`false → null → true` laundering route**. The implementation instead keys the fence on
+    `breachAlreadyObserved(state)` — the presence of a `containment_failure` diagnostic, the permanent
+    record — so a breach can be softened by neither a later `true` nor a malformed payload. `design.md`
+    D3 has been amended to record that the table as I wrote it was not tight enough.
+  - No pattern repeated across chains (only one chain so far) → no tripwire candidates yet.
+- `integrity-ok` — `fixloop.sh integrity chain/synthrun-binding-1` against the declared allowlist: exactly
+  the three declared files, no protected path touched.
+- `merged` + `regate-pass` — `b47f4c8` on the staging branch; `./scripts/gate.sh` exit 0 on the merged tip.
+  Worktree and chain branch cleaned up unsandboxed; no stranded `.git/config` branch sections.
+- `docs-corrected` — two planning docs amended so they do not outlive their accuracy: `research.md`'s
+  attribution of the init-script ordering guarantee to `allInitScripts()` was an over-read (it applies to
+  fresh frame sessions; this call path is governed by CDP registration order — conclusion unchanged), and
+  `design.md` D3 now records the laundering route A3 closed.
+- `scope-widened` — chain-2 picks up task 2.5: the stale `exposeFunction` doc comment at
+  `synthrun/contract.ts:118`, which chain-1 flagged but could not reach inside its declared scope.
+  chains.md updated to declare `synthrun/contract.ts` in chain-2's partition. Safe because chain-2 is
+  `after: chain-1` — file-disjointness constrains *concurrent* chains, and nothing else is in flight.

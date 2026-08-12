@@ -86,6 +86,14 @@ forged frame now fails.
 | `true` | `false` | accepted (a breach observed later is still a breach) |
 | same value | same value | no-op |
 
+> **Strengthened during implementation (chain-1); this table as written was not quite tight enough.**
+> Keying the rule on the *current value* leaves `false → null` (a malformed payload) as a legal
+> downgrade, and therefore leaves a two-step **`false → null → true` laundering route** that defeats the
+> whole rule. The implemented fence instead keys on `breachAlreadyObserved(state)` — the presence of a
+> `containment_failure` diagnostic, i.e. the permanent record — so once a breach is observed, neither a
+> later `true` **nor** a malformed payload can soften it. See `handoff/host-provenance.md` for the
+> implemented table. The tri-state and its single minting site are preserved exactly as specified above.
+
 **Why fail-closed and not first-write-wins.** The spec says only "not silently replaceable". Two readings
 were available; this one is chosen because the asymmetry matches the threat: the dangerous direction is
 the one that *ships an unsafe app*, i.e. pinning `contained: true`. A later honest `false` must still be
