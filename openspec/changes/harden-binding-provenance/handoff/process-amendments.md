@@ -95,13 +95,13 @@ BEFORE (`apply.md:57`, step 13, verbatim and complete):
 AFTER (same line, one clause added; step numbering unchanged):
 
 ```md
-13. Closing summary to progress.md: chains run, redispatches, deviations by class, reviewer verdict. CENSUS DISCHARGE (blocking, before closure): every row of research.md's pattern census classified UNSAFE or NOT-CHECKED that this change does not fix must be appended to `openspec/critic/open-follow-ups.md` with `file:line`, the vulnerability class, and what "done" looks like. Naming it in the report or in progress.md is explicitly NOT sufficient — a finding with no backlog entry is a finding the next run re-derives from scratch (2026-07 `runner.mjs:72`, missed by three consecutive runs). An empty census is a legitimate outcome only if the digest says so. Collect `MEMORY:` proposals from implementer reports, dedupe, and apply the worthwhile ones yourself (each Write prompts the human; unattended → list them for ratification instead). Tell the user the change is ready for a skim of progress.md + the proposal — not the diff — and suggest `/opsx:archive`.
+13. Closing summary to progress.md: chains run, redispatches, deviations by class, reviewer verdict. CENSUS DISCHARGE (blocking, before closure): every row of research.md's pattern census classified UNSAFE that this change does not fix must be appended to `openspec/critic/open-follow-ups.md` with `file:line`, the vulnerability class, and what "done" looks like. Naming it in the report or in progress.md is explicitly NOT sufficient — a finding with no backlog entry is a finding the next run re-derives from scratch (2026-07 `runner.mjs:72`, missed by three consecutive runs). An empty census is a legitimate outcome only if the digest says so. Collect `MEMORY:` proposals from implementer reports, dedupe, and apply the worthwhile ones yourself (each Write prompts the human; unattended → list them for ratification instead). Tell the user the change is ready for a skim of progress.md + the proposal — not the diff — and suggest `/opsx:archive`.
 ```
 
 Mirror into the schema (the enforcing surface for artifact content), appended to the same `research`
 instruction so the obligation travels with the census that creates it:
 
 ```yaml
-      - Every UNSAFE / NOT-CHECKED census row not fixed by this change is filed
+      - Every UNSAFE census row not fixed by this change is filed
       to openspec/critic/open-follow-ups.md before closure (apply.md step 13).
 ```

@@ -10,7 +10,9 @@
 
 - tasks: 1.1–1.5, 4.1
 - rationale: all six tasks build, wire, and evidence one new structural-AST
-  module (`checks/passes/binding-provenance.ts`) reachable through the
+  module (`checks/audit/binding-provenance.ts` — deliberately not under
+  `checks/passes/`, since everything there is a registered `Pass` and this
+  is not one) reachable through the
   existing `checks:test` seam; the dogfooding writeup (4.1) shares the same
   non-vacuity narrative and touches the one other file this chain owns.
 - reads: design.md D1 ("a NEW sibling module... not a `Pass` registered in
@@ -20,8 +22,11 @@
   `ts.isImportCall`); design.md D2 (guard shapes to recognize: page-level
   `source.frame !== page.mainFrame()`, context-level
   `source.frame !== source.page.mainFrame()`); design.md Risks/Trade-offs
-  (first bullet — detector-fails-while-B-unapplied is a feature); design.md
-  Migration Plan steps 1–2; research.md "Pattern census: every Playwright
+  (first bullet — a detector that reds the gate cannot pass its own
+  self-gate, so the guard lands first and the pre-fix proof is pinned to
+  commit 754e2f7); design.md Migration Plan steps 1–2 (reversed ordering:
+  guard first, detector second, evidence pinned to 754e2f7); research.md
+  "Pattern census: every Playwright
   host binding in the repo" (quoted in D1) for the glob roots (`scripts/`,
   `invariants/`, `build/`, `src/`, `server/`, `contract/`, `synthrun/`,
   `checks/`, excluding `node_modules` and `openspec/changes/archive/**`);
@@ -32,7 +37,7 @@
   `handoff/invariants-binding-guard.md`, and chain-3 has no dependency on
   chain-1 at all. The only inter-chain relationship is a build-ORDER
   constraint, captured as `after:` on chain-2 below, not a contract read.
-- files touched: new `checks/passes/binding-provenance.ts`; a new `test()`
+- files touched: new `checks/audit/binding-provenance.ts`; a new `test()`
   in `checks/test/acceptance.ts` (or a sibling module it imports);
   `openspec/critic/open-follow-ups.md` (task 4.1 — unprotected, no
   `openspec/*` pattern in `.claude/hooks/protect-harness.sh`); new
@@ -65,7 +70,8 @@
 - tasks: 2.1–2.3
 - rationale: all three tasks apply, and verify, one exact patch to the
   Class-2-protected bridge invariants runner — subagents are hard-blocked
-  from `invariants/` by `.claude/hooks/protect-harness.sh:103-134`.
+  from `invariants/` by `.claude/hooks/protect-harness.sh:103-135` (the
+  `invariants/*` pattern at `:116`).
 - reads: design.md D2 (inline guards, no shared helper — "a trust
   inversion"); design.md D3 (refusal must be observable — a counter
   mirroring `hostProvenanceRefusals` in `synthrun/observe.ts`; the guard must
@@ -91,8 +97,7 @@
   text comes from `handoff/invariants-binding-guard.md`, and its required
   red-check (neuter the guard to `if (false)`, confirm the hostile write
   LANDS pre-fix, per decision #28) is run locally by the applying human.
-- files touched: `invariants/sandbox-isolation/bridge/runner.mjs` (and
-  possibly `host-shim.ts`, per the handoff contract).
+- files touched: `invariants/sandbox-isolation/bridge/runner.mjs`.
 
 ## chain-3: harness-research-primitive-amendments (HUMAN-BOOTSTRAP)
 
@@ -121,7 +126,8 @@
 - files touched: `.claude/agents/researcher.md`;
   `openspec/schemas/whim-harness/schema.yaml`;
   `.claude/commands/opsx/apply.md`; regenerated `.codex/agents/*.toml` (via
-  `node scripts/sync-codex.mjs --write`, task 3.4).
+  `node scripts/sync-codex.mjs --write`, task 3.4); `docs/capabilities.md`
+  (task 3.5 — unprotected, Class-1, bundled into this chain for locality).
 
 ## Closure (not a chain)
 
@@ -134,11 +140,12 @@ closure step (`gate-full.sh` + reviewer pass), not a fourth authored chain.
 ## File-disjointness
 
 Confirmed against the real task list: chain-1 →
-`checks/passes/binding-provenance.ts`, `checks/test/acceptance.ts` (or
+`checks/audit/binding-provenance.ts`, `checks/test/acceptance.ts` (or
 sibling), `openspec/critic/open-follow-ups.md`,
 `openspec/changes/harden-binding-provenance/evidence-red-check.md`.
-chain-2 → `invariants/sandbox-isolation/bridge/runner.mjs` (+ possibly
-`host-shim.ts`). chain-3 → `.claude/agents/researcher.md`,
+chain-2 → `invariants/sandbox-isolation/bridge/runner.mjs`. chain-3 →
+`.claude/agents/researcher.md`,
 `openspec/schemas/whim-harness/schema.yaml`,
-`.claude/commands/opsx/apply.md`, `.codex/agents/*.toml`. No path appears in
+`.claude/commands/opsx/apply.md`, `.codex/agents/*.toml`,
+`docs/capabilities.md`. No path appears in
 two chains' file lists.

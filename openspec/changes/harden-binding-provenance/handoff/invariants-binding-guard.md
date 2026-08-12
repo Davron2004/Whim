@@ -4,7 +4,7 @@ Class-2 file, subagent-denied. A human applies the three edits below to
 `invariants/sandbox-isolation/bridge/runner.mjs` verbatim — plain `.mjs`, no TS annotations.
 Engine read-back call used: `host.realm.engine.kv.get(key)` — `Host.realm: RealmRecord`
 (`host-shim.ts:47`) → `RealmRecord.engine: StorageEngine | null` (`src/host/bridge/contract.ts:283`)
-→ `kv.get(key): JsonValue | undefined`, sync (`src/host/storage-engine/contract.ts:117`).
+→ `kv.get(key): JsonValue | undefined`, sync (`src/host/storage-engine/contract.ts:118`).
 
 ## Edit 1 + 2 — `scenario()` (`runner.mjs:65-82`): exposeBinding guard + refusal counter
 
@@ -36,7 +36,10 @@ AFTER:
   let hostProvenanceRefusals = 0;
   await page.exposeBinding('whimHostDispatch', (source, raw) => {
     // FIRST statement, before any parse or dispatch: no capability runs for an unauthenticated
-    // caller. `source.page.mainFrame()` because this exposure is page-level, not context-level.
+    // caller. `source.page.mainFrame()` is the CONTEXT-level guard form (design.md D2) — used
+    // here even though this is `page.exposeBinding`, because it resolves correctly regardless of
+    // whether the binding was registered on the page or the context, unlike the page-level form
+    // `source.frame !== page.mainFrame()`, which depends on an outer `page` in closure scope.
     // The refusal returns the dispatcher's own "no result" shape (null), never an error string:
     // `deliverBindingResult` evaluates the returned expression back inside the CALLER's realm, so
     // the return value must carry nothing about the guard.
