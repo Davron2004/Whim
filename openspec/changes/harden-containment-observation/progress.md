@@ -368,5 +368,157 @@ the *interpretation* stated in this change's proposal and in `handoff/run-report
 hostility would be reading the harness's own pen test.
 
 This is a documentation/interpretation defect, not a containment or safety defect, and it was found by the
-chain that wrote the tests rather than by the chain that wrote the field. Disposition pending the final
-reviewer's confirmation.
+chain that wrote the tests rather than by the chain that wrote the field. **Confirmed by the final
+reviewer from code** (`probes.js:194-210` posts the T6b spoof from every realm; `assemble.mjs:146` rejects
+and relays it; `acceptance.ts:362` already ships an assertion pinning `count === 1` for a clean
+candidate). Aggravating: `sweep.ts:440`'s `reinject({reset:true})` re-runs the oracle per realm reset, so
+the count is partly a realm-reset counter. D5's mechanical requirements (bounded, payload-free,
+non-model-facing) were verified to CONFORM; only the interpretation was wrong, and no spec delta sentence
+stated it. Corrected by chain-7.
+
+## Final review (whole change, `63a369d..10b5d47`) — verdict: findings
+
+Independently confirmed by the reviewer, worth recording because they were the load-bearing risks:
+
+- **The three-valued verdict is real end-to-end.** Traced `ObservationState.contained` → `report.ts:145`
+  (verbatim, no coercion) → `RunReport` → `stages/run.ts:63-64` (both non-`true` values discriminated,
+  `null` before the delivery path) → `machine.ts:748` (`!== true`, not `!`) → `unverifiedRunOutcome` →
+  `failureTerminalFor`. Repo-wide grep found no `?? false`, cast, or non-null assertion on the path. The
+  sites chain-3 warned the compiler would NOT flag were in fact fixed by reading.
+- **`RunOutcome` is a genuine third union arm** (`machine.ts:102-105`), exhaustiveness-enforced under
+  `strict` — D8-local satisfied.
+- **The new tests are real, not tautologies**, with one exception (below). `machine.suite.ts:476-517` was
+  singled out as the strongest: exact copy, distinctness, `attempts === 1`, zero repair stages, and a
+  two-turn scripted model so a repair round would *throw* rather than merely fail an assertion.
+- **The user-facing copy is exact and isolated**; `failureTerminalFor` is the only site choosing a reason.
+- **Forgery containment holds**: no forgery reference anywhere in `server/src/` outside comments; the run
+  stage returns `diagnostics: []` on both non-`true` verdicts.
+- **Check-weakening scan: clean.** No Class-1 or Class-2 file touched across the 19-file diff; every
+  eslint disable is one-line, scoped and justified; `server/tsconfig.json` retains `strict: true`, which
+  is what makes the new exhaustive switches actually enforce exhaustiveness.
+
+### Closure blockers raised, and their disposition
+
+1. **Artifacts untracked** — `progress.md`, the `tasks.md` ticks and the whole follow-up change existed
+   only in the working tree, so the verified escape was in no commit. **Fixed**: committed as `4fa928e`.
+2. **`observation-phases.md` stated a security-relevant falsehood** ("the scrub is what makes the
+   containment invariant true"). **Fixed by chain-7.**
+3. **Forgery interpretation wrong in four places.** **Fixed by chain-7.**
+
+### Finding 3 — the central fix was locked by no test (MED, escalated by the dispatcher)
+
+The reviewer found that the `synthetic-run` scenario "A frame emitted before load is not dropped" had NO
+acceptance case, and that reverting the relay back into `finish()` would leave every new test passing —
+the un-quarantined `mount_timeout` case included, because its unbounded-hang fixture emits no frame at
+all, so its assertions hold under both orderings. The reviewer filed this as follow-up; the dispatcher
+escalated it to a closure blocker, on the grounds that a change whose entire purpose is removing an
+intermittent failure must not leave its own fix unprotected.
+
+**Fixed by chain-8, and red-checked against the real regression.** With relay installation moved back into
+`EarlyObservers.finish()` (the pre-fix code verbatim), the new case reported **5 failing assertions**
+(pre-load frame not observed, `readyState` undefined, no diagnostic, no kind/severity/hint match) while
+the post-`load` control frame on the same transport still landed. Restored to green immediately after.
+Chain-8 also confirmed the reviewer's other claim in the same run: the `mount_timeout` case still PASSED
+under the broken ordering.
+
+**Bonus finding from that red-check:** against a candidate wedged in a synchronous hang,
+`page.evaluate`/`exposeFunction` on that page **never resolve**. The pre-chain-2 post-navigation install
+therefore *deadlocks the whole suite* on `FIXTURE_MOUNT_HANG`. Chain-2's fix removed a deadlock class in
+addition to the dropped-frame race — nobody had named that one.
+
+## Human decisions taken at closure
+
+- **Spec sentence amended** (`18029a8`), user-ratified: the confinement requirement now prohibits the
+  *effect* (the host transport global must not be defined outside the top frame, and in particular not in
+  the opaque-origin sandbox realm) and explicitly permits a per-document mechanism provided it is guarded
+  so the global exists only where the frame is the top frame. Rationale: `page.evaluate` is unimplementable
+  pre-navigation (the global dies at document commit) and Playwright offers no main-frame-only
+  per-document hook, so the named mechanism was unsatisfiable; the guard delivers the guarantee that
+  actually matters and was probed against nested candidate iframes, detached frames and popups.
+- **Sentence 3 kept as "unreachable"**, user-ratified, deliberately NOT softened to match the shipped
+  assertion. The change therefore ships with a known, documented, tracked gap against its own spec rather
+  than weakening the spec to match a known-broken implementation. Softening it would have laundered the
+  verified escape into "compliant".
+
+## OPEN AT CLOSURE — `synthetic-run` flake
+
+`gate-full.sh` on the merged tip `ccbd154` FAILED once in `synthetic-run`, with a single assertion:
+`✗ the diagnostic's line resolves through the source map to original line 4 (got undefined)`, inside the
+pre-existing `runtime_throw: source-anchored throw during mount` case (spec §"Throw with a source
+anchor"). 1 FAILED, 136 passed, 1 QUARANTINED.
+
+**Three subsequent standalone `npm run synthrun:test` runs were green (137/0/1)**, as were chain-8's two.
+So it is intermittent and load-dependent — it surfaced only under a full-gate run, after the Chromium
+suites.
+
+Not re-baselined and not pushed past. `chain-9` dispatched (opus/high) to reproduce, diagnose, establish
+whether this change caused it (by reproducing against the pre-change baseline `63a369d` in its own
+worktree), and fix it — with an explicit instruction that weakening, retry-wrapping, sleep-padding or
+quarantining the assertion is not an acceptable outcome, and a class-B stop is preferred to an
+improvised structural change at closure time.
+
+Leading hypothesis handed to it: the CDP exception handler is installed pre-navigation and closes over a
+mutable `sourceMap` slot that `EarlyObservers.finish(ctx)` assigns; `finish()` is now degenerate and does
+nothing else, so an exception processed before that assignment yields a diagnostic with no `line`.
+
+**This one matters beyond its size:** the change exists to eliminate an intermittent `gate-full` failure
+in this exact suite, so shipping it alongside a different intermittent failure in the same suite would
+undercut the result.
+
+### RESOLVED — chain-9: reproduced, diagnosed, proven pre-existing, fixed structurally
+
+**Reproduction (9.1).** Failed on the first standalone worktree run, then 1 more in 5 further runs (2/6
+serial). A throwaway harness driving only `FIXTURE_THROW_ON_MOUNT` through the public API gave a
+controlled signal: serial 1/12 then 0/40; **at parallelism 4 (matching the session's own concurrency),
+15/40 = 37.5%**. Host CPU load alone (8 spinners) did NOT move it — **the race is browser-side**, which is
+exactly why it surfaced under `gate-full`'s concurrent Chromium work and never under a serial suite run.
+
+**Diagnosis (9.2) — hypothesis CONFIRMED at 100% correlation.** The harness sampled
+`early.state.diagnostics.length` synchronously on the tick `openRun` resolved, i.e. before `finish(ctx)`.
+Across **52 samples: every failing run had `diagsBeforeFinish=1`; every passing run had `0`.** The
+`runtime_throw` is recorded by the CDP handler while the closed-over `sourceMap` slot is still `''`, so
+`resolveOriginalLine` is skipped and `line` is emitted permanently `undefined`. The ordering inverts
+because `openRun`'s navigation awaits the **outer page's `load`** while the candidate's
+deliver→mount→throw runs independently; when the throw wins, the CDP event reaches Node first. Measured
+gap between `goto` resolving and `finish` was 0–1 ms in every sample, so `rm(pageDir)` is NOT the window —
+the exception simply arrives earlier.
+
+**Provenance (9.3) — PRE-EXISTING, not a regression.** At `63a369dd` the identical mutable-slot pattern is
+already in `attachObserversEarly`; checked out in the chain's own worktree, the repro failed **9/40** under
+the same conditions. Chain-2's phase split moved the *relay* install earlier and never touched the
+source-map slot. The baseline suite stayed green over 6 serial runs (+3 under CPU load) — consistent with
+a latent race that this change's larger, more concurrent suite made *visible*. Branch restored after.
+
+**Fix (9.4), contained to `synthrun/observe.ts`.** The handler no longer resolves the anchor from whatever
+the slot happens to hold on arrival. It retains the raw wrapped line, parks unanchored diagnostics, and
+`finish(ctx)` drains them exactly once after assigning the map. **No retry, no sleep, no widened window** —
+`line` becomes a function of the evidence rather than of arrival order. The same move as the change's
+headline fix: stop letting a timing accident decide a reported value. The failing assertion was not
+touched.
+
+**Proof.** A new deterministic test forces the adverse ordering (withholding `finish(ctx)` until the throw
+is recorded, with a non-vacuity assertion that it really was): **red 3/3 before the fix, green in every
+run after.** Repro harness: **15/40 fail before → 0/40, and 0/80 at parallelism 8, after** — while a
+post-fix instrumented run still showed the adverse ordering 15/40 times, so the repro stayed
+**non-vacuous**. Suite: 5/5 green serial plus 6 green as 3 concurrent suites (harsher than gate-full).
+
+`merged` chain-9 → `aa66c40`. Suite count is now **139 passed / 0 failed / 1 quarantined** (+2 assertions).
+
+Standing note for future work: the adverse ordering happens in ~37% of runs at concurrency 4, so any code
+reading `state.diagnostics` before `finish(ctx)` must assume the source map may not be applied yet.
+
+## Closure
+
+- `gate-full PASS` on the final tip `aa66c40` — no failures; `synthrun acceptance: 139 passed, 1
+  QUARANTINED`.
+- All nine chain worktrees and branches removed UNSANDBOXED (docs/harness.md §11).
+- Chains run: 6 planned (1–6) + 3 fix chains (7 correct-false-claims, 8 lock-the-ordering-fix,
+  9 fix-sourcemap-anchor-flake). Redispatches: 0. Halts: 0.
+- Deviations by class: **Class A ×13**, all adjudicated and accepted; **Class B ×3** — chain-2's mechanism
+  swap (reclassified from A by reviewer audit; resolved by a user-ratified spec amendment), chain-6's
+  SubagentStop hook defect (harness-level, out of scope, recorded as a memory), and chain-9's flake
+  (resolved in-run). **Class C: none.**
+- Reviewer verdict: findings; all three closure blockers cleared, plus the escalated finding 3.
+- Two findings deliberately carried OUT of this change rather than fixed in it: the verified sandbox
+  binding escape (filed as `harden-synthrun-binding-isolation`, with a quarantined red test naming it) and
+  the SubagentStop hook defect (Class-2, needs human ratification).
