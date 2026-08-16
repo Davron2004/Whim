@@ -2,7 +2,7 @@
  * synthetic-run-harness — capability wiring (design D3, `handoff/capability-trace.md`). Wires
  * the REAL production capability gate/dispatcher/registry against an ephemeral, per-run Node
  * `:memory:` storage engine — the bridge-invariants recipe transplanted verbatim: `launchApp` →
- * `Dispatcher.forRealm` → `context.exposeFunction('whimHostDispatch', …)`. Nothing here
+ * `Dispatcher.forRealm` → `context.exposeBinding('whimHostDispatch', …)`. Nothing here
  * reimplements or approximates authorization; every verdict is the production gate's own.
  *
  * Denials are collected HOST-SIDE at the dispatch function (the only vantage that sees them even
@@ -14,7 +14,7 @@
  * `attachObserversEarly` (`handoff/observe-api.md`) — this module never calls `page.goto` or
  * owns navigation itself; `beforeNavigate` below is the ENTIRE seam.
  */
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Frame, Page } from 'playwright';
 import {
   AppRecord,
   CueBackend,
@@ -54,10 +54,11 @@ export interface CapabilityWiring {
   /** The exposed dispatch: a syscall-frame string in, a sysret string (or `null` when dropped)
    *  out — directly callable (no browser needed) for tests that don't need a real page. */
   dispatch: (frameString: string) => Promise<string | null>;
-  /** `RunOptions.beforeNavigate`-compatible: binds `context.exposeFunction('whimHostDispatch',
-   *  dispatch)`. A no-op when launch failed — nothing to expose; the runtime's fallback relay
-   *  then silently drops any syscall the candidate attempts, and `launchError` is what actually
-   *  surfaces the failure to the caller. */
+  /** `RunOptions.beforeNavigate`-compatible: binds `context.exposeBinding('whimHostDispatch', …)`
+   *  behind a main-frame provenance guard — a call from any other frame (the candidate's own realm
+   *  included) is refused before `dispatch` runs and returns `null`. A no-op when launch failed —
+   *  nothing to expose; the runtime's fallback relay then silently drops any syscall the candidate
+   *  attempts, and `launchError` is what actually surfaces the failure to the caller. */
   beforeNavigate: (page: Page, context: BrowserContext) => Promise<void>;
 }
 
@@ -133,7 +134,25 @@ export function wireCapabilityBridge(appRecord: AppRecord, opts: CapabilityWirin
     trace,
     dispatch,
     beforeNavigate: async (_page, context) => {
-      await context.exposeFunction('whimHostDispatch', dispatch);
+      // `exposeBinding`, never `exposeFunction`: only the former keeps the `{context, page, frame}`
+      // source the browser resolves for every call, and only the calling frame's identity can tell
+      // the outer page's `relaySyscall` — the ONE legitimate caller, which source-verifies
+      // `ev.source === iframe.contentWindow` before it ever calls here — apart from a syscall frame
+      // hand-rolled inside the candidate's realm. The name is reachable there either way (the raw
+      // CDP binding is installed on every execution context of the target), and the generation fence
+      // cannot help: a hand-rolled `gen:1` frame MATCHES it. Provenance is the layer that can, and
+      // frame identity is browser-derived, so the candidate cannot forge it (design D2).
+      await context.exposeBinding('whimHostDispatch', (source: { frame: Frame; page: Page }, raw: string) => {
+        // Refused BEFORE `dispatcher.handle`, so no capability runs and nothing is recorded in
+        // `trace` — an unauthenticated caller must not be able to author the report's syscall log
+        // either. `source.page.mainFrame()` because the exposure is context-level (deliberately
+        // unchanged: init scripts and the raw binding reach every frame regardless, so page-level
+        // exposure would buy no guarantee). The refusal returns the dispatcher's own "no result"
+        // shape, never an error string describing the guard: `deliverBindingResult` evaluates the
+        // result expression back inside the CALLER's realm, so the return value must carry nothing.
+        if (source.frame !== source.page.mainFrame()) return null;
+        return dispatch(raw);
+      });
     },
   };
 }
