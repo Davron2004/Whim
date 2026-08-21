@@ -19,6 +19,8 @@ import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
 import { COPY } from './copy';
+import { miniAppSurface } from './boot-state';
+import { BreathingView } from './flow-skeletons';
 import Orb from './Orb';
 
 export interface MiniAppViewProps {
@@ -47,7 +49,8 @@ export default function MiniAppView({
 }: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
-  const bg = shellPalette(theme).bg;
+  const p = shellPalette(theme);
+  const bg = p.bg;
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
   // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
   const [webKey, setWebKey] = useState(0);
@@ -62,10 +65,15 @@ export default function MiniAppView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Which of the four container surfaces this render belongs to. The precedence (both failure
+  // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
+  // before any paint is unpainted too, so an implicit "unpainted means booting" would park the
+  // user in a permanent opening screen instead of the honest failure copy.
+  const surface = miniAppSurface(host.state);
+
   // A launch refused pre-delivery (#41 D7, structured `launchApp` failure) never delivers a
   // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
-  if (host.state.launchFailed) {
-    const p = shellPalette(theme);
+  if (surface === 'launch-failed') {
     return (
       <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
@@ -83,8 +91,7 @@ export default function MiniAppView({
   // lastError AND bumps webKey together: clearing alone can't remount (the branch below never
   // renders while lastError is set), and bumping the key alone can't reset lastError (only bind()
   // does that) -- both are needed to fall through into a fresh <WebView> mount.
-  if (host.state.lastError) {
-    const p = shellPalette(theme);
+  if (surface === 'app-error') {
     const retry = () => {
       host.clearLastError();
       setWebKey((k) => k + 1);
@@ -118,6 +125,24 @@ export default function MiniAppView({
         setSupportMultipleWindows={false}
         onError={(ev) => logWebViewError(log, ev.nativeEvent, { appId: record.appId })}
       />
+      {/* The boot state: branded and minimal, drawn OVER a WebView that stays mounted and keeps
+          loading -- a realm reset is a recreate, never a re-inject (spike2 §5), so the overlay must
+          never gate the mount. It defines all four insets, so it spans the root's full border-box
+          (Yoga: an absolutely-positioned child that defines its insets ignores the parent's
+          padding) and carries the safe-area padding itself. `pointerEvents="none"` keeps the orb's
+          guaranteed exit reachable throughout the wait. */}
+      {surface === 'boot' && (
+        <View
+          style={[styles.boot, { backgroundColor: bg, paddingTop: insets.top }]}
+          pointerEvents="none"
+          accessibilityRole="progressbar"
+          accessibilityLabel={COPY.appBootA11yLabel}
+        >
+          <Text style={[TYPE_SCALE.screenTitle, styles.bootTitle, { color: p.text }]}>{record.name}</Text>
+          <BreathingView style={[styles.bootMark, { backgroundColor: p.accent }]} />
+          <Text style={[TYPE_SCALE.bodyEmphatic, styles.bootLabel, { color: p.textMuted }]}>{COPY.appBootLabel}</Text>
+        </View>
+      )}
       <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>
   );
@@ -130,4 +155,8 @@ const styles = StyleSheet.create({
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
   errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field },
+  boot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  bootTitle: { textAlign: 'center', marginBottom: SPACING.md },
+  bootMark: { width: SPACING.xl, height: SPACING.xs, borderRadius: RADIUS.chip, marginBottom: SPACING.md },
+  bootLabel: { textAlign: 'center' },
 });
