@@ -30,6 +30,8 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 import { deleteStorage, peekAppliedSchema } from '../storage-engine';
 import { HighlightingProvider } from '../ui/whim-prose/WhimProse';
 import { AppIndex, InstalledApp } from './app-index';
+import { AppBusy, runAppOp } from './app-busy';
+import type { AppBusyMap } from './app-busy';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord } from './pending-builds';
@@ -339,6 +341,13 @@ function LauncherShell({
   // the CURRENT request, not the one a stale render closed over.
   const flowRequests = useRef(new FlowRequests()).current;
 
+  // The home grid's per-app wait affordances (`app-busy.ts`): which app is opening, forking or
+  // being deleted right now. A ref for the guard — two taps in one frame both read the same
+  // `useState` value, so state alone could not refuse the second — plus a mirrored snapshot in
+  // state, which is the only half the screens render.
+  const appOps = useRef(new AppBusy()).current;
+  const [appBusy, setAppBusy] = useState<AppBusyMap>({});
+
   // The build screen of the attempt currently in flight, kept live even while the user is
   // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
   // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
@@ -416,45 +425,51 @@ function LauncherShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onOpen = async (app: InstalledApp) => {
-    try {
-      const source = await access.activeBundle(app);
-      setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app) });
-    } catch (e) {
-      // The user still gets the alert; the class/message/stack of what actually failed is only
-      // recoverable from the seam (host-observability "The alert paths now log").
-      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
-      Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
-    }
-  };
+  /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
+   *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
+   *  read as unregistered while the active bundle is being read). */
+  const onOpen = (app: InstalledApp) =>
+    runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
+      try {
+        const source = await access.activeBundle(app);
+        setScreen({ kind: 'app', app, record: app.record, source, engineAppId: access.engineAppId(app) });
+      } catch (e) {
+        // The user still gets the alert; the class/message/stack of what actually failed is only
+        // recoverable from the seam (host-observability "The alert paths now log").
+        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
+        Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+      }
+    });
 
-  const onFork = async (app: InstalledApp, opts: { shareData: boolean }) => {
-    try {
-      await access.fork(app, undefined, opts);
-      refresh();
-    } catch (e) {
-      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) });
-      Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));
-    }
-  };
+  const onFork = (app: InstalledApp, opts: { shareData: boolean }) =>
+    runAppOp(appOps, setAppBusy, app.id, 'fork', async () => {
+      try {
+        await access.fork(app, undefined, opts);
+        refresh();
+      } catch (e) {
+        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'fork', ...errorFields(e) });
+        Alert.alert('Could not fork this app', (e as Error)?.message ?? String(e));
+      }
+    });
 
   const onHistory = (app: InstalledApp) => {
     setScreen({ kind: 'history', app });
   };
 
-  const onDelete = async (app: InstalledApp) => {
-    try {
-      await access.remove(app);
-      // The app's retained last-run report goes with it, in the SAME operation — the discipline
-      // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
-      // ever revisits this id, so a report left behind would never be reclaimed.
-      journal.deleteLastRun(app.id);
-      refresh();
-    } catch (e) {
-      log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
-      Alert.alert('Could not delete this app', (e as Error)?.message ?? String(e));
-    }
-  };
+  const onDelete = (app: InstalledApp) =>
+    runAppOp(appOps, setAppBusy, app.id, 'delete', async () => {
+      try {
+        await access.remove(app);
+        // The app's retained last-run report goes with it, in the SAME operation — the discipline
+        // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
+        // ever revisits this id, so a report left behind would never be reclaimed.
+        journal.deleteLastRun(app.id);
+        refresh();
+      } catch (e) {
+        log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
+        Alert.alert('Could not delete this app', (e as Error)?.message ?? String(e));
+      }
+    });
 
   /** The leave-handler half of the flow's cancellation pattern: the step being left cancels its
    *  OWN in-flight request and nothing else. Compose drops its busy state on the way out too —
@@ -1125,6 +1140,7 @@ function LauncherShell({
         onOpen={onOpen}
         onFork={onFork}
         onDelete={onDelete}
+        appBusy={appBusy}
         onHistory={onHistory}
         onPromptAgain={(app) => openCompose(app)}
         onCreate={() => openCompose()}
