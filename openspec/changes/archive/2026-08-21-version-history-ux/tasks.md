@@ -28,4 +28,4 @@
 ## 5. Docs and closure
 
 - [x] 5.1 Append the decision-log entry (restore-before-prompt semantics, timeline verb, prompt envelope contract for #7/#11) to `docs/decisions.md`
-- [ ] 5.2 On-device acceptance (attended, human-run): seeded app → History → restore back and forward → pin → fork-from-old-version → annotations render; record latency observations against #39's numbers
+- [x] 5.2 On-device acceptance (attended, human-run): seeded app → History → restore back and forward → pin → fork-from-old-version → annotations render; record latency observations against #39's numbers

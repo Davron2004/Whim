@@ -18,3 +18,7 @@
 - Chains run: 1, 2, 3 — all merged onto v1-sprint, regated green. Redispatches: 0. Deviations: one Class A (D3 predicate refined, reviewer-confirmed sound), one dispatcher-authorized scope amendment (stale §20b comment).
 - gate-full: PASSED. Reviewer: CLEAN.
 - Remaining: task 5.2 on-device acceptance (ATTENDED, user-run) → then /opsx:archive. Closure deferred to attended sprint closure.
+
+## 2026-08-21 — On-device acceptance (task 5.2)
+
+Run on the Pixel 9 Pro XL emulator (release APK, Maestro-driven, attended session). Lineage isolation verified live: fork timeline unaffected by new versions on the original and by the original rolling back; expand-not-restore, confirm-sheet restore with reassurance copy, roll-forward listing, no pin affordance, fork opens; History open and restore both near-instant. Root-row restore absence and schema-unchanged annotation absence confirmed spec-conformant (Install-row scenario; conditional annotation requirement). Ticked 5.2.

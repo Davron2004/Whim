@@ -54,3 +54,7 @@ it closes the change after chain-4 merges. No Class-2 config touched by any chai
 - **Open:** task 5.2 (on-device acceptance) — attended/human-run; closes the change post-archive.
 - **MEMORY applied:** storage-engine barrel-import gotcha.
 - **Closure:** LOCAL main ratification (remote deferred, mirroring sdk-charts). Ready for a skim of this ledger + the proposal, then `/opsx:archive`.
+
+## 2026-08-21 — On-device acceptance (task 5.2)
+
+Run on the Pixel 9 Pro XL emulator (release APK, Maestro-driven, attended session). Lineage isolation verified live: fork timeline unaffected by new versions on the original and by the original rolling back; expand-not-restore, confirm-sheet restore with reassurance copy, roll-forward listing, no pin affordance, fork opens; History open and restore both near-instant. Root-row restore absence and schema-unchanged annotation absence confirmed spec-conformant (Install-row scenario; conditional annotation requirement). Ticked 5.2.

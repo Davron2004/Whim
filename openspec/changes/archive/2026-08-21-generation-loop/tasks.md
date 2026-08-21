@@ -142,7 +142,7 @@
 - [x] 7.5 `server/test/acceptance.ts`: register the new suites, assert the whole deterministic suite passes
       with `OPENROUTER_API_KEY` unset and the no-network transport installed, and assert the fast suite
       launches no browser.
-- [ ] 7.6 **Attended, on-device (PENDING at merge)**: real device on the LAN against a real key — generate
+- [x] 7.6 **Attended, on-device (PENDING at merge)**: real device on the LAN against a real key — generate
       an app end to end and install it; then kill the app mid-generation and confirm the server observes the
       abort (closing the roadmap's cancellation carryover (a)) and that the reconciled usage lands in
       `/v1/usage`.
