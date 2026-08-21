@@ -85,6 +85,7 @@ import {
   withStage,
 } from './prompt-flow';
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import { FlowRequests, onlyOnStep } from './flow-request';
 import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
@@ -332,6 +333,12 @@ function LauncherShell({
   // truncated stream look identical). Cleared once the generation settles.
   const genRef = useRef<{ controller: AbortController; cancelled: boolean; detached: boolean } | null>(null);
 
+  // The same bookkeeping for the flow's two unary requests — compose's clarify and plan's rewrite
+  // — one controller per step, so leaving a step cancels its own request and nothing else
+  // (`flow-request.ts`). A ref for the same reason `genRef` is one: the leave-handler must reach
+  // the CURRENT request, not the one a stale render closed over.
+  const flowRequests = useRef(new FlowRequests()).current;
+
   // The build screen of the attempt currently in flight, kept live even while the user is
   // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
   // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
@@ -449,7 +456,21 @@ function LauncherShell({
     }
   };
 
+  /** The leave-handler half of the flow's cancellation pattern: the step being left cancels its
+   *  OWN in-flight request and nothing else. Compose drops its busy state on the way out too —
+   *  the primary action is busy only for the clarify request this just cancelled, and its
+   *  post-await reset is guarded, so nothing else would ever clear it. */
+  const leaveFlowStep = (kind: Screen['kind']) => {
+    if (kind === 'compose') {
+      flowRequests.abort('compose');
+      setBusy(false);
+    } else if (kind === 'plan') {
+      flowRequests.abort('plan');
+    }
+  };
+
   const goHome = () => {
+    leaveFlowStep(screen.kind);
     refresh();
     setScreen({ kind: 'home' });
   };
@@ -503,6 +524,7 @@ function LauncherShell({
   const openCompose = (editing?: InstalledApp, text?: string) => setScreen(composeStep(editing, text ?? ''));
 
   const goBack = (from: FlowScreen) => {
+    leaveFlowStep(from.kind);
     const target = backFrom(from);
     if (target === 'home') goHome();
     else if (target) setScreen(target);
@@ -513,18 +535,27 @@ function LauncherShell({
   const openPlan = async (prev: ComposeScreen | ClarifyScreen) => {
     if (!clientOptions) return;
     const plan = planStep(prev);
-    setScreen(plan);
+    // Guarded like every other post-navigation write: this runs straight after the clarify await
+    // on the compose path, and a user who has already left must not be pulled onto a plan step.
+    setScreen(onlyOnStep<Screen, 'compose' | 'clarify'>(prev.kind, () => plan));
+    const request = flowRequests.start('plan');
     try {
       const response = await rewritePrompt(
         clientOptions,
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
+        request.controller.signal,
       );
-      setScreen((s) => (s.kind === 'plan' ? withPlan(s, response) : s));
+      if (request.cancelled) return;
+      setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withPlan(s, response)));
     } catch (e) {
+      // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
+      if (request.cancelled) return;
       logGenError('rewrite failed', e);
       const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
-      setScreen((s) => (s.kind === 'plan' ? failed : s));
+      setScreen(onlyOnStep<Screen, 'plan'>('plan', () => failed));
+    } finally {
+      flowRequests.release('plan', request);
     }
   };
 
@@ -533,20 +564,31 @@ function LauncherShell({
   const onComposeContinue = async (from: ComposeScreen) => {
     if (!clientOptions) return;
     setBusy(true);
+    const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
     try {
-      questions = acceptClarifyQuestions((await clarifyPrompt(clientOptions, from.text)).questions);
+      questions = acceptClarifyQuestions(
+        (await clarifyPrompt(clientOptions, from.text, request.controller.signal)).questions,
+      );
     } catch (e) {
+      // The user left compose while this was in flight: the abort surfaces here as a plain
+      // `AbortError`, and it is swallowed — no failure screen, no breadcrumb, and `busy` was
+      // already cleared by the leave-handler that cancelled it.
+      if (request.cancelled) return;
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
         setBusy(false);
-        setScreen(failure(from.editing, from.text, e, 'clarify failed'));
+        const failed = failure(from.editing, from.text, e, 'clarify failed');
+        setScreen(onlyOnStep<Screen, 'compose'>('compose', () => failed));
         return;
       }
+    } finally {
+      flowRequests.release('compose', request);
     }
+    if (request.cancelled) return;
     setBusy(false);
     if (stepAfterClarifyExchange(questions) === 'clarify') {
-      setScreen(clarifyStep(from, questions));
+      setScreen(onlyOnStep<Screen, 'compose'>('compose', () => clarifyStep(from, questions)));
     } else {
       await openPlan(from);
     }
@@ -996,7 +1038,10 @@ function LauncherShell({
         onChangeText={(text) => setScreen({ ...from, text })}
         onContinue={() => onComposeContinue(from)}
         onBack={() => goBack(from)}
-        onOpenSettings={() => setScreen({ kind: 'settings' })}
+        onOpenSettings={() => {
+          leaveFlowStep('compose');
+          setScreen({ kind: 'settings' });
+        }}
       />
     );
   } else if (screen.kind === 'clarify') {
