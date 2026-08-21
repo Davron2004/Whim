@@ -40,6 +40,7 @@ import { runGridCompositionTests } from './grid-composition.suite';
 import { runRunJournalTests } from './run-journal.suite';
 import { runRunSignalsTests } from './run-signals.suite';
 import { runRunTimelineTests } from './run-timeline.suite';
+import { runAppBusyTests } from './app-busy.suite';
 
 const h = new Harness();
 
@@ -77,6 +78,7 @@ await runGridCompositionTests(h);
 await runRunJournalTests(h);
 await runRunSignalsTests(h);
 await runRunTimelineTests(h);
+await runAppBusyTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

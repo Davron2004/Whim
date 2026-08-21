@@ -30,6 +30,11 @@ export const COPY = {
   actionFork: 'Fork',
   actionPromptAgain: 'Prompt again',
   actionDelete: 'Delete',
+  /** The Fork/Delete rows while that app's operation is running (`app-launcher` "Fork and delete
+   *  show a busy state and cannot be re-triggered mid-operation"): the row says what it is doing
+   *  rather than what it offers, so the disabled row never reads as an unregistered tap. */
+  actionForkBusy: 'Forking…',
+  actionDeleteBusy: 'Deleting…',
   cancel: 'Cancel',
   // ── ghost tiles (launcher-ghost-tiles) ──────────────────────────────────────
   /** A ghost/rebuild tile's state caption — names its own state, distinguishing `building` from
