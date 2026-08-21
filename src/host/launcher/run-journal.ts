@@ -193,8 +193,9 @@ export class RunJournalStore {
    *
    * It is also the stream's END-OF-STREAM FLUSH (see `appendAggregate`): `aggregates` closes the
    * final, otherwise-unclosed throttle window with the true final counts, and `observedDiagnostics`
-   * records how many `diagnostic` events went past. Both are re-projected to numbers here for the
-   * same reason the failure detail is re-projected — a caller cannot widen what reaches storage.
+   * records how many `diagnostic` events went past. All three figures are re-projected field by
+   * field AND coerced to numbers here, for the same reason the failure detail is re-projected — a
+   * caller cannot widen what reaches storage, and no field is trusted more than its siblings.
    */
   appendTerminal(
     launcherId: string,
@@ -205,7 +206,9 @@ export class RunJournalStore {
     this.appendEntry(launcherId, {
       t: this.now(),
       kind: 'terminal',
-      ...(aggregates ? { aggregates: { chars: aggregates.chars, tokens: aggregates.tokens } } : {}),
+      ...(aggregates
+        ? { aggregates: { chars: Number(aggregates.chars), tokens: Number(aggregates.tokens) } }
+        : {}),
       ...(terminal.observedDiagnostics !== undefined
         ? { observedDiagnostics: Number(terminal.observedDiagnostics) }
         : {}),

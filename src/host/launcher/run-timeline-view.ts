@@ -118,8 +118,12 @@ export function runTimelineRows(
     });
   }
 
+  // No output, no growth row — and since every attempt now ends with a terminal flush, "no output"
+  // reaches here as a recorded ZERO rather than as an absent count. A run that failed during
+  // planning would otherwise be summarised as "0 characters written", which reads as a finding
+  // about the run instead of the absence it actually is.
   const chars = outputChars(journal);
-  if (chars != null) rows.push({ key: 'growth', kind: 'growth', text: timelineGrowthLine(chars) });
+  if (chars != null && chars > 0) rows.push({ key: 'growth', kind: 'growth', text: timelineGrowthLine(chars) });
 
   const failure = lastFailure(journal);
   if (failure != null) {
