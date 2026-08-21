@@ -108,12 +108,18 @@ function isUsage(value: unknown): value is Usage {
   );
 }
 
+// This is a contract assertion, not a re-parse — `__WHIM_APP_MODULE__` is the loader's runtime
+// binding contract.
+function isRunnableBundle(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.includes('__WHIM_APP_MODULE__');
+}
+
 function isWireAppRecord(value: unknown): value is WireAppRecord {
   return (
     isRecord(value) &&
     typeof value.name === 'string' &&
     typeof value.source === 'string' &&
-    typeof value.bundle === 'string' &&
+    isRunnableBundle(value.bundle) &&
     isOptionalString(value.sourceMap) &&
     isRecord(value.manifest) &&
     isRecord(value.schema)
