@@ -21,6 +21,7 @@ import {
   buildProgressFraction,
   buildStepStatuses,
   currentActionSentence,
+  type RunSignals,
   type Stage,
 } from './prompt-flow';
 import { shellPalette } from './theme';
@@ -36,6 +37,12 @@ export interface BuildStepProps {
   stage: Stage | null;
   /** The stream produced its record and delivery is running — the last named step. */
   delivering: boolean;
+  /** The live attempt's in-memory liveness state, or `null` when the shell has none for this
+   *  screen. Derived values are computed from it and `now` per render — the screen never reads the
+   *  run journal. */
+  signals: RunSignals | null;
+  /** The render's own clock reading, moved by the shell's tick. */
+  now: number;
   /** Returns to the shell; the run keeps going and its result is still delivered. */
   onLeaveRunning: () => void;
   /** Hardware back: aborts the in-flight request, installing and updating nothing. */
