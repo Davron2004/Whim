@@ -39,6 +39,7 @@ import { runBuildLifecycleTests } from './build-lifecycle.suite';
 import { runGridCompositionTests } from './grid-composition.suite';
 import { runRunJournalTests } from './run-journal.suite';
 import { runRunSignalsTests } from './run-signals.suite';
+import { runRunTimelineTests } from './run-timeline.suite';
 
 const h = new Harness();
 
@@ -75,6 +76,7 @@ await runBuildLifecycleTests(h);
 await runGridCompositionTests(h);
 await runRunJournalTests(h);
 await runRunSignalsTests(h);
+await runRunTimelineTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

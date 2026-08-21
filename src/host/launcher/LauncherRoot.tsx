@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { BackHandler, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -34,6 +34,7 @@ import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord } from './pending-builds';
 import { RunJournalStore } from './run-journal';
+import type { RunJournal } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
@@ -61,6 +62,8 @@ import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
+import RunTimeline from './RunTimeline';
+import { runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeGridSkeleton } from './flow-skeletons';
 import {
   EMPTY_RUN_AGGREGATES,
@@ -115,6 +118,10 @@ type Screen =
        *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
        *  "Failure screens hydrate from the persisted failure payload"). */
       pendingId?: string;
+      /** Which run journal describes the attempt this screen is about — the live attempt's
+       *  launcher id, or the record's own. The what-happened section is read from it ONCE, when
+       *  the screen opens; a missing journal changes nothing else about the screen. */
+      journalId?: string;
     };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
@@ -340,6 +347,32 @@ function LauncherShell({
     return () => clearInterval(timer);
   }, [screen.kind]);
 
+  // The build screen's details view (task 5.4): the entries read at the moment it was opened, or
+  // `null` while it is closed. STATE, not a ref, because opening it is exactly the one moment this
+  // screen should re-render — and the read happens there, never on the tick above.
+  const [timeline, setTimeline] = useState<RunJournal | null>(null);
+
+  // While the details view is up, hardware back closes IT rather than cancelling the run: this
+  // listener is registered after the build screen's own, and the newest listener runs first.
+  useEffect(() => {
+    if (timeline === null) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setTimeline(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [timeline]);
+
+  // Leaving the build screen closes it, so returning to a later attempt never opens onto the
+  // previous one's entries.
+  useEffect(() => {
+    if (screen.kind !== 'build') setTimeline(null);
+  }, [screen.kind]);
+
+  /** Whether the timeline shows the developer counts, decided ONCE for both surfaces — never a
+   *  bare `__DEV__` check (decision #60(c)). */
+  const timelineDevMode = runTimelineDevModeEnabled(__DEV__);
+
   const refresh = () => {
     setApps(index.list());
     setPendingBuilds(pending.list());
@@ -437,6 +470,7 @@ function LauncherShell({
     err: unknown,
     stage: string,
     observed = 0,
+    journalId?: string,
   ): Screen => {
     const reasoned = errorReason(err);
     logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err });
@@ -445,6 +479,9 @@ function LauncherShell({
       editing,
       prompt,
       ...reasoned,
+      // Absent for the clarify and rewrite steps: they fail before any attempt — and so before any
+      // journal — exists, and a timeline is never invented for a run that never started.
+      ...(journalId != null ? { journalId } : {}),
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
@@ -572,6 +609,7 @@ function LauncherShell({
       prompt: input.prompt,
       reason: input.reason,
       diagnostics: input.hints,
+      journalId: input.attemptId,
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
@@ -713,7 +751,7 @@ function LauncherShell({
       logGenError('build failed', e);
       const reasoned = errorReason(e);
       settleFailed(attemptId, reasoned.reason, reasoned.diagnostics);
-      setScreen(failure(editing, building.text, e, 'build failed', counts.repair));
+      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId));
     }
   };
 
@@ -758,6 +796,7 @@ function LauncherShell({
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,
       pendingId: rec.id,
+      journalId: rec.id,
     };
   };
 
@@ -815,6 +854,22 @@ function LauncherShell({
    *  they stay Rephrase and Back — and the record that failure just persisted keeps its ghost on
    *  the grid either way. A record dismissed elsewhere in the meantime falls back to the live
    *  shape rather than acting on a ghost that is no longer there. */
+  /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
+   *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
+   *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
+   *  about the screen depends on it. */
+  const failureJournal = useMemo(
+    () => (screen.kind === 'failure' && screen.journalId != null ? journal.get(screen.journalId) : null),
+    [screen, journal],
+  );
+
+  /** The build screen's Details affordance: ONE read of the in-flight attempt's journal, at the
+   *  moment the user asks for it. */
+  const onShowDetails = () => {
+    const id = liveRef.current?.id;
+    setTimeline((id != null ? journal.get(id) : null) ?? []);
+  };
+
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
     const ghost = s.pendingId != null ? pending.get(s.pendingId) : null;
     if (ghost != null) {
@@ -920,14 +975,33 @@ function LauncherShell({
   } else if (screen.kind === 'build') {
     const from = screen;
     content = (
-      <BuildStep
-        stage={from.stage}
-        delivering={from.delivering}
-        signals={signalsRef.current}
-        now={Date.now()}
-        onLeaveRunning={onLeaveRunning}
-        onCancel={() => onCancelGeneration(from.editing, from.text)}
-      />
+      <>
+        <BuildStep
+          stage={from.stage}
+          delivering={from.delivering}
+          signals={signalsRef.current}
+          now={Date.now()}
+          onLeaveRunning={onLeaveRunning}
+          onCancel={() => onCancelGeneration(from.editing, from.text)}
+          onShowDetails={onShowDetails}
+        />
+        {timeline !== null && (
+          <View style={[styles.timelineOverlay, { backgroundColor: palette.bg }]}>
+            {/* The inset edges are DEFINED here, so the padding that keeps the list off them has
+                to live on an inner view — an absolutely-positioned box ignores its own padding. */}
+            <View style={styles.timelineBody}>
+              <RunTimeline entries={timeline} devMode={timelineDevMode} />
+            </View>
+            <TouchableOpacity
+              onPress={() => setTimeline(null)}
+              accessibilityRole="button"
+              style={[styles.timelineClose, { borderColor: palette.cardBorder }]}
+            >
+              <Text style={[TYPE_SCALE.bodyEmphatic, { color: palette.textMuted }]}>{COPY.timelineClose}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </>
     );
   } else if (screen.kind === 'done') {
     const from = screen;
@@ -941,6 +1015,8 @@ function LauncherShell({
         diagnostics={screen.diagnostics}
         observedRepairAttempts={screen.observedRepairAttempts}
         hasWorkingVersion={screen.hasWorkingVersion}
+        journal={failureJournal}
+        devMode={timelineDevMode}
         {...failureActions(screen)}
       />
     );
@@ -985,6 +1061,18 @@ function LauncherShell({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   loading: { flex: 1, padding: SPACING.lg },
+  // The details view sits OVER the build screen rather than replacing it: the run carries on
+  // behind it, and closing it returns to a progress screen that never went away.
+  timelineOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  timelineBody: { flex: 1, paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
+  timelineClose: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.card,
+    paddingVertical: SPACING.sm,
+    alignItems: 'center',
+  },
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,
