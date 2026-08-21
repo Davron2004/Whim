@@ -57,6 +57,7 @@ export function buildSseStream(
         keepaliveInterval = setInterval(() => {
           try {
             controller.enqueue(enc.encode(KEEPALIVE_FRAME));
+          // eslint-disable-next-line no-restricted-syntax -- intentional: keepalive write races stream closure; the interval is cleared right below regardless
           } catch {
             // Stream may already be closed; interval will be cleared below
           }

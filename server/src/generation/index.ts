@@ -19,6 +19,7 @@ import { createCheckStage, preflightSource } from './stages/check';
 import { createBuildStage } from './stages/build';
 import { createRunStage } from './stages/run';
 import { GenerationMachine, type PipelineBounds, type RunTrace } from './machine';
+import { createModelSummariser } from './summarise';
 import type { GenerationStatsTransport } from './reconcile';
 import { createRunCandidate } from '../../../synthrun/report';
 import type { SynthRunSession } from '../../../synthrun/session';
@@ -88,6 +89,7 @@ export function openRouterGenerationStatsTransport(
         const completionTokens = Number(data.tokens_completion ?? data.native_tokens_completion ?? 0);
         if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens)) return null;
         return { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens };
+      // eslint-disable-next-line no-restricted-syntax -- intentional: per this function's contract above, any failure resolves null, never throws
       } catch {
         return null;
       }
@@ -133,6 +135,7 @@ export function createGenerationPipeline(options: CreatePipelineOptions): Pipeli
     build,
     run,
     clock,
+    summariser: createModelSummariser({ model, roster }),
     bounds: options.bounds,
   });
 

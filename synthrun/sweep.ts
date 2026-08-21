@@ -496,6 +496,7 @@ export async function sweepApp(ctx: RunContext, obs: AttachedObservers, source: 
       const outcome = await sweepOneScreen(coldFrame, name, obs, budgets, resolved);
       actionsLog.push(...outcome.actionsLog);
       if (outcome.truncated) truncated = true;
+    // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort — the unreachable_screen diagnostic already recorded the failure, so move on rather than abort the sweep.
     } catch {
       // best-effort (a cold-mount build/deliver failure still leaves the unreachable_screen
       // diagnostic above) — move on to the next declared screen rather than aborting the sweep.

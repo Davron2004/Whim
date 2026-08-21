@@ -14,10 +14,27 @@ forge; every watchdog outcome is an explicitly named diagnostic, never a silent 
 
 The harness SHALL expose a library entry point that accepts one candidate TypeScript source string (the H1b bundle contract: single file importing only `vc-sdk`) plus options (budgets, concurrency handle), and returns a run report containing: the diagnostics list, the containment verdict, per-stage timings (build, boot, mount→paint, sweep, per-screen), the syscall/cue invocation trace, screens visited vs declared, and the applied budget values. Given the same candidate source and options, the sweep SHALL be deterministic: fixed canonical input values, sorted fingerprint action order, no random or wall-clock-dependent branching in the driver.
 
+The report's containment verdict SHALL be three-valued: `true` (a nonce-authenticated `probes` frame reported containment held), `false` (a nonce-authenticated `probes` frame reported a breach), and `null` (no authenticated verdict was ever observed — no `probes` frame arrived, or the one that arrived carried no boolean verdict). The harness SHALL NOT collapse `null` onto `false`, onto `true`, or onto any other single value: "we could not hear the guard" and "the guard said no" are distinct states at the report's type level, so a consumer that ignores the distinction fails to compile rather than silently reproducing the collapse.
+
 #### Scenario: Same candidate, same report
 
 - **WHEN** the same candidate source is run twice with the same options
 - **THEN** both reports contain the same diagnostics (kinds, targets) and the same action sequence, timings aside
+
+#### Scenario: An unobserved verdict is not a negative one
+
+- **WHEN** a run produces no nonce-authenticated `probes` frame at all
+- **THEN** the report's containment verdict is `null`, not `false`, and the report carries the named unobserved-verdict diagnostic rather than a `containment_failure` diagnostic
+
+#### Scenario: A negative verdict is still negative
+
+- **WHEN** a nonce-authenticated `probes` frame reports a breach
+- **THEN** the report's containment verdict is `false` and the report carries a `containment_failure` diagnostic, unchanged from before
+
+#### Scenario: A malformed verdict payload is unobserved, not a breach
+
+- **WHEN** a nonce-authenticated `probes` frame arrives whose containment field is absent or not a boolean
+- **THEN** the report's containment verdict is `null` and no `containment_failure` diagnostic is produced
 
 ### Requirement: The candidate boots in the unmodified production runtime page
 
@@ -32,6 +49,12 @@ The harness SHALL assemble pages exclusively from the production artifacts (`bui
 
 The harness SHALL derive every failure-grade signal from vantage points the bundle cannot overwrite: nonce-authenticated frames (`delivery`, `paint`, `error`, `probes`), Playwright/CDP-level `pageerror` (throws and unhandled rejections) and console capture, and gate denials read host-side at the harness's own exposed dispatch function. The bundle's self-reports (including `emitUiEvent` and `__whimNavDepth` frames) SHALL be used for sweep bookkeeping only and SHALL NOT determine any diagnostic or the containment verdict.
 
+The host-side transport those frames travel SHALL be live before navigation — installed in the pre-navigation phase, so it is already in place when the delivered page's inline scripts run and no frame the outer page emits between document commit and load is dropped. That installation SHALL be confined to the main frame: the host transport global SHALL NOT be defined in any frame other than the top frame, and in particular SHALL NOT be defined inside the opaque-origin sandbox realm the loader and probes rely on being free of it. A per-document installation mechanism MAY be used provided it is guarded so that the global is defined only where the frame is the top frame; what is guaranteed is the absence of the global from the sandbox realm, not the choice of mechanism. The harness's own suite SHALL assert that the host relay binding is unreachable from inside the sandboxed realm, so the confinement is enforced rather than reviewed.
+
+Opening the transport earlier SHALL NOT widen what is trusted: authentication remains the outer page's nonce check, evaluated before any trusted frame is posted, and the harness SHALL continue to consume the frame's trusted flag rather than re-deriving it.
+
+A frame the outer page rejected as a forgery SHALL be recorded as the **fact** of a rejection plus a **bounded** count. The bound SHALL be a fixed cap declared by the harness, and rejections beyond it SHALL saturate at that cap — read as "at least the cap" — rather than being recorded individually, so the recorded signal is fixed-size no matter how many frames a candidate posts. The forged payload SHALL NOT be echoed into any diagnostic, log line, or field of the run report, and SHALL NOT reach any model-facing path — the payload is attacker-chosen input, so echoing it would let the candidate author our diagnostics and an unbounded list would be a log-exhaustion lever.
+
 #### Scenario: Forged verdict attempt
 
 - **WHEN** a hostile candidate posts forged frames claiming a passing containment verdict and clean execution
@@ -41,6 +64,53 @@ The harness SHALL derive every failure-grade signal from vantage points the bund
 
 - **WHEN** a candidate invokes an undeclared capability and `.catch`es the rejected promise so no `pageerror` fires
 - **THEN** the report still contains the denial diagnostic, collected host-side at the dispatch function
+
+#### Scenario: A frame emitted before load is not dropped
+
+- **WHEN** the outer page emits a nonce-authenticated frame between document commit and the page's `load` event
+- **THEN** the harness observes that frame and it contributes to the report exactly as a post-load frame would
+
+#### Scenario: The relay binding is not reachable from the sandbox realm
+
+- **WHEN** the harness suite evaluates, from inside the candidate's opaque-origin sandboxed realm, whether the host relay binding is defined
+- **THEN** it is not defined, and the suite fails naming the leak if it is
+
+#### Scenario: A rejected forgery is counted, never echoed
+
+- **WHEN** a candidate posts more forged frames with large attacker-chosen payloads than the harness's declared cap
+- **THEN** the report records that forgeries were rejected and a count saturated at that cap rather than the true number, and no byte of any forged payload appears in the report, its diagnostics, or any log line
+
+### Requirement: Host observation channels are unreachable from the candidate realm
+
+The harness SHALL ensure that every host-side channel it opens for observation or capability dispatch is unreachable **as a capability** from the candidate's opaque-origin sandboxed realm — not merely undefined by name. A channel whose name has been deleted from the sandbox realm's global while the underlying binding machinery remains reachable there SHALL NOT be considered isolated, because candidate code can restore the name from that machinery in one call.
+
+This strengthens "Observation is trusted-vantage only" above. That requirement guarantees the *absence of the host transport global* from the sandbox realm, and that guarantee still holds and is still asserted. It is not sufficient on its own: the binding machinery beneath the global is installed by the browser on every execution context and cannot be scoped away, so absence of the name is a hardening measure while host-side refusal is the guarantee.
+
+The harness SHALL establish the provenance of a frame arriving at its host relay rather than accepting the frame's own claim to be trusted. A frame SHALL be attributable to the main frame before it is treated as a nonce-authenticated observation; the outer page's nonce check governs which frames it posts, and the harness SHALL NOT treat a frame that never transited the outer page as though it had. Provenance is an additional necessary condition and SHALL NOT replace the trusted flag: a frame must be both main-frame-attributable and trusted.
+
+An authenticated containment verdict, once observed, SHALL NOT be silently replaceable by a later frame. The harness SHALL NOT resolve competing verdicts by last-writer-wins, because that converts any writable channel into a verdict override. A verdict SHALL only ever move in the fail-closed direction: once a breach has been observed, neither a later passing verdict nor a later malformed payload SHALL soften it, and a refused transition SHALL be recorded rather than dropped.
+
+The harness's own suite SHALL assert capability-level unreachability for each such channel, and that assertion SHALL fail — naming the reachable channel — while any channel remains reachable.
+
+#### Scenario: The relay cannot be re-acquired from inside the sandbox
+
+- **WHEN** candidate code inside the opaque-origin sandboxed realm attempts to restore the host relay binding from the underlying binding machinery and post a frame claiming to be trusted
+- **THEN** the frame does not reach the harness's observation state, and the run's containment verdict is unaffected by it
+
+#### Scenario: Host syscall dispatch cannot be reached from inside the sandbox
+
+- **WHEN** candidate code inside the opaque-origin sandboxed realm hand-rolls a syscall frame to the host dispatch channel, bypassing the sandbox-side syscall shim and its generation fence
+- **THEN** the call is refused, no host capability is invoked, and no syscall is recorded host-side as legitimate
+
+#### Scenario: An observed verdict is not overridden by a later frame
+
+- **WHEN** a nonce-authenticated `probes` frame has established a containment verdict and a later frame reports a different verdict
+- **THEN** the run's verdict is not silently replaced by the later frame
+
+#### Scenario: An observed breach is not laundered through a malformed frame
+
+- **WHEN** a breach has been observed and a later authenticated frame carries a malformed containment payload, followed by a frame claiming containment held
+- **THEN** the breach verdict stands, is not softened to an unobserved verdict, and the later claim is refused
 
 ### Requirement: Interaction sweep covers the interactive surface with fingerprint dedup
 
@@ -90,12 +160,19 @@ Each run SHALL wire the production capability gate, dispatcher, and registry aga
 
 ### Requirement: Diagnostics extend the central vocabulary additively
 
-Runtime-observed diagnostic kinds (`runtime_throw`, `unhandled_rejection`, `mount_timeout`, `run_truncated`, `containment_failure`, `unreachable_screen`, and any later additions) SHALL be added additively to the closed vocabulary in the checks contract module — never minted ad hoc — and SHALL reuse the runtime's existing kind string where the same misdeed already has one (bridge denial kinds verbatim). Every diagnostic SHALL carry the mandatory `hint`; `line` SHALL be populated when the failure maps through the build's source map to an original-source anchor, and omitted otherwise (the shared shape's runtime-producer provision).
+Runtime-observed diagnostic kinds (`runtime_throw`, `unhandled_rejection`, `mount_timeout`, `run_truncated`, `containment_failure`, `containment_unobserved`, `unreachable_screen`, and any later additions) SHALL be added additively to the closed vocabulary in the checks contract module — never minted ad hoc — and SHALL reuse the runtime's existing kind string where the same misdeed already has one (bridge denial kinds verbatim). Every diagnostic SHALL carry the mandatory `hint`; `line` SHALL be populated when the failure maps through the build's source map to an original-source anchor, and omitted otherwise (the shared shape's runtime-producer provision).
+
+`containment_unobserved` and `mount_timeout` SHALL remain distinct kinds: `mount_timeout` names the never-painted cause only, and a verdict can go unobserved without a mount timeout (a malformed verdict payload, a suppressed frame, or a failure after a successful paint). A run SHALL NOT report an unobserved verdict as `mount_timeout`, and SHALL NOT report a mount timeout in place of `containment_unobserved` when the mount budget did not fire.
 
 #### Scenario: Throw with a source anchor
 
 - **WHEN** a candidate throws during an `onPress` handler and the stack maps through the source map to original line 42
 - **THEN** the report contains a `runtime_throw` diagnostic with `line: 42`, a message, and a non-empty hint
+
+#### Scenario: An unobserved verdict after a successful paint
+
+- **WHEN** a candidate paints within the mount budget but no authenticated verdict is ever observed
+- **THEN** the report contains a `containment_unobserved` error diagnostic with a non-empty hint, and no `mount_timeout` diagnostic
 
 ### Requirement: Session lifecycle isolates candidates and records timings
 

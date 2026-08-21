@@ -139,6 +139,7 @@ export class VersionStore {
     try {
       await this.backend.stat(path);
       return true;
+    // eslint-disable-next-line no-restricted-syntax -- intentional: stat throwing means the path doesn't exist, which is what this predicate reports
     } catch {
       return false;
     }
@@ -255,6 +256,7 @@ export class VersionStore {
     if (this.config.autoCompact && this.backend.countLooseObjects(gitdir) > this.config.compactionThreshold) {
       try {
         await compactRepo(this.client, this.backend, dir, gitdir);
+      // eslint-disable-next-line no-restricted-syntax -- intentional: the snapshot already committed; a compaction failure must not fail the caller's snapshot() call
       } catch {
         // Auto-compaction is best-effort. The snapshot (commit + tag) is already
         // durable; a compaction failure must NOT surface to the caller as a rejection.
@@ -505,6 +507,7 @@ export class VersionStore {
     let oid: string;
     try {
       oid = await git.resolveRef({ fs: this.client, gitdir, ref: 'HEAD' });
+    // eslint-disable-next-line no-restricted-syntax -- intentional: no resolvable HEAD means no active snapshot to return
     } catch {
       return null;
     }
@@ -542,6 +545,7 @@ export class VersionStore {
     try {
       const oid = await git.resolveRef({ fs: this.client, gitdir, ref: 'HEAD' });
       return (await this.oidToId(gitdir)).get(oid) ?? null;
+    // eslint-disable-next-line no-restricted-syntax -- intentional: no resolvable HEAD (e.g. unborn repo) means no active snapshot, which is correctly null
     } catch {
       return null;
     }

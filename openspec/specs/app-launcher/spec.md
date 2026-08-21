@@ -190,12 +190,22 @@ User-facing launcher copy SHALL NOT promise features that are not present. Text 
 - **THEN** the modal body contains no "Coming soon." text
 
 ### Requirement: Production builds hide developer diagnostics surfaces
-The shipping build SHALL NOT display developer diagnostics. Neither the DELIVERY/PAINT/CONTAINMENT diagnostics panel nor the `CONTAINED … probes` containment status bar may be visible while a mini-app is open.
+The shipping build SHALL NOT display developer diagnostics. Neither the DELIVERY/PAINT/CONTAINMENT diagnostics panel nor the `CONTAINED … probes` containment status bar may be visible while a mini-app is open. The dev log overlay SHALL be held to the same rule: it SHALL NOT be reachable from any surface of a shipping build, and the affordance that opens it SHALL NOT render there.
+
+Because this project's working build recipe is a release build, in which `__DEV__` is `false`, the gate on every developer diagnostics surface SHALL be `__DEV__` **or** an explicit build-time flag that defaults to `false` — the same idiom the on-device acceptance probes already use. A surface gated on `__DEV__` alone is unreachable in the build the project actually runs, which is a defect, not compliance.
 
 #### Scenario: Opening a mini-app in a production build
 - **WHEN** a mini-app is opened in the shipping build
 - **THEN** no diagnostics panel is shown
 - **AND** no containment status-bar overlay is shown
+
+#### Scenario: The log overlay is absent from a shipping build
+- **WHEN** the launcher renders with the developer flag off and `__DEV__` false
+- **THEN** no affordance opens the dev log overlay and no route reaches it
+
+#### Scenario: The log overlay is reachable in a locally-built release APK
+- **WHEN** the app is built with the developer flag on
+- **THEN** the dev log overlay is reachable from the same developer affordance that opens the device probe screen, even though `__DEV__` is false
 
 ### Requirement: Launcher surfaces respect the system status-bar inset
 In Android edge-to-edge mode, launcher and mini-app content SHALL be inset below the system status bar so app content does not draw underneath the clock, signal, and battery icons.
@@ -208,31 +218,338 @@ In Android edge-to-edge mode, launcher and mini-app content SHALL be inset below
 - **WHEN** a mini-app view renders on Android 15+ with edge-to-edge enabled
 - **THEN** the top of the mini-app content begins below the system status bar
 
-### Requirement: The launcher persists a user theme preference and restyles the shell with it
-
-The launcher SHALL offer a settings surface where the user picks a theme preset and optional accent and shape overrides; the resolved theme SHALL restyle the launcher's own screens immediately, and the preference SHALL persist across restarts in the launcher's key-value store.
-
-#### Scenario: Picking a preset restyles the shell live
-
-- **WHEN** the user selects a different preset in settings
-- **THEN** the home and settings screens SHALL re-render in the new theme without a restart, and the choice SHALL be persisted
-
-#### Scenario: The preference survives restart and tolerates garbage
-
-- **WHEN** the launcher starts with a stored preference, or with a corrupted/absent one
-- **THEN** it SHALL resolve the stored preference, or fall back to the default preset without crashing
-
 ### Requirement: A launched mini-app receives the active theme at delivery
 
-When launching a mini-app, the launcher SHALL hand the resolved theme to the delivery path so the app renders in the user's theme, while delivery without a theme SHALL remain valid and render SDK defaults.
+When launching a mini-app, the launcher SHALL hand the fixed v2 shell theme to the delivery path so the app renders in the shell's own token values, while delivery without a theme SHALL remain valid and render SDK defaults. There is no user theme preference to resolve: the shell is fixed, identical on every device, and the delivered theme is the same on every launch.
 
 #### Scenario: Shell and mini-app match
 
-- **WHEN** the user opens an installed app while a non-default theme is active
-- **THEN** the delivered init payload SHALL carry the resolved theme and the app's token-based UI SHALL render in it
+- **WHEN** the user opens an installed app
+- **THEN** the delivered init payload SHALL carry the fixed v2 theme and the app's token-based UI SHALL render in it
 
 #### Scenario: Theme-less delivery stays byte-identical on the bundle path
 
 - **WHEN** a bundle is delivered with no theme (probes, invariant pages)
 - **THEN** the bundle bytes and the delivery channel SHALL be unchanged from the pre-theme contract and the app SHALL render with default tokens
 
+### Requirement: The create affordance and per-app re-prompt action open the prompt flow
+
+The home screen SHALL carry a composer entry row reading `Describe an app…` as its create affordance, opening the prompt flow's new-app entry point on tap. The app long-press action sheet SHALL include a "Prompt again" action alongside Open/Fork/Delete/History, opening the prompt flow's edit entry point scoped to that app.
+
+#### Scenario: The composer row opens the prompt flow
+- **WHEN** the user taps the composer entry row on the home screen
+- **THEN** the prompt flow's compose step opens with no app being edited
+
+#### Scenario: Re-prompt opens the prompt flow scoped to an app
+- **WHEN** the user long-presses an app tile and chooses "Prompt again"
+- **THEN** the compose step opens scoped to that app
+
+### Requirement: Version-store access for the prompt flow's delivery stays behind StoreAccess
+The launcher SHALL deliver a generated app (install a new entry, snapshot an existing entry's own lineage, or fork a silent shared continuation) exclusively through `StoreAccess` wrapper methods; no launcher component may hold or call a raw `VersionStore` handle. Each wrapper SHALL apply the existing ensure-lineage discipline.
+
+#### Scenario: Delivery only through StoreAccess
+- **WHEN** the prompt flow installs, updates, or forks-and-updates an entry after a successful generation
+- **THEN** every store interaction goes through a `StoreAccess` method that ensures the entry's lineage first
+
+### Requirement: The Settings screen persists a server address for the prompt flow
+The launcher SHALL let the user enter and persist a server address, used by the prompt flow's rewrite and generation requests. An absent or invalid address SHALL be treated as "not configured" rather than causing a crash, and the prompt flow SHALL show an honest message directing the user to Settings rather than attempting a request.
+
+#### Scenario: Configured address is used
+- **WHEN** a server address has been entered in Settings and the user submits a prompt
+- **THEN** the rewrite and generation requests target that address
+
+#### Scenario: Unconfigured address is handled honestly
+- **WHEN** no server address has been entered and the user opens the prompt screen
+- **THEN** the screen tells the user to set an address in Settings instead of attempting a request
+
+### Requirement: History entry point in the app action sheet
+The app long-press action sheet SHALL include a History action alongside Open/Fork/Delete, opening the app's full-screen history surface. The history screen SHALL follow the launcher's full-screen sibling pattern: its own hardware-back binding returning to Home, theme colors via the shell palette, and all strings via the centralized copy table (product-verbs guard applies).
+
+#### Scenario: Opening history
+- **WHEN** the user long-presses an app tile and chooses History
+- **THEN** the app's history screen opens full-screen, and hardware back returns to Home
+
+### Requirement: Version-store access for history flows stays behind StoreAccess
+The launcher SHALL reach all history-related store verbs (history/timeline listing, restore, pin, diff, fork-from-version) exclusively through `StoreAccess` wrapper methods; no launcher component may hold or call a raw `VersionStore` handle. Each wrapper SHALL apply the existing ensure-lineage discipline before delegating, so fork entries (whose store id and lineage differ from their launcher id) resolve correctly. Fork SHALL accept an optional version so "make this version its own app" reuses the existing fork→install flow unchanged.
+
+#### Scenario: Wrappers only
+- **WHEN** the history screen lists, restores, pins, diffs, or forks
+- **THEN** every store interaction goes through a `StoreAccess` method that ensures the entry's lineage first
+
+#### Scenario: Fork entry history
+- **WHEN** History is opened on a forked app entry
+- **THEN** the listed versions are those of the fork's own lineage line, not the original's
+
+### Requirement: The mini-app container styles its failure state from tokens
+The mini-app container's launch-failure state SHALL resolve every colour, radius, spacing, and type value from the shell's design tokens. Hardcoded numeric style literals for font size, radius, padding, and margin SHALL NOT appear in its stylesheet, so a token change reaches this surface like every other.
+
+The container's WebView error path SHALL report through the logging seam rather than a raw console call, carrying the native error payload as structured fields.
+
+#### Scenario: The failure state carries no style literals
+- **WHEN** the mini-app container's stylesheet is inspected
+- **THEN** its font sizes, radii, paddings, and margins are token references, not numeric literals
+
+#### Scenario: A WebView error is recorded
+- **WHEN** the WebView reports a load error
+- **THEN** a record is emitted on the mini-app container's channel carrying the native error's fields, and no `console.*` call is made
+
+### Requirement: App tiles use the ghost-letterform treatment
+
+An app tile SHALL be square with the tile radius (22px), filled solid with the app's own colour, and SHALL carry its monogram twice: once small in the foreground at the bottom-left, and once blown up, bleeding off the top-right edge, at 16% white. The tile SHALL carry a 1px inset white border at 30% opacity. The app's name SHALL render beneath the tile, never inside it.
+
+The grid SHALL show tiles at a uniform size and SHALL NOT vary treatment per app: the app's colour is the only thing that differs between two tiles.
+
+#### Scenario: A tile renders both letterforms
+
+- **WHEN** an installed app's tile renders
+- **THEN** its monogram appears once at readable size in the foreground and once oversized and clipped by the tile's top-right edge at 16% white
+
+#### Scenario: Two tiles differ only by colour
+
+- **WHEN** two installed apps' tiles are compared
+- **THEN** their geometry, radius, border and monogram placement are identical and only the fill colour differs
+
+### Requirement: A tile's colour is the app's declared colour, with a deterministic fallback
+
+The launcher SHALL take an app's tile colour from the host-held record's manifest when the app declared one, and next from a launcher-injected colour when the app declared none but the launcher recorded one (a new install's ghost-tile id hash, preserved across rebuilds per the "Ghost tile color is a deterministic hash of the launcher id" requirement below), and SHALL fall back to `appColor(name)` only when the record carries neither a declared nor a launcher-injected colour, when the declaration is malformed, or when it collides with a reserved status hue. The colour SHALL be read from the host-held record only — never from anything the running bundle reports about itself — and the launcher SHALL NOT hold a second name→colour mapping of its own.
+
+Every surface that shows an app's colour — the grid tile, the history header, and an `app`-class span in prose — SHALL resolve it through this one path, so a single app is one colour everywhere.
+
+#### Scenario: A declared colour wins
+
+- **WHEN** an installed app's record carries a valid declared tile colour
+- **THEN** its tile and every `app`-class mention of it render in that colour
+
+#### Scenario: A launcher-injected colour wins over the name hash
+
+- **WHEN** an installed app's record carries a launcher-injected tile colour (a new install with no declared colour of its own) rather than a declared one
+- **THEN** its tile and every `app`-class mention of it render in the injected colour, not `appColor(name)`
+
+#### Scenario: A pre-existing app keeps working
+
+- **WHEN** an app installed before declarations existed is rendered
+- **THEN** its colour resolves from `appColor(name)` and nothing in the grid, history, or prose errors or renders colourless
+
+#### Scenario: The bundle cannot recolour itself
+
+- **WHEN** a running mini-app reports a different colour than its host-held record carries
+- **THEN** the launcher SHALL use the record's value
+
+### Requirement: Shell prose renders through one shared Whim Syntax renderer
+
+All machine-written prose on the shell surface SHALL be rendered by a single shared renderer, never by per-screen highlighting. The renderer SHALL support exactly six classes, each on one channel: `app` (that app's own hue), `chg` (weight 500, no colour), `yours` (Newsreader italic + `yours`), `measure` (mono face, no colour), `state` (the three status hues, fixed vocabulary only), and `hedge` (`faint`, a reverse highlight).
+
+The renderer SHALL enforce the discipline rules itself rather than relying on the producer: at most **four** system marks per sentence; `yours` exempt from that cap and the only span permitted two channels at once; one channel per span; at most one **hue** coloured per sentence; `state` never applied when a status indicator is already adjacent. Marks in excess of a cap SHALL be dropped to flat text, never truncated mid-span.
+
+The one-hue cap is per DISTINCT colour, not per span: two coloured spans that resolve to the SAME hue (e.g. two mentions of the same app in one sentence) SHALL both render coloured. Only a second, DIFFERENT hue in the same sentence is capped — that span renders flat.
+
+Only prose the product is telling the user SHALL be marked. Labels, buttons, settings, and headings SHALL never be marked. Prose SHALL never be lexed inside a field being typed — a prompt is highlighted only after submission.
+
+#### Scenario: The cap is enforced at render time
+
+- **WHEN** a sentence arrives carrying five or more system marks
+- **THEN** the rendered sentence carries at most four, and the dropped spans render as flat text with their words intact
+
+#### Scenario: One hue per sentence
+
+- **WHEN** a sentence would resolve two coloured spans of two DIFFERENT hues
+- **THEN** only one renders coloured and the other renders flat
+
+#### Scenario: Repeated mentions of the same app keep their colour
+
+- **WHEN** a sentence would resolve two or more coloured spans that all resolve to the SAME hue (e.g. the same app named twice)
+- **THEN** every one of them renders coloured — the cap is on distinct hues, not on span count
+
+#### Scenario: Offering is never marked
+
+- **WHEN** a button label, settings row, or screen heading renders
+- **THEN** no Whim Syntax class is applied to it
+
+#### Scenario: The composer is never lexed live
+
+- **WHEN** the user is typing in the composer
+- **THEN** the field renders unmarked text, and highlighting appears only after the prompt is submitted
+
+#### Scenario: Every string survives being flattened
+
+- **WHEN** each shell prose string is rendered with all marks removed
+- **THEN** it remains unambiguous — no meaning was being carried by a mark alone
+
+### Requirement: Four Whim Syntax classes are lexed deterministically on the device
+
+The device SHALL determine `app`, `measure`, `yours`, and `state` itself, with no model involvement: `app` by matching the installed-app list, `measure` by a number / duration / version pattern, `yours` by matching against the stored verbatim prompt for that change, and `state` by lookup against the fixed three-word status vocabulary. The lexer SHALL be a pure function of (text, installed apps, stored prompt) and SHALL be exercised by a deterministic suite.
+
+`chg` and `hedge` SHALL come only from the producer's marks; the device SHALL NOT infer them.
+
+#### Scenario: The same input lexes the same way
+
+- **WHEN** the lexer runs twice over the same text, app list, and stored prompt
+- **THEN** the spans produced are identical
+
+#### Scenario: `yours` is matched, never reconstructed
+
+- **WHEN** the prose paraphrases the user rather than quoting them verbatim
+- **THEN** no `yours` span is produced, and no approximate or reconstructed quote is marked as the user's words
+
+#### Scenario: Status words outside the vocabulary are not marked
+
+- **WHEN** prose uses a synonym for a status rather than one of the fixed three words
+- **THEN** no `state` span is produced
+
+### Requirement: Highlighting can be switched off
+
+The Settings screen SHALL carry a single persisted switch that renders all shell prose flat. With it off, the renderer SHALL emit no class-bearing spans anywhere on any screen, and every string SHALL remain legible and unambiguous. The preference SHALL survive a restart, and an absent or unreadable stored value SHALL resolve to highlighting on, never to a crash.
+
+#### Scenario: Flat everywhere, in one switch
+
+- **WHEN** the user turns highlighting off and visits the history, plan, and build surfaces
+- **THEN** no marked span renders on any of them, and no screen retains its own highlighting
+
+#### Scenario: The preference survives restart
+
+- **WHEN** the launcher restarts with the switch stored off, or with a corrupted stored value
+- **THEN** it resolves off, or falls back to on, without crashing
+
+### Requirement: The orb is a tapped menu whose actions are instrumented
+
+Inside a running mini-app the shell SHALL present the orb as a tapped menu: tapping opens a list of actions, tapping the orb again closes it, and tapping the scrim dismisses it with no side effect. The menu SHALL carry only cheap, undoable actions — delete, rename, and restore SHALL NOT be reachable from it, because anything that cannot be undone with one tap belongs on a screen where it can be read.
+
+The launcher SHALL persist a per-action tap count through its existing key-value path, so the action set can later be chosen from use rather than from opinion. No counter, count, or instrumentation value SHALL be shown on the user-facing surface.
+
+No press-and-hold arming, directional flick, or wheel geometry SHALL exist in this change, and the menu SHALL NOT advertise one — no per-row direction hints and no "hold to flick" caption, because copy that promises an unshipped feature is forbidden on this surface.
+
+#### Scenario: Tap opens, tap closes
+
+- **WHEN** the user taps the orb, then taps it again
+- **THEN** the menu opens and then closes, and no action fires
+
+#### Scenario: Dismissing costs nothing
+
+- **WHEN** the user taps the scrim behind an open menu
+- **THEN** the menu closes and no action fires
+
+#### Scenario: Taps are counted
+
+- **WHEN** the user fires the same menu action twice across two launches
+- **THEN** the persisted count for that action is two, and nothing about the count appears on screen
+
+#### Scenario: Nothing destructive is on the menu
+
+- **WHEN** the menu's action set is inspected
+- **THEN** it contains no delete, rename, or restore action
+
+### Requirement: The home grid renders ghost tiles for pending-build records
+
+The home grid SHALL render one greyed, non-launchable tile for every pending-build record, interleaved with installed-app tiles. A ghost tile MUST NOT be tappable as a launch action — tapping it opens the build or failure screen (per the ghost interaction requirement below), never a running mini-app.
+
+#### Scenario: A building generation shows a ghost tile
+
+- **WHEN** a generation is in flight and the user is on the home screen
+- **THEN** the grid shows a greyed tile for that pending-build record alongside the installed apps
+
+#### Scenario: A ghost tile does not launch an app
+
+- **WHEN** the user taps a ghost tile
+- **THEN** no mini-app realm is opened
+
+### Requirement: Building and failed/interrupted ghosts are visually distinct
+
+A ghost tile SHALL render a state caption and visual treatment that distinguishes `building` from `failed`/`interrupted`: a `building` ghost carries a neutral in-progress treatment, while `failed` and `interrupted` ghosts carry a shared alert accent distinct from `building`.
+
+#### Scenario: A building ghost looks different from a failed one
+
+- **WHEN** the grid renders one `building` ghost and one `failed` ghost
+- **THEN** their visual treatments differ, and each carries a state caption naming its own state
+
+### Requirement: Ghost tile color is a deterministic hash of the launcher id, stable across transmute and undeclared rebuilds
+
+A ghost tile's color SHALL be derived deterministically from its pending-build record's launcher id, using the same tile-color derivation the installed tile will use once delivered. When the delivered app's manifest declares no tile color of its own, the color MUST NOT change as the ghost transmutes into the delivered tile at the same grid position, nor across a later rebuild whose own manifest ALSO declares no tile color. A manifest that DOES declare a tile color — at delivery or on a later rebuild — is the app stating its own identity (`sdk-design-system`), and that declaration wins over the derived hash; a color change at delivery, or at a rebuild whose manifest declares a color, is then intended behavior, not a violation of this requirement.
+
+#### Scenario: Same id, same color, before and after delivery
+
+- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered as an installed app with id X whose manifest declares no tile color
+- **THEN** the tile color at that position is unchanged across the transmute
+
+#### Scenario: A manifest that declares its own color takes it at delivery
+
+- **WHEN** a ghost tile with launcher id X is showing, and its generation is delivered with a manifest that declares its own tile color
+- **THEN** the delivered tile renders the declared color rather than the id-derived one
+
+#### Scenario: Rebuilding does not move a delivered app's color
+
+- **WHEN** an app delivered under the id-derived color is re-prompted and rebuilt, and the rebuilt manifest declares no tile color of its own
+- **THEN** the tile still renders the color it has rendered since delivery, not a name-derived one
+
+#### Scenario: Color is deterministic for a given id
+
+- **WHEN** the same launcher id is hashed to a tile color twice
+- **THEN** both derivations produce the same color
+
+### Requirement: A ghost tile displays a working title
+
+A ghost tile SHALL display the pending-build record's working title (derived from the user's prompt) as its label, since no app name exists until delivery.
+
+#### Scenario: Ghost label before a name exists
+
+- **WHEN** a ghost tile renders for a pending-build record with no delivered app yet
+- **THEN** the tile's visible label is the record's working title, not a blank or placeholder name
+
+### Requirement: Tapping a ghost tile opens the build or failure screen by state
+
+Tapping a `building` ghost tile SHALL reopen the build-progress screen, reattaching to the in-flight generation. Tapping a `failed` or `interrupted` ghost tile SHALL open the failure screen, hydrated from the record's persisted failure payload.
+
+#### Scenario: Tap a building ghost
+
+- **WHEN** the user taps a `building` ghost tile
+- **THEN** the build-progress screen opens, reflecting the still-running generation
+
+#### Scenario: Tap a failed ghost
+
+- **WHEN** the user taps a `failed` ghost tile
+- **THEN** the failure screen opens, showing the reason and diagnostics persisted on that record
+
+#### Scenario: Tap an interrupted ghost
+
+- **WHEN** the user taps an `interrupted` ghost tile
+- **THEN** the failure screen opens, showing that the attempt was interrupted
+
+### Requirement: Long-press on a ghost tile offers Cancel or Dismiss, never both
+
+Long-pressing a `building` ghost tile SHALL offer a Cancel action. Long-pressing a `failed` or `interrupted` ghost tile SHALL offer a Dismiss action. A ghost tile's long-press menu MUST NOT offer both actions at once.
+
+#### Scenario: Long-press a building ghost
+
+- **WHEN** the user long-presses a `building` ghost tile
+- **THEN** the action sheet offers Cancel and does not offer Dismiss
+
+#### Scenario: Long-press a failed or interrupted ghost
+
+- **WHEN** the user long-presses a `failed` or `interrupted` ghost tile
+- **THEN** the action sheet offers Dismiss and does not offer Cancel
+
+### Requirement: No always-visible cancel affordance on the ghost tile face
+
+A ghost tile's resting visual state SHALL NOT show a cancel or dismiss control on its face. Destructive actions are reached only through long-press, never a persistent button on the tile itself.
+
+#### Scenario: A resting ghost tile has no visible cancel control
+
+- **WHEN** a `building` ghost tile is rendered in its resting state, not long-pressed
+- **THEN** no cancel or dismiss control is visible on the tile
+
+### Requirement: Grid composition dedupes pending and installed entries by id, pending wins
+
+When composing the grid from pending-build records and installed-app records, an id present in both lists SHALL render exactly once, as the pending (ghost) tile, until the pending record is deleted.
+
+#### Scenario: Transmute does not double-render
+
+- **WHEN** a pending-build record and its just-delivered installed-app record briefly coexist under the same id during a delivery sequence
+- **THEN** the grid shows exactly one tile for that id, not two
+
+### Requirement: Rebuilding an existing app marks its installed tile as building, spawning no ghost
+
+When the user re-prompts an existing installed app, the home grid SHALL show that app's existing installed tile in a `building` state for the duration of the generation. No separate ghost tile SHALL appear for the rebuild attempt.
+
+#### Scenario: Re-prompting an installed app greys its own tile
+
+- **WHEN** the user re-prompts an existing app and the generation starts
+- **THEN** that app's existing tile shows a `building` state, and the grid gains no additional tile

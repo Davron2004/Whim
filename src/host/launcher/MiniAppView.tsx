@@ -3,8 +3,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // One WebView == one realm == one app (#41 D2). The bundle is delivered BY SOURCE from the
 // installed record's active version-store snapshot (#5 D3) — the iframe-side contract is
-// byte-identical to the baked path. The floating affordance (D5) and Android system back (D4)
-// both exit to the launcher; the realm can reach neither. LauncherRoot keys this component by
+// byte-identical to the baked path. The orb menu's Home action (D5, shell-redesign-v2 D12) and
+// Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
+// keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -12,10 +13,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
+import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { log } from '../logging';
+import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
 import { COPY } from './copy';
-import FloatingExit from './FloatingExit';
+import Orb from './Orb';
 
 export interface MiniAppViewProps {
   record: AppRecord;
@@ -25,9 +29,22 @@ export interface MiniAppViewProps {
   /** The resolved launcher theme, forwarded opaquely into delivery (design sdk-design-system D8). */
   theme: WhimTheme;
   onExit: () => void;
+  /** Orb "Versions" — opens the real History screen for this running app. */
+  onVersions: () => void;
+  /** Orb "Change it" — opens the compose step prefilled for this running app (same path
+   *  History's own "Change it from here" row action uses). */
+  onChangeIt: () => void;
 }
 
-export default function MiniAppView({ record, bundleSource, engineAppId, theme, onExit }: Readonly<MiniAppViewProps>) {
+export default function MiniAppView({
+  record,
+  bundleSource,
+  engineAppId,
+  theme,
+  onExit,
+  onVersions,
+  onChangeIt,
+}: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
   const bg = shellPalette(theme).bg;
@@ -47,10 +64,10 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
     const p = shellPalette(theme);
     return (
       <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
-        <Text style={[styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
-        <Text style={[styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
+        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
         <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
-          <Text style={[styles.errorButtonLabel, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
         </Pressable>
       </View>
     );
@@ -68,9 +85,9 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}
-        onError={(ev) => console.log('[whim] webview error', JSON.stringify(ev.nativeEvent))}
+        onError={(ev) => logWebViewError(log, ev.nativeEvent, { appId: record.appId })}
       />
-      <FloatingExit onPress={host.exit} />
+      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
     </View>
   );
 }
@@ -78,9 +95,8 @@ export default function MiniAppView({ record, bundleSource, engineAppId, theme, 
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
-  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  errorTitle: { fontSize: 20, fontWeight: '600', textAlign: 'center', marginBottom: 12 },
-  errorBody: { fontSize: 15, textAlign: 'center', marginBottom: 24 },
-  errorButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 8 },
-  errorButtonLabel: { fontSize: 15, fontWeight: '600' },
+  errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
+  errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
+  errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
+  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field },
 });

@@ -23,6 +23,10 @@
  */
 
 import type {
+  Clarification,
+  ClarifyQuestion,
+  ClarifyRequest,
+  ClarifyResponse,
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
@@ -33,7 +37,14 @@ import type {
 } from '@whim/contract';
 
 import { openXhrGenerateStream } from './xhr-transport';
-import { GenerationClientError, httpErrorFrom, isNonEmptyString, isRecord, requestHeaders } from './transport-shared';
+import {
+  GenerationClientError,
+  httpErrorFrom,
+  isNonEmptyString,
+  isRecord,
+  logMappedError,
+  requestHeaders,
+} from './transport-shared';
 import type { ClientOptions } from './transport-shared';
 
 /** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
@@ -60,6 +71,20 @@ function isOptionalNumber(value: unknown): boolean {
 
 function isRewriteResponse(value: unknown): value is RewriteResponse {
   return isRecord(value) && typeof value.rewrittenPrompt === 'string';
+}
+
+function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.question === 'string' &&
+    Array.isArray(value.options) &&
+    value.options.every((option) => typeof option === 'string')
+  );
+}
+
+function isClarifyResponse(value: unknown): value is ClarifyResponse {
+  return isRecord(value) && Array.isArray(value.questions) && value.questions.every(isClarifyQuestion);
 }
 
 function isDiagnostic(value: unknown): value is Diagnostic {
@@ -141,22 +166,64 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. */
-export async function rewritePrompt(opts: ClientOptions, prompt: string): Promise<RewriteResponse> {
+/**
+ * `POST /v1/clarify` — the pre-stream exchange, fast and unary, plain JSON, never SSE. Zero
+ * questions is a SUCCESS meaning "nothing needs clarifying" (the common case), so callers get an
+ * empty list rather than an error. A `502` (`clarify_not_configured`/`model_failure`) surfaces as
+ * `GenerationClientError{kind:'http', status:502}`, which the flow treats as "skip to the plan
+ * step" rather than a dead end (`prompt-flow.ts#isClarifySkip`).
+ */
+export async function clarifyPrompt(opts: ClientOptions, prompt: string): Promise<ClarifyResponse> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await fetchImpl(`${opts.baseUrl}/v1/clarify`, {
+      method: 'POST',
+      headers: requestHeaders(opts),
+      body: JSON.stringify({ prompt } satisfies ClarifyRequest),
+    });
+  } catch (err) {
+    logMappedError('/v1/clarify', opts.baseUrl, 'network', { message: messageOf(err) });
+    throw new GenerationClientError('network', { hint: messageOf(err) });
+  }
+
+  if (!response.ok) {
+    throw await httpErrorFrom(response, '/v1/clarify', opts.baseUrl);
+  }
+
+  const bodyJson: unknown = await response.json().catch(() => null);
+  if (!isClarifyResponse(bodyJson)) {
+    throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
+  }
+  return bodyJson;
+}
+
+/** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
+ *  clarify exchange's answers so the rewrite (and the plan rows it returns) reflect them; an empty
+ *  list is sent as no field at all, since absent and empty mean the same thing on the wire. */
+export async function rewritePrompt(
+  opts: ClientOptions,
+  prompt: string,
+  clarifications: readonly Clarification[] = [],
+): Promise<RewriteResponse> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   let response: Response;
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/rewrite`, {
       method: 'POST',
       headers: requestHeaders(opts),
-      body: JSON.stringify({ prompt } satisfies RewriteRequest),
+      body: JSON.stringify({
+        prompt,
+        ...(clarifications.length > 0 ? { clarifications: [...clarifications] } : {}),
+      } satisfies RewriteRequest),
     });
   } catch (err) {
+    logMappedError('/v1/rewrite', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
 
   if (!response.ok) {
-    throw await httpErrorFrom(response);
+    throw await httpErrorFrom(response, '/v1/rewrite', opts.baseUrl);
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
@@ -219,11 +286,12 @@ async function openFetchGenerateStream(
     if (isAbortError(err)) {
       return 'aborted';
     }
+    logMappedError('/v1/generate', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
 
   if (!response.ok) {
-    throw await httpErrorFrom(response);
+    throw await httpErrorFrom(response, '/v1/generate', opts.baseUrl);
   }
   if (!response.body) {
     throw new GenerationClientError('network', { hint: 'Response has no body' });

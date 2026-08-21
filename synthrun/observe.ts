@@ -10,7 +10,8 @@
  * are read ONLY as an activity heartbeat for the quiet-window heuristic below — never as a
  * diagnostic or verdict source.
  */
-import type { BrowserContext, CDPSession, Page } from 'playwright';
+import type { BrowserContext, CDPSession, Frame, Page } from 'playwright';
+import { REJECTED_FORGERY_CAP } from './contract';
 import type { RunBudgets, RunOptions } from './contract';
 import type { RunContext, SynthRunSession } from './session';
 
@@ -29,6 +30,7 @@ export const RUNTIME_OBSERVED_KINDS = [
   'mount_timeout',
   'run_truncated',
   'containment_failure',
+  'containment_unobserved',
 ] as const;
 export type RuntimeObservedKind = (typeof RUNTIME_OBSERVED_KINDS)[number];
 
@@ -64,7 +66,11 @@ export type ObservedFrameKind =
 export interface FrameEvent {
   kind: ObservedFrameKind;
   trusted: boolean;
-  /** ms since `RunContext.startedAt`. */
+  /** ms since the observation relay was installed — i.e. since `attachObserversEarly` ran,
+   *  immediately before navigation. NOT `RunContext.startedAt`: a frame can now legitimately
+   *  arrive before `finish(ctx)` has been called (that is the point of installing the relay
+   *  pre-navigation), so `ctx` is not guaranteed to exist when the first frame lands; one
+   *  attach-time anchor keeps every frame in a run mutually comparable. */
   atMs: number;
   /** The generation this event's payload claims, when present; else the last-seen one
    *  (starts at 1 — the loader's own `__whimGeneration` starting point). */
@@ -76,10 +82,31 @@ export interface ObservationState {
   events: FrameEvent[];
   diagnostics: ObservedDiagnostic[];
   /** Set ONLY from the nonce-authenticated `probes` frame's `payload.contained` — never any
-   *  other source (spec §Observation is trusted-vantage only, "Forged verdict attempt"). `null`
-   *  until one authenticated probes frame has arrived. */
+   *  other source (spec §Observation is trusted-vantage only, "Forged verdict attempt").
+   *  Three-valued and never collapsed (design D2): `true` held, `false` breach, `null` no
+   *  authenticated verdict was ever observed — either no authenticated probes frame arrived, or
+   *  the one that did carried no boolean verdict. */
   contained: boolean | null;
-  /** ms (since `startedAt`) the nonce-authenticated `paint` frame arrived, else `null`. */
+  /** How many frame-forgery rejections were observed — the outer page's `rejected-forgery`
+   *  events plus the host's own provenance refusals folded into the same tally (see
+   *  `hostProvenanceRefusals`), SATURATING at `REJECTED_FORGERY_CAP` — a fixed-size signal no
+   *  matter how many frames a candidate posts (design D5). The count only; a forged frame's
+   *  attacker-chosen payload is never read, never echoed into a diagnostic, and never carried
+   *  onto the report. */
+  rejectedForgeries: number;
+  /** How many of those rejections the HOST itself made on provenance: a frame that arrived on the
+   *  relay binding from a frame other than `page.mainFrame()` — i.e. straight from the candidate's
+   *  own realm, never through the outer page's nonce check (spec §Host observation channels are
+   *  unreachable from the candidate realm). A strict subset of `rejectedForgeries`, saturating at
+   *  the same `REJECTED_FORGERY_CAP` and payload-free for the same reason: the frame is refused
+   *  BEFORE it is parsed, so not one attacker-chosen byte is ever read.
+   *
+   *  Optional only so that a hand-built `ObservationState` literal stays valid;
+   *  `attachObserversEarly` always initialises it to `0`, so `undefined` means "this state did not
+   *  come from the collector", never "no refusal happened". */
+  hostProvenanceRefusals?: number;
+  /** ms (on `FrameEvent.atMs`'s attach-time clock) the nonce-authenticated `paint` frame
+   *  arrived, else `null`. */
   paintAtMs: number | null;
   /** `Date.now()` of the most recent FrameEvent, CDP exception, or console message — the
    *  quiet-window heuristic's activity clock (design D2: "no new paint/console/telemetry
@@ -95,14 +122,17 @@ export interface AttachedObservers {
 }
 
 export interface EarlyObservers {
-  /** Live from the moment `attachObserversEarly` resolves — a mount-time throw recorded before
-   *  `finish()` is called still lands here (same object, mutated in place). */
+  /** Live from the moment `attachObserversEarly` resolves — EVERY collector (CDP exceptions, the
+   *  nonce-authenticated frame relay, the console heartbeat) is already attached, so a mount-time
+   *  throw, a `delivery`/`paint`/`probes` frame or a console line recorded before `finish()` is
+   *  called still lands here (same object, mutated in place). */
   state: ObservationState;
-  /** Completes attachment once `SynthRunSession.openRun` has returned (i.e. after navigation):
-   *  wires the nonce-authenticated frame relay (`window.ReactNativeWebView` override) and the
-   *  console activity heartbeat onto the now-navigated `ctx.page`. Call this exactly once,
-   *  immediately after `openRun` resolves — see `RunOptions.beforeNavigate`'s doc comment for
-   *  why the CDP half above cannot wait until then. */
+  /** Supplies the one value that cannot exist before navigation — `ctx.sourceMap`, which
+   *  `SynthRunSession.openRun` only hands back on return — and yields the attached collectors.
+   *  Attachment itself is already complete; this call installs NOTHING. A CDP exception that
+   *  arrived first is not left anchorless: its raw wrapped line was kept, and this call resolves
+   *  it, so a diagnostic's `line` never depends on whether the throw or the map came first. Call
+   *  it exactly once, immediately after `openRun` resolves. */
   finish(ctx: RunContext): Promise<AttachedObservers>;
 }
 
@@ -182,6 +212,7 @@ export function resolveOriginalLine(mapText: string, wrappedLine1Based: number):
   let map: DecodedSourceMap;
   try {
     map = JSON.parse(mapText) as DecodedSourceMap;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable source map just means no `line` resolution, per the doc comment above.
   } catch {
     return undefined;
   }
@@ -190,6 +221,7 @@ export function resolveOriginalLine(mapText: string, wrappedLine1Based: number):
   if (genLine0 < 0) return undefined;
   try {
     return originForGeneratedLine(map, genLine0);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: per the doc comment above, this resolver never throws — an unmapped line silently yields no `line`.
   } catch {
     return undefined;
   }
@@ -205,19 +237,91 @@ function sleep(ms: number): Promise<void> {
 
 type RelayPayload = { generation?: unknown; contained?: unknown; message?: unknown; where?: unknown } | undefined;
 
+/** An authenticated breach has already been observed in this run. Read from the DIAGNOSTIC rather
+ *  than from `state.contained`: the diagnostic is the permanent record of the observation, while
+ *  `state.contained` is a cell — sourcing the fence below from the cell would make the fence only as
+ *  durable as the last write to it, and any future path that could reset the cell would silently
+ *  reopen the `false → … → true` route this fence exists to close. */
+function breachAlreadyObserved(state: ObservationState): boolean {
+  return state.diagnostics.some((d) => d.kind === 'containment_failure');
+}
+
 // Split out of `EarlyObservers.finish`'s relay callback (cognitive-complexity budget) — the two
 // authenticated frame kinds that produce a diagnostic, `probes` and `error`.
 function recordProbesOutcome(state: ObservationState, payload: RelayPayload): void {
   const contained = payload && typeof payload.contained === 'boolean' ? payload.contained : null;
+  // Monotonic and fail-closed (spec "An authenticated containment verdict, once observed, SHALL NOT
+  // be silently replaceable by a later frame"). Assigning unconditionally was last-writer-wins,
+  // which turns any writable channel into a verdict override. Refusing EVERY later write would be
+  // wrong in the opposite direction — a breach observed after the first probes frame is still a
+  // breach — so the asymmetry follows the threat: the only dangerous direction is the one that
+  // ships an unsafe app, i.e. back up to `contained: true`. Once a breach has been observed it is
+  // this run's verdict; `null → true|false` and `true → false|null` still pass straight through.
+  if (breachAlreadyObserved(state)) {
+    if (contained === true) {
+      // "Not silently" is discharged by RECORDING the refusal, not by dropping it quietly, so a
+      // suppressed override reads off the report instead of being inferred from its absence. The
+      // breach's own kind, because that is still exactly what this run observed — never softened to
+      // `containment_unobserved` (`handoff/diagnostic-kind.md`, the no-substitution rule).
+      state.diagnostics.push({
+        kind: 'containment_failure',
+        severity: 'error',
+        message: 'a later probes frame claimed containment held after an authenticated breach — refused, the breach verdict stands',
+        hint: genericHint('containment_failure'),
+      });
+    }
+    // Anything else here is a no-op: an equal `false` is already recorded, and a malformed payload
+    // must not soften an authenticated breach to `containment_unobserved` (same no-substitution
+    // rule) — which also denies the `false → null → true` laundering route through this seam.
+    return;
+  }
   state.contained = contained;
   if (contained === false) {
+    // An authenticated verdict that reported a breach — evidence, and the only OBSERVATION that
+    // earns this kind (`handoff/diagnostic-kind.md`, the no-substitution rule; the refusal above
+    // records this same breach a second time, never a different finding).
     state.diagnostics.push({
       kind: 'containment_failure',
       severity: 'error',
       message: 'trusted-vantage containment probes reported a breach',
       hint: genericHint('containment_failure'),
     });
+  } else if (contained === null) {
+    // An authenticated frame arrived but carried no boolean verdict: absence of evidence in
+    // either direction, so NOT a `containment_failure` (spec "A malformed verdict payload is
+    // unobserved, not a breach"). The malformed payload itself is never read or echoed.
+    pushContainmentUnobserved(state, 'a nonce-authenticated probes frame carried no boolean containment verdict');
   }
+}
+
+/** The one place this kind is minted, so the accompanying-diagnostic invariant ("`null` never
+ *  travels without its diagnostic") holds from a single site — and so it can never be pushed
+ *  twice for one run. */
+function pushContainmentUnobserved(state: ObservationState, message: string): ObservedDiagnostic | null {
+  if (state.diagnostics.some((d) => d.kind === 'containment_unobserved')) return null;
+  const diagnostic: ObservedDiagnostic = {
+    kind: 'containment_unobserved',
+    severity: 'error',
+    message,
+    hint: genericHint('containment_unobserved'),
+  };
+  state.diagnostics.push(diagnostic);
+  return diagnostic;
+}
+
+/**
+ * Report-composition close-out (spec "An unobserved verdict is not a negative one"): a run that
+ * ends with `state.contained === null` never saw an authenticated verdict at all, so it carries
+ * `containment_unobserved` — appended to `state.diagnostics` before the caller copies them, never
+ * silent, and never a substitute for `mount_timeout` or `containment_failure` (both of which may
+ * legitimately sit beside it when their own conditions independently held).
+ *
+ * Idempotent: a malformed-payload frame already recorded the kind, and this returns `null` rather
+ * than duplicating it. Returns the diagnostic it appended, `null` when it appended none.
+ */
+export function finalizeContainmentVerdict(state: ObservationState): ObservedDiagnostic | null {
+  if (state.contained !== null) return null;
+  return pushContainmentUnobserved(state, 'the run ended with no nonce-authenticated probes frame — containment was never verified');
 }
 
 function recordMountError(state: ObservationState, payload: RelayPayload): void {
@@ -246,29 +350,114 @@ function genericHint(kind: RuntimeObservedKind): string {
       return 'raise totalBudgetMs or investigate a stuck interaction; the page was hard-killed to bound harness cost';
     case 'containment_failure':
       return 'the sandbox containment probes reported a breach — see the probes payload for which check failed';
+    case 'containment_unobserved':
+      return 'no authenticated containment verdict was observed — this run proves nothing about containment; re-run it and treat the candidate as unverified, not as escaped';
   }
 }
 
+/** The host relay binding `installRelayShim` below reads and then scrubs. Exported so a caller
+ *  (the suite's confinement assertion) names the SAME string this module installs rather than a
+ *  second copy that could drift. */
+export const RELAY_BINDING_NAME = '__whimSynthRelay';
+
 /**
- * Phase 1 (task 2.1): wire the CDP `Runtime.exceptionThrown` collector onto the FRESH
- * `page`/`context` — BEFORE navigation, via `RunOptions.beforeNavigate`. This is load-bearing,
- * not defensive style: a candidate can throw near-instantly once its module code starts
- * running, well before the nonce-authenticated `toRN()` frame handshake (hello→hostInit→ready→
- * deliver→mount→paint→probes, many event-loop turns) would ever catch it — attaching CDP AFTER
- * `SynthRunSession.openRun` returns (i.e. after navigation) measurably loses that race
- * intermittently. `ctx.sourceMap` (needed for `line` resolution) doesn't exist yet at this
- * point — the build already completed inside `openRun`, but `ctx` itself is only handed back on
- * return — so the exception handler closes over a mutable slot `finish()` fills in.
+ * The main-frame-confined transport install (spec §Observation is trusted-vantage only, "That
+ * installation SHALL be confined to the main frame"). Registered pre-navigation so it is already
+ * in place when the delivered page's inline scripts run, and it runs FIRST in every document —
+ * which is exactly what makes the confinement enforceable rather than merely intended:
+ *
+ *  - in EVERY realm it deletes the exposed relay binding from the global. Playwright's
+ *    `page.exposeBinding` defines its wrapper in every frame of the page, the opaque-origin
+ *    sandboxed iframe included (measured) — so scrubbing it here removes the NAME from the realm
+ *    `loader.js`/`probes.js` rely on being free of it (#35/#37, F4). Defence in depth only, and
+ *    deliberately NOT load-bearing (design D4): the raw CDP binding underneath is installed on the
+ *    global of every execution context of the target and can be re-minted inside the sandbox realm
+ *    from Playwright's own binding controller. What makes the channel inert is the host-side
+ *    provenance guard on the callback, below;
+ *  - only in the MAIN frame does it define the `ReactNativeWebView` transport `assemble.mjs`'s
+ *    `toRN()`/`rnLog()` post through, closing over the captured reference. The sandbox realm
+ *    keeps `loader.js`'s own same-named stub, untouched.
+ *
+ * A pre-navigation `page.evaluate` cannot serve here: its global belongs to the pre-navigation
+ * `about:blank` document and is gone the moment the candidate page commits (measured).
+ */
+function installRelayShim(name: string): void {
+  const g = globalThis as unknown as Record<string, unknown> & { top?: unknown };
+  const relay = g[name] as ((s: string) => void) | undefined;
+  try {
+    delete g[name];
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a non-configurable binding just stays visible; nothing here can recover from that, and throwing would abort the document's first script.
+  } catch {
+    /* non-configurable — nothing further this script can do */
+  }
+  if (g.top !== g) return; // every non-main frame (the sandbox realm included) installs NOTHING
+  if (typeof relay !== 'function') return;
+  (g as { ReactNativeWebView?: { postMessage(s: string): void } }).ReactNativeWebView = {
+    postMessage(s: string) {
+      try {
+        relay(s);
+      // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort transport stub, mirrors the loader's own postMessage swallow.
+      } catch {
+        /* best-effort, matches the loader's own transport-stub swallow */
+      }
+    },
+  };
+}
+
+/**
+ * Attach EVERY trusted-vantage collector onto the FRESH `page`/`context` — BEFORE navigation,
+ * via `RunOptions.beforeNavigate`. All three halves are load-bearing here, not defensive style:
+ *
+ *  - CDP `Runtime.exceptionThrown`: a candidate can throw near-instantly once its module code
+ *    starts running, well before the nonce-authenticated `toRN()` frame handshake (hello→
+ *    hostInit→ready→deliver→mount→paint→probes, many event-loop turns) would ever catch it;
+ *  - the nonce-authenticated frame relay: the outer page emits `delivery` ~3ms and `paint`/
+ *    `probes` ~20ms after `page.goto`'s `load` resolves (measured), so a relay opened after
+ *    `openRun` returns races those frames and drops the ones it loses — `toRN()` discards a
+ *    frame at the source when no transport exists, so there is nothing to replay (spec: "no
+ *    frame the outer page emits between document commit and load is dropped");
+ *  - `page.on('console')`: `rnLog()`'s console fallback fires on that same pre-`load` timeline.
+ *
+ * Opening the transport earlier does NOT widen what is trusted: the nonce check happens in the
+ * outer page before any `toRN({trusted:true})`, and this collector consumes `msg.trusted`
+ * verbatim. `ctx.sourceMap` (needed for `line` resolution) doesn't exist yet at this point — the
+ * build already completed inside `openRun`, but `ctx` itself is only handed back on return — so
+ * the exception handler closes over a mutable slot `finish()` fills in, and resolves each
+ * exception's anchor against that slot's eventual value rather than its value on arrival (see
+ * `anchorOriginalLine` below).
  */
 export async function attachObserversEarly(page: Page, context: BrowserContext): Promise<EarlyObservers> {
   const state: ObservationState = {
     events: [],
     diagnostics: [],
     contained: null,
+    rejectedForgeries: 0,
+    hostProvenanceRefusals: 0,
     paintAtMs: null,
     lastActivityAtMs: Date.now(),
   };
   let sourceMap = '';
+  // A CDP exception can legitimately land BEFORE `finish(ctx)` fills the slot above: `openRun`'s
+  // navigation awaits the OUTER page's `load`, and the candidate's own deliver→mount→throw races
+  // it — with four concurrent contexts the throw wins ~37% of runs (measured). Resolving the
+  // anchor from whatever the slot happened to hold on arrival therefore dropped `line` at random.
+  // Instead the raw wrapped line is retained and the anchor is resolved once, whenever the map
+  // becomes available — so a diagnostic's `line` is a function of the evidence, never of arrival
+  // order. Nothing is retried and no window is widened: `finish()` drains this exactly once.
+  const unanchored: { diagnostic: ObservedDiagnostic; wrappedLine: number }[] = [];
+  const anchorOriginalLine = (diagnostic: ObservedDiagnostic, wrappedLine: number): void => {
+    if (!sourceMap) {
+      unanchored.push({ diagnostic, wrappedLine });
+      return;
+    }
+    const origin = resolveOriginalLine(sourceMap, wrappedLine);
+    if (origin) diagnostic.line = origin.line;
+  };
+  // The one clock every FrameEvent is stamped against (`FrameEvent.atMs`) — fixed at attach, i.e.
+  // immediately pre-navigation, because a frame can now arrive before `finish(ctx)` supplies a
+  // `RunContext` at all.
+  const observationStartedAt = Date.now();
+  let generation = 1;
 
   const cdp: CDPSession = await context.newCDPSession(page);
   await cdp.send('Runtime.enable');
@@ -279,76 +468,99 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     const description = details.exception?.description ?? details.text ?? 'uncaught exception';
     const message = description.split('\n')[0];
     const topFrame = details.stackTrace?.callFrames?.[0];
-    let line: number | undefined;
+    const diagnostic: ObservedDiagnostic = { kind, severity: 'error', message, hint: genericHint(kind) };
+    state.diagnostics.push(diagnostic);
     // Only the candidate's own dynamically-inserted script reports an empty `url` (an
     // "anonymous" script, distinct from the runtime parts' parser-inserted `about:srcdoc`
     // scripts) — resolving anything else would misattribute a host/runtime-internal frame to
     // the candidate's source.
-    if (topFrame && topFrame.url === '' && sourceMap) {
-      const origin = resolveOriginalLine(sourceMap, topFrame.lineNumber + 1);
-      if (origin) line = origin.line;
-    }
-    state.diagnostics.push({ kind, severity: 'error', message, hint: genericHint(kind), line });
+    if (topFrame?.url === '') anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
   };
   cdp.on('Runtime.exceptionThrown', onException);
 
+  // `exposeBinding`, never `exposeFunction`: only the former keeps the `{context, page, frame}`
+  // source Playwright resolves for every call from the CALLING execution context's browser-supplied
+  // `auxData` — `exposeFunction` is literally `exposeBinding` with a wrapper that throws that
+  // argument away. It matters because the raw CDP binding underneath is installed on the global of
+  // EVERY execution context of the target (the opaque-origin sandboxed srcdoc included) and can be
+  // re-minted there from Playwright's own binding controller, so no amount of name-scrubbing makes
+  // this channel unreachable. Provenance is what makes it INERT instead: frame identity is derived
+  // by the browser and never from page-supplied data, so the candidate keeps the ability to CALL and
+  // loses the ability to be BELIEVED (spec §Host observation channels are unreachable from the
+  // candidate realm; design D1). This is an ADDITIONAL necessary condition, never a replacement for
+  // `msg.trusted` — a frame must be BOTH main-frame-originated AND tagged trusted by the outer page.
+  await page.exposeBinding(RELAY_BINDING_NAME, (source: { frame: Frame }, raw: string) => {
+    if (source.frame !== page.mainFrame()) {
+      // Refused BEFORE parsing and before anything else in `state` moves: no event, no verdict, no
+      // diagnostic, no generation update — and deliberately not even `lastActivityAtMs`, or a
+      // candidate could hold the quiet window open from a realm the harness does not trust. The two
+      // saturating counters are the whole effect, so the attempt is visible in the report
+      // (`RunReport.forgeries`) at fixed size, and payload-free because `raw` is never read.
+      state.rejectedForgeries = Math.min(state.rejectedForgeries + 1, REJECTED_FORGERY_CAP);
+      state.hostProvenanceRefusals = Math.min((state.hostProvenanceRefusals ?? 0) + 1, REJECTED_FORGERY_CAP);
+      return;
+    }
+    state.lastActivityAtMs = Date.now();
+    type RelayFrame = { kind?: string; trusted?: boolean; payload?: unknown };
+    let msg: RelayFrame | null = null;
+    try {
+      msg = JSON.parse(raw) as RelayFrame;
+    // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed relay frame is dropped, not fatal to the observation session.
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg.kind !== 'string') return;
+    const kind = msg.kind as ObservedFrameKind;
+    const payload = msg.payload as RelayPayload;
+    if (payload && typeof payload.generation === 'number') generation = payload.generation;
+    const trusted = msg.trusted === true;
+    state.events.push({ kind, trusted, atMs: Date.now() - observationStartedAt, generation, payload: msg.payload });
+
+    // A frame the outer page REJECTED as a forgery (never trusted): record the fact via a count
+    // that saturates at the declared cap, and nothing else — no payload is read, so a flood of
+    // large attacker-chosen frames costs a fixed-size signal (design D5).
+    if (kind === 'rejected-forgery' && state.rejectedForgeries < REJECTED_FORGERY_CAP) state.rejectedForgeries++;
+
+    if (!trusted) return;
+    if (kind === 'paint' && state.paintAtMs === null) state.paintAtMs = Date.now() - observationStartedAt;
+    else if (kind === 'probes') recordProbesOutcome(state, payload);
+    else if (kind === 'error') recordMountError(state, payload);
+  });
+  // ORDER IS LOAD-BEARING, and silently so (design D4). Each init script is registered with the
+  // browser as it is added here, and the delivered document runs them in that registration order —
+  // so `installRelayShim` can capture-then-scrub the relay only because the binding above was
+  // exposed FIRST. Swap these two lines and the shim runs ahead of the binding script: it captures
+  // nothing, so it installs no `ReactNativeWebView` transport and the outer page silently drops
+  // every frame it emits, while the scrub deletes a name that does not exist yet and the relay's
+  // own wrapper then lands in every realm unscrubbed. No type error and no fast-gate failure (the
+  // scrub is defence in depth, not the guarantee); what catches it is the acceptance suite, whose
+  // capability-reachability and pre-`load`-frame cases both need this transport live.
+  await page.addInitScript(installRelayShim, RELAY_BINDING_NAME);
+
+  const onConsole = (): void => {
+    state.lastActivityAtMs = Date.now();
+  };
+  page.on('console', onConsole);
+
+  const attached: AttachedObservers = {
+    state,
+    detach(): void {
+      page.off('console', onConsole);
+      cdp.off('Runtime.exceptionThrown', onException);
+      cdp.detach().catch(() => {
+        /* best-effort — the target may already be gone */
+      });
+    },
+  };
+
   return {
     state,
-    async finish(ctx: RunContext): Promise<AttachedObservers> {
+    finish(ctx: RunContext): Promise<AttachedObservers> {
       sourceMap = ctx.sourceMap;
-      let generation = 1;
-
-      const relayName = '__whimSynthRelay';
-      await ctx.page.exposeFunction(relayName, (raw: string) => {
-        state.lastActivityAtMs = Date.now();
-        type RelayFrame = { kind?: string; trusted?: boolean; payload?: unknown };
-        let msg: RelayFrame | null = null;
-        try {
-          msg = JSON.parse(raw) as RelayFrame;
-        } catch {
-          return;
-        }
-        if (!msg || typeof msg.kind !== 'string') return;
-        const kind = msg.kind as ObservedFrameKind;
-        const payload = msg.payload as RelayPayload;
-        if (payload && typeof payload.generation === 'number') generation = payload.generation;
-        const trusted = msg.trusted === true;
-        state.events.push({ kind, trusted, atMs: Date.now() - ctx.startedAt, generation, payload: msg.payload });
-
-        if (!trusted) return;
-        if (kind === 'paint' && state.paintAtMs === null) state.paintAtMs = Date.now() - ctx.startedAt;
-        else if (kind === 'probes') recordProbesOutcome(state, payload);
-        else if (kind === 'error') recordMountError(state, payload);
-      });
-
-      await ctx.page.evaluate((fnName: string) => {
-        const relay = (globalThis as unknown as Record<string, (s: string) => void>)[fnName];
-        (globalThis as { ReactNativeWebView?: { postMessage(s: string): void } }).ReactNativeWebView = {
-          postMessage(s: string) {
-            try {
-              relay(s);
-            } catch {
-              /* best-effort, matches the loader's own transport-stub swallow */
-            }
-          },
-        };
-      }, relayName);
-
-      const onConsole = (): void => {
-        state.lastActivityAtMs = Date.now();
-      };
-      ctx.page.on('console', onConsole);
-
-      return {
-        state,
-        detach(): void {
-          ctx.page.off('console', onConsole);
-          cdp.off('Runtime.exceptionThrown', onException);
-          cdp.detach().catch(() => {
-            /* best-effort — the target may already be gone */
-          });
-        },
-      };
+      // Every exception that beat the map to the collector gets its anchor now — the map is
+      // certainly present from here on, so later exceptions resolve inline and this drains empty.
+      for (const pending of unanchored.splice(0)) anchorOriginalLine(pending.diagnostic, pending.wrappedLine);
+      return Promise.resolve(attached);
     },
   };
 }
@@ -356,8 +568,12 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
 /**
  * Convenience composition of the two-phase attachment above for a caller that does NOT need to
  * combine `beforeNavigate` with another chain's hook (chain 3's `whimHostDispatch` exposure) —
- * this chain's own acceptance suite uses it. A composing caller (chain 5's assembly) instead
- * calls `attachObserversEarly` directly from its OWN combined `beforeNavigate`.
+ * this chain's own acceptance suite uses it. A composing caller (chain 5's assembly, `report.ts`)
+ * instead calls `attachObserversEarly` directly from its OWN combined `beforeNavigate`.
+ *
+ * Both compositions have the same shape and the same contract: attach inside `beforeNavigate`
+ * (every collector is live from there on), then call `finish(ctx)` once `openRun` returns purely
+ * to hand over `ctx.sourceMap`.
  */
 export async function openObservedRun(
   session: SynthRunSession,

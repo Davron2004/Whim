@@ -86,3 +86,5 @@ of that round — never reconstructed from memory.
 - 2026-07-24 automate-closure S1192 .claude/hooks/test/unroll.test.sh:84
 - 2026-07-24 automate-closure S5332 .claude/hooks/test/unroll.test.sh:94
 - 2026-07-28 linked-apps-data-model new_duplicated_lines_density src/host/launcher/test/shared-storage.suite.ts:83
+- 2026-08-11 launcher-ghost-tiles S6582 src/host/launcher/LauncherRoot.tsx:708
+- 2026-08-11 launcher-ghost-tiles S6582 src/host/launcher/pending-builds.ts:167

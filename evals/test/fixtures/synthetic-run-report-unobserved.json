@@ -1,0 +1,29 @@
+{
+  "ok": false,
+  "diagnostics": [
+    {
+      "kind": "containment_unobserved",
+      "severity": "error",
+      "message": "no authenticated containment verdict was ever observed",
+      "hint": "check that a probes frame reaches the outer page before the run's budgets expire"
+    }
+  ],
+  "contained": null,
+  "forgeries": { "rejected": false, "count": 0 },
+  "truncated": false,
+  "timings": {
+    "buildMs": 42,
+    "bootMs": 310,
+    "mountToPaintMs": 180,
+    "sweepMs": 95,
+    "perScreenMs": { "Home": 95 }
+  },
+  "trace": [],
+  "screens": { "declared": ["Home"], "visited": ["Home"] },
+  "budgets": {
+    "mountBudgetMs": 8000,
+    "actionQuietMs": 300,
+    "actionHardCapMs": 4000,
+    "totalBudgetMs": 45000
+  }
+}

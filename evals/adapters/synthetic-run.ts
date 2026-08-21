@@ -13,17 +13,17 @@
  */
 import { SynthRunSession, createRunCandidate } from '../../synthrun';
 import type { RunReport } from '../../synthrun/contract';
-import type { Diagnostic, RunObservation } from '../contract';
+import type { ContainmentVerdict, Diagnostic, RunObservation } from '../contract';
 
 export { SynthRunSession, createRunCandidate };
 
 /**
- * `report.contained` is derived ONLY from the nonce-authenticated `probes` frame by construction
- * (`synthrun/report.ts`: "Derived ONLY from the nonce-authenticated probes frame ... never
- * adopted as `true`" otherwise) — every real synthetic-run report is therefore authenticated by
- * definition. An un-authenticated `ContainmentVerdict` can only arise from a hand-built
- * (synthesized) `RunObservation` used to exercise Tier A's untrusted-verdict path directly —
- * never from this adapter.
+ * `report.contained` is three-valued (`handoff/run-report-contract.md`): `true`/`false` come from
+ * a nonce-authenticated `probes` frame, `null` means no authenticated verdict was ever observed.
+ * `toContainmentVerdict` carries that distinction into `ContainmentVerdict.authenticated` rather
+ * than collapsing it — `null` becomes `authenticated: false`, which is exactly the untrusted
+ * vantage Tier A already refuses to pass (`tier-a.ts`'s `containmentTrusted = authenticated &&
+ * contained`).
  */
 export function observationFromRunReport(caseId: string, report: RunReport): RunObservation {
   return {
@@ -33,8 +33,24 @@ export function observationFromRunReport(caseId: string, report: RunReport): Run
     reachedScreens: report.screens.visited,
     syscallsInvoked: entriesOfKind(report, 'syscall'),
     cuesInvoked: entriesOfKind(report, 'cue'),
-    containment: { authenticated: true, contained: report.contained },
+    containment: toContainmentVerdict(report.contained),
   };
+}
+
+/**
+ * `true`/`false` came from an authenticated `probes` frame, so they pass through as
+ * `authenticated: true` with the same `contained` value. `null` (no authenticated verdict ever
+ * observed) maps to `authenticated: false` — the un-authenticated state Tier A already refuses to
+ * trust. `ContainmentVerdict.contained` has no "unknown" value to carry alongside that, so `null`
+ * picks `contained: false`: the fail-closed reading, and one that never changes a gating outcome
+ * either way, since `authenticated: false` already short-circuits Tier A's `authenticated &&
+ * contained` check regardless of what `contained` says.
+ */
+function toContainmentVerdict(contained: boolean | null): ContainmentVerdict {
+  if (contained === null) {
+    return { authenticated: false, contained: false };
+  }
+  return { authenticated: true, contained };
 }
 
 function entriesOfKind(report: RunReport, kind: 'syscall' | 'cue'): readonly string[] {

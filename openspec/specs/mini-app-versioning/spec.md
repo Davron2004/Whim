@@ -7,10 +7,29 @@ TBD - created by archiving change on-device-snapshot-store. Update Purpose after
 
 Each generation of a mini-app SHALL be recorded as an immutable snapshot, and each snapshot MUST carry the structured prompt that produced it so a later snapshot can be traced back to the instruction that created it.
 
+The structured prompt SHALL be a **versioned envelope**. Its current version carries the verbatim submitted prompt text and, when the run produced one, the run's summary alongside it — so a snapshot can be shown back to the user both as what they asked for and as what happened, without a second store to keep consistent across rollback, fork and delete.
+
+Every reader SHALL accept every envelope version it may encounter, and a raw non-envelope string, without a migration: an older envelope resolves to its prompt text with no summary, which is a legitimate state rather than an error. Envelope version numbers SHALL be monotonic, and a new field SHALL never be added without bumping the version. The per-snapshot lineage stamp SHALL remain a commit trailer outside the envelope and SHALL NOT be written into it.
+
 #### Scenario: Two generations produce two traceable snapshots
 
 - **WHEN** a mini-app is generated, then regenerated with a different prompt
 - **THEN** two distinct snapshots exist in order, and each snapshot's history entry shows the prompt that produced it
+
+#### Scenario: A snapshot carries the run's summary beside the verbatim prompt
+
+- **WHEN** a generation whose run produced a summary is recorded
+- **THEN** the snapshot's structured prompt carries both the verbatim submitted text and that summary, and the text is unmodified by the summary's presence
+
+#### Scenario: An older envelope still reads
+
+- **WHEN** a snapshot recorded under an earlier envelope version, or with a raw string prompt, is read back
+- **THEN** it resolves to its prompt text with no summary, nothing errors, and no migration runs
+
+#### Scenario: Lineage identity stays out of the envelope
+
+- **WHEN** a snapshot's structured prompt is read back
+- **THEN** it contains no lineage marker, exactly as before this change
 
 ### Requirement: Rollback is non-destructive
 
@@ -61,3 +80,66 @@ Snapshot, rollback, pin, diff, and history operations SHALL complete fast enough
 
 - **WHEN** each version operation is run against a realistic Tier-0 bundle
 - **THEN** it completes within an interactive latency budget (eyeballed) and the observed timing is written into the decisions log / DEVLOG
+
+### Requirement: A snapshot carries the original source, not only the runnable bundle
+
+Every snapshot a generation produces SHALL store the app's **original TypeScript source** as its own
+artifact alongside the runnable bundle, so a later edit can re-send what the model actually wrote rather
+than what the build emitted. Reading a snapshot's source SHALL return that artifact when present and
+SHALL report its absence honestly for snapshots taken before source tracking existed — it SHALL NOT
+silently substitute the compiled bundle. Existing installs SHALL keep working unchanged: an absent source
+artifact is a legitimate state, never a migration or an error, and it resolves naturally the first time the
+app is regenerated.
+
+#### Scenario: A generated snapshot round-trips its source
+
+- **WHEN** a generation is delivered and its snapshot's source is read back
+- **THEN** the result is the original TypeScript the generation produced, not the bundle
+
+#### Scenario: A legacy snapshot reports no source
+
+- **WHEN** a snapshot taken before source tracking is read for its source
+- **THEN** the absence is reported as such, and the compiled bundle is not returned in its place
+
+#### Scenario: Legacy entries keep launching
+
+- **WHEN** an app whose snapshots carry no source artifact is launched, restored, forked, and deleted
+- **THEN** every operation behaves exactly as before, because the runnable bundle is unchanged
+
+### Requirement: Version enumeration and restore are lineage-correct
+`timeline` SHALL enumerate only snapshots created on the active lineage's own line. A snapshot that is a DAG descendant of the current position but was created on a DIFFERENT lineage — a sibling fork, or the original after this lineage forked away — SHALL NOT be enumerated. `rollback` SHALL refuse any target not on the active lineage's own line, using the same lineage-correct predicate as `timeline`. The lineage each snapshot belongs to SHALL be recorded per snapshot at creation time and SHALL never appear in any returned value, prompt text, or error message. Snapshots created before this identity existed SHALL be treated as belonging to the primary (`main`) lineage. Single-lineage behavior (an app never forked) SHALL be unchanged.
+
+#### Scenario: Non-diverged fork excludes the original's later versions
+- **WHEN** an app is forked and, before the fork makes any snapshot of its own, the original creates further snapshots, and `timeline` is called on the fork
+- **THEN** only the fork's own line (the versions it inherited up to the fork point) is enumerated, and none of the original's later snapshots appear
+
+#### Scenario: Rolled-back original excludes a diverged fork's versions
+- **WHEN** the original lineage is rolled back to a point at or before where a fork diverged, a snapshot exists on the fork's line, and `timeline` is called on the original
+- **THEN** the fork's snapshots are not enumerated
+
+#### Scenario: Restore never lands on another lineage
+- **WHEN** `rollback` is asked to restore a snapshot that belongs to a different lineage than the active one
+- **THEN** it is refused with an error that names the fork / switch-lineage path and contains no git vocabulary
+
+#### Scenario: Lineage identity never surfaces
+- **WHEN** any snapshot is read back through `history`, `timeline`, or a point lookup
+- **THEN** the returned prompt and every field are identical to a store without lineage stamping — the internal lineage marker never appears in any surfaced value
+
+#### Scenario: Single-lineage behavior is unchanged
+- **WHEN** an app has never been forked and `timeline` / `rollback` are used across rollbacks
+- **THEN** enumeration and restore behave identically to before this change — every snapshot on the one line remains listed and restorable
+
+### Requirement: Same-line enumeration survives rollback (timeline)
+The store SHALL provide an additive enumeration verb (`timeline`) that lists every snapshot on the active lineage's line — ancestors *and* tag-reachable descendants of the current position — newest first, capped like `history`. After a rollback moves the active position backward, snapshots later on the same line SHALL still be enumerated, so roll-forward targets remain discoverable without knowing their ids. Existing verbs SHALL be unchanged in shape and behavior; the verb returns the same snapshot shape (`{id, prompt, createdAt}`) as `history`.
+
+#### Scenario: Descendants listed after rollback
+- **WHEN** an app has snapshots A→B→C, is rolled back to A, and `timeline` is called
+- **THEN** the result contains A, B, and C, newest first, and B and C are valid `rollback` (roll-forward) targets
+
+#### Scenario: Other lineages excluded
+- **WHEN** an app has a fork lineage alongside the active lineage and `timeline` is called
+- **THEN** only snapshots on the active lineage's line are enumerated
+
+#### Scenario: Cap respected
+- **WHEN** the line holds more snapshots than the configured history limit
+- **THEN** `timeline` returns the newest entries up to the limit

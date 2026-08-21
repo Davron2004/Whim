@@ -18,7 +18,11 @@ import type { UsageStore } from '../usage-store';
 import type { RunTrace } from '../generation/machine';
 import { reconcileAbortedUsage, type GenerationStatsTransport, type ReconcileBounds } from '../generation/reconcile';
 import { buildSseStream } from '../sse';
-import { logRequest } from '../dev-log';
+import { log } from '../logger';
+
+/** Same scope as `app.ts`'s middleware child: an SSE response's request record is emitted from
+ *  here instead, once its body has actually drained. */
+const requestLog = log.child({ scope: 'request' });
 
 type Env = { Variables: { deviceId: string } };
 
@@ -43,7 +47,7 @@ export function makeGenerateRoute(
   const { keepaliveMs, reconcile } = options;
 
   app.post('/', async (c) => {
-    // Dev logging (task 4.1, design D5): the stream's own body only finishes once it settles
+    // Request logging: the stream's own body only finishes once it settles
     // (close/error/cancel) — the outer app-level middleware (`app.ts`) returns from `next()` as
     // soon as headers are sent, well before that, so this route logs itself exactly once, from
     // `buildSseStream`'s `onSettled` hook below, instead.
@@ -94,11 +98,16 @@ export function makeGenerateRoute(
         if (creditOwned) return;
         // `reconcileAbortedUsage` never throws/rejects (`../generation/reconcile.ts`'s own
         // contract) — fire-and-forget is intentional, the SSE response has already ended.
+        // `.catch(fn)` is not a `CatchClause`, so the silent-catch tripwire cannot see this one
+        // (design D9) — it stays fire-and-forget by hand, and the rejection is recorded rather
+        // than discarded, since a reconciliation that failed means usage went uncredited.
         reconcileAbortedUsage(deviceId, trace.generationIds, {
           transport: reconcile.transport,
           usageStore,
           bounds: reconcile.bounds,
-        }).catch(() => {});
+        }).catch((err: unknown) => {
+          log.warn({ err, generationIds: trace.generationIds.length }, 'aborted-usage reconciliation failed');
+        });
       },
       { once: true },
     );
@@ -116,7 +125,10 @@ export function makeGenerateRoute(
     const stream = buildSseStream(source, keepaliveMs, () => controller.abort(), () => {
       // Status is always 200 here: the SSE response's headers are already committed by the time
       // this fires, whether the stream drained normally, errored mid-stream, or was cancelled.
-      logRequest(method, path, 200, requestStart);
+      requestLog.info(
+        { method, path, status: 200, durationMs: Math.round(performance.now() - requestStart) },
+        'request',
+      );
     });
 
     return new Response(stream, {
