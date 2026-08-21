@@ -23,16 +23,16 @@
 
 ## 3. Shell wiring — stream loop writes the journal
 
-- [ ] 3.1 In the `LauncherShell` loop driving `onBuildIt`, call `RunJournalStore.create` at the
+- [x] 3.1 In the `LauncherShell` loop driving `onBuildIt`, call `RunJournalStore.create` at the
       same point the pending-build record is created.
-- [ ] 3.2 Append `stage` entries immediately on every `stage` event; feed `token` events into the
+- [x] 3.2 Append `stage` entries immediately on every `stage` event; feed `token` events into the
       throttled `appendAggregate` path.
-- [ ] 3.3 Append the `terminal` entry immediately on `result`, `failure`, or stream error,
+- [x] 3.3 Append the `terminal` entry immediately on `result`, `failure`, or stream error,
       bypassing the aggregate throttle.
-- [ ] 3.4 Wire `moveToLastRun` into the successful-delivery path (after install succeeds, using the
+- [x] 3.4 Wire `moveToLastRun` into the successful-delivery path (after install succeeds, using the
       delivered app's id) and `delete` into the dismiss path, matching the pending-build record's
       own delete-on-dismiss timing.
-- [ ] 3.5 Thread the in-memory elapsed/aggregate/heartbeat state (Decision 6 in design.md) through
+- [x] 3.5 Thread the in-memory elapsed/aggregate/heartbeat state (Decision 6 in design.md) through
       to `BuildStep`'s props without a journal re-read on every tick.
 
 ## 4. Build-screen UI — activity signals
