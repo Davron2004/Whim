@@ -3,7 +3,8 @@
 // spec "Failure is shown honestly, never as a crash").
 // ─────────────────────────────────────────────────────────────────────────────
 // A full-screen sibling of the other launcher screens: `shellPalette(theme)`, own hardware-back
-// binding (routed to `onDismiss`), every string from `copy.ts`. HINT-ONLY BY CONSTRUCTION: this
+// binding (routed to `onBack`, the NON-destructive exit — the hardware gesture must never delete
+// an attempt), every string from `copy.ts`. HINT-ONLY BY CONSTRUCTION: this
 // component's props carry `reason` (the terminal event's or the client error's plain-English
 // summary) and a list of `{hint: string}` — never a `Diagnostic`'s `kind`/`symbol`/`message`.
 // "Rephrase" returns to the prompt screen with the user's text preserved (the caller re-opens
@@ -76,7 +77,11 @@ export interface FailureScreenProps {
   /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
    *  prompt screen with the user's text preserved. */
   onRephrase: () => void;
-  /** Dismisses the failure screen (back to home). */
+  /** Leaves the failure screen for the launcher, destroying NOTHING — the attempt, its ghost tile
+   *  and its run journal all survive. Also what the hardware back gesture performs. */
+  onBack: () => void;
+  /** Discards the attempt: the pending-build record and its run journal are deleted. Destructive,
+   *  and labelled as such (`COPY.failureDismiss`) — never as plain navigation. */
   onDismiss: () => void;
 }
 
@@ -114,6 +119,7 @@ export default function FailureScreen({
   attemptStarted = false,
   devMode = false,
   onRephrase,
+  onBack,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
   const { theme } = useTheme();
@@ -121,11 +127,11 @@ export default function FailureScreen({
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onDismiss();
+      onBack();
       return true;
     });
     return () => sub.remove();
-  }, [onDismiss]);
+  }, [onBack]);
 
   const outcome = recovered ? STATUS_COLORS.done : p.danger;
   const rows = failureChecklistRows({ diagnostics, hasWorkingVersion });
@@ -199,12 +205,22 @@ export default function FailureScreen({
           {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
         </Text>
       </TouchableOpacity>
+      {/* The two exits, in the order their consequences deserve: leaving is the ordinary way out
+          and reads as plain navigation; discarding deletes the attempt and its journal, so it
+          takes the danger hue and says what it does. */}
+      <TouchableOpacity
+        onPress={onBack}
+        accessibilityRole="button"
+        style={[styles.action, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{COPY.failureBack}</Text>
+      </TouchableOpacity>
       <TouchableOpacity
         onPress={onDismiss}
         accessibilityRole="button"
-        style={[styles.action, styles.actionLast, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+        style={[styles.action, styles.actionLast, { backgroundColor: p.bg, borderColor: p.danger }]}
       >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.failureDismiss}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.danger }]}>{COPY.failureDismiss}</Text>
       </TouchableOpacity>
     </View>
   );
