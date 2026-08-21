@@ -7,13 +7,13 @@
 // differ. Plain Node 22 ESM, no new dependencies, orchestrating external tools only: adb,
 // maestro, the Gradle wrapper, and ffmpeg.
 //
-//   node demo/android/film.mjs <flow.yaml> [--out <dir>] [--rebuild] [--avd <name>]
+//   node demo/android/film.mjs <flow.yaml> [--out <dir>] [--rebuild] [--avd <name>] [--tighten]
 //
 // STATE MACHINE (one linear pipeline, no branching back-edges — a filming run is a single
 // attempt, never resumed mid-way):
 //
 //   PREFLIGHT → DEVICE → APK → INSTALL → CLEAR → RECORD_START → MAESTRO → RECORD_STOP
-//     → PULL → FINALIZE → done
+//     → PULL → FINALIZE → [TIGHTEN] → done
 //
 // - PREFLIGHT: verify Node >= 22, resolve adb/maestro/ffmpeg/emulator (PATH first, falling
 //   back to the grounded absolute paths below), verify the flow file exists. Any failure here
@@ -33,6 +33,11 @@
 // - MAESTRO failing does not short-circuit RECORD_STOP/PULL/FINALIZE: the partial recording is
 //   still pulled and transcoded (useful for debugging a flaky flow), but the process still
 //   exits non-zero and prints the flow's own error.
+// - TIGHTEN (opt-in, --tighten): runs after FINALIZE, only if maestro succeeded (a failed flow's
+//   partial recording is left as-is for debugging, not tightened). Calls demo/edit.mjs's
+//   `tighten()` over the finalized .mp4; the raw file is always kept, a `-tight` variant is
+//   written alongside it. A tighten failure is reported but does not fail the overall command —
+//   the raw recording already succeeded by that point.
 //
 // CAP: `adb shell screenrecord` hard-stops recording at 180s. Flows filmed by this tool must
 // stay comfortably under that (~2.5 min) — film.mjs does not attempt to chain recordings.
@@ -43,6 +48,7 @@ import { constants as FS } from 'node:fs';
 import { resolve, join, basename, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { tighten } from '../edit.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -123,6 +129,7 @@ function parseArgs(argv) {
   let out;
   let rebuild = false;
   let avd = DEFAULT_AVD;
+  let doTighten = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--out') {
       out = argv[i + 1];
@@ -132,15 +139,17 @@ function parseArgs(argv) {
     } else if (argv[i] === '--avd') {
       avd = argv[i + 1];
       i++;
+    } else if (argv[i] === '--tighten') {
+      doTighten = true;
     } else {
       rest.push(argv[i]);
     }
   }
   if (rest.length !== 1) {
-    console.error('usage: node demo/android/film.mjs <flow.yaml> [--out <dir>] [--rebuild] [--avd <name>]');
+    console.error('usage: node demo/android/film.mjs <flow.yaml> [--out <dir>] [--rebuild] [--avd <name>] [--tighten]');
     process.exit(1);
   }
-  return { flowArg: rest[0], outDir: out ? resolve(out) : DEFAULT_OUT_DIR, rebuild, avd };
+  return { flowArg: rest[0], outDir: out ? resolve(out) : DEFAULT_OUT_DIR, rebuild, avd, doTighten };
 }
 
 // ── PREFLIGHT ───────────────────────────────────────────────────────────────────────────────
@@ -270,7 +279,7 @@ async function finalizeVideo(ffmpeg, rawPath, outPath) {
 }
 
 async function main() {
-  const { flowArg, outDir, rebuild, avd } = parseArgs(process.argv.slice(2));
+  const { flowArg, outDir, rebuild, avd, doTighten } = parseArgs(process.argv.slice(2));
   const flowPath = resolve(flowArg);
   const flowName = basename(flowPath, extname(flowPath));
 
@@ -336,6 +345,23 @@ async function main() {
   }
 
   console.log(`\n[film] Demo video written: ${outPath}`);
+
+  if (doTighten) {
+    try {
+      const result = await tighten(outPath);
+      if (result.skipped) {
+        log(`already tight (no static stretches found) — kept raw only: ${outPath}`);
+      } else {
+        log(
+          `tightened ${result.totalDuration.toFixed(2)}s -> ${result.outDuration.toFixed(2)}s ` +
+            `(${result.cuts} cuts, ${result.removedSec.toFixed(2)}s removed)`,
+        );
+        console.log(`[film] Tightened demo video written: ${result.outPath}`);
+      }
+    } catch (err) {
+      console.error(`[film] --tighten skipped — ${err.message}`);
+    }
+  }
 }
 
 await main();
