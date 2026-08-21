@@ -76,16 +76,23 @@ export default function MiniAppView({
     );
   }
 
-  // A post-delivery failure (a bundle-error frame, or a delivered app that never paints -- the
-  // watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
-  // instead of a blank screen, with a way to retry the same app or leave to Home.
+  // A post-delivery failure (a fatal bundle-error frame, or a delivered app that never paints --
+  // the watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
+  // instead of a blank screen, with a way to retry the same app or leave to Home. Retry clears
+  // lastError AND bumps webKey together: clearing alone can't remount (the branch below never
+  // renders while lastError is set), and bumping the key alone can't reset lastError (only bind()
+  // does that) -- both are needed to fall through into a fresh <WebView> mount.
   if (host.state.lastError) {
     const p = shellPalette(theme);
+    const retry = () => {
+      host.clearLastError();
+      setWebKey((k) => k + 1);
+    };
     return (
       <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
-        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={() => setWebKey((k) => k + 1)}>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={retry}>
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
         </Pressable>
         <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>

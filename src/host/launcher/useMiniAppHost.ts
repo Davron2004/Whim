@@ -57,6 +57,29 @@ function armPaintWatchdog(ref: TimerRef, setS: (fn: (p: HostState) => HostState)
   }, PAINT_WATCHDOG_MS);
 }
 
+// The `error` frame's `where` values a bundle can never recover a paint from (loader.js: no
+// AppSpec export, a render throw, or the delivery wrapper itself throwing before any script even
+// runs) -- distinct from post-paint diagnostics (e.g. `where: 'probes'`), which stay
+// diagnostic-only and never escalate into the product's full-screen recovery surface.
+function isFatalErrorWhere(where: unknown): boolean {
+  return where === 'bundle' || where === 'mount' || where === 'deliver';
+}
+
+/** A `delivery` frame only arms the paint watchdog when the bundle was actually ACCEPTED
+ *  (loader.js: `{accepted: true/false, ...}`) -- a refused delivery never mounts, so a countdown
+ *  to a takeover would be redundant with the `error` frame the refusal path also posts. */
+function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (payload?.accepted === true) armPaintWatchdog(paintTimer, setS);
+}
+
+/** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
+ *  non-fatal diagnostic (e.g. a post-paint probes failure) never triggers a full-screen takeover
+ *  on an otherwise-healthy running app. */
+function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (!isFatalErrorWhere(payload?.where)) return;
+  setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error' }));
+}
+
 export interface HostState {
   contained: boolean | null;
   probesFrac: string;
@@ -107,6 +130,10 @@ export interface MiniAppHost {
   control: (js: string) => void;
   /** Tap the floating affordance / explicit leave (bypasses the realm entirely). */
   exit: () => void;
+  /** Clear a post-delivery `lastError` WITHOUT tearing down or rebinding the realm -- paired with
+   *  a WebView remount (a fresh `key`) by the caller so Retry falls through the error branch into
+   *  a normal render, whose `onLoadEnd` re-runs `deliverBySource` → `bind()` into a fresh realm. */
+  clearLastError: () => void;
 }
 
 export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
@@ -150,7 +177,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       }
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
-      if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; }
+      disarmTimer(paintTimer);
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
       setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0 }));
@@ -260,10 +287,10 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, rejectedForgeries: p.rejectedForgeries + 1 }));
         return;
       case 'delivery':
-        armPaintWatchdog(paintTimer, setS);
+        handleDeliveryFrame(m.payload, paintTimer, setS);
         return;
       case 'error':
-        setS((p) => ({ ...p, lastError: m.payload?.message || m.payload?.name || 'error' }));
+        handleErrorFrame(m.payload, setS);
         return;
       default:
         return; // unknown kind → ignore (never act on a frame by its tag)
@@ -271,9 +298,13 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   }, [control]);
 
   const exit = useCallback(() => {
-    if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; }
+    disarmTimer(paintTimer);
     tearDownLiveRealm(live, popTimer);
     onExitRef.current?.();
+  }, []);
+
+  const clearLastError = useCallback(() => {
+    setS((p) => ({ ...p, lastError: null }));
   }, []);
 
   // ── Android system back (#5 D4 — the guaranteed-exit wiring) ────────────────
@@ -302,7 +333,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // Runs ONLY on unmount (empty deps). Reads `live` and `popTimer` as refs so the closure is
   // never stale. Does NOT call onExit — unmount already means leaving; onExit is the exit()-path
   // caller's responsibility (explicit user-initiated leave only).
-  useEffect(() => () => { if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; } tearDownLiveRealm(live, popTimer); }, []);
+  useEffect(() => () => { tearDownLiveRealm(live, popTimer); disarmTimer(paintTimer); }, []);
 
   return {
     runtimeHtml: RUNTIME_HTML,
@@ -313,5 +344,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     deliverByRecord,
     control,
     exit,
+    clearLastError,
   };
 }
