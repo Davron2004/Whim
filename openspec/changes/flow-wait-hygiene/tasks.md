@@ -29,12 +29,12 @@
 
 ## 3. Open/fork/delete busy states (B3/B4)
 
-- [ ] 3.1 Add a per-tile busy/pressed state to the home grid (`HomeScreen.tsx`/`app-tile.tsx`)
+- [x] 3.1 Add a per-tile busy/pressed state to the home grid (`HomeScreen.tsx`/`app-tile.tsx`)
   driven by `onOpen`'s in-flight status, cleared on screen switch or failure.
-- [ ] 3.2 Add a busy/disabled state to the Fork and Delete action-sheet rows (or their triggering
+- [x] 3.2 Add a busy/disabled state to the Fork and Delete action-sheet rows (or their triggering
   controls) in `HomeScreen.tsx`, driven by `onFork`/`onDelete`'s in-flight status in
   `LauncherRoot.tsx`, disabling re-invocation for the same app until the operation settles.
-- [ ] 3.3 Verify (manually or via an existing acceptance path) that a failed fork/delete clears
+- [x] 3.3 Verify (manually or via an existing acceptance path) that a failed fork/delete clears
   the busy state and still shows the existing `Alert.alert` failure path.
 
 ## 4. Mini-app boot state (B7)
