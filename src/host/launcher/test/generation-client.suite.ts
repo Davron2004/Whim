@@ -77,6 +77,54 @@ function abortableSseResponse(startEvent: GenerationEvent, signal: AbortSignal |
 
 const BASE: ClientOptions = { baseUrl: 'https://example.invalid', deviceId: 'device-1' };
 
+/** The connect window used by the timeout scenarios below — milliseconds, not the production
+ *  15s, so the suite proves the behaviour without sleeping through it. */
+const WINDOW_MS = 20;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** Await `promise` but resolve to `'hung'` rather than hanging the whole suite if it never
+ *  settles (a bare `await` on a regression here would be an exit-13 hang, not a failed check). */
+async function settledOrHung<T>(promise: Promise<T>, ms: number): Promise<T | 'hung' | Error> {
+  const hung = new Promise<'hung'>((resolve) => {
+    setTimeout(() => resolve('hung'), ms);
+  });
+  try {
+    return await Promise.race([promise, hung]);
+  } catch (err) {
+    return err as Error;
+  }
+}
+
+/** A `fetch` double whose SSE response body stays open indefinitely: the test drives it through
+ *  `hold.controller`, and the body errors on abort exactly as a real `fetch`'s does — so a connect
+ *  timer that was never disarmed would visibly kill the stream. */
+function openEndedSseFetch(hold: { controller?: ReadableStreamDefaultController<Uint8Array> }): typeof fetch {
+  const start = (c: ReadableStreamDefaultController<Uint8Array>, signal: AbortSignal | null | undefined): void => {
+    hold.controller = c;
+    signal?.addEventListener('abort', () => errorStreamOnAbort(c));
+  };
+  return (async (_url: string, init?: RequestInit) => {
+    const stream = new ReadableStream<Uint8Array>({ start: (c) => start(c, init?.signal) });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as typeof fetch;
+}
+
+/** A `fetch` double that never resolves on its own — it settles only when the request's signal
+ *  aborts, exactly as a real `fetch` does, so a fired connect timeout is observable. */
+function hangingFetch(record: { signal?: AbortSignal } = {}): typeof fetch {
+  return (async (_url: string, init?: RequestInit) => {
+    record.signal = init?.signal ?? undefined;
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+    });
+  }) as typeof fetch;
+}
+
 export async function runGenerationClientTests(h: Harness): Promise<void> {
   // device id: generated once, persisted, reused
   await h.test('device-id generates once and persists across reads on the same KVBackend', () => {
@@ -310,6 +358,76 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(got, [startEvent], 'yields the events seen before the abort');
     h.eq(threw, undefined, 'does not throw');
   });
+
+  // --- flow-wait-hygiene chain-1: leaving compose/plan cancels the in-flight unary request ---
+
+  await h.test('clarifyPrompt: the caller signal reaches the request and an abort surfaces as AbortError, not a network failure', async () => {
+    const record: { signal?: AbortSignal } = {};
+    const controller = new AbortController();
+    const pending = clarifyPrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', controller.signal);
+    const caught = settledOrHung(pending, 1000);
+    h.ok(record.signal !== undefined, 'the signal is threaded into the fetch call');
+    controller.abort();
+    const err = await caught;
+    h.ok(err !== 'hung', 'the aborted call settles instead of hanging');
+    h.ok(err instanceof Error && err.name === 'AbortError', 'the abort surfaces as an AbortError');
+    h.ok(!(err instanceof GenerationClientError), 'a user cancel is NOT reclassified as a GenerationClientError');
+  });
+
+  await h.test('rewritePrompt: the caller signal reaches the request and an abort surfaces as AbortError, not a network failure', async () => {
+    const record: { signal?: AbortSignal } = {};
+    const controller = new AbortController();
+    const pending = rewritePrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', [], controller.signal);
+    const caught = settledOrHung(pending, 1000);
+    h.ok(record.signal !== undefined, 'the signal is threaded into the fetch call');
+    controller.abort();
+    const err = await caught;
+    h.ok(err !== 'hung', 'the aborted call settles instead of hanging');
+    h.ok(err instanceof Error && err.name === 'AbortError', 'the abort surfaces as an AbortError');
+    h.ok(!(err instanceof GenerationClientError), 'a user cancel is NOT reclassified as a GenerationClientError');
+  });
+
+  // --- flow-wait-hygiene chain-1: the connect / first-event window on the fetch transport ---
+
+  await h.test(
+    'generateApp (fetch path): no first event within the connect window raises GenerationClientError{kind:"network"}',
+    async () => {
+      const opts: ClientOptions = { ...BASE, fetchImpl: hangingFetch(), connectTimeoutMs: WINDOW_MS };
+      const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
+      h.ok(err !== 'hung', 'the hung connect is bounded rather than waiting forever');
+      h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
+      h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'network', 'classified as a network failure, not left in progress');
+    },
+  );
+
+  await h.test(
+    'generateApp (fetch path): the connect window never applies once the first event has arrived',
+    async () => {
+      const enc = new TextEncoder();
+      const eventA: GenerationEvent = { type: 'stage', stage: 'generate', status: 'start' };
+      const eventB: GenerationEvent = { type: 'token', text: 'still going' };
+      const hold: { controller?: ReadableStreamDefaultController<Uint8Array> } = {};
+      const fetchImpl = openEndedSseFetch(hold);
+
+      const gen = generateApp({ ...BASE, fetchImpl, connectTimeoutMs: WINDOW_MS }, { prompt: 'p' });
+      const first = gen.next();
+      hold.controller?.enqueue(enc.encode(sseFrame(eventA, 1)));
+      const firstResult = await settledOrHung(first, 1000);
+      h.eq(firstResult !== 'hung' && !(firstResult instanceof Error) ? firstResult.value : undefined, eventA, 'yields the first event');
+
+      // Idle for several windows with the stream open -- a long generation, mid-flight.
+      await sleep(WINDOW_MS * 4);
+      hold.controller?.enqueue(enc.encode(sseFrame(eventB, 2)));
+      hold.controller?.close();
+
+      const second = await settledOrHung(gen.next(), 1000);
+      h.eq(
+        second !== 'hung' && !(second instanceof Error) ? second.value : second,
+        eventB,
+        'a stream idle far longer than the connect window keeps running and yields its next event',
+      );
+    },
+  );
 
   // clarifyPrompt: a mapped error records a generation-channel breadcrumb before throwing.
   // obs-v1: the breadcrumb is a SEAM record, not a console line — so this reads the seam's ring

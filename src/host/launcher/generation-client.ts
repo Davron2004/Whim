@@ -38,7 +38,9 @@ import type {
 
 import { openXhrGenerateStream } from './xhr-transport';
 import {
+  CONNECT_TIMEOUT_HINT,
   GenerationClientError,
+  connectTimeoutOf,
   httpErrorFrom,
   isNonEmptyString,
   isRecord,
@@ -179,7 +181,11 @@ function messageOf(err: unknown): string {
  * `GenerationClientError{kind:'http', status:502}`, which the flow treats as "skip to the plan
  * step" rather than a dead end (`prompt-flow.ts#isClarifySkip`).
  */
-export async function clarifyPrompt(opts: ClientOptions, prompt: string): Promise<ClarifyResponse> {
+export async function clarifyPrompt(
+  opts: ClientOptions,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<ClarifyResponse> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   let response: Response;
   try {
@@ -187,8 +193,12 @@ export async function clarifyPrompt(opts: ClientOptions, prompt: string): Promis
       method: 'POST',
       headers: requestHeaders(opts),
       body: JSON.stringify({ prompt } satisfies ClarifyRequest),
+      signal,
     });
   } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
     logMappedError('/v1/clarify', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
@@ -211,6 +221,7 @@ export async function rewritePrompt(
   opts: ClientOptions,
   prompt: string,
   clarifications: readonly Clarification[] = [],
+  signal?: AbortSignal,
 ): Promise<RewriteResponse> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   let response: Response;
@@ -222,8 +233,12 @@ export async function rewritePrompt(
         prompt,
         ...(clarifications.length > 0 ? { clarifications: [...clarifications] } : {}),
       } satisfies RewriteRequest),
+      signal,
     });
   } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
     logMappedError('/v1/rewrite', opts.baseUrl, 'network', { message: messageOf(err) });
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }
@@ -269,26 +284,77 @@ function parseSseBlock(block: string): GenerationEvent | undefined {
   return dataJson;
 }
 
-/** Open the `POST /v1/generate` SSE stream over `fetch` and return its body reader, or
- *  `'aborted'` if `signal` fired before/during the request. Every other failure throws
- *  `GenerationClientError`. Only reachable when the runtime capability determination below has
- *  decided this runtime's `fetch` actually streams (or a caller injects it directly via
- *  `ClientOptions.streamTransport`). */
+function connectTimeoutError(opts: ClientOptions): GenerationClientError {
+  logMappedError('/v1/generate', opts.baseUrl, 'network', { message: CONNECT_TIMEOUT_HINT });
+  return new GenerationClientError('network', { hint: CONNECT_TIMEOUT_HINT });
+}
+
+/**
+ * Open the `POST /v1/generate` SSE stream over `fetch` and return its body reader, or
+ * `'aborted'` if `signal` fired before/during the request. Every other failure throws
+ * `GenerationClientError`. Only reachable when the runtime capability determination below has
+ * decided this runtime's `fetch` actually streams (or a caller injects it directly via
+ * `ClientOptions.streamTransport`).
+ *
+ * Bounded by the connect / first-event window (design "flow-wait-hygiene" D2): a timer armed
+ * before the request aborts it through the SAME `AbortController` that relays the caller's
+ * `signal`, so one abort path serves both — but a timer-triggered abort sets `timedOut` first and
+ * is therefore classified `GenerationClientError{kind:'network'}` rather than silently ending the
+ * iteration the way a user cancel does. The window covers request start → the first `read()`
+ * outcome only; the returned reader disarms it there, so a long generation that has begun
+ * emitting is NEVER timed out. The timer is cleared on every exit path (abort, HTTP error,
+ * transport error, first chunk, stream end) — a live `setTimeout` outliving its request is a
+ * leak class.
+ */
 async function openFetchGenerateStream(
   opts: ClientOptions,
   request: GenerateRequest,
   signal: AbortSignal | undefined,
 ): Promise<ResponseBodyReader | 'aborted'> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  let timedOut = false;
+
+  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    timer = undefined;
+    timedOut = true;
+    controller.abort();
+  }, connectTimeoutOf(opts));
+
+  function disarm(): void {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  }
+  const onCallerAbort = (): void => {
+    disarm();
+    controller.abort();
+  };
+  function cleanup(): void {
+    disarm();
+    signal?.removeEventListener('abort', onCallerAbort);
+  }
+
+  if (signal?.aborted) {
+    cleanup();
+    return 'aborted';
+  }
+  signal?.addEventListener('abort', onCallerAbort, { once: true });
+
   let response: Response;
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/generate`, {
       method: 'POST',
       headers: requestHeaders(opts),
       body: JSON.stringify(request satisfies GenerateRequest),
-      signal,
+      signal: controller.signal,
     });
   } catch (err) {
+    cleanup();
+    if (timedOut) {
+      throw connectTimeoutError(opts);
+    }
     if (isAbortError(err)) {
       return 'aborted';
     }
@@ -297,12 +363,33 @@ async function openFetchGenerateStream(
   }
 
   if (!response.ok) {
+    cleanup();
     throw await httpErrorFrom(response, '/v1/generate', opts.baseUrl);
   }
   if (!response.body) {
+    cleanup();
     throw new GenerationClientError('network', { hint: 'Response has no body' });
   }
-  return response.body.getReader();
+
+  const inner = response.body.getReader();
+  return {
+    async read() {
+      try {
+        const chunk = await inner.read();
+        disarm(); // first byte observed — no further timeout applies for the stream's lifetime
+        if (chunk.done) {
+          cleanup();
+        }
+        return chunk;
+      } catch (err) {
+        cleanup();
+        if (timedOut) {
+          throw connectTimeoutError(opts);
+        }
+        throw err;
+      }
+    },
+  };
 }
 
 /**

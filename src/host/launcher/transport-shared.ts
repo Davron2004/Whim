@@ -70,13 +70,32 @@ type StreamTransport = (
  *  `POST /v1/generate` (design D1/D2) — it is what lets the acceptance suite drive the XHR
  *  transport directly, against a fake `XMLHttpRequest`, instead of only ever exercising Node's
  *  native streaming `fetch`. Independent of `fetchImpl`, which only affects the unary
- *  `rewritePrompt` call and the fetch-based stream path's own request when it is in effect. */
+ *  `rewritePrompt` call and the fetch-based stream path's own request when it is in effect.
+ *
+ *  `connectTimeoutMs` overrides the shared connect / first-event window (`CONNECT_TIMEOUT_MS`)
+ *  applied by both stream transports. */
 export interface ClientOptions {
   baseUrl: string;
   deviceId: string;
   fetchImpl?: typeof fetch;
   streamTransport?: StreamTransport;
+  connectTimeoutMs?: number;
 }
+
+/** The connect / first-event window for `POST /v1/generate` (design "flow-wait-hygiene" D2):
+ *  request start → first byte/event only, NEVER the stream's lifetime. Once the first event is
+ *  observed both transports disarm, so a long generation runs indefinitely. Overridable per
+ *  request through `ClientOptions.connectTimeoutMs` solely so the acceptance suites can drive the
+ *  window in milliseconds instead of sleeping fifteen seconds; production callers never set it. */
+export const CONNECT_TIMEOUT_MS = 15_000;
+
+export function connectTimeoutOf(opts: ClientOptions): number {
+  return opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS;
+}
+
+/** The hint carried by the `GenerationClientError{kind:'network'}` both transports raise when the
+ *  connect window expires — a hung connect is a network failure, never an in-progress stream. */
+export const CONNECT_TIMEOUT_HINT = 'The generate request timed out before the first event';
 
 export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse';
 

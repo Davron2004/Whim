@@ -22,7 +22,15 @@
  */
 
 import type { GenerateRequest } from '@whim/contract';
-import { GenerationClientError, httpErrorFrom, logMappedError, requestHeaders, type ClientOptions } from './transport-shared';
+import {
+  CONNECT_TIMEOUT_HINT,
+  GenerationClientError,
+  connectTimeoutOf,
+  httpErrorFrom,
+  logMappedError,
+  requestHeaders,
+  type ClientOptions,
+} from './transport-shared';
 
 /** One queued outcome for the reader's pull-based `read()`, produced by XHR's push-based
  *  events. Delivered strictly in arrival order and never dropped, even if several XHR events
@@ -53,6 +61,20 @@ function abortError(): Error {
  * other `Error` for a transport failure (`readNext` wraps it into
  * `GenerationClientError{kind:'network'}` unchanged — no re-classification needed here).
  *
+ * Bounded by the connect / first-event window (design "flow-wait-hygiene" D2): request start →
+ * first delivered event only, disarmed the moment the first chunk reaches the reader, so a long
+ * generation that has begun emitting is NEVER killed.
+ *
+ * That window is a JS `setTimeout`, NOT `xhr.timeout`, and the difference is load-bearing rather
+ * than a matter of taste. RN reads `this.timeout` once, at `send()` time, and hands it to the
+ * native layer (`XMLHttpRequest.js`: `RCTNetworking.sendRequest(..., this.timeout, ...)`), so a
+ * post-`send()` write is never observed — the window could not be disarmed. And Android maps that
+ * value onto OkHttp's `callTimeout` (`NetworkingModule.kt`:
+ * `clientBuilder.callTimeout(timeout, MILLISECONDS)`), which bounds the WHOLE call including the
+ * response-body read — arming it at 15s would abort every generation that streams for longer than
+ * fifteen seconds, exactly what the spec forbids. `xhr.ontimeout` stays wired (a native timeout,
+ * however it arises, is still classified `network`); it is simply never this module's own window.
+ *
  * `createXhr` defaults to the global `XMLHttpRequest` constructor and exists solely so tests
  * can supply a fake without mutating global state.
  */
@@ -74,6 +96,14 @@ export async function openXhrGenerateStream(
     signal?.addEventListener('abort', onSignalAbort, { once: true });
     function cleanupSignal(): void {
       signal?.removeEventListener('abort', onSignalAbort);
+    }
+
+    let connectTimer: ReturnType<typeof setTimeout> | undefined;
+    function disarmConnectTimeout(): void {
+      if (connectTimer !== undefined) {
+        clearTimeout(connectTimer);
+        connectTimer = undefined;
+      }
     }
 
     let offset = 0;
@@ -168,6 +198,7 @@ export async function openXhrGenerateStream(
         return;
       }
       finished = true;
+      disarmConnectTimeout();
       cleanupSignal();
       deliver({ kind: 'value', value: newTextChunk(true) });
     }
@@ -177,6 +208,7 @@ export async function openXhrGenerateStream(
         return;
       }
       finished = true;
+      disarmConnectTimeout();
       cleanupSignal();
       if (opened) {
         deliver({ kind: 'error', error: abortError() });
@@ -191,6 +223,7 @@ export async function openXhrGenerateStream(
         return;
       }
       finished = true;
+      disarmConnectTimeout();
       logMappedError('/v1/generate', opts.baseUrl, 'network', { readyState: xhr.readyState, message: hint });
       cleanupSignal();
       if (opened) {
@@ -215,6 +248,7 @@ export async function openXhrGenerateStream(
         return;
       }
       finished = true;
+      disarmConnectTimeout();
       cleanupSignal();
       const fakeResponse = {
         status: xhr.status,
@@ -249,6 +283,8 @@ export async function openXhrGenerateStream(
       if (ok) {
         const chunk = newTextChunk(false);
         if (chunk.value) {
+          // First event delivered — the connect window closes and never reopens.
+          disarmConnectTimeout();
           deliver({ kind: 'value', value: chunk });
         }
       }
@@ -266,6 +302,12 @@ export async function openXhrGenerateStream(
     xhr.onerror = () => finishTransportError('The generate request failed');
     xhr.ontimeout = () => finishTransportError('The generate request timed out');
     xhr.onabort = () => finishAbort();
+
+    connectTimer = setTimeout(() => {
+      connectTimer = undefined;
+      finishTransportError(CONNECT_TIMEOUT_HINT);
+      xhr.abort(); // release the socket; `finished` is already set, so `onabort` is a no-op here
+    }, connectTimeoutOf(opts));
 
     xhr.send(JSON.stringify(request));
   });
