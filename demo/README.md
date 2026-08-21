@@ -11,6 +11,7 @@ on top.
 npm run build                                   # once, so runtime-artifacts.json is fresh
 node demo/cli.mjs demo/flows/tip-splitter.demo.mjs
 node demo/cli.mjs demo/flows/tip-splitter.demo.mjs --out /tmp/somewhere
+node demo/cli.mjs demo/flows/tip-splitter.demo.mjs --tighten   # also writes a dead-air-cut -tight.mp4, see (e)
 ```
 
 Prints the output path on success (`demo/out/<flow-name>.mp4` by default — the flow file's
@@ -76,7 +77,7 @@ instead of a Chromium rendering of one bundle in isolation:
 
 ```sh
 npm run build && cd android && ./gradlew assembleRelease && cd ..   # once, or pass --rebuild
-node demo/android/film.mjs demo/android/flows/tip-splitter.yaml [--out demo/out/] [--rebuild] [--avd <name>]
+node demo/android/film.mjs demo/android/flows/tip-splitter.yaml [--out demo/out/] [--rebuild] [--avd <name>] [--tighten]
 ```
 
 It boots-or-reuses an emulator, installs the APK, `pm clear`s the app for a fresh seeded first
@@ -92,3 +93,53 @@ opaque-origin iframe — mini-app text (`"Bill"`, `"Reset"`, computed `$` rows) 
 ordinary node `text`, alongside `resource-id: "whim-iframe"`/`"whim-root"`. So the Android flow
 targets in-app content with plain text/relative selectors, no coordinate taps needed, no
 testIDs added.
+
+## (e) Tightening — cutting dead air (`demo/edit.mjs`)
+
+Both `demo/cli.mjs` and `demo/android/film.mjs` accept an opt-in `--tighten` flag that runs a
+dead-air cut over the raw recording once it's written. The raw file is always kept — tighten
+never replaces it — and a `-tight` variant is written alongside it; a tighten failure (e.g.
+`ffmpeg` missing) is reported but does NOT fail the overall film/record command, since the raw
+recording already succeeded by that point.
+
+```sh
+node demo/cli.mjs demo/flows/tip-splitter.demo.mjs --tighten
+node demo/android/film.mjs demo/android/flows/tip-splitter.yaml --tighten
+
+# standalone, against an already-rendered video:
+node demo/edit.mjs demo/out/tip-splitter-android.mp4
+node demo/edit.mjs demo/out/tip-splitter-android.mp4 --out /tmp/out.mp4 --min-still 1.0 --keep 0.4 --noise -50dB
+```
+
+**What it does**: two ffmpeg passes. Pass 1 runs `freezedetect` (`n=`noise, `d=`min-still) to
+find visually-static stretches — mini-app generation waits, Maestro's ~1s inter-action safety
+windows, settle pauses. Pass 2 clamps each one down to `--keep` seconds (default **0.6s**) rather
+than removing it outright: a demo cut edge-to-edge on hard action boundaries reads as broken, not
+snappy — a short held beat after each action lands still reads as an edit, not a glitch. Static
+stretches shorter than `--min-still` (default **1.2s**) are left untouched entirely
+(freezedetect's own `d` threshold — nothing that short is worth cutting). If freezedetect finds
+nothing, the tool prints "already tight" and writes nothing (exit 0) rather than emitting a copy.
+
+**Defaults were tuned against real footage, not guessed**: `demo/out/tip-splitter-android.mp4`
+(an 81s Android recording) needed no tuning at freezedetect's own default noise floor (`-60dB`)
+combined with `d=1.2` — it found 23 real static stretches (from ~0.6s idle bounces up to a 6.3s
+generation wait) and tightened the video to ~24s. Verified by extracting frames at several points
+across the tightened output and confirming the mini-app's state (typed values, computed rows,
+menu sheets) still appears in the correct order.
+
+**Which end of the freeze survives the clamp**: the FIRST `--keep` seconds, not a centered slice
+or the trailing edge. Every frame inside a freeze is visually identical by definition (that's
+what "frozen" means to freezedetect), so the only thing that changes between first/last/centered
+is the felt rhythm of the cut. Keeping the leading edge reads as "the action lands, we hold on
+the result for a beat, then cut" (a natural edit beat); keeping the trailing edge reads as
+anticipation for something the mini-app gives no visible tell is about to happen.
+
+**A real-footage gotcha worth knowing if you touch `demo/edit.mjs`**: these screen recordings are
+genuinely variable-frame-rate — the encoder doesn't emit a new frame while nothing changes, and
+even authors an explicit long *duration* value on the one frame representing a static stretch. A
+naive `trim`+`concat` filter graph either collapses the "kept beat" to near-zero (the trim window
+can legitimately contain zero real frames) or overshoots by seconds (several ffmpeg
+filters/encoders were found to use that inherited duration value for output pacing instead of
+recomputing it). `edit.mjs` sidesteps both failure modes by resampling to a constant frame rate
+up front and using the classic `select`+`setpts` idiom instead (no `trim`/`concat` at all) — see
+the VFR GOTCHA comment at the top of that file for the full story.
