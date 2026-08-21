@@ -45,7 +45,10 @@ function shapeRewrite(text: string): RewriteResponse {
   const rows: PlanRow[] = Array.isArray(v.plan)
     ? v.plan
         .filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
-        .map((row) => ({ label: String(row.label ?? '').trim(), text: String(row.text ?? '').trim() }))
+        .map((row) => ({
+          label: (typeof row.label === 'string' ? row.label : '').trim(),
+          text: (typeof row.text === 'string' ? row.text : '').trim(),
+        }))
         .filter((row) => row.label.length > 0 && row.text.length > 0)
     : [];
 

@@ -38,7 +38,7 @@ export interface DevLogSinkOptions {
   maxBodyBytes?: number;
 }
 
-const LEVELS: readonly DevLogLevel[] = ['debug', 'info', 'warn', 'error'];
+const LEVELS: ReadonlySet<DevLogLevel> = new Set(['debug', 'info', 'warn', 'error']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,7 +47,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isDevLogRecord(value: unknown): value is DevLogRecord {
   if (!isRecord(value)) return false;
   if (typeof value.at !== 'number' || !Number.isFinite(value.at)) return false;
-  if (typeof value.level !== 'string' || !LEVELS.includes(value.level as DevLogLevel)) return false;
+  if (typeof value.level !== 'string' || !LEVELS.has(value.level as DevLogLevel)) return false;
   if (typeof value.channel !== 'string' || value.channel.length === 0) return false;
   if (typeof value.message !== 'string') return false;
   return isRecord(value.fields);
