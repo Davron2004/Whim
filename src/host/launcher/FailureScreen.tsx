@@ -26,6 +26,8 @@ import {
   type AttemptSegment,
   type FailureRowKind,
 } from './copy';
+import RunTimeline from './RunTimeline';
+import type { RunJournalEntry } from './run-journal';
 import { shellPalette, type ShellPalette } from './theme';
 import { useTheme } from './theme-context';
 
@@ -53,6 +55,24 @@ export interface FailureScreenProps {
    * Absent = the live shape, unchanged.
    */
   retryable?: boolean;
+  /**
+   * The failed attempt's run journal, read ONCE by the caller for the record being shown. `null`
+   * (or absent) when there was none to read — the what-happened section then falls back to its
+   * empty note, and NOTHING else about this screen changes: the state, the reason and the
+   * checklist all come from the pending-build record, never from the journal
+   * (`generation-run-journal` "A journal is never a second source of truth").
+   */
+  journal?: readonly RunJournalEntry[] | null;
+  /**
+   * Whether a generation attempt was ever STARTED for this failure. A clarify or rewrite failure
+   * fails before any attempt exists, so there is no run to have a what-happened section about —
+   * absent (or false) omits the section entirely rather than heading an empty note. True with a
+   * `null` journal is the different, genuinely-degraded case (an attempt ran, its journal is gone),
+   * where the section stays and falls back to its empty note.
+   */
+  attemptStarted?: boolean;
+  /** The developer-diagnostics gate's verdict, decided by the caller (decision #60(c)). */
+  devMode?: boolean;
   /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
    *  prompt screen with the user's text preserved. */
   onRephrase: () => void;
@@ -65,6 +85,8 @@ const ATTEMPT_BAR_HEIGHT = 5;
 /** The checklist row's ring/mark icon (design html:321). */
 const ROW_ICON_SIZE = 18;
 const ROW_ICON_BORDER = 1.5;
+/** How tall the what-happened section may grow before its list scrolls inside itself. */
+const TIMELINE_MAX_HEIGHT = 180;
 /** Alpha suffixes composing the design's tinted panel out of the outcome hue (RN 8-digit hex). */
 const PANEL_FILL_ALPHA = '14';
 const PANEL_BORDER_ALPHA = '3d';
@@ -88,6 +110,9 @@ export default function FailureScreen({
   hasWorkingVersion = false,
   recovered = false,
   retryable = false,
+  journal = null,
+  attemptStarted = false,
+  devMode = false,
   onRephrase,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
@@ -152,6 +177,17 @@ export default function FailureScreen({
             );
           })}
         </View>
+
+        {/* The what-happened timeline, IN ADDITION to the checklist above and never in place of
+            it: the checklist says what to do next, this says what the attempt actually did. Shown
+            only when there is a run to speak of — a failure that never started an attempt gets no
+            heading and no empty note, because "nothing was recorded" would be answering a question
+            the user never had. */}
+        {(journal != null || attemptStarted) && (
+          <View style={styles.timeline}>
+            <RunTimeline entries={journal} devMode={devMode} />
+          </View>
+        )}
       </View>
 
       <TouchableOpacity
@@ -191,6 +227,9 @@ const styles = StyleSheet.create({
     gap: SPACING.sm,
     overflow: 'hidden',
   },
+  // The section is bounded so a long run scrolls inside it rather than pushing the checklist —
+  // the screen's primary content — off the screen. No `SPACING` value is a section height.
+  timeline: { marginTop: SPACING.lg, maxHeight: TIMELINE_MAX_HEIGHT },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
   rowIcon: {
     width: ROW_ICON_SIZE,
