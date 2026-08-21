@@ -864,6 +864,14 @@ function LauncherShell({
     goHome();
   };
 
+  /** Leave a failure screen without acting on the attempt at all — the honest counterpart to
+   *  Dismiss, and what the hardware back gesture performs. It touches NO store: the record keeps
+   *  its ghost tile and its run journal stays readable, so a user who only wanted to read the
+   *  failure can walk away without destroying it. */
+  const onLeaveFailure = () => {
+    goHome();
+  };
+
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
    *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
   const onRetryPending = async (rec: PendingBuildRecord) => {
@@ -871,11 +879,12 @@ function LauncherShell({
     await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
   };
 
-  /** The failure screen's two actions. Hydrated from a `failed`/`interrupted` record, they are
-   *  Retry (same launcher id) and Dismiss (delete the record); shown live off a terminal event,
-   *  they stay Rephrase and Back — and the record that failure just persisted keeps its ghost on
-   *  the grid either way. A record dismissed elsewhere in the meantime falls back to the live
-   *  shape rather than acting on a ghost that is no longer there. */
+  /** The failure screen's three actions. Hydrated from a `failed`/`interrupted` record, they are
+   *  Retry (same launcher id), Back (leave, deleting nothing) and Discard (delete the record);
+   *  shown live off a terminal event, the primary stays Rephrase — and the record that failure
+   *  just persisted keeps its ghost on the grid either way. Back is the same non-destructive leave
+   *  in both shapes. A record dismissed elsewhere in the meantime falls back to the live shape
+   *  rather than acting on a ghost that is no longer there. */
   /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
    *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
@@ -898,12 +907,14 @@ function LauncherShell({
       return {
         retryable: true,
         onRephrase: () => onRetryPending(ghost),
+        onBack: onLeaveFailure,
         onDismiss: () => onDismissPending(ghost),
       };
     }
     return {
       retryable: false,
       onRephrase: () => openCompose(s.editing, s.prompt),
+      onBack: onLeaveFailure,
       onDismiss: goHome,
     };
   };

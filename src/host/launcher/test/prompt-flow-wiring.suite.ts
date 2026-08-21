@@ -24,6 +24,9 @@ import * as path from 'node:path';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import { MapKVBackend } from '../../version-store';
+import { PendingBuildStore } from '../pending-builds';
+import { RunJournalStore } from '../run-journal';
+import { dropPendingBuild } from '../build-lifecycle';
 import { loadServerUrl, saveServerUrl } from '../server-address';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
@@ -355,13 +358,56 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
     h.ok(actionsFn.includes('pending.get(s.pendingId)'), 'the actions are decided by whether the record is still there');
     h.ok(actionsFn.includes('retryable: true'), 'a still-present record makes the primary action a Retry');
-    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Dismiss on that record');
+    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Discard on that record');
     h.ok(actionsFn.includes('retryable: false'), 'and a record dismissed in the meantime falls back to the live Rephrase/Back shape');
     h.ok(rootSrc.includes('{...failureActions(screen)}'), 'the failure screen is rendered with those actions — without this the wiring is inert');
     h.ok(/\{retryable \? COPY\.screenErrorRetry : COPY\.failureRephrase\}/.test(read('FailureScreen.tsx')), 'and `retryable` is what relabels the primary action');
 
     const retryFn = rootSrc.slice(rootSrc.indexOf('const onRetryPending'), rootSrc.indexOf('const failureActions'));
     h.ok(retryFn.includes('runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id)'), 'Retry re-runs the stored prompt under the SAME launcher id — one ghost, not a second');
+  });
+
+  await h.test('failure exits: Back keeps the record and its journal readable, Discard deletes both', () => {
+    // `prompt-flow`: "Back leaves the record in place" / "Discard removes the record". The two
+    // paths are exercised against a real store pair; what pins them to the SHELL is the source
+    // half below — that the leave handler touches no store at all, and that Discard is the one
+    // `dropAttempt` path.
+    const kv = new MapKVBackend();
+    const pending = new PendingBuildStore(kv);
+    const journal = new RunJournalStore(kv);
+    const rec = pending.create({ id: 'run-back', prompt: 'a tip splitter', workingTitle: 'Tip splitter' });
+    journal.create(rec.id);
+    journal.appendTerminal(rec.id, { failure: { reason: 'it did not build', diagnostics: [{ hint: 'say it differently' }] } });
+
+    // Back: the shell only navigates, so the stores are untouched and everything the user might
+    // come back to is still there.
+    h.eq(pending.get(rec.id)?.id, rec.id, 'the pending-build record survives leaving');
+    h.eq(pending.list().map(r => r.id), [rec.id], 'so its ghost tile still renders');
+    h.eq((journal.get(rec.id) ?? []).length, 1, 'and its run journal is still readable');
+
+    // Discard: `dropAttempt`'s two calls, in the shell's own order.
+    dropPendingBuild(pending, rec.id);
+    journal.delete(rec.id);
+    h.eq(pending.get(rec.id), null, 'discarding deletes the record');
+    h.eq(pending.list().map(r => r.id), [], 'so the ghost tile stops rendering');
+    h.eq(journal.get(rec.id), null, 'and takes the journal with it');
+
+    const leaveFn = rootSrc.slice(rootSrc.indexOf('const onLeaveFailure'), rootSrc.indexOf('const onRetryPending'));
+    h.ok(leaveFn.includes('goHome();'), 'the leave handler is a plain navigation home');
+    h.ok(
+      !/dropAttempt\(|dropPendingBuild\(|journal\.|pending\./.test(leaveFn),
+      'and calls NOTHING on the stores — no record, journal or pending-build call on the leave path',
+    );
+    const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
+    h.eq(
+      (actionsFn.match(/onBack: onLeaveFailure/g) ?? []).length,
+      2,
+      'both entry points — ghost-opened and live-failure — get the same non-destructive Back',
+    );
+    h.ok(
+      /onBack: \(\) => void;/.test(read('FailureScreen.tsx')),
+      'and the screen actually takes it, so the wiring is not inert',
+    );
   });
 
   await h.test('concurrent attempts: a settling attempt only ever clears refs that still point at itself', () => {
