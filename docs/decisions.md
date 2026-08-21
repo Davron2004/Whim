@@ -884,3 +884,115 @@ one `POST /v1/generate` per generation attempt regardless of runtime.
 
 **Not in this change:** anything about `generation-contract`'s schemas, which are transport-agnostic; the
 generation pipeline itself (#56); the sandbox, CSP, bridge, or runtime.
+
+### 59. `shell-redesign-v2` adopted — the design handoff's fixed v2 tokens, Whim Syntax, declared tile colour, and the `2a`/`4a`/`2b` screens replace the placeholder shell `[DECIDED — openspec: shell-redesign-v2; answers the handoff's three OPEN questions, extends #45's token contract, reverses #53's rewrite-preview flow]`
+
+**Decided:** the shell adopts `docs/design/README.md` (design handoff v2) in full except the orb wheel
+gesture: a fixed, non-themeable v2 token set (`src/sdk/theme.ts`/`tokens.ts`) with three faces
+(Instrument Sans / IBM Plex Mono / Newsreader italic) replacing the AI-generated presets, `#4f46e5`
+and Space Grotesk; **Whim Syntax** as one shell-side shared renderer + deterministic lexer
+(`src/host/ui/whim-prose/`), never exported from `vc-sdk`, with its discipline caps enforced in the
+renderer rather than merely prompted for; a five-step `2a` prompt flow (`compose → clarify → plan →
+build → done`) replacing the two-stage rewrite-preview screen (#53); a `4a` history surface fed by
+stored per-run summaries rendered through Whim Syntax; and a `2b` ghost-letterform `AppTile`. Full
+design record: `openspec/changes/shell-redesign-v2/design.md` D1–D13.
+
+**The design's three OPEN questions, answered by the user (research.md §1):**
+
+- **Tile colour is declared**, not derived: `AppSpec.tileColor?` is extracted at build time into the
+  same single `CheckedManifest` extraction that already yields capabilities — no second source of
+  truth — with `appColor(name)` (one deterministic name→hue function, SDK theme module) demoted to a
+  fallback for an absent, malformed, or reserved-hue-colliding declaration (design D4, D6).
+- **The six presets and ten accents are cut with zero migration.** No frozen-palette snapshot, no
+  per-app colour pinning. Installed mini-apps re-skin automatically because the SDK speaks tokens,
+  never values (#13) — the zero-migration path was the user's deliberate choice, not a tolerated
+  side effect (design D5).
+- **Screen `4b` does not exist.** There is no dedicated "last change, undoable in place" screen; `4a`
+  is the whole history surface (design D5's sibling ruling, proposal "Out of scope").
+
+**Clarify is a pre-stream exchange, not a generation stage** (design D1). `POST /v1/clarify` is a new
+unary route gated by `x-whim-device` like every `/v1` route: prompt in, 0–3 questions out, answers
+threaded into `GenerateRequest.clarifications`. The ratified `GenerationEvent.stage` enum
+(`plan|generate|check|run|repair`, #56) is not widened — clarify precedes any generation request and
+would otherwise force every conforming server to emit an event for a question it may never ask. Zero
+questions is a legitimate response; the client skips straight from compose to plan.
+
+**The summary rides the terminal `result` event, not a new one** (design D2). `result.summary?: {
+text, kind, touched[], marks[] }` is optional in the schema, so the stub pipeline and older servers
+stay conforming and history survives its absence. A summariser failure or timeout must not fail the
+run — the run still emits `result` with `summary` absent. The prompt envelope bumps to `{v: 2, text,
+summary?}` (design D3): `text` keeps its exact current meaning so `yours` spans echo the verbatim
+prompt; every reader accepts `v1`, `v2`, and a raw non-JSON string; no migration.
+
+**The named-pins surface is withdrawn, not relocated** (design D11). The redesigned history row
+surfaces at most two next actions — restore/copy for a past version, one edit action for the current
+one — which leaves no room for a third, pin-related action. `version-history`'s pin requirement is
+removed from the delta rather than left describing a feature with no way to reach it; the store verbs
+and `StoreAccess` wrappers are untouched, so already-stored pins stay stored, merely unreachable from
+the UI. Flagged in the design as a judgment call the orchestrator's OPEN-question ruling did not
+cover.
+
+**Not in this change:** the orb wheel gesture (tapped menu ships instrumented instead, design D12);
+the repair ladder (`3b`); the raw terminal log / "show details" disclosure; colour bundles recommended
+to the user; and any change to the generation pipeline's `stage` enum, the sandbox, CSP, bridge, or
+runtime.
+
+### 60. `obs-v1` corrects the "dead Metro NAT" note's scope, adds one bounded type-only exception to `generation-contract`'s zod-only rule, and rules `__DEV__`-only gating a no-op in this project's builds `[DECIDED/FIXED — openspec: obs-v1; corrects the scope of the note at CLAUDE.md "Android build & run" / this file's former line 441 (§56's roadmap notes), narrows #56's zod-only wire-contract rule]`
+
+**(a) `adb reverse` works from a release APK; the dead-NAT note is about Metro's dev-server protocol
+only.** `adb reverse tcp:<port> tcp:<port>` is proven working transport for plain HTTP from a release
+build — precedent: `openspec/changes/archive/2026-08-01-fix-generate-stream-transport/progress.md:128`,
+chain-7's attended on-device verification, a release APK (`./gradlew assembleRelease`) on
+`emulator-5554`, a real generation over `adb reverse tcp:8787` logging `POST /v1/generate 200
+155815ms` (`obs-v1/research.md` §7). "The emulator's NAT route to Metro is dead" (CLAUDE.md "Android
+build & run") was never a claim about TCP port forwarding in general — it is Metro's own dev-server
+protocol that doesn't traverse, and the roadmap notes above already flagged this as unverified ("also
+retry `adb reverse` for plain HTTP — the Metro failure may have been dev-server-specific"). §7 is that
+retry, and it passed. Consequence: a device→host dev sink can reuse `adb reverse` and the address the
+device already persists for `/v1/generate` — no new transport, no new setting.
+
+**(b) `generation-contract`'s "schemas SHALL be zod values" rule gains one bounded, named exception.**
+`contract/src/dev-log.ts` (the shared device↔server dev-log envelope) declares its record/batch types
+and the sink route's path as **type-only** — no runtime value, no zod schema — because `zod` must
+never enter the Metro graph (every existing device-side `@whim/contract` import is already `import
+type` with an explicit comment saying so) and a zod value in the contract package is exactly the kind
+of thing a device-side author would reach for by reflex. The server validates incoming batches with
+its own hand-written structural guard. The exception is bound to this one module and does not extend
+to any other `contract/` file; `generation-contract`'s delta names it explicitly rather than leaving a
+silent contradiction between rule and code for a reviewer to find.
+
+**(c) `__DEV__`-only gating is a no-op in this project's builds; developer surfaces use an explicit
+flag instead.** `__DEV__` is `false` on the device this project actually runs on, because the working
+recipe is `npm run android:release` (the emulator's NAT route to Metro's dev server is dead, per (a)).
+Anything gated on `__DEV__` alone is therefore dead code on-device. The existing on-device acceptance
+probes already established the pattern — build-time boolean flags defaulting to `false`
+(`RUN_VSTORE_PROBE` #40, `RUN_STORAGE_PROBE` #40, `RUN_BRIDGE_PROBE` #41) — and `obs-v1`'s dev log
+overlay and batching HTTP sink follow it: the overlay gates on `__DEV__ || <explicit flag>`, the sink
+gates on the explicit flag alone, both default `false`, so a shipping build carries neither. Any future
+developer-diagnostics surface in this app should use the same pattern rather than re-deriving `__DEV__`
+as if it were the safe default.
+
+**Not in this change:** any change to `generation-contract`'s zod-only rule beyond the one named
+module; the sandbox, CSP, bridge, storage engine, or version store; and any wire schema (`obs-v1`'s
+migration plan is "none").
+
+### 61. Plan pieces edit inline on the plan step; a hand-edited plan's rows become the build prompt's source of truth `[DECIDED — reverses #59's "tap re-opens the composer prefilled with that row's text" ruling; openspec/specs/prompt-flow updated in place]`
+
+**Tapping a plan card now opens an inline editor on the plan step itself** — one row at a time,
+Save/Cancel — instead of re-opening the composer prefilled with only the tapped row's text (#59's
+original `2a` ruling). The old path silently discarded the original prompt, the clarify answers, and
+every sibling row the user hadn't touched; a naive row-level edit wouldn't have reached generation at
+all, since rows were purely a display projection of the rewrite response, not an input to it. Two new
+pure transitions in `src/host/launcher/prompt-flow.ts` carry the change: `updatePlanRow` replaces one
+row and marks the plan `edited: true`; `promptForBuild` derives the actual generation prompt.
+`reopenCompose` is deleted.
+
+**The trust switch:** an unedited plan's build prompt is the rewrite response's `rewritten` string,
+byte-identical — the model's prose stays authoritative for as long as the user hasn't touched a row.
+The moment any row is hand-edited, that guarantee ends for the whole plan: `promptForBuild` instead
+deterministically assembles `label: text` lines from the current rows, and every subsequent edit stays
+on that path even if the user reverts the row's text back to the model's original wording. Per-edit
+re-invocation of the server rewrite was rejected — the model is free to rephrase or reorder rows the
+user never touched, which would make an edit to row 2 silently mutate row 1 out from under the user.
+Rows, once trusted, stay the single source of truth rather than being re-derived from a call the user
+didn't ask for.

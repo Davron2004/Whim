@@ -14,7 +14,7 @@ import type { AppRecord } from '../src/host/bridge';
 import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
 import { wireCapabilityBridge } from './capability';
-import { attachObserversEarly, awaitMount, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
+import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
 import type { SynthRunSession } from './session';
 import { sweepApp } from './sweep';
 import type { RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
@@ -58,11 +58,16 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       ...opts,
       appId,
       beforeNavigate: async (page, context) => {
+        // Every trusted-vantage collector — CDP, the frame relay, the console heartbeat — is live
+        // from here, i.e. before the delivered page's inline scripts run (`handoff/
+        // observation-phases.md`); nothing observation-side is attached after navigation.
         early = await attachObserversEarly(page, context); // chain 2
         await wiring.beforeNavigate(page, context); // chain 3
         if (opts.beforeNavigate) await opts.beforeNavigate(page, context);
       },
     });
+    // Installs nothing — hands the now-available `ctx.sourceMap` to the already-attached CDP
+    // collector and returns it.
     const obs = await early!.finish(ctx);
 
     const diagnostics: RuntimeDiagnostic[] = [];
@@ -105,9 +110,15 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         opts.signal,
       );
 
+      // Close out the verdict BEFORE the copy below, so a run that never saw an authenticated
+      // `probes` frame carries `containment_unobserved` and `contained: null` never travels
+      // without its diagnostic. Idempotent — a malformed-payload frame already recorded it.
+      finalizeContainmentVerdict(obs.state);
+
       // `obs.state.diagnostics` is chronological (pushed as observed): the mount gate's own
       // `mount_timeout`, if any, plus every `runtime_throw`/`unhandled_rejection`/
-      // `containment_failure`/`run_truncated` recorded up to and including the sweep just above.
+      // `containment_failure`/`containment_unobserved`/`run_truncated` recorded up to and
+      // including the sweep just above.
       diagnostics.push(...obs.state.diagnostics);
 
       // Host-side gate denials become diagnostics too (spec "Undeclared capability yields the
@@ -127,9 +138,13 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         ok: diagnostics.length === 0,
         diagnostics,
         // Derived ONLY from the nonce-authenticated probes frame (spec §Observation is
-        // trusted-vantage only) — `null` (no probes frame yet, e.g. a hung/killed mount) reads
-        // as not-proven-contained, never adopted as `true`.
-        contained: obs.state.contained === true,
+        // trusted-vantage only), and emitted VERBATIM — all three states survive to the consumer:
+        // `true` held, `false` breach, `null` no authenticated verdict was ever observed. The
+        // harness never collapses `null` onto `false` (or `true`): "we could not hear the guard"
+        // is not "the guard said no" (design D2).
+        contained: obs.state.contained,
+        // The fact plus a saturating count — never the forged payload (design D5).
+        forgeries: { rejected: obs.state.rejectedForgeries > 0, count: obs.state.rejectedForgeries },
         // Either the total budget fired (page hard-killed) OR the sweep itself hit a per-screen
         // cap with unvisited fingerprints remaining — both mean the report is not a complete
         // pass (spec "A truncated sweep SHALL be marked in the report, never silently reported

@@ -6,6 +6,7 @@
  * the abort-mid-stream cases) and the whole file passes with `OPENROUTER_API_KEY` unset.
  */
 import { check, eq, section } from './harness';
+import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { parsePlan, validatePlan, type Plan } from '../src/generation/plan';
 import {
@@ -466,6 +467,56 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   }
 }
 
+/** The settled copy for each terminal (design D6). Written out verbatim here rather than imported:
+ *  these two sentences are product decisions, and a test that reads the constant it is checking
+ *  would pass through any reword. */
+const CONTAINMENT_FAILURE_COPY = 'This app could not be safely run and was not delivered.';
+const UNVERIFIED_RUN_COPY = "We couldn't verify this app ran safely. Please try again.";
+
+async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> {
+  section('machine — an unobserved containment verdict is terminal, distinct, and consumes no repair (D3/D6)');
+
+  // Two scripted turns only — plan and generate. A repair round would ask the model for a third
+  // and blow up, so "no repair attempt is consumed" is enforced structurally as well as asserted.
+  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    // One outcome only: a second `run` call — a re-run of the same candidate — exhausts the script
+    // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
+    run: scriptedRun([{ contained: null, diagnostics: [] }]),
+  });
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('unobserved verdict', events);
+
+  eq('unobserved verdict: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
+  eq('unobserved verdict: the run stage bracket still closes', stageEvents(events, 'run').map((e) => e.status), ['start', 'done']);
+  eq('unobserved verdict: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
+  eq('unobserved verdict: no result is emitted — the candidate is never delivered', events.filter((e) => e.type === 'result').length, 0);
+
+  const terminal = events.at(-1);
+  check('unobserved verdict: the single terminal is a failure', terminal?.type === 'failure');
+  if (terminal?.type === 'failure') {
+    eq('unobserved verdict: the reason says we could not VERIFY, not that the app was unsafe', terminal.reason, UNVERIFIED_RUN_COPY);
+    check('unobserved verdict: the reason is NOT the containment-failure reason', terminal.reason !== CONTAINMENT_FAILURE_COPY);
+    eq('unobserved verdict: attempts is 1 — no repair attempt was spent', terminal.attempts, 1);
+    eq('unobserved verdict: diagnostics is empty — nothing fed back', terminal.diagnostics, []);
+  }
+
+  // spec "Forgery detail never reaches the model" / the unobserved half of the same guard: the
+  // pipeline assembled exactly the plan and generate prompts, and neither names the unobserved
+  // verdict, its diagnostic kind, or any forgery signal.
+  eq('unobserved verdict: only the plan and generate prompts were ever assembled', model.requests.length, 2);
+  const assembled = model.requests
+    .flatMap((r) => r.request.messages.map((m) => m.content))
+    .join('\n')
+    .toLowerCase();
+  for (const leak of ['containment_unobserved', 'unobserved', 'forger', 'contained']) {
+    check(`unobserved verdict: no assembled prompt mentions "${leak}"`, !assembled.includes(leak));
+  }
+}
+
 async function testStageThrowYieldsOneFailure(): Promise<void> {
   section('machine — a stage throwing still yields exactly one failure');
 
@@ -732,7 +783,14 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     { role: 'engineer', deltas: [], error: new Error('provider secret MODEL-LEAK') },
   ]);
-  const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+  } finally {
+    capture.stop();
+  }
 
   assertCompletedEnvelope('model stream throws', events);
   const terminal = events.at(-1);
@@ -741,6 +799,65 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
     check('model stream throws: failure prose hides provider details', !terminal.reason.includes('MODEL-LEAK'));
     eq('model stream throws: no candidate was produced', terminal.attempts, 0);
   }
+
+  check(
+    'model stream throws: the run log carries the plan stage start, as named fields',
+    withMessage(capture, 'stage').some(
+      (r) => r.scope === 'run' && r.stage === 'plan' && r.status === 'start',
+    ),
+  );
+  // ScriptedModelClient's error turn throws from the delta iterator itself (deltas: []), so this
+  // exception is never observed via `settledUsage.error`/`settledId.error` — it propagates straight
+  // to runGenerator's top-level catch. The record below is that catch's log, carrying the same error
+  // class/message; it is NOT evidence that `throwLoggedModelCallFailure` ran (see
+  // testUsageRejectionAfterDeltasLogsAtThrowSite for that coverage).
+  check(
+    'model stream throws: the run log carries the runGenerator-catch record with error class and detail',
+    withMessage(capture, 'run failed').some(
+      (r) => r.errorClass === 'Error' && r.detail === 'provider secret MODEL-LEAK',
+    ),
+  );
+}
+
+/**
+ * Covers the actual `throwLoggedModelCallFailure` call site inside `runModelTurn` — reachable only
+ * when the delta stream completes normally but `stream.usage` rejects afterward (a genuine race the
+ * real provider client can hit, per `settle`'s doc comment), unlike `ScriptedModelClient`'s error
+ * turn, which always throws from the delta iterator itself before that point is ever reached.
+ */
+async function testUsageRejectionAfterDeltasLogsAtThrowSite(): Promise<void> {
+  section('machine — a usage rejection after a clean delta stream logs at its own throw site');
+
+  const model: ModelClient = {
+    stream(): ModelStream {
+      return {
+        deltas: (async function* () {
+          yield VALID_PLAN_JSON;
+        })(),
+        usage: Promise.reject(new Error('usage promise rejected after deltas')),
+        id: Promise.resolve('gen-usage-rejected'),
+      };
+    },
+  };
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+  } finally {
+    capture.stop();
+  }
+
+  const terminal = events.at(-1);
+  check('usage rejection: terminal is still a failure', terminal?.type === 'failure');
+
+  check(
+    'usage rejection: the run log carries the throw-site model-call-failure record',
+    withMessage(capture, 'model call failed').some(
+      (r) =>
+        r.which === 'usage' && r.errorClass === 'Error' && r.detail === 'usage promise rejected after deltas',
+    ),
+  );
 }
 
 async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
@@ -818,6 +935,7 @@ export async function runMachineTests(): Promise<void> {
   await testWarningsOnlyOneRepairThenDeliver();
   await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
   await testContainmentFailureShortCircuit();
+  await testUnobservedVerdictIsTerminalWithItsOwnReason();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();
   await testAbortDuringGenerateTokens();
@@ -827,6 +945,7 @@ export async function runMachineTests(): Promise<void> {
   await testAbortAtEveryStageBoundary();
   await testAbortAtDiagnosticAndCompletionBoundaries();
   await testModelStreamThrowYieldsOneFailure();
+  await testUsageRejectionAfterDeltasLogsAtThrowSite();
   await testRepairBudgetsAreConstructorInjectable();
   await testRunTraceCollectsGenerationIds();
   await testBuildFailureBecomesADiagnosticAndIsRepairable();

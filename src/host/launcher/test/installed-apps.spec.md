@@ -127,12 +127,13 @@ like `activeBundle`/`fork` already do.
 
 ## Prompt-envelope parsing (design D4, `src/host/launcher/prompt-envelope.ts`)
 
-24. Valid v1 envelope: `parsePromptEnvelope('{"v":1,"text":"make a tip splitter"}')` →
-    `{text: "make a tip splitter"}`.
+24. Every readable envelope version resolves to its text, with no migration:
+    `parsePromptEnvelope('{"v":1,"text":"make a tip splitter"}')` and the current
+    `{"v":2,...}` form both → `{text: "make a tip splitter"}`.
 25. Invalid JSON (e.g. a raw legacy prompt string that is not JSON at all) → falls back to
     `{text: <the raw string, unchanged>}`; never throws.
-26. Wrong shape — valid JSON but `v !== 1`, `text` missing or non-string, or the parsed value
-    is not a plain object (e.g. a JSON array or number) — falls back to `{text: <raw>}` the
+26. Wrong shape — valid JSON but an unreadable `v`, `text` missing or non-string, or the parsed
+    value is not a plain object (e.g. a JSON array or number) — falls back to `{text: <raw>}` the
     same way as invalid JSON.
 
 ## Storage groups (linked-apps-data-model chain-1, design D1–D3)

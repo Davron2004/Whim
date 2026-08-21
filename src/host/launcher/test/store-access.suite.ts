@@ -283,6 +283,13 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(updated.lineageId, orig.lineageId, 'lineage unchanged');
     h.eq(updated.createdAt, orig.createdAt, 'createdAt unchanged');
     h.eq(updated.record, newRecord, 'record updated');
+    // The new record's name ('wc-v2') deliberately differs from the entry's own name ('WC') —
+    // `update` must NOT adopt it. `app.name` (not `app.record.name`) is what tile-colour resolution
+    // hashes for an app with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
+    // via `HomeScreen`/`HistoryScreen`'s `AppTile`/`tileColor` calls, both keyed on `app.name`).
+    // Refreshing the entry's name from the record here would silently move that app's hue the first
+    // time it is renamed by a rebuild — see build-lifecycle.ts's PRESERVE comment on `deliverResult`.
+    h.eq(updated.name, orig.name, 'update preserves the entry\'s own name — tile-colour hash stability for records with no declared colour depends on it, not adopting `spec.record.name`');
     h.eq(index.get('wc')?.record, newRecord, 'index reflects the new record');
     h.eq(await access.activeBundle(orig), 'V2', 'the new bundle is the active snapshot');
     h.eq((await access.history(orig)).map(s => s.prompt), ['p2', 'p1'], 'update snapshots onto the same lineage (history grows)');

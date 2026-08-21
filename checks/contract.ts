@@ -38,6 +38,11 @@ export type Severity = 'error' | 'warning';
  *      - `mount_timeout`         — no nonce-authenticated `paint` frame within the mount budget
  *      - `run_truncated`         — the total wall-clock budget fired; the page was hard-killed
  *      - `containment_failure`   — the nonce-authenticated `probes` frame itself reported a breach
+ *      - `containment_unobserved` — no authenticated containment verdict was observed (the harness
+ *        never heard back, so neither containment nor a breach was established). A third kind, NOT
+ *        a rename of `containment_failure` (an authenticated verdict reporting a breach) nor of
+ *        `mount_timeout` (no authenticated `paint` frame in the mount budget): a verdict can go
+ *        unobserved without a mount timeout, and no producer may emit one of the three for another.
  *      - `unreachable_screen`    — a declared screen no live nav path reaches (cold-mount warning)
  *      - `missing_schema`        — `launchApp` refused: `storage` declared, no schema artifact
  *        shipped (`src/host/bridge/launch.ts`'s own `LaunchResult` kind, reused verbatim — not
@@ -106,6 +111,7 @@ export const DIAGNOSTIC_KINDS = [
   'mount_timeout',
   'run_truncated',
   'containment_failure',
+  'containment_unobserved',
   'unreachable_screen',
   'missing_schema',
   'launch_failed',
@@ -153,6 +159,10 @@ export interface ExtractedManifest {
   capabilities: string[];
   /** The raw `schema` literal, when declared — validated separately by the schema pass. */
   schema?: unknown;
+  /** The app's declared tile colour, when it was declared AS A STRING LITERAL. Carried through
+   *  this one extraction (never a second parse); a non-literal declaration is simply absent here,
+   *  and the colour's *validity* (hex shape, reserved-hue collision) is the consumer's call. */
+  tileColor?: string;
 }
 
 /**

@@ -7,7 +7,7 @@
  * `@whim/contract` is a TYPE-ONLY import — importing the zod schema VALUES here would pull zod
  * into the Metro bundle graph (the same discipline `generation-client.ts` documents).
  */
-import type { GenerateRequest } from '@whim/contract';
+import type { Clarification, GenerateRequest } from '@whim/contract';
 import type { AppliedSchema } from '../storage-engine/schema';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
@@ -32,18 +32,25 @@ export type AppliedSchemaReader = (appId: string) => AppliedSchema;
  * for `access.engineAppId(entry)` — the storage group's live accumulated union — NEVER from
  * `entry.record.schemaArtifact` (the entry's own declared schema, which `schema` below still
  * carries unchanged; the two fields can legitimately differ for a grouped entry).
+ *
+ * `clarifications` carries the clarify exchange's answers by value (the server holds no state
+ * between that exchange and the request that follows it). An empty list is sent as no field at
+ * all: absent and empty both mean "the user answered nothing", which is the common case.
  */
 export async function buildGenerateRequest(
   access: StoreAccess,
   readApplied: AppliedSchemaReader,
   editing: InstalledApp | undefined,
   prompt: string,
+  clarifications: readonly Clarification[] = [],
 ): Promise<GenerateRequest> {
-  if (!editing) return { prompt };
+  const answers = clarifications.length > 0 ? { clarifications: [...clarifications] } : {};
+  if (!editing) return { prompt, ...answers };
   const source = await access.activeSource(editing);
   const appliedSchema = readApplied(access.engineAppId(editing));
   return {
     prompt,
+    ...answers,
     app: {
       ...(source != null ? { source } : {}),
       manifest: editing.record.manifest as unknown as Record<string, unknown>,

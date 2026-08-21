@@ -1,0 +1,22 @@
+The mascot
+
+Concrete over abstract, but barely. The abstract marks you named (Claude's starburst, Codex) work because those brands only need a symbol. Your mascot has a job: it must think, tinker, stumble, and celebrate on a build screen. Acting requires anatomy — eyes and posture at minimum. Pure abstract shapes can't emote without becoming a different shape (which breaks recognition). But a fully concrete animal (owl, cat, robot) drags in cliché and Duolingo/Clippy comparisons. The sweet spot is a creature-shaped abstraction: one simple silhouette with eyes, no species.
+
+And Whim has a gift here you shouldn't waste: you're already shipping ghost tiles. A wisp — a will-o'-the-wisp, a little glowing spirit — is thematically perfect: whims are fleeting wishes, the wisp is the thing inhabiting the ghost tile while your app doesn't exist yet, and glow is a free animation channel (bright and flickering while tokens flow, dimming when the stream stalls, guttering on failure, flaring on delivery). The mascot's body literally becomes the activity indicator — that's the honesty coupling we discussed, embodied. It also sidesteps the originality problem: there is no famous wisp mascot; the adjacent ones (Clyde, Kiki, Freddie) are all solid-bodied animals.
+
+Your 50-variant generation plan is good. Here's the filter to run candidates through — reject anything that fails one:
+
+1. The 24px test: shrink it to tile-icon size, then to monochrome. Still recognizable? It has to double as your logo, so this is non-negotiable.
+2. One closed silhouette, ≤3 colors, flat or single gradient. Cheap SVG models stay consistent with simple geometry, and Rive/Lottie rigging stays trivial.
+3. Eyes only, no mouth. Eyes carry 90% of expressiveness; mouths are where cute mascots tip into creepy or infantile.
+4. Four poses must be drawable by moving, not redrawing: think (tilt + squint), tinker (lean + jitter), fail (droop + dim), celebrate (bounce + flare).
+5. Negative-prompt the lookalikes explicitly: Clippy, Duo, Octocat, Clyde, Mailchimp Freddie, ghosts from Pac-Man. Then reverse-image-search your finalist — that's about as enforceable as originality gets, and it's enough.
+6. Works filled on light and outlined on dark.
+
+Palette — three directions, pick by what you want Whim to feel like:
+
+- Ember/amber (#FFB454 core, #FF7847 accent, on #1C1917 warm charcoal): a warm glowing spirit. My favorite — nearly every AI product is purple right now, so warm light is instant differentiation, and "glow" animation reads best in warm tones.
+- Violet/indigo (#8B7CF6 core, #C4B5FD glow, #0F0F23 ground): the "magic" register. Safe, on-genre, but you'll blend into the Copilot/Gemini sea.
+- Mint/teal (#5EEAD4 core, #2DD4BF accent, #134E4A ground): calm-tool energy, more "trustworthy instrument" than "magic." Good if you want Whim to feel like infrastructure, wrong if you want delight.
+
+Per-person configurability: agree with your dislike, kill it. A mascot is brand identity; configurable identity is no identity. If you ever want personalization, it's outfits/moods on the one canonical character, years from now.

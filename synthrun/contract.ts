@@ -77,6 +77,31 @@ export interface Semaphore {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Rejected forgeries (spec §Observation is trusted-vantage only, "A frame the outer page
+// rejected as a forgery SHALL be recorded as the fact of a rejection plus a bounded count";
+// design D5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The fixed cap the harness declares for the rejected-forgery count. Rejections beyond it
+ *  SATURATE rather than being recorded individually, so the recorded signal is fixed-size no
+ *  matter how many frames a candidate posts (design D5: the signal needed is "did this candidate
+ *  try to forge, and was it once or was it spamming", which saturates well before this). */
+export const REJECTED_FORGERY_CAP = 16;
+
+/** The whole rejected-forgery signal: the FACT plus a BOUNDED count — never the payload, never a
+ *  per-frame list. A forged frame's contents are attacker-chosen input, so echoing them would let
+ *  the candidate author our diagnostics and an unbounded list would be a log-exhaustion lever. */
+export interface ForgeryTally {
+  /** At least one frame was refused as a forgery during this run — by the outer page's nonce check
+   *  or by the host's own provenance guard (see `RunReport.forgeries`). */
+  rejected: boolean;
+  /** How many rejections were observed, SATURATING at `REJECTED_FORGERY_CAP`: when `count`
+   *  equals the cap, read it as "at least `REJECTED_FORGERY_CAP`", never as exactly that many.
+   *  `0` iff `rejected` is `false`. */
+  count: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The entry point (spec §One candidate in, one deterministic run report out)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -90,8 +115,11 @@ export interface RunOptions {
    *  navigation — the seam for setup that must be live before the delivered page's inline
    *  scripts run: chain 2's CDP `Runtime.enable` (a candidate can throw before the
    *  nonce-handshake's slower `toRN()` frame channel would ever catch it — `handoff/
-   *  observe-api.md`'s `attachObserversEarly`); chain 3's `context.exposeFunction(
-   *  'whimHostDispatch', ...)`. Multiple concerns compose by wrapping: `session.openRun(source,
+   *  observe-api.md`'s `attachObserversEarly`); chain 3's `context.exposeBinding(
+   *  'whimHostDispatch', ...)` — `exposeBinding`, never `exposeFunction`, because only the former
+   *  keeps the calling frame's browser-derived identity, which is what refuses a syscall frame
+   *  hand-rolled inside the candidate's own realm (`capability.ts`, design D2). Multiple concerns
+   *  compose by wrapping: `session.openRun(source,
    *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
   beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
   /** Cancellation (chain 6, design D8, generation-loop spec "Cancellation aborts the pipeline at
@@ -110,8 +138,28 @@ export interface RunReport {
   ok: boolean;
   diagnostics: RuntimeDiagnostic[];
   /** The containment verdict, derived ONLY from the nonce-authenticated `probes` frame
-   *  (spec §Observation is trusted-vantage only) — never the candidate's self-report. */
-  contained: boolean;
+   *  (spec §Observation is trusted-vantage only) — never the candidate's self-report.
+   *
+   *  THREE-VALUED, and never collapsed (design D2):
+   *  - `true`  — an authenticated `probes` frame reported containment held;
+   *  - `false` — an authenticated `probes` frame reported a breach (a `containment_failure`
+   *              diagnostic accompanies it);
+   *  - `null`  — NO authenticated verdict was ever observed: no `probes` frame arrived, or the
+   *              one that arrived carried no boolean verdict (a `containment_unobserved`
+   *              diagnostic accompanies it, and NO `containment_failure`).
+   *
+   *  "We could not hear the guard" and "the guard said no" are distinct states at the type level:
+   *  a consumer that ignores the distinction fails to compile rather than silently treating an
+   *  unverified run as a breach — or as a pass. */
+  contained: boolean | null;
+  /** Frames refused as forgeries: the fact plus a count bounded by `REJECTED_FORGERY_CAP`
+   *  (design D5). BOTH refusal sites are folded into this one tally — the outer page rejecting a
+   *  frame that fails its nonce check, and the HOST refusing a frame that arrived on its relay
+   *  binding from outside `page.mainFrame()` (i.e. straight from the candidate's realm) — so a
+   *  non-zero count does NOT imply the outer page rejected anything. Payload-free by construction —
+   *  no byte of a forged frame reaches this or any other report field, any diagnostic, any log
+   *  line, or any model-facing path. */
+  forgeries: ForgeryTally;
   /** The total wall-clock budget fired and the page was killed mid-run (`run_truncated`). */
   truncated: boolean;
   timings: StageTimings;

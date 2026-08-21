@@ -14,6 +14,8 @@
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import type { AppRecord } from '../bridge/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /**
  * The launcher-facing record (D1). The launcher id IS the version-store appId for original
@@ -59,7 +61,13 @@ export class AppIndex {
     try {
       const v = JSON.parse(raw);
       return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-    } catch {
+    } catch (e) {
+      // Tolerated (an unreadable order list reads as "no order"), but never silent: this is
+      // corrupted device state, and the grid the user sees is empty because of it.
+      log.warn(CHANNELS.app, 'stored app order is unreadable', {
+        key: ORDER_KEY,
+        detail: e instanceof Error ? e.message : String(e),
+      });
       return [];
     }
   }
@@ -74,7 +82,13 @@ export class AppIndex {
     if (!raw) return null;
     try {
       return JSON.parse(raw) as InstalledApp;
-    } catch {
+    } catch (e) {
+      // An unreadable record reads as "not installed" so the shell keeps working — but the app
+      // has effectively disappeared from the user's grid, which is worth a record.
+      log.warn(CHANNELS.app, 'stored app record is unreadable', {
+        appId: id,
+        detail: e instanceof Error ? e.message : String(e),
+      });
       return null;
     }
   }

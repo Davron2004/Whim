@@ -54,6 +54,7 @@ export function runInTransaction<T>(execute: (sql: string) => void, fn: () => T)
   } catch (err) {
     try {
       execute('ROLLBACK');
+    // eslint-disable-next-line no-restricted-syntax -- intentional: rethrows the original error below; a rollback failure would only mask it
     } catch {
       /* the original error is what matters */
     }

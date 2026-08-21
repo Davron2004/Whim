@@ -68,6 +68,7 @@ async function resolveOneId(id: string, deadline: number, bounds: ReconcileBound
     let usage: Usage | null;
     try {
       usage = await transport.fetchStats(id);
+    // eslint-disable-next-line no-restricted-syntax -- intentional: a transport rejection is treated identically to an unresolved null, per the doc comment above
     } catch {
       usage = null;
     }
@@ -120,6 +121,7 @@ export async function reconcileAbortedUsage(deviceId: string, generationIds: rea
     const deadline = Date.now() + bounds.totalBudgetMs;
     const { total, foundAny } = await resolveAll(generationIds, deadline, bounds, deps.transport);
     if (foundAny) await deps.usageStore.credit(deviceId, total);
+  // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort per spec "gives up quietly" — must never surface a user-visible failure
   } catch {
     // best-effort — reconciliation must never fail anything user-visible (spec "gives up quietly")
   }

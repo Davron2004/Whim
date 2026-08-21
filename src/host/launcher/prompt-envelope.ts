@@ -1,21 +1,53 @@
 /**
- * prompt-envelope — the launcher-local shape wrapping a version's stored prompt (design D4).
+ * prompt-envelope — the launcher-local shape wrapping a version's stored prompt (design D4;
+ * shell-redesign-v2 design D3).
  *
- * A version's stored prompt (Snapshot.prompt) may be JSON envelope `{v: 1, text: string}`
- * (new-style, honest structured prompt) or a raw legacy string (older seeded fixtures). This
- * module is launcher-local, NOT `contract/` — the RN app must not grow a workspace import
- * (guard:metro seam). #7/#11 will surface this shape in `@whim/contract` later and must
- * conform to it.
+ * A version's stored prompt (Snapshot.prompt) may be the CURRENT envelope `{v: 2, text, summary?}`,
+ * the earlier `{v: 1, text}`, or a raw legacy string (older seeded fixtures). Every one of those is
+ * a legitimate state: an older envelope resolves to its prompt text with no summary, and nothing
+ * migrates.
+ *
+ * `text` keeps its exact meaning across the bump — the VERBATIM approved prompt — so the shell can
+ * echo the user's own words rather than reconstruct them. The run's summary rides beside it rather
+ * than overwriting it; `history-logic.ts#storedSummary` reads that field structurally off the same
+ * JSON, so the two modules never have to agree on a summary type.
+ *
+ * This module is launcher-local, NOT `contract/` — the RN app must not grow a workspace import
+ * (guard:metro seam). `@whim/contract` is a TYPE-ONLY import here for the same reason.
  */
+
+import type { RunSummary } from '@whim/contract';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+
+/** The envelope version this build writes. Monotonic: a new field bumps it (design D3). */
+export const PROMPT_ENVELOPE_VERSION = 2;
+
+/** The versions a reader accepts. `1` predates the summary field and carries none. */
+const READABLE_VERSIONS: ReadonlySet<number> = new Set([1, 2]);
 
 export interface PromptEnvelope {
   text: string;
 }
 
 /**
- * Strict-parse `raw` as envelope JSON `{v: 1, text: string}`. Any parse failure or shape
- * mismatch (not an object, `v !== 1`, non-string `text`) falls back to `{text: raw}` — the
- * raw string rendered unchanged. Never throws (History's "does not error" requirement).
+ * Serialize the tracked prompt for a delivered generation: `{v: 2, text, summary?}`. `text` is
+ * stored verbatim; `summary` is written only when the run's terminal event carried one (its
+ * absence is a legitimate state, never an emitter defect). The per-snapshot lineage stamp stays a
+ * commit trailer OUTSIDE this envelope and is never written into it.
+ */
+export function promptEnvelope(text: string, summary?: RunSummary): string {
+  return JSON.stringify(
+    summary === undefined
+      ? { v: PROMPT_ENVELOPE_VERSION, text }
+      : { v: PROMPT_ENVELOPE_VERSION, text, summary },
+  );
+}
+
+/**
+ * Strict-parse `raw` as envelope JSON (`v` of 1 or 2, `text` a string). Any parse failure or shape
+ * mismatch (not an object, an unknown version, non-string `text`) falls back to `{text: raw}` —
+ * the raw string rendered unchanged. Never throws (History's "does not error" requirement).
  */
 export function parsePromptEnvelope(raw: string): PromptEnvelope {
   try {
@@ -24,13 +56,17 @@ export function parsePromptEnvelope(raw: string): PromptEnvelope {
       parsed !== null &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      (parsed as Record<string, unknown>).v === 1 &&
+      READABLE_VERSIONS.has((parsed as Record<string, unknown>).v as number) &&
       typeof (parsed as Record<string, unknown>).text === 'string'
     ) {
       return { text: (parsed as { text: string }).text };
     }
-  } catch {
-    // not JSON at all — fall through to the raw fallback below.
+  } catch (e) {
+    // A raw legacy string is a LEGITIMATE stored state, not a fault — hence `debug`: the record
+    // exists so the fallback is visible when reading a log, not to report a problem.
+    log.debug(CHANNELS.app, 'stored prompt is not an envelope, read as raw text', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
   }
   return { text: raw };
 }

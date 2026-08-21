@@ -17,6 +17,8 @@ import type { ClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import type { GenerationEvent } from '@whim/contract';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -271,6 +273,30 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       const result = await first;
       h.ok(result.done === true, 'the abort wins the race -- iteration ends silently, not with a thrown http error');
       h.eq(fakeXhr.abortCount, 0, 'the underlying XHR is never told to abort -- its response had already fully arrived');
+    },
+  );
+
+  // obs-v1: the breadcrumb is a SEAM record on the generation channel, not a console line — read
+  // back off the seam's ring buffer and asserted as named fields.
+  await h.test(
+    'openXhrGenerateStream: a transport failure records a structured breadcrumb on the generation channel',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const before = log.buffer.snapshot().length;
+      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+      fakeXhr.respondError(); // no respondHeaders() call first -- status stays 0, reader never handed back
+      const caught = await expectThrow(first);
+      h.ok(caught instanceof GenerationClientError, 'still throws GenerationClientError');
+
+      const logged = log.buffer
+        .snapshot()
+        .slice(before)
+        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/generate');
+      h.ok(logged !== undefined, 'records a breadcrumb at the transport-error mapping site');
+      if (logged) {
+        h.eq(logged.fields.kind, 'network', 'the mapped error kind is a named field');
+        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
+      }
     },
   );
 

@@ -115,6 +115,54 @@ section('synthetic-run adapter: normalizes a recorded report fixture (design D6)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+section(
+  'synthetic-run adapter: pins the three-valued containment mapping ' +
+    '(handoff/run-report-contract.md, design Open Question 1)',
+);
+// ─────────────────────────────────────────────────────────────────────────────
+
+{
+  const reportPath = join(repoRoot, 'evals', 'test', 'fixtures', 'synthetic-run-report.json');
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  const observation = observationFromRunReport('contained-true', report);
+  eq(
+    'RunReport.contained === true maps to an authenticated, contained verdict',
+    observation.containment,
+    { authenticated: true, contained: true },
+  );
+}
+
+{
+  const reportPath = join(repoRoot, 'evals', 'test', 'fixtures', 'synthetic-run-report-breach.json');
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  const observation = observationFromRunReport('contained-false', report);
+  eq(
+    'RunReport.contained === false maps to an authenticated, NOT-contained verdict',
+    observation.containment,
+    { authenticated: true, contained: false },
+  );
+}
+
+{
+  const reportPath = join(repoRoot, 'evals', 'test', 'fixtures', 'synthetic-run-report-unobserved.json');
+  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  const observation = observationFromRunReport('contained-null', report);
+  check(
+    'RunReport.contained === null maps to an un-authenticated verdict',
+    observation.containment.authenticated === false,
+  );
+  // Isolate the containment mapping's effect from the fixture's own `containment_unobserved`
+  // diagnostic: even with no diagnostics at all, the un-authenticated verdict alone fails Tier A
+  // (tier-a.ts's `containmentTrusted = authenticated && contained`) — never adopted as a pass.
+  const isolatedObservation: RunObservation = { ...observation, diagnostics: [] };
+  const result = evaluateTierA(readCandidate('honest.app.tsx'), isolatedObservation);
+  check(
+    'an unobserved (null) verdict fails Tier A as an untrusted verdict, never as a pass',
+    result.status === 'fail',
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 section('case verdict: three-tier gating semantics (spec "Three tiers with declared gating semantics")');
 // ─────────────────────────────────────────────────────────────────────────────
 

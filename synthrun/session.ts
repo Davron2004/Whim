@@ -6,14 +6,17 @@
  * repeated per call — see `contract.ts`'s `Semaphore` comment).
  *
  * `openRun` is the extension point later chains build on. `RunOptions.beforeNavigate` (see
- * `contract.ts`) is the pre-navigation seam: chain 2 (observation/watchdog) uses it for CDP
- * `Runtime.enable` (a candidate can throw before the nonce-authenticated frame handshake would
- * ever catch it post-navigation — measured, not theoretical: `handoff/observe-api.md`'s
- * `attachObserversEarly`) plus the REST of its collectors, attached to `ctx.page` right after
- * `openRun` returns and before driving anything; chain 3 (capability wiring) uses the SAME hook
- * for `context.exposeFunction('whimHostDispatch', host.dispatch)` — which MUST happen before
- * navigation for the exposed function to be available when the page's inline scripts run (`page.
- * ts` already sets `syscallSink:'exposed'` expecting this); chain 4 (the sweep) drives `ctx.
+ * `contract.ts`) is the pre-navigation seam: observation (`observe.ts`'s `attachObserversEarly`,
+ * `handoff/observation-phases.md`) attaches ALL of its collectors there — CDP `Runtime.enable`,
+ * the nonce-authenticated frame relay and the console heartbeat — because the outer page emits
+ * `delivery`/`paint`/`probes` within milliseconds of `load`, so anything attached after `openRun`
+ * returns races those frames and silently drops the ones it loses (measured, not theoretical);
+ * chain 3 (capability wiring) uses the SAME hook
+ * for `context.exposeBinding('whimHostDispatch', host.dispatch)` — which MUST happen before
+ * navigation for the binding to be available when the page's inline scripts run (`page.
+ * ts` already sets `syscallSink:'exposed'` expecting this), and it's `exposeBinding` rather
+ * than `exposeFunction` that carries the caller's frame through to the main-frame guard;
+ * chain 4 (the sweep) drives `ctx.
  * page`; chain 5 (task 5.2) composes all of the above plus `dispose()` into the full
  * `RunCandidate` entry point `contract.ts` declares.
  */
@@ -99,6 +102,12 @@ export class SynthRunSession {
       const page = await context.newPage();
       try {
         if (opts.beforeNavigate) await opts.beforeNavigate(page, context);
+        // `waitUntil:'load'` is settled, not inherited: measured against a candidate that hangs
+        // synchronously and unboundedly, this `goto` still resolves in ~30ms rather than timing
+        // out, because the outer page's `load` fires once the sandboxed iframe's own srcdoc has
+        // loaded — the candidate bundle is only DELIVERED afterwards, over postMessage. So a
+        // never-painting candidate still reaches the mount watchdog, and a weaker mode ('commit'/
+        // 'domcontentloaded') would buy nothing while making `bootMs` mean less.
         await page.goto(`file://${pagePath}`, { waitUntil: 'load', timeout: 20000 });
       } finally {
         await rm(pageDir, { recursive: true, force: true });

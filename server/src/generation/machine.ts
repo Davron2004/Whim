@@ -11,6 +11,7 @@ import type {
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  RunSummary,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
@@ -18,6 +19,17 @@ import type { ModelClient, ModelMessage, ModelRoster } from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
+import type { Summariser } from './summarise';
+import { log } from '../logger';
+
+/** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
+ *  triggers and terminal outcomes — as one child logger carrying its scope as a field. Everything
+ *  variable is a NAMED FIELD, never interpolated into the message, and the root logger's `redact`
+ *  config is what keeps prompt text / generated source / the API key out of these records: it is
+ *  enforced at the serializer, not by a rule a future author has to remember.
+ *
+ *  Nothing here is called from inside a delta-iteration or token-emission loop. */
+const runLog = log.child({ scope: 'run' });
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
@@ -73,11 +85,23 @@ export interface RunInput {
 
 /** `contained: false` is TERMINAL (design D7): `diagnostics` and any assembled record are ignored
  *  entirely by the machine, no repair attempt is consumed, and nothing about the escape is fed back
- *  to the model. When `contained` is `true`, `record` is ALWAYS present (the harness-validated
- *  `WireAppRecord`, design D12) — the machine, not the stage, decides whether to deliver it or keep
- *  repairing, based on `diagnostics[].severity` (design D6). */
+ *  to the model.
+ *
+ *  `contained: null` — the harness observed no authenticated containment verdict at all — is its
+ *  own THIRD ARM (design D8-local), not a flag hung off either of the others: an arm makes every
+ *  non-exhaustive consumer a compile error, whereas a discriminant field would let a consumer that
+ *  handles both original arms keep compiling while silently mishandling the new state. It is
+ *  terminal on the same terms as `false` (no repair attempt, nothing fed back) but is a DISTINCT
+ *  outcome carrying its own user-facing reason, and is never re-run (design D3): it is NOT a
+ *  containment failure, and must never be reported as one — never heard back is not evidence of a
+ *  breach, and it is not evidence of containment either.
+ *
+ *  When `contained` is `true`, `record` is ALWAYS present (the harness-validated `WireAppRecord`,
+ *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
+ *  on `diagnostics[].severity` (design D6). */
 export type RunOutcome =
   | { contained: false; diagnostics: Diagnostic[] }
+  | { contained: null; diagnostics: Diagnostic[] }
   | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
 
 export interface RunStage {
@@ -115,6 +139,12 @@ export interface GenerationPipelineDeps {
   build: BuildStage;
   run: RunStage;
   clock: Clock;
+  /** Optional post-run step (spec "A post-run summariser…"). When absent — a fake-driven suite,
+   *  a server that runs without one — the `result` event simply carries no summary, which the
+   *  contract declares a legitimate state. It is invoked ONLY after a record has been chosen for
+   *  delivery, sees no part of that record (`SummariserInput` is record-free), and can neither
+   *  fail the run nor delay a terminal event past its own timeout. */
+  summariser?: Summariser;
   bounds?: Partial<PipelineBounds>;
 }
 
@@ -127,6 +157,11 @@ const PLAN_FAILURE_FALLBACK_REASON =
 const REPAIR_EXHAUSTED_REASON =
   'Could not produce a working app after several attempts. Try describing it differently or more specifically.';
 const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and was not delivered.';
+/** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
+ *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
+ *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
+ *  rather than promising an automatic retry (design D3 declines to add one). */
+const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
 const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
 
 function sumUsage(a: Usage, b: Usage): Usage {
@@ -195,6 +230,27 @@ function outcomeFromDecision(decision: Exclude<DiagnosticsDecision, { action: 'p
   return { kind: 'failed', reason: decision.reason };
 }
 
+/** One breadcrumb for a `stage` transition — same fields the wire's `stage` event itself carries
+ *  (stage name, status, and attempt when present). */
+function logStage(stage: string, status: string, attempt?: number): void {
+  runLog.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
+}
+
+/** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
+ *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
+ *  called from inside the delta iteration loop (design D5 scope). */
+function throwLoggedModelCallFailure(which: 'usage' | 'id', error: unknown): never {
+  runLog.error(
+    {
+      which,
+      errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      detail: error instanceof Error ? error.message : String(error),
+    },
+    'model call failed',
+  );
+  throw error;
+}
+
 function schemaContextFor(request: GenerateRequest): string {
   const appliedSchema = request.app?.appliedSchema;
   if (!appliedSchema || Object.keys(appliedSchema).length === 0) return '';
@@ -220,9 +276,47 @@ type CandidateOutcome =
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
   | { kind: 'failed'; reason: string }
-  | { kind: 'contained-failure' };
+  | { kind: 'contained-failure' }
+  | { kind: 'containment-unobserved' };
+
+/** Maps a non-affirmative containment verdict onto its own terminal outcome — the one place the
+ *  three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over the
+ *  verdict's literal type (design D8-local): `contained` is the discriminant, so a fourth
+ *  `RunOutcome` arm makes this a compile error at the call site instead of silently reusing one of
+ *  these two. Never collapse the two — `null` is absence of evidence, `false` is evidence. */
+function unverifiedRunOutcome(contained: false | null): CandidateOutcome {
+  switch (contained) {
+    case false:
+      return { kind: 'contained-failure' };
+    case null:
+      return { kind: 'containment-unobserved' };
+  }
+}
 
 type TerminalEvent = Extract<GenerationEvent, { type: 'result' | 'failure' }>;
+
+/** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
+ *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
+ *  without deciding what the user is told; and each arm decides its `diagnostics` independently.
+ *  Both containment terminals send `[]`: nothing about an escape attempt, and no unobserved-verdict
+ *  detail, is ever fed back (spec "The run stage is the synthetic harness…"). */
+function failureTerminalFor(
+  outcome: Extract<CandidateOutcome, { kind: 'failed' | 'contained-failure' | 'containment-unobserved' }>,
+  state: RunState,
+): TerminalEvent {
+  const attempts = state.candidatesProduced;
+  switch (outcome.kind) {
+    case 'contained-failure':
+      return { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] };
+    // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
+    // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
+    // prompt is built, and the candidate is never re-run.
+    case 'containment-unobserved':
+      return { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] };
+    case 'failed':
+      return { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics };
+  }
+}
 
 // ─── The machine ─────────────────────────────────────────────────────────────
 
@@ -251,6 +345,7 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0 };
 
+    runLog.info('run start');
     try {
       const schemaContext = schemaContextFor(request);
 
@@ -262,8 +357,16 @@ export class GenerationMachine {
       if (source === undefined) return;
 
       yield* this.runRepairLoop(request, plan, schemaContext, source, signal, trace, state);
-    } catch {
+    } catch (err) {
       if (signal?.aborted) return;
+      runLog.error(
+        {
+          errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          detail: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        },
+        'run failed',
+      );
       yield* this.emitCompletion(state, signal, {
         type: 'failure',
         reason: GENERIC_INTERNAL_ERROR_REASON,
@@ -283,6 +386,11 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     yield { type: 'usage', usage: state.usage };
     if (signal?.aborted) return;
+    if (terminal.type === 'failure') {
+      runLog.info({ reason: terminal.reason }, 'terminal failure');
+    } else {
+      runLog.info('terminal result');
+    }
     yield terminal;
   }
 
@@ -312,10 +420,10 @@ export class GenerationMachine {
     }
     if (signal?.aborted) return { text, aborted: true };
     const settledUsage = await usageResult;
-    if (!settledUsage.ok) throw settledUsage.error;
+    if (!settledUsage.ok) throwLoggedModelCallFailure('usage', settledUsage.error);
     state.usage = sumUsage(state.usage, settledUsage.value);
     const settledId = await idResult;
-    if (!settledId.ok) throw settledId.error;
+    if (!settledId.ok) throwLoggedModelCallFailure('id', settledId.error);
     return { text, aborted: signal?.aborted ?? false };
   }
 
@@ -341,6 +449,7 @@ export class GenerationMachine {
 
     for (let attempt = 1; attempt <= this.bounds.planAttempts; attempt++) {
       if (signal?.aborted) return undefined;
+      logStage('plan', 'start');
       yield { type: 'stage', stage: 'plan', status: 'start' };
       if (signal?.aborted) return undefined;
 
@@ -350,6 +459,7 @@ export class GenerationMachine {
 
       const { plan, failureReason } = this.resolvePlan(turn.text, request);
 
+      logStage('plan', 'done');
       yield { type: 'stage', stage: 'plan', status: 'done' };
       if (signal?.aborted) return undefined;
 
@@ -378,6 +488,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
+    logStage('generate', 'start');
     yield { type: 'stage', stage: 'generate', status: 'start' };
     if (signal?.aborted) return undefined;
 
@@ -385,6 +496,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
     if (turn.aborted) return undefined;
 
+    logStage('generate', 'done');
     yield { type: 'stage', stage: 'generate', status: 'done' };
     if (signal?.aborted) return undefined;
 
@@ -405,6 +517,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
+    logStage('repair', 'start', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'start', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -415,6 +528,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
     if (turn.aborted) return undefined;
 
+    logStage('repair', 'done', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'done', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -450,27 +564,17 @@ export class GenerationMachine {
       if (outcome.kind === 'aborted') return;
 
       if (outcome.kind === 'deliver') {
-        yield* this.emitCompletion(state, signal, { type: 'result', app: outcome.record });
+        yield* this.emitDelivery(request, outcome.record, state, signal);
         return;
       }
-      if (outcome.kind === 'contained-failure') {
-        yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: CONTAINMENT_FAILURE_REASON,
-          attempts: state.candidatesProduced,
-          diagnostics: [],
-        });
+      if (outcome.kind !== 'repair') {
+        yield* this.emitCompletion(state, signal, failureTerminalFor(outcome, state));
         return;
       }
-      if (outcome.kind === 'failed') {
-        yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: outcome.reason,
-          attempts: state.candidatesProduced,
-          diagnostics: state.diagnostics,
-        });
-        return;
-      }
+
+      const kindCounts: Record<string, number> = {};
+      for (const d of outcome.diagnostics) kindCounts[d.kind] = (kindCounts[d.kind] ?? 0) + 1;
+      runLog.info({ kindCounts, warningsOnly: outcome.warningsOnly }, 'repair triggered');
 
       repairsUsed += 1;
       if (outcome.warningsOnly) warningRepairsUsed += 1;
@@ -492,6 +596,65 @@ export class GenerationMachine {
     }
   }
 
+  /** Summarise, then deliver: the summariser runs between the delivery decision and the terminal
+   *  event, so its token spend lands inside the `usage` event that immediately precedes `result`. */
+  private async *emitDelivery(
+    request: GenerateRequest,
+    record: WireAppRecord,
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<GenerationEvent, void> {
+    const summary = await this.summariseDelivery(request, record, state, signal);
+    yield* this.emitCompletion(state, signal, {
+      type: 'result',
+      app: record,
+      ...(summary ? { summary } : {}),
+    });
+  }
+
+  /**
+   * The post-run summariser (spec "A post-run summariser…"). Called once, only for a record that
+   * is already going to be delivered, and never allowed to change that: it is handed copied
+   * primitives (no record, no manifest object, no bundle), its token spend is folded into the run's
+   * usage before the `usage` event, and ANY failure — a rejection, a timeout, unusable prose —
+   * yields `undefined`, so the run still emits its `result` with the summary simply absent. No
+   * stage event narrates it: it is not a stage, and the enum is not widened.
+   */
+  private async summariseDelivery(
+    request: GenerateRequest,
+    record: WireAppRecord,
+    state: RunState,
+    signal: AbortSignal | undefined,
+  ): Promise<RunSummary | undefined> {
+    const summariser = this.deps.summariser;
+    if (!summariser || signal?.aborted) return undefined;
+    const capabilities = record.manifest.capabilities;
+    try {
+      const result = await summariser.summarise(
+        {
+          prompt: request.prompt,
+          isEdit: request.app !== undefined,
+          appName: record.name,
+          capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
+          attempts: state.candidatesProduced,
+          diagnostics: [...state.diagnostics],
+        },
+        signal,
+      );
+      if (result.usage) state.usage = sumUsage(state.usage, result.usage);
+      return result.summary;
+    } catch (err) {
+      runLog.error(
+        {
+          errorClass: err instanceof Error ? err.constructor.name : typeof err,
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        'summariser failed',
+      );
+      return undefined;
+    }
+  }
+
   /** Streams each diagnostic as it is observed, then the stage's `done` event — the shared tail
    *  of both `CHECK` and `RUN` (build failures included). */
   private async *emitDiagnosticsAndDone(
@@ -508,6 +671,7 @@ export class GenerationMachine {
       if (signal?.aborted) return;
     }
     if (signal?.aborted) return;
+    logStage(stage, 'done', attemptField.attempt);
     yield { type: 'stage', stage, status: 'done', ...attemptField };
   }
 
@@ -524,6 +688,7 @@ export class GenerationMachine {
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
     const attemptField = roundAttempt !== undefined ? { attempt: roundAttempt } : {};
 
+    logStage('check', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'check', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const checkReport = await this.deps.check.check(source, { appliedSchema: request.app?.appliedSchema }, signal);
@@ -554,6 +719,7 @@ export class GenerationMachine {
     attemptField: { attempt?: number },
     roundDiagnostics: Diagnostic[],
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
+    logStage('run', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'run', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const buildOutcome = await this.deps.build.build(source, signal);
@@ -574,9 +740,15 @@ export class GenerationMachine {
     );
     if (signal?.aborted) return { kind: 'aborted' };
 
-    if (!runOutcome.contained) {
+    // Only an affirmative verdict proceeds. `!runOutcome.contained` would be true for BOTH `false`
+    // and `null` and would report an unverified run as a containment failure; `=== false` alone
+    // would let `null` fall through to delivery. Both non-`true` verdicts still emit the `run`
+    // stage's `done` half — the bracket the wire opened above always closes — and neither streams a
+    // `diagnostic` event.
+    if (runOutcome.contained !== true) {
+      logStage('run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
-      return { kind: 'contained-failure' };
+      return unverifiedRunOutcome(runOutcome.contained);
     }
 
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, diagnosticsAccum, signal);

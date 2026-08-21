@@ -67,6 +67,7 @@ async function run(browser, file, drive, waitForVerdict = true) {
           publicSdk = typeof window.__whimRequire === 'function'
             ? window.__whimRequire('vc-sdk')
             : null;
+          // eslint-disable-next-line no-restricted-syntax -- intentional: the probe is READING whether vc-sdk is reachable; a throw here is the "absent" answer, and logging it inside a headless-Chromium probe is noise, not signal
         } catch {}
         return {
           text: root.innerText,
@@ -80,6 +81,7 @@ async function run(browser, file, drive, waitForVerdict = true) {
         };
       });
       if (state) iframeState = state;
+      // eslint-disable-next-line no-restricted-syntax -- intentional: a non-sandbox frame refusing evaluate is not the frame being probed; the probe skips it and reports on the frames it could read
     } catch {}
   }
   await page.close();

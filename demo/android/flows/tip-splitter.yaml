@@ -1,0 +1,142 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# demo/android/flows/tip-splitter.yaml — Maestro walkthrough of the REAL Whim app on a real
+# Android emulator: launcher home → open "Tip Splitter" → interact inside the mini-app → Orb
+# menu → Home → long-press the tile → Fork sheet → Cancel. Filmed by demo/android/film.mjs,
+# which runs `adb shell pm clear com.whim` immediately before this flow starts, so beat 0 is
+# always a freshly-seeded first run (see src/host/launcher/seed.ts).
+#
+# SELECTORS: no testID exists anywhere in the app (by design — see demo/README.md's Android
+# variant section). Every selector below is either visible text or an accessibilityLabel.
+# WEBVIEW-VISIBILITY FINDING (verified via `maestro hierarchy` while Tip Splitter was open):
+# unlike Playwright/Chromium's cross-origin isolation, Android's accessibility tree exposes text
+# INSIDE the sandboxed opaque-origin iframe (`android.webkit.WebView` > ... > resource-id
+# "whim-iframe" > "whim-root", with "Bill"/"Tip %"/"People"/"Reset" and the computed "$"-rows all
+# present as `text` attributes). So the in-app interaction segment below uses ordinary Maestro
+# text/relative selectors — no coordinate taps were needed.
+#
+# PAUSE PRIMITIVE: Maestro has no first-class fixed-duration "sleep" command. Every explicit
+# pause below is `extendedWaitUntil: { visible: <marker that will never appear>, timeout: <ms>,
+# optional: true }` — it blocks for the full timeout (confirmed empirically: wall-clock delta
+# tracks the requested timeout) and `optional: true` demotes the inevitable "not found" outcome
+# to a WARNED step instead of failing the flow (confirmed: overall exit code stays 0).
+appId: com.whim
+---
+# Beat 0 — launch into the freshly-seeded home screen.
+- launchApp
+- waitForAnimationToEnd
+
+# Beat 1 — dwell on the home grid so the seeded tiles ("Tip Splitter", "Water Counter",
+# "Style Gallery") read on camera before anything moves.
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 2200
+    optional: true
+
+# Beat 2 — open Tip Splitter.
+- tapOn: "Tip Splitter"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1200
+    optional: true
+
+# Beat 3 — in-app interaction. Each field is targeted by its label via `below:` (the EditText
+# sits directly under its <Text> label in the fixture's NumberInput layout — see
+# fixtures/tip-splitter.app.tsx / src/sdk/index.tsx NumberInput).
+#
+# SELECT-THEN-REPLACE, not erase-then-append: `inputText` alone APPENDS at the cursor, and
+# `eraseText` doesn't fully solve it either — probing found `eraseText` leaves the field showing
+# a re-rendered "0" (React re-renders the controlled input to its emptied numeric state, which
+# is 0), and the DIGITS TYPED AFTER IT NEVER OVERWRITE THAT LEADING "0" ON SCREEN: React's
+# controlled-input reconciliation treats the new numeric value (e.g. 86) as unchanged versus the
+# DOM's current text ("086") via a loose comparison, so it skips writing the DOM — the field
+# reads "086" for the rest of the segment even though the underlying state is the correct 86
+# (confirmed via a pulled screenshot showing "086"/"018" on screen, and the computed rows
+# reading as if bill were 10086 before this fix — "86" landed appended after the stray "0",
+# not in place of it). `doubleTapOn` was tried first as the natural "select the token" gesture
+# and did NOT select anything in this WebView (probed: produced the same stray-zero/append
+# result as eraseText). What DOES work: `longPressOn` triggers Chromium's native text-selection
+# UI (probed via `maestro hierarchy` — a floating toolbar appears with a "Select all" text node),
+# and tapping that then typing replaces the full selection cleanly — confirmed via a pulled
+# screenshot showing "86" with no leading zero, and the computed Tip/Total/Per-person rows
+# matching Bill=86 exactly. Tapping the ("Tip Splitter") title text — non-interactive, but still
+# resolvable as a tap target — blurs the field WITHOUT invoking `hideKeyboard`: probing showed
+# `hideKeyboard`'s back-press popped the mini-app back to the launcher instead of just
+# dismissing the keyboard.
+- longPressOn:
+    below: "Bill"
+- tapOn: "Select all"
+- inputText: "86"
+- tapOn: "Tip Splitter"
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 900
+    optional: true
+
+- longPressOn:
+    below: "Tip %"
+- tapOn: "Select all"
+- inputText: "18"
+- tapOn: "Tip Splitter"
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 900
+    optional: true
+
+- longPressOn:
+    below: "People"
+- tapOn: "Select all"
+- inputText: "3"
+- tapOn: "Tip Splitter"
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1200
+    optional: true
+
+# Beat 4 — dwell on the computed Tip/Total/Per-person rows before resetting.
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1600
+    optional: true
+- tapOn: "Reset"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1200
+    optional: true
+
+# Beat 5 — the Orb (RN chrome overlaying the running mini-app, NOT inside the WebView;
+# accessibilityLabel "Open the app menu") → "Home".
+- tapOn: "Open the app menu"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 700
+    optional: true
+- tapOn: "Home"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1200
+    optional: true
+
+# Beat 6 — long-press the tile → action sheet → "Fork" → fork sheet → "Cancel" (of the FORK
+# sheet, not the action sheet) → back on the home grid, flow ends there.
+- longPressOn: "Tip Splitter"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1000
+    optional: true
+- tapOn: "Fork"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1200
+    optional: true
+- tapOn: "Cancel"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "__whim_demo_pause_marker__"
+    timeout: 1600
+    optional: true

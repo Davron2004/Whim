@@ -13,10 +13,22 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 
 const SERVER_URL_KEY = 'whim.server-url:v1';
 
-/** Trims and drops a blank result to `undefined`. Never throws. */
+/**
+ * Trims, strips trailing slashes (one or more — `host:8787///` → `host:8787`), and drops a blank
+ * result to `undefined`. Never throws.
+ *
+ * Trailing-slash stripping matters because `generation-client.ts` concatenates this address with
+ * a leading-slash path (e.g. `/v1/clarify`); a stored trailing slash would double it to `//v1/...`,
+ * which the server 404s (no non-exact-path matching).
+ */
 function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
-  return trimmed.length > 0 ? trimmed : undefined;
+  let end = trimmed.length;
+  while (end > 0 && trimmed[end - 1] === '/') {
+    end -= 1;
+  }
+  const deslashed = trimmed.slice(0, end);
+  return deslashed.length > 0 ? deslashed : undefined;
 }
 
 /** Read the persisted server address, or `undefined` when unset/blank ("not configured"). */

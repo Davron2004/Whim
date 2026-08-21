@@ -146,6 +146,12 @@ export class StoreAccess {
       },
       spec.prompt,
     );
+    // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
+    // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
+    // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
+    // via `AppTile`); build-lifecycle.ts's `deliverResult` PRESERVE comment depends on this holding
+    // in the other direction. Adopting the new name here would move that app's hue on its next
+    // rename-carrying rebuild. Pinned: store-access.suite.ts §34.
     const updated: InstalledApp = { ...entry, record: spec.record };
     this.index.put(updated);
     return updated;
