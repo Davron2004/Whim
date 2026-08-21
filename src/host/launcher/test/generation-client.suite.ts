@@ -163,7 +163,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       { type: 'usage', usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } },
       {
         type: 'result',
-        app: { name: 'Tip Splitter', source: 'src', bundle: 'bundle', manifest: {}, schema: {} },
+        app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
       },
     ];
     const text = events.map((e, i) => sseFrame(e, i + 1)).join('');
@@ -222,6 +222,58 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       }
     },
   );
+
+  // generateApp: result frame with an empty bundle raises GenerationClientError{kind:"stream_parse"}
+  await h.test(
+    'generateApp: a result frame with an empty bundle raises GenerationClientError{kind:"stream_parse"}',
+    async () => {
+      const badFrame =
+        'event: result\ndata: {"type":"result","app":{"name":"Tip Splitter","source":"src","bundle":"","manifest":{},"schema":{}}}\nid: 1\n\n';
+      const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
+      try {
+        await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+        h.ok(false, 'expected a throw');
+      } catch (err) {
+        h.ok(err instanceof GenerationClientError, 'throws GenerationClientError');
+        h.eq((err as GenerationClientError).kind, 'stream_parse', 'kind is "stream_parse"');
+      }
+    },
+  );
+
+  // generateApp: result frame with a bundle missing the loader's runtime binding contract
+  // raises GenerationClientError{kind:"stream_parse"}
+  await h.test(
+    'generateApp: a result frame with a bundle missing __WHIM_APP_MODULE__ raises GenerationClientError{kind:"stream_parse"}',
+    async () => {
+      const badFrame =
+        'event: result\ndata: {"type":"result","app":{"name":"Tip Splitter","source":"src","bundle":"const x = 1;","manifest":{},"schema":{}}}\nid: 1\n\n';
+      const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
+      try {
+        await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+        h.ok(false, 'expected a throw');
+      } catch (err) {
+        h.ok(err instanceof GenerationClientError, 'throws GenerationClientError');
+        h.eq((err as GenerationClientError).kind, 'stream_parse', 'kind is "stream_parse"');
+      }
+    },
+  );
+
+  // generateApp: result frame with a runnable bundle (contains __WHIM_APP_MODULE__) yields normally
+  await h.test('generateApp: a result frame with a runnable bundle yields normally', async () => {
+    const event: GenerationEvent = {
+      type: 'result',
+      app: {
+        name: 'Tip Splitter',
+        source: 'src',
+        bundle: 'window.__WHIM_APP_MODULE__ = {};',
+        manifest: {},
+        schema: {},
+      },
+    };
+    const fetchImpl = (async () => sseResponse([sseFrame(event, 1)])) as typeof fetch;
+    const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+    h.eq(got, [event], 'yields the result event');
+  });
 
   // rewritePrompt: a 200 body that fails RewriteResponse shape validation still raises 'http'
   await h.test(
