@@ -1,24 +1,24 @@
 ## 1. Run journal store
 
-- [ ] 1.1 Add a `RunJournalStore` module colocated with `PendingBuildStore`, on the same MMKV
+- [x] 1.1 Add a `RunJournalStore` module colocated with `PendingBuildStore`, on the same MMKV
       `KVBackend`: `create(launcherId)`, `appendStage(launcherId, stage)`, `appendAggregate(launcherId,
       { chars, tokens })` (throttled ~5s internally), `appendTerminal(launcherId, { failure? })`,
       `get(launcherId)`, `moveToLastRun(launcherId, appId)`, `delete(launcherId)`.
-- [ ] 1.2 Implement the entry cap (~200) with aggregate-first eviction inside the store's append
+- [x] 1.2 Implement the entry cap (~200) with aggregate-first eviction inside the store's append
       path.
-- [ ] 1.3 Implement `moveToLastRun` (read `journal:<launcherId>`, write `lastrun:<appId>`
+- [x] 1.3 Implement `moveToLastRun` (read `journal:<launcherId>`, write `lastrun:<appId>`
       overwriting any prior value, delete `journal:<launcherId>`) and `delete`.
-- [ ] 1.4 Node acceptance suite for the store: throttling, cap/eviction order, move semantics,
+- [x] 1.4 Node acceptance suite for the store: throttling, cap/eviction order, move semantics,
       delete semantics (`npm run launcher:test` surface).
 
 ## 2. Pure aggregation and derivation helpers
 
-- [ ] 2.1 Add pure helpers to `prompt-flow.ts`: elapsed-time formatting from a start timestamp,
+- [x] 2.1 Add pure helpers to `prompt-flow.ts`: elapsed-time formatting from a start timestamp,
       cumulative char/token aggregation from stream events, heartbeat quiet-duration derivation
       from a last-arrival timestamp and the ~8s threshold.
-- [ ] 2.2 Add a pure helper mapping a journal's `stage` entries into consecutive-transition
+- [x] 2.2 Add a pure helper mapping a journal's `stage` entries into consecutive-transition
       durations for the timeline view.
-- [ ] 2.3 Node unit tests for the above helpers, including the threshold boundary and the
+- [x] 2.3 Node unit tests for the above helpers, including the threshold boundary and the
       no-quiet-indication case.
 
 ## 3. Shell wiring — stream loop writes the journal
