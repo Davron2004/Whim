@@ -13,7 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { COPY } from '../copy';
+import { COPY, buildActivityLine, buildQuietLine } from '../copy';
 import { GenerationClientError } from '../transport-shared';
 import {
   BUILD_STEPS,
@@ -389,6 +389,32 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(!/log|terminal/i.test(buildSrc), 'no log or terminal panel');
   });
 
+  await h.test('build: the activity line states the clock and an output SIZE, never the output', () => {
+    h.eq(buildActivityLine('0:42', 1204), '0:42 · 1204 characters so far', 'the clock and the character count, in that order');
+    h.eq(buildActivityLine('0:00', 0), '0:00 · 0 characters so far', 'a stream that has produced nothing yet still states its size');
+    h.eq(buildActivityLine('0:01', 1), '0:01 · 1 character so far', 'one character is not "1 characters"');
+  });
+
+  await h.test('build: the heartbeat states how long the stream has been quiet', () => {
+    h.eq(buildQuietLine(9), 'Quiet for 9s', 'the spec’s "quiet for Ns" statement');
+    h.eq(buildQuietLine(31), 'Quiet for 31s', 'and it advances with the quiet duration');
+  });
+
+  await h.test('build: elapsed, the counter and the heartbeat are derived per render, from the props', () => {
+    h.ok(/elapsedLabel\(signals\.startedAt, now\)/.test(buildSrc), 'the clock is derived from the attempt start and the render’s own now');
+    h.ok(/quietSecondsSince\(signals\.lastArrivalAt, now\)/.test(buildSrc), 'the heartbeat is measured from the last arrival, so a fresh arrival clears it');
+    h.ok(buildSrc.includes('signals.aggregates.chars'), 'the counter renders the cumulative character count');
+    h.ok(!/aggregates\.tokens/.test(buildSrc), 'never a raw count of stream events');
+    h.ok(/quietSeconds !== null &&/.test(buildSrc), 'a stream inside the threshold shows no quiet indication at all');
+    h.ok(!/journal|Store|useState|useRef/.test(buildSrc), 'the screen holds no state of its own and never reads a store');
+  });
+
+  await h.test('build: a details affordance opens the attempt’s timeline', () => {
+    h.ok(/onShowDetails\?: \(\) => void/.test(buildSrc), 'activation is a callback the caller owns');
+    h.ok(/onPress=\{onShowDetails\}/.test(buildSrc), 'the affordance is wired to it');
+    h.ok(buildSrc.includes('COPY.buildDetails') && /accessibilityRole="button"/.test(buildSrc), 'it is a labelled button from the copy table');
+  });
+
   await h.test('build: arriving text is never faded in or typed in per character', () => {
     h.ok(!/Animated|Easing|typewriter|fadeIn/i.test(buildSrc), 'the build screen holds no animation at all');
     h.ok(buildSrc.includes('COPY.buildLeaveRunning') && buildSrc.includes('onLeaveRunning'), 'it offers Leave it running');
@@ -414,7 +440,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
       'flowBusy', 'flowContinue', 'composeHeadline', 'composeHelper', 'composeChipsEyebrow',
       'composeChipTimer', 'composeChipTracker', 'composeChipDice', 'clarifyHelper', 'planHeadline',
       'planSubhead', 'planFooter', 'planBuild', 'buildTitle', 'buildSubtitle', 'buildStepReading',
-      'buildStepWriting', 'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning',
+      'buildStepWriting', 'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails',
       'doneBody', 'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
       'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureDismiss',
     ] as const;

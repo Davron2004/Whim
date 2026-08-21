@@ -24,14 +24,15 @@
  * the attempt calls these.
  */
 
-import type { RunSummary, WireAppRecord } from '@whim/contract';
+import type { GenerationEvent, RunSummary, WireAppRecord } from '@whim/contract';
 import type { AppManifest, AppRecord } from '../bridge';
 import type { SchemaArtifact } from '../storage-engine';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
-import type { BuildScreen } from './prompt-flow';
-import { ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
+import type { BuildScreen, RunSignals } from './prompt-flow';
+import type { RunJournalStore } from './run-journal';
+import { accumulateRunAggregates, ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
@@ -104,6 +105,47 @@ export function startPendingBuild(pending: PendingBuildStore, start: AttemptStar
     ...(start.editing ? { editingAppId: start.editing.id } : {}),
   });
   return id;
+}
+
+/**
+ * Fold ONE stream event into the attempt's journal AND its in-memory run signals — the whole of
+ * what the shell's stream loop does with an event beyond its own screen state
+ * (`generation-run-journal` spec; design D3/D6). Lives here rather than in the shell for the same
+ * reason the delivery ordering does: `LauncherRoot.tsx` cannot be imported under Node, and the
+ * write CADENCE is the property worth watching — a `stage` event journals immediately, a `token`
+ * event goes through `appendAggregate`, which throttles internally, and every other event writes
+ * nothing at all.
+ *
+ * `at` is the arrival time (the caller's single clock reading for the event). Returns the signals
+ * the next event should be folded into — the same object by reference when nothing moved, so a
+ * caller holding these in React state sees no spurious change.
+ *
+ * The token's TEXT is never carried out of here: `accumulateRunAggregates` counts it and discards
+ * it, which is what keeps the counter inside the no-internals rule.
+ */
+export function journalStreamEvent(
+  journal: RunJournalStore,
+  launcherId: string,
+  signals: RunSignals,
+  event: GenerationEvent,
+  at: number,
+): RunSignals {
+  if (event.type === 'stage') {
+    // ONE entry per stage, on its `start` edge only. The wire emits both edges (`status:
+    // 'start'|'done'`), so journaling every stage event would double the timeline's spine and give
+    // each stage a second, bogus duration measured across the gap to the next stage. `start` is
+    // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
+    // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
+    // heartbeat's arrival stamp, it just writes nothing.
+    if (event.status === 'start') journal.appendStage(launcherId, event.stage);
+    return { ...signals, lastArrivalAt: at };
+  }
+  if (event.type === 'token') {
+    const aggregates = accumulateRunAggregates(signals.aggregates, event);
+    journal.appendAggregate(launcherId, aggregates);
+    return { ...signals, aggregates, lastArrivalAt: at };
+  }
+  return signals;
 }
 
 /**

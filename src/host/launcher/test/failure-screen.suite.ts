@@ -116,6 +116,19 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(!allowed.has('sdk-misuse'), 'the leak fixtures are genuinely outside the allowed set');
   });
 
+  await h.test('source: FailureScreen.tsx admits only a hint, never a diagnostic’s kind, symbol or message', () => {
+    const src = readSource('src/host/launcher/FailureScreen.tsx');
+    h.ok(
+      /diagnostics: readonly \{ hint: string \}\[\];/.test(src),
+      'the diagnostics prop type itself admits only a hint, never a full Diagnostic',
+    );
+    h.ok(!/\.symbol\b/.test(src), 'never references a diagnostic’s symbol');
+    h.ok(!/\.message\b/.test(src), 'never references a diagnostic’s message');
+    // Non-vacuity: the two property-access scans do fire on the shapes they are meant to catch.
+    h.ok(/\.symbol\b/.test('diagnostic.symbol'), 'the symbol scan matches a property access');
+    h.ok(/\.message\b/.test('diagnostic.message'), 'the message scan matches a property access');
+  });
+
   // ── both surfaces: tokens only ─────────────────────────────────────────────
 
   await h.test('tokens: the failure screen and the mini-app container carry no style literals', () => {

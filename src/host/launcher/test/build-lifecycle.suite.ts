@@ -22,11 +22,15 @@ import {
   dropPendingBuild,
   failPendingBuild,
   hydratedDiagnostics,
+  journalStreamEvent,
   pendingFailure,
   retryBuildScreen,
   startPendingBuild,
 } from '../build-lifecycle';
-import { ghostTileColorFor } from '../prompt-flow';
+import { RunJournalStore } from '../run-journal';
+import { EMPTY_RUN_AGGREGATES, ghostTileColorFor } from '../prompt-flow';
+import type { RunSignals } from '../prompt-flow';
+import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
 import { appColor } from '../../../sdk/theme';
 import type { WireAppRecord } from '@whim/contract';
@@ -456,6 +460,115 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(screen.stage, null, 'the run starts from nothing observed');
     h.ok(screen.editing === undefined, 'a new-install retry edits no app');
     h.eq(retryBuildScreen(store.get(id)!, APP).editing, APP, 'a rebuild retry stays scoped to its app');
+  });
+
+  // ── the stream loop's journal writes and derived signals (generation-run-journal) ─────────────
+
+  const RUN = 'app-journalled';
+  const STAGE = (stage: 'plan' | 'generate' | 'check', status: 'start' | 'done' = 'start'): GenerationEvent =>
+    ({ type: 'stage', stage, status });
+  const TOKEN = (text: string): GenerationEvent => ({ type: 'token', text });
+
+  /** A journal store over an injected clock, so the ~5s aggregate throttle is driven rather than
+   *  slept through, plus the empty signals an attempt starts from. */
+  function attemptFixture(startedAt = 1_000) {
+    let clock = startedAt;
+    const journal = new RunJournalStore(new MapKVBackend(), () => clock);
+    const signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
+    return { journal, signals, at: () => clock, tick: (ms: number) => (clock += ms) };
+  }
+
+  await h.test('journal: every stage transition is journaled the instant it arrives, by wire name', async () => {
+    const f = attemptFixture();
+    let signals = f.signals;
+    for (const event of [STAGE('plan'), STAGE('generate'), STAGE('check')]) {
+      f.tick(10);
+      signals = journalStreamEvent(f.journal, RUN, signals, event, f.at());
+    }
+    const entries = f.journal.get(RUN)!;
+    h.eq(entries.length, 3, 'one entry per transition, none throttled away');
+    h.eq(entries.map((e) => e.kind), ['stage', 'stage', 'stage'], 'each is a stage entry');
+    h.eq(entries.map((e) => e.stage), ['plan', 'generate', 'check'], 'in arrival order, in the WIRE vocabulary');
+    h.eq(signals.lastArrivalAt, f.at(), 'and the heartbeat’s arrival stamp follows the last one');
+  });
+
+  await h.test('journal: a realistic start/done stream journals ONE entry per stage, on its start edge', async () => {
+    // The wire emits BOTH edges of every stage (`status: 'start'|'done'`). A suite that only ever
+    // feeds `start` cannot see a doubled spine, so this replays a run the way the server sends it:
+    // plan, generate, then a check→repair→check→run loop, each stage opened and closed.
+    const f = attemptFixture();
+    let signals = f.signals;
+    const wire: readonly (readonly ['plan' | 'generate' | 'check' | 'run' | 'repair', 'start' | 'done'])[] = [
+      ['plan', 'start'], ['plan', 'done'],
+      ['generate', 'start'], ['generate', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['repair', 'start'], ['repair', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['repair', 'start'], ['repair', 'done'],
+      ['run', 'start'], ['run', 'done'],
+    ];
+    for (const [stage, status] of wire) {
+      f.tick(100);
+      signals = journalStreamEvent(f.journal, RUN, signals, { type: 'stage', stage, status }, f.at());
+    }
+    const entries = f.journal.get(RUN)!;
+    h.eq(entries.length, 7, 'seven stage transitions, not fourteen — a `done` edge is not a second transition');
+    h.eq(
+      entries.map((e) => e.stage),
+      ['plan', 'generate', 'check', 'repair', 'check', 'repair', 'run'],
+      'the spine is the run as it happened, each stage appearing exactly once per time it was entered',
+    );
+    h.eq(
+      entries.filter((e) => e.stage === 'repair').length,
+      2,
+      'two repair attempts — the same figure the shell’s own `status === "start"` tally reports',
+    );
+    h.eq(signals.lastArrivalAt, f.at(), 'a `done` edge still counts as liveness for the heartbeat');
+  });
+
+  await h.test('journal: a burst of tokens is bounded by elapsed time, never one entry per token', async () => {
+    const f = attemptFixture();
+    let signals = f.signals;
+    // Two 2-second bursts of 40 tokens each, 6 seconds apart: dozens of arrivals, and the entry
+    // count must follow the ~5s window rather than the arrival count.
+    for (let i = 0; i < 40; i++) {
+      f.tick(50);
+      signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('abcde'), f.at());
+    }
+    f.tick(6_000);
+    for (let i = 0; i < 40; i++) {
+      f.tick(50);
+      signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('abcde'), f.at());
+    }
+    const aggregates = f.journal.get(RUN)!.filter((e) => e.kind === 'aggregate');
+    h.eq(aggregates.length, 2, '80 token arrivals over ~10s of wall time write one entry per ~5s window, not 80');
+    h.eq(signals.aggregates, { chars: 400, tokens: 80 }, 'the in-memory counter still counts every token');
+    h.eq(aggregates[0].aggregates, { chars: 5, tokens: 1 }, 'each entry carries the CUMULATIVE totals as of that moment');
+    h.eq(aggregates[1].aggregates, { chars: 205, tokens: 41 }, 'so a later entry is a running total, never a per-window delta');
+    h.ok(!JSON.stringify(aggregates).includes('abcde'), 'and never the token text itself');
+  });
+
+  await h.test('journal: an event that is neither stage nor token writes nothing and moves nothing', async () => {
+    const f = attemptFixture();
+    const diagnostic: GenerationEvent = {
+      type: 'diagnostic',
+      diagnostic: { kind: 'type', symbol: 'x', message: 'boom', hint: 'try again' },
+    };
+    const after = journalStreamEvent(f.journal, RUN, f.signals, diagnostic, f.at() + 5_000);
+    h.ok(after === f.signals, 'the same signals object comes back — a React setter sees no change');
+    h.eq(f.journal.get(RUN) ?? [], [], 'and no entry is written for it');
+  });
+
+  await h.test('journal: the arrival stamp the heartbeat measures from moves on stage AND token', async () => {
+    const f = attemptFixture();
+    f.tick(3_000);
+    const afterStage = journalStreamEvent(f.journal, RUN, f.signals, STAGE('generate'), f.at());
+    h.eq(afterStage.lastArrivalAt, f.at(), 'a stage arrival is liveness');
+    h.eq(afterStage.startedAt, f.signals.startedAt, 'the attempt’s start never moves');
+    f.tick(3_000);
+    const afterToken = journalStreamEvent(f.journal, RUN, afterStage, TOKEN('xy'), f.at());
+    h.eq(afterToken.lastArrivalAt, f.at(), 'so is a token arrival');
+    h.eq(afterToken.aggregates, { chars: 2, tokens: 1 }, 'which is also the only thing that moves the counts');
   });
 
   // ── the persisted payload round-trips into the failure screen's own shape ─────────────────────

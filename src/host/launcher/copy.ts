@@ -82,6 +82,24 @@ export const COPY = {
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
   buildLeaveRunning: 'Leave it running',
+  /** Opens the run timeline for the attempt on screen. */
+  buildDetails: 'Details',
+  // ── the run timeline (generation-observability, design D7) ──────────────────
+  /** The timeline's heading, on the build screen's details view and on the failure screen. */
+  timelineTitle: 'What happened',
+  /** No journal survived for this attempt — the section says so rather than inventing a run. */
+  timelineEmpty: 'Nothing was recorded for this attempt.',
+  timelineClose: 'Close',
+  /** A stage the attempt was still in when the journal stops — no duration is invented for it. */
+  timelineStillGoing: 'still going',
+  // One plain-words label per generation stage. `check`, `run` and `repair` share ONE named build
+  // step on the progress screen, but the timeline is a list of what happened in order, so each
+  // stage the device actually saw gets its own line.
+  timelineStagePlan: 'Read the plan',
+  timelineStageGenerate: 'Wrote the app',
+  timelineStageCheck: 'Checked it',
+  timelineStageRun: 'Tried it out',
+  timelineStageRepair: 'Fixed what didn’t work',
   doneBody: 'It’s on your home screen. Open it, or tell Whim what to change.',
   doneOpen: 'Open it',
   doneBackToApps: 'Back to your apps',
@@ -188,6 +206,59 @@ export function addedFieldsLine(fields: readonly string[]): string {
 /** The done step's title: "<App name> is ready". */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
+}
+
+/**
+ * The build screen's activity line: how long the attempt has been running, and how much output has
+ * come back so far. `elapsed` is the `m:ss` clock; `chars` is a cumulative character COUNT — a
+ * size, never any of the generated text itself.
+ */
+export function buildActivityLine(elapsed: string, chars: number): string {
+  const written = chars === 1 ? '1 character' : `${chars} characters`;
+  return `${elapsed} · ${written} so far`;
+}
+
+/** The stall heartbeat's statement, shown only once the quiet threshold has been exceeded. */
+export function buildQuietLine(seconds: number): string {
+  return `Quiet for ${seconds}s`;
+}
+
+// ── the run timeline's lines (generation-observability, design D7) ───────────
+// The timeline's rows ARE copy — which words a stage reads as, how a duration is written — so they
+// live here beside the checklist rows, in the one module the launcher's Node suite can import.
+
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+const TENTHS_PER_SECOND = 10;
+
+/** A stage's plain-words label. Kept as the bare literal union rather than importing `Stage`, the
+ *  same standing `ghostStateCaption` has: `copy.ts` depends on no other module. */
+export function timelineStageLabel(stage: 'plan' | 'generate' | 'check' | 'run' | 'repair'): string {
+  if (stage === 'plan') return COPY.timelineStagePlan;
+  if (stage === 'generate') return COPY.timelineStageGenerate;
+  if (stage === 'check') return COPY.timelineStageCheck;
+  if (stage === 'run') return COPY.timelineStageRun;
+  return COPY.timelineStageRepair;
+}
+
+/** How long a stage took: tenths of a second under a minute, `m ss` above it. A negative duration
+ *  (out-of-order timestamps) reads as zero rather than as a negative. */
+export function timelineDurationLabel(ms: number): string {
+  const tenths = Math.round(Math.max(0, ms) / (MS_PER_SECOND / TENTHS_PER_SECOND));
+  if (tenths < SECONDS_PER_MINUTE * TENTHS_PER_SECOND) return `${(tenths / TENTHS_PER_SECOND).toFixed(1)}s`;
+  const totalSeconds = Math.round(Math.max(0, ms) / MS_PER_SECOND);
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  return `${minutes}m ${String(totalSeconds % SECONDS_PER_MINUTE).padStart(2, '0')}s`;
+}
+
+/** One stage transition's row: what happened, then how long it took. */
+export function timelineStageLine(label: string, durationMs: number | null): string {
+  return `${label} · ${durationMs == null ? COPY.timelineStillGoing : timelineDurationLabel(durationMs)}`;
+}
+
+/** The output-growth row: a cumulative character COUNT — a size, never any of the text itself. */
+export function timelineGrowthLine(chars: number): string {
+  return chars === 1 ? '1 character written' : `${chars} characters written`;
 }
 
 /** The clarify step's headline, counted: one, two or three quick things. */

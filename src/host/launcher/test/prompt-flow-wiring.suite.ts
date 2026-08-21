@@ -383,6 +383,117 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(/genRef\.current = null;/.test(abortFn2) && /liveRef\.current = null;/.test(abortFn2), 'cancel remains the one unguarded clear');
   });
 
+  // ── the run journal's call sites (generation-observability) ─────────────────────────────────
+  // The store and the per-event fold are exercised for real in `run-journal.suite.ts` and
+  // `build-lifecycle.suite.ts`; what cannot be run here is WHERE the shell calls them. Each
+  // assertion below is a requirement whose only failure mode is a missing call site — the journal
+  // silently never being written, moved or deleted, with every behavioural suite still green.
+
+  await h.test('journal: it is created at the same point as the pending-build record', () => {
+    // `generation-run-journal`: "A run journal is created alongside its pending-build record."
+    const startAt = attemptFn.indexOf('const attemptId = startPendingBuild(');
+    const createAt = attemptFn.indexOf('journal.create(attemptId)');
+    h.ok(startAt >= 0 && createAt > startAt, 'the journal is created with the record, before the request goes out');
+    h.ok(createAt < attemptFn.indexOf('generateApp('), 'and never after the stream has already started');
+    h.ok(/journal: new RunJournalStore\(launcherKv\)/.test(rootSrc), 'over the SAME backend instance the pending store uses');
+  });
+
+  await h.test('journal: every stream event goes through the one fold, at one clock reading', () => {
+    h.ok(
+      attemptFn.includes('signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());'),
+      'the loop folds each event into the journal and the derived signals through build-lifecycle',
+    );
+    h.eq((attemptFn.match(/journal\.appendStage\(|journal\.appendAggregate\(/g) ?? []).length, 0, 'the shell never writes stage/aggregate entries itself — one writer, one cadence');
+    h.ok(!/event\.text\b/.test(attemptFn), 'and still never reads a token’s text');
+  });
+
+  await h.test('journal: a terminal entry is written on every ending the stream can have', () => {
+    // `generation-run-journal`: "A terminal entry is always written immediately." A `result` writes
+    // it where the stream ends; the three failure endings all pass through `settleFailed`.
+    const terminalAt = attemptFn.indexOf('journal.appendTerminal(attemptId, terminalCounts())');
+    h.ok(terminalAt >= 0, 'a delivered result journals its terminal entry');
+    h.ok(terminalAt < attemptFn.indexOf('deliverAndSettle('), 'at the end of the stream, before delivery runs');
+    const settleFn = rootSrc.slice(rootSrc.indexOf('const settleFailed'), rootSrc.indexOf('const abortLiveAttempt'));
+    h.ok(
+      settleFn.includes('journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed })'),
+      'and every failure ending — terminal failure, stream error, throw — journals one with its detail',
+    );
+    h.ok(
+      settleFn.indexOf('journal.appendTerminal(') < settleFn.indexOf('failPendingBuild('),
+      'written as part of the same settlement that persists the failed record',
+    );
+  });
+
+  await h.test('journal: the terminal entry flushes the counts no aggregate entry can hold', () => {
+    // The throttle's LAST window is never closed by another aggregate, so without this flush the
+    // persisted growth figure silently stops at the last window boundary.
+    h.ok(
+      attemptFn.includes('const terminalCounts = (): RunTerminalCounts => ({') &&
+        attemptFn.includes('aggregates: signals.aggregates') &&
+        attemptFn.includes('observedDiagnostics: counts.diagnostic'),
+      'the flush is the loop’s own in-memory totals and its diagnostics tally, read where the stream ends',
+    );
+    h.eq(
+      (attemptFn.match(/terminalCounts\(\)/g) ?? []).length,
+      4,
+      'and every one of the four endings — result, terminal failure, stream error, throw — carries it',
+    );
+    h.ok(
+      !/observedDiagnostics: (?!counts\.diagnostic)/.test(attemptFn),
+      'the tally is the loop’s own counter — a number — and never a diagnostic object',
+    );
+  });
+
+  await h.test('journal: success moves it to the app’s last-run report, after delivery', () => {
+    // `generation-run-journal`: "On success, the journal moves to a per-app last-run report."
+    const deliverAt = attemptFn.indexOf('await deliverAndSettle(');
+    const moveAt = attemptFn.indexOf('journal.moveToLastRun(attemptId, delivered.id)');
+    h.ok(moveAt > deliverAt, 'the move happens only once install/update has resolved');
+    h.ok(
+      attemptFn.indexOf('journal.moveToLastRun(') < attemptFn.indexOf('if (ctl.detached) return;'),
+      'and on the detached path too — a run delivered while the user is elsewhere still keeps its report',
+    );
+  });
+
+  await h.test('journal: cancel and dismiss delete it in the same operation as the record', () => {
+    // `generation-run-journal`: "Dismissing a ghost deletes its journal."
+    const dropFn = rootSrc.slice(rootSrc.indexOf('const dropAttempt'), rootSrc.indexOf('const settleFailed'));
+    h.ok(dropFn.includes('dropPendingBuild(pending, id)') && dropFn.includes('journal.delete(id)'), 'the two deletions are one operation');
+    h.eq(
+      (rootSrc.match(/dropPendingBuild\(/g) ?? []).length,
+      1,
+      'and it is the shell’s ONLY record-deletion call site, so no path can delete a record and orphan its journal',
+    );
+    h.ok(rootSrc.includes('const onDismissPending = (rec: PendingBuildRecord) => {\n    dropAttempt(rec.id);'), 'dismiss goes through it');
+    h.ok(rootSrc.includes('if (live) dropAttempt(live.id);'), 'so does cancel');
+  });
+
+  await h.test('journal: deleting an app reclaims its last-run report in the same operation', () => {
+    // `lastrun:<appId>` is the one journal key that outlives its attempt. Nothing ever revisits a
+    // deleted app's id, so a report not reclaimed here is leaked in MMKV forever.
+    const deleteFn = rootSrc.slice(rootSrc.indexOf('const onDelete ='), rootSrc.indexOf('const goHome ='));
+    h.ok(deleteFn.includes('await access.remove(app);'), 'the app removal is still the first thing that happens');
+    h.ok(deleteFn.includes('journal.deleteLastRun(app.id);'), 'and its last-run report goes with it');
+    h.ok(
+      deleteFn.indexOf('journal.deleteLastRun(') > deleteFn.indexOf('await access.remove(app)'),
+      'after the removal resolved — a failed removal must not orphan the app from its own report',
+    );
+    h.eq(
+      (rootSrc.match(/deleteLastRun\(/g) ?? []).length,
+      1,
+      'exactly one call site, so a report can never be dropped out from under a live app',
+    );
+  });
+
+  await h.test('journal: the build screen’s liveness signals are in-memory, and the tick never reads the store', () => {
+    // design D6: elapsed/counter/heartbeat are derived from in-memory state on a render tick.
+    h.ok(rootSrc.includes('const signalsRef = useRef<RunSignals | null>(null);'), 'the attempt’s signals live in a ref, so a token arrival is not a re-render');
+    h.ok(rootSrc.includes('signals={signalsRef.current}') && rootSrc.includes('now={Date.now()}'), 'and reach the build screen as props');
+    const tickEffect = rootSrc.slice(rootSrc.indexOf('useEffect(() => {\n    if (screen.kind !== \'build\')'), rootSrc.indexOf('const refresh ='));
+    h.ok(tickEffect.includes('RUN_SIGNAL_TICK_MS'), 'a live build screen re-renders on the shared tick constant');
+    h.ok(!tickEffect.includes('journal.'), 'and the tick reads nothing out of the journal — it moves a clock, not the store');
+  });
+
   await h.test('highlighting: the off-switch is mounted around the whole launcher tree', () => {
     h.ok(/<HighlightingProvider enabled=\{highlighting\}>/.test(rootSrc), 'without this wrapper the switch is inert everywhere');
     h.ok(rootSrc.includes('loadHighlighting(kv)') && rootSrc.includes('saveHighlighting(kv, enabled)'), 'and it reads/persists the one flag');
