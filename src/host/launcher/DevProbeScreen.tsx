@@ -12,6 +12,8 @@ import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } fr
 import { WebView } from 'react-native-webview';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import type { AppRecord } from '../bridge';
+import { log } from '../logging';
+import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 
 // The baked fixtures the host can deliver by name on-device (records extracted at build time).
@@ -71,7 +73,7 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}
-        onError={(ev) => console.log('[whim] webview error', JSON.stringify(ev.nativeEvent))}
+        onError={(ev) => logWebViewError(log, ev.nativeEvent, { surface: 'dev-probe' })}
       />
     </SafeAreaView>
   );

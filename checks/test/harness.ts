@@ -43,6 +43,7 @@ function currentPhase(): Chain | undefined {
   try {
     const raw = fs.readFileSync(phasePath, 'utf8').trim();
     phase = (VALID_CHAINS as readonly string[]).includes(raw) ? (raw as Chain) : undefined;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: missing/unreadable phase file defaults to STRICT (everything due), a safe fallback
   } catch {
     phase = undefined; // absent (or unreadable) ⇒ STRICT, fail-closed
   }

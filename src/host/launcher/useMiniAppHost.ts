@@ -24,6 +24,8 @@ import {
   type RealmRecord,
 } from '../bridge';
 import { createStorageEngine } from '../storage-engine';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
@@ -112,7 +114,17 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     (record: AppRecord, displayName: string, engineAppId: string): RealmRecord | null => {
       if (live.current) {
         tearDownRealm(live.current.realm); // fence the old realm's late results
-        try { live.current.realm.engine?.close(); } catch { /* best effort */ }
+        // Best effort: the old realm is already fenced, so a failed close costs the user nothing
+        // — but it is a real defect (a leaked handle) and is recorded rather than swallowed.
+        try {
+          live.current.realm.engine?.close();
+        } catch (e) {
+          log.warn(CHANNELS.app, 'storage engine close failed', {
+            operation: 'rebind',
+            errorClass: e instanceof Error ? e.constructor.name : typeof e,
+            detail: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
@@ -164,10 +176,19 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const onMessage = useCallback((data: string) => {
     // UNTRUSTED DATA. Parse defensively; act on nothing; never trust a frame by its `kind`.
     let m: any;
-    try { m = JSON.parse(data); } catch { return; }
+    try {
+      m = JSON.parse(data);
+    } catch (e) {
+      // The frame is dropped either way — nothing is acted on — but a page that cannot even
+      // produce JSON is a defect worth seeing, so it is recorded at debug rather than returned on.
+      log.debug(CHANNELS.page, 'frame from the sandboxed page is not JSON', {
+        detail: e instanceof Error ? e.message : String(e),
+      });
+      return;
+    }
     if (!m || typeof m !== 'object') return;
 
-    if (m.__whimHostLog === true) { console.log('[whim:page]', m.line); return; }
+    if (m.__whimHostLog === true) { log.debug(CHANNELS.page, 'relayed page log', { line: m.line }); return; }
 
     switch (m.kind) {
       case 'syscall': {
@@ -201,7 +222,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         return;
       case 'probes': {
         const r = m.payload || {};
-        if (m.trusted !== true) { console.log('[whim] ignoring unauthenticated probes frame'); return; }
+        if (m.trusted !== true) { log.warn(CHANNELS.app, 'ignoring unauthenticated probes frame', {}); return; }
         setS((p) => ({
           ...p,
           contained: !!r.contained,

@@ -10,6 +10,8 @@
 import { Vibration } from 'react-native';
 import type { CueBackend, HapticKind, SoundName } from './bridge/contract';
 import WhimTone from '../native/NativeWhimTone';
+import { log } from './logging';
+import { CHANNELS } from './logging/channels';
 
 // Haptic token → Android vibration pattern (ms). A single number vibrates that long; an array is
 // [initialDelay, on, off, on, …] (RN `Vibration.vibrate`). Closed-set substitution only (D4).
@@ -32,8 +34,13 @@ export function createCueBackend(): CueBackend {
     haptic(kind: HapticKind): void {
       try {
         Vibration.vibrate(HAPTIC_PATTERN[kind] ?? HAPTIC_PATTERN.tap);
-      } catch {
-        /* fire-and-forget: a missing/disabled vibrator is not the bundle's concern */
+      } catch (e) {
+        // Still fire-and-forget: the failure NEVER reaches the bundle (D7 — a cue adds no failure
+        // surface). It reaches the developer's log instead of nowhere.
+        log.debug(CHANNELS.app, 'haptic cue failed', {
+          cue: kind,
+          detail: e instanceof Error ? e.message : String(e),
+        });
       }
     },
     sound(name: SoundName): void {
@@ -42,8 +49,11 @@ export function createCueBackend(): CueBackend {
         // closed token straight through. Null when the native module isn't present (e.g. a
         // codegen-less dev build) → sound is a no-op, haptics still fire.
         WhimTone?.play(name);
-      } catch {
-        /* fire-and-forget */
+      } catch (e) {
+        log.debug(CHANNELS.app, 'sound cue failed', {
+          cue: name,
+          detail: e instanceof Error ? e.message : String(e),
+        });
       }
     },
   };

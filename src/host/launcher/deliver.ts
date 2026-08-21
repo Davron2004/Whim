@@ -9,6 +9,9 @@
  * injectJavaScript pipe (the design risk note).
  */
 
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+
 /** Refuse a bundle source larger than this (the injectJavaScript guard, D3). H1b bundles are
  *  ~4.5 KiB; 512 KiB is a generous ceiling that still rejects a runaway future input. */
 export const MAX_BUNDLE_SOURCE_BYTES = 512 * 1024;
@@ -26,7 +29,12 @@ export class BundleTooLargeError extends Error {
 function byteLength(s: string): number {
   try {
     return new TextEncoder().encode(s).length;
-  } catch {
+  } catch (e) {
+    // A runtime without TextEncoder is a platform fact, not a fault — but the size guard is
+    // measuring characters rather than bytes from here on, and that is worth knowing.
+    log.debug(CHANNELS.app, 'no TextEncoder, byte length falls back to char count', {
+      detail: e instanceof Error ? e.message : String(e),
+    });
     return s.length;
   }
 }

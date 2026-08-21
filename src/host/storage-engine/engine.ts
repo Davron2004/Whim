@@ -60,6 +60,7 @@ export function readAppliedSchema(executor: SqlExecutor): AppliedSchema {
     const res = executor.execute(`SELECT v FROM "${META_TABLE}" WHERE k = ?`, [APPLIED_KEY]);
     if (!res.rows.length) return emptyApplied();
     return JSON.parse(sqlText(res.rows[0].v)) as AppliedSchema;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: a never-opened DB has no `_meta` table yet, so the SELECT throws; emptyApplied() is the correct read either way
   } catch {
     return emptyApplied();
   }

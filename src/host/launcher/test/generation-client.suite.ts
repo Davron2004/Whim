@@ -22,9 +22,11 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { getDeviceId } from '../device-id';
-import { GenerationClientError, generateApp, rewritePrompt } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import type { GenerationEvent } from '@whim/contract';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -256,4 +258,34 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(got, [startEvent], 'yields the events seen before the abort');
     h.eq(threw, undefined, 'does not throw');
   });
+
+  // clarifyPrompt: a mapped error records a generation-channel breadcrumb before throwing.
+  // obs-v1: the breadcrumb is a SEAM record, not a console line — so this reads the seam's ring
+  // buffer and asserts NAMED FIELDS (spec "A breadcrumb carries structure, not a formatted
+  // string"), which is also what makes the assertion independent of any formatting.
+  await h.test(
+    'clarifyPrompt: a non-2xx response still throws AND records a structured breadcrumb on the generation channel',
+    async () => {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as typeof fetch;
+
+      const before = log.buffer.snapshot().length;
+      await h.throws(
+        () => clarifyPrompt({ ...BASE, fetchImpl }, 'hi'),
+        '',
+        'clarifyPrompt still throws on a 404',
+      );
+
+      const logged = log.buffer
+        .snapshot()
+        .slice(before)
+        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/clarify');
+      h.ok(logged !== undefined, 'records a breadcrumb at the httpErrorFrom mapping site');
+      if (logged) {
+        h.eq(logged.fields.status, 404, 'the response status is a named field');
+        h.eq(logged.fields.kind, 'http', 'the mapped error kind is a named field');
+        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
+      }
+    },
+  );
 }

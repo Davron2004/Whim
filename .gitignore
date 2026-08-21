@@ -1,9 +1,7 @@
 # OSX
-#
 .DS_Store
 
 # Xcode
-#
 ios/build/
 *.pbxuser
 !default.pbxuser
@@ -23,7 +21,6 @@ DerivedData
 **/.xcode.env.local
 
 # Android/IntelliJ
-#
 android/**/build/
 .idea
 .gradle
@@ -36,13 +33,11 @@ local.properties
 .kotlin/
 
 # node.js
-#
 node_modules/
 npm-debug.log
 yarn-error.log
 
 # fastlane
-#
 # It is recommended to not store the screenshots in the git repo. Instead, use fastlane to re-generate the
 # screenshots whenever they are needed.
 # For more information about the recommended setup visit:
@@ -94,9 +89,16 @@ checks/test/.phase
 
 # Harness server: durable per-device token counter (the only server state) + local secrets
 server/.data/
+# Dev-only device log sink (WHIM_DEV_LOG_SINK=1): `npm run whim:logs` tails it. Never committed.
+server/.logs/
 .env
 
 # Corpus-eval CLI: local run reports (the CLI's default --out; never a committed artifact —
 # docs/evals.md). The visible eval set + its Tier-B specs live at evals/sets/visible/ and stay
 # tracked; this is scratch OUTPUT only.
 evals/.reports/
+
+# Demo-video tool (demo/): rendered videos + the assembled-HTML scratch dir are build OUTPUT,
+# never committed artifacts — demo/lib, demo/cli.mjs, demo/flows, demo/README.md stay tracked.
+demo/out/
+demo/.pages/

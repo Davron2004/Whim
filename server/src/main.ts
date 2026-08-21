@@ -20,9 +20,18 @@ import { createStubPipeline, type Pipeline } from './pipeline';
 import { NodeSqliteUsageStore } from './usage-store';
 import { createGenerationPipeline, buildModelDepsFromEnv, openRouterGenerationStatsTransport, type ModelDeps } from './generation';
 import { SynthRunSession } from '../../synthrun/session';
+import { log } from './logger';
 
 const port = Number(process.env.WHIM_SERVER_PORT ?? '8787');
 const useStub = process.env.WHIM_PIPELINE === 'stub';
+
+// The dev-only device log sink (obs-v1). OFF unless explicitly enabled — an explicit flag, never
+// an inferred "we look like dev" (design D5): a network-fed file writer must not switch itself on.
+// Not mounted under `/v1`, so the x-whim-device gate's surface is unchanged (`app.ts`).
+const devLogSink =
+  process.env.WHIM_DEV_LOG_SINK === '1'
+    ? { filePath: process.env.WHIM_DEV_LOG_FILE ?? path.join(process.cwd(), 'server', '.logs', 'device.jsonl') }
+    : undefined;
 
 // Durable usage store under WHIM_DATA_DIR (default: server/.data/). Resolve from cwd — `npm run
 // server:dev` pins cwd to the repo root — NOT from import.meta.dirname: dev.mjs bundles this file
@@ -36,10 +45,12 @@ try {
   modelDeps = buildModelDepsFromEnv();
 } catch (err) {
   if (!useStub) throw err;
-  console.warn(
-    `whim-server: starting in WHIM_PIPELINE=stub mode without a usable model client (${
-      err instanceof Error ? err.message : String(err)
-    }). /v1/rewrite will respond 502 until configured.`,
+  log.warn(
+    {
+      detail: err instanceof Error ? err.message : String(err),
+      hint: '/v1/rewrite will respond 502 until configured.',
+    },
+    'starting in WHIM_PIPELINE=stub mode without a usable model client',
   );
 }
 
@@ -59,10 +70,15 @@ const app = createApp({
   model: modelDeps?.model,
   roster: modelDeps?.roster,
   reconcile: modelDeps ? { transport: openRouterGenerationStatsTransport(modelDeps.apiKey) } : undefined,
+  stub: useStub,
+  devLogSink,
 });
 
 const server = serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
-  console.log(`whim-server listening on http://0.0.0.0:${port} (pipeline: ${useStub ? 'stub' : 'real'})`);
+  log.info(
+    { port, pipeline: useStub ? 'stub' : 'real', devLogSink: devLogSink !== undefined },
+    'whim-server listening',
+  );
 });
 
 let shuttingDown = false;
@@ -75,8 +91,12 @@ async function shutdown(): Promise<void> {
 }
 
 process.on('SIGINT', () => {
-  shutdown().catch((err: unknown) => console.error('whim-server: shutdown failed', err));
+  shutdown().catch((err: unknown) => {
+    log.error({ detail: err instanceof Error ? err.message : String(err) }, 'shutdown failed');
+  });
 });
 process.on('SIGTERM', () => {
-  shutdown().catch((err: unknown) => console.error('whim-server: shutdown failed', err));
+  shutdown().catch((err: unknown) => {
+    log.error({ detail: err instanceof Error ? err.message : String(err) }, 'shutdown failed');
+  });
 });

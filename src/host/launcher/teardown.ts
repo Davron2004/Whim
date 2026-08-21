@@ -11,6 +11,8 @@
  */
 
 import { tearDownRealm, type RealmRecord } from '../bridge';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 
 /** Minimal mutable-ref shape (mirrors React.MutableRefObject without importing react). */
 interface MutableRef<T> { current: T }
@@ -37,7 +39,17 @@ export function tearDownLiveRealm(
   }
   if (live.current) {
     tearDownRealm(live.current.realm);
-    try { live.current.realm.engine?.close(); } catch { /* best effort */ }
+    // Best effort: the realm is already fenced, so a failed close changes nothing the user can
+    // see — but it is a leaked handle, and it is recorded instead of vanishing.
+    try {
+      live.current.realm.engine?.close();
+    } catch (e) {
+      log.warn(CHANNELS.app, 'storage engine close failed', {
+        operation: 'teardown',
+        errorClass: e instanceof Error ? e.constructor.name : typeof e,
+        detail: e instanceof Error ? e.message : String(e),
+      });
+    }
     live.current = null;
   }
 }

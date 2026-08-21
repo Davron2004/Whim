@@ -2,6 +2,7 @@
   "ok": true,
   "diagnostics": [],
   "contained": true,
+  "forgeries": { "rejected": false, "count": 0 },
   "truncated": false,
   "timings": {
     "buildMs": 42,
