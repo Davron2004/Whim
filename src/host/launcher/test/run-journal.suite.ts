@@ -239,6 +239,19 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     );
     h.eq(typeof entry.observedDiagnostics, 'number', 'the diagnostics figure is a count');
     h.ok(!JSON.stringify(t.store.get('a')).includes('const total'), 'no token text reaches storage through the flush');
+
+    // All THREE figures are coerced, not just one: a caller handing over a stringy count must not
+    // leave one field a number and its sibling a string for a consumer to trip over.
+    const stringy = {
+      aggregates: { chars: '120', tokens: '30' },
+      observedDiagnostics: '2',
+    } as unknown as { aggregates: { chars: number; tokens: number }; observedDiagnostics: number };
+    t.store.appendTerminal('b', stringy);
+    const coerced = t.store.get('b')![0];
+    h.eq(typeof coerced.aggregates!.chars, 'number', 'chars is stored as a number');
+    h.eq(typeof coerced.aggregates!.tokens, 'number', 'so is tokens');
+    h.eq(typeof coerced.observedDiagnostics, 'number', 'and so is the diagnostics count');
+    h.eq(coerced.aggregates, { chars: 120, tokens: 30 }, 'with their values intact');
   });
 
   await h.test('run-journal: a terminal entry with nothing to flush carries no counts at all', async () => {

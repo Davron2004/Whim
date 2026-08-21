@@ -115,10 +115,24 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.eq(growth, [timelineGrowthLine(910)], 'one row, from the newest aggregate entry');
     h.eq(timelineGrowthLine(910), '910 characters written', 'it states a character count');
     h.eq(timelineGrowthLine(1), '1 character written', 'one character is not "1 characters"');
+    // The SHIPPING shape of a zero-output run: it failed during planning, no `token` ever arrived,
+    // and its terminal entry still flushes counts — so the zero is RECORDED, not absent, and only
+    // an explicit suppression keeps "0 characters written" off the screen.
+    const noOutput = [
+      stage(1_000, 'plan'),
+      terminal(3_000, { reason: 'The app could not be built from that description.' }, {
+        aggregates: { chars: 0, tokens: 0 },
+        observedDiagnostics: 0,
+      }),
+    ];
     h.eq(
-      runTimelineRows([stage(1_000, 'plan')]).filter((r) => r.kind === 'growth').length,
+      runTimelineRows(noOutput).filter((r) => r.kind === 'growth').length,
       0,
       'a run that produced no output gets no growth row rather than a fabricated zero',
+    );
+    h.ok(
+      !runTimelineRows(noOutput, true).map((r) => r.text).some((t) => t.includes('0 characters')),
+      'and the zero never reaches a row under any gate — it is an absence, not a finding about the run',
     );
   });
 
