@@ -338,4 +338,4 @@ async function main() {
   console.log(`\n[film] Demo video written: ${outPath}`);
 }
 
-main();
+await main();

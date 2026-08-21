@@ -39,7 +39,7 @@ async function main() {
     const mod = await import(pathToFileURL(flowPath).href);
     flow = mod.default;
   } catch (err) {
-    console.error(`Could not load flow file ${flowPath}:\n${err && err.stack ? err.stack : err}`);
+    console.error(`Could not load flow file ${flowPath}:\n${err?.stack ? err.stack : err}`);
     process.exit(1);
   }
   if (typeof flow !== 'function') {
@@ -53,10 +53,10 @@ async function main() {
     const outPath = await stage.finish();
     console.log(`\nDemo video written: ${outPath}`);
   } catch (err) {
-    console.error(`\nDemo flow "${flowName}" failed:\n${err && err.stack ? err.stack : err}`);
+    console.error(`\nDemo flow "${flowName}" failed:\n${err?.stack ? err.stack : err}`);
     await stage.abort();
     process.exit(1);
   }
 }
 
-main();
+await main();
