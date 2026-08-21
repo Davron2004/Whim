@@ -107,6 +107,13 @@ entry left as harmless belt-and-braces, or `dev/v1` is retired from the tier-1 l
 its own. That list is Class-2, so it cannot be an incidental edit. Deciding *which* is the actual
 open question — do not assume the second.
 
+**RESOLVED 2026-08-21.** Both, human-directed in an attended session: the user confirmed the
+divergent `dev/v1` history is a pre-rewrite relic (soft-reset + recommitted before `main` took
+over) and asked for full removal. `origin/dev/v1` deleted; `dev/v1` retired from the tier-1
+protected set in `bash-policy.sh`; live docs (`CLAUDE.md`, `harness.md`, `.devcontainer/*`,
+`git-cleaner.md`, `fixloop.sh` comment) scrubbed. Historical records (decision log, archived
+changes, dated critic reports) intentionally left as written.
+
 ---
 
 ## 5. The `no checks reported` window has never been observed live

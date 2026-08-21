@@ -42,7 +42,7 @@ ROOT="$(pwd)"
 # The trusted single-writer branch fixes/chains merge into. Under the staging lane
 # (openspec: staging-branch-integration) each run sets FIXLOOP_INTEGRATION_BRANCH to its
 # integration/<run-id> branch, cut from main at run start; the default `main` covers legacy
-# direct runs. (dev/v1 served through 2026-07, fully merged into main at 559defe.)
+# direct runs.
 INTEGRATION_BRANCH="${FIXLOOP_INTEGRATION_BRANCH:-main}"
 
 # Protected paths split by BLAST RADIUS (docs/parallel-fix-loop.md §4.9):
