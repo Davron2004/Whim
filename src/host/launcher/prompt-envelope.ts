@@ -24,7 +24,7 @@ import { CHANNELS } from '../logging/channels';
 export const PROMPT_ENVELOPE_VERSION = 2;
 
 /** The versions a reader accepts. `1` predates the summary field and carries none. */
-const READABLE_VERSIONS: readonly number[] = [1, 2];
+const READABLE_VERSIONS: ReadonlySet<number> = new Set([1, 2]);
 
 export interface PromptEnvelope {
   text: string;
@@ -56,7 +56,7 @@ export function parsePromptEnvelope(raw: string): PromptEnvelope {
       parsed !== null &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      READABLE_VERSIONS.includes((parsed as Record<string, unknown>).v as number) &&
+      READABLE_VERSIONS.has((parsed as Record<string, unknown>).v as number) &&
       typeof (parsed as Record<string, unknown>).text === 'string'
     ) {
       return { text: (parsed as { text: string }).text };
