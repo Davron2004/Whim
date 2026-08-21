@@ -130,9 +130,9 @@ function probeAppendOnly(): boolean {
     registerStorageRows(reg);
     try {
       reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) });
-    } catch (duplicate) {
+    } catch (error_) {
       log.debug(CHANNELS.app, 'append-only guard rejected a duplicate registration', {
-        detail: duplicate instanceof Error ? duplicate.message : String(duplicate),
+        detail: error_ instanceof Error ? error_.message : String(error_),
       });
       return true;
     }
