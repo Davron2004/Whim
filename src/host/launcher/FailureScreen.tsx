@@ -81,8 +81,10 @@ export interface FailureScreenProps {
    *  and its run journal all survive. Also what the hardware back gesture performs. */
   onBack: () => void;
   /** Discards the attempt: the pending-build record and its run journal are deleted. Destructive,
-   *  and labelled as such (`COPY.failureDismiss`) — never as plain navigation. */
-  onDismiss: () => void;
+   *  and labelled as such (`COPY.failureDismiss`) — never as plain navigation. ABSENT when there
+   *  is no attempt to discard (a clarify or rewrite failure, which fails before any record
+   *  exists): the button is then not rendered at all, rather than offered as a no-op. */
+  onDismiss?: () => void;
 }
 
 /** The attempt row's bar height (design html:311) — below the spacing scale's smallest step. */
@@ -205,23 +207,27 @@ export default function FailureScreen({
           {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
         </Text>
       </TouchableOpacity>
-      {/* The two exits, in the order their consequences deserve: leaving is the ordinary way out
-          and reads as plain navigation; discarding deletes the attempt and its journal, so it
-          takes the danger hue and says what it does. */}
+      {/* The exits, in the order their consequences deserve: leaving is the ordinary way out and
+          reads as plain navigation; discarding deletes the attempt and its journal, so it takes
+          the danger hue and says what it does. Back is always here and always the last thing
+          standing — when there is no attempt to discard the discard button is absent entirely,
+          never a destructively-labelled no-op. */}
       <TouchableOpacity
         onPress={onBack}
         accessibilityRole="button"
-        style={[styles.action, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+        style={[styles.action, onDismiss == null ? styles.actionLast : null, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{COPY.failureBack}</Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        onPress={onDismiss}
-        accessibilityRole="button"
-        style={[styles.action, styles.actionLast, { backgroundColor: p.bg, borderColor: p.danger }]}
-      >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.danger }]}>{COPY.failureDismiss}</Text>
-      </TouchableOpacity>
+      {onDismiss != null && (
+        <TouchableOpacity
+          onPress={onDismiss}
+          accessibilityRole="button"
+          style={[styles.action, styles.actionLast, { backgroundColor: p.bg, borderColor: p.danger }]}
+        >
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.danger }]}>{COPY.failureDismiss}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
