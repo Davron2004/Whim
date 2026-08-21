@@ -7,7 +7,7 @@
 // Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -48,11 +48,15 @@ export default function MiniAppView({
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
   const bg = shellPalette(theme).bg;
+  // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
+  // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
+  const [webKey, setWebKey] = useState(0);
 
   // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1).
-  // The component is keyed by launcher id, so each app is a fresh mount and onLoadEnd fires once
-  // — theme is captured at that first delivery, matching the "theme applies at delivery" model
-  // (design sdk-design-system Non-Goals): a running realm never re-themes live.
+  // onLoadEnd fires once per <WebView> instance: once on the component's normal first mount
+  // (keyed by launcher id), and again each time Retry bumps webKey to remount after a post-
+  // delivery error -- theme is re-captured at each such delivery, matching the "theme applies at
+  // delivery" model (design sdk-design-system Non-Goals): a running realm never re-themes live.
   const handleLoadEnd = useCallback(() => {
     host.deliverBySource(record, bundleSource, engineAppId, theme);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -73,9 +77,36 @@ export default function MiniAppView({
     );
   }
 
+  // A post-delivery failure (a fatal bundle-error frame, or a delivered app that never paints --
+  // the watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
+  // instead of a blank screen, with a way to retry the same app or leave to Home. Retry clears
+  // lastError AND bumps webKey together: clearing alone can't remount (the branch below never
+  // renders while lastError is set), and bumping the key alone can't reset lastError (only bind()
+  // does that) -- both are needed to fall through into a fresh <WebView> mount.
+  if (host.state.lastError) {
+    const p = shellPalette(theme);
+    const retry = () => {
+      host.clearLastError();
+      setWebKey((k) => k + 1);
+    };
+    return (
+      <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
+        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={retry}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
+        </Pressable>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top, backgroundColor: bg }]}>
       <WebView
+        key={webKey}
         ref={host.webRef}
         style={[styles.web, { backgroundColor: bg }]}
         originWhitelist={['*']}
