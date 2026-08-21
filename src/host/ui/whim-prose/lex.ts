@@ -110,7 +110,7 @@ const MEASURE_PATTERNS: readonly RegExp[] = [
 function mergeAdjacentMeasures(text: string, spans: readonly Span[]): Span[] {
   const merged: Span[] = [];
   for (const span of spans) {
-    const previous = merged[merged.length - 1];
+    const previous = merged.at(-1);
     const joinable =
       previous !== undefined &&
       span.start === previous.end + 1 &&

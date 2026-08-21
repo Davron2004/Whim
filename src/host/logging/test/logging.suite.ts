@@ -58,14 +58,14 @@ const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js'];
  * flag, and none is on the product's path. Written out one by one, never as a glob, so the
  * carve-out cannot silently widen.
  */
-const PROBE_SURFACES: readonly string[] = [
+const PROBE_SURFACES: ReadonlySet<string> = new Set([
   path.join('src', 'host', 'BridgeProbeScreen.tsx'),
   path.join('src', 'host', 'StorageProbeScreen.tsx'),
   path.join('src', 'host', 'VersionStoreProbeScreen.tsx'),
   path.join('src', 'host', 'bridge', 'device-acceptance.ts'),
   path.join('src', 'host', 'storage-engine', 'device-acceptance.ts'),
   path.join('src', 'host', 'version-store', 'device-acceptance.ts'),
-];
+]);
 
 /** Every source file under the given repo-relative roots, recursively. */
 function sourceFiles(roots: readonly string[]): string[] {
@@ -85,9 +85,9 @@ function sourceFiles(roots: readonly string[]): string[] {
       // read failure is real and rethrown — a skipped directory would silently weaken the scans.
       try {
         walk(full);
-      } catch (notADirectory) {
-        if (!String(notADirectory).includes('ENOTDIR')) {
-          throw notADirectory;
+      } catch (error_) {
+        if (!String(error_).includes('ENOTDIR')) {
+          throw error_;
         }
       }
     }
@@ -122,7 +122,7 @@ function isNodeSuite(file: string): boolean {
 }
 
 function isProbeSurface(file: string): boolean {
-  return PROBE_SURFACES.includes(rel(file));
+  return PROBE_SURFACES.has(rel(file));
 }
 
 export async function runLoggingTests(h: Harness): Promise<void> {

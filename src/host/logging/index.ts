@@ -109,7 +109,7 @@ export function createSeam(options: Partial<SeamOptions> = {}): Seam {
     levels: LEVEL_ORDER,
     severity: 'debug',
     async: false,
-    formatFunc: (_level, _extension, msgs) => String((msgs as unknown[])[0] ?? ''),
+    formatFunc: (_level, _extension, msgs) => (msgs as DevLogRecord[])[0]?.message ?? '',
     transport: (props: { rawMsg: unknown }) => {
       const record = (props.rawMsg as DevLogRecord[])[0];
       const stored = buffer.push(record);
