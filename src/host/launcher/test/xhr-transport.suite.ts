@@ -338,7 +338,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       }) as typeof fetch;
       const event: GenerationEvent = {
         type: 'result',
-        app: { name: 'Tip Splitter', source: 'src', bundle: 'bundle', manifest: {}, schema: {} },
+        app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
       };
       const opts: ClientOptions = {
         ...BASE,
