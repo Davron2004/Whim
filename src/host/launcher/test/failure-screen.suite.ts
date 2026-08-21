@@ -103,6 +103,27 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(/onDismiss\(\)/.test('onDismiss();'), 'the scan matches an imperative call');
   });
 
+  await h.test('exits: with no attempt to discard the button is absent, not a destructively-labelled no-op', () => {
+    // A clarify or rewrite failure fails before any pending-build record exists, so the caller
+    // passes no `onDismiss`. Offering "Discard this attempt" there would be the same dishonesty
+    // the other direction — a danger-styled control that only navigates.
+    const src = readSource('src/host/launcher/FailureScreen.tsx');
+    h.ok(/onDismiss\?: \(\) => void;/.test(src), 'the discard callback is optional — a caller may have nothing to discard');
+    const guard = src.indexOf('{onDismiss != null && (');
+    h.ok(guard >= 0, 'and the discard button is behind a presence guard');
+    h.eq(
+      (src.match(/\{COPY\.failureDismiss\}/g) ?? []).length,
+      1,
+      'the discard label is rendered in exactly one place, so nothing renders it outside the guard',
+    );
+    h.ok(src.indexOf('{COPY.failureDismiss}') > guard, 'that one place being inside the guard');
+    h.ok(src.indexOf('{COPY.failureBack}') < guard, 'while Back is rendered outside it — the leave exit always exists');
+    h.ok(
+      /onDismiss == null \? styles\.actionLast : null/.test(src),
+      'and takes the last action’s spacing when it IS the last one, so the guarded button leaves no gap',
+    );
+  });
+
   // ── the checklist: hints and copy strings, nothing else ────────────────────
 
   await h.test('checklist: reassurance, then one row per hint, then the advisory line', () => {

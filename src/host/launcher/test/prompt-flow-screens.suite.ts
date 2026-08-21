@@ -442,7 +442,8 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
       'planSubhead', 'planFooter', 'planBuild', 'buildTitle', 'buildSubtitle', 'buildStepReading',
       'buildStepWriting', 'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails',
       'doneBody', 'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
-      'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureDismiss',
+      'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureBack',
+      'failureDismiss',
     ] as const;
     for (const key of keys) {
       h.ok(typeof COPY[key] === 'string' && COPY[key].length > 0, `COPY.${key} must be a non-empty string`);
