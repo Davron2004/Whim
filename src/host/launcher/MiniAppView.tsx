@@ -7,7 +7,7 @@
 // Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -48,6 +48,9 @@ export default function MiniAppView({
   const host = useMiniAppHost({ onExit });
   const insets = useSafeAreaInsets();
   const bg = shellPalette(theme).bg;
+  // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
+  // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
+  const [webKey, setWebKey] = useState(0);
 
   // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1).
   // The component is keyed by launcher id, so each app is a fresh mount and onLoadEnd fires once
@@ -73,9 +76,29 @@ export default function MiniAppView({
     );
   }
 
+  // A post-delivery failure (a bundle-error frame, or a delivered app that never paints -- the
+  // watchdog in useMiniAppHost) leaves the realm dark otherwise -- show honest product copy
+  // instead of a blank screen, with a way to retry the same app or leave to Home.
+  if (host.state.lastError) {
+    const p = shellPalette(theme);
+    return (
+      <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
+        <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={() => setWebKey((k) => k + 1)}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>
+        </Pressable>
+        <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
+          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.root, { paddingTop: insets.top, backgroundColor: bg }]}>
       <WebView
+        key={webKey}
         ref={host.webRef}
         style={[styles.web, { backgroundColor: bg }]}
         originWhitelist={['*']}

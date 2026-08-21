@@ -131,6 +131,9 @@ export const COPY = {
   launchFailedBody:
     'Something about this app doesn’t match what’s already saved here, so it can’t open right now.',
   launchFailedBack: 'Back to your apps',
+  appErrorTitle: 'This app stopped working',
+  appErrorBody: 'Nothing you made was lost. Try again, and it should come back.',
+  appErrorRetry: 'Try again',
   failureTitle: 'Couldn’t build this app',
   failureHintsTitle: 'What to try',
   failureRephrase: 'Try rephrasing',

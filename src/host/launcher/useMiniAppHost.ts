@@ -36,6 +36,27 @@ import { tearDownLiveRealm } from './teardown';
 // place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
+// A delivered bundle that never paints (dropped `paint` frame, a realm gone dark pre-render)
+// otherwise leaves a blank screen with no recovery path -- arm a watchdog at delivery and
+// disarm it the moment a `paint` frame actually lands.
+const PAINT_WATCHDOG_MS = 6000;
+
+type TimerRef = { current: ReturnType<typeof setTimeout> | null };
+
+/** Clear a possibly-armed timer ref in place (idempotent — safe when already null). */
+function disarmTimer(ref: TimerRef): void {
+  if (ref.current) { clearTimeout(ref.current); ref.current = null; }
+}
+
+/** Arm the paint watchdog: on expiry it self-clears then reports the app as never painted. */
+function armPaintWatchdog(ref: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
+  disarmTimer(ref);
+  ref.current = setTimeout(() => {
+    ref.current = null;
+    setS((p) => ({ ...p, lastError: 'app never became visible' }));
+  }, PAINT_WATCHDOG_MS);
+}
+
 export interface HostState {
   contained: boolean | null;
   probesFrac: string;
@@ -96,6 +117,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const genCounter = useRef(1);
   const policy = useRef(new BackPolicy());
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const paintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
   const engineId = useRef<string | null>(null);
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
@@ -128,6 +150,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       }
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
+      if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; }
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
       setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0 }));
@@ -218,6 +241,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
+        disarmTimer(paintTimer);
         setS((p) => ({ ...p, paintMs: m.payload?.mountToFirstPaintMs ?? null, generation: m.payload?.generation ?? null }));
         return;
       case 'probes': {
@@ -236,6 +260,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, rejectedForgeries: p.rejectedForgeries + 1 }));
         return;
       case 'delivery':
+        armPaintWatchdog(paintTimer, setS);
         return;
       case 'error':
         setS((p) => ({ ...p, lastError: m.payload?.message || m.payload?.name || 'error' }));
@@ -246,6 +271,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   }, [control]);
 
   const exit = useCallback(() => {
+    if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; }
     tearDownLiveRealm(live, popTimer);
     onExitRef.current?.();
   }, []);
@@ -276,7 +302,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // Runs ONLY on unmount (empty deps). Reads `live` and `popTimer` as refs so the closure is
   // never stale. Does NOT call onExit — unmount already means leaving; onExit is the exit()-path
   // caller's responsibility (explicit user-initiated leave only).
-  useEffect(() => () => { tearDownLiveRealm(live, popTimer); }, []);
+  useEffect(() => () => { if (paintTimer.current) { clearTimeout(paintTimer.current); paintTimer.current = null; } tearDownLiveRealm(live, popTimer); }, []);
 
   return {
     runtimeHtml: RUNTIME_HTML,
