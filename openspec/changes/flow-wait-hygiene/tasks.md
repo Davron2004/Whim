@@ -1,15 +1,15 @@
 ## 1. Transport: cancellable clarify/rewrite + connect timeout
 
-- [ ] 1.1 Add an optional `AbortSignal` parameter to `clarifyPrompt` and `rewritePrompt`
+- [x] 1.1 Add an optional `AbortSignal` parameter to `clarifyPrompt` and `rewritePrompt`
   (`generation-client.ts`) and thread it through to their `fetchImpl` calls.
-- [ ] 1.2 Add a connect/first-event timeout (~15s) to `openFetchGenerateStream` (`fetch` path):
+- [x] 1.2 Add a connect/first-event timeout (~15s) to `openFetchGenerateStream` (`fetch` path):
   race the initial request against a timer that aborts via the same `AbortController`, disarmed
   once the first chunk/event is observed.
-- [ ] 1.3 Arm `xhr.timeout` to the same ~15s value before `.send()` in `xhr-transport.ts`,
+- [x] 1.3 Arm `xhr.timeout` to the same ~15s value before `.send()` in `xhr-transport.ts`,
   disarmed (or effectively bypassed) once the first event is delivered, so a hung connect fires
   the existing `xhr.ontimeout` handler and a long-running active stream is never killed.
-- [ ] 1.4 Ensure a fired connect timeout on either transport is classified as `GenerationClientError{kind:'network'}` (or equivalent honest network-failure classification), not left indistinguishable from an in-progress stream.
-- [ ] 1.5 Run `npm run launcher:test`, adding/extending cases for: clarify/rewrite abort, and a
+- [x] 1.4 Ensure a fired connect timeout on either transport is classified as `GenerationClientError{kind:'network'}` (or equivalent honest network-failure classification), not left indistinguishable from an in-progress stream.
+- [x] 1.5 Run `npm run launcher:test`, adding/extending cases for: clarify/rewrite abort, and a
   connect-timeout case on each transport that doesn't fire once the first event has arrived.
 
 ## 2. LauncherRoot: clarify/rewrite cancellation and the B1 navigation-hijack fix
