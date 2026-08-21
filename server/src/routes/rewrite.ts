@@ -55,6 +55,13 @@ function shapeRewrite(text: string): RewriteResponse {
   return rows.length > 0 ? { rewrittenPrompt, plan: rows } : { rewrittenPrompt };
 }
 
+export interface RewriteRouteOptions {
+  /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): a prompt
+   *  carrying the stub pipeline's `[[fail]]` marker is passed through raw, with no model call —
+   *  mirroring `/v1/clarify`'s stub short-circuit — so the marker survives into `/v1/generate`. */
+  stub?: boolean;
+}
+
 /**
  * `model`/`roster` are optional so a caller that only exercises `/v1/generate` (e.g. the
  * pre-existing server-core/metering suites) need not supply one — an unconfigured server
@@ -64,12 +71,11 @@ export function makeRewriteRoute(
   model: ModelClient | undefined,
   roster: ModelRoster | undefined,
   usageStore: UsageStore,
+  options: RewriteRouteOptions = {},
 ): Hono<Env> {
   const app = new Hono<Env>();
 
   app.post('/', async (c) => {
-    if (!model || !roster) return c.json(NOT_CONFIGURED, 502);
-
     const deviceId = c.get('deviceId');
     const body = await c.req.json().catch(() => null);
     const parsed = RewriteRequest.safeParse(body);
@@ -79,6 +85,12 @@ export function makeRewriteRoute(
         400,
       );
     }
+
+    if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
+      return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
+    }
+
+    if (!model || !roster) return c.json(NOT_CONFIGURED, 502);
 
     const messages = buildRewriteMessages({ request: parsed.data });
     const stream = model.stream({ model: roster.rewrite, messages }, c.req.raw.signal);
