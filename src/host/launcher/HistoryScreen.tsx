@@ -149,7 +149,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
   }, []);
 
   useEffect(() => {
-    if (!confirm || confirm.kind !== 'restore' || activeId == null) {
+    if (confirm?.kind !== 'restore' || activeId == null) {
       setRestoreLeaving([]);
       return;
     }

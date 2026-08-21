@@ -181,7 +181,10 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // The load-bearing guarantee: a caller that passes no `size` (the home grid) can never reach a
     // done-variant style. Each one is applied exactly once, always behind the same `isDone` gate.
     for (const variant of ['rootDone', 'tileDone', 'ghostMonogramDone', 'foregroundMonogramDone']) {
-      h.eq((src.match(new RegExp(`styles\\.${variant}`, 'g')) ?? []).length, 1, `styles.${variant} is applied in exactly one place`);
+      const variantPattern = new RegExp(String.raw`styles\.${variant}`, 'g');
+      let variantCount = 0;
+      while (variantPattern.exec(src)) variantCount++;
+      h.eq(variantCount, 1, `styles.${variant} is applied in exactly one place`);
       h.ok(src.includes(`isDone ? styles.${variant} : null`), `styles.${variant} is reachable only through the done variant`);
     }
     // The glow is the one done-only style that is NOT a `styles.*` entry — it is built at the call

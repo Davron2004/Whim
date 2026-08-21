@@ -54,7 +54,7 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
   // ── History reads as the user's own prompts (E1/E2) ───────────────────────
   await h.test('history: a row with a stored summary headlines with the summary text', () => {
     const summary = storedSummary(envelope('give me a warning chime', SUMMARY_ADDED));
-    h.ok(summary != null && summary.text === SUMMARY_ADDED.text, 'the summary parses off the prompt envelope');
+    h.ok(summary?.text === SUMMARY_ADDED.text, 'the summary parses off the prompt envelope');
   });
 
   await h.test('history: fallback to prompt text (v1 envelope, no summary, or a run with none)', async () => {
