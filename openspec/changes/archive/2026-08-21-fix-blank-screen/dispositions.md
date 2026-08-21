@@ -37,3 +37,5 @@ Findings source: openspec/findings-blank-screen-2026-08-21.md (5 findings F1–F
 | 28 | L1 re-review (rev 2) | CLEAN — both mandatory fixes exact; new assertions non-vacuous; 1 non-blocking comment-wording nit (theme-capture sentence) accepted as-is |
 | 29 | L1 gatefull | PASS |
 | 30 | L1 MERGED | --no-ff onto staging, regate PASS, worktree cleaned. All three lanes terminal |
+| 31 | closing gatefull | PASS on staging tip (all 3 lanes combined) |
+| 32 | run-closure | staging merged back into v1-sprint per deviation D1; change archived |
