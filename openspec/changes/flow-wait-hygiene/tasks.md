@@ -39,12 +39,12 @@
 
 ## 4. Mini-app boot state (B7)
 
-- [ ] 4.1 Derive a "has painted" boolean in `useMiniAppHost.ts`'s `HostState` from the existing
+- [x] 4.1 Derive a "has painted" boolean in `useMiniAppHost.ts`'s `HostState` from the existing
   `paintMs` field (non-null means first paint observed), without adding a new bridge message.
-- [ ] 4.2 Add a boot-state render branch in `MiniAppView.tsx`: rendered when bound but not yet
+- [x] 4.2 Add a boot-state render branch in `MiniAppView.tsx`: rendered when bound but not yet
   painted and not `launchFailed`; branded and minimal, styled from design tokens per the existing
   "mini-app container styles its failure state from tokens" discipline in `app-launcher`.
-- [ ] 4.3 Confirm the existing `launchFailed` branch still takes precedence over the boot state
+- [x] 4.3 Confirm the existing `launchFailed` branch still takes precedence over the boot state
   when a launch fails before any paint.
 
 ## 5. History screen: loading state, confirm-sheet disabling, restore-diff pending (B5/B6/D5)

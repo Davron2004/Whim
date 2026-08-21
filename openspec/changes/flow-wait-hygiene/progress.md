@@ -10,3 +10,6 @@
 - dispatched 2026-08-21 — chain-3 launcher-open-fork-delete-busy, BASE f2e860e, worktree .claude/worktrees/flow-wait-hygiene-3
 - report 2026-08-21 — chain-3 STATUS complete, GATE PASS, commit 3c435fb (6830 launcher checks; red-check discriminated "row disabled but op still reaches version store"). Class-A: new `app-busy.ts` (AppBusy + runAppOp); handlers now return runAppOp(...); widened two brittle tile-colour regexes; COPY +actionForkBusy/actionDeleteBusy. Accepted.
 - merged 2026-08-21 — chain-3 → integration (regate-pass). Worktree removed.
+- dispatched 2026-08-21 — chain-4 mini-app-boot-state, BASE f2e3305, worktree .claude/worktrees/flow-wait-hygiene-4
+- report 2026-08-21 — chain-4 STATUS complete, GATE PASS, commit 0d1aef9 (6921 launcher checks, 4 red-checks). Class-A: `paintMs` not reset on rebind before this chain (latent: stale paint would suppress the next boot state) — reset added in bind(); `hasPainted` computed on MiniAppHost, not stored; boot overlay also covers pre-bind window; two wiring assertions rewritten to `miniAppSurface()` branches at equal strength. COPY +appBootLabel/appBootA11yLabel. Accepted.
+- merged 2026-08-21 — chain-4 → integration (regate-pass). Worktree removed.
