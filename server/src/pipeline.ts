@@ -3,6 +3,10 @@
  * The real pipeline (OpenRouter-backed) replaces the stub internals behind this same interface.
  */
 import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
+import { buildCandidateSource } from '../../synthrun/builder';
+
+const STUB_APP_SOURCE =
+  "import { defineApp, Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hello</Text></Screen> });";
 
 export interface Pipeline {
   /**
@@ -12,15 +16,17 @@ export interface Pipeline {
   run(request: GenerateRequest, signal?: AbortSignal): AsyncIterable<GenerationEvent>;
 }
 
-/** Fixed WireAppRecord emitted on success. */
-const STUB_APP_RECORD: WireAppRecord = {
-  name: 'stub-app',
-  source: "import { Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hello</Text></Screen> });",
-  bundle: '(()=>{ /* stub bundle */ })();',
-  sourceMap: undefined,
-  manifest: { capabilities: [] },
-  schema: {},
-};
+/**
+ * Built once (memoized) rather than per-request: `createStubPipeline` can be constructed
+ * multiple times within a single test run, and the real H1b esbuild call is comparatively
+ * expensive to repeat for a fixed, prompt-independent stub source.
+ */
+let stubBuildPromise: Promise<{ js: string; map: string }> | undefined;
+
+function buildStubRecord(): Promise<{ js: string; map: string }> {
+  stubBuildPromise ??= buildCandidateSource(STUB_APP_SOURCE, { filenameHint: 'stub-app' });
+  return stubBuildPromise;
+}
 
 /** Factory for the stub pipeline with injectable inter-event delay. */
 export function createStubPipeline(delayMs = 200): Pipeline {
@@ -106,7 +112,16 @@ async function* emitTerminal(
       diagnostics: [{ kind: 'BUILD_FAILURE', hint: 'Try a simpler prompt.' }],
     };
   } else {
-    yield { type: 'result', app: STUB_APP_RECORD };
+    const { js, map } = await buildStubRecord();
+    const app: WireAppRecord = {
+      name: 'Hello App',
+      source: STUB_APP_SOURCE,
+      bundle: js,
+      sourceMap: map,
+      manifest: { capabilities: [] },
+      schema: {},
+    };
+    yield { type: 'result', app };
   }
 }
 

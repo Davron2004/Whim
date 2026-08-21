@@ -2,6 +2,7 @@
  * Server-core tests (SPEC.md §3, §4, §5).
  * Driven by Hono's in-process app.request() and the test-side sse-reader.
  */
+import * as vm from 'node:vm';
 import { check, eq, section } from './harness';
 import { readSseResponse } from './sse-reader';
 import { captureLogs, withMessage } from './log-capture';
@@ -712,6 +713,84 @@ async function testRequestLogging(): Promise<void> {
   }
 }
 
+/**
+ * F4 — the stub-delivered bundle must actually DEFINE the app module, not blank-screen. Drives a
+ * real `/v1/generate` to completion, then executes the result's `bundle` through `node:vm` with a
+ * minimal `window` global mirroring how `src/runtime/web/loader.js` wraps a delivered bundle (a
+ * bare `require` resolving the closed {vc-sdk, react, react-dom} allowlist, top-level `var`
+ * landing on `window`). RED at BASE: the old stub bundle was `(()=>{ /* stub bundle *\/ })();` —
+ * it defines nothing, so `window.__WHIM_APP_MODULE__` stays undefined.
+ */
+async function testStubBundleDefinesAppModule(): Promise<void> {
+  section('Stub-delivered bundle actually defines the app module (F4)');
+
+  const app = testApp();
+  const res = await post(app, '/v1/generate', { prompt: 'make a todo app' }, DEVICE_HEADER);
+  const { events } = await readSseResponse(res);
+  const resultEvent = events.at(-1)!.data;
+  if (resultEvent.type !== 'result') {
+    check('F4: terminal event is result', false);
+    return;
+  }
+
+  check('F4: bundle is non-empty', typeof resultEvent.app.bundle === 'string' && resultEvent.app.bundle.length > 0);
+
+  const fakeRequire = (name: string): unknown => {
+    if (name === 'vc-sdk') return { Screen: 'Screen', Text: 'Text', defineApp: (spec: unknown) => spec };
+    if (name === 'react') return { createElement: () => ({}) };
+    if (name === 'react-dom') return {};
+    throw new Error(`unexpected require: ${name}`);
+  };
+
+  const window: Record<string, unknown> = { require: fakeRequire };
+  window.window = window;
+  vm.createContext(window);
+  // Intentional: executing the server's OWN just-built stub bundle inside an isolated
+  // node:vm sandbox context, mirroring how the trusted loader (src/runtime/web/loader.js)
+  // executes a delivered bundle — this is the test, not a runtime code-injection path.
+  // eslint-disable-next-line sonarjs/code-eval
+  vm.runInContext(resultEvent.app.bundle, window);
+
+  check('F4: window.__WHIM_APP_MODULE__ is defined and truthy', Boolean(window.__WHIM_APP_MODULE__));
+}
+
+/**
+ * F5 — `/v1/rewrite` under WHIM_PIPELINE=stub must pass a `[[fail]]`-marked prompt through raw,
+ * with no model call, so the marker survives into the `/v1/generate` request that follows (the
+ * plan→rewrite→generate flow otherwise loses it: the pipeline only ever sees the REWRITTEN
+ * prompt, and a paraphrasing rewrite model drops the marker before the stub pipeline can see it).
+ * RED at BASE: no `stub` option existed, so the scripted model was always called and the
+ * marker was lost.
+ */
+async function testStubRewritePreservesFailMarker(): Promise<void> {
+  section('Stub rewrite passes the [[fail]] marker through untouched (F5)');
+
+  const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+    { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },
+  ]);
+  const app = createApp({
+    pipeline: createStubPipeline(0),
+    usageStore: new InMemoryUsageStore(),
+    model,
+    roster: REWRITE_TEST_ROSTER,
+    stub: true,
+  });
+
+  const rewriteRes = await post(app, '/v1/rewrite', { prompt: 'do something [[fail]] please' }, DEVICE_HEADER);
+  eq('F5: stub rewrite status 200', rewriteRes.status, 200);
+  const rewriteBody = (await rewriteRes.json()) as { rewrittenPrompt: string };
+  check(
+    'F5: rewrittenPrompt still contains the [[fail]] marker',
+    rewriteBody.rewrittenPrompt.includes('[[fail]]'),
+  );
+  eq('F5: stub rewrite makes zero model calls', model.requests.length, 0);
+
+  const generateRes = await post(app, '/v1/generate', { prompt: rewriteBody.rewrittenPrompt }, DEVICE_HEADER);
+  const { events } = await readSseResponse(generateRes);
+  const lastType = events.at(-1)!.data.type;
+  eq('F5: terminal event for the rewritten prompt is failure', lastType, 'failure');
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
@@ -720,4 +799,6 @@ export async function runServerCoreTests(): Promise<void> {
   await testSseCancelAbortsPipeline();
   await testAbortDoubleCreditRace();
   await testRequestLogging();
+  await testStubBundleDefinesAppModule();
+  await testStubRewritePreservesFailMarker();
 }
