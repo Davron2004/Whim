@@ -60,9 +60,10 @@ export interface AppOptions {
    *  OUTSIDE `/v1`, so the "every `/v1` route is gated by `x-whim-device`" invariant is untouched
    *  and no ungated product surface is created. */
   devLogSink?: DevLogSinkOptions;
-  /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. Today it only makes
-   *  `/v1/clarify` deterministic and model-free; the pipeline's own stub is selected by passing
-   *  `createStubPipeline()` above, not by this flag. */
+  /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. It makes `/v1/clarify`
+   *  deterministic and model-free, and makes `/v1/rewrite` pass a `[[fail]]`-marked prompt
+   *  through raw (no model call) so the marker survives into `/v1/generate`; the pipeline's own
+   *  stub is selected by passing `createStubPipeline()` above, not by this flag. */
   stub?: boolean;
 }
 
@@ -127,7 +128,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
 
   // Mount routes under /v1
   app.route('/v1/generate', makeGenerateRoute(pipeline, usageStore, { keepaliveMs, reconcile }));
-  app.route('/v1/rewrite', makeRewriteRoute(model, roster, usageStore));
+  app.route('/v1/rewrite', makeRewriteRoute(model, roster, usageStore, { stub: options.stub }));
   app.route('/v1/clarify', makeClarifyRoute(model, roster, usageStore, { stub: options.stub }));
   app.route('/v1/usage', makeUsageRoute(usageStore));
 
