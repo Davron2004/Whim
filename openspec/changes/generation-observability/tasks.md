@@ -45,15 +45,15 @@
 
 ## 5. Timeline view and failure-screen integration
 
-- [ ] 5.1 Build the `RunTimeline` component: stage transitions with durations, output-growth
+- [x] 5.1 Build the `RunTimeline` component: stage transitions with durations, output-growth
       summary, and (for failed attempts) the terminal entry's `reason`/`hint` detail — reading from
       a journal already loaded by the caller.
-- [ ] 5.2 Add the `devMode` render branch showing diagnostics count and repair-attempts count,
+- [x] 5.2 Add the `devMode` render branch showing diagnostics count and repair-attempts count,
       threaded from the project's explicit developer-diagnostics flag (decision #60(c)).
-- [ ] 5.3 Add the "what happened" section to `FailureScreen`, reading the journal for the record
+- [x] 5.3 Add the "what happened" section to `FailureScreen`, reading the journal for the record
       being shown (falling back gracefully if the journal is missing — see spec's
       journal-is-not-source-of-truth requirement).
-- [ ] 5.4 Wire the build screen's details affordance (4.3) to render `RunTimeline` for the
+- [x] 5.4 Wire the build screen's details affordance (4.3) to render `RunTimeline` for the
       in-progress attempt's journal.
 
 ## 6. Validation
