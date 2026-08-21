@@ -67,6 +67,35 @@ async function expectThrow(promise: Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** The connect window used by the timeout scenarios below — milliseconds, not the production
+ *  15s, so the suite proves the behaviour without sleeping through it. */
+const WINDOW_MS = 20;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function withFakeXhrTimeout(fakeXhr: FakeXMLHttpRequest): ClientOptions {
+  return { ...withFakeXhr(fakeXhr), connectTimeoutMs: WINDOW_MS };
+}
+
+/** Await `promise`, resolving to its rejection value, or to `'hung'` if it never settles within
+ *  `ms`. A bare `await` here would turn a regression (no window armed at all) into a suite-wide
+ *  hang instead of a failed check. */
+function outcomeOrHung(promise: Promise<unknown>, ms: number): Promise<unknown> {
+  return Promise.race([
+    promise.then(
+      (value) => value,
+      (err: unknown) => err,
+    ),
+    new Promise<'hung'>((resolve) => {
+      setTimeout(() => resolve('hung'), ms);
+    }),
+  ]);
+}
+
 export async function runXhrTransportTests(h: Harness): Promise<void> {
   // --- task 3.2: incremental delivery, keepalive skipping, multi-byte survival ---
 
@@ -323,6 +352,65 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     const caught = await expectThrow(gen.next());
     h.eq(caught, undefined, 'no error is raised past the abort');
   });
+
+  // --- flow-wait-hygiene chain-1: the connect / first-event window on the XHR transport ---
+
+  await h.test(
+    'openXhrGenerateStream: a connect with no response within the window raises GenerationClientError{kind:"network"} and aborts the request',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      // The fake is deliberately never driven: no headers, no data -- a hung connect.
+      const err = await outcomeOrHung(collect(generateApp(withFakeXhrTimeout(fakeXhr), { prompt: 'p' })), 1000);
+      h.ok(err !== 'hung', 'the hung connect is bounded rather than waiting forever');
+      h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
+      h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'network', 'classified as a network failure, not left in progress');
+      h.eq(fakeXhr.abortCount, 1, 'the underlying request is aborted rather than left holding a socket');
+    },
+  );
+
+  await h.test(
+    'openXhrGenerateStream: headers but no first event within the window is still a network failure',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const collected = outcomeOrHung(collect(generateApp(withFakeXhrTimeout(fakeXhr), { prompt: 'p' })), 1000);
+      fakeXhr.respondHeaders(200); // the reader is handed back, but no body event ever arrives
+      const err = await collected;
+      h.ok(err !== 'hung', 'the hung stream is bounded rather than waiting forever');
+      h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
+      h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'network', 'classified as a network failure');
+    },
+  );
+
+  await h.test(
+    'openXhrGenerateStream: the connect window never applies once the first event has arrived',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      const eventA: GenerationEvent = { type: 'stage', stage: 'generate', status: 'start' };
+      const eventB: GenerationEvent = { type: 'token', text: 'still going' };
+      // The rejection handler is attached UP FRONT, not after the sleep below: a regression that
+      // kills the live stream would otherwise reject with no handler attached yet and crash the
+      // whole runner on an unhandled rejection instead of failing this one check.
+      const collected = collect(generateApp(withFakeXhrTimeout(fakeXhr), { prompt: 'p' })).catch(
+        (err: unknown) => err,
+      );
+      fakeXhr.respondHeaders(200);
+      fakeXhr.respondIncremental(sseFrame(eventA, 1));
+
+      // Idle for several windows mid-stream -- a long generation that has begun emitting.
+      await sleep(WINDOW_MS * 4);
+      fakeXhr.respondIncremental(sseFrame(eventB, 2));
+      fakeXhr.respondComplete();
+
+      const got = await Promise.race([
+        collected,
+        new Promise<'hung'>((resolve) => {
+          setTimeout(() => resolve('hung'), 1000);
+        }),
+      ]);
+      h.eq(got, [eventA, eventB], 'a stream idle far longer than the connect window is never killed');
+      h.eq(fakeXhr.abortCount, 0, 'the live stream is never aborted');
+    },
+  );
 
   // --- task 3.6: exactly one request per generation ---
 
