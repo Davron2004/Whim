@@ -14,16 +14,16 @@
 
 ## 2. LauncherRoot: clarify/rewrite cancellation and the B1 navigation-hijack fix
 
-- [ ] 2.1 Give `onComposeContinue`'s clarify call its own `AbortController`, tracked so the
+- [x] 2.1 Give `onComposeContinue`'s clarify call its own `AbortController`, tracked so the
   compose step's leave-handler (hardware back / `goHome`) can abort it, mirroring the
   `genRef`/`ctl` pattern `onBuildIt` already uses for generate.
-- [ ] 2.2 Guard every post-await `setScreen` write inside `onComposeContinue` (including
+- [x] 2.2 Guard every post-await `setScreen` write inside `onComposeContinue` (including
   `setBusy(false)`) with a current-screen check, mirroring `openPlan`'s existing
   `s.kind === 'plan'` guard — this is the B1 bug fix.
-- [ ] 2.3 Give `openPlan`'s rewrite call its own `AbortController`, tracked so leaving the plan
+- [x] 2.3 Give `openPlan`'s rewrite call its own `AbortController`, tracked so leaving the plan
   screen aborts it (A2/B2); the existing `s.kind === 'plan'` guard on the response application
   stays in place.
-- [ ] 2.4 Wire the abort into whatever leave-handler(s) apply to the compose and plan steps
+- [x] 2.4 Wire the abort into whatever leave-handler(s) apply to the compose and plan steps
   (hardware back, `goHome`, `goBack`), consistent with how `onCancelGeneration` wires abort for
   the build step.
 
