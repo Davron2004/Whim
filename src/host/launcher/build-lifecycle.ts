@@ -131,7 +131,13 @@ export function journalStreamEvent(
   at: number,
 ): RunSignals {
   if (event.type === 'stage') {
-    journal.appendStage(launcherId, event.stage);
+    // ONE entry per stage, on its `start` edge only. The wire emits both edges (`status:
+    // 'start'|'done'`), so journaling every stage event would double the timeline's spine and give
+    // each stage a second, bogus duration measured across the gap to the next stage. `start` is
+    // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
+    // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
+    // heartbeat's arrival stamp, it just writes nothing.
+    if (event.status === 'start') journal.appendStage(launcherId, event.stage);
     return { ...signals, lastArrivalAt: at };
   }
   if (event.type === 'token') {

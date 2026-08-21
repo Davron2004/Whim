@@ -410,17 +410,37 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('journal: a terminal entry is written on every ending the stream can have', () => {
     // `generation-run-journal`: "A terminal entry is always written immediately." A `result` writes
     // it where the stream ends; the three failure endings all pass through `settleFailed`.
-    const terminalAt = attemptFn.indexOf('journal.appendTerminal(attemptId)');
+    const terminalAt = attemptFn.indexOf('journal.appendTerminal(attemptId, terminalCounts())');
     h.ok(terminalAt >= 0, 'a delivered result journals its terminal entry');
     h.ok(terminalAt < attemptFn.indexOf('deliverAndSettle('), 'at the end of the stream, before delivery runs');
     const settleFn = rootSrc.slice(rootSrc.indexOf('const settleFailed'), rootSrc.indexOf('const abortLiveAttempt'));
     h.ok(
-      settleFn.includes('journal.appendTerminal(id, { failure: { reason, diagnostics } })'),
+      settleFn.includes('journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed })'),
       'and every failure ending — terminal failure, stream error, throw — journals one with its detail',
     );
     h.ok(
       settleFn.indexOf('journal.appendTerminal(') < settleFn.indexOf('failPendingBuild('),
       'written as part of the same settlement that persists the failed record',
+    );
+  });
+
+  await h.test('journal: the terminal entry flushes the counts no aggregate entry can hold', () => {
+    // The throttle's LAST window is never closed by another aggregate, so without this flush the
+    // persisted growth figure silently stops at the last window boundary.
+    h.ok(
+      attemptFn.includes('const terminalCounts = (): RunTerminalCounts => ({') &&
+        attemptFn.includes('aggregates: signals.aggregates') &&
+        attemptFn.includes('observedDiagnostics: counts.diagnostic'),
+      'the flush is the loop’s own in-memory totals and its diagnostics tally, read where the stream ends',
+    );
+    h.eq(
+      (attemptFn.match(/terminalCounts\(\)/g) ?? []).length,
+      4,
+      'and every one of the four endings — result, terminal failure, stream error, throw — carries it',
+    );
+    h.ok(
+      !/observedDiagnostics: (?!counts\.diagnostic)/.test(attemptFn),
+      'the tally is the loop’s own counter — a number — and never a diagnostic object',
     );
   });
 
@@ -446,6 +466,23 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     );
     h.ok(rootSrc.includes('const onDismissPending = (rec: PendingBuildRecord) => {\n    dropAttempt(rec.id);'), 'dismiss goes through it');
     h.ok(rootSrc.includes('if (live) dropAttempt(live.id);'), 'so does cancel');
+  });
+
+  await h.test('journal: deleting an app reclaims its last-run report in the same operation', () => {
+    // `lastrun:<appId>` is the one journal key that outlives its attempt. Nothing ever revisits a
+    // deleted app's id, so a report not reclaimed here is leaked in MMKV forever.
+    const deleteFn = rootSrc.slice(rootSrc.indexOf('const onDelete ='), rootSrc.indexOf('const goHome ='));
+    h.ok(deleteFn.includes('await access.remove(app);'), 'the app removal is still the first thing that happens');
+    h.ok(deleteFn.includes('journal.deleteLastRun(app.id);'), 'and its last-run report goes with it');
+    h.ok(
+      deleteFn.indexOf('journal.deleteLastRun(') > deleteFn.indexOf('await access.remove(app)'),
+      'after the removal resolved — a failed removal must not orphan the app from its own report',
+    );
+    h.eq(
+      (rootSrc.match(/deleteLastRun\(/g) ?? []).length,
+      1,
+      'exactly one call site, so a report can never be dropped out from under a live app',
+    );
   });
 
   await h.test('journal: the build screen’s liveness signals are in-memory, and the tick never reads the store', () => {

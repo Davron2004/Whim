@@ -167,6 +167,88 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.ok(!stored.includes('symbol') && !stored.includes('"kind":"error"'), 'no diagnostic kind or symbol reaches storage');
   });
 
+  // ── the end-of-stream flush: no window goes unclosed (design D3) ────────────
+
+  await h.test('run-journal: the entry that closes a window carries the LATEST counts observed in it', async () => {
+    const t = makeStore();
+    t.at(0);
+    // A steady stream: one arrival every 500ms, cumulative counts growing 10 chars per arrival.
+    for (let i = 1; i <= 24; i++) {
+      t.at(i * 500);
+      t.store.appendAggregate('a', { chars: i * 10, tokens: i });
+    }
+    const aggregates = t.store.get('a')!.filter((e) => e.kind === 'aggregate');
+    h.eq(aggregates.map((e) => e.t), [500, 5_500, 10_500], 'one entry per ~5s window, not one per arrival');
+    // Each entry's counts must be the newest ones seen up to its own instant, never an earlier
+    // reading held over from the moment the window opened.
+    for (const entry of aggregates) {
+      h.eq(
+        entry.aggregates,
+        { chars: (entry.t / 500) * 10, tokens: entry.t / 500 },
+        `the entry closing at ${entry.t} carries the counts as of ${entry.t}, not a stale earlier reading`,
+      );
+    }
+  });
+
+  await h.test('run-journal: the terminal entry closes the LAST window, so the final counts are never lost', async () => {
+    const t = makeStore();
+    t.at(0);
+    // 12 seconds of stream: the last aggregate entry lands at 10s, and everything after it would
+    // be silently unpersisted without the flush (the reviewer's 20020-vs-24000 case).
+    for (let i = 1; i <= 24; i++) {
+      t.at(i * 500);
+      t.store.appendAggregate('a', { chars: i * 1000, tokens: i * 50 });
+    }
+    const lastAggregate = t.store.get('a')!.filter((e) => e.kind === 'aggregate').at(-1)!;
+    h.eq(lastAggregate.aggregates, { chars: 21_000, tokens: 1_050 }, 'the newest aggregate entry is already stale by design');
+    t.at(12_000);
+    t.store.appendTerminal('a', { aggregates: { chars: 24_000, tokens: 1_200 }, observedDiagnostics: 0 });
+    const entry = t.store.get('a')!.at(-1)!;
+    h.eq(entry.kind, 'terminal', 'the flush rides on the terminal entry, not a second aggregate');
+    h.eq(entry.aggregates, { chars: 24_000, tokens: 1_200 }, 'carrying the run’s TRUE final counts');
+  });
+
+  await h.test('run-journal: a run shorter than the throttle window still ends with its true final counts', async () => {
+    const t = makeStore();
+    t.at(0);
+    t.store.create('a');
+    for (let i = 1; i <= 30; i++) {
+      t.at(i * 50); // 1.5s of stream — the throttle window never closes
+      t.store.appendAggregate('a', { chars: i * 4, tokens: i });
+    }
+    t.at(1_600);
+    t.store.appendTerminal('a', { aggregates: { chars: 120, tokens: 30 }, observedDiagnostics: 2 });
+    const journal = t.store.get('a')!;
+    h.eq(journal.filter((e) => e.kind === 'aggregate').length, 1, 'a sub-window run still writes no per-token entries');
+    h.eq(journal.at(-1)!.aggregates, { chars: 120, tokens: 30 }, 'and the terminal entry carries everything the aggregate could not');
+    h.eq(journal.at(-1)!.observedDiagnostics, 2, 'along with how many diagnostics went past');
+  });
+
+  await h.test('run-journal: the flush is still counts only — no token text, no diagnostic content', async () => {
+    const t = makeStore();
+    const leaky = {
+      aggregates: { chars: 10, tokens: 2, text: 'const total = 1' },
+      observedDiagnostics: 3,
+    } as unknown as { aggregates: { chars: number; tokens: number }; observedDiagnostics: number };
+    t.store.appendTerminal('a', leaky);
+    const entry = t.store.get('a')![0];
+    h.eq(
+      Object.keys(entry.aggregates!).sort((a, b) => a.localeCompare(b)),
+      ['chars', 'tokens'],
+      'the flushed counts are re-projected to the two numbers, so a richer caller object cannot widen them',
+    );
+    h.eq(typeof entry.observedDiagnostics, 'number', 'the diagnostics figure is a count');
+    h.ok(!JSON.stringify(t.store.get('a')).includes('const total'), 'no token text reaches storage through the flush');
+  });
+
+  await h.test('run-journal: a terminal entry with nothing to flush carries no counts at all', async () => {
+    const t = makeStore();
+    t.store.appendTerminal('a');
+    const entry = t.store.get('a')![0];
+    h.ok(entry.aggregates === undefined, 'no fabricated zero counts');
+    h.ok(entry.observedDiagnostics === undefined, 'and no fabricated diagnostics figure');
+  });
+
   // ── cap and eviction ────────────────────────────────────────────────────────
   await h.test('run-journal: the oldest aggregate is evicted to make room; the journal stays at the cap', async () => {
     const t = makeStore();
@@ -252,6 +334,22 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     const kept = t.store.getLastRun('app-1');
     t.store.moveToLastRun('app-1', 'app-1'); // nothing at the source this time
     h.eq(t.store.getLastRun('app-1'), kept, 'the last-run report is neither emptied nor fabricated');
+  });
+
+  await h.test('run-journal: deleting an app reclaims its last-run report, and only its own', async () => {
+    const t = makeStore();
+    t.at(1);
+    t.store.appendStage('app-1', 'plan');
+    t.store.moveToLastRun('app-1', 'app-1');
+    t.store.appendStage('app-2', 'generate');
+    t.store.moveToLastRun('app-2', 'app-2');
+    h.ok(t.map.has('lastrun:app-1'), 'the report exists before the deletion (the assertion is non-vacuous)');
+    t.store.deleteLastRun('app-1');
+    h.eq(t.store.getLastRun('app-1'), null, 'the deleted app’s report is gone');
+    h.ok(!t.map.has('lastrun:app-1'), 'the key itself is reclaimed, not merely emptied');
+    h.ok(t.store.getLastRun('app-2') !== null, 'another app’s report is untouched');
+    t.store.deleteLastRun('app-1'); // must not throw
+    h.eq(t.store.getLastRun('app-1'), null, 'deleting a report that was never there is a tolerated no-op');
   });
 
   // ── failure survival + delete ───────────────────────────────────────────────
