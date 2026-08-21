@@ -374,6 +374,23 @@ export function workingTitleFromPrompt(text: string): string {
 export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
 
 /**
+ * Everything the build screen's liveness signals are derived FROM, held in memory for the life of
+ * one attempt and never read back out of the journal (design D6): the moment the attempt started,
+ * the cumulative counts folded from its stream, and when its last `token`/`stage` event arrived.
+ * The rendered values — `elapsedLabel(startedAt, now)`, `quietSecondsSince(lastArrivalAt, now)` —
+ * are computed per render from a single `now`, so the clock and the heartbeat can never disagree.
+ */
+export interface RunSignals {
+  startedAt: number;
+  aggregates: RunAggregates;
+  lastArrivalAt: number;
+}
+
+/** How often the shell re-renders a live build screen so its derived clock moves (design D6/D8):
+ *  a re-render on a timer, never an animation, and never a journal read. */
+export const RUN_SIGNAL_TICK_MS = 1_000;
+
+/**
  * Fold one stream event into the running totals. Only a `token` event moves them: `chars` by the
  * token's character count, `tokens` by one. The token's TEXT is counted and discarded — it is
  * never carried in the returned value, which is what keeps the derived counter inside the

@@ -33,11 +33,13 @@ import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord } from './pending-builds';
+import { RunJournalStore } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
   failPendingBuild,
   hydratedDiagnostics,
+  journalStreamEvent,
   retryBuildScreen,
   startPendingBuild,
 } from './build-lifecycle';
@@ -61,6 +63,8 @@ import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import { HomeGridSkeleton } from './flow-skeletons';
 import {
+  EMPTY_RUN_AGGREGATES,
+  RUN_SIGNAL_TICK_MS,
   acceptClarifyQuestions,
   backFrom,
   buildStep,
@@ -77,7 +81,7 @@ import {
   withPlan,
   withStage,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
@@ -227,17 +231,25 @@ export default function LauncherRoot() {
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
-  const { index, access, pending, kv } = useMemo(() => {
+  const { index, access, pending, journal, kv } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({ store, index: idx, deleteStorage: (appId) => deleteStorage({ appId }) });
-    return { index: idx, access: acc, pending: new PendingBuildStore(launcherKv), kv: launcherKv };
+    return {
+      index: idx,
+      access: acc,
+      pending: new PendingBuildStore(launcherKv),
+      // The run journal rides on the SAME backend instance as the pending record it is a sibling
+      // key of (design D1), under the same single-writer discipline.
+      journal: new RunJournalStore(launcherKv),
+      kv: launcherKv,
+    };
   }, []);
 
   return (
     <ThemeProvider>
-      <LauncherShell index={index} access={access} pending={pending} kv={kv} />
+      <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} />
     </ThemeProvider>
   );
 }
@@ -271,8 +283,15 @@ function LauncherShell({
   index,
   access,
   pending,
+  journal,
   kv,
-}: Readonly<{ index: AppIndex; access: StoreAccess; pending: PendingBuildStore; kv: KVBackend }>) {
+}: Readonly<{
+  index: AppIndex;
+  access: StoreAccess;
+  pending: PendingBuildStore;
+  journal: RunJournalStore;
+  kv: KVBackend;
+}>) {
   const { theme } = useTheme();
   const palette = shellPalette(theme);
 
@@ -306,6 +325,20 @@ function LauncherShell({
   // -state change — reading the screen back out of here — and not a second subscriber, an event
   // bus or per-tile progress. Cleared the moment the attempt settles.
   const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+
+  // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
+  // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
+  // state, because it moves on every token — re-rendering per token is exactly the cadence this
+  // change refuses. The build screen's clock moves on the tick below instead, and the journal is
+  // never read to produce any of it.
+  const signalsRef = useRef<RunSignals | null>(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (screen.kind !== 'build') return undefined;
+    const timer = setInterval(() => setTick((t) => t + 1), RUN_SIGNAL_TICK_MS);
+    return () => clearInterval(timer);
+  }, [screen.kind]);
 
   const refresh = () => {
     setApps(index.list());
@@ -483,11 +516,24 @@ function LauncherShell({
     if (liveRef.current?.id === attemptId) liveRef.current = null;
   };
 
+  /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
+   *  and dismissing a `failed`/`interrupted` ghost — WITH the run journal that rode alongside it
+   *  (`generation-run-journal` "Dismissing a ghost deletes its journal": the same operation, so a
+   *  journal can never outlive the record it describes). */
+  const dropAttempt = (id: string) => {
+    dropPendingBuild(pending, id);
+    journal.delete(id);
+  };
+
   /** A terminal `failure`, a stream that ended without one, or a throw: the record moves to
    *  `failed` and STAYS on the grid, so the attempt is still reachable after the screen is gone.
-   *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. */
+   *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. The
+   *  journal's terminal entry is written here too, and FIRST: this is the one settlement every
+   *  non-deliverable ending passes through, and the entry must not wait on the aggregate throttle
+   *  (`generation-run-journal` "A terminal entry is always written immediately"). */
   const settleFailed = (id: string, reason: string, diagnostics: readonly { hint: string }[]) => {
     releaseLiveRef(id);
+    journal.appendTerminal(id, { failure: { reason, diagnostics } });
     failPendingBuild(pending, id, reason, diagnostics);
     refresh();
   };
@@ -503,7 +549,7 @@ function LauncherShell({
     }
     const live = liveRef.current;
     liveRef.current = null;
-    if (live) dropPendingBuild(pending, live.id);
+    if (live) dropAttempt(live.id);
     refresh();
   };
 
@@ -554,6 +600,13 @@ function LauncherShell({
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
     const attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+    // The journal is created at the SAME moment as the record it is a sibling of
+    // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
+    // and the attempt's derived signals start from the same instant the request does.
+    journal.create(attemptId);
+    const startedAt = Date.now();
+    let signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
+    signalsRef.current = signals;
     // The live screen a `building` ghost taps back into; kept in step with the stream below.
     let live = building;
     liveRef.current = { id: attemptId, screen: live };
@@ -574,6 +627,11 @@ function LauncherShell({
       // held until the stream ends so the terminal-event handling below stays in one place.
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
         countEvent(counts, event);
+        // The journal write and the signal fold for this event, in one place and at one clock
+        // reading: `stage` journals immediately, `token` goes through the store's own ~5s
+        // throttle, everything else writes nothing (`build-lifecycle#journalStreamEvent`).
+        signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
+        signalsRef.current = signals;
         if (event.type === 'stage') {
           live = withStage(live, event.stage);
           liveRef.current = { id: attemptId, screen: live };
@@ -624,6 +682,9 @@ function LauncherShell({
         return;
       }
 
+      // The stream ended with a deliverable result: the terminal entry is written HERE, at the end
+      // of the stream and before delivery starts, carrying no failure field.
+      journal.appendTerminal(attemptId);
       live = withDelivering(live);
       liveRef.current = { id: attemptId, screen: live };
       setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
@@ -637,6 +698,11 @@ function LauncherShell({
         wire: terminal.app,
         summary: terminal.summary,
       });
+      // Delivery landed: the attempt's journal becomes the delivered app's retained last-run
+      // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
+      // is not the attempt's). After the delivery, never before it — a death in between loses the
+      // report and nothing else (design D5).
+      journal.moveToLastRun(attemptId, delivered.id);
       releaseLiveRef(attemptId);
       refresh();
       if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
@@ -726,14 +792,14 @@ function LauncherShell({
       abortLiveAttempt();
       return;
     }
-    dropPendingBuild(pending, rec.id);
+    dropAttempt(rec.id);
     refresh();
   };
 
   /** Dismiss a `failed`/`interrupted` record, from its quick actions or its failure screen: the
    *  record is deleted and its ghost stops rendering. */
   const onDismissPending = (rec: PendingBuildRecord) => {
-    dropPendingBuild(pending, rec.id);
+    dropAttempt(rec.id);
     goHome();
   };
 
@@ -857,6 +923,8 @@ function LauncherShell({
       <BuildStep
         stage={from.stage}
         delivering={from.delivering}
+        signals={signalsRef.current}
+        now={Date.now()}
         onLeaveRunning={onLeaveRunning}
         onCancel={() => onCancelGeneration(from.editing, from.text)}
       />
