@@ -149,6 +149,15 @@ export const COPY = {
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
 
+  // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
+  //    first paint") ──────────────────────────────────────────────────────────
+  /** Shown under the app's own name while its realm loads, so the wait before first paint reads
+   *  as Whim opening the app rather than as a blank screen. */
+  appBootLabel: 'Opening…',
+  /** The boot overlay's accessibility label — the screen reader gets the same fact the sighted
+   *  user gets from the breathing mark. */
+  appBootA11yLabel: 'Opening this app',
+
   // ── failure surfaces ────────────────────────────────────────────────────────
   launchFailedTitle: 'Couldn’t open this app',
   launchFailedBody:

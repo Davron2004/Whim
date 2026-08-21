@@ -36,7 +36,11 @@ export async function runLaunchFailureUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('launch-failure: MiniAppView renders honest static copy for launchFailed, never the raw error', () => {
-    h.ok(viewSrc.includes('host.state.launchFailed'), 'MiniAppView must branch on host.state.launchFailed');
+    // The branch now runs through the pure `miniAppSurface(host.state)` (flow-wait-hygiene
+    // chain-4), which reads `launchFailed` FIRST — the failure surface still outranks every other
+    // container surface, including the boot state.
+    h.ok(viewSrc.includes('miniAppSurface(host.state)'), 'MiniAppView must branch through miniAppSurface over the host state');
+    h.ok(viewSrc.includes("surface === 'launch-failed'"), 'MiniAppView must render the launch-failure branch');
     h.ok(viewSrc.includes('COPY.launchFailedTitle') && viewSrc.includes('COPY.launchFailedBody'), 'must render the static COPY strings, not lastError/hint/kind');
     h.ok(!/\{host\.state\.lastError\}/.test(viewSrc), 'must never interpolate the raw structured lastError string into the UI');
   });

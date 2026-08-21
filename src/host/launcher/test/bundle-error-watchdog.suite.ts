@@ -59,10 +59,15 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
   const viewSrc = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/MiniAppView.tsx'), 'utf8');
 
   await h.test('bundle-error: MiniAppView has a lastError recovery branch distinct from launchFailed', () => {
-    h.ok(viewSrc.includes('host.state.lastError'), 'MiniAppView must branch on host.state.lastError');
-    h.ok(viewSrc.includes('host.state.launchFailed'), 'the pre-delivery launchFailed branch must still exist');
+    // Both branches now come off the pure `miniAppSurface(host.state)` (flow-wait-hygiene
+    // chain-4), which still keeps them distinct AND keeps the post-delivery error surface above
+    // the boot state -- an app that failed before painting shows this recovery screen, not a
+    // permanent opening screen.
+    h.ok(viewSrc.includes('miniAppSurface(host.state)'), 'MiniAppView must derive its surface from the host state');
+    h.ok(viewSrc.includes("surface === 'app-error'"), 'MiniAppView must branch on the post-delivery error surface');
+    h.ok(viewSrc.includes("surface === 'launch-failed'"), 'the pre-delivery launchFailed branch must still exist');
     h.ok(
-      viewSrc.indexOf('host.state.lastError') !== viewSrc.indexOf('host.state.launchFailed'),
+      viewSrc.indexOf("surface === 'app-error'") !== viewSrc.indexOf("surface === 'launch-failed'"),
       'the two branches must be distinct conditionals',
     );
   });

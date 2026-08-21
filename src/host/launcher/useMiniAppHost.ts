@@ -27,6 +27,7 @@ import { createStorageEngine } from '../storage-engine';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
+import { hasPainted as firstPaintObserved } from './boot-state';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
@@ -90,6 +91,9 @@ function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) 
 export interface HostState {
   contained: boolean | null;
   probesFrac: string;
+  /** Mount→first-paint for the CURRENTLY bound realm, or null when this realm has not painted yet
+   *  (`bind()` resets it). Non-null is the "has painted" signal `boot-state.ts` derives from — the
+   *  container's boot state needs no bridge message of its own. */
   paintMs: number | null;
   generation: number | null;
   lastTap: string | null;
@@ -128,6 +132,9 @@ export interface MiniAppHost {
   runtimeHtml: string;
   webRef: React.RefObject<WebView | null>;
   state: HostState;
+  /** Derived from `state.paintMs`, never stored twice: true once the currently bound realm has
+   *  reported first paint. The container's boot state ends here (`boot-state.ts`). */
+  hasPainted: boolean;
   onMessage: (data: string) => void;
   /** Product path: launch an installed app by host record + bundle SOURCE (#5 D3). */
   deliverBySource: (record: AppRecord, source: string, engineAppId?: string, theme?: object) => void;
@@ -187,7 +194,10 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       disarmTimer(paintTimer);
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0 }));
+      // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
+      // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
+      // already-up and skip the boot state.
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
@@ -351,6 +361,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     runtimeHtml: RUNTIME_HTML,
     webRef,
     state: s,
+    hasPainted: firstPaintObserved(s.paintMs),
     onMessage,
     deliverBySource,
     deliverByRecord,
