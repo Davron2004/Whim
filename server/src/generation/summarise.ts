@@ -86,7 +86,7 @@ function sentenceRanges(text: string): Array<{ start: number; end: number }> {
 /** One sentence, no exclamation marks. Voice rules the summariser can satisfy mechanically without
  *  rewriting the model's words: `!` becomes `.`, and everything after the first sentence is cut. */
 function toOneSentence(raw: string): string {
-  const flattened = raw.replace(/!/g, '.').replace(/\.{2,}/g, '.').trim();
+  const flattened = raw.replaceAll('!', '.').replace(/\.{2,}/g, '.').trim();
   if (flattened.length === 0) return '';
   const first = sentenceRanges(flattened)[0];
   return first ? flattened.slice(first.start, first.end).trim() : flattened;
