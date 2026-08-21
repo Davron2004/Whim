@@ -58,9 +58,9 @@
 
 ## 6. Validation
 
-- [ ] 6.1 Run `npm run launcher:test` and the Node aggregation/helper suites; confirm no
+- [x] 6.1 Run `npm run launcher:test` and the Node aggregation/helper suites; confirm no
       per-token journal writes occur under a synthetic high-cadence token stream (assert write
       count bound by elapsed time, not token count).
-- [ ] 6.2 Run `npm run lint` and typecheck; confirm no raw token/diagnostic field is referenced
+- [x] 6.2 Run `npm run lint` and typecheck; confirm no raw token/diagnostic field is referenced
       anywhere in `BuildStep.tsx`, `FailureScreen.tsx`, or the new timeline component outside the
       permitted `hint`/`reason`/count fields.
