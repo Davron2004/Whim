@@ -8,4 +8,7 @@
 - chain-1 integrity exit 0 (6 files, all in scope). Merged 4cb53dc; tasks 1.1–2.3 ticked. Regate PASS; worktree/branch cleaned.
 - chain-2 dispatched — BASE e759682, worktree .claude/worktrees/generation-observability-2.
 - chain-2 report: complete, GATE PASS (6237 checks), commit 1488088. Deviations class A ×3: (a) per-event write+fold lives in RN-free `journalStreamEvent` in build-lifecycle.ts (Node-testable, behavioural throttle test); (b) cancel/dismiss unified in shell helper `dropAttempt(id)`, `dropPendingBuild(` pinned to one call site by suite; (c) BuildStep receives signals/now unrendered — rendering is chain-3. Notes: BuildStep.tsx source-lock suite forbids substrings token/log/terminal/.kind/.symbol → counter must render aggregates.chars; a delivery failure after result can produce two terminal entries — failure detail reads the LAST one.
-- chain-2 integrity exit 0 (7 files). Merged; tasks 3.1–3.5 ticked.
+- chain-2 integrity exit 0 (7 files). Merged; tasks 3.1–3.5 ticked. Regate PASS; cleaned.
+- chain-3 dispatched — BASE 7aed5a1, worktree .claude/worktrees/generation-observability-3.
+- chain-3 report: complete, GATE PASS (6277 checks), commit 19acc35. Deviation class A ×1: copy formatters `buildActivityLine`/`buildQuietLine` added to copy.ts (repo convention), tested behaviourally. Self-red-checked the affordance wiring assertion. Seam for chain-4: optional `onShowDetails?: () => void` on BuildStepProps (chain-4 owns open/close state + journal read on open; may make prop required). Contract ran 122 lines — dispatcher trimmed 2 blank lines to meet the 120 cap post-merge.
+- chain-3 integrity exit 0 (4 files). Merged; tasks 4.1–4.3 ticked.

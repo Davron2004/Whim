@@ -37,11 +37,11 @@
 
 ## 4. Build-screen UI — activity signals
 
-- [ ] 4.1 Render elapsed time and the output-size counter on `BuildStep`, next to the existing
+- [x] 4.1 Render elapsed time and the output-size counter on `BuildStep`, next to the existing
       stage sentence, using only in-memory derived state (no raw token text).
-- [ ] 4.2 Render the stall heartbeat ("quiet for Ns") once the ~8s threshold is exceeded, clearing
+- [x] 4.2 Render the stall heartbeat ("quiet for Ns") once the ~8s threshold is exceeded, clearing
       on the next `token`/`stage` arrival.
-- [ ] 4.3 Add the details affordance on `BuildStep` that opens the run timeline view.
+- [x] 4.3 Add the details affordance on `BuildStep` that opens the run timeline view.
 
 ## 5. Timeline view and failure-screen integration
 

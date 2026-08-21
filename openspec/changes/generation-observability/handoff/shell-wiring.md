@@ -103,7 +103,6 @@ reference**. Token text is counted and discarded. Behavioural coverage: `build-l
   terminal entry; `stageDurations` (which uses the first) is unaffected.
 
 ## chain-3 seam for chain-4 (task 5.4)
-
 `BuildStep` renders the activity line, the heartbeat and a `Details` button; it holds NO visibility
 state and reads nothing. The whole seam is one prop on `BuildStepProps`:
 
@@ -117,6 +116,5 @@ chain-4's call; the `?` exists only because nothing wires it yet. Copy: `COPY.bu
 chain-3's `buildActivityLine(elapsed, chars)` / `buildQuietLine(seconds)` in `copy.ts`.
 
 ## Error surface
-
 None. Every journal call is best-effort and non-throwing (chain-1's contract); no new failure mode
 reaches the flow. A lost journal degrades to "no timeline", never to a failed or lost run.
