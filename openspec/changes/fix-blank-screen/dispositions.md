@@ -27,3 +27,5 @@ Findings source: openspec/findings-blank-screen-2026-08-21.md (5 findings F1–F
 | 18 | L1 review | REJECT — Retry dead code (circular: key bump needs lastError clear, clear needs remount), error case not narrowed by where (post-paint probes failure would blank healthy app), watchdog arms on non-accepted delivery, copy overclaims, token-not-behavior test assertions. Revision 1/2 sent to worker |
 | 19 | L3 review | CLEAN (1 low theoretical note: memoized build caches rejection — accepted) |
 | 20 | L3 gatefull | running |
+| 21 | L3 gatefull | PASS |
+| 22 | L3 MERGED | --no-ff onto staging, regate PASS, worktree cleaned |
