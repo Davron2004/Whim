@@ -82,6 +82,8 @@ export const COPY = {
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
   buildLeaveRunning: 'Leave it running',
+  /** Opens the run timeline for the attempt on screen. */
+  buildDetails: 'Details',
   doneBody: 'It’s on your home screen. Open it, or tell Whim what to change.',
   doneOpen: 'Open it',
   doneBackToApps: 'Back to your apps',
@@ -188,6 +190,21 @@ export function addedFieldsLine(fields: readonly string[]): string {
 /** The done step's title: "<App name> is ready". */
 export function readyTitle(name: string): string {
   return `${name} is ready`;
+}
+
+/**
+ * The build screen's activity line: how long the attempt has been running, and how much output has
+ * come back so far. `elapsed` is the `m:ss` clock; `chars` is a cumulative character COUNT — a
+ * size, never any of the generated text itself.
+ */
+export function buildActivityLine(elapsed: string, chars: number): string {
+  const written = chars === 1 ? '1 character' : `${chars} characters`;
+  return `${elapsed} · ${written} so far`;
+}
+
+/** The stall heartbeat's statement, shown only once the quiet threshold has been exceeded. */
+export function buildQuietLine(seconds: number): string {
+  return `Quiet for ${seconds}s`;
 }
 
 /** The clarify step's headline, counted: one, two or three quick things. */

@@ -102,6 +102,20 @@ reference**. Token text is counted and discarded. Behavioural coverage: `build-l
   then the delivery-failure settlement). A consumer showing failure detail should read the **last**
   terminal entry; `stageDurations` (which uses the first) is unaffected.
 
+## chain-3 seam for chain-4 (task 5.4)
+
+`BuildStep` renders the activity line, the heartbeat and a `Details` button; it holds NO visibility
+state and reads nothing. The whole seam is one prop on `BuildStepProps`:
+
+```ts
+  onShowDetails?: () => void;   // rendered as onPress={onShowDetails}
+```
+
+Chain-4 owns the open/close state and the read: hold it in `LauncherShell`, pass `onShowDetails`,
+render `RunTimeline` over `journal.get(attemptId)` read **on open**. Making the prop required is
+chain-4's call; the `?` exists only because nothing wires it yet. Copy: `COPY.buildDetails`, plus
+chain-3's `buildActivityLine(elapsed, chars)` / `buildQuietLine(seconds)` in `copy.ts`.
+
 ## Error surface
 
 None. Every journal call is best-effort and non-throwing (chain-1's contract); no new failure mode
