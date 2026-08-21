@@ -24,6 +24,9 @@ import * as path from 'node:path';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import { MapKVBackend } from '../../version-store';
+import { PendingBuildStore } from '../pending-builds';
+import { RunJournalStore } from '../run-journal';
+import { dropPendingBuild } from '../build-lifecycle';
 import { loadServerUrl, saveServerUrl } from '../server-address';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
@@ -355,13 +358,111 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
     h.ok(actionsFn.includes('pending.get(s.pendingId)'), 'the actions are decided by whether the record is still there');
     h.ok(actionsFn.includes('retryable: true'), 'a still-present record makes the primary action a Retry');
-    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Dismiss on that record');
+    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Discard on that record');
     h.ok(actionsFn.includes('retryable: false'), 'and a record dismissed in the meantime falls back to the live Rephrase/Back shape');
     h.ok(rootSrc.includes('{...failureActions(screen)}'), 'the failure screen is rendered with those actions — without this the wiring is inert');
     h.ok(/\{retryable \? COPY\.screenErrorRetry : COPY\.failureRephrase\}/.test(read('FailureScreen.tsx')), 'and `retryable` is what relabels the primary action');
 
     const retryFn = rootSrc.slice(rootSrc.indexOf('const onRetryPending'), rootSrc.indexOf('const failureActions'));
     h.ok(retryFn.includes('runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id)'), 'Retry re-runs the stored prompt under the SAME launcher id — one ghost, not a second');
+  });
+
+  await h.test('failure exits: Back keeps the record and its journal readable, Discard deletes both', () => {
+    // `prompt-flow`: "Back leaves the record in place" / "Discard removes the record".
+    // Two halves, and they claim different things. The first drives a real store pair to show
+    // what the two OPERATIONS do — that `dropPendingBuild` + `journal.delete` really is a paired
+    // delete, and that a record left alone stays readable; it is evidence about the stores, NOT
+    // about the shell, which cannot be imported here. The second half is the source lock that ties
+    // each exit to one of those operations: the leave handler touches no store at all, and Discard
+    // is the shell's single `dropAttempt` path.
+    const kv = new MapKVBackend();
+    const pending = new PendingBuildStore(kv);
+    const journal = new RunJournalStore(kv);
+    const rec = pending.create({ id: 'run-back', prompt: 'a tip splitter', workingTitle: 'Tip splitter' });
+    journal.create(rec.id);
+    journal.appendTerminal(rec.id, { failure: { reason: 'it did not build', diagnostics: [{ hint: 'say it differently' }] } });
+
+    // Left alone — which is all the leave path does — the record and its journal are exactly as
+    // the failure left them.
+    h.eq(pending.get(rec.id)?.id, rec.id, 'the pending-build record survives leaving');
+    h.eq(pending.list().map(r => r.id), [rec.id], 'so its ghost tile still renders');
+    h.eq((journal.get(rec.id) ?? []).length, 1, 'and its run journal is still readable');
+
+    // Discard: `dropAttempt`'s two calls, in the shell's own order.
+    dropPendingBuild(pending, rec.id);
+    journal.delete(rec.id);
+    h.eq(pending.get(rec.id), null, 'discarding deletes the record');
+    h.eq(pending.list().map(r => r.id), [], 'so the ghost tile stops rendering');
+    h.eq(journal.get(rec.id), null, 'and takes the journal with it');
+
+    const leaveFn = rootSrc.slice(rootSrc.indexOf('const onLeaveFailure'), rootSrc.indexOf('const onRetryPending'));
+    h.ok(leaveFn.includes('goHome();'), 'the leave handler is a plain navigation home');
+    h.ok(
+      !/dropAttempt\(|dropPendingBuild\(|journal\.|pending\./.test(leaveFn),
+      'and calls NOTHING on the stores — no record, journal or pending-build call on the leave path',
+    );
+    const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
+    h.eq(
+      (actionsFn.match(/onBack: onLeaveFailure/g) ?? []).length,
+      2,
+      'both entry points — ghost-opened and live-failure — get the same non-destructive Back',
+    );
+    h.ok(
+      /onBack: \(\) => void;/.test(read('FailureScreen.tsx')),
+      'and the screen actually takes it, so the wiring is not inert',
+    );
+  });
+
+  await h.test('failure exits: a LIVE failure’s Discard deletes the record it just settled — never bare navigation', () => {
+    // A live failure screen is not action-free: every ending that went through `settleFailed` has
+    // already persisted a `failed` record, so the Discard it offers must delete that record. A
+    // branch that wired Discard to `goHome` would render a danger-styled control that silently
+    // does nothing — the same label/effect mismatch this change exists to remove, the other way
+    // round.
+    const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
+    h.ok(
+      actionsFn.includes('const settled = s.recordId != null ? pending.get(s.recordId) : null;'),
+      'the live branch asks whether this failure already settled a record',
+    );
+    h.ok(
+      actionsFn.includes('...(settled != null ? { onDismiss: () => onDismissPending(settled) } : {})'),
+      'and when it did, Discard goes through the SAME onDismissPending → dropAttempt path the ghost branch uses',
+    );
+    h.ok(!/onDismiss: goHome/.test(actionsFn), 'no branch offers a Discard that is merely navigation');
+    h.eq(
+      (rootSrc.match(/dropPendingBuild\(/g) ?? []).length,
+      1,
+      'and the live path opens no second deletion call site — record and journal still die together',
+    );
+
+    // Which live endings carry a record: the three that settle one, and only those.
+    const failureFn = rootSrc.slice(rootSrc.indexOf('const failure = ('), rootSrc.indexOf('const openCompose'));
+    h.ok(
+      failureFn.includes('...(settledAttemptId != null ? { journalId: settledAttemptId, recordId: settledAttemptId } : {})'),
+      'the failure-screen builder names the settled attempt only when it was given one',
+    );
+    h.ok(
+      /setScreen\(failure\(editing, building\.text, e, 'build failed', counts\.repair, attemptId\)\)/.test(rootSrc),
+      'the build-threw ending passes the attempt `settleFailed` just persisted',
+    );
+    h.ok(/failure\(plan\.editing, plan\.text, e, 'rewrite failed'\)/.test(rootSrc), 'rewrite passes none — it fails before any attempt exists');
+    h.ok(/failure\(from\.editing, from\.text, e, 'clarify failed'\)/.test(rootSrc), 'and clarify passes none either');
+
+    const streamFn = rootSrc.slice(rootSrc.indexOf('const showStreamFailure'), rootSrc.indexOf('const runAttempt'));
+    h.ok(streamFn.includes('recordId: input.attemptId'), 'both stream-failure endings carry the record they settled');
+    h.ok(
+      streamFn.indexOf('settleFailed(') < streamFn.indexOf('recordId: input.attemptId'),
+      'and only after that record has actually been persisted',
+    );
+
+    // The other side of the same requirement: with nothing to discard the button is not rendered.
+    // `FailureScreen.tsx` is source-checked in `failure-screen.suite.ts`; what belongs here is that
+    // the shell can express the absence at all.
+    h.ok(/onDismiss\?: \(\) => void;/.test(read('FailureScreen.tsx')), 'the screen’s discard callback is optional');
+    h.ok(
+      read('FailureScreen.tsx').includes('{onDismiss != null && ('),
+      'so a clarify/rewrite failure — handed no onDismiss — renders no Discard button at all',
+    );
   });
 
   await h.test('concurrent attempts: a settling attempt only ever clears refs that still point at itself', () => {
