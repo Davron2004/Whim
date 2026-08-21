@@ -16,6 +16,7 @@
 
 import type { Clarification, ClarifyQuestion, GenerationEvent, PlanRow, RewriteResponse } from '@whim/contract';
 import type { InstalledApp } from './app-index';
+import type { RunAggregates, RunJournalEntry } from './run-journal';
 import { COPY } from './copy';
 import { GenerationClientError } from './transport-shared';
 import { appColor } from '../../sdk/theme';
@@ -361,6 +362,102 @@ export function workingTitleFromPrompt(text: string): string {
   const cut = collapsed.slice(0, WORKING_TITLE_MAX_CHARS);
   const lastSpace = cut.lastIndexOf(' ');
   return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+}
+
+// ── Derived run signals (generation-observability design D6) ────────────────────────────────────
+// Elapsed time, the output counter and the heartbeat are DERIVED in memory from the request's own
+// start timestamp and the same cumulative counts the journal throttles into entries — they are
+// never separately persisted, and they never read the journal back. All four helpers below are
+// pure so the build screen's liveness signals are Node-testable without a clock or a render.
+
+/** Cumulative output counts before any token has arrived. */
+export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
+
+/**
+ * Everything the build screen's liveness signals are derived FROM, held in memory for the life of
+ * one attempt and never read back out of the journal (design D6): the moment the attempt started,
+ * the cumulative counts folded from its stream, and when its last `token`/`stage` event arrived.
+ * The rendered values — `elapsedLabel(startedAt, now)`, `quietSecondsSince(lastArrivalAt, now)` —
+ * are computed per render from a single `now`, so the clock and the heartbeat can never disagree.
+ */
+export interface RunSignals {
+  startedAt: number;
+  aggregates: RunAggregates;
+  lastArrivalAt: number;
+}
+
+/** How often the shell re-renders a live build screen so its derived clock moves (design D6/D8):
+ *  a re-render on a timer, never an animation, and never a journal read. */
+export const RUN_SIGNAL_TICK_MS = 1_000;
+
+/**
+ * Fold one stream event into the running totals. Only a `token` event moves them: `chars` by the
+ * token's character count, `tokens` by one. The token's TEXT is counted and discarded — it is
+ * never carried in the returned value, which is what keeps the derived counter inside the
+ * no-internals rule. Any other event returns `prev` unchanged (same reference, so a React state
+ * setter sees no spurious change).
+ */
+export function accumulateRunAggregates(prev: RunAggregates, event: GenerationEvent): RunAggregates {
+  if (event.type !== 'token') return prev;
+  return { chars: prev.chars + event.text.length, tokens: prev.tokens + 1 };
+}
+
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+
+/**
+ * Elapsed wall time as a plain `m:ss` clock (`0:07`, `1:05`, `12:30`) — a timer display, not a
+ * progress claim. A `now` before `startedAt` (clock skew, or a value read before the first tick)
+ * reads as `0:00` rather than a negative.
+ */
+export function elapsedLabel(startedAt: number, now: number): string {
+  const totalSeconds = Math.max(0, Math.floor((now - startedAt) / MS_PER_SECOND));
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const seconds = totalSeconds % SECONDS_PER_MINUTE;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** How long the stream may go without a `token` or `stage` event before the screen says so
+ *  (`prompt-flow` spec, "A stall heartbeat visibly reports when the stream goes quiet"). Wholly
+ *  independent of the journal's own aggregate write throttle (design D6). */
+export const HEARTBEAT_QUIET_MS = 8_000;
+
+/**
+ * Whole seconds the stream has been quiet, or `null` when it has not been quiet long enough to
+ * report — which is the "show no quiet indication" case, including the instant a fresh event
+ * arrives and resets `lastArrivalAt`. The threshold must be EXCEEDED, so exactly
+ * `HEARTBEAT_QUIET_MS` still reads as healthy.
+ */
+export function quietSecondsSince(lastArrivalAt: number, now: number): number | null {
+  const quietMs = now - lastArrivalAt;
+  if (quietMs <= HEARTBEAT_QUIET_MS) return null;
+  return Math.floor(quietMs / MS_PER_SECOND);
+}
+
+/** One stage transition as the timeline renders it. `durationMs` is `null` for a stage that never
+ *  ended — the attempt was still in it when the journal stops. */
+export interface StageDuration {
+  stage: Stage;
+  durationMs: number | null;
+}
+
+/**
+ * A journal's `stage` entries as consecutive-transition durations (design D7): each stage lasts
+ * until the next stage entry, and the last one lasts until the terminal entry if there is one.
+ * Entries of any other kind are ignored — the journal is a mixed log, and the timeline's spine is
+ * the stage transitions alone. Out-of-order timestamps clamp to `0` rather than reporting a
+ * negative duration.
+ */
+export function stageDurations(journal: readonly RunJournalEntry[]): StageDuration[] {
+  const stages = journal.filter((e): e is RunJournalEntry & { stage: Stage } => e.kind === 'stage' && e.stage != null);
+  const terminal = journal.find((e) => e.kind === 'terminal');
+  return stages.map((entry, i) => {
+    const endsAt = i + 1 < stages.length ? stages[i + 1].t : terminal?.t;
+    return {
+      stage: entry.stage,
+      durationMs: endsAt == null ? null : Math.max(0, endsAt - entry.t),
+    };
+  });
 }
 
 /** A ghost tile's colour (`pending-builds` design D6): a deterministic hash of the launcher id

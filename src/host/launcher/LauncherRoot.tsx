@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { BackHandler, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -33,11 +33,14 @@ import { AppIndex, InstalledApp } from './app-index';
 import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord } from './pending-builds';
+import { RunJournalStore } from './run-journal';
+import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
   failPendingBuild,
   hydratedDiagnostics,
+  journalStreamEvent,
   retryBuildScreen,
   startPendingBuild,
 } from './build-lifecycle';
@@ -59,8 +62,12 @@ import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
+import RunTimeline from './RunTimeline';
+import { runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeGridSkeleton } from './flow-skeletons';
 import {
+  EMPTY_RUN_AGGREGATES,
+  RUN_SIGNAL_TICK_MS,
   acceptClarifyQuestions,
   backFrom,
   buildStep,
@@ -77,7 +84,7 @@ import {
   withPlan,
   withStage,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { shellPalette } from './theme';
 import { ThemeProvider, useTheme } from './theme-context';
 import { loadServerUrl, saveServerUrl } from './server-address';
@@ -111,6 +118,10 @@ type Screen =
        *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
        *  "Failure screens hydrate from the persisted failure payload"). */
       pendingId?: string;
+      /** Which run journal describes the attempt this screen is about — the live attempt's
+       *  launcher id, or the record's own. The what-happened section is read from it ONCE, when
+       *  the screen opens; a missing journal changes nothing else about the screen. */
+      journalId?: string;
     };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
@@ -227,17 +238,25 @@ export default function LauncherRoot() {
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
-  const { index, access, pending, kv } = useMemo(() => {
+  const { index, access, pending, journal, kv } = useMemo(() => {
     const launcherKv: KVBackend = createMmkvBackend('whim.launcher');
     const idx = new AppIndex(launcherKv);
     const store = createPersistentStore(createMmkvBackend('whim-version-store'));
     const acc = new StoreAccess({ store, index: idx, deleteStorage: (appId) => deleteStorage({ appId }) });
-    return { index: idx, access: acc, pending: new PendingBuildStore(launcherKv), kv: launcherKv };
+    return {
+      index: idx,
+      access: acc,
+      pending: new PendingBuildStore(launcherKv),
+      // The run journal rides on the SAME backend instance as the pending record it is a sibling
+      // key of (design D1), under the same single-writer discipline.
+      journal: new RunJournalStore(launcherKv),
+      kv: launcherKv,
+    };
   }, []);
 
   return (
     <ThemeProvider>
-      <LauncherShell index={index} access={access} pending={pending} kv={kv} />
+      <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} />
     </ThemeProvider>
   );
 }
@@ -271,8 +290,15 @@ function LauncherShell({
   index,
   access,
   pending,
+  journal,
   kv,
-}: Readonly<{ index: AppIndex; access: StoreAccess; pending: PendingBuildStore; kv: KVBackend }>) {
+}: Readonly<{
+  index: AppIndex;
+  access: StoreAccess;
+  pending: PendingBuildStore;
+  journal: RunJournalStore;
+  kv: KVBackend;
+}>) {
   const { theme } = useTheme();
   const palette = shellPalette(theme);
 
@@ -306,6 +332,46 @@ function LauncherShell({
   // -state change — reading the screen back out of here — and not a second subscriber, an event
   // bus or per-tile progress. Cleared the moment the attempt settles.
   const liveRef = useRef<{ id: string; screen: BuildScreen } | null>(null);
+
+  // The live attempt's derived-signal state (design D6): its start time, the cumulative counts
+  // folded from its stream and the arrival that the heartbeat measures quiet from. A REF, not
+  // state, because it moves on every token — re-rendering per token is exactly the cadence this
+  // change refuses. The build screen's clock moves on the tick below instead, and the journal is
+  // never read to produce any of it.
+  const signalsRef = useRef<RunSignals | null>(null);
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (screen.kind !== 'build') return undefined;
+    const timer = setInterval(() => setTick((t) => t + 1), RUN_SIGNAL_TICK_MS);
+    return () => clearInterval(timer);
+  }, [screen.kind]);
+
+  // The build screen's details view (task 5.4): the entries read at the moment it was opened, or
+  // `null` while it is closed. STATE, not a ref, because opening it is exactly the one moment this
+  // screen should re-render — and the read happens there, never on the tick above.
+  const [timeline, setTimeline] = useState<RunJournal | null>(null);
+
+  // While the details view is up, hardware back closes IT rather than cancelling the run: this
+  // listener is registered after the build screen's own, and the newest listener runs first.
+  useEffect(() => {
+    if (timeline === null) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setTimeline(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [timeline]);
+
+  // Leaving the build screen closes it, so returning to a later attempt never opens onto the
+  // previous one's entries.
+  useEffect(() => {
+    if (screen.kind !== 'build') setTimeline(null);
+  }, [screen.kind]);
+
+  /** Whether the timeline shows the developer counts, decided ONCE for both surfaces — never a
+   *  bare `__DEV__` check (decision #60(c)). */
+  const timelineDevMode = runTimelineDevModeEnabled(__DEV__);
 
   const refresh = () => {
     setApps(index.list());
@@ -366,6 +432,10 @@ function LauncherShell({
   const onDelete = async (app: InstalledApp) => {
     try {
       await access.remove(app);
+      // The app's retained last-run report goes with it, in the SAME operation — the discipline
+      // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
+      // ever revisits this id, so a report left behind would never be reclaimed.
+      journal.deleteLastRun(app.id);
       refresh();
     } catch (e) {
       log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
@@ -404,6 +474,7 @@ function LauncherShell({
     err: unknown,
     stage: string,
     observed = 0,
+    journalId?: string,
   ): Screen => {
     const reasoned = errorReason(err);
     logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err });
@@ -412,6 +483,9 @@ function LauncherShell({
       editing,
       prompt,
       ...reasoned,
+      // Absent for the clarify and rewrite steps: they fail before any attempt — and so before any
+      // journal — exists, and a timeline is never invented for a run that never started.
+      ...(journalId != null ? { journalId } : {}),
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
@@ -483,11 +557,32 @@ function LauncherShell({
     if (liveRef.current?.id === attemptId) liveRef.current = null;
   };
 
+  /** The record deletion the user's two delete gestures share — cancelling an in-flight attempt
+   *  and dismissing a `failed`/`interrupted` ghost — WITH the run journal that rode alongside it
+   *  (`generation-run-journal` "Dismissing a ghost deletes its journal": the same operation, so a
+   *  journal can never outlive the record it describes). */
+  const dropAttempt = (id: string) => {
+    dropPendingBuild(pending, id);
+    journal.delete(id);
+  };
+
   /** A terminal `failure`, a stream that ended without one, or a throw: the record moves to
    *  `failed` and STAYS on the grid, so the attempt is still reachable after the screen is gone.
-   *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. */
-  const settleFailed = (id: string, reason: string, diagnostics: readonly { hint: string }[]) => {
+   *  Never a delete — only the user's cancel/dismiss and a successful delivery do that. The
+   *  journal's terminal entry is written here too, and FIRST: this is the one settlement every
+   *  non-deliverable ending passes through, and the entry must not wait on the aggregate throttle
+   *  (`generation-run-journal` "A terminal entry is always written immediately"). */
+  const settleFailed = (
+    id: string,
+    reason: string,
+    diagnostics: readonly { hint: string }[],
+    observed: RunTerminalCounts,
+  ) => {
     releaseLiveRef(id);
+    // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
+    // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
+    // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
+    journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
     failPendingBuild(pending, id, reason, diagnostics);
     refresh();
   };
@@ -503,7 +598,7 @@ function LauncherShell({
     }
     const live = liveRef.current;
     liveRef.current = null;
-    if (live) dropPendingBuild(pending, live.id);
+    if (live) dropAttempt(live.id);
     refresh();
   };
 
@@ -518,14 +613,16 @@ function LauncherShell({
     reason: string;
     hints: readonly { hint: string }[];
     observed: number;
+    counts: RunTerminalCounts;
   }) => {
-    settleFailed(input.attemptId, input.reason, input.hints);
+    settleFailed(input.attemptId, input.reason, input.hints, input.counts);
     setScreen({
       kind: 'failure',
       editing: input.editing,
       prompt: input.prompt,
       reason: input.reason,
       diagnostics: input.hints,
+      journalId: input.attemptId,
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
@@ -554,6 +651,20 @@ function LauncherShell({
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
     const attemptId = startPendingBuild(pending, { editing, text: building.text, reuseId });
+    // The journal is created at the SAME moment as the record it is a sibling of
+    // (`generation-run-journal` "A run journal is created alongside its pending-build record"),
+    // and the attempt's derived signals start from the same instant the request does.
+    journal.create(attemptId);
+    const startedAt = Date.now();
+    let signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
+    signalsRef.current = signals;
+    /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
+     *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
+     *  tally. Numbers only — the same redaction rule every journal entry lives under. */
+    const terminalCounts = (): RunTerminalCounts => ({
+      aggregates: signals.aggregates,
+      observedDiagnostics: counts.diagnostic,
+    });
     // The live screen a `building` ghost taps back into; kept in step with the stream below.
     let live = building;
     liveRef.current = { id: attemptId, screen: live };
@@ -574,6 +685,11 @@ function LauncherShell({
       // held until the stream ends so the terminal-event handling below stays in one place.
       for await (const event of generateApp(clientOptions, request, controller.signal)) {
         countEvent(counts, event);
+        // The journal write and the signal fold for this event, in one place and at one clock
+        // reading: `stage` journals immediately, `token` goes through the store's own ~5s
+        // throttle, everything else writes nothing (`build-lifecycle#journalStreamEvent`).
+        signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
+        signalsRef.current = signals;
         if (event.type === 'stage') {
           live = withStage(live, event.stage);
           liveRef.current = { id: attemptId, screen: live };
@@ -602,6 +718,7 @@ function LauncherShell({
           reason: GENERIC_STREAM_ERROR,
           hints: [],
           observed: counts.repair,
+          counts: terminalCounts(),
         });
         return;
       }
@@ -620,10 +737,14 @@ function LauncherShell({
           reason: terminal.reason,
           hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
           observed: counts.repair,
+          counts: terminalCounts(),
         });
         return;
       }
 
+      // The stream ended with a deliverable result: the terminal entry is written HERE, at the end
+      // of the stream and before delivery starts, carrying no failure field.
+      journal.appendTerminal(attemptId, terminalCounts());
       live = withDelivering(live);
       liveRef.current = { id: attemptId, screen: live };
       setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
@@ -637,6 +758,11 @@ function LauncherShell({
         wire: terminal.app,
         summary: terminal.summary,
       });
+      // Delivery landed: the attempt's journal becomes the delivered app's retained last-run
+      // report, under the id the app NOW has (a behind-tip rebuild delivers onto a fork, whose id
+      // is not the attempt's). After the delivery, never before it — a death in between loses the
+      // report and nothing else (design D5).
+      journal.moveToLastRun(attemptId, delivered.id);
       releaseLiveRef(attemptId);
       refresh();
       if (ctl.detached) return; // "Leave it running": delivered silently, the user is elsewhere
@@ -646,8 +772,8 @@ function LauncherShell({
       releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
-      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics);
-      setScreen(failure(editing, building.text, e, 'build failed', counts.repair));
+      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts());
+      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId));
     }
   };
 
@@ -692,6 +818,7 @@ function LauncherShell({
       observedRepairAttempts: 0,
       hasWorkingVersion: edited != null,
       pendingId: rec.id,
+      journalId: rec.id,
     };
   };
 
@@ -726,14 +853,14 @@ function LauncherShell({
       abortLiveAttempt();
       return;
     }
-    dropPendingBuild(pending, rec.id);
+    dropAttempt(rec.id);
     refresh();
   };
 
   /** Dismiss a `failed`/`interrupted` record, from its quick actions or its failure screen: the
    *  record is deleted and its ghost stops rendering. */
   const onDismissPending = (rec: PendingBuildRecord) => {
-    dropPendingBuild(pending, rec.id);
+    dropAttempt(rec.id);
     goHome();
   };
 
@@ -749,6 +876,22 @@ function LauncherShell({
    *  they stay Rephrase and Back — and the record that failure just persisted keeps its ghost on
    *  the grid either way. A record dismissed elsewhere in the meantime falls back to the live
    *  shape rather than acting on a ghost that is no longer there. */
+  /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
+   *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
+   *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
+   *  about the screen depends on it. */
+  const failureJournal = useMemo(
+    () => (screen.kind === 'failure' && screen.journalId != null ? journal.get(screen.journalId) : null),
+    [screen, journal],
+  );
+
+  /** The build screen's Details affordance: ONE read of the in-flight attempt's journal, at the
+   *  moment the user asks for it. */
+  const onShowDetails = () => {
+    const id = liveRef.current?.id;
+    setTimeline((id != null ? journal.get(id) : null) ?? []);
+  };
+
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
     const ghost = s.pendingId != null ? pending.get(s.pendingId) : null;
     if (ghost != null) {
@@ -854,12 +997,33 @@ function LauncherShell({
   } else if (screen.kind === 'build') {
     const from = screen;
     content = (
-      <BuildStep
-        stage={from.stage}
-        delivering={from.delivering}
-        onLeaveRunning={onLeaveRunning}
-        onCancel={() => onCancelGeneration(from.editing, from.text)}
-      />
+      <>
+        <BuildStep
+          stage={from.stage}
+          delivering={from.delivering}
+          signals={signalsRef.current}
+          now={Date.now()}
+          onLeaveRunning={onLeaveRunning}
+          onCancel={() => onCancelGeneration(from.editing, from.text)}
+          onShowDetails={onShowDetails}
+        />
+        {timeline !== null && (
+          <View style={[styles.timelineOverlay, { backgroundColor: palette.bg }]}>
+            {/* The inset edges are DEFINED here, so the padding that keeps the list off them has
+                to live on an inner view — an absolutely-positioned box ignores its own padding. */}
+            <View style={styles.timelineBody}>
+              <RunTimeline entries={timeline} devMode={timelineDevMode} />
+            </View>
+            <TouchableOpacity
+              onPress={() => setTimeline(null)}
+              accessibilityRole="button"
+              style={[styles.timelineClose, { borderColor: palette.cardBorder }]}
+            >
+              <Text style={[TYPE_SCALE.bodyEmphatic, { color: palette.textMuted }]}>{COPY.timelineClose}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </>
     );
   } else if (screen.kind === 'done') {
     const from = screen;
@@ -873,6 +1037,9 @@ function LauncherShell({
         diagnostics={screen.diagnostics}
         observedRepairAttempts={screen.observedRepairAttempts}
         hasWorkingVersion={screen.hasWorkingVersion}
+        journal={failureJournal}
+        attemptStarted={screen.journalId != null}
+        devMode={timelineDevMode}
         {...failureActions(screen)}
       />
     );
@@ -917,6 +1084,18 @@ function LauncherShell({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   loading: { flex: 1, padding: SPACING.lg },
+  // The details view sits OVER the build screen rather than replacing it: the run carries on
+  // behind it, and closing it returns to a progress screen that never went away.
+  timelineOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  timelineBody: { flex: 1, paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
+  timelineClose: {
+    marginHorizontal: SPACING.lg,
+    marginBottom: SPACING.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.card,
+    paddingVertical: SPACING.sm,
+    alignItems: 'center',
+  },
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,
