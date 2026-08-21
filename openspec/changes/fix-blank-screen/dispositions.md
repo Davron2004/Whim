@@ -29,3 +29,9 @@ Findings source: openspec/findings-blank-screen-2026-08-21.md (5 findings F1–F
 | 20 | L3 gatefull | running |
 | 21 | L3 gatefull | PASS |
 | 22 | L3 MERGED | --no-ff onto staging, regate PASS, worktree cleaned |
+| 23 | L1 revision 1 | complete, gate PASS, commit 4c35014 — all 5 review findings addressed; fatal-where set verified as {bundle,mount,deliver} |
+| 24 | L1 redcheck (rev 1) | RED — per-site assertions fail on revert |
+| 25 | L1 integrity (rev 1) | exit 0 — same 5 files |
+| 26 | L1 re-review | dispatched to same reviewer |
+| 27 | L1 re-review | REJECT converging — F1-F7 all resolved; 2 new MED residuals (stale watchdog fires onto retry-in-progress; probes error frames dropped unlogged) + 4 lows. Revision 2/2 (final) sent |
+| 28 | L1 re-review (rev 2) | CLEAN — both mandatory fixes exact; new assertions non-vacuous; 1 non-blocking comment-wording nit (theme-capture sentence) accepted as-is |
