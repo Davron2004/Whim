@@ -35,3 +35,5 @@ Findings source: openspec/findings-blank-screen-2026-08-21.md (5 findings F1–F
 | 26 | L1 re-review | dispatched to same reviewer |
 | 27 | L1 re-review | REJECT converging — F1-F7 all resolved; 2 new MED residuals (stale watchdog fires onto retry-in-progress; probes error frames dropped unlogged) + 4 lows. Revision 2/2 (final) sent |
 | 28 | L1 re-review (rev 2) | CLEAN — both mandatory fixes exact; new assertions non-vacuous; 1 non-blocking comment-wording nit (theme-capture sentence) accepted as-is |
+| 29 | L1 gatefull | PASS |
+| 30 | L1 MERGED | --no-ff onto staging, regate PASS, worktree cleaned. All three lanes terminal |
