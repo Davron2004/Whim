@@ -118,6 +118,12 @@ type Screen =
        *  what turns the primary action into Retry and the secondary into Dismiss (`prompt-flow`
        *  "Failure screens hydrate from the persisted failure payload"). */
       pendingId?: string;
+      /** The pending-build record this LIVE failure screen already settled — set by every ending
+       *  that went through `settleFailed`, absent for the clarify/rewrite failures, which fail
+       *  before any attempt (and so any record) exists. Deliberately NOT `pendingId`: it says
+       *  there is something to discard, without claiming the screen was hydrated from a ghost, so
+       *  the primary action stays Rephrase rather than flipping to Retry. */
+      recordId?: string;
       /** Which run journal describes the attempt this screen is about — the live attempt's
        *  launcher id, or the record's own. The what-happened section is read from it ONCE, when
        *  the screen opens; a missing journal changes nothing else about the screen. */
@@ -474,7 +480,7 @@ function LauncherShell({
     err: unknown,
     stage: string,
     observed = 0,
-    journalId?: string,
+    settledAttemptId?: string,
   ): Screen => {
     const reasoned = errorReason(err);
     logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err });
@@ -484,8 +490,10 @@ function LauncherShell({
       prompt,
       ...reasoned,
       // Absent for the clarify and rewrite steps: they fail before any attempt — and so before any
-      // journal — exists, and a timeline is never invented for a run that never started.
-      ...(journalId != null ? { journalId } : {}),
+      // journal or pending-build record — exists, and neither a timeline nor a discardable attempt
+      // is ever invented for a run that never started. An attempt's launcher id is both its
+      // journal key and its record id, so the one argument answers both.
+      ...(settledAttemptId != null ? { journalId: settledAttemptId, recordId: settledAttemptId } : {}),
       observedRepairAttempts: observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: editing != null,
@@ -623,6 +631,9 @@ function LauncherShell({
       reason: input.reason,
       diagnostics: input.hints,
       journalId: input.attemptId,
+      // `settleFailed` just persisted the record above, so this live screen HAS an attempt to
+      // discard — and its Discard must delete it rather than merely navigate.
+      recordId: input.attemptId,
       observedRepairAttempts: input.observed,
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
@@ -864,6 +875,14 @@ function LauncherShell({
     goHome();
   };
 
+  /** Leave a failure screen without acting on the attempt at all — the honest counterpart to
+   *  Dismiss, and what the hardware back gesture performs. It touches NO store: the record keeps
+   *  its ghost tile and its run journal stays readable, so a user who only wanted to read the
+   *  failure can walk away without destroying it. */
+  const onLeaveFailure = () => {
+    goHome();
+  };
+
   /** Retry from a hydrated failure screen: a NEW generation from the record's stored prompt,
    *  reusing the same launcher id, so the ghost the user is looking at is the one that resolves. */
   const onRetryPending = async (rec: PendingBuildRecord) => {
@@ -871,11 +890,6 @@ function LauncherShell({
     await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
   };
 
-  /** The failure screen's two actions. Hydrated from a `failed`/`interrupted` record, they are
-   *  Retry (same launcher id) and Dismiss (delete the record); shown live off a terminal event,
-   *  they stay Rephrase and Back — and the record that failure just persisted keeps its ghost on
-   *  the grid either way. A record dismissed elsewhere in the meantime falls back to the live
-   *  shape rather than acting on a ghost that is no longer there. */
   /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
    *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
@@ -892,19 +906,34 @@ function LauncherShell({
     setTimeline((id != null ? journal.get(id) : null) ?? []);
   };
 
+  /**
+   * The failure screen's actions. Back is the same non-destructive leave in every shape; the
+   * primary is Retry when the screen was hydrated from a ghost (`pendingId`) and Rephrase when it
+   * was shown live. Discard is offered ONLY when there is an attempt to discard, and it always
+   * deletes one: a hydrated ghost's record, or — for a live failure that already settled one
+   * (`recordId`, every ending that went through `settleFailed`) — that record. Both go through
+   * `onDismissPending`, so record and journal die together in the shell's single deletion path.
+   * The clarify and rewrite failures fail before any attempt exists, so they get NO Discard at all
+   * rather than one that would merely navigate under a destructive label. A record discarded
+   * elsewhere in the meantime drops the button the same way, instead of acting on a ghost that is
+   * no longer there.
+   */
   const failureActions = (s: Extract<Screen, { kind: 'failure' }>) => {
     const ghost = s.pendingId != null ? pending.get(s.pendingId) : null;
     if (ghost != null) {
       return {
         retryable: true,
         onRephrase: () => onRetryPending(ghost),
+        onBack: onLeaveFailure,
         onDismiss: () => onDismissPending(ghost),
       };
     }
+    const settled = s.recordId != null ? pending.get(s.recordId) : null;
     return {
       retryable: false,
       onRephrase: () => openCompose(s.editing, s.prompt),
-      onDismiss: goHome,
+      onBack: onLeaveFailure,
+      ...(settled != null ? { onDismiss: () => onDismissPending(settled) } : {}),
     };
   };
 

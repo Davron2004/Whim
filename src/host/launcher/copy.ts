@@ -155,7 +155,12 @@ export const COPY = {
   failureTitle: 'Couldn’t build this app',
   failureHintsTitle: 'What to try',
   failureRephrase: 'Try rephrasing',
-  failureDismiss: 'Back to your apps',
+  // The failure screen's two exits are deliberately NOT interchangeable: `failureBack` leaves the
+  // attempt exactly where it is, `failureDismiss` deletes it. A destructive action is never
+  // labelled as plain navigation (`prompt-flow` "Failure screens hydrate from the persisted
+  // failure payload").
+  failureBack: 'Back to your apps',
+  failureDismiss: 'Discard this attempt',
   // The recoverable error screen the launcher's screen boundary renders (obs-v1) — plain
   // English, never the thrown error itself.
   screenErrorTitle: 'This screen stopped working',
