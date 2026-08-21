@@ -93,7 +93,7 @@ async function transcodeToMp4(webmPath, mp4Path) {
     await execFileP('ffmpeg', ['-y', '-i', webmPath, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', mp4Path]);
     return true;
   } catch (err) {
-    if (err && err.code === 'ENOENT') return false; // ffmpeg not installed — caller keeps the .webm
+    if (err?.code === 'ENOENT') return false; // ffmpeg not installed — caller keeps the .webm
     throw err; // ffmpeg ran and failed — a real problem, don't swallow it
   }
 }

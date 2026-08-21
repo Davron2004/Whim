@@ -495,9 +495,9 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
   eq('unobserved verdict: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
   eq('unobserved verdict: no result is emitted — the candidate is never delivered', events.filter((e) => e.type === 'result').length, 0);
 
-  const terminal = events[events.length - 1];
-  check('unobserved verdict: the single terminal is a failure', terminal.type === 'failure');
-  if (terminal.type === 'failure') {
+  const terminal = events.at(-1);
+  check('unobserved verdict: the single terminal is a failure', terminal?.type === 'failure');
+  if (terminal?.type === 'failure') {
     eq('unobserved verdict: the reason says we could not VERIFY, not that the app was unsafe', terminal.reason, UNVERIFIED_RUN_COPY);
     check('unobserved verdict: the reason is NOT the containment-failure reason', terminal.reason !== CONTAINMENT_FAILURE_COPY);
     eq('unobserved verdict: attempts is 1 — no repair attempt was spent', terminal.attempts, 1);

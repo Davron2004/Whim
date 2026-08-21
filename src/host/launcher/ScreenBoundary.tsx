@@ -47,7 +47,8 @@ function errorClassOf(error: unknown): string {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  return typeof error === 'string' ? error : JSON.stringify(error);
 }
 
 function stackOf(error: unknown): string | undefined {

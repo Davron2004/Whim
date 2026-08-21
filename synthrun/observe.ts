@@ -474,7 +474,7 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     // "anonymous" script, distinct from the runtime parts' parser-inserted `about:srcdoc`
     // scripts) — resolving anything else would misattribute a host/runtime-internal frame to
     // the candidate's source.
-    if (topFrame && topFrame.url === '') anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
+    if (topFrame?.url === '') anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
   };
   cdp.on('Runtime.exceptionThrown', onException);
 
