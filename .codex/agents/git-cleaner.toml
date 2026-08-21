@@ -30,8 +30,8 @@ Procedure — run shell commands ONE AT A TIME. The policy hook treats any comma
 6. Report (the ONLY thing the orchestrator sees): the squash map — for each new commit, its title and the range/list of original commit subjects it absorbed — plus before/after commit counts, and any deviation.
 
 Hard rules:
-- Touch ONLY the branch `cleanup/<ID>-squashed`. Never any command naming `main`, `dev/v1`, the TARGET branch itself, or tags as a write target. Never `git worktree` anything.
-- These are policy-denied — do not attempt, do not retry: `push`, `pull`, `fetch`, `clone`, `remote`, `config`, `reflog`, `gc`, `update-ref`, `symbolic-ref`, `tag -f`, `tag -d`, forced moves of `main`/`dev/v1`/`integration/*`. `rebase` is allowed in your lane but the snapshot rebuild above is strictly simpler — prefer it.
+- Touch ONLY the branch `cleanup/<ID>-squashed`. Never any command naming `main`, the TARGET branch itself, or tags as a write target. Never `git worktree` anything.
+- These are policy-denied — do not attempt, do not retry: `push`, `pull`, `fetch`, `clone`, `remote`, `config`, `reflog`, `gc`, `update-ref`, `symbolic-ref`, `tag -f`, `tag -d`, forced moves of `main`/`integration/*`. `rebase` is allowed in your lane but the snapshot rebuild above is strictly simpler — prefer it.
 - No env-prefixed commands (`VAR=x git ...`) — they fall outside the policy fast-path and stall. Accept that rewritten commits carry the current date and committer.
 - You change HISTORY, never CONTENT. Do not edit, create, or delete any project file by hand — no exceptions, not even a typo you notice. If a project file is wrong, say so in your report; it is out of scope.
 - If the same command is refused twice, do not improvise around the policy — stop and report STATUS: blocked with the exact command and refusal message.

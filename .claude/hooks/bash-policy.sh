@@ -128,7 +128,7 @@ esac
 # protected state (`main`) is the server-side GitHub ruleset (require PR, block force-push, restrict
 # deletion, require checks) — agents cannot edit it, so it is strictly stronger than any local ask.
 # Re-anchored here (the scoped-`ask`-per-push is retired):
-#   - ANY push naming `main`/`dev/v1` (incl. refspec smuggling `integration/x:main`) is denied for
+#   - ANY push naming `main` (incl. refspec smuggling `integration/x:main`) is denied for
 #     EVERY caller, match-anywhere, as fail-closed belt-and-braces — a local instant-deny beats a
 #     server rejection; "rename the branch" stays the workaround, never a relaxation.
 #   - Subagents are denied EVERY push, unconditionally (they never reach the shared remote).
@@ -140,8 +140,8 @@ esac
 case "$POLICY_CMD" in
   *"git push"*)
     case "$POLICY_CMD" in
-      *main*|*"dev/v1"*)
-        deny "push naming a protected branch (main/dev/v1) is denied for ALL callers — the server-side ruleset + PR review is the merge gate; rename the branch (class-B deviation)" ;;
+      *main*)
+        deny "push naming the protected branch (main) is denied for ALL callers — the server-side ruleset + PR review is the merge gate; rename the branch (class-B deviation)" ;;
     esac
     if [[ -n "$AGENT_ID" ]]; then
       deny "subagents are denied every push form, unconditionally (class-B deviation)"
@@ -189,9 +189,8 @@ case "$POLICY_CMD" in
   *"git pull"*|*"git fetch"*|*"git clone"*|*"git remote"*|\
   *"git update-ref"*|*"git symbolic-ref"*|*"git reflog"*|*"git gc"*|*"git config"*|\
   *"git tag -f"*|*"git tag -d"*|\
-  *"git branch -f dev/v1"*|*"git branch -D dev/v1"*|*"git branch -m dev/v1"*|\
   *"git branch -f main"*|*"git branch -D main"*|*"git branch -m main"*|\
-  *"git checkout -B main"*|*"git switch -C main"*|*"git checkout -B dev/v1"*|*"git switch -C dev/v1"*)
+  *"git checkout -B main"*|*"git switch -C main"*)
     deny "git network/shared-ref/history op is human-approved only (class-B deviation)" ;;
 esac
 # The ACTIVE staging branch (integration/*) is protected like main against SUBAGENT ref rewrites
