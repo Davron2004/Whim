@@ -68,6 +68,62 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     );
   });
 
+  // ── the two exits: one leaves, one deletes, and each says so ───────────────
+
+  await h.test('exits: the deleting action says it discards; the plain exit is the one that leaves', () => {
+    // `prompt-flow`: "The Discard action's label SHALL state that it discards the attempt; it MUST
+    // NOT be labeled as plain navigation."
+    h.eq(COPY.failureBack, 'Back to your apps', 'the non-destructive exit reads as plain navigation');
+    h.eq(COPY.failureDismiss, 'Discard this attempt', 'and the destructive one names what it does to the attempt');
+    h.ok(!/back to your apps/i.test(COPY.failureDismiss), 'the deleting action is never labelled as navigation');
+    h.ok(COPY.failureBack !== COPY.failureDismiss, 'the two exits cannot read identically');
+
+    const src = readSource('src/host/launcher/FailureScreen.tsx');
+    h.ok(/onBack: \(\) => void;/.test(src), 'the screen takes a non-destructive exit alongside the destructive one');
+    h.ok(
+      /onPress=\{onBack\}(?:(?!onPress=)[\s\S])*?COPY\.failureBack/.test(src),
+      'the Back button renders the Back copy',
+    );
+    h.ok(
+      /onPress=\{onDismiss\}(?:(?!onPress=)[\s\S])*?COPY\.failureDismiss/.test(src),
+      'and the Discard button the discard copy — the labels are not swapped',
+    );
+    h.ok(/color: p\.danger \}\]\}>\{COPY\.failureDismiss\}/.test(src), 'the discard label carries the danger hue');
+  });
+
+  await h.test('exits: the hardware back gesture leaves the attempt alone', () => {
+    // `prompt-flow`: "The hardware back gesture on the failure screen SHALL perform the
+    // non-destructive Back, never Discard."
+    const src = readSource('src/host/launcher/FailureScreen.tsx');
+    const effect = src.slice(src.indexOf("addEventListener('hardwareBackPress'"), src.indexOf('const outcome ='));
+    h.ok(effect.includes('onBack();'), 'the hardware gesture performs the non-destructive Back');
+    h.ok(!effect.includes('onDismiss'), 'and never the deleting one');
+    h.ok(!/onDismiss\(\)/.test(src), 'nothing else in the screen invokes the deletion imperatively either');
+    // Non-vacuity: the imperative-call scan does fire on the shape it is meant to catch.
+    h.ok(/onDismiss\(\)/.test('onDismiss();'), 'the scan matches an imperative call');
+  });
+
+  await h.test('exits: with no attempt to discard the button is absent, not a destructively-labelled no-op', () => {
+    // A clarify or rewrite failure fails before any pending-build record exists, so the caller
+    // passes no `onDismiss`. Offering "Discard this attempt" there would be the same dishonesty
+    // the other direction — a danger-styled control that only navigates.
+    const src = readSource('src/host/launcher/FailureScreen.tsx');
+    h.ok(/onDismiss\?: \(\) => void;/.test(src), 'the discard callback is optional — a caller may have nothing to discard');
+    const guard = src.indexOf('{onDismiss != null && (');
+    h.ok(guard >= 0, 'and the discard button is behind a presence guard');
+    h.eq(
+      (src.match(/\{COPY\.failureDismiss\}/g) ?? []).length,
+      1,
+      'the discard label is rendered in exactly one place, so nothing renders it outside the guard',
+    );
+    h.ok(src.indexOf('{COPY.failureDismiss}') > guard, 'that one place being inside the guard');
+    h.ok(src.indexOf('{COPY.failureBack}') < guard, 'while Back is rendered outside it — the leave exit always exists');
+    h.ok(
+      /onDismiss == null \? styles\.actionLast : null/.test(src),
+      'and takes the last action’s spacing when it IS the last one, so the guarded button leaves no gap',
+    );
+  });
+
   // ── the checklist: hints and copy strings, nothing else ────────────────────
 
   await h.test('checklist: reassurance, then one row per hint, then the advisory line', () => {

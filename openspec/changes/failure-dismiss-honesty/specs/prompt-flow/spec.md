@@ -23,3 +23,19 @@ When the failure screen is opened from a `failed` or `interrupted` ghost tile ra
 
 - **WHEN** the user chooses Discard on a failure screen opened from a ghost tile
 - **THEN** the pending-build record is deleted and its ghost tile no longer renders
+
+## ADDED Requirements
+
+### Requirement: Live failure screens offer Discard only when an attempt was settled
+
+A failure screen shown from a live failure SHALL offer the Discard action only when a settled pending-build record exists for the failed attempt, and choosing it SHALL delete that record (and its run journal) exactly as the ghost-opened screen's Discard does. A failure screen for a failure that precedes any generation attempt (such as a clarify or rewrite failure) SHALL NOT render a Discard action, because there is no record to discard. The non-destructive Back SHALL be offered in every case.
+
+#### Scenario: A live terminal failure's Discard deletes the settled record
+
+- **WHEN** a generation fails with a live terminal failure and the user chooses Discard on the resulting failure screen
+- **THEN** the settled pending-build record and its run journal are deleted and no ghost tile renders for that attempt
+
+#### Scenario: A pre-attempt failure offers no Discard
+
+- **WHEN** a clarify or rewrite step fails before any generation attempt started
+- **THEN** the failure screen renders no Discard action, and Back returns to the launcher
