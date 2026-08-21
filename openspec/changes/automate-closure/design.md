@@ -40,7 +40,7 @@ One-time human setup: a branch ruleset on `main` — require PR before merging, 
 
 - Main-thread pushes to non-`main` branches, including `git push --force-with-lease origin integration/<id>`, become **auto-allow** in `bash-policy.sh`.
 - The documented "ask-never-allow" invariant (research.md, Constraints) is **amended, not violated**: its purpose — a human ratifies everything reaching the shared remote's protected state — is re-anchored to the ruleset + PR review. Branch pushes are staging-lane traffic; the protected state is `main`, and the human ratification act is the merge click on the reviewed PR.
-- The fail-closed `main`/`dev/v1` substring denial stays as belt-and-braces (a local instant deny beats a server rejection).
+- The fail-closed `main` substring denial stays as belt-and-braces (a local instant deny beats a server rejection). (`dev/v1` was removed from the tier-1 list 2026-08-21 — the branch is deleted; critic follow-up #4.)
 - Subagent push denial: unchanged, unconditional.
 - Tier-1 relaxation, main thread only: `git fetch origin` and `git pull --ff-only origin main` become allowed — needed for the ancestor check and post-merge teardown (research.md, Integration points: Tier-1 denies currently block even the orchestrator).
 

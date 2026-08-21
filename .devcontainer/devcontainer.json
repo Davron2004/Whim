@@ -7,7 +7,7 @@
   "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
 
   // The host repo is BIND-MOUNTED (the default workspaceMount does this), so
-  // worktrees under .claude/worktrees/ and merges to dev/v1 land on the host FS
+  // worktrees under .claude/worktrees/ and merges to the staging branch land on the host FS
   // immediately — no git push needed (push stays denied).
   //
   // node_modules is a SEPARATE named volume, NOT the bind mount:

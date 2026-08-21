@@ -135,11 +135,11 @@ The other live signal needs no log at all — because the repo is bind-mounted, 
 loop's git state updates on the host in real time:
 
 ```sh
-watch -n2 'git worktree list; echo; git log --oneline -8 dev/v1; \
+watch -n2 'git worktree list; echo; git log --oneline -8 "$FIXLOOP_INTEGRATION_BRANCH"; \
   echo; git branch --list "wip/*"; ls -1 .claude/fixloop/*.log 2>/dev/null'
 ```
 
-Worktree appears → a fixer is working it; new `fix:` commit on `dev/v1` → merged;
+Worktree appears → a fixer is working it; new `fix:` commit on the staging branch → merged;
 `wip/<id>` branch + a note in `.claude/fixloop/` → parked (the note says why).
 
 ## Known limitations
