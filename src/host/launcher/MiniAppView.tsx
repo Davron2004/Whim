@@ -53,9 +53,10 @@ export default function MiniAppView({
   const [webKey, setWebKey] = useState(0);
 
   // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1).
-  // The component is keyed by launcher id, so each app is a fresh mount and onLoadEnd fires once
-  // — theme is captured at that first delivery, matching the "theme applies at delivery" model
-  // (design sdk-design-system Non-Goals): a running realm never re-themes live.
+  // onLoadEnd fires once per <WebView> instance: once on the component's normal first mount
+  // (keyed by launcher id), and again each time Retry bumps webKey to remount after a post-
+  // delivery error -- theme is re-captured at each such delivery, matching the "theme applies at
+  // delivery" model (design sdk-design-system Non-Goals): a running realm never re-themes live.
   const handleLoadEnd = useCallback(() => {
     host.deliverBySource(record, bundleSource, engineAppId, theme);
     // eslint-disable-next-line react-hooks/exhaustive-deps

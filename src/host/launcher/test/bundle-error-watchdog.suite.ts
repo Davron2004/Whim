@@ -87,9 +87,8 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     const before = viewSrc.slice(0, retryIdx);
     const onPressIdx = before.lastIndexOf('onPress=');
     h.ok(onPressIdx !== -1, 'expected an onPress handler before the Retry label');
-    const handlerRegionStart = before.lastIndexOf('const retry', onPressIdx) !== -1
-      ? before.lastIndexOf('const retry')
-      : onPressIdx;
+    const constRetryIdx = before.lastIndexOf('const retry', onPressIdx);
+    const handlerRegionStart = constRetryIdx !== -1 ? constRetryIdx : onPressIdx;
     const handlerRegion = viewSrc.slice(handlerRegionStart, retryIdx);
     h.ok(handlerRegion.includes('host.clearLastError()'), 'the Retry handler must call host.clearLastError()');
     h.ok(/setWebKey\(\(?k\)? *=> *k *\+ *1\)/.test(handlerRegion), 'the Retry handler must also bump webKey by 1');
@@ -130,7 +129,9 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     // this assertion pass against the exact bug under review: every error frame escalating).
     const handlerBody = functionBody(hostSrc, 'handleErrorFrame');
     h.ok(handlerBody.length > 0, 'handleErrorFrame must be defined');
-    const beforeSetS = handlerBody.slice(0, handlerBody.indexOf('setS('));
+    const setSIdx = handlerBody.indexOf('setS(');
+    h.ok(setSIdx !== -1, 'handleErrorFrame must call setS(...) for the fatal path');
+    const beforeSetS = setSIdx === -1 ? '' : handlerBody.slice(0, setSIdx);
     h.ok(/\breturn;/.test(beforeSetS), 'handleErrorFrame must return BEFORE reaching setS for a non-fatal where (an unconditional setS is the exact bug this locks against)');
     h.ok(handlerBody.includes('isFatalErrorWhere('), 'handleErrorFrame must gate that early return on isFatalErrorWhere(payload.where)');
 
@@ -140,6 +141,17 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     h.ok(fatalSet.includes("'bundle'"), "the fatal-where set must include loader.js's 'bundle' where");
     h.ok(fatalSet.includes("'mount'"), "the fatal-where set must include loader.js's 'mount' where");
     h.ok(!fatalSet.includes("'probes'"), "the fatal-where set must NOT include the post-paint 'probes' diagnostic where");
+  });
+
+  await h.test("bundle-error: a non-fatal 'error' frame is recorded (never silently swallowed)", () => {
+    // DevProbeScreen's own diagnostic line reads state.lastError -- a purely-dropped non-fatal
+    // frame would silently stop showing up anywhere it used to, which is a regression even though
+    // it correctly stops escalating to the product's full-screen takeover.
+    const handlerBody = functionBody(hostSrc, 'handleErrorFrame');
+    const returnIdx = handlerBody.search(/\breturn;/);
+    h.ok(returnIdx !== -1, 'expected an early return for the non-fatal path');
+    const nonFatalPath = handlerBody.slice(0, returnIdx);
+    h.ok(/log\.(debug|warn)\(/.test(nonFatalPath), 'the non-fatal path must log the frame, not drop it silently');
   });
 
   await h.test("bundle-error: the 'delivery' case only arms the paint watchdog when accepted === true", () => {
@@ -155,8 +167,9 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
   });
 
   await h.test('bundle-error: paintTimer is disarmed (via the shared disarmTimer helper) at every lifecycle edge', () => {
-    // bind() start, the 'paint' case, exit(), and the unmount effect all must render the realm's
-    // watchdog inert -- checked per-site so a build that clears it in only SOME of them still fails.
+    // bind() start, the 'paint' case, exit(), clearLastError(), and the unmount effect all must
+    // render the realm's watchdog inert -- checked per-site so a build that clears it in only
+    // SOME of them still fails.
     const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverByRecord'));
     h.ok(/disarmTimer\(paintTimer\)/.test(bindBody), 'bind() must disarm paintTimer before rebinding');
 
@@ -165,6 +178,15 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
 
     const exitBody = hostSrc.slice(hostSrc.indexOf('const exit = useCallback'), hostSrc.indexOf('const clearLastError'));
     h.ok(/disarmTimer\(paintTimer\)/.test(exitBody), 'exit() must disarm paintTimer');
+
+    // clearLastError() is Retry's own clearing step -- an accepted delivery whose watchdog is
+    // still armed when a fatal error lands must not have that STALE timer fire after Retry has
+    // already cleared lastError and remounted, re-setting lastError for an invisible reason.
+    const clearLastErrorIdx = hostSrc.indexOf('const clearLastError = useCallback');
+    h.ok(clearLastErrorIdx !== -1, 'expected a clearLastError useCallback');
+    const clearLastErrorCloseIdx = hostSrc.indexOf('}, []);', clearLastErrorIdx);
+    const clearLastErrorBody = hostSrc.slice(clearLastErrorIdx, clearLastErrorCloseIdx + '}, []);'.length);
+    h.ok(/disarmTimer\(paintTimer\)/.test(clearLastErrorBody), 'clearLastError() must also disarm paintTimer');
 
     const unmountIdx = hostSrc.indexOf('Unmount teardown');
     const unmountRegion = hostSrc.slice(unmountIdx, unmountIdx + 800);

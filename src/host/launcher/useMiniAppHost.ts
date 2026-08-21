@@ -76,7 +76,14 @@ function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: 
  *  non-fatal diagnostic (e.g. a post-paint probes failure) never triggers a full-screen takeover
  *  on an otherwise-healthy running app. */
 function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (!isFatalErrorWhere(payload?.where)) return;
+  if (!isFatalErrorWhere(payload?.where)) {
+    // Record-don't-swallow (the same convention this file uses elsewhere): a non-fatal frame
+    // never escalates to the product surface, but it must not vanish either -- DevProbeScreen's
+    // own diagnostic display reads state.lastError, so a purely-dropped frame here would silently
+    // stop showing up anywhere.
+    log.debug(CHANNELS.page, 'non-fatal error frame from the realm', { where: payload?.where, detail: payload?.message ?? payload?.name });
+    return;
+  }
   setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error' }));
 }
 
@@ -304,6 +311,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   }, []);
 
   const clearLastError = useCallback(() => {
+    // Disarm the paint watchdog too -- otherwise an accepted delivery whose watchdog is still
+    // ticking (fatal error landed before paint) can fire AFTER Retry clears lastError but before
+    // the new WebView's onLoadEnd re-delivers into a fresh realm, re-setting lastError for an
+    // invisible reason.
+    disarmTimer(paintTimer);
     setS((p) => ({ ...p, lastError: null }));
   }, []);
 
