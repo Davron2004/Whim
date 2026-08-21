@@ -492,6 +492,40 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(signals.lastArrivalAt, f.at(), 'and the heartbeat’s arrival stamp follows the last one');
   });
 
+  await h.test('journal: a realistic start/done stream journals ONE entry per stage, on its start edge', async () => {
+    // The wire emits BOTH edges of every stage (`status: 'start'|'done'`). A suite that only ever
+    // feeds `start` cannot see a doubled spine, so this replays a run the way the server sends it:
+    // plan, generate, then a check→repair→check→run loop, each stage opened and closed.
+    const f = attemptFixture();
+    let signals = f.signals;
+    const wire: readonly (readonly ['plan' | 'generate' | 'check' | 'run' | 'repair', 'start' | 'done'])[] = [
+      ['plan', 'start'], ['plan', 'done'],
+      ['generate', 'start'], ['generate', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['repair', 'start'], ['repair', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['repair', 'start'], ['repair', 'done'],
+      ['run', 'start'], ['run', 'done'],
+    ];
+    for (const [stage, status] of wire) {
+      f.tick(100);
+      signals = journalStreamEvent(f.journal, RUN, signals, { type: 'stage', stage, status }, f.at());
+    }
+    const entries = f.journal.get(RUN)!;
+    h.eq(entries.length, 7, 'seven stage transitions, not fourteen — a `done` edge is not a second transition');
+    h.eq(
+      entries.map((e) => e.stage),
+      ['plan', 'generate', 'check', 'repair', 'check', 'repair', 'run'],
+      'the spine is the run as it happened, each stage appearing exactly once per time it was entered',
+    );
+    h.eq(
+      entries.filter((e) => e.stage === 'repair').length,
+      2,
+      'two repair attempts — the same figure the shell’s own `status === "start"` tally reports',
+    );
+    h.eq(signals.lastArrivalAt, f.at(), 'a `done` edge still counts as liveness for the heartbeat');
+  });
+
   await h.test('journal: a burst of tokens is bounded by elapsed time, never one entry per token', async () => {
     const f = attemptFixture();
     let signals = f.signals;

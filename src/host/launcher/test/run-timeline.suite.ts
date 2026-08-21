@@ -16,8 +16,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
+import { MapKVBackend } from '../../version-store';
+import { journalStreamEvent } from '../build-lifecycle';
 import { COPY, timelineDurationLabel, timelineGrowthLine, timelineStageLabel } from '../copy';
-import type { RunJournalEntry } from '../run-journal';
+import { EMPTY_RUN_AGGREGATES } from '../prompt-flow';
+import { RunJournalStore, type RunJournalEntry } from '../run-journal';
 import {
   SHOW_RUN_TIMELINE_DIAGNOSTICS,
   runTimelineDevModeEnabled,
@@ -39,9 +42,15 @@ const aggregate = (t: number, chars: number, tokens: number): RunJournalEntry =>
   kind: 'aggregate',
   aggregates: { chars, tokens },
 });
-const terminal = (t: number, failure?: RunJournalEntry['failure']): RunJournalEntry => ({
+const terminal = (
+  t: number,
+  failure?: RunJournalEntry['failure'],
+  flush?: { aggregates?: { chars: number; tokens: number }; observedDiagnostics?: number },
+): RunJournalEntry => ({
   t,
   kind: 'terminal',
+  ...(flush?.aggregates ? { aggregates: flush.aggregates } : {}),
+  ...(flush?.observedDiagnostics !== undefined ? { observedDiagnostics: flush.observedDiagnostics } : {}),
   ...(failure ? { failure } : {}),
 });
 
@@ -113,6 +122,26 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     );
   });
 
+  await h.test('timeline: the growth row prefers the terminal entry’s end-of-stream flush', () => {
+    // The last throttle window is closed by the terminal entry, never by another aggregate, so the
+    // newest aggregate is stale by design and reading it alone under-reports the run.
+    const journal = [
+      stage(1_000, 'generate'),
+      aggregate(6_000, 20_020, 1_001),
+      terminal(12_000, undefined, { aggregates: { chars: 24_000, tokens: 1_200 }, observedDiagnostics: 0 }),
+    ];
+    const growth = runTimelineRows(journal).filter((r) => r.kind === 'growth').map((r) => r.text);
+    h.eq(growth, [timelineGrowthLine(24_000)], 'the figure shown is the run’s final one, not the last aggregate’s');
+    h.ok(!growth[0].includes('20020'), 'the stale mid-stream figure is not what the user reads');
+    h.eq(
+      runTimelineRows([stage(1_000, 'generate'), aggregate(6_000, 910, 96), terminal(9_000)])
+        .filter((r) => r.kind === 'growth')
+        .map((r) => r.text),
+      [timelineGrowthLine(910)],
+      'and a terminal entry with no flush leaves the newest aggregate as the honest best figure',
+    );
+  });
+
   // ── failure detail (task 5.3) ───────────────────────────────────────────────
 
   await h.test('timeline: failure detail is the reason and the hints, and nothing else can reach a row', () => {
@@ -159,6 +188,47 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     );
   });
 
+  await h.test('timeline: a real start/done stream renders one row per stage and one repair per attempt', () => {
+    // End to end over the SAME fold the shell uses, fed the wire's real two-edge stage protocol:
+    // what the timeline shows must be the run, not the run's edges.
+    let clock = 1_000;
+    const journal = new RunJournalStore(new MapKVBackend(), () => clock);
+    let signals = { startedAt: clock, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: clock };
+    const wire = [
+      ['plan', 'start'], ['plan', 'done'],
+      ['generate', 'start'], ['generate', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['repair', 'start'], ['repair', 'done'],
+      ['check', 'start'], ['check', 'done'],
+      ['run', 'start'], ['run', 'done'],
+    ] as const;
+    let repairStarts = 0;
+    for (const [stageName, status] of wire) {
+      clock += 1_000;
+      if (stageName === 'repair' && status === 'start') repairStarts += 1;
+      signals = journalStreamEvent(journal, 'run-1', signals, { type: 'stage', stage: stageName, status }, clock);
+    }
+    clock += 1_000;
+    journal.appendTerminal('run-1', { failure: { reason: 'It did not run.' }, observedDiagnostics: 4 });
+
+    const entries = journal.get('run-1')!;
+    const rows = runTimelineRows(entries, true);
+    h.eq(
+      rows.filter((r) => r.kind === 'stage').map((r) => r.text),
+      [
+        `${COPY.timelineStagePlan} · 2.0s`,
+        `${COPY.timelineStageGenerate} · 2.0s`,
+        `${COPY.timelineStageCheck} · 2.0s`,
+        `${COPY.timelineStageRepair} · 2.0s`,
+        `${COPY.timelineStageCheck} · 2.0s`,
+        `${COPY.timelineStageRun} · 2.0s`,
+      ],
+      'six rows for six stage transitions — never twelve, and never a duration measured across a done edge',
+    );
+    h.ok(rows.some((r) => r.text === `Repair attempts: ${repairStarts}`), 'the repair count matches the shell’s own start-edge tally');
+    h.eq(repairStarts, 1, 'the tally the timeline is being checked against is itself non-trivial');
+  });
+
   // ── the journal is never a second source of truth (task 5.3) ────────────────
 
   await h.test('timeline: a missing or empty journal produces no rows at all', () => {
@@ -166,6 +236,24 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.eq(runTimelineRows([], true), [], 'and dev mode adds no counts to a run with no record of itself');
     h.ok(COPY.timelineEmpty.length > 0, 'the screens have a modest empty note to fall back to');
     h.ok(!/error|missing|failed|null/i.test(COPY.timelineEmpty), 'which reads as an absence, never as a failure');
+  });
+
+  await h.test('timeline: a failure that never started an attempt has no what-happened section at all', () => {
+    // Clarify and rewrite failures fail before any attempt exists, so the shell hands them no
+    // `journalId` — heading a section and answering "nothing was recorded" would be answering a
+    // question the user never asked.
+    const src = code(readSource('FailureScreen.tsx'));
+    h.ok(/attemptStarted\?: boolean/.test(src), 'the screen is told whether an attempt was ever started');
+    h.ok(/attemptStarted = false/.test(src), 'and assumes none was, so a caller that says nothing gets no section');
+    h.ok(
+      /\{\(journal != null \|\| attemptStarted\) && \(/.test(src),
+      'the whole section — heading and empty note together — is behind that guard',
+    );
+    const rootSrc = code(readSource('LauncherRoot.tsx'));
+    h.ok(
+      /attemptStarted=\{screen\.journalId != null\}/.test(rootSrc),
+      'the shell answers it from the one thing that marks an attempt as having started',
+    );
   });
 
   await h.test('timeline: the failure screen falls back without changing anything else it shows', () => {
@@ -189,15 +277,40 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
       stage(3_000, 'repair'),
       stage(4_000, 'check'),
       stage(5_000, 'repair'),
-      terminal(6_000, { reason: 'It still did not run.', diagnostics: [{ hint: 'one' }, { hint: 'two' }] }),
+      terminal(
+        6_000,
+        { reason: 'It still did not run.', diagnostics: [{ hint: 'one' }, { hint: 'two' }] },
+        { observedDiagnostics: 7 },
+      ),
     ];
     h.eq(runTimelineRows(journal).filter((r) => r.kind === 'dev').length, 0, 'no counts when the gate is off');
     h.eq(
       runTimelineRows(journal, true).filter((r) => r.kind === 'dev').map((r) => r.text),
-      ['Diagnostics: 2', 'Repair attempts: 2'],
+      ['Diagnostics: 7', 'Repair attempts: 2'],
       'the two observed counts when it is on',
     );
     h.eq(SHOW_RUN_TIMELINE_DIAGNOSTICS, false, 'the build-time flag defaults to false, so a shipping build has no counts');
+  });
+
+  await h.test('timeline dev mode: the diagnostics count is what the stream showed, not what the payload kept', () => {
+    // The failure payload lists the hints worth SHOWING; the count is how many `diagnostic` events
+    // actually went past. Reading the payload's length instead reports the wrong number whenever
+    // repair resolved some of them — which is exactly the interesting run.
+    const journal = [
+      stage(1_000, 'check'),
+      stage(2_000, 'repair'),
+      terminal(3_000, { reason: 'It did not run.', diagnostics: [{ hint: 'only one hint survived' }] }, {
+        observedDiagnostics: 9,
+      }),
+    ];
+    const dev = runTimelineRows(journal, true).filter((r) => r.kind === 'dev').map((r) => r.text);
+    h.ok(dev.includes('Diagnostics: 9'), 'the observed figure is the one shown');
+    h.ok(!dev.includes('Diagnostics: 1'), 'never the length of the final payload’s hint list');
+
+    // A journal that recorded no such count says nothing rather than claiming a zero.
+    const silent = runTimelineRows([stage(1_000, 'check'), terminal(2_000)], true).map((r) => r.text);
+    h.ok(!silent.some((t) => t.startsWith('Diagnostics:')), 'no diagnostics row when the run recorded no count');
+    h.ok(silent.includes('Repair attempts: 0'), 'the repair count, which the journal can always vouch for, still shows');
   });
 
   await h.test('timeline dev mode: the gate is __DEV__ OR the explicit flag, never __DEV__ alone', () => {

@@ -34,7 +34,7 @@ import { StoreAccess } from './store-access';
 import { PendingBuildStore } from './pending-builds';
 import type { PendingBuildRecord } from './pending-builds';
 import { RunJournalStore } from './run-journal';
-import type { RunJournal } from './run-journal';
+import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
@@ -432,6 +432,10 @@ function LauncherShell({
   const onDelete = async (app: InstalledApp) => {
     try {
       await access.remove(app);
+      // The app's retained last-run report goes with it, in the SAME operation — the discipline
+      // "dismissing a ghost deletes its journal" applied to the other journal key. Nothing else
+      // ever revisits this id, so a report left behind would never be reclaimed.
+      journal.deleteLastRun(app.id);
       refresh();
     } catch (e) {
       log.error(CHANNELS.app, 'installed-app action failed', { operation: 'delete', ...errorFields(e) });
@@ -568,9 +572,17 @@ function LauncherShell({
    *  journal's terminal entry is written here too, and FIRST: this is the one settlement every
    *  non-deliverable ending passes through, and the entry must not wait on the aggregate throttle
    *  (`generation-run-journal` "A terminal entry is always written immediately"). */
-  const settleFailed = (id: string, reason: string, diagnostics: readonly { hint: string }[]) => {
+  const settleFailed = (
+    id: string,
+    reason: string,
+    diagnostics: readonly { hint: string }[],
+    observed: RunTerminalCounts,
+  ) => {
     releaseLiveRef(id);
-    journal.appendTerminal(id, { failure: { reason, diagnostics } });
+    // `observed` is the end-of-stream flush: the final cumulative counts (closing the last throttle
+    // window, which no aggregate entry can) and how many `diagnostic` events went past. Only the
+    // loop that watched the stream can supply them, so they are threaded in rather than re-derived.
+    journal.appendTerminal(id, { failure: { reason, diagnostics }, ...observed });
     failPendingBuild(pending, id, reason, diagnostics);
     refresh();
   };
@@ -601,8 +613,9 @@ function LauncherShell({
     reason: string;
     hints: readonly { hint: string }[];
     observed: number;
+    counts: RunTerminalCounts;
   }) => {
-    settleFailed(input.attemptId, input.reason, input.hints);
+    settleFailed(input.attemptId, input.reason, input.hints, input.counts);
     setScreen({
       kind: 'failure',
       editing: input.editing,
@@ -645,6 +658,13 @@ function LauncherShell({
     const startedAt = Date.now();
     let signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
     signalsRef.current = signals;
+    /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
+     *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
+     *  tally. Numbers only — the same redaction rule every journal entry lives under. */
+    const terminalCounts = (): RunTerminalCounts => ({
+      aggregates: signals.aggregates,
+      observedDiagnostics: counts.diagnostic,
+    });
     // The live screen a `building` ghost taps back into; kept in step with the stream below.
     let live = building;
     liveRef.current = { id: attemptId, screen: live };
@@ -698,6 +718,7 @@ function LauncherShell({
           reason: GENERIC_STREAM_ERROR,
           hints: [],
           observed: counts.repair,
+          counts: terminalCounts(),
         });
         return;
       }
@@ -716,13 +737,14 @@ function LauncherShell({
           reason: terminal.reason,
           hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
           observed: counts.repair,
+          counts: terminalCounts(),
         });
         return;
       }
 
       // The stream ended with a deliverable result: the terminal entry is written HERE, at the end
       // of the stream and before delivery starts, carrying no failure field.
-      journal.appendTerminal(attemptId);
+      journal.appendTerminal(attemptId, terminalCounts());
       live = withDelivering(live);
       liveRef.current = { id: attemptId, screen: live };
       setScreen((s) => (s.kind === 'build' ? withDelivering(s) : s));
@@ -750,7 +772,7 @@ function LauncherShell({
       releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
-      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics);
+      settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts());
       setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId));
     }
   };
@@ -1016,6 +1038,7 @@ function LauncherShell({
         observedRepairAttempts={screen.observedRepairAttempts}
         hasWorkingVersion={screen.hasWorkingVersion}
         journal={failureJournal}
+        attemptStarted={screen.journalId != null}
         devMode={timelineDevMode}
         {...failureActions(screen)}
       />

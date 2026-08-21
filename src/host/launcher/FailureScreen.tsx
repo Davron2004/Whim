@@ -63,6 +63,14 @@ export interface FailureScreenProps {
    * (`generation-run-journal` "A journal is never a second source of truth").
    */
   journal?: readonly RunJournalEntry[] | null;
+  /**
+   * Whether a generation attempt was ever STARTED for this failure. A clarify or rewrite failure
+   * fails before any attempt exists, so there is no run to have a what-happened section about —
+   * absent (or false) omits the section entirely rather than heading an empty note. True with a
+   * `null` journal is the different, genuinely-degraded case (an attempt ran, its journal is gone),
+   * where the section stays and falls back to its empty note.
+   */
+  attemptStarted?: boolean;
   /** The developer-diagnostics gate's verdict, decided by the caller (decision #60(c)). */
   devMode?: boolean;
   /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
@@ -103,6 +111,7 @@ export default function FailureScreen({
   recovered = false,
   retryable = false,
   journal = null,
+  attemptStarted = false,
   devMode = false,
   onRephrase,
   onDismiss,
@@ -170,10 +179,15 @@ export default function FailureScreen({
         </View>
 
         {/* The what-happened timeline, IN ADDITION to the checklist above and never in place of
-            it: the checklist says what to do next, this says what the attempt actually did. */}
-        <View style={styles.timeline}>
-          <RunTimeline entries={journal} devMode={devMode} />
-        </View>
+            it: the checklist says what to do next, this says what the attempt actually did. Shown
+            only when there is a run to speak of — a failure that never started an attempt gets no
+            heading and no empty note, because "nothing was recorded" would be answering a question
+            the user never had. */}
+        {(journal != null || attemptStarted) && (
+          <View style={styles.timeline}>
+            <RunTimeline entries={journal} devMode={devMode} />
+          </View>
+        )}
       </View>
 
       <TouchableOpacity

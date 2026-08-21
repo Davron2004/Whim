@@ -47,10 +47,23 @@ export interface RunJournalEntry {
   kind: RunJournalEntryKind;
   /** Present only on `kind: 'stage'`. */
   stage?: Stage;
-  /** Present only on `kind: 'aggregate'`. */
+  /** On `kind: 'aggregate'`, the counts that close the window this entry ends. On
+   *  `kind: 'terminal'`, the END-OF-STREAM flush: the true final counts, which no aggregate entry
+   *  can hold because the last window is never closed by another aggregate. */
   aggregates?: RunAggregates;
+  /** Present only on `kind: 'terminal'`: how many `diagnostic` events the device OBSERVED on the
+   *  stream — a count, never a diagnostic's content. */
+  observedDiagnostics?: number;
   /** Present only on `kind: 'terminal'`, and only when the attempt ended in a failure. */
   failure?: RunJournalFailure;
+}
+
+/** What the shell knows at the instant a stream ends and only it can supply: the running totals it
+ *  folded in memory and how many `diagnostic` events went past. NUMBERS ONLY — the redaction rule
+ *  is the same one aggregate entries live under, so nothing here can carry content. */
+export interface RunTerminalCounts {
+  aggregates: RunAggregates;
+  observedDiagnostics: number;
 }
 
 export type RunJournal = readonly RunJournalEntry[];
@@ -140,9 +153,18 @@ export class RunJournalStore {
 
   /**
    * Record cumulative output counts, throttled to at most one entry per `AGGREGATE_THROTTLE_MS`
-   * (design D3). Leading-edge: the first call after a quiet window writes immediately carrying the
-   * counts as of that moment, and every call inside the window is coalesced into the next one —
-   * so the entry count is bounded by elapsed time / ~5s, never by the number of `token` events.
+   * (design D3), so the entry count is bounded by elapsed time / ~5s and never by the number of
+   * `token` events.
+   *
+   * WINDOW SEMANTICS, because a doubled reading of them is what makes a growth figure wrong: an
+   * entry CLOSES the window that ended at its own timestamp, carrying the LATEST cumulative counts
+   * observed up to that instant. Every arrival inside a window is coalesced into the entry that
+   * closes it — none is lost, and none is reported as a per-tick delta.
+   *
+   * The one window an aggregate entry can never close is the LAST one: the stream ends inside it,
+   * with no later arrival to write the closing entry. That window is closed by `appendTerminal`'s
+   * own `aggregates` flush, which is why a caller must pass the final counts there — without it a
+   * 12s stream would persist the figure it had at 10s and silently under-report the rest.
    *
    * The throttle is derived from the journal's own newest `aggregate` entry rather than from
    * instance state, so it survives a store re-instantiation mid-attempt.
@@ -168,12 +190,25 @@ export class RunJournalStore {
    * ALWAYS written immediately, bypassing the aggregate throttle: it is the one entry a consumer
    * cannot afford to miss. Failure detail is re-projected to `reason` + diagnostic `hint`s, which
    * is what keeps a richer caller-side object from reaching storage.
+   *
+   * It is also the stream's END-OF-STREAM FLUSH (see `appendAggregate`): `aggregates` closes the
+   * final, otherwise-unclosed throttle window with the true final counts, and `observedDiagnostics`
+   * records how many `diagnostic` events went past. Both are re-projected to numbers here for the
+   * same reason the failure detail is re-projected — a caller cannot widen what reaches storage.
    */
-  appendTerminal(launcherId: string, terminal: { failure?: RunJournalFailure } = {}): void {
+  appendTerminal(
+    launcherId: string,
+    terminal: { failure?: RunJournalFailure } & Partial<RunTerminalCounts> = {},
+  ): void {
     const failure = terminal.failure;
+    const aggregates = terminal.aggregates;
     this.appendEntry(launcherId, {
       t: this.now(),
       kind: 'terminal',
+      ...(aggregates ? { aggregates: { chars: aggregates.chars, tokens: aggregates.tokens } } : {}),
+      ...(terminal.observedDiagnostics !== undefined
+        ? { observedDiagnostics: Number(terminal.observedDiagnostics) }
+        : {}),
       ...(failure
         ? {
             failure: {
@@ -200,5 +235,13 @@ export class RunJournalStore {
   /** Drop an attempt's journal (dismissing its ghost). A no-op if it was never there. */
   delete(launcherId: string): void {
     this.kv.delete(JOURNAL_KEY(launcherId));
+  }
+
+  /** Drop an app's retained last-run report, in the SAME operation that deletes the app itself —
+   *  the same discipline "dismissing a ghost deletes its journal" imposes on the attempt key.
+   *  Without it a `lastrun:<appId>` outlives the app it describes and is never reclaimed, since
+   *  nothing else ever revisits that id. A no-op when there was no report. */
+  deleteLastRun(appId: string): void {
+    this.kv.delete(LAST_RUN_KEY(appId));
   }
 }

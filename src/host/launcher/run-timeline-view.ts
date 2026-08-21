@@ -53,12 +53,28 @@ export interface TimelineRow {
   readonly text: string;
 }
 
-/** The cumulative character count the journal's newest `aggregate` entry recorded, or `null` when
- *  no aggregate was ever written (a run that failed before any output arrived). */
+/** The newest cumulative character count the journal holds, or `null` when none was ever written
+ *  (a run that failed before any output arrived). Deliberately NOT restricted to `aggregate`
+ *  entries: the terminal entry carries the end-of-stream flush, and it is the only entry that can
+ *  hold the counts from the last, never-closed throttle window — so preferring the newest entry
+ *  that carries counts at all is what makes the growth row the run's TRUE final figure. */
 function outputChars(journal: readonly RunJournalEntry[]): number | null {
   for (let i = journal.length - 1; i >= 0; i -= 1) {
     const entry = journal[i];
-    if (entry.kind === 'aggregate' && entry.aggregates != null) return entry.aggregates.chars;
+    if (entry.aggregates != null) return entry.aggregates.chars;
+  }
+  return null;
+}
+
+/** How many `diagnostic` events the device OBSERVED, as the terminal entry recorded it — not how
+ *  many hints the final failure payload happened to carry (a payload lists the hints worth showing,
+ *  which is a different number from what went past on the stream). `null` when no terminal entry
+ *  recorded one, so a journal from before this was recorded reports nothing rather than a zero it
+ *  cannot vouch for. */
+function observedDiagnostics(journal: readonly RunJournalEntry[]): number | null {
+  for (let i = journal.length - 1; i >= 0; i -= 1) {
+    const entry = journal[i];
+    if (entry.kind === 'terminal' && entry.observedDiagnostics != null) return entry.observedDiagnostics;
   }
   return null;
 }
@@ -75,7 +91,9 @@ function lastFailure(journal: readonly RunJournalEntry[]): RunJournalEntry['fail
 }
 
 /** How many repair attempts this journal actually recorded — one per `repair` stage entry, never
- *  a number invented for a run that never reached repair. */
+ *  a number invented for a run that never reached repair. A stage is journaled on its `start` edge
+ *  only (`build-lifecycle#journalStreamEvent`), so this counts attempts, not stage edges, and
+ *  agrees with the shell's own `repair` tally. */
 function repairAttempts(journal: readonly RunJournalEntry[]): number {
   return journal.filter((entry) => entry.kind === 'stage' && entry.stage === 'repair').length;
 }
@@ -113,8 +131,12 @@ export function runTimelineRows(
 
   // No journal, no timeline — and therefore nothing for the counts to be counts OF.
   if (devMode && journal.length > 0) {
-    const diagnostics = failure?.diagnostics?.length ?? 0;
-    rows.push({ key: 'dev:diagnostics', kind: 'dev', text: `${DIAGNOSTICS_COUNT_LABEL}: ${diagnostics}` });
+    const diagnostics = observedDiagnostics(journal);
+    // Omitted rather than shown as `0` when the run recorded no count: a journal that never held
+    // one cannot vouch for "none were observed", and the counts exist to be believed.
+    if (diagnostics != null) {
+      rows.push({ key: 'dev:diagnostics', kind: 'dev', text: `${DIAGNOSTICS_COUNT_LABEL}: ${diagnostics}` });
+    }
     rows.push({ key: 'dev:repairs', kind: 'dev', text: `${REPAIR_ATTEMPTS_COUNT_LABEL}: ${repairAttempts(journal)}` });
   }
 
