@@ -51,19 +51,26 @@ export function miniAppSurface(s: Readonly<MiniAppSurfaceInput>): MiniAppSurface
 export interface PaintFrame {
   /** Stamped `true` by the outer page only for a nonce-authenticated frame (constraint #4). */
   trusted?: unknown;
-  payload?: { generation?: unknown } | null;
+  /** The realm's own paint payload, forwarded verbatim (`mountToFirstPaintMs`, the iframe-local
+   *  `generation`, `appName`) — unvalidated, so it stays an open bag of unknowns. */
+  payload?: Record<string, unknown> | null;
 }
 
 /**
- * Whether a `paint` frame may move the boot state to `running`. Two guards, the same two its
- * sibling frames already apply: the frame must be nonce-authenticated (`probes`), and it must
- * carry the CURRENTLY bound realm's generation (`nav-depth`, fenced by the back-policy).
+ * Whether a `paint` frame may move the boot state to `running`. ONE guard: the frame must be
+ * nonce-authenticated (`trusted`, stamped by the outer page — the same check the `probes` branch
+ * applies), so a bundle cannot post a `paint` for itself to skip its own boot state.
  *
- * Without them the boot state is dismissible by anyone: a paint from the previous realm, still in
- * flight across a rebind, would make the new launch look already-up, and a bundle could post a
- * `paint` frame itself to skip its own boot state.
+ * Deliberately NOT generation-fenced, unlike `nav-depth`. Two independent reasons:
+ *
+ *  - A stale-realm paint cannot arrive: a realm reset RECREATES the iframe (spike2 §5), which
+ *    tears down the old realm's window before the new one exists.
+ *  - `payload.generation` is not comparable to the host's counter. The outer page re-stamps only
+ *    `nav-depth` with the generation the host authoritatively bound (`GEN`); `paint` it forwards
+ *    VERBATIM, so `payload.generation` is the iframe-local `window.__whimGeneration` — it starts
+ *    at 0 and reaches 1 on the first delivery, while the host's `genCounter` starts at 1 and is
+ *    pre-incremented per bind, so the first launch is 2. Comparing them rejects every real paint.
  */
-export function paintAccepted(frame: PaintFrame | null | undefined, currentGeneration: number): boolean {
-  if (!frame || frame.trusted !== true) return false;
-  return frame.payload?.generation === currentGeneration;
+export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
+  return !!frame && frame.trusted === true;
 }

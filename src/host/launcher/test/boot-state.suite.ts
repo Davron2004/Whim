@@ -7,7 +7,7 @@
  * two facts that live in them — the container renders the boot surface over a still-mounted
  * WebView, and `bind()` resets the paint signal so a rebind cannot inherit a stale paint — are
  * asserted against their source, the idiom `launch-failure-ui.suite.ts` already uses. The paint
- * frame's own trust/generation fence is pure (`paintAccepted`) and exercised directly.
+ * frame's own trust fence is pure (`paintAccepted`) and exercised directly.
  */
 
 import * as fs from 'node:fs';
@@ -94,29 +94,92 @@ export async function runBootStateTests(h: Harness): Promise<void> {
   });
 
   // Scenario: because `bind()` resets the paint signal, the boot state is only honest if a paint
-  // frame from the previous realm — or one a bundle posts for itself — cannot end it.
-  await h.test('boot-state: only an authenticated, current-generation paint frame ends the boot state', () => {
-    h.eq(paintAccepted({ trusted: true, payload: { generation: 7 } }, 7), true, 'the bound realm’s own paint is accepted');
-    h.eq(paintAccepted({ trusted: true, payload: { generation: 6 } }, 7), false, 'a paint from the PREVIOUS realm is fenced out');
-    h.eq(paintAccepted({ trusted: true, payload: { generation: 8 } }, 7), false, 'so is one from a generation never bound');
-    h.eq(paintAccepted({ trusted: false, payload: { generation: 7 } }, 7), false, 'an unauthenticated paint is refused even at the right generation');
-    h.eq(paintAccepted({ payload: { generation: 7 } }, 7), false, 'a frame with no trust stamp at all is refused');
-    h.eq(paintAccepted({ trusted: true, payload: {} }, 7), false, 'a paint carrying no generation is refused');
-    h.eq(paintAccepted({ trusted: true }, 7), false, 'so is one with no payload');
-    h.eq(paintAccepted(null, 7), false, 'and a missing frame');
+  // frame a bundle posts for ITSELF cannot end it — while every authentic paint does end it.
+  await h.test('boot-state: only an authenticated paint frame ends the boot state', () => {
+    h.eq(paintAccepted({ trusted: true, payload: { generation: 7, mountToFirstPaintMs: 4 } }), true, 'an authentic paint is accepted');
+    h.eq(paintAccepted({ trusted: false, payload: { generation: 7 } }), false, 'an unauthenticated paint is refused');
+    h.eq(paintAccepted({ payload: { generation: 7 } }), false, 'a frame with no trust stamp at all is refused');
+    h.eq(paintAccepted({ trusted: 'yes' }), false, 'and a truthy-but-not-true stamp is refused');
+    h.eq(paintAccepted({ trusted: true }), true, 'a payload-less authentic paint still counts (paintMs falls back to null)');
+    h.eq(paintAccepted(null), false, 'and a missing frame is refused');
+  });
+
+  // The bug this pins: `paint` is NOT generation-fenced, because the two generation counters are
+  // different namespaces. The frame below is built from what the BUILT runtime actually emits, so
+  // it cannot drift into a shape only the test believes in.
+  await h.test('boot-state: a real first paint is accepted even though its generation differs from the host counter', () => {
+    const runtime = readSource('src/runtime/generated/runtime-html.ts');
+
+    // (a) The outer page forwards `paint` verbatim — unlike `nav-depth`, which it re-stamps with
+    //     the generation the HOST bound (GEN). So a paint's generation never enters host space.
+    const paintForward = "toRN({kind:'paint',trusted:true,payload:m.payload})";
+    h.ok(runtime.includes(paintForward), 'the built outer page must forward paint as {kind,trusted:true,payload}');
+    h.ok(!paintForward.includes('GEN'), 'and must NOT re-stamp it with the host generation');
+    h.ok(
+      runtime.includes("toRN({kind:'nav-depth',trusted:false,payload:{depth:(typeof m.depth==='number'?m.depth:0),generation:GEN}})"),
+      'while nav-depth — the frame that IS fenced — is re-stamped with GEN',
+    );
+
+    // (b) The realm's own counter starts at 0 and reaches 1 on the first delivery, so the first
+    //     paint of a fresh realm carries generation 1 whatever generation the host bound.
+    h.ok(runtime.includes('window.__whimGeneration = 0'), 'the iframe-local generation counter starts at 0');
+    h.ok(
+      runtime.includes('window.__whimGeneration = (window.__whimGeneration || 0) + 1'),
+      'and a bundle delivery increments it, so a fresh realm paints at generation 1',
+    );
+    h.ok(
+      runtime.includes('post(\'paint\', { generation: gen, mountToFirstPaintMs:'),
+      'and the realm posts that iframe-local generation on the paint frame',
+    );
+
+    // The host, meanwhile, starts genCounter at 1 and PRE-increments per bind, so the very first
+    // launch is generation 2 — never 1.
+    h.ok(/const genCounter = useRef\(1\)/.test(hostSrc), 'the host generation counter starts at 1');
+    h.ok(/\+\+genCounter\.current/.test(hostSrc), 'and bind() pre-increments it, making the first launch generation 2');
+
+    const firstRealPaint = { trusted: true, payload: { generation: 1, mountToFirstPaintMs: 61.5, appName: 'water-counter' } };
+    h.eq(paintAccepted(firstRealPaint), true, 'the first real paint of a successful launch is accepted');
+    h.eq(
+      miniAppSurface({ launchFailed: false, lastError: null, paintMs: firstRealPaint.payload.mountToFirstPaintMs }),
+      'running',
+      'so the container leaves the boot state instead of waiting out the paint watchdog',
+    );
+  });
+
+  // The other half: a bundle forging its own paint must NOT dismiss the boot state, and must not
+  // buy itself immunity from the watchdog that would otherwise report it as never visible.
+  await h.test('boot-state: an unauthenticated paint leaves the boot state up and the watchdog armed', () => {
+    for (const forged of [
+      { payload: { generation: 1, mountToFirstPaintMs: 3 } },
+      { trusted: false, payload: { generation: 2, mountToFirstPaintMs: 3 } },
+    ]) {
+      h.eq(paintAccepted(forged), false, 'a forged paint frame is refused');
+    }
+    h.eq(
+      miniAppSurface({ launchFailed: false, lastError: null, paintMs: null }),
+      'boot',
+      'paintMs stays null, so the container is still showing the boot state',
+    );
+    const handler = hostSrc.slice(hostSrc.indexOf('function handlePaintFrame'), hostSrc.indexOf('/** An `error` frame'));
+    h.ok(
+      handler.indexOf('if (!paintAccepted(frame)) return;') < handler.indexOf('disarmTimer'),
+      'and the host returns on a refused frame BEFORE disarming the paint watchdog',
+    );
   });
 
   await h.test('boot-state: the host runs the paint frame through the fence before touching paintMs', () => {
     const paintCase = hostSrc.slice(hostSrc.indexOf("case 'paint':"), hostSrc.indexOf("case 'probes'"));
     h.ok(
-      /handlePaintFrame\(m, genCounter\.current/.test(paintCase),
-      'the paint branch must hand the frame to handlePaintFrame together with the live generation counter',
+      /handlePaintFrame\(m, paintTimer/.test(paintCase),
+      'the paint branch must hand the whole frame to handlePaintFrame',
     );
+    h.ok(!/genCounter/.test(paintCase), 'and must not fence it on the host generation counter, which paint never carries');
     const handler = hostSrc.slice(hostSrc.indexOf('function handlePaintFrame'), hostSrc.indexOf('/** An `error` frame'));
-    const guardIdx = handler.indexOf('paintAccepted(frame, generation)');
+    const guardIdx = handler.indexOf('paintAccepted(frame)');
     h.ok(guardIdx > 0, 'and that handler must consult paintAccepted');
     h.ok(guardIdx < handler.indexOf('paintMs:'), 'refusing BEFORE publishing paintMs');
     h.ok(guardIdx < handler.indexOf('disarmTimer'), 'and before disarming the paint watchdog');
+    h.ok(!handler.includes('generation:'), 'the paint path must not write HostState.generation — the probes branch owns it');
   });
 
   await h.test('boot-state: the boot copy speaks outcome, not mechanism', () => {
