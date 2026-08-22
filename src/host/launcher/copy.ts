@@ -135,6 +135,13 @@ export const COPY = {
   historyRestoreConfirm: 'Go back to it',
   historyCopyConfirm: 'Make the copy',
   historyCopyToast: 'Copy made — it’s on your home screen',
+  /** The three history wait states (`version-history`, flow-wait-hygiene): the first-load
+   *  skeleton's screen-reader name, the two confirm buttons' in-flight labels, and the name of
+   *  the muted placeholder standing in for the reassurance line while it is computed. */
+  historyLoadingLabel: 'Looking up this app’s history',
+  historyRestoreConfirmBusy: 'Going back…',
+  historyCopyConfirmBusy: 'Making the copy…',
+  historyReassurancePending: 'Checking what this changes',
   forkShareData: 'Use the same saved data',
   forkStartFresh: 'Start fresh',
 

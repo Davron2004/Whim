@@ -42,6 +42,7 @@ import { runRunSignalsTests } from './run-signals.suite';
 import { runRunTimelineTests } from './run-timeline.suite';
 import { runAppBusyTests } from './app-busy.suite';
 import { runBootStateTests } from './boot-state.suite';
+import { runHistoryWaitTests } from './history-wait.suite';
 
 const h = new Harness();
 
@@ -81,6 +82,7 @@ await runRunSignalsTests(h);
 await runRunTimelineTests(h);
 await runAppBusyTests(h);
 await runBootStateTests(h);
+await runHistoryWaitTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
