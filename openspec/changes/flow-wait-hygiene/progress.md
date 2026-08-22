@@ -1,0 +1,37 @@
+# progress ledger: flow-wait-hygiene
+
+- run-start 2026-08-21 — staging branch `integration/flow-wait-hygiene` cut from `v1-sprint` tip bb1c4dd (sprint precedent; main receives the sprint PR). Serial DAG: chain-1 → 2 → 3 → 4 → 5 (declared `after:` for shared LauncherRoot.tsx / copy.ts).
+- dispatched 2026-08-21 — chain-1 transport-cancel-timeout, BASE bb1c4dd, worktree .claude/worktrees/flow-wait-hygiene-1
+- report 2026-08-21 — chain-1 STATUS complete, GATE PASS, commit 9903cc6 (6715 launcher checks, 3 discriminating red-checks). Deviation (A→B-adjacent, ACCEPTED under D2 escape hatch): XHR connect window is a JS setTimeout + xhr.abort(), not `xhr.timeout` — RN captures `timeout` at send() (no post-send disarm) and Android maps it to OkHttp callTimeout bounding the streamed body, which would kill >15s generations (spec-forbidden). Class-A: touched transport-shared.ts (owner of ClientOptions) for the shared window constant/test seam; hoisted a test double for sonarjs/no-nested-functions.
+- merged 2026-08-21 — chain-1 → integration (regate-pass); trailer stripped at merge per user rule. Worktree removed.
+- dispatched 2026-08-21 — chain-2 launcher-compose-plan-cancel, BASE 6920e87, worktree .claude/worktrees/flow-wait-hygiene-2
+- report 2026-08-21 — chain-2 STATUS complete, GATE PASS, commit 5ed09f8 (6742 launcher checks, 5 red-checks incl. the weaker-variant `kind !== 'home'`). Class-A: new pure sibling `flow-request.ts` (FlowRequests + onlyOnStep) for Node-testability; Settings gear is also a compose leave path; leave-handler clears `busy`. Accepted.
+- merged 2026-08-21 — chain-2 → integration (regate-pass). Worktree removed.
+- dispatched 2026-08-21 — chain-3 launcher-open-fork-delete-busy, BASE f2e860e, worktree .claude/worktrees/flow-wait-hygiene-3
+- report 2026-08-21 — chain-3 STATUS complete, GATE PASS, commit 3c435fb (6830 launcher checks; red-check discriminated "row disabled but op still reaches version store"). Class-A: new `app-busy.ts` (AppBusy + runAppOp); handlers now return runAppOp(...); widened two brittle tile-colour regexes; COPY +actionForkBusy/actionDeleteBusy. Accepted.
+- merged 2026-08-21 — chain-3 → integration (regate-pass). Worktree removed.
+- dispatched 2026-08-21 — chain-4 mini-app-boot-state, BASE f2e3305, worktree .claude/worktrees/flow-wait-hygiene-4
+- report 2026-08-21 — chain-4 STATUS complete, GATE PASS, commit 0d1aef9 (6921 launcher checks, 4 red-checks). Class-A: `paintMs` not reset on rebind before this chain (latent: stale paint would suppress the next boot state) — reset added in bind(); `hasPainted` computed on MiniAppHost, not stored; boot overlay also covers pre-bind window; two wiring assertions rewritten to `miniAppSurface()` branches at equal strength. COPY +appBootLabel/appBootA11yLabel. Accepted.
+- merged 2026-08-21 — chain-4 → integration (regate-pass). Worktree removed.
+- dispatched 2026-08-21 — chain-5 history-loading-confirm-guard, BASE 081f718, worktree .claude/worktrees/flow-wait-hygiene-5
+- report 2026-08-21 — chain-5 STATUS complete, GATE PASS, commit df3df00 (7067 launcher checks; red-check discriminated control-only disable from handler-level guard). Class-A: new `history-wait.ts`; confirmCopy closes the sheet AFTER the fork (spec: busy on the confirmed control); filter pills hidden while loading; read failure now publishes loading:false; two history-logic wiring pins updated to the new call shape. Accepted.
+- merged 2026-08-21 — chain-5 → integration (regate-pass). Worktree removed. All 5 chains merged; running gate-full.
+- gate-full 2026-08-21 — FULL GATE PASSED on merged tip.
+- reviewer 2026-08-21 — FINDINGS (report honesty OK, no protected paths, timers clean). medium: HomeScreen fork/delete busy not visible in single-tap path (sheet dismissed before op; tile busy gated to 'open'); medium: `paint` frame not generation-fenced in useMiniAppHost (stale paint from old realm dismisses new boot overlay). low: dead `MiniAppHost.hasPainted`; runHistoryLoad finally wipes on-screen rows on failed reload; connect-timeout error re-wrapped by readNext (hint nested); tasks.md 1.3 text stale vs shipped; tile-colour pins widened (accepted). → fix chain R dispatched.
+- dispatched 2026-08-21 — chain-R reviewer-fixes, BASE 2a36f93, worktree .claude/worktrees/flow-wait-hygiene-R
+- report 2026-08-21 — chain-R STATUS complete, GATE PASS, commit 920f1de (7098 launcher checks). F1 isAppBusy covers all ops on the tile; F2 paint frame trust+generation-fenced via handlePaintFrame (mirrors handleDeliveryFrame); F3 dead MiniAppHost.hasPainted removed; F4 failed reload keeps rows; F5 readNext passes through classified errors. Class-A only. Accepted.
+- merged 2026-08-21 — chain-R → integration; FULL GATE PASSED on merged tip. Worktree removed. Reviewer re-check on fix diff dispatched.
+- reviewer re-check 2026-08-21 — FINDINGS. HIGH: chain-R paint fence compares host genCounter (first launch = 2) to iframe __whimGeneration (fresh realm = 1; assemble.mjs forwards paint verbatim, only nav-depth is GEN-restamped) → every paint rejected, boot overlay never clears, paint watchdog fails every launch. MED: new tests can't see it (pure + source-grep). LOW: redundant state.generation write on paint path; conditional watchdog pin. F1/F3/F4/F5 verified fixed. Decision: fence paint on `trusted` only (realm reset recreates the iframe so a stale-realm paint cannot arrive; GEN restamp would need protected build/assemble.mjs). → chain-R2.
+- dispatched 2026-08-21 — chain-R2 paint-fence-fix, BASE d8b00d2
+- report 2026-08-21 — chain-R2 STATUS complete, GATE PASS, commit a37461b (7114 launcher checks). paintAccepted trust-only; fixture built from the generated runtime; red-check "generation comparison restored → realistic-frame test fails" confirmed. Redundant state.generation write removed; watchdog pin unconditional. Class-A only. Accepted.
+- merged 2026-08-21 — chain-R2 → integration; FULL GATE PASSED. Worktree removed. Final reviewer re-check dispatched.
+- reviewer final 2026-08-21 — CLEAN. Launch path traced loader.js → assemble.mjs (trusted:true iff nonce-authentic) → handlePaintFrame; no generation comparison remains on the paint path; watchdog edges intact. One low: boot-state.suite.ts:~120 `!paintForward.includes('GEN')` asserts a local literal (tautology) — follow-up, not blocking.
+
+## Closing summary
+- Chains run: 1–5 (planned) + R, R2 (reviewer fix chains). Redispatches: 0. Merge conflicts: 0. All regates + two gate-full runs PASS. Launcher suite 6715 → 7114 checks.
+- Deviations: Class-A only (new pure siblings flow-request/app-busy/boot-state/history-wait for Node-testability; paintMs reset on rebind; Settings gear as compose leave path; confirmCopy keeps sheet open; tile-colour/history-logic/watchdog pins adjusted at equal or greater strength). One B-adjacent, accepted under D2: XHR connect window is a JS timer, not xhr.timeout (RN→OkHttp callTimeout would kill long streams).
+- Reviewer: round 1 FINDINGS (2 medium, 4 low) → chain R; round 2 HIGH (paint fence compared disjoint generation namespaces → boot overlay never cleared) → chain R2; round 3 CLEAN.
+- Tripwire candidates: none repeated across 2+ chains.
+- Not done: task 6.2 on-device manual verification (no emulator run this session) — left unticked for the human.
+- Follow-ups: tautological assertion boot-state.suite.ts:~120; tile-colour regex no longer pins `width={cellWidth}` as last prop (accepted).
+- MEMORY applied: whim-two-generation-namespaces.

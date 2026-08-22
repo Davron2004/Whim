@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
+import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
@@ -48,6 +49,13 @@ export interface HomeScreenProps {
    *  directly with shareData: true. */
   onFork: (app: InstalledApp, opts: { shareData: boolean }) => void;
   onDelete: (app: InstalledApp) => void;
+  /** Which apps have an open/fork/delete running right now (`app-busy.ts`), by app id. Drives the
+   *  tile's own busy look — for ANY of the three operations, since the fork and delete sheets are
+   *  closed by the time their version-store call starts — and the Fork/Delete rows'
+   *  busy-and-disabled state for the re-open case (`app-launcher`:
+   *  "Opening an app shows an immediate busy affordance" / "Fork and delete show a busy state and
+   *  cannot be re-triggered mid-operation"). Omitted = nothing is in flight. */
+  appBusy?: AppBusyMap;
   /** Opens the app's full-screen history surface (version-history-ux). */
   onHistory: (app: InstalledApp) => void;
   /** Opens the compose step scoped to re-prompting this app (`app-launcher` spec's "create
@@ -83,6 +91,7 @@ export default function HomeScreen({
   onOpen,
   onFork,
   onDelete,
+  appBusy,
   onHistory,
   onPromptAgain,
   onCreate,
@@ -106,6 +115,11 @@ export default function HomeScreen({
   const selectedRebuild = selected
     ? tiles.find((t): t is InstalledTile => t.kind === 'app' && t.app.id === selected.id)?.rebuild
     : undefined;
+
+  /** What the long-pressed app is busy with, if anything — the sheet's Fork and Delete rows read
+   *  it. One app has at most one operation in flight, so ANY in-flight operation disables both
+   *  rows; only the matching one also carries the busy label. */
+  const selectedBusy = selected ? appBusy?.[selected.id] : undefined;
 
   const confirmDelete = (app: InstalledApp) => {
     setSelected(null);
@@ -159,7 +173,7 @@ export default function HomeScreen({
                   onPress={() => onOpen(app)}
                   onLongPress={() => setSelected(app)}
                 >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} />
+                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} />
                   {app.example && (
                     <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
                       <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>
@@ -196,10 +210,10 @@ export default function HomeScreen({
           <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
             <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
             <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
-            <SheetRow label={COPY.actionFork} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
+            <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
             <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
-            <SheetRow label={COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} onPress={() => confirmDelete(selected!)} />
+            <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
             {selectedRebuild && (
               <GhostActionRow
                 rec={selectedRebuild}
@@ -349,9 +363,17 @@ function GhostActionRow({
   );
 }
 
-function SheetRow({ label, onPress, color, borderColor }: Readonly<{ label: string; onPress: () => void; color: string; borderColor: string }>) {
+/** `disabled` is the row's wait affordance: an operation is already running for this app, so the
+ *  row neither fires nor reads as tappable. Dimming is opacity-only — `shadow*` props are
+ *  iOS-only, so a raised/flattened treatment would be invisible on Android. */
+function SheetRow({ label, onPress, color, borderColor, disabled }: Readonly<{ label: string; onPress: () => void; color: string; borderColor: string; disabled?: boolean }>) {
   return (
-    <TouchableOpacity style={[styles.sheetRow, { borderTopColor: borderColor }]} onPress={onPress}>
+    <TouchableOpacity
+      style={[styles.sheetRow, { borderTopColor: borderColor }, disabled ? styles.sheetRowDisabled : null]}
+      accessibilityState={{ disabled: disabled === true }}
+      disabled={disabled}
+      onPress={onPress}
+    >
       <Text style={[TYPE_SCALE.bodyEmphatic, { color }]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -431,4 +453,5 @@ const styles = StyleSheet.create({
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
   sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
   sheetRow: { paddingVertical: SPACING.md, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
+  sheetRowDisabled: { opacity: 0.45 },
 });

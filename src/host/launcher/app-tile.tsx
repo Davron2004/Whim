@@ -71,6 +71,13 @@ export interface AppTileProps {
    *  the ordinary launchable tile, unchanged. Never combined with `size='done'` — a ghost is
    *  always grid-sized. */
   ghost?: 'building' | 'failed' | 'interrupted';
+  /** The tap registered and the app is being opened (`app-launcher` "Opening an app shows an
+   *  immediate busy affordance"): a held-down/working look on THIS tile — a dim over the tile's
+   *  own fill, not a spinner and not an overlay, since the message is "working", not "wait here".
+   *  Deliberately opacity-based: `shadow*` props are iOS-only, so a pressed look built from them
+   *  would render as nothing at all on Android. Orthogonal to `ghost`, which is a different (and
+   *  never simultaneous) state — a ghost tile is not launchable, so it can never be opening. */
+  busy?: boolean;
 }
 
 /** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
@@ -79,7 +86,7 @@ function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
   return ghost === 'failed' || ghost === 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
@@ -122,7 +129,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
 
   return (
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
-      <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle]}>
+      <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
       </View>
@@ -191,6 +198,9 @@ const styles = StyleSheet.create({
    *  grid renders ghost tiles for pending-build records"), never a second fixed grey fill, so the
    *  tile's colour identity still reads through faintly. */
   tileGhost: { opacity: 0.45 },
+  /** The opening tile's pressed/busy look: dimmed, but distinctly less than a ghost's 0.45, so a
+   *  tile that is working never reads as one that cannot be launched. */
+  tileBusy: { opacity: 0.7 },
   /** `failed`/`interrupted`'s shared alert accent: the tile's own 30%-white inset border is
    *  replaced by the reserved status "broken" hue, at the same 1px inset the ordinary tile keeps
    *  (`building` keeps the ordinary white border — the neutral treatment). */
