@@ -59,10 +59,15 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
   const viewSrc = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/MiniAppView.tsx'), 'utf8');
 
   await h.test('bundle-error: MiniAppView has a lastError recovery branch distinct from launchFailed', () => {
-    h.ok(viewSrc.includes('host.state.lastError'), 'MiniAppView must branch on host.state.lastError');
-    h.ok(viewSrc.includes('host.state.launchFailed'), 'the pre-delivery launchFailed branch must still exist');
+    // Both branches now come off the pure `miniAppSurface(host.state)` (flow-wait-hygiene
+    // chain-4), which still keeps them distinct AND keeps the post-delivery error surface above
+    // the boot state -- an app that failed before painting shows this recovery screen, not a
+    // permanent opening screen.
+    h.ok(viewSrc.includes('miniAppSurface(host.state)'), 'MiniAppView must derive its surface from the host state');
+    h.ok(viewSrc.includes("surface === 'app-error'"), 'MiniAppView must branch on the post-delivery error surface');
+    h.ok(viewSrc.includes("surface === 'launch-failed'"), 'the pre-delivery launchFailed branch must still exist');
     h.ok(
-      viewSrc.indexOf('host.state.lastError') !== viewSrc.indexOf('host.state.launchFailed'),
+      viewSrc.indexOf("surface === 'app-error'") !== viewSrc.indexOf("surface === 'launch-failed'"),
       'the two branches must be distinct conditionals',
     );
   });
@@ -173,8 +178,14 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverByRecord'));
     h.ok(/disarmTimer\(paintTimer\)/.test(bindBody), 'bind() must disarm paintTimer before rebinding');
 
+    // The paint path delegates to the named `handlePaintFrame` helper (kept out of the switch for
+    // cognitive complexity). Pin BOTH halves unconditionally -- a conditional fallback to the
+    // case body would silently pass on a rename, checking a branch that no longer runs.
     const paintBody = caseBody(hostSrc, 'paint');
-    h.ok(paintBody.includes('disarmTimer(paintTimer)'), "the 'paint' case must disarm paintTimer");
+    h.ok(paintBody.includes('handlePaintFrame'), "the 'paint' case must delegate to handlePaintFrame");
+    const paintDisarmSrc = functionBody(hostSrc, 'handlePaintFrame');
+    h.ok(paintDisarmSrc.length > 0, 'and that helper must exist');
+    h.ok(paintDisarmSrc.includes('disarmTimer(paintTimer)'), "the 'paint' path must disarm paintTimer");
 
     const exitBody = hostSrc.slice(hostSrc.indexOf('const exit = useCallback'), hostSrc.indexOf('const clearLastError'));
     h.ok(/disarmTimer\(paintTimer\)/.test(exitBody), 'exit() must disarm paintTimer');

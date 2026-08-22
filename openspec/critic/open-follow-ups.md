@@ -291,3 +291,4 @@ four call sites, and `fixloop.sh park` inherits it.
 
 **Evidence.** Observed 2026-07-28 unparking `wip/linked-apps-data-model`;
 `openspec/changes/linked-apps-data-model/progress.md` first closure ledger line; decision #51 D7-AMENDED.
+- 2026-08-21 flow-wait-hygiene: `src/host/launcher/test/boot-state.suite.ts` ~:120 — `!paintForward.includes('GEN')` asserts a local literal; re-point at the extracted runtime substring. low.

@@ -284,8 +284,10 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
   await h.test('history: HistoryScreen wires expand-not-restore, confirm-gated restore, and fork-from-version', () => {
     const src = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/HistoryScreen.tsx'), 'utf8');
     h.ok(src.includes('onPress={onToggle}'), 'tapping a row toggles expansion, not a restore');
-    h.ok(src.includes('await access.rollback(app, row.id);'), 'restore only happens from the confirm sheet, against the row\'s own version');
-    h.ok(src.includes('await access.fork(app, row.id);'), 'fork-from-version calls StoreAccess.fork with the viewed snapshot id');
+    // Both calls now sit inside the confirm sheet's double-submit guard (`history-wait.ts`), so
+    // what is pinned is the call and its argument, not the `await` that used to precede it.
+    h.ok(src.includes('() => access.rollback(app, row.id)'), 'restore only happens from the confirm sheet, against the row\'s own version');
+    h.ok(src.includes('() => access.fork(app, row.id)'), 'fork-from-version calls StoreAccess.fork with the viewed snapshot id');
   });
 
   await h.test('history: History is reachable from the home action sheet and LauncherRoot switch', () => {
