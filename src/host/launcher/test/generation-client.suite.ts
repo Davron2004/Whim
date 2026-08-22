@@ -25,6 +25,7 @@ import { getDeviceId } from '../device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import type { GenerationEvent } from '@whim/contract';
+import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 
@@ -397,6 +398,41 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       h.ok(err !== 'hung', 'the hung connect is bounded rather than waiting forever');
       h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
       h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'network', 'classified as a network failure, not left in progress');
+    },
+  );
+
+  await h.test(
+    'generateApp (fetch path): headers but no first event surfaces the connect-timeout hint, not a nested message',
+    async () => {
+      // The post-open half of the same window: the response headers land, the body never emits.
+      // The transport already classified this failure, so the surfaced error must be THAT error —
+      // re-wrapping it keeps `kind` but buries the hint the failure screen shows.
+      const hold: { controller?: ReadableStreamDefaultController<Uint8Array> } = {};
+      const opts: ClientOptions = { ...BASE, fetchImpl: openEndedSseFetch(hold), connectTimeoutMs: WINDOW_MS };
+      const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
+      h.ok(err !== 'hung', 'the silent stream is bounded rather than waiting forever');
+      h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
+      h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'network', 'classified as a network failure');
+      h.eq(err instanceof GenerationClientError ? err.hint : undefined, CONNECT_TIMEOUT_HINT, 'carrying the connect-timeout hint itself');
+    },
+  );
+
+  await h.test(
+    'generateApp: a failure the transport already classified reaches the caller unchanged',
+    async () => {
+      // Re-wrapping an already-classified error re-classifies it: `kind` is forced to 'network'
+      // and everything the transport attached beyond the message (a status, in particular) is
+      // dropped. The stream reader must rethrow such an error as-is.
+      const classified = new GenerationClientError('http', { status: 503, hint: 'The service is warming up' });
+      const opts: ClientOptions = {
+        ...BASE,
+        streamTransport: async () => ({ read: async () => { throw classified; } }),
+      };
+      const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
+      h.ok(err === classified, 'the transport’s own error instance is what surfaces');
+      h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'http', 'its kind is not forced to network');
+      h.eq(err instanceof GenerationClientError ? err.status : undefined, 503, 'and its status survives');
+      h.eq(err instanceof GenerationClientError ? err.hint : undefined, 'The service is warming up', 'as does its hint');
     },
   );
 

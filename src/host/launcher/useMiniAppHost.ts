@@ -27,7 +27,7 @@ import { createStorageEngine } from '../storage-engine';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
-import { hasPainted as firstPaintObserved } from './boot-state';
+import { paintAccepted } from './boot-state';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
@@ -71,6 +71,17 @@ function isFatalErrorWhere(where: unknown): boolean {
  *  to a takeover would be redundant with the `error` frame the refusal path also posts. */
 function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
   if (payload?.accepted === true) armPaintWatchdog(paintTimer, setS);
+}
+
+/** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
+ *  but only when it is authentic AND belongs to the CURRENTLY bound realm (`paintAccepted`), the
+ *  same trust check `probes` applies and the same generation fence `nav-depth` gets from the
+ *  back-policy. Otherwise a paint from the previous realm, in flight across a rebind, would make
+ *  the new launch look already-up. */
+function handlePaintFrame(frame: any, generation: number, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (!paintAccepted(frame, generation)) return;
+  disarmTimer(paintTimer);
+  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null, generation: frame.payload?.generation ?? null }));
 }
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
@@ -132,9 +143,6 @@ export interface MiniAppHost {
   runtimeHtml: string;
   webRef: React.RefObject<WebView | null>;
   state: HostState;
-  /** Derived from `state.paintMs`, never stored twice: true once the currently bound realm has
-   *  reported first paint. The container's boot state ends here (`boot-state.ts`). */
-  hasPainted: boolean;
   onMessage: (data: string) => void;
   /** Product path: launch an installed app by host record + bundle SOURCE (#5 D3). */
   deliverBySource: (record: AppRecord, source: string, engineAppId?: string, theme?: object) => void;
@@ -285,8 +293,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        disarmTimer(paintTimer);
-        setS((p) => ({ ...p, paintMs: m.payload?.mountToFirstPaintMs ?? null, generation: m.payload?.generation ?? null }));
+        handlePaintFrame(m, genCounter.current, paintTimer, setS);
         return;
       case 'probes': {
         const r = m.payload || {};
@@ -361,7 +368,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     runtimeHtml: RUNTIME_HTML,
     webRef,
     state: s,
-    hasPainted: firstPaintObserved(s.paintMs),
     onMessage,
     deliverBySource,
     deliverByRecord,

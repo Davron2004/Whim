@@ -21,7 +21,7 @@ import {
 } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
-import type { AppBusyMap } from './app-busy';
+import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
@@ -50,7 +50,9 @@ export interface HomeScreenProps {
   onFork: (app: InstalledApp, opts: { shareData: boolean }) => void;
   onDelete: (app: InstalledApp) => void;
   /** Which apps have an open/fork/delete running right now (`app-busy.ts`), by app id. Drives the
-   *  tile's own busy look and the Fork/Delete rows' busy-and-disabled state (`app-launcher`:
+   *  tile's own busy look — for ANY of the three operations, since the fork and delete sheets are
+   *  closed by the time their version-store call starts — and the Fork/Delete rows'
+   *  busy-and-disabled state for the re-open case (`app-launcher`:
    *  "Opening an app shows an immediate busy affordance" / "Fork and delete show a busy state and
    *  cannot be re-triggered mid-operation"). Omitted = nothing is in flight. */
   appBusy?: AppBusyMap;
@@ -171,7 +173,7 @@ export default function HomeScreen({
                   onPress={() => onOpen(app)}
                   onLongPress={() => setSelected(app)}
                 >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={appBusy?.[app.id] === 'open'} />
+                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} />
                   {app.example && (
                     <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
                       <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>

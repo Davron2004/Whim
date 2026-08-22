@@ -45,3 +45,25 @@ export function miniAppSurface(s: Readonly<MiniAppSurfaceInput>): MiniAppSurface
   if (s.lastError) return 'app-error';
   return hasPainted(s.paintMs) ? 'running' : 'boot';
 }
+
+/** The shape of a `paint` bridge frame as it arrives from the outer page — untrusted data, so
+ *  every field is optional and unknown until checked. */
+export interface PaintFrame {
+  /** Stamped `true` by the outer page only for a nonce-authenticated frame (constraint #4). */
+  trusted?: unknown;
+  payload?: { generation?: unknown } | null;
+}
+
+/**
+ * Whether a `paint` frame may move the boot state to `running`. Two guards, the same two its
+ * sibling frames already apply: the frame must be nonce-authenticated (`probes`), and it must
+ * carry the CURRENTLY bound realm's generation (`nav-depth`, fenced by the back-policy).
+ *
+ * Without them the boot state is dismissible by anyone: a paint from the previous realm, still in
+ * flight across a rebind, would make the new launch look already-up, and a bundle could post a
+ * `paint` frame itself to skip its own boot state.
+ */
+export function paintAccepted(frame: PaintFrame | null | undefined, currentGeneration: number): boolean {
+  if (!frame || frame.trusted !== true) return false;
+  return frame.payload?.generation === currentGeneration;
+}
