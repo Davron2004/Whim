@@ -74,14 +74,15 @@ function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: 
 }
 
 /** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
- *  but only when it is authentic AND belongs to the CURRENTLY bound realm (`paintAccepted`), the
- *  same trust check `probes` applies and the same generation fence `nav-depth` gets from the
- *  back-policy. Otherwise a paint from the previous realm, in flight across a rebind, would make
- *  the new launch look already-up. */
-function handlePaintFrame(frame: any, generation: number, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (!paintAccepted(frame, generation)) return;
+ *  but only when it is nonce-authenticated (`paintAccepted`), the same trust check `probes`
+ *  applies. It is NOT generation-fenced like `nav-depth`: the outer page forwards `paint`
+ *  verbatim, so its `payload.generation` is the iframe-local counter and means nothing here
+ *  (`boot-state.ts` carries the full reasoning). `generation` on HostState is owned by the
+ *  `probes` branch alone. */
+function handlePaintFrame(frame: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (!paintAccepted(frame)) return;
   disarmTimer(paintTimer);
-  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null, generation: frame.payload?.generation ?? null }));
+  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
 }
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
@@ -293,7 +294,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        handlePaintFrame(m, genCounter.current, paintTimer, setS);
+        handlePaintFrame(m, paintTimer, setS);
         return;
       case 'probes': {
         const r = m.payload || {};
