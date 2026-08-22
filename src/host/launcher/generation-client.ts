@@ -436,13 +436,18 @@ async function openGenerateStream(
 type ReadOutcome = { done: boolean; value?: Uint8Array } | 'aborted';
 
 /** One `reader.read()`, translating an abort into `'aborted'` and any other failure into
- *  `GenerationClientError{kind:'network'}`. */
+ *  `GenerationClientError{kind:'network'}` — except one the transport ALREADY classified, which
+ *  passes through untouched: re-wrapping it would keep the kind but bury its hint (the post-open
+ *  connect timeout's `CONNECT_TIMEOUT_HINT`) inside a nested message. */
 async function readNext(reader: ResponseBodyReader): Promise<ReadOutcome> {
   try {
     return await reader.read();
   } catch (err) {
     if (isAbortError(err)) {
       return 'aborted';
+    }
+    if (err instanceof GenerationClientError) {
+      throw err;
     }
     throw new GenerationClientError('network', { hint: messageOf(err) });
   }

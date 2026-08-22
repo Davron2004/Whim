@@ -81,3 +81,14 @@ export async function runAppOp(
   }
   return true;
 }
+
+/**
+ * Whether the home grid should render `appId`'s tile busy. ANY in-flight operation counts, not
+ * just `open`: fork and delete are triggered from sheets that close before the version-store call
+ * starts (`app-launcher`: "Fork and delete each show a busy state on their triggering control
+ * while their underlying version-store operation runs"), so after the sheet is gone the tile is
+ * the only surviving control for that app and therefore where the wait has to be visible.
+ */
+export function isAppBusy(busy: AppBusyMap | undefined, appId: string): boolean {
+  return busy?.[appId] !== undefined;
+}

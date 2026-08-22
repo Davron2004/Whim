@@ -178,8 +178,11 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverByRecord'));
     h.ok(/disarmTimer\(paintTimer\)/.test(bindBody), 'bind() must disarm paintTimer before rebinding');
 
+    // Inline or via a named helper (the shape the 'delivery' case already uses): what must hold
+    // is that an accepted paint frame renders the watchdog inert.
     const paintBody = caseBody(hostSrc, 'paint');
-    h.ok(paintBody.includes('disarmTimer(paintTimer)'), "the 'paint' case must disarm paintTimer");
+    const paintDisarmSrc = paintBody.includes('handlePaintFrame') ? functionBody(hostSrc, 'handlePaintFrame') : paintBody;
+    h.ok(paintDisarmSrc.includes('disarmTimer(paintTimer)'), "the 'paint' path must disarm paintTimer");
 
     const exitBody = hostSrc.slice(hostSrc.indexOf('const exit = useCallback'), hostSrc.indexOf('const clearLastError'));
     h.ok(/disarmTimer\(paintTimer\)/.test(exitBody), 'exit() must disarm paintTimer');

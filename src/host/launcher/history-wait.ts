@@ -31,22 +31,34 @@ export interface HistoryLoadState {
  *  history, which is `{ loading: false, snapshots: [] }`. */
 export const HISTORY_LOADING: HistoryLoadState = { loading: true, snapshots: [], activeId: null };
 
+/** The screen's `setState` mirror: it takes a new state or, as React's does, an updater over the
+ *  previous one — which is what lets a FAILED read clear the wait without inventing rows. */
+export type PublishHistoryLoad = (
+  next: HistoryLoadState | ((prev: HistoryLoadState) => HistoryLoadState),
+) => void;
+
 /**
  * Run one history read and publish its result. `loading` is always published false once the read
  * settles — including when it rejects, so a failed read surfaces the honest empty history instead
  * of stranding the screen in a permanent skeleton. The rejection itself still propagates, so this
  * changes no error semantics beyond clearing the wait.
+ *
+ * A rejection clears `loading` and NOTHING else: this same function runs the reload after a
+ * restore, and publishing the default empty result there would wipe the rows already on screen —
+ * turning a failed reload into an apparently empty history.
  */
 export async function runHistoryLoad(
   read: () => Promise<{ snapshots: Snapshot[]; activeId: string | null }>,
-  publish: (state: HistoryLoadState) => void,
+  publish: PublishHistoryLoad,
 ): Promise<void> {
-  let result: { snapshots: Snapshot[]; activeId: string | null } = { snapshots: [], activeId: null };
+  let result: { snapshots: Snapshot[]; activeId: string | null };
   try {
     result = await read();
-  } finally {
-    publish({ loading: false, snapshots: result.snapshots, activeId: result.activeId });
+  } catch (e) {
+    publish((prev) => ({ ...prev, loading: false }));
+    throw e;
   }
+  publish({ loading: false, snapshots: result.snapshots, activeId: result.activeId });
 }
 
 // ── confirm-sheet double-submit guard ────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { AppBusy, runAppOp } from '../app-busy';
+import { AppBusy, isAppBusy, runAppOp } from '../app-busy';
 import type { AppBusyMap } from '../app-busy';
 import { COPY } from '../copy';
 
@@ -182,6 +182,23 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     await first;
   });
 
+  // Scenario: fork and delete are triggered from sheets that are already dismissed when their
+  // version-store call starts, so the tile is the ONLY control left to carry their wait.
+  await h.test('busy: the tile affordance covers fork and delete, not only open', async () => {
+    const registry = new AppBusy();
+    const rec = recorder();
+    for (const op of ['open', 'fork', 'delete'] as const) {
+      const gate = deferred();
+      const running = runAppOp(registry, rec.publish, 'a1', op, () => gate.promise);
+      h.eq(isAppBusy(rec.latest(), 'a1'), true, `a tile with a '${op}' in flight reads as busy`);
+      gate.resolve();
+      await running;
+      h.eq(isAppBusy(rec.latest(), 'a1'), false, `and idle again once the '${op}' settles`);
+    }
+    h.eq(isAppBusy(rec.latest(), 'other'), false, 'an app with nothing in flight is never busy');
+    h.eq(isAppBusy(undefined, 'a1'), false, 'no published snapshot at all reads as idle');
+  });
+
   // ── LauncherRoot.tsx / HomeScreen.tsx / app-tile.tsx: static wiring assertions ───────────────
   // The guard and the affordance are exercised for real above; what these pin is that the shell's
   // three handlers and the two surfaces are actually wired to them. Their failure mode is a
@@ -201,7 +218,7 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
   });
 
   await h.test('wiring: the grid tile shows the open affordance and the sheet rows disable', () => {
-    h.ok(/busy=\{appBusy\?\.\[app\.id\] === 'open'\}/.test(homeSrc), 'a tile being opened renders the busy tile treatment');
+    h.ok(/busy=\{isAppBusy\(appBusy, app\.id\)\}/.test(homeSrc), 'a tile whose app has an operation in flight renders the busy tile treatment');
     h.ok(/const selectedBusy = selected \? appBusy\?\.\[selected\.id\] : undefined/.test(homeSrc), 'the sheet reads the long-pressed app’s in-flight operation');
     const row = (busyKey: string) => homeSrc.split('\n').find(l => l.includes('SheetRow') && l.includes(busyKey)) ?? '';
     h.ok(row('COPY.actionForkBusy').includes('disabled={selectedBusy != null}'), 'the Fork row is disabled while an operation runs');

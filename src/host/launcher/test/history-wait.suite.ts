@@ -24,6 +24,7 @@ import {
   runConfirmOp,
   runHistoryLoad,
   type HistoryLoadState,
+  type PublishHistoryLoad,
 } from '../history-wait';
 import { COPY } from '../copy';
 
@@ -46,6 +47,16 @@ function snaps(ids: string[]): HistoryLoadState['snapshots'] {
   return ids.map(id => ({ id })) as unknown as HistoryLoadState['snapshots'];
 }
 
+/** The screen's `setState` mirror: it applies value-and-updater publishes over the previous state
+ *  exactly as React's setter does, so `latest` is what `HistoryScreen` would render. */
+function publisher(initial: HistoryLoadState = HISTORY_LOADING): { latest: () => HistoryLoadState; publish: PublishHistoryLoad } {
+  let state = initial;
+  return {
+    latest: () => state,
+    publish: (next) => { state = typeof next === 'function' ? next(state) : next; },
+  };
+}
+
 /** Guard against the bare-await hang: a promise that must settle within `ms`. */
 function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return Promise.race([
@@ -65,47 +76,67 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
 
   await h.test('load: loading stays true until the first read resolves, then the rows land together', async () => {
     const gate = deferred<{ snapshots: HistoryLoadState['snapshots']; activeId: string | null }>();
-    let latest: HistoryLoadState = HISTORY_LOADING;
+    const pub = publisher();
 
-    const run = runHistoryLoad(() => gate.promise, s => { latest = s; });
-    h.eq(latest.loading, true, 'nothing is published while the snapshot list and active id are still being read');
-    h.eq(latest.snapshots.length, 0, 'and there are no rows yet');
+    const run = runHistoryLoad(() => gate.promise, pub.publish);
+    h.eq(pub.latest().loading, true, 'nothing is published while the snapshot list and active id are still being read');
+    h.eq(pub.latest().snapshots.length, 0, 'and there are no rows yet');
 
     gate.resolve({ snapshots: snaps(['v3', 'v2', 'v1']), activeId: 'v3' });
     await within(run, 1000, 'the first load');
-    h.eq(latest.loading, false, 'the loading state clears when the read resolves');
-    h.eq(latest.snapshots.length, 3, 'with the rows');
-    h.eq(latest.activeId, 'v3', 'and the active version, published in the same update');
+    h.eq(pub.latest().loading, false, 'the loading state clears when the read resolves');
+    h.eq(pub.latest().snapshots.length, 3, 'with the rows');
+    h.eq(pub.latest().activeId, 'v3', 'and the active version, published in the same update');
   });
 
   await h.test('load: an install-only history clears loading and renders as genuinely empty', async () => {
     // The distinguishing case for the requirement: one snapshot (or none) must NOT keep the
     // skeleton on screen — loading clears and the real, honest list renders.
-    let latest: HistoryLoadState = HISTORY_LOADING;
+    const pub = publisher();
     await within(
-      runHistoryLoad(async () => ({ snapshots: snaps(['v1']), activeId: 'v1' }), s => { latest = s; }),
+      runHistoryLoad(async () => ({ snapshots: snaps(['v1']), activeId: 'v1' }), pub.publish),
       1000,
       'the install-only load',
     );
-    h.eq(latest, { loading: false, snapshots: snaps(['v1']), activeId: 'v1' }, 'install-only history is loaded, not loading');
+    h.eq(pub.latest(), { loading: false, snapshots: snaps(['v1']), activeId: 'v1' }, 'install-only history is loaded, not loading');
 
-    let empty: HistoryLoadState = HISTORY_LOADING;
+    const emptyPub = publisher();
     await within(
-      runHistoryLoad(async () => ({ snapshots: snaps([]), activeId: null }), s => { empty = s; }),
+      runHistoryLoad(async () => ({ snapshots: snaps([]), activeId: null }), emptyPub.publish),
       1000,
       'the empty load',
     );
-    h.eq(empty.loading, false, 'a zero-row result also clears the loading state');
+    h.eq(emptyPub.latest().loading, false, 'a zero-row result also clears the loading state');
   });
 
   await h.test('load: a failed read clears the loading state instead of stranding the skeleton', async () => {
-    let latest: HistoryLoadState = HISTORY_LOADING;
+    const pub = publisher();
     await h.throws(
-      () => within(runHistoryLoad(async () => { throw new Error('store unreadable'); }, s => { latest = s; }), 1000, 'the failing load'),
+      () => within(runHistoryLoad(async () => { throw new Error('store unreadable'); }, pub.publish), 1000, 'the failing load'),
       'store unreadable',
       'the read failure still propagates to the caller',
     );
-    h.eq(latest.loading, false, 'and the screen is not left loading forever');
+    h.eq(pub.latest().loading, false, 'and the screen is not left loading forever');
+  });
+
+  // Scenario: the reload `confirmRestore` runs after a restore fails. The rows on screen are still
+  // the truth about this app's history — a failed READ must not present as an emptied history.
+  await h.test('load: a failed RELOAD keeps the rows already on screen', async () => {
+    const pub = publisher();
+    await within(
+      runHistoryLoad(async () => ({ snapshots: snaps(['v3', 'v2', 'v1']), activeId: 'v3' }), pub.publish),
+      1000,
+      'the first load',
+    );
+
+    await h.throws(
+      () => within(runHistoryLoad(async () => { throw new Error('store unreadable'); }, pub.publish), 1000, 'the failing reload'),
+      'store unreadable',
+      'the reload failure still propagates to the caller',
+    );
+    h.eq(pub.latest().snapshots.length, 3, 'the rows from the last good read are still on screen');
+    h.eq(pub.latest().activeId, 'v3', 'and so is the active version');
+    h.eq(pub.latest().loading, false, 'with the wait cleared, not a permanent skeleton');
   });
 
   // ── confirm-sheet double submit ────────────────────────────────────────────────────────────
