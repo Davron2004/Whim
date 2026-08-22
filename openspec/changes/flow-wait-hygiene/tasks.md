@@ -63,7 +63,7 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run `npm run lint`, `npm run launcher:test`, and `scripts/gate.sh` locally before merge.
+- [x] 6.1 Run `npm run lint`, `npm run launcher:test`, and `scripts/gate.sh` locally before merge.
 - [ ] 6.2 Manually verify on-device (or via the offline release build) that: leaving compose
   while clarify is in flight no longer navigates the user back into the flow; leaving the plan
   screen stops the rewrite call; opening/forking/deleting an app shows a busy affordance; history

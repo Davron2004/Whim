@@ -25,3 +25,13 @@
 - dispatched 2026-08-21 — chain-R2 paint-fence-fix, BASE d8b00d2
 - report 2026-08-21 — chain-R2 STATUS complete, GATE PASS, commit a37461b (7114 launcher checks). paintAccepted trust-only; fixture built from the generated runtime; red-check "generation comparison restored → realistic-frame test fails" confirmed. Redundant state.generation write removed; watchdog pin unconditional. Class-A only. Accepted.
 - merged 2026-08-21 — chain-R2 → integration; FULL GATE PASSED. Worktree removed. Final reviewer re-check dispatched.
+- reviewer final 2026-08-21 — CLEAN. Launch path traced loader.js → assemble.mjs (trusted:true iff nonce-authentic) → handlePaintFrame; no generation comparison remains on the paint path; watchdog edges intact. One low: boot-state.suite.ts:~120 `!paintForward.includes('GEN')` asserts a local literal (tautology) — follow-up, not blocking.
+
+## Closing summary
+- Chains run: 1–5 (planned) + R, R2 (reviewer fix chains). Redispatches: 0. Merge conflicts: 0. All regates + two gate-full runs PASS. Launcher suite 6715 → 7114 checks.
+- Deviations: Class-A only (new pure siblings flow-request/app-busy/boot-state/history-wait for Node-testability; paintMs reset on rebind; Settings gear as compose leave path; confirmCopy keeps sheet open; tile-colour/history-logic/watchdog pins adjusted at equal or greater strength). One B-adjacent, accepted under D2: XHR connect window is a JS timer, not xhr.timeout (RN→OkHttp callTimeout would kill long streams).
+- Reviewer: round 1 FINDINGS (2 medium, 4 low) → chain R; round 2 HIGH (paint fence compared disjoint generation namespaces → boot overlay never cleared) → chain R2; round 3 CLEAN.
+- Tripwire candidates: none repeated across 2+ chains.
+- Not done: task 6.2 on-device manual verification (no emulator run this session) — left unticked for the human.
+- Follow-ups: tautological assertion boot-state.suite.ts:~120; tile-colour regex no longer pins `width={cellWidth}` as last prop (accepted).
+- MEMORY applied: whim-two-generation-namespaces.
