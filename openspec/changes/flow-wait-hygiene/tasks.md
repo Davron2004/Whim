@@ -49,16 +49,16 @@
 
 ## 5. History screen: loading state, confirm-sheet disabling, restore-diff pending (B5/B6/D5)
 
-- [ ] 5.1 Add an explicit `loading` boolean to `HistoryScreen.tsx`'s `load()` flow, true until the
+- [x] 5.1 Add an explicit `loading` boolean to `HistoryScreen.tsx`'s `load()` flow, true until the
   first `Promise.all([listVersions, activeId])` resolves; render row skeletons (reusing existing
   skeleton-geometry primitives) while `loading` is true instead of an empty list.
-- [ ] 5.2 Add a per-confirm in-flight boolean to `HistoryScreen.tsx`'s confirm state, set before
+- [x] 5.2 Add a per-confirm in-flight boolean to `HistoryScreen.tsx`'s confirm state, set before
   `access.rollback`/`access.fork` in `confirmRestore`/`confirmCopy` and cleared after; disable the
   `ConfirmBody` Restore/Copy `TouchableOpacity`s while it's true.
-- [ ] 5.3 Add a pending visual state to the `fieldsLeavingViewOnRestore` line in `ConfirmBody`
+- [x] 5.3 Add a pending visual state to the `fieldsLeavingViewOnRestore` line in `ConfirmBody`
   (e.g. a muted placeholder), shown while the existing `cancelled`-guarded effect is in flight,
   replaced by the reassurance line or nothing once it resolves.
-- [ ] 5.4 Run `npm run launcher:test`, adding/extending cases for the loading state and
+- [x] 5.4 Run `npm run launcher:test`, adding/extending cases for the loading state and
   confirm-sheet double-submit guard.
 
 ## 6. Verification

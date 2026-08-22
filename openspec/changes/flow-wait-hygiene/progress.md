@@ -13,3 +13,6 @@
 - dispatched 2026-08-21 — chain-4 mini-app-boot-state, BASE f2e3305, worktree .claude/worktrees/flow-wait-hygiene-4
 - report 2026-08-21 — chain-4 STATUS complete, GATE PASS, commit 0d1aef9 (6921 launcher checks, 4 red-checks). Class-A: `paintMs` not reset on rebind before this chain (latent: stale paint would suppress the next boot state) — reset added in bind(); `hasPainted` computed on MiniAppHost, not stored; boot overlay also covers pre-bind window; two wiring assertions rewritten to `miniAppSurface()` branches at equal strength. COPY +appBootLabel/appBootA11yLabel. Accepted.
 - merged 2026-08-21 — chain-4 → integration (regate-pass). Worktree removed.
+- dispatched 2026-08-21 — chain-5 history-loading-confirm-guard, BASE 081f718, worktree .claude/worktrees/flow-wait-hygiene-5
+- report 2026-08-21 — chain-5 STATUS complete, GATE PASS, commit df3df00 (7067 launcher checks; red-check discriminated control-only disable from handler-level guard). Class-A: new `history-wait.ts`; confirmCopy closes the sheet AFTER the fork (spec: busy on the confirmed control); filter pills hidden while loading; read failure now publishes loading:false; two history-logic wiring pins updated to the new call shape. Accepted.
+- merged 2026-08-21 — chain-5 → integration (regate-pass). Worktree removed. All 5 chains merged; running gate-full.
