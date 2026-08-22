@@ -5,7 +5,7 @@
 - [x] 1.2 Add a connect/first-event timeout (~15s) to `openFetchGenerateStream` (`fetch` path):
   race the initial request against a timer that aborts via the same `AbortController`, disarmed
   once the first chunk/event is observed.
-- [x] 1.3 Arm `xhr.timeout` to the same ~15s value before `.send()` in `xhr-transport.ts`,
+- [x] 1.3 (as-built: JS connect timer + `xhr.abort()`, NOT `xhr.timeout` — RN maps it to OkHttp callTimeout, see progress.md) Arm `xhr.timeout` to the same ~15s value before `.send()` in `xhr-transport.ts`,
   disarmed (or effectively bypassed) once the first event is delivered, so a hung connect fires
   the existing `xhr.ontimeout` handler and a long-running active stream is never killed.
 - [x] 1.4 Ensure a fired connect timeout on either transport is classified as `GenerationClientError{kind:'network'}` (or equivalent honest network-failure classification), not left indistinguishable from an in-progress stream.
