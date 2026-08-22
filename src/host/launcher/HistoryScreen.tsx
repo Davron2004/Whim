@@ -18,7 +18,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
-import type { Snapshot } from '../version-store';
 import { InstalledApp } from './app-index';
 import {
   annotationBetween,
@@ -43,6 +42,17 @@ import {
   restoreSheetTitle,
   restoredToast,
 } from './copy';
+import {
+  ConfirmFlight,
+  HISTORY_LOADING,
+  RESTORE_DIFF_NONE,
+  restoreDiffLine,
+  runConfirmOp,
+  runHistoryLoad,
+  type HistoryLoadState,
+  type RestoreDiffState,
+} from './history-wait';
+import { BreathingView } from './flow-skeletons';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
 import { tileColor } from './tiles';
@@ -91,6 +101,10 @@ const CURRENT_DOT_RING = STATUS_COLORS.done + '4d';
  *  half its height. The timeline segment starts or stops here on the list's terminal rows. */
 const DOT_CENTRE = 21.5;
 
+/** How many placeholder rows the first load draws. The real count is not known until the read
+ *  resolves, so this is a shape hint, not a prediction. */
+const HISTORY_SKELETON_ROWS = 3;
+
 /** Where a row's timeline segment begins and ends: an interior row's spans the whole wrapper, the
  *  first row's drops from the dot, the last row's rises to it. A list of one renders no segment at
  *  all — the caller checks that, since there is no extent that expresses "absent". */
@@ -114,20 +128,26 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
   const p = shellPalette(theme);
   const appHue = tileColor(app.name, app.record.manifest);
 
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // One state object rather than three: `loading`, the snapshot list and the active id all land
+  // together from `runHistoryLoad`, so they can never be read half-applied (an empty list with
+  // `loading` already false is exactly the fake-empty flash this screen had).
+  const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [restoreLeaving, setRestoreLeaving] = useState<string[]>([]);
+  const [restoreDiff, setRestoreDiff] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
+  // The confirm sheet's double-submit guard. A ref, not state: two taps inside one frame both read
+  // the same rendered `disabled` value, so only a synchronous claim can refuse the second.
+  const confirmFlight = useRef(new ConfirmFlight()).current;
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = async () => {
-    const [list, active] = await Promise.all([listVersions(access, app), access.activeId(app)]);
-    setSnapshots(list);
-    setActiveId(active);
-  };
+  const load = () =>
+    runHistoryLoad(async () => {
+      const [list, active] = await Promise.all([listVersions(access, app), access.activeId(app)]);
+      return { snapshots: list, activeId: active };
+    }, setLoad);
 
   useEffect(() => {
     load();
@@ -150,12 +170,13 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
 
   useEffect(() => {
     if (confirm?.kind !== 'restore' || activeId == null) {
-      setRestoreLeaving([]);
+      setRestoreDiff(RESTORE_DIFF_NONE);
       return;
     }
+    setRestoreDiff({ status: 'pending' });
     let cancelled = false;
     fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId).then(fields => {
-      if (!cancelled) setRestoreLeaving(fields);
+      if (!cancelled) setRestoreDiff({ status: 'ready', fields });
     });
     return () => {
       cancelled = true;
@@ -176,17 +197,22 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
   const confirmRestore = async () => {
     if (!confirm) return;
     const { row } = confirm;
-    await access.rollback(app, row.id);
+    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.rollback(app, row.id));
+    if (!ran) return;
     setConfirm(null);
     await load();
     showToast(restoredToast(row.version));
   };
 
+  // The sheet stays open for the duration of the fork (it used to close first) — the requirement
+  // is that the confirmed control itself shows the busy state until the fork completes, which a
+  // dismissed sheet cannot do.
   const confirmCopy = async () => {
     if (!confirm) return;
     const { row } = confirm;
+    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.fork(app, row.id));
+    if (!ran) return;
     setConfirm(null);
-    await access.fork(app, row.id);
     showToast(COPY.historyCopyToast);
   };
 
@@ -240,6 +266,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
         </View>
       </View>
 
+      {!loading && (
       <View style={styles.pillRow}>
         {pills.map(pill => {
           const selected = pill.key === filter;
@@ -259,8 +286,13 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
           );
         })}
       </View>
+      )}
 
-      <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
+      {loading ? (
+        <HistoryLoadingRows palette={p} />
+      ) : (
+        <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
+      )}
 
       {toast && (
         <View style={[styles.toast, { backgroundColor: p.text }]}>
@@ -275,7 +307,8 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
               <ConfirmBody
                 confirm={confirm}
                 appName={app.name}
-                leaving={restoreLeaving}
+                diff={restoreDiff}
+                busy={confirmBusy}
                 palette={p}
                 onCancel={() => setConfirm(null)}
                 onConfirmRestore={confirmRestore}
@@ -463,7 +496,8 @@ function ActionButton({
 function ConfirmBody({
   confirm,
   appName,
-  leaving,
+  diff,
+  busy,
   palette: p,
   onCancel,
   onConfirmRestore,
@@ -471,7 +505,10 @@ function ConfirmBody({
 }: Readonly<{
   confirm: ConfirmState;
   appName: string;
-  leaving: string[];
+  diff: RestoreDiffState;
+  /** A restore/fork is running for this confirmation: the consequential control says so and stops
+   *  accepting taps until it settles. */
+  busy: boolean;
   palette: ReturnType<typeof shellPalette>;
   onCancel: () => void;
   onConfirmRestore: () => void;
@@ -480,22 +517,64 @@ function ConfirmBody({
   const isRestore = confirm.kind === 'restore';
   const title = isRestore ? restoreSheetTitle(confirm.row.version) : copySheetTitle(confirm.row.version);
   const body = isRestore ? restoreSheetBody(confirm.row.version) : copySheetBody(appName);
-  const confirmLabel = isRestore ? COPY.historyRestoreConfirm : COPY.historyCopyConfirm;
+  const idleLabel = isRestore ? COPY.historyRestoreConfirm : COPY.historyCopyConfirm;
+  const busyLabel = isRestore ? COPY.historyRestoreConfirmBusy : COPY.historyCopyConfirmBusy;
+  // The reassurance line resolves IN PLACE: while the diff is being computed a muted placeholder
+  // holds its space, so the sheet does not reflow when the sentence arrives (D6 — a placeholder,
+  // deliberately not a skeleton: one sentence has no row shape to mimic).
+  const line = isRestore ? restoreDiffLine(diff) : 'none';
 
   return (
     <>
       <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{title}</Text>
       <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{body}</Text>
-      {isRestore && leaving.length > 0 && (
+      {line === 'pending' && (
+        <View
+          accessibilityRole="progressbar"
+          accessibilityLabel={COPY.historyReassurancePending}
+          style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
+        />
+      )}
+      {line === 'reassurance' && (
         <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>
       )}
       <TouchableOpacity onPress={onCancel} style={[styles.sheetSafeBtn, { backgroundColor: p.text }]}>
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.cancel}</Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={isRestore ? onConfirmRestore : onConfirmCopy} style={styles.sheetConsequentialBtn}>
-        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{confirmLabel}</Text>
+      <TouchableOpacity
+        onPress={isRestore ? onConfirmRestore : onConfirmCopy}
+        disabled={busy}
+        accessibilityState={{ disabled: busy, busy }}
+        style={[styles.sheetConsequentialBtn, busy ? styles.sheetConsequentialBtnBusy : null]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{busy ? busyLabel : idleLabel}</Text>
       </TouchableOpacity>
     </>
+  );
+}
+
+/**
+ * The first-load timeline (D4 — the one legitimate skeleton here: a true content load whose row
+ * shape is already known). Geometry is the real row's own `rowWrap`/`marker`/`card` styles and the
+ * `TYPE_SCALE` line heights the real text uses, so the list does not jump when the rows land; the
+ * only motion is `BreathingView`'s. The row COUNT is unknown before the read, so it is a small
+ * fixed number that reads as "a list is coming" rather than a promise of how long it is.
+ */
+function HistoryLoadingRows({ palette: p }: Readonly<{ palette: ReturnType<typeof shellPalette> }>) {
+  return (
+    <View style={styles.list} accessibilityRole="progressbar" accessibilityLabel={COPY.historyLoadingLabel}>
+      {Array.from({ length: HISTORY_SKELETON_ROWS }, (_, i) => (
+        <View key={`skeleton-${i}`} style={styles.rowWrap}>
+          <View style={[styles.marker, { backgroundColor: p.bg, borderColor: p.cardBorder }]}>
+            <View style={[styles.markerDot, { backgroundColor: p.cardBorder }]} />
+          </View>
+          <View style={[styles.card, { backgroundColor: p.bg, borderColor: p.cardBorder }]}>
+            <BreathingView delayMs={i * 120} style={[styles.skeletonMeta, { backgroundColor: p.cardBorder }]} />
+            <BreathingView delayMs={i * 120 + 90} style={[styles.skeletonHeadline, { backgroundColor: p.cardBorder }]} />
+          </View>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -590,4 +669,10 @@ const styles = StyleSheet.create({
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 24 },
   sheetSafeBtn: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
   sheetConsequentialBtn: { height: 46, alignItems: 'center', justifyContent: 'center' },
+  // Opacity, not a shadow or an elevation: `shadow*` renders as nothing on Android.
+  sheetConsequentialBtnBusy: { opacity: 0.5 },
+  // The reassurance line's placeholder holds exactly the height that one caption line will take.
+  reassurancePending: { height: TYPE_SCALE.caption.lineHeight, width: '76%', borderRadius: RADIUS.chip, marginTop: SPACING.xs, opacity: 0.6 },
+  skeletonMeta: { height: TYPE_SCALE.metaPlain.lineHeight, width: '46%', borderRadius: RADIUS.chip },
+  skeletonHeadline: { height: TYPE_SCALE.bodyEmphatic.lineHeight, borderRadius: RADIUS.chip, marginTop: 4 },
 });
