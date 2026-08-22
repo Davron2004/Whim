@@ -27,6 +27,7 @@ import { createStorageEngine } from '../storage-engine';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
+import { paintAccepted } from './boot-state';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
@@ -72,6 +73,18 @@ function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: 
   if (payload?.accepted === true) armPaintWatchdog(paintTimer, setS);
 }
 
+/** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
+ *  but only when it is nonce-authenticated (`paintAccepted`), the same trust check `probes`
+ *  applies. It is NOT generation-fenced like `nav-depth`: the outer page forwards `paint`
+ *  verbatim, so its `payload.generation` is the iframe-local counter and means nothing here
+ *  (`boot-state.ts` carries the full reasoning). `generation` on HostState is owned by the
+ *  `probes` branch alone. */
+function handlePaintFrame(frame: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (!paintAccepted(frame)) return;
+  disarmTimer(paintTimer);
+  setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
+}
+
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
  *  non-fatal diagnostic (e.g. a post-paint probes failure) never triggers a full-screen takeover
  *  on an otherwise-healthy running app. */
@@ -90,6 +103,9 @@ function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) 
 export interface HostState {
   contained: boolean | null;
   probesFrac: string;
+  /** Mount→first-paint for the CURRENTLY bound realm, or null when this realm has not painted yet
+   *  (`bind()` resets it). Non-null is the "has painted" signal `boot-state.ts` derives from — the
+   *  container's boot state needs no bridge message of its own. */
   paintMs: number | null;
   generation: number | null;
   lastTap: string | null;
@@ -187,7 +203,10 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       disarmTimer(paintTimer);
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
-      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0 }));
+      // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
+      // reads (`boot-state.ts`), so a PREVIOUS realm's paint must never make the next launch look
+      // already-up and skip the boot state.
+      setS((p) => ({ ...p, currentApp: displayName, lastError: null, launchFailed: false, navDepth: 0, paintMs: null }));
 
       // ALWAYS bind a realm + dispatcher — even for a zero-capability app — so a bundle that
       // syscalls anyway (the cap-intruder) is DENIED with a structured error, not dropped into a
@@ -275,8 +294,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        disarmTimer(paintTimer);
-        setS((p) => ({ ...p, paintMs: m.payload?.mountToFirstPaintMs ?? null, generation: m.payload?.generation ?? null }));
+        handlePaintFrame(m, paintTimer, setS);
         return;
       case 'probes': {
         const r = m.payload || {};

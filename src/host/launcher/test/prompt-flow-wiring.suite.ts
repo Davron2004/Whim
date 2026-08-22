@@ -15,6 +15,8 @@
  *   - answers reach the rewrite and the generation request, by value.
  *   - nothing is generated before the plan's `Build it`.
  *   - `Leave it running` does not cancel; hardware back out of the build step does.
+ *   - leaving compose or plan cancels that step's own in-flight request, and a response to a
+ *     request the user has left cannot move the screen.
  *   - a delivered generation tracks `{v:2, text, summary?}`; v1 and raw strings still read.
  *   - the highlighting off-switch is mounted around the whole tree, or it is inert.
  */
@@ -32,6 +34,7 @@ import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import { buildGenerateRequest } from '../generation-request';
 import { isClarifySkip } from '../prompt-flow';
+import { FlowRequests, onlyOnStep } from '../flow-request';
 import { PROMPT_ENVELOPE_VERSION, parsePromptEnvelope, promptEnvelope } from '../prompt-envelope';
 import { loadHighlighting, saveHighlighting } from '../highlighting';
 import { storedSummary } from '../history-logic';
@@ -229,6 +232,56 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!promptEnvelope('a timer', SUMMARY).includes('lineage'), 'no lineage marker is written into the prompt');
   });
 
+  // ── flow-request.ts: leaving a step cancels its request, and a late response is discarded ──
+  // (`prompt-flow` "Leaving clarify or rewrite cancels the in-flight request cleanly" and "A
+  // response to a request the user has left cannot move the screen".) Behavioural: both halves of
+  // the pattern are pure, so they run here for real; only their call sites are asserted statically.
+
+  await h.test('cancel: leaving compose aborts the clarify request it started', () => {
+    const requests = new FlowRequests();
+    const clarify = requests.start('compose');
+    h.eq(clarify.controller.signal.aborted, false, 'the request starts live');
+    requests.abort('compose');
+    h.eq(clarify.controller.signal.aborted, true, 'leaving compose aborts the underlying request');
+    h.eq(clarify.cancelled, true, 'and records the intent, since an abort and a failure look alike to the caller');
+  });
+
+  await h.test('cancel: leaving plan aborts rewrite and nothing else', () => {
+    const requests = new FlowRequests();
+    const clarify = requests.start('compose');
+    const rewrite = requests.start('plan');
+    requests.abort('plan');
+    h.eq(rewrite.controller.signal.aborted, true, 'leaving plan aborts the rewrite request');
+    h.eq(clarify.controller.signal.aborted, false, 'per-step controllers: the clarify request is untouched');
+    h.eq(clarify.cancelled, false, 'and is not marked cancelled');
+  });
+
+  await h.test('cancel: a settled request releases only its own slot', () => {
+    const requests = new FlowRequests();
+    const first = requests.start('compose');
+    const second = requests.start('compose');
+    h.eq(first.controller.signal.aborted, true, 'a superseding request cancels the one it replaces');
+    requests.release('compose', first);
+    requests.abort('compose');
+    h.eq(second.controller.signal.aborted, true, 'the stale request’s release did not strand the newer one');
+  });
+
+  await h.test('cancel: a late clarify response cannot move the screen off Home', () => {
+    // The user backed out of compose to Home while clarify was in flight; the response lands
+    // afterwards. It must be discarded, and Home must stay put.
+    const toClarify = onlyOnStep<{ kind: string }, 'compose'>('compose', () => ({ kind: 'clarify' }));
+    const home = { kind: 'home' };
+    h.ok(toClarify(home) === home, 'the late response leaves the current screen untouched, by reference');
+    h.eq(toClarify({ kind: 'compose' }).kind, 'clarify', 'while a compose step that never left still advances');
+  });
+
+  await h.test('cancel: a late rewrite response cannot move a screen the user already left', () => {
+    const applied = onlyOnStep<{ kind: string }, 'plan'>('plan', () => ({ kind: 'plan-with-rows' }));
+    const settings = { kind: 'settings' };
+    h.ok(applied(settings) === settings, 'a rewrite that resolves after the plan step is gone is discarded');
+    h.eq(applied({ kind: 'plan' }).kind, 'plan-with-rows', 'and still applies while the plan step is current');
+  });
+
   // ── LauncherRoot.tsx / HomeScreen.tsx: static wiring assertions ─────────────────────────────
 
   const rootSrc = read('LauncherRoot.tsx');
@@ -264,6 +317,40 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(attemptFn.includes('generateApp('), 'and it is inside runAttempt');
     const buildFn = rootSrc.slice(rootSrc.indexOf('const onBuildIt'), rootSrc.indexOf('const onLeaveRunning'));
     h.ok(buildFn.includes('runAttempt(buildStep(from))'), 'Build it reaches generation only through that one runner');
+  });
+
+  await h.test('cancel-wiring: the flow’s leave-handlers abort clarify and rewrite', () => {
+    // Only the call SITES are static here — the pattern itself runs for real above. Their one
+    // failure mode is a missing wire: the request is never cancelled and every other assertion
+    // in this file stays green.
+    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
+    const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
+    h.ok(/clarifyPrompt\([\s\S]*?request\.controller\.signal/.test(composeFn), 'the clarify call carries its own abort signal');
+    h.ok(/rewritePrompt\([\s\S]*?request\.controller\.signal/.test(planFn), 'so does the rewrite call');
+    h.ok(composeFn.includes("flowRequests.start('compose')"), 'compose owns a compose-scoped request');
+    h.ok(planFn.includes("flowRequests.start('plan')"), 'and the plan step a plan-scoped one — never one flow-wide controller');
+    const leaveFn = rootSrc.slice(rootSrc.indexOf('const leaveFlowStep'), rootSrc.indexOf('const onServerUrlChange'));
+    h.ok(leaveFn.includes("flowRequests.abort('compose')") && leaveFn.includes("flowRequests.abort('plan')"), 'the leave-handler aborts the step being left');
+    h.ok(/const goHome = \(\) => \{\s*leaveFlowStep\(screen\.kind\);/.test(rootSrc), 'going Home leaves the current step');
+    h.ok(/const goBack = \(from: FlowScreen\) => \{\s*leaveFlowStep\(from\.kind\);/.test(rootSrc), 'and so does a back press — which is what the hardware back button calls');
+    h.ok(/onOpenSettings=\{\(\) => \{\s*leaveFlowStep\('compose'\);/.test(rootSrc), 'opening Settings out of compose leaves it too');
+  });
+
+  await h.test('cancel-wiring: every post-await screen write in the flow is guarded', () => {
+    // The B1 fix: aborting alone cannot stop a promise that had already resolved when the user
+    // navigated away, so each write after an `await` re-checks the step that started it.
+    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
+    const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
+    const writes = (src: string) => src.match(/setScreen\(/g) ?? [];
+    const guarded = (src: string) => src.match(/setScreen\(onlyOnStep</g) ?? [];
+    h.eq(guarded(composeFn).length, writes(composeFn).length, 'no unguarded setScreen survives in onComposeContinue');
+    h.eq(guarded(planFn).length, writes(planFn).length, 'nor in openPlan');
+    h.ok(composeFn.includes('if (request.cancelled) return;'), 'a cancelled clarify returns before touching busy or the screen');
+    h.ok(planFn.includes('if (request.cancelled) return;'), 'and a cancelled rewrite before showing any failure');
+    h.ok(composeFn.indexOf('if (request.cancelled) return;') < composeFn.indexOf("logGenError('clarify failed'"), 'the abort is swallowed before any failure breadcrumb is logged');
+    h.ok(planFn.indexOf('if (request.cancelled) return;') < planFn.indexOf("logGenError('rewrite failed'"), 'on the rewrite path too');
+    const leaveFn = rootSrc.slice(rootSrc.indexOf('const leaveFlowStep'), rootSrc.indexOf('const onServerUrlChange'));
+    h.ok(leaveFn.includes('setBusy(false)'), 'leaving compose clears the busy primary action the guarded reset can no longer clear');
   });
 
   await h.test('build: only `stage` reaches screen state — never token text or diagnostic fields', () => {

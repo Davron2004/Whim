@@ -30,6 +30,11 @@ export const COPY = {
   actionFork: 'Fork',
   actionPromptAgain: 'Prompt again',
   actionDelete: 'Delete',
+  /** The Fork/Delete rows while that app's operation is running (`app-launcher` "Fork and delete
+   *  show a busy state and cannot be re-triggered mid-operation"): the row says what it is doing
+   *  rather than what it offers, so the disabled row never reads as an unregistered tap. */
+  actionForkBusy: 'Forking…',
+  actionDeleteBusy: 'Deleting…',
   cancel: 'Cancel',
   // ── ghost tiles (launcher-ghost-tiles) ──────────────────────────────────────
   /** A ghost/rebuild tile's state caption — names its own state, distinguishing `building` from
@@ -130,6 +135,13 @@ export const COPY = {
   historyRestoreConfirm: 'Go back to it',
   historyCopyConfirm: 'Make the copy',
   historyCopyToast: 'Copy made — it’s on your home screen',
+  /** The three history wait states (`version-history`, flow-wait-hygiene): the first-load
+   *  skeleton's screen-reader name, the two confirm buttons' in-flight labels, and the name of
+   *  the muted placeholder standing in for the reassurance line while it is computed. */
+  historyLoadingLabel: 'Looking up this app’s history',
+  historyRestoreConfirmBusy: 'Going back…',
+  historyCopyConfirmBusy: 'Making the copy…',
+  historyReassurancePending: 'Checking what this changes',
   forkShareData: 'Use the same saved data',
   forkStartFresh: 'Start fresh',
 
@@ -143,6 +155,15 @@ export const COPY = {
   orbMenuOpenLabel: 'Open the app menu',
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
+
+  // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
+  //    first paint") ──────────────────────────────────────────────────────────
+  /** Shown under the app's own name while its realm loads, so the wait before first paint reads
+   *  as Whim opening the app rather than as a blank screen. */
+  appBootLabel: 'Opening…',
+  /** The boot overlay's accessibility label — the screen reader gets the same fact the sighted
+   *  user gets from the breathing mark. */
+  appBootA11yLabel: 'Opening this app',
 
   // ── failure surfaces ────────────────────────────────────────────────────────
   launchFailedTitle: 'Couldn’t open this app',

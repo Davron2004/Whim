@@ -274,7 +274,7 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     // `width: APP_TILE_SIZE` / `height: APP_TILE_SIZE` style entries used to.
     // `launcher-ghost-tiles` adds one more destructured prop (`ghost`) after the default — the
     // default itself, and every prop before it, are unchanged.
-    h.ok(/width = APP_TILE_SIZE(?:, \w+)? \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
+    h.ok(/width = APP_TILE_SIZE(?:, \w+)* \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
     h.ok(/const fluidRoot = isDone \? null : \{ width \};/.test(src), 'the root takes its width from the prop');
     h.ok(/const fluidTile = isDone \? null : \{ width, height: width \};/.test(src), 'and the tile stays square at that width');
     // Ruling R23's stated precedence: the done tile is a fixed 120x120 preset and IGNORES `width`.
@@ -287,7 +287,7 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     const src = read('HomeScreen.tsx');
     h.ok(/homeGridCellWidth\(useWindowDimensions\(\)\.width, APP_TILE_SIZE\)/.test(src), 'the frame width drives the cell, falling back to the tile default');
     h.ok(/style=\{\{ width: cellWidth \}\}/.test(src), 'the grid cell is that width');
-    h.ok(/<AppTile name=\{app\.name\} manifest=\{app\.record\.manifest\} width=\{cellWidth\} \/>/.test(src), 'and the tile fills it — never an 88 tile left-aligned in a wider box');
+    h.ok(/<AppTile name=\{app\.name\} manifest=\{app\.record\.manifest\} width=\{cellWidth\}[ /]/.test(src), 'and the tile fills it — never an 88 tile left-aligned in a wider box');
     h.ok(/paddingHorizontal: HOME_GRID_SIDE_PADDING/.test(src), 'the padding the derivation subtracts is the padding the style applies');
   });
 
