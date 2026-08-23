@@ -8,3 +8,5 @@
 - chain-5: dispatched(BASE=48c5e8e) report=complete gate=PASS integrity=0 merged commit=8f63fa8
 - chain-3: dispatched(BASE=82dd783) report=complete gate=PASS integrity=0 merged commit=d2ed02b note=machine.suite header comment stale (chain-5 file) -> integration note
 - chain-4: dispatched(BASE=a181fd1) report=complete gate=PASS integrity=0 merged commit=a7776f8 note=record.name-vs-entry.name choice logged
+- chain-6: dispatched(BASE=5d3af66) report=complete gate=PASS integrity=0 merged commit=2e2d78d
+- chain-6 merge redone from primary tree (first attempt ran inside the worktree, no-op); regate PASS

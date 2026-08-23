@@ -40,8 +40,8 @@
 
 ## 6. Documentation and the engine-level regression
 
-- [ ] 6.1 Document the schema artifact in `docs/sdk-reference.md` §5: collections/fields keyed by display name over burned ids, the six field types, `tombstones`, and `date` as an epoch-millisecond integer with a worked `Date.now()` example — test: `server/test/prompts.suite.ts` §sdk reference tripwire (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 6.2 Disambiguate `Chart`'s `DayPoint.date` in §2 as a `YYYY-MM-DD` chart label unrelated to the storage `date` field type — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 6.3 Extend the SDK-reference tripwire to fail when the schema-artifact section, any of the six field types, or the epoch-millisecond statement is missing — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 6.4 Engine regression for the orphaning invariant: applying an artifact that replaces a collection id leaves the old table and rows byte-identical; an artifact omitting a field leaves its column untouched across an update — test: `src/host/storage-engine/test/acceptance.ts` (`npm run storage:test`); gate: `./scripts/gate.sh`
-- [ ] 6.5 Full gate before hand-off: `./scripts/gate-full.sh` (adds the Chromium suites, `guard:metro`, knip and `openspec validate`) — gate: `./scripts/gate-full.sh`
+- [x] 6.1 Document the schema artifact in `docs/sdk-reference.md` §5: collections/fields keyed by display name over burned ids, the six field types, `tombstones`, and `date` as an epoch-millisecond integer with a worked `Date.now()` example — test: `server/test/prompts.suite.ts` §sdk reference tripwire (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 6.2 Disambiguate `Chart`'s `DayPoint.date` in §2 as a `YYYY-MM-DD` chart label unrelated to the storage `date` field type — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 6.3 Extend the SDK-reference tripwire to fail when the schema-artifact section, any of the six field types, or the epoch-millisecond statement is missing — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 6.4 Engine regression for the orphaning invariant: applying an artifact that replaces a collection id leaves the old table and rows byte-identical; an artifact omitting a field leaves its column untouched across an update — test: `src/host/storage-engine/test/acceptance.ts` (`npm run storage:test`); gate: `./scripts/gate.sh`
+- [x] 6.5 Full gate before hand-off: `./scripts/gate-full.sh` (adds the Chromium suites, `guard:metro`, knip and `openspec validate`) — gate: `./scripts/gate-full.sh`

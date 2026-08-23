@@ -35,6 +35,7 @@ import {
 } from '../src/generation/prompts';
 import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
 import { runStaticChecks } from '../../checks/index';
+import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
 import type { GenerateRequest, Diagnostic, GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
@@ -541,6 +542,80 @@ async function testExportsDocumented(): Promise<void> {
   }
 }
 
+// ── §Tripwire 1b: the storage schema artifact is documented ──────────────────
+
+/** The reference's storage-schema-artifact section — its heading through to the next heading of the
+ *  same or higher level, or `null` when the document has no such section (the failure this tripwire
+ *  exists for). Scoped rather than whole-document on purpose: `text` and `bool` also appear as token
+ *  names elsewhere in the reference, so only a hit INSIDE this section counts as documentation. */
+function schemaArtifactSection(reference: string): string | null {
+  const lines = reference.split('\n');
+  const start = lines.findIndex((line) => /^#{2,4} .*schema artifact/i.test(line));
+  if (start === -1) return null;
+  const opener = /^#+/.exec(lines[start]);
+  const level = opener ? opener[0].length : 2;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const heading = /^(#+) /.exec(lines[i]);
+    if (heading && heading[1].length <= level) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+/** A whitespace-normalized window starting at the first occurrence of `needle`, so a statement that
+ *  wraps across markdown lines still reads as one span. */
+function windowAround(text: string, needle: string, span = 300): string | null {
+  const flat = text.replace(/\s+/g, ' ');
+  const at = flat.indexOf(needle);
+  return at === -1 ? null : flat.slice(at, at + span);
+}
+
+async function testSchemaArtifactDocumented(): Promise<void> {
+  section('Tripwire: docs/sdk-reference.md documents the storage schema artifact');
+
+  const reference = loadSdkReference(repoRoot);
+  const artifactSection = schemaArtifactSection(reference);
+  check(
+    'sdk reference: a storage schema-artifact section exists',
+    artifactSection !== null,
+    'no "… schema artifact" heading in docs/sdk-reference.md',
+  );
+  const body = artifactSection ?? '';
+
+  // The six types come from the engine's own closed set, so adding a seventh without documenting
+  // it fails here rather than silently teaching the model an incomplete list.
+  check('field-type set is six wide (sanity vs the engine contract)', FIELD_TYPES.length === 6, `engine declares ${FIELD_TYPES.length} field types`);
+  for (const type of FIELD_TYPES) {
+    check(
+      `sdk reference: field type "${type}" is named in the schema-artifact section`,
+      new RegExp('[`\'"]' + type + '[`\'"]').test(body),
+      `field type "${type}" is undocumented`,
+    );
+  }
+
+  check('sdk reference: the schema-artifact section documents `tombstones`', /tombstones/.test(body), 'the section never mentions tombstones');
+  check(
+    'sdk reference: a `date` field is stated to be an epoch-millisecond integer',
+    /epoch-millisecond/i.test(body),
+    'the schema-artifact section never says a `date` field is epoch-milliseconds',
+  );
+  check(
+    'sdk reference: the epoch-millisecond statement carries a worked Date.now() example',
+    /Date\.now\(\)/.test(body),
+    'no worked Date.now() example in the schema-artifact section',
+  );
+
+  const dayPoint = windowAround(reference, 'DayPoint.date');
+  check(
+    "sdk reference: `DayPoint.date` is disambiguated from the storage `date` field type",
+    dayPoint !== null && /YYYY-MM-DD/.test(dayPoint) && /unrelated/i.test(dayPoint) && /storage/i.test(dayPoint),
+    dayPoint === null ? 'the reference never names `DayPoint.date`' : `not disambiguated near: ${dayPoint.slice(0, 140)}`,
+  );
+}
+
 // ── §Tripwire 2: every curated few-shot fixture is honest ────────────────────
 
 async function testFewShotFixturesAreHonest(): Promise<void> {
@@ -613,6 +688,7 @@ export async function runPromptsTests(): Promise<void> {
   await testEditTurnPrompt();
   await testEditTurnThreading();
   await testExportsDocumented();
+  await testSchemaArtifactDocumented();
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();
 }
