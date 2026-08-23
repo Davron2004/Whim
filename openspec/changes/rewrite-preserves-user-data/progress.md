@@ -12,3 +12,13 @@
 - chain-6 merge redone from primary tree (first attempt ran inside the worktree, no-op); regate PASS
 - reviewer: FINDINGS (3 medium, 6 low). Dispositions: F1 wire-test fix chain; F2 adjudicated entry.name (user-visible display name) + divergent-fixture test; F3 no-artifact edit candidate => schema_identity_drift + handoff fix; F4 comment fix; F7 doc nit fix; F5 pre-existing (follow-up note); F6/F8/F9 noted, no action this run.
 - chain-7(fix): dispatched(BASE=15ccbd6) report=complete gate=PASS integrity=0 merged commit=f188f3b — F1/F2/F3/F4/F7 closed, red-checked
+
+## Closing summary (2026-08-23)
+
+- Chains run: 6 planned + 1 fix chain (reviewer findings). Redispatches: chain-1 once (first cut of the run was from `main`, 354 commits behind the real baseline `v1-sprint`; re-cut and redone). No parked chains, no merge conflicts, no Class-2 touches.
+- Deviations: all Class A (recorded per chain above). Notable adjudications: rewrite context carries the user-visible `entry.name`; a missing schema artifact on an edit candidate is `schema_identity_drift`.
+- Gates: fast gate green after every merge; gate-full green twice (pre- and post-fix-chain). CI green on both pushes; Sonar 0 issues.
+- Reviewer: 3 medium / 6 low → mediums + two lows fixed in chain-7; F5 (pre-existing `BUILD_FAILURE` ad-hoc kind in the stub pipeline), F6 (no source-scan tripwire for "no second extractor"), F8, F9 (silent `asAppliedSchema` degradation) left as follow-ups.
+- Closure: PR #26 → `v1-sprint` (user-directed; `main` catch-up is separate), history cleaned 17→7 semantic commits, merged f22e4be.
+- Tripwire candidates: none repeated across chains.
+- Follow-ups worth a change of their own: pre-seeded synthetic-run engines (design open question 2); aliased-facade SDK lint (open question 3); host-fault escalation (open question 1).
