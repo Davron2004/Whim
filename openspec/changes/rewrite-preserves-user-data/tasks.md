@@ -16,12 +16,12 @@
 
 ## 3. The edit turn
 
-- [ ] 3.1 Render `Current source:` in `buildGenerateMessages` when the pre-flighted `app.source` is present, and make `requestEditSection`'s claim true (no claim when absent) — test: `server/test/prompts.suite.ts` §generate (edit) (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 3.2 Add the identity-continuity instruction (keep the name unless a rename was asked for; keep existing burned ids for existing concepts) to the edit turn — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 3.3 Add `storageSurface` to the generate/plan/repair turn contexts and render the location list with the "keep reading these, add don't replace" instruction — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 3.4 In `machine.ts`, call `scanStorageSurface` once per run on the pre-flighted source; feed the rendered list to the prompts and the surface itself to the check stage options (`stages/check.ts` passes it into `runStaticChecks`) — test: `server/test/machine.suite.ts` + `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 3.5 Rewrite `schemaContextFor`: per-collection numeric floors from `burnedIdFloor`, "keep existing ids for existing concepts; allocate NEW ids strictly above the floor", dropping "do not reuse them" — test: `server/test/prompts.suite.ts` §schema context (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 3.6 Write `handoff/prompt-context.md`: the turn-context shapes (`GenerateTurnContext`/`PlanTurnContext`/`RepairTurnContext`) and the section helpers, so the rewrite work can extend the same file without re-reading it — gate: `./scripts/gate.sh`
+- [x] 3.1 Render `Current source:` in `buildGenerateMessages` when the pre-flighted `app.source` is present, and make `requestEditSection`'s claim true (no claim when absent) — test: `server/test/prompts.suite.ts` §generate (edit) (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 3.2 Add the identity-continuity instruction (keep the name unless a rename was asked for; keep existing burned ids for existing concepts) to the edit turn — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 3.3 Add `storageSurface` to the generate/plan/repair turn contexts and render the location list with the "keep reading these, add don't replace" instruction — test: `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 3.4 In `machine.ts`, call `scanStorageSurface` once per run on the pre-flighted source; feed the rendered list to the prompts and the surface itself to the check stage options (`stages/check.ts` passes it into `runStaticChecks`) — test: `server/test/machine.suite.ts` + `server/test/prompts.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 3.5 Rewrite `schemaContextFor`: per-collection numeric floors from `burnedIdFloor`, "keep existing ids for existing concepts; allocate NEW ids strictly above the floor", dropping "do not reuse them" — test: `server/test/prompts.suite.ts` §schema context (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 3.6 Write `handoff/prompt-context.md`: the turn-context shapes (`GenerateTurnContext`/`PlanTurnContext`/`RepairTurnContext`) and the section helpers, so the rewrite work can extend the same file without re-reading it — gate: `./scripts/gate.sh`
 
 ## 4. Rewrite carries the app
 

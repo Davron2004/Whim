@@ -4,6 +4,12 @@
  * the four prompt-assembly tripwires from spec "Prompt assembly has one source of truth per input"
  * (task 2.5). Registered into `server/test/acceptance.ts` alongside the other suites (task 7.5).
  *
+ * It also owns the edit turn (spec "The edit turn sees the app it is changing", "The storage-surface
+ * instruction and the drift check read one scanner", "Generation allocates burned field IDs above
+ * the accumulated floor"): the builders directly, and — because "one scanner, two consumers" is a
+ * property of the wiring, not of either end — one real `GenerationMachine` run whose fake check
+ * stage records the `CheckContext` it was handed, asserted against the prompts the same run built.
+ *
  * Deterministic throughout: every model call goes through `ScriptedModelClient` or an
  * `OpenRouterClient` wired to a fake `fetch` (never the real network), and the whole file passes
  * with `OPENROUTER_API_KEY` unset — it is never read here.
@@ -12,12 +18,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { check, eq, caught, section } from './harness';
+import { captureLogs } from './log-capture';
 import { OpenRouterClient, OpenRouterNetworkError } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
 import { openRouterModelClient, type ModelRoster } from '../src/generation/model';
 import { ScriptedModelClient, ScriptedModelClientExhaustedError, ScriptedModelClientRoleMismatchError, noNetworkTransport } from './scripted-model';
-import type { ScriptedTurn } from './scripted-model';
+import type { CapturedRequest, ScriptedTurn } from './scripted-model';
 import { loadSdkReference, loadFewShotExamples, loadPromptInputs, PromptInputError } from '../src/generation/prompts/inputs';
+import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   buildRewriteMessages,
   buildPlanMessages,
@@ -25,8 +33,9 @@ import {
   buildRepairMessages,
   type PromptPlan,
 } from '../src/generation/prompts';
+import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
 import { runStaticChecks } from '../../checks/index';
-import type { GenerateRequest, Diagnostic } from '@whim/contract';
+import type { GenerateRequest, Diagnostic, GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
 
@@ -242,6 +251,208 @@ async function testMessageBuilders(): Promise<void> {
   check('repair: diagnostics reach the prompt verbatim (hint)', repairMessages.some((m) => m.content.includes('use delay/interval instead')));
 }
 
+// ── §The edit turn — what an edit prompt does and does not claim ─────────────
+
+/** A previous version that reads one kv key and one record collection through the real `vc-sdk`
+ *  binding the scanner resolves — the source of truth for both continuity assertions below. */
+const PREVIOUS_SOURCE = [
+  "import { defineApp, storage } from 'vc-sdk';",
+  "const history = storage.kv.get('habitCompletionHistory');",
+  "const done = storage.records.list('Completions');",
+  "export default defineApp({ name: 'Habits', initial: 'Home', screens: {} });",
+].join('\n');
+
+/** Accumulated union with a single collection whose highest burned ordinal is 7 (spec scenario
+ *  "The floor reaches the model"). Shaped as the storage engine's `AppliedSchema`, since that is
+ *  what `burnedIdFloor` reads. */
+const APPLIED_SCHEMA = {
+  collections: [
+    {
+      id: 'c1',
+      active: [
+        { id: 'f1', type: 'text' },
+        { id: 'f7', type: 'number' },
+      ],
+      retired: [],
+    },
+  ],
+};
+
+const EDIT_WITH_SOURCE: GenerateRequest = {
+  prompt: 'add a streak counter',
+  app: {
+    source: PREVIOUS_SOURCE,
+    manifest: { capabilities: ['storage'] },
+    schema: {},
+    appliedSchema: APPLIED_SCHEMA,
+  },
+};
+
+const EDIT_WITHOUT_SOURCE: GenerateRequest = {
+  prompt: 'add a streak counter',
+  app: { manifest: { capabilities: ['storage'] }, schema: {}, appliedSchema: APPLIED_SCHEMA },
+};
+
+const SURFACE_LIST = ['- kv key "habitCompletionHistory"', '- record collection "Completions"'].join('\n');
+
+function userContent(messages: { role: string; content: string }[]): string {
+  return messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+}
+
+async function testEditTurnPrompt(): Promise<void> {
+  section('The edit turn — current source, identity continuity, storage locations');
+
+  const inputs = loadPromptInputs(repoRoot);
+
+  const withSource = userContent(
+    buildGenerateMessages(
+      { request: EDIT_WITH_SOURCE, plan: PLAN, schemaContext: '', storageSurface: SURFACE_LIST },
+      inputs,
+    ),
+  );
+  check('generate (edit): the "Current source" block holds the source verbatim', withSource.includes(`Current source:\n${PREVIOUS_SOURCE}`));
+  check(
+    'generate (edit): the prompt claims the source is included — and it is',
+    withSource.includes('included below under "Current source"'),
+  );
+  check(
+    'generate (edit): the app keeps its name unless a rename was asked for',
+    withSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
+  );
+  check(
+    'generate (edit): existing concepts keep the IDs they already have',
+    withSource.includes('keeps the collection and field IDs it already has'),
+  );
+  check('generate (edit): both storage locations are named', withSource.includes('habitCompletionHistory') && withSource.includes('Completions'));
+  check(
+    'generate (edit): the locations carry the keep-reading, add-do-not-replace instruction',
+    withSource.includes('Keep reading and writing these exact locations') && withSource.includes('never replace or rename an existing one'),
+  );
+
+  // Source absent (or failed pre-flight): the honest-regeneration path, unchanged — and no claim
+  // that source is included, because it is not.
+  const withoutSource = userContent(
+    buildGenerateMessages({ request: EDIT_WITHOUT_SOURCE, plan: PLAN, schemaContext: '' }, inputs),
+  );
+  check('generate (edit, no source): no "Current source" block', !withoutSource.includes('Current source:'));
+  check('generate (edit, no source): no claim that source is included', !withoutSource.includes('included below under "Current source"'));
+  check('generate (edit, no source): the honest-regeneration instruction survives', withoutSource.includes('Regenerate it honestly from the manifest and schema'));
+  check('generate (edit, no source): no storage-location list', !withoutSource.includes('Storage locations the app being edited'));
+  check(
+    'generate (edit, no source): identity continuity still applies',
+    withoutSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
+  );
+
+  // A new app is unconstrained: none of the three continuity instructions.
+  const newApp = userContent(buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs));
+  check('generate (new app): no "Current source" block', !newApp.includes('Current source:'));
+  check('generate (new app): no storage-location list', !newApp.includes('Storage locations the app being edited'));
+  check('generate (new app): no identity-continuity instruction', !newApp.includes("Keep the app's current name"));
+
+  // The plan turn does not render the source (design D2) — so it must not claim to.
+  const planUser = userContent(buildPlanMessages({ request: EDIT_WITH_SOURCE, schemaContext: '', storageSurface: SURFACE_LIST }));
+  check('plan (edit): no "Current source" block', !planUser.includes('Current source:'));
+  check('plan (edit): does not claim the source is included', !planUser.includes('included below under "Current source"'));
+  check('plan (edit): still names the storage locations', planUser.includes('habitCompletionHistory'));
+}
+
+// ── §Schema context and the one-scan threading, through a real machine run ───
+
+const EDIT_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const FAKE_PROMPT_INPUTS: PromptInputs = { sdkReference: 'fake sdk reference', fewShotExamples: [] };
+
+const EDIT_PLAN_JSON = JSON.stringify({
+  screens: [{ name: 'Home', purpose: 'the only screen' }],
+  initial: 'Home',
+  state: [],
+  capabilities: ['storage'],
+  storageKeys: ['habitCompletionHistory'],
+});
+
+async function drainEvents(iter: AsyncIterable<GenerationEvent>): Promise<GenerationEvent[]> {
+  const events: GenerationEvent[] = [];
+  for await (const event of iter) events.push(event);
+  return events;
+}
+
+async function testEditTurnThreading(): Promise<void> {
+  section('Edit context — one scan per run, fed to both the prompts and the check stage');
+
+  const scripted = new ScriptedModelClient(EDIT_ROSTER, [
+    { role: 'engineer', deltas: [EDIT_PLAN_JSON] },
+    { role: 'engineer', deltas: ['// candidate 1'] },
+    { role: 'engineer', deltas: ['// candidate 2'] },
+  ]);
+
+  // Every candidate fails its check, so the run is plan → generate → repair → failure: two check
+  // calls with nothing else to configure, and build/run provably never reached.
+  const seen: CheckContext[] = [];
+  const failingCheck: CheckStage = {
+    check: (_source, ctx) => {
+      seen.push(ctx);
+      return {
+        diagnostics: [{ kind: 'raw_timer', severity: 'error', message: 'raw setTimeout', hint: 'use delay/interval instead' }],
+      };
+    },
+  };
+
+  const machine = new GenerationMachine({
+    model: scripted,
+    roster: EDIT_ROSTER,
+    promptInputs: FAKE_PROMPT_INPUTS,
+    check: failingCheck,
+    build: { build: () => { throw new Error('build must not run: every candidate failed its check'); } },
+    run: { run: () => { throw new Error('run must not run: every candidate failed its check'); } },
+    clock: { now: () => 0 },
+    bounds: { repairAttempts: 1 },
+  });
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await drainEvents(machine.run(EDIT_WITH_SOURCE));
+  } finally {
+    capture.stop();
+  }
+
+  eq('machine: the run ended on its own terms', events.at(-1)?.type, 'failure');
+  eq('machine: the check stage saw both candidates', seen.length, 2);
+  const baseline = seen[0]?.previousSurface;
+  check('machine: the check stage gets the previous source\'s kv key as its drift baseline', baseline?.kvKeys.some((k) => k.name === 'habitCompletionHistory') === true);
+  check('machine: the check stage gets the previous source\'s collection too', baseline?.collections.some((c) => c.name === 'Completions') === true);
+  check(
+    'machine: the source is scanned ONCE per run, not once per candidate',
+    baseline !== undefined && seen[1]?.previousSurface === baseline,
+  );
+
+  const turns = scripted.requests as CapturedRequest[];
+  eq('machine: plan, generate and one repair turn were requested', turns.length, 3);
+  const planUser = userContent(turns[0]?.request.messages ?? []);
+  const generateUser = userContent(turns[1]?.request.messages ?? []);
+  const repairUser = userContent(turns[2]?.request.messages ?? []);
+
+  check('machine: the generate turn carries the pre-flighted source verbatim', generateUser.includes(PREVIOUS_SOURCE));
+  // The scenario the whole change rests on: the prompt's list and the checker's baseline are the
+  // SAME scan, so the harness cannot teach one set of locations and enforce another.
+  const baselineNames = [...(baseline?.kvKeys ?? []), ...(baseline?.collections ?? [])].map((r) => r.name);
+  check('machine: sanity — the baseline named something', baselineNames.length === 2);
+  check(
+    'machine: every location the checker will demand is named in the generate prompt',
+    baselineNames.every((name) => generateUser.includes(name)),
+  );
+  check('machine: the plan turn is fed the same list', baselineNames.every((name) => planUser.includes(name)));
+
+  // §schema context (spec "Generation allocates burned field IDs above the accumulated floor").
+  check('machine: the generate prompt states the numeric floor', generateUser.includes('new field IDs start above 7'));
+  check('machine: the repair prompt states the numeric floor', repairUser.includes('new field IDs start above 7'));
+  check('machine: the floor is stated per collection', generateUser.includes('collection "c1": new field IDs start above 7'));
+  check(
+    'machine: the prompt asks the model to KEEP the existing IDs',
+    generateUser.includes('Keep the existing collection and field IDs for every concept that already has one'),
+  );
+  check('machine: no avoid-these-IDs instruction survives', !/do not reuse/i.test(generateUser) && !/do not reuse/i.test(repairUser));
+}
+
 // ── §Tripwire 1: every vc-sdk runtime value export is documented ─────────────
 
 function hasExportModifier(node: ts.Node): boolean {
@@ -360,6 +571,8 @@ export async function runPromptsTests(): Promise<void> {
   await testScriptedModelClient();
   await testPromptInputLoading();
   await testMessageBuilders();
+  await testEditTurnPrompt();
+  await testEditTurnThreading();
   await testExportsDocumented();
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();

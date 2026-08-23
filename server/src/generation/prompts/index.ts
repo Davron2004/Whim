@@ -25,17 +25,66 @@ export interface PromptPlan {
 
 // ─── Shared rendering helpers ────────────────────────────────────────────────
 
-function requestEditSection(request: GenerateRequest): string {
+/**
+ * `sourceRendered` is whether THIS turn goes on to render the `Current source:` block — the plan
+ * turn deliberately does not (design D2: it does not need the whole source and paying its tokens
+ * twice per run is waste). The claim "the source is included below" is made only when it is true
+ * (spec "The edit turn sees the app it is changing": the prompt SHALL NOT state that source is
+ * included when it is not), so this flag is not decoration — it is what keeps the prompt honest.
+ */
+function editOpeningLine(sourceOnFile: boolean, sourceRendered: boolean): string {
+  if (!sourceOnFile) {
+    return (
+      'This is an edit, but no original TypeScript source is on file for this install (a pre-existing app). ' +
+      'Regenerate it honestly from the manifest and schema below — do NOT refer to any code as "your current code".'
+    );
+  }
+  return sourceRendered
+    ? 'This is an edit. The current TypeScript source is included below under "Current source" — read it before changing anything.'
+    : 'This is an edit of an app the user already has installed.';
+}
+
+function requestEditSection(request: GenerateRequest, sourceRendered: boolean): string {
   if (!request.app) return 'This is a brand-new app: there is no existing install.';
   const lines = [
-    request.app.source !== undefined
-      ? 'This is an edit. The current TypeScript source is included below under "Current source" — read it before changing anything.'
-      : 'This is an edit, but no original TypeScript source is on file for this install (a pre-existing app). ' +
-        'Regenerate it honestly from the manifest and schema below — do NOT refer to any code as "your current code".',
+    editOpeningLine(request.app.source !== undefined, sourceRendered),
     `Current manifest: ${JSON.stringify(request.app.manifest)}`,
     `Current schema: ${JSON.stringify(request.app.schema)}`,
   ];
   return lines.join('\n');
+}
+
+/** The one shape "here is the code" takes, whichever turn renders it — the generate turn's
+ *  pre-flighted `app.source` and the repair turn's failing candidate use the same heading. */
+function currentSourceSection(source: string): string {
+  return `Current source:\n${source}`;
+}
+
+/** The identity half of edit continuity (spec "The edit turn sees the app it is changing").
+ *  Carried by every turn for a request with an `app`, source on file or not: an honest
+ *  regeneration must preserve the app's identity just as much as an edit that can read the code. */
+const IDENTITY_CONTINUITY = [
+  "Continuity — this app already exists and holds the user's data:",
+  '- Keep the app\'s current name unless this request explicitly asks to rename it.',
+  "- Every concept that already exists keeps the collection and field IDs it already has: the user's",
+  '  rows are stored under those IDs, and a different ID is a different, empty table or column.',
+].join('\n');
+
+function identityContinuitySection(request: GenerateRequest): string {
+  return request.app ? IDENTITY_CONTINUITY : '';
+}
+
+/** The storage half of edit continuity. `storageSurface` is the location list rendered by the
+ *  machine from the ONE per-run `scanStorageSurface` result (design D3: the same value the static
+ *  checker takes as its drift baseline) — empty for a new app, or for an edit whose source is
+ *  absent or failed pre-flight, and then no section is rendered at all. */
+function storageSurfaceSection(storageSurface: string | undefined): string {
+  if (!storageSurface || storageSurface.trim().length === 0) return '';
+  return (
+    `Storage locations the app being edited reads and writes:\n${storageSurface}\n` +
+    "Keep reading and writing these exact locations — the user's existing data lives there. Add a new " +
+    'location when the change needs one; never replace or rename an existing one.'
+  );
 }
 
 function planSection(plan: PromptPlan): string {
@@ -177,6 +226,8 @@ export function buildSummaryMessages(input: SummariserInput): ModelMessage[] {
 export interface PlanTurnContext {
   request: GenerateRequest;
   schemaContext: string;
+  /** The rendered storage-location list — see `GenerateTurnContext.storageSurface`. */
+  storageSurface?: string;
   /** Set only on a plan re-ask (spec "the plan SHALL be re-asked once with that reason"). */
   priorFailureReason?: string;
 }
@@ -195,7 +246,10 @@ export function buildPlanMessages(ctx: PlanTurnContext): ModelMessage[] {
   const userContent = nonEmptySections(
     `Request: ${ctx.request.prompt}`,
     clarificationsSection(ctx.request.clarifications),
-    requestEditSection(ctx.request),
+    // `false`: the plan turn never renders the source block, so it never claims to (design D2).
+    requestEditSection(ctx.request, false),
+    identityContinuitySection(ctx.request),
+    storageSurfaceSection(ctx.storageSurface),
     schemaContextSection(ctx.schemaContext),
     ctx.priorFailureReason
       ? `Your previous plan was rejected: ${ctx.priorFailureReason}\nReturn a corrected plan.`
@@ -213,6 +267,10 @@ export interface GenerateTurnContext {
   request: GenerateRequest;
   plan: PromptPlan;
   schemaContext: string;
+  /** The storage locations the app being edited reads and writes, already rendered one per line by
+   *  the machine from its single per-run `scanStorageSurface` result (design D3). Absent/empty for
+   *  a new app and for an edit with no pre-flighted source. */
+  storageSurface?: string;
 }
 
 const GENERATE_INSTRUCTIONS = [
@@ -223,10 +281,16 @@ const GENERATE_INSTRUCTIONS = [
 
 export function buildGenerateMessages(ctx: GenerateTurnContext, inputs: PromptInputs): ModelMessage[] {
   const system = nonEmptySections(GENERATE_INSTRUCTIONS, sdkReferenceSection(inputs), fewShotSection(inputs));
+  // Already pre-flighted by the composition root, so "present" here means "real, parseable source
+  // that declares a default-exported defineApp" — the only kind worth showing the model.
+  const currentSource = ctx.request.app?.source;
   const user = nonEmptySections(
     `Request: ${ctx.request.prompt}`,
     clarificationsSection(ctx.request.clarifications),
-    requestEditSection(ctx.request),
+    requestEditSection(ctx.request, currentSource !== undefined),
+    currentSource !== undefined ? currentSourceSection(currentSource) : '',
+    identityContinuitySection(ctx.request),
+    storageSurfaceSection(ctx.storageSurface),
     planSection(ctx.plan),
     schemaContextSection(ctx.schemaContext),
   );
@@ -245,6 +309,9 @@ export interface RepairTurnContext {
   /** Ordered errors-first by the caller; rendered verbatim in that order. */
   diagnostics: Diagnostic[];
   schemaContext: string;
+  /** The rendered storage-location list — see `GenerateTurnContext.storageSurface`. It describes
+   *  the app being edited, not the candidate below, so a repair round still has to preserve it. */
+  storageSurface?: string;
 }
 
 const REPAIR_INSTRUCTIONS = [
@@ -258,8 +325,9 @@ export function buildRepairMessages(ctx: RepairTurnContext, inputs: PromptInputs
   const user = nonEmptySections(
     `Request: ${ctx.request.prompt}`,
     planSection(ctx.plan),
+    storageSurfaceSection(ctx.storageSurface),
     schemaContextSection(ctx.schemaContext),
-    `Current source:\n${ctx.currentSource}`,
+    currentSourceSection(ctx.currentSource),
     diagnosticsSection(ctx.diagnostics),
   );
   return [

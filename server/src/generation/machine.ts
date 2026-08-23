@@ -5,7 +5,10 @@
  * validated against the request", "Repair asks for a minimal diff with the diagnostics in context",
  * "Cancellation aborts the pipeline at every boundary"). Depends on nothing concrete: `CheckStage`,
  * `BuildStage`, `RunStage`, and `Clock` are injected interfaces (design D2), so this file compiles
- * and is tested against fakes only. See `handoff/pipeline-machine.md` for the full contract.
+ * and is tested against fakes only — the two exceptions are pure, dependency-free library functions
+ * (`scanStorageSurface`, `burnedIdFloor`), imported rather than injected precisely because the edit
+ * context must be derived from ONE definition shared with the checker, not from a fake's opinion.
+ * See `handoff/pipeline-machine.md` for the full contract.
  */
 import type {
   Diagnostic,
@@ -15,6 +18,10 @@ import type {
   Usage,
   WireAppRecord,
 } from '@whim/contract';
+import { scanStorageSurface } from '../../../checks/index';
+import type { StorageSurface } from '../../../checks/index';
+import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
+import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
 import type { ModelClient, ModelMessage, ModelRoster } from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
@@ -54,6 +61,11 @@ export interface CheckReport {
 
 export interface CheckContext {
   appliedSchema?: Record<string, unknown>;
+  /** The storage surface of the source this candidate REPLACES — the drift baseline, and the same
+   *  value the edit turn's location list was rendered from (design D3: one scanner, two consumers).
+   *  Absent for a new app and for an edit with no pre-flighted source, which is how a caller says
+   *  "unconstrained", never a bug. */
+  previousSurface?: StorageSurface;
 }
 
 /** No `ok`/severity-gate field on purpose (design D6: "the checker API grows no severity knob —
@@ -251,10 +263,83 @@ function throwLoggedModelCallFailure(which: 'usage' | 'id', error: unknown): nev
   throw error;
 }
 
+/** The wire's applied schema, structurally narrowed to the engine's type. The field is a free-form
+ *  record on the wire, so a shape `burnedIdFloor` cannot read yields `undefined` — the JSON is
+ *  still rendered, only the numeric floors are dropped. */
+function asAppliedSchema(raw: Record<string, unknown>): AppliedSchema | undefined {
+  const collections = raw.collections;
+  if (!Array.isArray(collections)) return undefined;
+  const readable = collections.every(
+    (c) =>
+      typeof c === 'object' &&
+      c !== null &&
+      typeof (c as AppliedSchema['collections'][number]).id === 'string' &&
+      Array.isArray((c as AppliedSchema['collections'][number]).active) &&
+      Array.isArray((c as AppliedSchema['collections'][number]).retired),
+  );
+  return readable ? (raw as unknown as AppliedSchema) : undefined;
+}
+
+/**
+ * The burned-ID context both code-writing turns carry (spec "Generation allocates burned field IDs
+ * above the accumulated floor"). The floor is STATED numerically per collection and computed with
+ * the storage engine's exported `burnedIdFloor` — the checker's own definition, never re-derived
+ * here, so the prompt cannot teach a floor the check would not enforce.
+ *
+ * It asks the model to KEEP the existing IDs and to allocate above the floor; it deliberately does
+ * NOT say "do not reuse these IDs", which read as "avoid c1/f1" — the precise opposite of what
+ * preserves the user's rows (design D9).
+ */
 function schemaContextFor(request: GenerateRequest): string {
   const appliedSchema = request.app?.appliedSchema;
   if (!appliedSchema || Object.keys(appliedSchema).length === 0) return '';
-  return `Applied schema (existing burned field IDs — do not reuse them): ${JSON.stringify(appliedSchema)}`;
+  const applied = asAppliedSchema(appliedSchema);
+  const floors = applied ? burnedIdFloor(applied) : {};
+  return [
+    `Applied schema (the storage identities the user's existing data already lives under): ${JSON.stringify(appliedSchema)}`,
+    ...Object.entries(floors).map(
+      ([collectionId, floor]) =>
+        `- collection "${collectionId}": new field IDs start above ${floor} (the next free ID is "f${floor + 1}").`,
+    ),
+    'Keep the existing collection and field IDs for every concept that already has one — the ' +
+      "user's rows are stored under those IDs, and a different ID is a different, empty column. " +
+      "Allocate a NEW ID only for a genuinely new concept, strictly above that collection's floor.",
+  ].join('\n');
+}
+
+/** The edit turn's storage-location list: one line per location the source being edited names,
+ *  rendered from the run's single `scanStorageSurface` result. Empty (no section rendered) when
+ *  there is no surface, or when the source names no location at all. */
+function storageSurfaceFor(surface: StorageSurface | undefined): string {
+  if (!surface) return '';
+  return [
+    ...surface.kvKeys.map((ref) => `- kv key "${ref.name}"`),
+    ...surface.collections.map((ref) => `- record collection "${ref.name}"`),
+  ].join('\n');
+}
+
+/**
+ * Everything derived ONCE per run from the pre-flighted request and threaded to every consumer
+ * (design D3). `previousSurface` goes to the check stage as its drift baseline and `storageSurface`
+ * is the same scan rendered for the prompts — one scanner, two consumers, so the harness can never
+ * teach one set of locations and enforce another.
+ */
+interface EditContext {
+  schemaContext: string;
+  storageSurface: string;
+  previousSurface?: StorageSurface;
+}
+
+function editContextFor(request: GenerateRequest): EditContext {
+  // `app.source` is already pre-flighted by the composition root, so it is either real source or
+  // absent; an absent one yields no surface, which is exactly "unconstrained".
+  const source = request.app?.source;
+  const previousSurface = source !== undefined ? scanStorageSurface(source) : undefined;
+  return {
+    schemaContext: schemaContextFor(request),
+    storageSurface: storageSurfaceFor(previousSurface),
+    previousSurface,
+  };
 }
 
 /** Mutable per-run accumulator threaded through every phase. */
@@ -347,16 +432,16 @@ export class GenerationMachine {
 
     runLog.info('run start');
     try {
-      const schemaContext = schemaContextFor(request);
+      const edit = editContextFor(request);
 
-      const plan = yield* this.runPlanPhase(request, schemaContext, signal, trace, state);
+      const plan = yield* this.runPlanPhase(request, edit, signal, trace, state);
       if (!plan) return;
       if (signal?.aborted) return;
 
-      const source = yield* this.runGeneratePhase(request, plan, schemaContext, signal, trace, state);
+      const source = yield* this.runGeneratePhase(request, plan, edit, signal, trace, state);
       if (source === undefined) return;
 
-      yield* this.runRepairLoop(request, plan, schemaContext, source, signal, trace, state);
+      yield* this.runRepairLoop(request, plan, edit, source, signal, trace, state);
     } catch (err) {
       if (signal?.aborted) return;
       runLog.error(
@@ -440,7 +525,7 @@ export class GenerationMachine {
    *  abort and an already-emitted exhaustion failure — either way the caller simply stops. */
   private async *runPlanPhase(
     request: GenerateRequest,
-    schemaContext: string,
+    edit: EditContext,
     signal: AbortSignal | undefined,
     trace: RunTrace | undefined,
     state: RunState,
@@ -453,7 +538,12 @@ export class GenerationMachine {
       yield { type: 'stage', stage: 'plan', status: 'start' };
       if (signal?.aborted) return undefined;
 
-      const messages = buildPlanMessages({ request, schemaContext, priorFailureReason });
+      const messages = buildPlanMessages({
+        request,
+        schemaContext: edit.schemaContext,
+        storageSurface: edit.storageSurface,
+        priorFailureReason,
+      });
       const turn = yield* this.runModelTurn(messages, signal, trace, state, false);
       if (turn.aborted) return undefined;
 
@@ -483,7 +573,7 @@ export class GenerationMachine {
   private async *runGeneratePhase(
     request: GenerateRequest,
     plan: Plan,
-    schemaContext: string,
+    edit: EditContext,
     signal: AbortSignal | undefined,
     trace: RunTrace | undefined,
     state: RunState,
@@ -492,7 +582,10 @@ export class GenerationMachine {
     yield { type: 'stage', stage: 'generate', status: 'start' };
     if (signal?.aborted) return undefined;
 
-    const messages = buildGenerateMessages({ request, plan, schemaContext }, this.deps.promptInputs);
+    const messages = buildGenerateMessages(
+      { request, plan, schemaContext: edit.schemaContext, storageSurface: edit.storageSurface },
+      this.deps.promptInputs,
+    );
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
     if (turn.aborted) return undefined;
 
@@ -509,7 +602,7 @@ export class GenerationMachine {
   private async *runRepairRound(
     request: GenerateRequest,
     plan: Plan,
-    schemaContext: string,
+    edit: EditContext,
     currentSource: string,
     diagnostics: Diagnostic[],
     roundAttempt: number,
@@ -522,7 +615,14 @@ export class GenerationMachine {
     if (signal?.aborted) return undefined;
 
     const messages = buildRepairMessages(
-      { request, plan, currentSource, diagnostics, schemaContext },
+      {
+        request,
+        plan,
+        currentSource,
+        diagnostics,
+        schemaContext: edit.schemaContext,
+        storageSurface: edit.storageSurface,
+      },
       this.deps.promptInputs,
     );
     const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
@@ -541,7 +641,7 @@ export class GenerationMachine {
   private async *runRepairLoop(
     request: GenerateRequest,
     plan: Plan,
-    schemaContext: string,
+    edit: EditContext,
     initialSource: string,
     signal: AbortSignal | undefined,
     trace: RunTrace | undefined,
@@ -559,7 +659,7 @@ export class GenerationMachine {
         repairAttempts: this.bounds.repairAttempts,
         warningRepairAttempts: this.bounds.warningRepairAttempts,
       };
-      const outcome = yield* this.processCandidate(source, request, roundAttempt, signal, state.diagnostics, budgets);
+      const outcome = yield* this.processCandidate(source, request, edit, roundAttempt, signal, state.diagnostics, budgets);
 
       if (outcome.kind === 'aborted') return;
 
@@ -583,7 +683,7 @@ export class GenerationMachine {
       const repaired = yield* this.runRepairRound(
         request,
         plan,
-        schemaContext,
+        edit,
         source,
         outcome.diagnostics,
         roundAttempt,
@@ -681,6 +781,7 @@ export class GenerationMachine {
   private async *processCandidate(
     source: string,
     request: GenerateRequest,
+    edit: EditContext,
     roundAttempt: number | undefined,
     signal: AbortSignal | undefined,
     diagnosticsAccum: Diagnostic[],
@@ -691,7 +792,11 @@ export class GenerationMachine {
     logStage('check', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'check', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
-    const checkReport = await this.deps.check.check(source, { appliedSchema: request.app?.appliedSchema }, signal);
+    const checkReport = await this.deps.check.check(
+      source,
+      { appliedSchema: request.app?.appliedSchema, previousSurface: edit.previousSurface },
+      signal,
+    );
     if (signal?.aborted) return { kind: 'aborted' };
     yield* this.emitDiagnosticsAndDone(checkReport.diagnostics, 'check', attemptField, diagnosticsAccum, signal);
     if (signal?.aborted) return { kind: 'aborted' };

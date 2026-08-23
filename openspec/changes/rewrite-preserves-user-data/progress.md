@@ -6,3 +6,4 @@
 - chain-1: dispatched(BASE=92d2490) report=complete gate=PASS integrity=0 merged regate=PASS commit=4ea851f
 - chain-2: dispatched(BASE=48c5e8e) report=complete gate=PASS integrity=0 merged commit=35fc65f redchecks=6-variant
 - chain-5: dispatched(BASE=48c5e8e) report=complete gate=PASS integrity=0 merged commit=8f63fa8
+- chain-3: dispatched(BASE=82dd783) report=complete gate=PASS integrity=0 merged commit=d2ed02b note=machine.suite header comment stale (chain-5 file) -> integration note
