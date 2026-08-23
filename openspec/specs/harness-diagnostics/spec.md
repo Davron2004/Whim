@@ -40,6 +40,15 @@ neither containment nor a breach was established. It SHALL be distinct from
 can go unobserved without a mount timeout and a mount timeout is not evidence about
 containment. No producer SHALL emit one of the three in place of another.
 
+The vocabulary SHALL carry the storage engine's **verb-time** error kinds under the engine's own
+names — `type_mismatch`, `unknown_collection`, `unknown_field`, `unknown_record`,
+`unqueryable_field`, `kv_too_large` — so that a rejected syscall the harness observes at run time
+has a name and cannot be dropped for lack of one. It SHALL NOT carry the engine's **host-fault**
+kinds `not_open` and `corrupt_storage`: those report the harness's own engine state rather than a
+mistake in the candidate, carry no fix the model could apply, and are surfaced through the run
+report's trace instead. A producer SHALL NOT rename a host fault into a candidate diagnostic kind
+in order to report it.
+
 #### Scenario: Static and runtime agree on a name
 
 - **WHEN** the same undeclared-capability mistake is reported statically by the checker and
@@ -52,6 +61,12 @@ containment. No producer SHALL emit one of the three in place of another.
 - **THEN** it contains `containment_unobserved`, `containment_failure`, and `mount_timeout`
   as three distinct members, and `containment_unobserved` is declared in the contract module
   rather than minted at its producer
+
+#### Scenario: Verb-time storage kinds are named, host faults are not
+
+- **WHEN** the closed kind union is inspected against the storage engine's `StorageErrorKind`
+- **THEN** the six verb-time kinds appear under the engine's own names, and `not_open` and
+  `corrupt_storage` do not appear at all
 
 ### Requirement: Severity orders work but never excuses it
 
