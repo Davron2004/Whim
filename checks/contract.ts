@@ -58,6 +58,21 @@ export type Severity = 'error' | 'warning';
  *        invisible to `diffSchemas` alone.
  *      - `build_failure`   — the concrete `BuildStage` maps a production-builder throw to this
  *        single error diagnostic rather than propagating the exception (design D2/D12).
+ *      - `schema_identity_drift` — an edit candidate abandons a collection or an active field ID
+ *        the applied schema contains (the user's existing rows would become unreachable).
+ *      - `storage_surface_drift` — an edit candidate stops reading a storage location the
+ *        previous source read.
+ *      - `storage_surface_dynamic` — a storage-facade argument that is not a string literal, so
+ *        the location it names is unprovable in both directions. The ONE warning-severity member
+ *        of this set.
+ *  - VERBATIM-REUSED: storage-engine VERB-TIME denial kinds (`src/host/storage-engine/contract.ts`'s
+ *    `StorageErrorKind`). A syscall a synthetic run observes refused has a name here and so cannot
+ *    be dropped for lack of one: `type_mismatch`, `unknown_collection`, `unknown_field`,
+ *    `unknown_record`, `unqueryable_field`, `kv_too_large`.
+ *    EXCLUDED, deliberately: the engine's HOST-FAULT kinds `not_open` and `corrupt_storage`. They
+ *    report the harness's own engine state, carry no fix the model could apply, and are surfaced
+ *    through the run report's trace instead. No producer may rename a host fault into one of the
+ *    kinds above in order to report it.
  *  - NEW (authored here by Chain B from the static-checks spec, task 1.2/2.1): once
  *    authored this set is closed too — downstream stages extend the union additively,
  *    never by minting ad-hoc kind strings elsewhere.
@@ -118,6 +133,19 @@ export const DIAGNOSTIC_KINDS = [
   // — generation-loop (chain 5) —
   'id_below_floor',
   'build_failure',
+  // — generation-loop: edit-continuity (rewrite-preserves-user-data) —
+  'schema_identity_drift',
+  'storage_surface_drift',
+  'storage_surface_dynamic',
+  // — verbatim-reused: storage-engine VERB-TIME denial kinds (P4). The engine's HOST-FAULT kinds
+  //   `not_open`/`corrupt_storage` are deliberately EXCLUDED — they name the harness's own engine
+  //   state, not a candidate mistake, and are reported through the run trace instead. —
+  'type_mismatch',
+  'unknown_collection',
+  'unknown_field',
+  'unknown_record',
+  'unqueryable_field',
+  'kv_too_large',
 ] as const;
 
 export type DiagnosticKind = (typeof DIAGNOSTIC_KINDS)[number];

@@ -10,11 +10,17 @@
 import ts from 'typescript';
 import { Diagnostic, ExtractedManifest, FORBIDDEN_DIRECT_NAMES, GLOBAL_ROOTS } from '../contract';
 import type { AppliedSchema } from '../../src/host/storage-engine/schema';
+// Type-only (erased at compile time): `storage-surface.ts` imports this module for binding
+// resolution, so a value import here would close a runtime cycle.
+import type { StorageSurface } from '../storage-surface';
 
 export interface CheckContext {
   source: string;
   sourceFile: ts.SourceFile;
   appliedSchema?: AppliedSchema;
+  /** The storage surface of the source this candidate REPLACES, when the caller has one (an
+   *  edit turn). Absent for a first generation — continuity is then unconstrained. */
+  previousSurface?: StorageSurface;
   report(d: Diagnostic): void;
   /** Set by the manifest-extraction pass (task 5.1) when all required fields extract cleanly;
    *  later passes (capabilities/screens/schema) read this instead of re-parsing `defineApp`. */
@@ -383,6 +389,7 @@ export function buildContext(
   sourceFile: ts.SourceFile,
   report: (d: Diagnostic) => void,
   appliedSchema: AppliedSchema | undefined,
+  previousSurface?: StorageSurface,
 ): CheckContext {
-  return { source, sourceFile, appliedSchema, report };
+  return { source, sourceFile, appliedSchema, previousSurface, report };
 }

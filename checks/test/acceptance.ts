@@ -12,6 +12,7 @@
  *
  * Sections (one function per section below, run in order by `main()`):
  *   §B0  contract.ts + harness self-tests                          (greenBy: B)
+ *   §B1  storage-surface scanner (one scanner, two consumers)      (greenBy: B)
  *   §C1  parse gate                                                 (greenBy: C)
  *   §C2  import allowlist                                           (greenBy: C)
  *   §C3  forbidden-global walk (T8) + shadowing + no-suppression    (greenBy: C)
@@ -20,13 +21,15 @@
  *   §D3  screen graph                                                (greenBy: D)
  *   §D4  SDK lint                                                    (greenBy: D)
  *   §D5  schema check (validate + diff)                              (greenBy: D)
+ *   §schema identity  edit continuity: burned IDs survive a rewrite  (untagged: due now)
+ *   §storage continuity  edit continuity: reads survive a rewrite    (untagged: due now)
  *   §E1  assembly: ordering / purity / determinism                   (greenBy: E)
  *   §E2  honest fixtures (zero-diagnostics) + latency-probe pinned   (greenBy: E)
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { test, report, assert, assertHasKind, assertNoKind, kindsOf } from './harness';
+import { test, report, assert, assertHasKind, assertNoKind, findByKind, kindsOf } from './harness';
 import { runHostileCorpus } from './hostile/corpus';
 import {
   CAPABILITY_EXPORTS,
@@ -38,12 +41,13 @@ import {
   NAV_CALL_SHAPES,
   SDK_LINT_RULES,
 } from '../contract';
-import { runStaticChecks } from '../index';
+import { runStaticChecks, scanStorageSurface, StorageSurface } from '../index';
 // Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
 // pulls no Playwright/runtime dependency into the Node bundle).
 import { RUNTIME_OBSERVED_KINDS } from '../../synthrun/observe';
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
 import { SchemaArtifact } from '../../src/host/storage-engine/contract';
+import type { StorageErrorKind } from '../../src/host/storage-engine/contract';
 
 /** Every diagnostic in the report is well-formed per harness-diagnostics req 1/2. */
 function assertAllWellFormed(r: CheckReport): void {
@@ -148,11 +152,49 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
       'launch_failed',
       'id_below_floor',
       'build_failure',
+      'schema_identity_drift',
+      'storage_surface_drift',
+      'storage_surface_dynamic',
+      'type_mismatch',
+      'unknown_collection',
+      'unknown_field',
+      'unknown_record',
+      'unqueryable_field',
+      'kv_too_large',
     ];
     assert(DIAGNOSTIC_KINDS.length === expected.length, `expected ${expected.length} kinds, got ${DIAGNOSTIC_KINDS.length}`);
     assert(new Set(DIAGNOSTIC_KINDS).size === DIAGNOSTIC_KINDS.length, 'DIAGNOSTIC_KINDS must have no duplicates');
     for (const k of expected) {
       assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verbatim-reused/authored kind "${k}"`);
+    }
+  });
+
+  await test('B §contract: the storage engine\'s VERB-TIME kinds are carried under the engine\'s own names', () => {
+    // The element type is the INTERSECTION of the two vocabularies, so a rename on either side
+    // (engine union or `DIAGNOSTIC_KINDS`) fails to typecheck rather than silently drifting —
+    // a run that sees a refused syscall must have the engine's own name for it.
+    const verbTime: readonly (StorageErrorKind & DiagnosticKind)[] = [
+      'type_mismatch',
+      'unknown_collection',
+      'unknown_field',
+      'unknown_record',
+      'unqueryable_field',
+      'kv_too_large',
+    ];
+    for (const k of verbTime) {
+      assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verb-time storage kind "${k}"`);
+    }
+  });
+
+  await test('B §contract: the HOST-FAULT storage kinds not_open/corrupt_storage are NOT in the vocabulary', () => {
+    // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: these report the
+    // harness's own engine state and carry no fix a candidate could apply, so they are surfaced
+    // through the run report's trace — never renamed into a candidate diagnostic kind.
+    for (const hostFault of ['not_open', 'corrupt_storage']) {
+      assert(
+        !(DIAGNOSTIC_KINDS as readonly string[]).includes(hostFault),
+        `"${hostFault}" is a host fault, not a candidate mistake — it must never be a diagnostic kind`,
+      );
     }
   });
 
@@ -225,6 +267,139 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
   await test('B §harness: both due-now forms above actually executed (self-test)', () => {
     assert(selfTestMarker.includes('legacy-ran'), 'the untagged test() call should have executed (greenBy defaults to B, which is due at phase B)');
     assert(selfTestMarker.includes('tagged-B-ran'), 'the explicitly-tagged greenBy:B test() call should have executed');
+  });
+}
+
+// ── §B1 storage-surface scanner (greenBy: B) ───────────────────────────────
+// generation-pipeline req "The storage-surface instruction and the drift check read one
+// scanner". Driven through the PUBLIC entry (`checks/index.ts`) — that re-export is what the
+// generation server imports, so reaching into the module directly would not prove it exists.
+
+/** The 1-based (line, column) the scanner reported must point at `token` in `src`. */
+function assertAnchors(src: string, at: { line: number; column: number }, token: string, what: string): void {
+  const line = src.split('\n')[at.line - 1];
+  assert(line !== undefined, `${what}: line ${at.line} is past the end of the source`);
+  assert(
+    (line as string).slice(at.column - 1).startsWith(token),
+    `${what}: expected (${at.line},${at.column}) to point at ${token}, but the source there is ${JSON.stringify((line as string).slice(at.column - 1, at.column + 20))}`,
+  );
+}
+
+async function testStorageSurfaceScanner(): Promise<void> {
+  await test('B §storage-surface: literal kv keys are collected with their method and anchor', () => {
+    const src = [
+      "import { storage } from 'vc-sdk';",
+      "const load = () => storage.kv.get('habitCompletionHistory');",
+      "const save = (v: number) => storage.kv.set('total', v);",
+    ].join('\n');
+    const surface = scanStorageSurface(src);
+    const names = surface.kvKeys.map((k) => k.name);
+    assert(
+      JSON.stringify(names) === JSON.stringify(['habitCompletionHistory', 'total']),
+      `expected kv keys [habitCompletionHistory, total] in source order, got [${names.join(', ')}]`,
+    );
+    assert(surface.kvKeys[0]?.method === 'get', `expected the first key's method 'get', got ${String(surface.kvKeys[0]?.method)}`);
+    assert(surface.kvKeys[1]?.method === 'set', `expected the second key's method 'set', got ${String(surface.kvKeys[1]?.method)}`);
+    assertAnchors(src, surface.kvKeys[0] as { line: number; column: number }, "'habitCompletionHistory'", 'kv key anchor');
+    assert(surface.collections.length === 0, 'a kv-only source names no collections');
+    assert(surface.dynamic.length === 0, 'every argument was a literal — nothing dynamic');
+  });
+
+  await test('B §storage-surface: literal record collections are collected, deduplicated, in source order', () => {
+    const src = [
+      "import { storage } from 'vc-sdk';",
+      "const add = () => storage.records.append('Completions', { done: 1 });",
+      "const all = () => storage.records.list('Completions');",
+      "const streaks = () => storage.records.list('Streaks');",
+    ].join('\n');
+    const surface = scanStorageSurface(src);
+    const names = surface.collections.map((c) => c.name);
+    assert(
+      JSON.stringify(names) === JSON.stringify(['Completions', 'Streaks']),
+      `expected collections [Completions, Streaks] (deduplicated, source order), got [${names.join(', ')}]`,
+    );
+    assert(
+      surface.collections[0]?.line === 2 && surface.collections[0]?.method === 'append',
+      `the deduplicated entry keeps the FIRST occurrence (line 2, method append), got ${JSON.stringify(surface.collections[0])}`,
+    );
+    assert(surface.kvKeys.length === 0, 'a records-only source names no kv keys');
+  });
+
+  await test('B §storage-surface: a computed argument is recorded as a dynamic site, not as a name', () => {
+    const src = [
+      "import { storage } from 'vc-sdk';",
+      'const key = (d: string) => `day-${d}`;',
+      'const read = (d: string) => storage.kv.get(key(d));',
+      'const rows = (c: string) => storage.records.list(c);',
+    ].join('\n');
+    const surface = scanStorageSurface(src);
+    assert(surface.kvKeys.length === 0, `a computed key names nothing, got [${surface.kvKeys.map((k) => k.name).join(', ')}]`);
+    assert(surface.collections.length === 0, `a computed collection names nothing, got [${surface.collections.map((c) => c.name).join(', ')}]`);
+    assert(surface.dynamic.length === 2, `expected one dynamic site per non-literal argument (2), got ${surface.dynamic.length}`);
+    const sites = surface.dynamic.map((d) => `${d.facade}.${d.method}`);
+    assert(
+      JSON.stringify(sites) === JSON.stringify(['kv.get', 'records.list']),
+      `each dynamic site names its facade and method — expected [kv.get, records.list], got [${sites.join(', ')}]`,
+    );
+    assertAnchors(src, surface.dynamic[0] as { line: number; column: number }, 'key(d)', 'dynamic kv site anchor');
+    assertAnchors(src, surface.dynamic[1] as { line: number; column: number }, 'c)', 'dynamic records site anchor');
+  });
+
+  await test('B §storage-surface: a substitution-free template is a literal; an interpolated one is dynamic', () => {
+    const surface = scanStorageSurface(
+      [
+        "import { storage } from 'vc-sdk';",
+        'const a = () => storage.kv.get(`total`);',
+        'const b = (d: string) => storage.kv.get(`day-${d}`);',
+      ].join('\n'),
+    );
+    assert(
+      surface.kvKeys.length === 1 && surface.kvKeys[0]?.name === 'total',
+      `the substitution-free template names 'total', got [${surface.kvKeys.map((k) => k.name).join(', ')}]`,
+    );
+    assert(surface.dynamic.length === 1, `the interpolated template names no provable key — expected 1 dynamic site, got ${surface.dynamic.length}`);
+  });
+
+  await test('B §storage-surface: KNOWN LIMIT — a facade held in a local alias is NOT collected', () => {
+    // Documented, not accidental: aliasing would need value-flow analysis the checker does not
+    // do. The failure mode is a missed guarantee (an uncollected read), never a false
+    // accusation — continuity can only fire on locations the scanner DID collect.
+    const surface = scanStorageSurface(
+      ["import { storage } from 'vc-sdk';", 'const kv = storage.kv;', "const read = () => kv.get('total');"].join('\n'),
+    );
+    assert(
+      surface.kvKeys.length === 0,
+      `aliased-facade reads are a known scanner limit — expected nothing collected, got [${surface.kvKeys.map((k) => k.name).join(', ')}]`,
+    );
+    assert(surface.dynamic.length === 0, 'and an aliased call is no dynamic site either — the scanner never saw a storage-facade call');
+  });
+
+  await test('B §storage-surface: a `storage` that is not the vc-sdk import is never collected (binding resolution, not token matching)', () => {
+    const shadowed = scanStorageSurface(
+      ["const storage = { kv: { get: (k: string) => k } };", "const read = () => storage.kv.get('total');"].join('\n'),
+    );
+    assert(
+      shadowed.kvKeys.length === 0,
+      `a local object named storage is not the SDK facade, got [${shadowed.kvKeys.map((k) => k.name).join(', ')}]`,
+    );
+    const otherModule = scanStorageSurface(["import { storage } from 'other';", "const read = () => storage.kv.get('total');"].join('\n'));
+    assert(otherModule.kvKeys.length === 0, 'an import of `storage` from another module is not the SDK facade either');
+  });
+
+  await test('B §storage-surface: the namespace-import form resolves too', () => {
+    const surface = scanStorageSurface(
+      ["import * as sdk from 'vc-sdk';", "const read = () => sdk.storage.records.list('Notes');"].join('\n'),
+    );
+    const names = surface.collections.map((c) => c.name);
+    assert(JSON.stringify(names) === JSON.stringify(['Notes']), `expected [Notes] via the namespace import, got [${names.join(', ')}]`);
+  });
+
+  await test('B §storage-surface: a source with no storage use yields an empty surface', () => {
+    const surface: StorageSurface = scanStorageSurface(appSource('[]'));
+    assert(
+      surface.kvKeys.length === 0 && surface.collections.length === 0 && surface.dynamic.length === 0,
+      `expected an empty surface, got ${JSON.stringify(surface)}`,
+    );
   });
 }
 
@@ -706,6 +881,242 @@ async function testSchemaCheck(): Promise<void> {
   });
 }
 
+// ── §schema identity — an edit candidate keeps the applied schema's collections and fields ──
+// static-checks req "An edit candidate keeps the applied schema's collections and fields"
+// (rewrite-preserves-user-data, design D6). `diffSchemas` reads an omission as a tolerable
+// `older-subset`, so this rule is the ONLY thing standing between a rewrite and orphaned rows.
+
+/** One collection of a candidate artifact: display name → burned ID, field display name →
+ *  burned field ID, plus that collection's own tombstones. §D5's `schemaAppSourceFields`
+ *  always emits ONE collection with `tombstones: []`, which the identity scenarios must vary. */
+interface IdentityCollection {
+  displayName: string;
+  id: string;
+  /** Field display name → burned field ID (all `text` — identity logic is type-agnostic). */
+  fields: Record<string, string>;
+  tombstones?: string[];
+}
+
+function identityAppSource(collections: IdentityCollection[]): string {
+  const rendered = collections
+    .map((c) => {
+      const fields = Object.entries(c.fields)
+        .map(([name, id]) => `${name}: { id: '${id}', type: 'text' }`)
+        .join(', ');
+      const tombstones = (c.tombstones ?? []).map((t) => `'${t}'`).join(', ');
+      return `${c.displayName}: { id: '${c.id}', tombstones: [${tombstones}], fields: { ${fields} } }`;
+    })
+    .join(', ');
+  return `
+import { defineApp, type SchemaArtifact } from 'vc-sdk';
+function Home() { return null; }
+const SCHEMA: SchemaArtifact = { schemaVersion: 1, collections: { ${rendered} } };
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [], schema: SCHEMA,
+});
+`;
+}
+
+async function testSchemaIdentityContinuity(): Promise<void> {
+  const APPLIED_C1_F1_F2: AppliedSchema = {
+    collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }, { id: 'f2', type: 'text' }], retired: [] }],
+  };
+
+  await test('§schema identity: an abandoned collection ID is schema_identity_drift, naming it', () => {
+    const applied: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
+    const src = identityAppSource([{ displayName: 'Notes', id: 'c2', fields: { body: 'f1' } }]);
+
+    // The engine alone cannot see this: an omitted collection is a lossless `older-subset`.
+    const engineIncoming: SchemaArtifact = {
+      schemaVersion: 1,
+      collections: { Notes: { id: 'c2', tombstones: [], fields: { body: { id: 'f1', type: 'text' } } } },
+    };
+    assert(
+      diffSchemas(applied, engineIncoming).kind !== 'conflict',
+      'setup: diffSchemas must NOT flag this — an omission reads to the engine as a lossless older-subset, which is the gap this rule closes',
+    );
+
+    const r = runStaticChecks(src, { appliedSchema: applied });
+    const d = assertHasKind(r, 'schema_identity_drift');
+    assert(d.symbol === 'c1', `expected symbol "c1", got "${String(d.symbol)}"`);
+    assert(d.severity === 'error', `identity drift is an error, got "${d.severity}"`);
+    assert(/c1/.test(d.hint) && /rows/.test(d.hint), `hint must name c1 and say the user's rows live under it, got: ${d.hint}`);
+    assertAllWellFormed(r);
+  });
+
+  await test('§schema identity: an active field ID the candidate neither declares nor tombstones is drift', () => {
+    const src = identityAppSource([{ displayName: 'Notes', id: 'c1', fields: { title: 'f2' } }]);
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_C1_F1_F2 });
+    const hits = findByKind(r, 'schema_identity_drift');
+    assert(hits.length === 1, `expected exactly one drift (the dropped f1), got ${hits.length}: ${JSON.stringify(hits.map((h) => h.symbol))}`);
+    assert(hits[0]?.symbol === 'f1', `expected symbol "f1", got "${String(hits[0]?.symbol)}"`);
+    assert(/f1/.test(hits[0]?.hint ?? ''), `hint must name the abandoned field ID, got: ${String(hits[0]?.hint)}`);
+  });
+
+  await test('§schema identity: a deliberate tombstone in that collection is not drift', () => {
+    const src = identityAppSource([{ displayName: 'Notes', id: 'c1', fields: { title: 'f2' }, tombstones: ['f1'] }]);
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_C1_F1_F2 });
+    assertNoKind(r, 'schema_identity_drift', 'listing f1 in the collection\'s own tombstones is a deliberate goodbye, not drift');
+  });
+
+  await test('§schema identity: an already-retired field ID is exempt', () => {
+    const applied: AppliedSchema = {
+      collections: [{ id: 'c1', active: [{ id: 'f2', type: 'text' }], retired: [{ id: 'f1', type: 'text' }] }],
+    };
+    const src = identityAppSource([{ displayName: 'Notes', id: 'c1', fields: { title: 'f2' } }]);
+    const r = runStaticChecks(src, { appliedSchema: applied });
+    assertNoKind(r, 'schema_identity_drift', 'a retired ID is already unread by design — re-mentioning it is not required');
+  });
+
+  await test('§schema identity: a collection only the candidate has is unconstrained', () => {
+    const src = identityAppSource([
+      { displayName: 'Notes', id: 'c1', fields: { body: 'f1', title: 'f2' } },
+      { displayName: 'Tags', id: 'c2', fields: { label: 'f1' } },
+    ]);
+    const r = runStaticChecks(src, { appliedSchema: APPLIED_C1_F1_F2 });
+    assertNoKind(r, 'schema_identity_drift', 'growth is free — only abandonment is drift');
+  });
+
+  await test('§schema identity: a first generation (no applied schema) is unconstrained', () => {
+    const src = identityAppSource([{ displayName: 'Notes', id: 'c2', fields: { body: 'f1' } }]);
+    const r = runStaticChecks(src);
+    assertNoKind(r, 'schema_identity_drift', 'with no applied schema there is no identity to keep');
+  });
+
+  await test('§schema identity: dropping the schema artifact ENTIRELY abandons every applied collection', () => {
+    // The worst version of this mistake, and the one that used to slip through: a candidate that
+    // declares no `schema` never reaches `diffSchemas`, and can go on naming the same collections
+    // through the storage facade, so the surface pass sees nothing wrong either.
+    const applied: AppliedSchema = {
+      collections: [
+        { id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] },
+        { id: 'c2', active: [{ id: 'f1', type: 'text' }], retired: [] },
+      ],
+    };
+    const src = appSource("['storage']", 'defineApp, storage', 'return null;', "void storage.records.list('Notes');");
+    const r = runStaticChecks(src, { appliedSchema: applied, previousSurface: scanStorageSurface(src) });
+    assertNoKind(r, 'storage_surface_drift', 'setup: the candidate still names every location the previous version did — the surface pass has nothing to say');
+    const hits = findByKind(r, 'schema_identity_drift');
+    assert(hits.length === 2, `expected one drift per applied collection, got ${hits.length}: ${JSON.stringify(hits.map((h) => h.symbol))}`);
+    assert(
+      hits.map((h) => String(h.symbol)).sort((a, b) => a.localeCompare(b)).join(',') === 'c1,c2',
+      `expected the abandoned collection IDs c1,c2, got ${JSON.stringify(hits.map((h) => h.symbol))}`,
+    );
+    assert(/c1/.test(hits[0]?.hint ?? ''), `hint must name the collection ID, got: ${String(hits[0]?.hint)}`);
+    assertAllWellFormed(r);
+  });
+
+  await test('§schema identity: a schema-less candidate with NO applied schema is clean', () => {
+    const src = appSource('[]');
+    assertNoKind(runStaticChecks(src), 'schema_identity_drift', 'a first generation legitimately ships no schema');
+    assertNoKind(
+      runStaticChecks(src, { appliedSchema: { collections: [] } }),
+      'schema_identity_drift',
+      'an app that never created a collection has no rows to orphan — an empty applied schema is not an identity to keep',
+    );
+  });
+
+  await test('§schema identity: a `schema` that is present but not statically analyzable is not accused of dropping it', () => {
+    // `manifest_not_static` already fired; the artifact behind the call may well declare c1, so
+    // claiming it was abandoned would be a false accusation on top of a real diagnostic.
+    const src = `
+import { defineApp } from 'vc-sdk';
+function Home() { return null; }
+function makeSchema() { return { schemaVersion: 1, collections: {} }; }
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [], schema: makeSchema(),
+});
+`;
+    const applied: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
+    const r = runStaticChecks(src, { appliedSchema: applied });
+    assertHasKind(r, 'manifest_not_static', 'setup: an unresolvable schema is a manifest diagnostic');
+    assertNoKind(r, 'schema_identity_drift', 'only an outright omission is drift — an unreadable artifact is a different mistake');
+  });
+}
+
+// ── §storage continuity — an edit candidate keeps reading where the data already is ────────
+// static-checks req "An edit candidate keeps reading where the data already is" (design
+// D3/D4/D5). Superset, never equality; a non-literal argument warns and suppresses drift for
+// THAT facade only. The baseline is always `scanStorageSurface` output — one scanner, two
+// consumers — so these tests build it the way the generation server will.
+
+/** A storage-using candidate: `setup` is spliced in as module-level code with `storage`
+ *  imported and the capability declared, so the only diagnostics in play are continuity's. */
+function storageApp(setup: string): string {
+  return appSource("['storage']", 'defineApp, storage', 'return null;', setup);
+}
+
+async function testStorageContinuity(): Promise<void> {
+  await test('§storage continuity: a dropped kv key is storage_surface_drift, naming it', () => {
+    const previousSurface = scanStorageSurface(storageApp("const load = () => storage.kv.get('habitCompletionHistory');"));
+    const r = runStaticChecks(appSource('[]'), { previousSurface });
+    const d = assertHasKind(r, 'storage_surface_drift');
+    assert(d.symbol === 'habitCompletionHistory', `expected symbol "habitCompletionHistory", got "${String(d.symbol)}"`);
+    assert(d.severity === 'error', `drift is an error, got "${d.severity}"`);
+    assert(/habitCompletionHistory/.test(d.hint) && /data/.test(d.hint), `hint must name the location and say the data lives there, got: ${d.hint}`);
+    assertAllWellFormed(r);
+  });
+
+  await test('§storage continuity: a dropped record collection is drift; the one the candidate added is not', () => {
+    const previousSurface = scanStorageSurface(storageApp("const all = () => storage.records.list('Completions');"));
+    const r = runStaticChecks(storageApp("const all = () => storage.records.list('Streaks');"), { previousSurface });
+    const hits = findByKind(r, 'storage_surface_drift');
+    assert(hits.length === 1, `expected exactly one drift, got ${hits.length}: ${JSON.stringify(hits.map((h) => h.symbol))}`);
+    assert(hits[0]?.symbol === 'Completions', `expected symbol "Completions", got "${String(hits[0]?.symbol)}"`);
+  });
+
+  await test('§storage continuity: the rule is superset — keeping both locations and adding one is clean', () => {
+    const previousSurface = scanStorageSurface(
+      storageApp("const load = () => storage.kv.get('total');\nconst all = () => storage.records.list('Completions');"),
+    );
+    const candidate = storageApp(
+      [
+        "const load = () => storage.kv.get('total');",
+        "const all = () => storage.records.list('Completions');",
+        "const add = () => storage.records.append('Streaks', { n: 1 });",
+      ].join('\n'),
+    );
+    const r = runStaticChecks(candidate, { previousSurface });
+    assertNoKind(r, 'storage_surface_drift', 'every previous location is still read — the addition is free');
+    assertNoKind(r, 'storage_surface_dynamic', 'every argument is a literal');
+  });
+
+  await test('§storage continuity: a computed argument warns at its call site and suppresses drift for THAT facade only', () => {
+    const previousSurface = scanStorageSurface(
+      storageApp("const load = () => storage.kv.get('total');\nconst all = () => storage.records.list('Completions');"),
+    );
+    const candidate = storageApp("const someVariable = 'total';\nconst load = () => storage.kv.get(someVariable);");
+    const r = runStaticChecks(candidate, { previousSurface });
+
+    const dynamic = assertHasKind(r, 'storage_surface_dynamic');
+    assert(dynamic.severity === 'warning', `the dynamic diagnostic is the one warning of this set, got "${dynamic.severity}"`);
+    assert(dynamic.column !== undefined, 'the dynamic warning anchors at the offending argument, so it carries a column');
+    assertAnchors(candidate, { line: dynamic.line, column: dynamic.column ?? 0 }, 'someVariable)', 'dynamic warning anchor');
+
+    const drift = findByKind(r, 'storage_surface_drift');
+    assert(
+      drift.length === 1 && drift[0]?.symbol === 'Completions',
+      `suppression is per facade: the kv drift is unprovable and suppressed, the records drift still fires — got ${JSON.stringify(drift.map((d) => d.symbol))}`,
+    );
+  });
+
+  await test('§storage continuity: an aliased facade in the PREVIOUS source is never demanded of the candidate', () => {
+    // The scanner's KNOWN LIMIT points the safe way: a read it could not collect is a location
+    // continuity never claims was there. An uncollected read must not become drift evidence.
+    const previousSurface = scanStorageSurface(storageApp("const kv = storage.kv;\nconst load = () => kv.get('total');"));
+    assert(previousSurface.kvKeys.length === 0, 'setup: the aliased read is the scanner\'s documented blind spot');
+    const r = runStaticChecks(appSource('[]'), { previousSurface });
+    assertNoKind(r, 'storage_surface_drift', 'nothing was collected, so nothing may be accused');
+  });
+
+  await test('§storage continuity: with no previous surface, neither kind is emitted', () => {
+    const candidate = storageApp("const someVariable = 'total';\nconst load = () => storage.kv.get(someVariable);");
+    const r = runStaticChecks(candidate);
+    assertNoKind(r, 'storage_surface_drift', 'a first generation has nothing to be continuous with');
+    assertNoKind(r, 'storage_surface_dynamic', 'and the warning is gated on the same input — a new app is unconstrained');
+  });
+}
+
 // ── §E1 assembly: ordering / purity / determinism (greenBy: E) ─────────────
 
 async function testAssemblyOrderingPurity(): Promise<void> {
@@ -944,6 +1355,7 @@ export default defineApp({
 
 async function main(): Promise<void> {
   await testContractAndHarnessSelfTests();
+  await testStorageSurfaceScanner();
   await testParseGate();
   await testImportAllowlist();
   await testForbiddenGlobalsWalk();
@@ -952,6 +1364,8 @@ async function main(): Promise<void> {
   await testScreenGraph();
   await testSdkLint();
   await testSchemaCheck();
+  await testSchemaIdentityContinuity();
+  await testStorageContinuity();
   await testAssemblyOrderingPurity();
   await testHonestFixturesAndLatencyProbe();
   await runHostileCorpus();

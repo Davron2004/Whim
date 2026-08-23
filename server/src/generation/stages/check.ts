@@ -1,8 +1,9 @@
 /**
  * server/src/generation/stages/check.ts — the concrete `CheckStage` (design D12,
  * `handoff/stage-contracts.md`). Wraps `checks/index.ts`'s `runStaticChecks` — the harness's ONE
- * static-checker entry — with the request's applied schema as the diff baseline, and maps its
- * report onto the machine's minimal `CheckReport`/`CheckedManifest` shapes (design D2). The
+ * static-checker entry — with the request's applied schema as the diff baseline and the machine's
+ * per-run storage-surface scan as the drift baseline, and maps its report onto the machine's
+ * minimal `CheckReport`/`CheckedManifest` shapes (design D2). The
  * machine alone decides errors-block/warnings-pursued from `diagnostics[].severity` (design D6) —
  * this stage never filters or ranks by severity.
  *
@@ -83,7 +84,9 @@ export function createCheckStage(): CheckStage {
   return {
     check(source: string, ctx: CheckContext): CheckReport {
       const appliedSchema = ctx.appliedSchema as unknown as AppliedSchema | undefined;
-      const report = runStaticChecks(source, { appliedSchema });
+      // Both edit-turn inputs are opt-in by input: `undefined` means "unconstrained" (a new app),
+      // never a bug — passing them through untouched is this stage's whole job here.
+      const report = runStaticChecks(source, { appliedSchema, previousSurface: ctx.previousSurface });
       return {
         diagnostics: report.diagnostics.map(toWireDiagnostic),
         manifest: report.manifest ? toCheckedManifest(report.manifest) : undefined,
