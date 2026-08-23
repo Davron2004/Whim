@@ -33,10 +33,10 @@
 
 ## 5. Verb-time storage denials become diagnostics
 
-- [ ] 5.1 In `synthrun/report.ts`, extract the denial→diagnostic mapping into a pure function and let the six verb-time kinds through the closed-vocabulary filter with the engine's method and hint — test: `synthrun/test/acceptance.ts` §denial diagnostics (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
-- [ ] 5.2 Exclude `not_open`/`corrupt_storage` from diagnostics with a comment naming them host faults, and assert they stay in `report.trace` — test: `synthrun/test/acceptance.ts` (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
-- [ ] 5.3 Behavioural acceptance: a candidate that writes a date string into a `date` field produces a `type_mismatch` error diagnostic and a not-`ok` report — test: `synthrun/test/acceptance.ts` (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
-- [ ] 5.4 Pipeline assertion that an error-severity run diagnostic of kind `type_mismatch` routes the candidate to repair and delivers no record — test: `server/test/machine.suite.ts` §repair context (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 5.1 In `synthrun/report.ts`, extract the denial→diagnostic mapping into a pure function and let the six verb-time kinds through the closed-vocabulary filter with the engine's method and hint — test: `synthrun/test/acceptance.ts` §denial diagnostics (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
+- [x] 5.2 Exclude `not_open`/`corrupt_storage` from diagnostics with a comment naming them host faults, and assert they stay in `report.trace` — test: `synthrun/test/acceptance.ts` (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
+- [x] 5.3 Behavioural acceptance: a candidate that writes a date string into a `date` field produces a `type_mismatch` error diagnostic and a not-`ok` report — test: `synthrun/test/acceptance.ts` (`npm run synthrun:test`); gate: `./scripts/gate.sh` then `npm run synthrun:test`
+- [x] 5.4 Pipeline assertion that an error-severity run diagnostic of kind `type_mismatch` routes the candidate to repair and delivers no record — test: `server/test/machine.suite.ts` §repair context (`npm run server:test`); gate: `./scripts/gate.sh`
 
 ## 6. Documentation and the engine-level regression
 

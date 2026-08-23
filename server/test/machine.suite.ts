@@ -48,6 +48,15 @@ const BUILD_RESULT: BuildResult = { bundle: '(()=>{})();' };
 const ERROR_DIAG: Diagnostic = { kind: 'raw_timer', severity: 'error', message: 'raw setTimeout used', hint: 'use delay/interval instead' };
 const WARNING_DIAG: Diagnostic = { kind: 'unused_capability', severity: 'warning', message: 'cues declared but unused', hint: 'remove it' };
 const RUN_ERROR_DIAG: Diagnostic = { kind: 'run_fault', severity: 'error', message: 'the synthetic run failed', hint: 'fix the runtime behavior' };
+/** A VERB-TIME storage denial as the synthetic run reports it (synthetic-run §"Verb-time storage
+ *  denials are candidate diagnostics"): the engine's own kind, the denied method, the engine's own
+ *  hint. Static checks cannot see it — it exists only because the candidate was actually run. */
+const TYPE_MISMATCH_RUN_DIAG: Diagnostic = {
+  kind: 'type_mismatch',
+  severity: 'error',
+  message: 'storage.records.append: storage refused the call (type_mismatch)',
+  hint: 'Value for "at" in "Entries" is invalid: expected an epoch-millisecond integer.',
+};
 const BUILD_FAILURE_DIAG: Diagnostic = { kind: 'build_failure', severity: 'error', message: 'esbuild failed', hint: 'fix the syntax error' };
 
 const VALID_PLAN_JSON = JSON.stringify({
@@ -440,6 +449,63 @@ async function testRepairPromptGetsWholeCurrentRoundErrorsFirst(): Promise<void>
   check('whole-round repair context: the preceding CHECK warning is included', warningIndex >= 0);
   check('whole-round repair context: errors are ordered before warnings', errorIndex >= 0 && errorIndex < warningIndex);
   check('whole-round repair context: terminal is a result after the next green candidate', events.at(-1)?.type === 'result');
+}
+
+async function testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord(): Promise<void> {
+  section('machine — repair context: an error run diagnostic (type_mismatch) repairs and delivers no record');
+
+  // The first candidate RUNS and is contained — so the harness hands the machine an assembled
+  // record for it — but its storage write was refused at verb time. The record must never be
+  // delivered (synthetic-run §"An error run diagnostic reaches repair"): the machine, not the
+  // stage, decides delivery, and an error diagnostic in the round means repair.
+  const model = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-writes-a-date-string']),
+    engineerTurn(['candidate-writes-epoch-ms']),
+  ]);
+  const REFUSED_RECORD = { ...WIRE_RECORD, name: 'candidate-with-a-refused-write' };
+  const deps = baseDeps({
+    model,
+    // Both candidates pass the static checks clean — a verb-time denial is exactly the class of
+    // fault that only the run can produce, so nothing else in the round can explain the repair.
+    check: scriptedCheck([
+      { diagnostics: [], manifest: MANIFEST },
+      { diagnostics: [], manifest: MANIFEST },
+    ]),
+    build: scriptedBuild([
+      { ok: true, result: BUILD_RESULT },
+      { ok: true, result: BUILD_RESULT },
+    ]),
+    run: scriptedRun([
+      { contained: true, diagnostics: [TYPE_MISMATCH_RUN_DIAG], record: REFUSED_RECORD },
+      { contained: true, diagnostics: [], record: WIRE_RECORD },
+    ]),
+  });
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('verb-time run diagnostic', events);
+
+  eq('verb-time run diagnostic: exactly one repair pair is consumed', stageEvents(events, 'repair').length, 2);
+  eq('verb-time run diagnostic: the candidate is run twice — the repaired one too', stageEvents(events, 'run').length, 4);
+  eq(
+    'verb-time run diagnostic: it streams as a diagnostic event under the engine\'s own kind',
+    events.filter((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'type_mismatch').length,
+    1,
+  );
+
+  const repairPrompt = model.requests[2]?.request.messages.map((message) => message.content).join('\n') ?? '';
+  check('verb-time run diagnostic: the repair prompt carries the kind', repairPrompt.includes('type_mismatch'));
+  check('verb-time run diagnostic: the repair prompt carries the engine\'s own hint', repairPrompt.includes(TYPE_MISMATCH_RUN_DIAG.hint));
+  check('verb-time run diagnostic: the repair prompt names the denied method', repairPrompt.includes('storage.records.append'));
+
+  check(
+    'verb-time run diagnostic: no byte of the refused candidate\'s record is delivered anywhere',
+    !JSON.stringify(events).includes(REFUSED_RECORD.name),
+  );
+  const terminal = events.at(-1);
+  check('verb-time run diagnostic: terminal is a result for the repaired candidate', terminal?.type === 'result');
+  if (terminal?.type === 'result') {
+    eq('verb-time run diagnostic: the delivered record is the repaired one', terminal.app.name, WIRE_RECORD.name);
+  }
 }
 
 async function testContainmentFailureShortCircuit(): Promise<void> {
@@ -934,6 +1000,7 @@ export async function runMachineTests(): Promise<void> {
   await testPlanReaskThenFailure();
   await testWarningsOnlyOneRepairThenDeliver();
   await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
+  await testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord();
   await testContainmentFailureShortCircuit();
   await testUnobservedVerdictIsTerminalWithItsOwnReason();
   await testStageThrowYieldsOneFailure();

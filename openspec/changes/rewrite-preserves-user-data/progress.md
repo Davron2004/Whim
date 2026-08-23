@@ -5,3 +5,4 @@
 - DAG: chain-1 -> {chain-2, chain-5}; chain-2 -> chain-3 -> chain-4 -> chain-6.
 - chain-1: dispatched(BASE=92d2490) report=complete gate=PASS integrity=0 merged regate=PASS commit=4ea851f
 - chain-2: dispatched(BASE=48c5e8e) report=complete gate=PASS integrity=0 merged commit=35fc65f redchecks=6-variant
+- chain-5: dispatched(BASE=48c5e8e) report=complete gate=PASS integrity=0 merged commit=8f63fa8
