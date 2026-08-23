@@ -69,8 +69,8 @@ export type RewriteAppContext = NonNullable<RewriteRequest['app']>;
  * app it is changing"). `undefined` when nothing is being edited — composing a new app sends no
  * `app` at all, which is exactly how the server tells the two apart.
  *
- * DISPLAY NAMES ONLY, by construction: the app's current name from its stored record, and the
- * collection/field names its schema artifact is KEYED by. The burned ids those keys map to
+ * DISPLAY NAMES ONLY, by construction: the name the grid shows for this app, and the collection/
+ * field names its schema artifact is KEYED by. The burned ids those keys map to
  * (`CollectionSpec.id`, `FieldSpec.id`), the source, the bundle and the user's rows are never read
  * here — the rewrite turn writes a product description, not code, so it is given the vocabulary
  * the user would use and nothing else. A collection whose fields were all retired still counts as
@@ -84,5 +84,11 @@ export function buildRewriteAppContext(editing: InstalledApp | undefined): Rewri
   const collections = Object.entries(editing.record.schemaArtifact?.collections ?? {}).map(
     ([name, spec]) => ({ name, fields: Object.keys(spec.fields) }),
   );
-  return { name: editing.record.name, ...(collections.length > 0 ? { collections } : {}) };
+  // `entry.name`, NOT `entry.record.name`: the spec's "current display name" is the name the
+  // user sees on the grid, and the two legitimately diverge. `StoreAccess.update` deliberately
+  // never refreshes `entry.name` from the wire record on a rebuild (store-access.ts §update),
+  // so after a model renamed the app unprompted, the tile still reads the user's name while
+  // `record.name` reads the model's. Presenting the tile's name is what lets the next rewrite
+  // heal that: the model is told the app is called what the user calls it, and keeps it.
+  return { name: editing.name, ...(collections.length > 0 ? { collections } : {}) };
 }

@@ -10,3 +10,5 @@
 - chain-4: dispatched(BASE=a181fd1) report=complete gate=PASS integrity=0 merged commit=a7776f8 note=record.name-vs-entry.name choice logged
 - chain-6: dispatched(BASE=5d3af66) report=complete gate=PASS integrity=0 merged commit=2e2d78d
 - chain-6 merge redone from primary tree (first attempt ran inside the worktree, no-op); regate PASS
+- reviewer: FINDINGS (3 medium, 6 low). Dispositions: F1 wire-test fix chain; F2 adjudicated entry.name (user-visible display name) + divergent-fixture test; F3 no-artifact edit candidate => schema_identity_drift + handoff fix; F4 comment fix; F7 doc nit fix; F5 pre-existing (follow-up note); F6/F8/F9 noted, no action this run.
+- chain-7(fix): dispatched(BASE=15ccbd6) report=complete gate=PASS integrity=0 merged commit=f188f3b — F1/F2/F3/F4/F7 closed, red-checked

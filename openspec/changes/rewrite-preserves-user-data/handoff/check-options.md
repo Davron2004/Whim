@@ -84,9 +84,14 @@ columns above are):
   `kv` or `records` — whichever facade the call belonged to — and never for both.
 - **`ok` is unchanged**: `diagnostics.length === 0`, any severity. A lone
   `storage_surface_dynamic` warning still fails the report, so the check stage still gates.
-- **Identity continuity only runs when the candidate SHIPS a schema literal** (the schema pass's
-  standing precondition) and only after `validateArtifact` comes back clean. A candidate that
-  drops its schema artifact entirely is caught by `storage_surface_drift`, not by this rule.
+- **Per-field identity continuity only runs when the candidate SHIPS a schema literal** (the
+  schema pass's standing precondition) and only after `validateArtifact` comes back clean. The
+  one exception is an OUTRIGHT OMISSION: a candidate declaring no `schema` field at all, against
+  a non-empty applied schema, declares no collection, so the rule fires once per applied
+  collection id (collection level only — there is no artifact to carry a `tombstones` list). A
+  `schema` that is present but not statically resolvable is left to `manifest_not_static`.
+  `storage_surface_drift` does NOT cover any of this: it judges the locations the candidate
+  NAMES, and a schema-less candidate can go on naming every one of them.
 - **A retired field ID is exempt; a tombstoned one is accounted for.** The candidate satisfies an
   active applied ID by declaring it OR by listing it in that collection's own `tombstones`.
 - **The scanner's aliased-facade blind spot points the safe way.** An uncollected read in the

@@ -81,14 +81,16 @@ const habitsSchema: SchemaArtifact = {
   },
 };
 
-/** An installed entry with no store behind it — enough for the pure rewrite-context builder. */
-function entryFor(id: string, name: string, schemaArtifact?: SchemaArtifact): InstalledApp {
+/** An installed entry with no store behind it — enough for the pure rewrite-context builder.
+ *  `recordName` defaults to `name` (the usual case); passing it separately builds the DIVERGENT
+ *  state a rebuild leaves behind, where the grid and the stored record disagree. */
+function entryFor(id: string, name: string, schemaArtifact?: SchemaArtifact, recordName = name): InstalledApp {
   return {
     id,
     name,
     createdAt: 0,
     lineageId: 'main',
-    record: { ...REC(id, schemaArtifact), name },
+    record: { ...REC(id, schemaArtifact), name: recordName },
   };
 }
 
@@ -180,6 +182,20 @@ export async function runGenerationRequestTests(h: Harness): Promise<void> {
       buildRewriteAppContext(entry),
       { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
       'the display names the user would use, in artifact order',
+    );
+  });
+
+  await h.test('rewrite-context: the name is the one the grid shows, not the stored record\'s', () => {
+    // A rebuild whose model renamed the app unprompted leaves the two divergent: `StoreAccess`
+    // never refreshes `entry.name` from the wire record, so the tile still reads the user's
+    // name while `record.name` reads the model's. The re-prompt must present the user's — that
+    // is how the next rewrite heals an unprompted rename instead of ratifying it.
+    const renamed = entryFor('habits', 'Habit Tracker', habitsSchema, 'Streak Tracker');
+    h.eq(renamed.record.name, 'Streak Tracker', 'setup: the stored record carries the model\'s rename');
+    h.eq(
+      buildRewriteAppContext(renamed)?.name,
+      'Habit Tracker',
+      'the context carries the user-visible entry name, never record.name',
     );
   });
 

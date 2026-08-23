@@ -26,12 +26,19 @@
  * rollback tolerance is untouched, because a restore never passes through the checker.
  *
  * Runs only when `ctx.manifest?.schema` is set (manifest-extraction succeeded and a `schema`
- * field was present and statically resolved).
+ * field was present and statically resolved) — with ONE exception: a candidate that declares no
+ * `schema` field at all against a NON-EMPTY applied schema declares no collection, so identity
+ * continuity fails for every collection the applied schema contains and each is reported before
+ * the pass returns. Nothing else sees that omission: `diffSchemas` is never reached, and the
+ * storage-continuity pass judges the locations the source NAMES, which a schema-less candidate
+ * can go on naming exactly as before. A candidate that DOES declare a `schema` the extractor
+ * could not resolve is left alone — `manifest_not_static` already fired, and the artifact might
+ * well declare those collections.
  */
 
 import { Diagnostic, DiagnosticKind } from '../contract';
 import { CheckContext, Pass, lineOf } from '../internal/scope';
-import { resolveSchemaNode } from '../internal/manifest';
+import { getProperty, resolveSchemaNode } from '../internal/manifest';
 import { burnedIdFloor, diffSchemas, emptyApplied, validateArtifact } from '../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../src/host/storage-engine/schema';
 import type { CollectionSpec, SchemaArtifact, StorageError } from '../../src/host/storage-engine/contract';
@@ -138,6 +145,31 @@ function identityContinuityDiagnostics(
   return diagnostics;
 }
 
+/** Identity continuity for a candidate with NO usable `schema`. Only an outright OMISSION is
+ *  drift, and only against data that already exists: the manifest object must have been found
+ *  (otherwise there is nothing to read an omission from) and must carry no `schema` property at
+ *  all. Such a candidate declares none of the applied collections, so every one of them is
+ *  abandoned. Collection-level only — with no artifact there is no per-collection `tombstones`
+ *  list to account for a field, and naming the collection IDs is what tells the model where the
+ *  user's rows already live. */
+function reportMissingArtifactDrift(ctx: CheckContext, anchor: { line: number; column: number }): void {
+  const applied = ctx.appliedSchema;
+  if (!applied || applied.collections.length === 0) return;
+  if (ctx.manifestArgumentNode === undefined) return;
+  if (getProperty(ctx.manifestArgumentNode, 'schema') !== undefined) return;
+
+  for (const coll of applied.collections) {
+    ctx.report(
+      identityDriftDiagnostic(
+        coll.id,
+        coll.id,
+        `Collection ID "${coll.id}" is in the applied schema but this candidate declares no \`schema\` at all; the user's existing rows live under "${coll.id}", so ship a schema artifact that keeps that ID (and the field IDs inside it) rather than dropping it.`,
+        anchor,
+      ),
+    );
+  }
+}
+
 /** Diagnoses every genuinely-new field ID (not already active or retired in the matching
  *  applied collection) whose ordinal falls at or below that collection's burned-ID floor. A
  *  candidate collection with no counterpart in `applied` is unconstrained — skipped entirely. */
@@ -169,11 +201,15 @@ function allocationFloorDiagnostics(
 
 export const schemaCheckPass: Pass = (ctx: CheckContext) => {
   const manifest = ctx.manifest;
-  if (manifest?.schema === undefined) return;
   const { sourceFile } = ctx;
 
   const schemaNode = resolveSchemaNode(sourceFile, ctx.manifestArgumentNode) ?? ctx.manifestArgumentNode ?? sourceFile;
   const anchor = lineOf(sourceFile, schemaNode);
+
+  if (manifest?.schema === undefined) {
+    reportMissingArtifactDrift(ctx, anchor);
+    return;
+  }
 
   const artifactErrors = validateArtifact(manifest.schema);
   if (artifactErrors.length > 0) {

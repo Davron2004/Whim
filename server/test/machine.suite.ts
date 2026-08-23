@@ -1,9 +1,17 @@
 /**
  * server/test/machine.suite.ts — chain-4's suite: `plan.ts`'s parser/validator directly, and the
  * state machine end to end against fake `CheckStage`/`BuildStage`/`RunStage`/`Clock` (design D2) —
- * no Chromium, no network, no `checks/index.ts`, no `typescript` import. Deterministic throughout:
- * every model call goes through `ScriptedModelClient` (or a tiny hand-rolled `ModelClient` fake for
- * the abort-mid-stream cases) and the whole file passes with `OPENROUTER_API_KEY` unset.
+ * no Chromium, no network. Deterministic throughout: every model call goes through
+ * `ScriptedModelClient` (or a tiny hand-rolled `ModelClient` fake for the abort-mid-stream cases)
+ * and the whole file passes with `OPENROUTER_API_KEY` unset.
+ *
+ * `machine.ts` DOES value-import `checks/index.ts` (for `scanStorageSurface`, the one scanner the
+ * edit turn's prompt and the drift check share), so importing it pulls `typescript` in behind it.
+ * That costs this suite nothing it cares about: the scanner is pure and synchronous — no I/O, no
+ * clock, no network — so determinism is untouched, and `typescript` is `external` in `run.mjs`
+ * (Node resolves it from node_modules rather than esbuild bundling its CJS `require`s into an
+ * unsupported dynamic require). The real check PIPELINE still never runs here: `CheckStage` is a
+ * fake, exactly as before.
  */
 import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';

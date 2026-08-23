@@ -24,7 +24,9 @@ export type StorageFacade = 'kv' | 'records';
 export interface StorageReference {
   /** The literal kv key or record-collection display name, verbatim. */
   name: string;
-  /** The facade method it was passed to — `get`/`set`/`remove`, `append`/`list`/`update`. */
+  /** The facade method it was passed to, verbatim. METHOD-AGNOSTIC: whatever name follows the
+   *  facade is recorded, so today's roster (`kv.get`/`set`/`remove`,
+   *  `records.append`/`list`/`update`/`remove`) needs no update here when the SDK grows one. */
   method: string;
   /** 1-based line of the literal in the scanned source. */
   line: number;

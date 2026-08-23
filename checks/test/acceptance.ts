@@ -982,6 +982,56 @@ async function testSchemaIdentityContinuity(): Promise<void> {
     const r = runStaticChecks(src);
     assertNoKind(r, 'schema_identity_drift', 'with no applied schema there is no identity to keep');
   });
+
+  await test('§schema identity: dropping the schema artifact ENTIRELY abandons every applied collection', () => {
+    // The worst version of this mistake, and the one that used to slip through: a candidate that
+    // declares no `schema` never reaches `diffSchemas`, and can go on naming the same collections
+    // through the storage facade, so the surface pass sees nothing wrong either.
+    const applied: AppliedSchema = {
+      collections: [
+        { id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] },
+        { id: 'c2', active: [{ id: 'f1', type: 'text' }], retired: [] },
+      ],
+    };
+    const src = appSource("['storage']", 'defineApp, storage', 'return null;', "void storage.records.list('Notes');");
+    const r = runStaticChecks(src, { appliedSchema: applied, previousSurface: scanStorageSurface(src) });
+    assertNoKind(r, 'storage_surface_drift', 'setup: the candidate still names every location the previous version did — the surface pass has nothing to say');
+    const hits = findByKind(r, 'schema_identity_drift');
+    assert(hits.length === 2, `expected one drift per applied collection, got ${hits.length}: ${JSON.stringify(hits.map((h) => h.symbol))}`);
+    assert(
+      hits.map((h) => String(h.symbol)).sort((a, b) => a.localeCompare(b)).join(',') === 'c1,c2',
+      `expected the abandoned collection IDs c1,c2, got ${JSON.stringify(hits.map((h) => h.symbol))}`,
+    );
+    assert(/c1/.test(hits[0]?.hint ?? ''), `hint must name the collection ID, got: ${String(hits[0]?.hint)}`);
+    assertAllWellFormed(r);
+  });
+
+  await test('§schema identity: a schema-less candidate with NO applied schema is clean', () => {
+    const src = appSource('[]');
+    assertNoKind(runStaticChecks(src), 'schema_identity_drift', 'a first generation legitimately ships no schema');
+    assertNoKind(
+      runStaticChecks(src, { appliedSchema: { collections: [] } }),
+      'schema_identity_drift',
+      'an app that never created a collection has no rows to orphan — an empty applied schema is not an identity to keep',
+    );
+  });
+
+  await test('§schema identity: a `schema` that is present but not statically analyzable is not accused of dropping it', () => {
+    // `manifest_not_static` already fired; the artifact behind the call may well declare c1, so
+    // claiming it was abandoned would be a false accusation on top of a real diagnostic.
+    const src = `
+import { defineApp } from 'vc-sdk';
+function Home() { return null; }
+function makeSchema() { return { schemaVersion: 1, collections: {} }; }
+export default defineApp({
+  name: 'T', initial: 'Home', screens: { Home }, capabilities: [], schema: makeSchema(),
+});
+`;
+    const applied: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
+    const r = runStaticChecks(src, { appliedSchema: applied });
+    assertHasKind(r, 'manifest_not_static', 'setup: an unresolvable schema is a manifest diagnostic');
+    assertNoKind(r, 'schema_identity_drift', 'only an outright omission is drift — an unreadable artifact is a different mistake');
+  });
 }
 
 // ── §storage continuity — an edit candidate keeps reading where the data already is ────────
