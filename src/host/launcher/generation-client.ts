@@ -216,11 +216,16 @@ export async function clarifyPrompt(
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
  *  clarify exchange's answers so the rewrite (and the plan rows it returns) reflect them; an empty
- *  list is sent as no field at all, since absent and empty mean the same thing on the wire. */
+ *  list is sent as no field at all, since absent and empty mean the same thing on the wire.
+ *
+ *  `app` is the display-name context of the app a re-prompt is CHANGING, built by
+ *  `generation-request.ts#buildRewriteAppContext` — this client only carries it. Omitted entirely
+ *  when absent: no `app` key is what tells the server this is a new app. */
 export async function rewritePrompt(
   opts: ClientOptions,
   prompt: string,
   clarifications: readonly Clarification[] = [],
+  app?: RewriteRequest['app'],
   signal?: AbortSignal,
 ): Promise<RewriteResponse> {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -232,6 +237,7 @@ export async function rewritePrompt(
       body: JSON.stringify({
         prompt,
         ...(clarifications.length > 0 ? { clarifications: [...clarifications] } : {}),
+        ...(app ? { app } : {}),
       } satisfies RewriteRequest),
       signal,
     });

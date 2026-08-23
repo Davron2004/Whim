@@ -211,6 +211,45 @@ async function testMessageBuilders(): Promise<void> {
   assertNonEmptyMessages('rewrite', rewriteMessages);
   check('rewrite: user message carries the prompt verbatim', rewriteMessages.some((m) => m.content === 'a timer'));
 
+  // ── rewrite: the app an edit is changing (spec "A rewrite for an edit carries the app it is
+  // changing"). `app` present ⇒ this describes a CHANGE to an existing app; absent ⇒ a new app.
+  const editRewriteMessages = buildRewriteMessages({
+    request: {
+      prompt: 'add a streak count',
+      app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
+    },
+  });
+  assertNonEmptyMessages('rewrite (edit)', editRewriteMessages);
+  const editRewriteUser = editRewriteMessages.find((m) => m.role === 'user')?.content ?? '';
+  const editRewriteSystem = editRewriteMessages.find((m) => m.role === 'system')?.content ?? '';
+  check('rewrite (edit): the prompt still reaches the user message', editRewriteUser.includes('add a streak count'));
+  check('rewrite (edit): the app’s current name reaches the prompt', editRewriteUser.includes('Habit Tracker'));
+  check(
+    'rewrite (edit): the concepts it already keeps reach the prompt',
+    editRewriteUser.includes('Completions') && editRewriteUser.includes('Date, Note'),
+  );
+  check(
+    'rewrite (edit): the system message asks to keep the name unless a rename is asked for',
+    /keep that name unless the request explicitly asks to rename it/i.test(editRewriteSystem),
+  );
+  check(
+    'rewrite (edit): the system message asks for only the change, not a from-nothing description',
+    /describe ONLY what this request changes/.test(editRewriteSystem),
+  );
+  const newAppRewriteUser = rewriteMessages.find((m) => m.role === 'user')?.content ?? '';
+  check(
+    'rewrite (new app): no continuity language at all — the user message is the prompt and nothing else',
+    newAppRewriteUser === 'a timer',
+  );
+  const storeNothingRewriteUser =
+    buildRewriteMessages({ request: { prompt: 'make it blue', app: { name: 'Tip Splitter' } } }).find(
+      (m) => m.role === 'user',
+    )?.content ?? '';
+  check(
+    'rewrite (edit, no collections): names the app but renders no dangling "keeps track of" heading',
+    storeNothingRewriteUser.includes('Tip Splitter') && !storeNothingRewriteUser.includes('keeps track of'),
+  );
+
   const planMessages = buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' });
   assertNonEmptyMessages('plan (new app)', planMessages);
 

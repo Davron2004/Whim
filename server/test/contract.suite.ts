@@ -142,6 +142,66 @@ export function runContractTests(): void {
       .success,
   );
   check('RewriteRequest shape', RewriteRequest.safeParse({ prompt: 'p' }).success);
+  // A prompt-only rewrite is a NEW-app rewrite: `app` absent is the whole signal.
+  check(
+    'RewriteRequest app is optional (a prompt-only request is a new-app rewrite)',
+    RewriteRequest.safeParse({ prompt: 'p' }).success &&
+      RewriteRequest.safeParse({ prompt: 'p' }).data?.app === undefined,
+  );
+  const rePrompt = RewriteRequest.safeParse({
+    prompt: 'add a streak count',
+    app: {
+      name: 'Habit Tracker',
+      collections: [{ name: 'Completions', fields: ['Date', 'Note'] }],
+    },
+  });
+  check('RewriteRequest accepts an app context of display names', rePrompt.success);
+  check(
+    'RewriteRequest app context round-trips its display names',
+    rePrompt.success &&
+      rePrompt.data.app?.name === 'Habit Tracker' &&
+      rePrompt.data.app.collections?.[0]?.name === 'Completions' &&
+      rePrompt.data.app.collections[0].fields.join(',') === 'Date,Note',
+  );
+  check(
+    'RewriteRequest app.collections is optional (an app that stores nothing)',
+    RewriteRequest.safeParse({ prompt: 'p', app: { name: 'Tip Splitter' } }).success,
+  );
+  check(
+    'RewriteRequest app.name is required inside the context',
+    !RewriteRequest.safeParse({ prompt: 'p', app: { collections: [] } }).success,
+  );
+  check(
+    'RewriteRequest app.collections entries carry both a name and its fields',
+    !RewriteRequest.safeParse({ prompt: 'p', app: { name: 'A', collections: [{ name: 'C' }] } })
+      .success,
+  );
+  // Names only: a client that sends source/bundle/ids/records inside `app` gets them stripped —
+  // the parsed value a server forwards to the model can never carry them.
+  const overReaching = RewriteRequest.safeParse({
+    prompt: 'add a streak count',
+    app: {
+      name: 'Habit Tracker',
+      source: 'export default defineApp({})',
+      bundle: '(()=>{})()',
+      appliedSchema: { c1: { f1: 'text' } },
+      records: [{ id: 1 }],
+      appId: 'habit-tracker',
+      collections: [{ name: 'Completions', fields: ['Date'], id: 'c1' }],
+    },
+  });
+  check('RewriteRequest tolerates an over-reaching app object', overReaching.success);
+  const parsedApp = (overReaching.success ? overReaching.data.app : {}) as Record<string, unknown>;
+  const parsedCollection = ((parsedApp.collections as Record<string, unknown>[] | undefined)?.[0] ??
+    {}) as Record<string, unknown>;
+  check(
+    'RewriteRequest app carries no source/bundle/applied schema/records/device identity',
+    ['source', 'bundle', 'appliedSchema', 'records', 'appId'].every((key) => !(key in parsedApp)),
+  );
+  check(
+    'RewriteRequest app.collections carry no burned ids',
+    !('id' in parsedCollection) && parsedCollection.name === 'Completions',
+  );
   check('RewriteResponse shape', RewriteResponse.safeParse({ rewrittenPrompt: 'r' }).success);
 
   // ApiError — the shape every non-SSE /v1/* error body validates against.

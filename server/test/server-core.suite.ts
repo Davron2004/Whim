@@ -317,6 +317,34 @@ async function testStubPipelineEndpoints(): Promise<void> {
     eq('rewrite is deterministic against the same scripted response', body1.rewrittenPrompt, body2.rewrittenPrompt);
   }
 
+  // §5.5 — a re-prompt's app context validates and reaches the model turn unchanged: the route
+  // adds nothing and drops nothing (spec "A rewrite for an edit carries the app it is changing").
+  {
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+      { role: 'rewrite', deltas: ['Track habits and show a streak count.'] },
+    ]);
+    const app = createApp({
+      pipeline: createStubPipeline(0),
+      usageStore: new InMemoryUsageStore(),
+      model,
+      roster: REWRITE_TEST_ROSTER,
+    });
+    const res = await post(
+      app,
+      '/v1/rewrite',
+      {
+        prompt: 'add a streak count',
+        app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date'] }] },
+      },
+      DEVICE_HEADER,
+    );
+    eq('rewrite with an app context → 200', res.status, 200);
+    const sent = model.requests[0]?.request.messages.map((m) => m.content).join('\n') ?? '';
+    check('rewrite app context reaches the model turn (name)', sent.includes('Habit Tracker'));
+    check('rewrite app context reaches the model turn (collection)', sent.includes('Completions'));
+    check('rewrite app context reaches the model turn (field)', sent.includes('Date'));
+  }
+
   // §5.5 — invalid rewrite body → 400
   {
     const app = scriptedRewriteApp();
@@ -784,6 +812,21 @@ async function testStubRewritePreservesFailMarker(): Promise<void> {
     rewriteBody.rewrittenPrompt.includes('[[fail]]'),
   );
   eq('F5: stub rewrite makes zero model calls', model.requests.length, 0);
+
+  // The short-circuit is keyed on the marker alone: a re-prompt of an installed app carries an
+  // `app` context, and that must not push it onto the model path.
+  const editRes = await post(
+    app,
+    '/v1/rewrite',
+    { prompt: 'do something [[fail]] please', app: { name: 'Habit Tracker' } },
+    DEVICE_HEADER,
+  );
+  eq('F5: stub rewrite of an existing app status 200', editRes.status, 200);
+  check(
+    'F5: an app-carrying stub rewrite still passes the marker through',
+    ((await editRes.json()) as { rewrittenPrompt: string }).rewrittenPrompt.includes('[[fail]]'),
+  );
+  eq('F5: an app-carrying stub rewrite still makes zero model calls', model.requests.length, 0);
 
   const generateRes = await post(app, '/v1/generate', { prompt: rewriteBody.rewrittenPrompt }, DEVICE_HEADER);
   const { events } = await readSseResponse(generateRes);

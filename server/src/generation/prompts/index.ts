@@ -133,6 +133,23 @@ export interface RewriteTurnContext {
   request: RewriteRequest;
 }
 
+/** The app a rewrite is CHANGING, stated in the user's own vocabulary (spec "A rewrite for an edit
+ *  carries the app it is changing"). `RewriteRequest.app` is display names only — no source, no
+ *  burned ids, no records — so this section can say what the app is called and what it already
+ *  keeps, and nothing more. Absent for a new app, which then carries no continuity language at all.
+ *  The instruction itself lives in `REWRITE_SYSTEM`; this section is the facts it acts on. */
+function rewriteAppSection(app: RewriteRequest['app']): string {
+  if (!app) return '';
+  const collections = (app.collections ?? []).filter((c) => c.name.trim().length > 0);
+  const collectionLine = (c: { name: string; fields: string[] }): string =>
+    c.fields.length > 0 ? `- ${c.name}: ${c.fields.join(', ')}` : `- ${c.name}`;
+  const kept =
+    collections.length > 0
+      ? '\nIt already keeps track of:\n' + collections.map(collectionLine).join('\n')
+      : '';
+  return `This request changes an app the user already has, called "${app.name}".${kept}`;
+}
+
 /** The four labels the plan screen renders (design D10). The rewrite model is asked for exactly
  *  these rows; a model that returns none stays conforming (the device renders the prompt itself). */
 export const PLAN_ROW_LABELS: readonly string[] = [
@@ -149,6 +166,10 @@ const REWRITE_SYSTEM = [
   `Use exactly these plan labels, in order: ${PLAN_ROW_LABELS.map((label) => JSON.stringify(label)).join(', ')}.`,
   "Write both fields in the user's own words: no SDK names, no component names, no engineering",
   'internals, no code.',
+  'When the request changes an app that already exists, its current name and what it already keeps',
+  'track of are stated with it: keep that name unless the request explicitly asks to rename it, keep',
+  'every concept it already has, and describe ONLY what this request changes — never describe the',
+  'app as if it were being built from nothing.',
 ].join(' ');
 
 export function buildRewriteMessages(ctx: RewriteTurnContext): ModelMessage[] {
@@ -156,7 +177,11 @@ export function buildRewriteMessages(ctx: RewriteTurnContext): ModelMessage[] {
     { role: 'system', content: REWRITE_SYSTEM },
     {
       role: 'user',
-      content: nonEmptySections(ctx.request.prompt, clarificationsSection(ctx.request.clarifications)),
+      content: nonEmptySections(
+        ctx.request.prompt,
+        rewriteAppSection(ctx.request.app),
+        clarificationsSection(ctx.request.clarifications),
+      ),
     },
   ];
 }

@@ -141,10 +141,26 @@ export type GenerateRequest = z.infer<typeof GenerateRequest>;
 
 /** Rewrite is fast and unary — plain JSON, no stream. `clarifications` carries the clarify
  *  exchange's answers so the rewrite (and the plan rows it returns) reflect them; absent and empty
- *  both mean "the user answered nothing". */
+ *  both mean "the user answered nothing".
+ *
+ *  `app` is the OPTIONAL context of the app this rewrite CHANGES: its presence means "this
+ *  request describes a change to an app that already exists", its absence means a new app. It
+ *  carries DISPLAY NAMES ONLY — the app's current name, and the names of the collections and
+ *  fields it already keeps — because the rewrite turn writes a product description, not code: it
+ *  never needs (and so never receives) source, bundle text, burned collection/field ids, applied
+ *  schemas, record contents, or any device-side identity. Anything else a client sends inside
+ *  `app` is stripped here rather than forwarded. */
 export const RewriteRequest = z.object({
   prompt: z.string(),
   clarifications: z.array(Clarification).optional(),
+  app: z
+    .object({
+      name: z.string(),
+      collections: z
+        .array(z.object({ name: z.string(), fields: z.array(z.string()) }))
+        .optional(),
+    })
+    .optional(),
 });
 export type RewriteRequest = z.infer<typeof RewriteRequest>;
 

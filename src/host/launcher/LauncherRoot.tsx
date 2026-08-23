@@ -46,7 +46,7 @@ import {
   retryBuildScreen,
   startPendingBuild,
 } from './build-lifecycle';
-import { buildGenerateRequest } from './generation-request';
+import { buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY } from './copy';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
@@ -559,6 +559,8 @@ function LauncherShell({
         clientOptions,
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
+        // A re-prompt tells the rewrite which app it is changing; composing a new app sends none.
+        buildRewriteAppContext(plan.editing),
         request.controller.signal,
       );
       if (request.cancelled) return;

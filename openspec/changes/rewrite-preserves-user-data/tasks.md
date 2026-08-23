@@ -25,11 +25,11 @@
 
 ## 4. Rewrite carries the app
 
-- [ ] 4.1 Add optional `app: { name, collections?: [{ name, fields: string[] }] }` to `RewriteRequest` in `contract/src/index.ts`, with the "names only" doc comment — test: `server/test/contract.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 4.2 Teach `REWRITE_SYSTEM` and `buildRewriteMessages` that a request carrying `app` describes a change to an existing app: keep its name unless a rename is asked for, keep its existing concepts, describe only the change — test: `server/test/prompts.suite.ts` §rewrite (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 4.3 Pass the context through `server/src/routes/rewrite.ts` unchanged (validation only; the stub short-circuit stays) — test: `server/test/server-core.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
-- [ ] 4.4 Add a pure `buildRewriteAppContext(editing)` to `src/host/launcher/generation-request.ts` (type-only contract import) reading name from the manifest and display names from the entry's schema artifact — test: `src/host/launcher/test/generation-request.suite.ts` (`npm run launcher:test`); gate: `./scripts/gate.sh`
-- [ ] 4.5 Send it: `rewritePrompt` takes the optional context and puts it in the body; `LauncherRoot.openPlan` supplies it from `plan.editing` and omits it for a new app — test: `src/host/launcher/test/generation-client.suite.ts` (`npm run launcher:test`); gate: `./scripts/gate.sh`
+- [x] 4.1 Add optional `app: { name, collections?: [{ name, fields: string[] }] }` to `RewriteRequest` in `contract/src/index.ts`, with the "names only" doc comment — test: `server/test/contract.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 4.2 Teach `REWRITE_SYSTEM` and `buildRewriteMessages` that a request carrying `app` describes a change to an existing app: keep its name unless a rename is asked for, keep its existing concepts, describe only the change — test: `server/test/prompts.suite.ts` §rewrite (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 4.3 Pass the context through `server/src/routes/rewrite.ts` unchanged (validation only; the stub short-circuit stays) — test: `server/test/server-core.suite.ts` (`npm run server:test`); gate: `./scripts/gate.sh`
+- [x] 4.4 Add a pure `buildRewriteAppContext(editing)` to `src/host/launcher/generation-request.ts` (type-only contract import) reading name from the manifest and display names from the entry's schema artifact — test: `src/host/launcher/test/generation-request.suite.ts` (`npm run launcher:test`); gate: `./scripts/gate.sh`
+- [x] 4.5 Send it: `rewritePrompt` takes the optional context and puts it in the body; `LauncherRoot.openPlan` supplies it from `plan.editing` and omits it for a new app — test: `src/host/launcher/test/generation-client.suite.ts` (`npm run launcher:test`); gate: `./scripts/gate.sh`
 
 ## 5. Verb-time storage denials become diagnostics
 
