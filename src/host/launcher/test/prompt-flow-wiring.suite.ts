@@ -336,6 +336,18 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(/onOpenSettings=\{\(\) => \{\s*leaveFlowStep\('compose'\);/.test(rootSrc), 'opening Settings out of compose leaves it too');
   });
 
+  await h.test('rewrite-wiring: the plan step tells the rewrite which app it is changing', () => {
+    // Same failure mode as the cancel wires above, and the same reason it is asserted statically:
+    // drop `buildRewriteAppContext(plan.editing)` from the call and the request simply stops
+    // carrying the app context — the builder's own suite still passes, the rewrite still
+    // succeeds, and the model quietly loses the names it was supposed to keep.
+    const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
+    h.ok(
+      /rewritePrompt\([\s\S]*?buildRewriteAppContext\(plan\.editing\)/.test(planFn),
+      'the rewrite call carries the app context built from the app being edited',
+    );
+  });
+
   await h.test('cancel-wiring: every post-await screen write in the flow is guarded', () => {
     // The B1 fix: aborting alone cannot stop a promise that had already resolved when the user
     // navigated away, so each write after an `await` re-checks the step that started it.

@@ -8,6 +8,11 @@
  * It is also the plan screen's endpoint (design D10): the request may carry the clarify exchange's
  * answers, and the response may carry the labelled `plan` rows the device renders as its approval
  * gate. Both are optional on the wire and optional here — one endpoint, one approval gate.
+ *
+ * A re-prompt additionally carries `app`, the display-name context of the app being changed. This
+ * route neither builds nor edits it: `RewriteRequest` validates it (and strips anything else the
+ * device put there), and the parsed request reaches `buildRewriteMessages` whole — the prompt
+ * builder is the one place that decides how an edit is stated to the model.
  */
 import { Hono } from 'hono';
 import { RewriteRequest, RewriteResponse, type ApiError, type PlanRow } from '@whim/contract';

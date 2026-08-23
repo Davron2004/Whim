@@ -7,7 +7,7 @@
  * `@whim/contract` is a TYPE-ONLY import — importing the zod schema VALUES here would pull zod
  * into the Metro bundle graph (the same discipline `generation-client.ts` documents).
  */
-import type { Clarification, GenerateRequest } from '@whim/contract';
+import type { Clarification, GenerateRequest, RewriteRequest } from '@whim/contract';
 import type { AppliedSchema } from '../storage-engine/schema';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
@@ -58,4 +58,37 @@ export async function buildGenerateRequest(
       appliedSchema: appliedSchema as unknown as Record<string, unknown>,
     },
   };
+}
+
+/** The rewrite turn's view of the app a re-prompt is changing: `RewriteRequest.app`, named so
+ *  callers (the shell, `rewritePrompt`) need no inline `NonNullable<...>` gymnastics. */
+export type RewriteAppContext = NonNullable<RewriteRequest['app']>;
+
+/**
+ * `RewriteRequest.app` for the plan step of a re-prompt (spec "A rewrite for an edit carries the
+ * app it is changing"). `undefined` when nothing is being edited — composing a new app sends no
+ * `app` at all, which is exactly how the server tells the two apart.
+ *
+ * DISPLAY NAMES ONLY, by construction: the name the grid shows for this app, and the collection/
+ * field names its schema artifact is KEYED by. The burned ids those keys map to
+ * (`CollectionSpec.id`, `FieldSpec.id`), the source, the bundle and the user's rows are never read
+ * here — the rewrite turn writes a product description, not code, so it is given the vocabulary
+ * the user would use and nothing else. A collection whose fields were all retired still counts as
+ * a concept the app keeps, so it is listed with an empty field list rather than dropped.
+ *
+ * Pure and synchronous — no store, no engine, no `await` — so the shell can call it inline while
+ * opening the plan step, and a Node suite can exercise it with a plain record.
+ */
+export function buildRewriteAppContext(editing: InstalledApp | undefined): RewriteAppContext | undefined {
+  if (!editing) return undefined;
+  const collections = Object.entries(editing.record.schemaArtifact?.collections ?? {}).map(
+    ([name, spec]) => ({ name, fields: Object.keys(spec.fields) }),
+  );
+  // `entry.name`, NOT `entry.record.name`: the spec's "current display name" is the name the
+  // user sees on the grid, and the two legitimately diverge. `StoreAccess.update` deliberately
+  // never refreshes `entry.name` from the wire record on a rebuild (store-access.ts §update),
+  // so after a model renamed the app unprompted, the tile still reads the user's name while
+  // `record.name` reads the model's. Presenting the tile's name is what lets the next rewrite
+  // heal that: the model is told the app is called what the user calls it, and keeps it.
+  return { name: editing.name, ...(collections.length > 0 ? { collections } : {}) };
 }

@@ -11,9 +11,10 @@
  * the session itself, same as every other chain's own test suite.
  */
 import type { AppRecord } from '../src/host/bridge';
+import type { StorageErrorKind } from '../src/host/storage-engine/contract';
 import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
-import { wireCapabilityBridge } from './capability';
+import { wireCapabilityBridge, type CapabilityTraceEntry } from './capability';
 import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
 import type { SynthRunSession } from './session';
 import { sweepApp } from './sweep';
@@ -29,6 +30,65 @@ const CLOSED_KINDS: readonly string[] = DIAGNOSTIC_KINDS;
  */
 function knownKind(kind: string): DiagnosticKind {
   return (CLOSED_KINDS.includes(kind) ? kind : 'launch_failed') as DiagnosticKind;
+}
+
+/** One `denial` entry as chain 3 records it host-side (`capability.ts`) — the only arm of the
+ *  capability trace `denialDiagnostic` below has anything to say about. */
+type DenialTraceEntry = Extract<CapabilityTraceEntry, { kind: 'denial' }>;
+
+/**
+ * The storage engine's VERB-TIME denial kinds: a value the candidate wrote, or a name it used,
+ * that its own declared schema refuses (spec §Verb-time storage denials are candidate
+ * diagnostics; host faults are not). Each names a mistake in the candidate's code, so each is an
+ * ERROR diagnostic the repair round can act on, carried under the ENGINE'S OWN kind string.
+ *
+ * The element type is the INTERSECTION of the two vocabularies — the engine's `StorageErrorKind`
+ * and the centrally-owned `DiagnosticKind` (`checks/contract.ts`, which this module only
+ * references and never extends) — so a rename on either side fails to typecheck instead of
+ * silently dropping a denial back into the "unknown kind" bucket.
+ */
+const VERB_TIME_STORAGE_KINDS: readonly (StorageErrorKind & DiagnosticKind)[] = [
+  'type_mismatch',
+  'unknown_collection',
+  'unknown_field',
+  'unknown_record',
+  'unqueryable_field',
+  'kv_too_large',
+];
+
+/**
+ * HOST FAULTS. `not_open` and `corrupt_storage` report THIS HARNESS'S engine state — a database
+ * that never opened, a store that is damaged — not anything the candidate wrote, so no repair
+ * round could act on them and they are deliberately not members of `DIAGNOSTIC_KINDS`. A denial
+ * carrying one is excluded from `RunReport.diagnostics` and never renamed into a kind that is a
+ * member; it stays verbatim in `RunReport.trace`, so the exclusion is visible rather than silent
+ * (spec: "No denial SHALL be dropped from both the diagnostics and the trace").
+ *
+ * Typed as exactly the engine kinds that are NOT diagnostic kinds: were `DIAGNOSTIC_KINDS` ever
+ * to adopt one of these, this list would stop compiling rather than quietly start reporting it.
+ */
+const HOST_FAULT_KINDS: readonly Exclude<StorageErrorKind, DiagnosticKind>[] = ['not_open', 'corrupt_storage'];
+
+/**
+ * The denial → diagnostic mapping, pure: one recorded denial in, the diagnostic it becomes, or
+ * `null` when this denial is not a candidate diagnostic at all (a host fault, or a kind outside
+ * the closed vocabulary — never minted here). Collected host-side, so a candidate that `.catch`es
+ * and swallows the rejected promise is reported exactly like one that does not.
+ */
+export function denialDiagnostic(entry: DenialTraceEntry): RuntimeDiagnostic | null {
+  if ((HOST_FAULT_KINDS as readonly string[]).includes(entry.errorKind)) return null;
+  if (!CLOSED_KINDS.includes(entry.errorKind)) return null; // closed vocabulary — never minted
+  const verbTime = (VERB_TIME_STORAGE_KINDS as readonly string[]).includes(entry.errorKind);
+  return {
+    kind: entry.errorKind as DiagnosticKind,
+    severity: 'error',
+    // Named for what actually refused: the capability gate never sees a verb-time error — the
+    // engine does, after the call was authorized. The engine's own hint travels verbatim.
+    message: verbTime
+      ? `${entry.method}: storage refused the call (${entry.errorKind})`
+      : `${entry.method}: gate denied (${entry.errorKind})`,
+    hint: entry.hint,
+  };
 }
 
 /**
@@ -121,17 +181,14 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       // including the sweep just above.
       diagnostics.push(...obs.state.diagnostics);
 
-      // Host-side gate denials become diagnostics too (spec "Undeclared capability yields the
-      // production denial" scenario) — reusing the bridge's own kind verbatim, never re-derived.
+      // Host-side denials become diagnostics too — both the gate's own refusals (spec "Undeclared
+      // capability yields the production denial") and the engine's verb-time refusals — reusing
+      // the producer's own kind verbatim, never re-derived. Host faults map to nothing and stay
+      // in `trace` below; see `denialDiagnostic`.
       for (const entry of wiring.trace) {
         if (entry.kind !== 'denial') continue;
-        if (!CLOSED_KINDS.includes(entry.errorKind)) continue; // closed vocabulary — never minted
-        diagnostics.push({
-          kind: entry.errorKind as DiagnosticKind,
-          severity: 'error',
-          message: `${entry.method}: gate denied (${entry.errorKind})`,
-          hint: entry.hint,
-        });
+        const diagnostic = denialDiagnostic(entry);
+        if (diagnostic) diagnostics.push(diagnostic);
       }
 
       return {

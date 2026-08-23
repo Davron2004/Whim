@@ -146,6 +146,10 @@ type DayPoint = { date: string /* YYYY-MM-DD */; value: number };
 type ChartTone = 'primary' | 'positive' | 'warning' | 'danger';
 ```
 
+`DayPoint.date` is a `YYYY-MM-DD` **label string** belonging to the heatmap component, and is
+unrelated to the storage `date` field type (§5), which is an epoch-millisecond integer. A stored
+timestamp becomes a heatmap label only by converting it: `new Date(ms).toISOString().slice(0, 10)`.
+
 ## 3. Tokens (the five scales)
 
 | `SpaceToken` | `none` \| `xs` \| `sm` \| `md` \| `lg` \| `xl` |
@@ -202,6 +206,68 @@ storage.records.remove(collection: string, id: number): Promise<void>
 cues.haptic(kind: HapticKind): Promise<void>
 cues.sound(name: SoundName): Promise<void>
 ```
+
+### The storage schema artifact
+
+An app declaring `capabilities: ['storage']` must also pass `defineApp` a `schema` — the declaration
+of everything `storage.records` will hold (`storage.kv` needs none). Collections and fields
+are keyed by **display name**, and each carries a burned **`id`** that is the real identity — the
+`id` is the physical table or column, the display name is only a label over it. Renaming is
+therefore free: change the key, keep the `id`, and the user's existing rows keep arriving in the
+same place. Change the `id` and you have declared a *different, empty* table or column; the old one
+stays on disk untouched, but nothing reads it any more.
+
+```ts
+type SchemaArtifact = {
+  schemaVersion: 1;
+  collections: {
+    [displayName: string]: {
+      id: string;                // burned collection id — one letter + digits, e.g. 'c1'; IS the table
+      fields: {
+        [displayName: string]: {
+          id: string;            // burned field id, e.g. 'f1'; IS the column
+          type: FieldType;
+          default?: JsonValue;   // REQUIRED for a field added to a collection that already exists
+        };
+      };
+      tombstones: string[];      // retired field ids — their data is kept, the ids never reused
+    };
+  };
+};
+
+type FieldType = 'text' | 'int' | 'float' | 'bool' | 'date' | 'json';
+```
+
+The six field types are the whole set. There is no undifferentiated `number` — a count and a price
+are different declarations:
+
+| Type | Holds | Written as |
+|---|---|---|
+| `text` | a string | `'flat white'` |
+| `int` | a whole number (JS safe-integer range) | `3` |
+| `float` | a fractional number | `4.25` |
+| `bool` | a flag | `true` |
+| `date` | a point in time, as an **epoch-millisecond integer** | `Date.now()` |
+| `json` | any other JSON value; opaque, so never usable in `where`/`orderBy` | `{ tags: ['x'] }` |
+
+**A `date` field is an epoch-millisecond INTEGER, never a formatted date string.** Writing
+`'2026-08-23'` or an ISO string into one is refused at write time (`type_mismatch`). Store
+`Date.now()` (or `d.getTime()`), and format only at render time:
+
+```ts
+await storage.records.append('Drinks', { at: Date.now() }); // 1755950400000 — an integer
+const rows = await storage.records.list('Drinks');
+const label = new Date(rows[0].at as number).toLocaleDateString();
+```
+
+Evolving the schema from one generation to the next:
+
+- **Keep every `id` an existing concept already has** — the user's rows live under it. Mint a new id
+  only for a genuinely new concept.
+- A field added to a collection that already exists needs a `default`; it backfills existing rows.
+- Retiring a field means dropping it from `fields` and adding its id to `tombstones`. The column and
+  its data are retained: the engine never deletes, renames, or migrates stored data.
+- Changing the `type` of an existing `id` is rejected. A different type means a new field, new id.
 
 ## 6. Navigation
 

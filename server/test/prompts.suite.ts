@@ -4,6 +4,12 @@
  * the four prompt-assembly tripwires from spec "Prompt assembly has one source of truth per input"
  * (task 2.5). Registered into `server/test/acceptance.ts` alongside the other suites (task 7.5).
  *
+ * It also owns the edit turn (spec "The edit turn sees the app it is changing", "The storage-surface
+ * instruction and the drift check read one scanner", "Generation allocates burned field IDs above
+ * the accumulated floor"): the builders directly, and — because "one scanner, two consumers" is a
+ * property of the wiring, not of either end — one real `GenerationMachine` run whose fake check
+ * stage records the `CheckContext` it was handed, asserted against the prompts the same run built.
+ *
  * Deterministic throughout: every model call goes through `ScriptedModelClient` or an
  * `OpenRouterClient` wired to a fake `fetch` (never the real network), and the whole file passes
  * with `OPENROUTER_API_KEY` unset — it is never read here.
@@ -12,12 +18,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { check, eq, caught, section } from './harness';
+import { captureLogs } from './log-capture';
 import { OpenRouterClient, OpenRouterNetworkError } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
 import { openRouterModelClient, type ModelRoster } from '../src/generation/model';
 import { ScriptedModelClient, ScriptedModelClientExhaustedError, ScriptedModelClientRoleMismatchError, noNetworkTransport } from './scripted-model';
-import type { ScriptedTurn } from './scripted-model';
+import type { CapturedRequest, ScriptedTurn } from './scripted-model';
 import { loadSdkReference, loadFewShotExamples, loadPromptInputs, PromptInputError } from '../src/generation/prompts/inputs';
+import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   buildRewriteMessages,
   buildPlanMessages,
@@ -25,8 +33,10 @@ import {
   buildRepairMessages,
   type PromptPlan,
 } from '../src/generation/prompts';
+import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
 import { runStaticChecks } from '../../checks/index';
-import type { GenerateRequest, Diagnostic } from '@whim/contract';
+import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
+import type { GenerateRequest, Diagnostic, GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
 
@@ -202,6 +212,45 @@ async function testMessageBuilders(): Promise<void> {
   assertNonEmptyMessages('rewrite', rewriteMessages);
   check('rewrite: user message carries the prompt verbatim', rewriteMessages.some((m) => m.content === 'a timer'));
 
+  // ── rewrite: the app an edit is changing (spec "A rewrite for an edit carries the app it is
+  // changing"). `app` present ⇒ this describes a CHANGE to an existing app; absent ⇒ a new app.
+  const editRewriteMessages = buildRewriteMessages({
+    request: {
+      prompt: 'add a streak count',
+      app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
+    },
+  });
+  assertNonEmptyMessages('rewrite (edit)', editRewriteMessages);
+  const editRewriteUser = editRewriteMessages.find((m) => m.role === 'user')?.content ?? '';
+  const editRewriteSystem = editRewriteMessages.find((m) => m.role === 'system')?.content ?? '';
+  check('rewrite (edit): the prompt still reaches the user message', editRewriteUser.includes('add a streak count'));
+  check('rewrite (edit): the app’s current name reaches the prompt', editRewriteUser.includes('Habit Tracker'));
+  check(
+    'rewrite (edit): the concepts it already keeps reach the prompt',
+    editRewriteUser.includes('Completions') && editRewriteUser.includes('Date, Note'),
+  );
+  check(
+    'rewrite (edit): the system message asks to keep the name unless a rename is asked for',
+    /keep that name unless the request explicitly asks to rename it/i.test(editRewriteSystem),
+  );
+  check(
+    'rewrite (edit): the system message asks for only the change, not a from-nothing description',
+    /describe ONLY what this request changes/.test(editRewriteSystem),
+  );
+  const newAppRewriteUser = rewriteMessages.find((m) => m.role === 'user')?.content ?? '';
+  check(
+    'rewrite (new app): no continuity language at all — the user message is the prompt and nothing else',
+    newAppRewriteUser === 'a timer',
+  );
+  const storeNothingRewriteUser =
+    buildRewriteMessages({ request: { prompt: 'make it blue', app: { name: 'Tip Splitter' } } }).find(
+      (m) => m.role === 'user',
+    )?.content ?? '';
+  check(
+    'rewrite (edit, no collections): names the app but renders no dangling "keeps track of" heading',
+    storeNothingRewriteUser.includes('Tip Splitter') && !storeNothingRewriteUser.includes('keeps track of'),
+  );
+
   const planMessages = buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' });
   assertNonEmptyMessages('plan (new app)', planMessages);
 
@@ -240,6 +289,208 @@ async function testMessageBuilders(): Promise<void> {
   check('repair: current source reaches the prompt', repairMessages.some((m) => m.content.includes('export default {};')));
   check('repair: diagnostics reach the prompt verbatim (kind)', repairMessages.some((m) => m.content.includes('raw_timer')));
   check('repair: diagnostics reach the prompt verbatim (hint)', repairMessages.some((m) => m.content.includes('use delay/interval instead')));
+}
+
+// ── §The edit turn — what an edit prompt does and does not claim ─────────────
+
+/** A previous version that reads one kv key and one record collection through the real `vc-sdk`
+ *  binding the scanner resolves — the source of truth for both continuity assertions below. */
+const PREVIOUS_SOURCE = [
+  "import { defineApp, storage } from 'vc-sdk';",
+  "const history = storage.kv.get('habitCompletionHistory');",
+  "const done = storage.records.list('Completions');",
+  "export default defineApp({ name: 'Habits', initial: 'Home', screens: {} });",
+].join('\n');
+
+/** Accumulated union with a single collection whose highest burned ordinal is 7 (spec scenario
+ *  "The floor reaches the model"). Shaped as the storage engine's `AppliedSchema`, since that is
+ *  what `burnedIdFloor` reads. */
+const APPLIED_SCHEMA = {
+  collections: [
+    {
+      id: 'c1',
+      active: [
+        { id: 'f1', type: 'text' },
+        { id: 'f7', type: 'number' },
+      ],
+      retired: [],
+    },
+  ],
+};
+
+const EDIT_WITH_SOURCE: GenerateRequest = {
+  prompt: 'add a streak counter',
+  app: {
+    source: PREVIOUS_SOURCE,
+    manifest: { capabilities: ['storage'] },
+    schema: {},
+    appliedSchema: APPLIED_SCHEMA,
+  },
+};
+
+const EDIT_WITHOUT_SOURCE: GenerateRequest = {
+  prompt: 'add a streak counter',
+  app: { manifest: { capabilities: ['storage'] }, schema: {}, appliedSchema: APPLIED_SCHEMA },
+};
+
+const SURFACE_LIST = ['- kv key "habitCompletionHistory"', '- record collection "Completions"'].join('\n');
+
+function userContent(messages: { role: string; content: string }[]): string {
+  return messages.filter((m) => m.role === 'user').map((m) => m.content).join('\n');
+}
+
+async function testEditTurnPrompt(): Promise<void> {
+  section('The edit turn — current source, identity continuity, storage locations');
+
+  const inputs = loadPromptInputs(repoRoot);
+
+  const withSource = userContent(
+    buildGenerateMessages(
+      { request: EDIT_WITH_SOURCE, plan: PLAN, schemaContext: '', storageSurface: SURFACE_LIST },
+      inputs,
+    ),
+  );
+  check('generate (edit): the "Current source" block holds the source verbatim', withSource.includes(`Current source:\n${PREVIOUS_SOURCE}`));
+  check(
+    'generate (edit): the prompt claims the source is included — and it is',
+    withSource.includes('included below under "Current source"'),
+  );
+  check(
+    'generate (edit): the app keeps its name unless a rename was asked for',
+    withSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
+  );
+  check(
+    'generate (edit): existing concepts keep the IDs they already have',
+    withSource.includes('keeps the collection and field IDs it already has'),
+  );
+  check('generate (edit): both storage locations are named', withSource.includes('habitCompletionHistory') && withSource.includes('Completions'));
+  check(
+    'generate (edit): the locations carry the keep-reading, add-do-not-replace instruction',
+    withSource.includes('Keep reading and writing these exact locations') && withSource.includes('never replace or rename an existing one'),
+  );
+
+  // Source absent (or failed pre-flight): the honest-regeneration path, unchanged — and no claim
+  // that source is included, because it is not.
+  const withoutSource = userContent(
+    buildGenerateMessages({ request: EDIT_WITHOUT_SOURCE, plan: PLAN, schemaContext: '' }, inputs),
+  );
+  check('generate (edit, no source): no "Current source" block', !withoutSource.includes('Current source:'));
+  check('generate (edit, no source): no claim that source is included', !withoutSource.includes('included below under "Current source"'));
+  check('generate (edit, no source): the honest-regeneration instruction survives', withoutSource.includes('Regenerate it honestly from the manifest and schema'));
+  check('generate (edit, no source): no storage-location list', !withoutSource.includes('Storage locations the app being edited'));
+  check(
+    'generate (edit, no source): identity continuity still applies',
+    withoutSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
+  );
+
+  // A new app is unconstrained: none of the three continuity instructions.
+  const newApp = userContent(buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs));
+  check('generate (new app): no "Current source" block', !newApp.includes('Current source:'));
+  check('generate (new app): no storage-location list', !newApp.includes('Storage locations the app being edited'));
+  check('generate (new app): no identity-continuity instruction', !newApp.includes("Keep the app's current name"));
+
+  // The plan turn does not render the source (design D2) — so it must not claim to.
+  const planUser = userContent(buildPlanMessages({ request: EDIT_WITH_SOURCE, schemaContext: '', storageSurface: SURFACE_LIST }));
+  check('plan (edit): no "Current source" block', !planUser.includes('Current source:'));
+  check('plan (edit): does not claim the source is included', !planUser.includes('included below under "Current source"'));
+  check('plan (edit): still names the storage locations', planUser.includes('habitCompletionHistory'));
+}
+
+// ── §Schema context and the one-scan threading, through a real machine run ───
+
+const EDIT_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const FAKE_PROMPT_INPUTS: PromptInputs = { sdkReference: 'fake sdk reference', fewShotExamples: [] };
+
+const EDIT_PLAN_JSON = JSON.stringify({
+  screens: [{ name: 'Home', purpose: 'the only screen' }],
+  initial: 'Home',
+  state: [],
+  capabilities: ['storage'],
+  storageKeys: ['habitCompletionHistory'],
+});
+
+async function drainEvents(iter: AsyncIterable<GenerationEvent>): Promise<GenerationEvent[]> {
+  const events: GenerationEvent[] = [];
+  for await (const event of iter) events.push(event);
+  return events;
+}
+
+async function testEditTurnThreading(): Promise<void> {
+  section('Edit context — one scan per run, fed to both the prompts and the check stage');
+
+  const scripted = new ScriptedModelClient(EDIT_ROSTER, [
+    { role: 'engineer', deltas: [EDIT_PLAN_JSON] },
+    { role: 'engineer', deltas: ['// candidate 1'] },
+    { role: 'engineer', deltas: ['// candidate 2'] },
+  ]);
+
+  // Every candidate fails its check, so the run is plan → generate → repair → failure: two check
+  // calls with nothing else to configure, and build/run provably never reached.
+  const seen: CheckContext[] = [];
+  const failingCheck: CheckStage = {
+    check: (_source, ctx) => {
+      seen.push(ctx);
+      return {
+        diagnostics: [{ kind: 'raw_timer', severity: 'error', message: 'raw setTimeout', hint: 'use delay/interval instead' }],
+      };
+    },
+  };
+
+  const machine = new GenerationMachine({
+    model: scripted,
+    roster: EDIT_ROSTER,
+    promptInputs: FAKE_PROMPT_INPUTS,
+    check: failingCheck,
+    build: { build: () => { throw new Error('build must not run: every candidate failed its check'); } },
+    run: { run: () => { throw new Error('run must not run: every candidate failed its check'); } },
+    clock: { now: () => 0 },
+    bounds: { repairAttempts: 1 },
+  });
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await drainEvents(machine.run(EDIT_WITH_SOURCE));
+  } finally {
+    capture.stop();
+  }
+
+  eq('machine: the run ended on its own terms', events.at(-1)?.type, 'failure');
+  eq('machine: the check stage saw both candidates', seen.length, 2);
+  const baseline = seen[0]?.previousSurface;
+  check('machine: the check stage gets the previous source\'s kv key as its drift baseline', baseline?.kvKeys.some((k) => k.name === 'habitCompletionHistory') === true);
+  check('machine: the check stage gets the previous source\'s collection too', baseline?.collections.some((c) => c.name === 'Completions') === true);
+  check(
+    'machine: the source is scanned ONCE per run, not once per candidate',
+    baseline !== undefined && seen[1]?.previousSurface === baseline,
+  );
+
+  const turns = scripted.requests as CapturedRequest[];
+  eq('machine: plan, generate and one repair turn were requested', turns.length, 3);
+  const planUser = userContent(turns[0]?.request.messages ?? []);
+  const generateUser = userContent(turns[1]?.request.messages ?? []);
+  const repairUser = userContent(turns[2]?.request.messages ?? []);
+
+  check('machine: the generate turn carries the pre-flighted source verbatim', generateUser.includes(PREVIOUS_SOURCE));
+  // The scenario the whole change rests on: the prompt's list and the checker's baseline are the
+  // SAME scan, so the harness cannot teach one set of locations and enforce another.
+  const baselineNames = [...(baseline?.kvKeys ?? []), ...(baseline?.collections ?? [])].map((r) => r.name);
+  check('machine: sanity — the baseline named something', baselineNames.length === 2);
+  check(
+    'machine: every location the checker will demand is named in the generate prompt',
+    baselineNames.every((name) => generateUser.includes(name)),
+  );
+  check('machine: the plan turn is fed the same list', baselineNames.every((name) => planUser.includes(name)));
+
+  // §schema context (spec "Generation allocates burned field IDs above the accumulated floor").
+  check('machine: the generate prompt states the numeric floor', generateUser.includes('new field IDs start above 7'));
+  check('machine: the repair prompt states the numeric floor', repairUser.includes('new field IDs start above 7'));
+  check('machine: the floor is stated per collection', generateUser.includes('collection "c1": new field IDs start above 7'));
+  check(
+    'machine: the prompt asks the model to KEEP the existing IDs',
+    generateUser.includes('Keep the existing collection and field IDs for every concept that already has one'),
+  );
+  check('machine: no avoid-these-IDs instruction survives', !/do not reuse/i.test(generateUser) && !/do not reuse/i.test(repairUser));
 }
 
 // ── §Tripwire 1: every vc-sdk runtime value export is documented ─────────────
@@ -289,6 +540,80 @@ async function testExportsDocumented(): Promise<void> {
     const documented = new RegExp(`\\b${escaped}\\b`).test(reference);
     check(`vc-sdk export "${name}" is documented in docs/sdk-reference.md`, documented, `missing export "${name}"`);
   }
+}
+
+// ── §Tripwire 1b: the storage schema artifact is documented ──────────────────
+
+/** The reference's storage-schema-artifact section — its heading through to the next heading of the
+ *  same or higher level, or `null` when the document has no such section (the failure this tripwire
+ *  exists for). Scoped rather than whole-document on purpose: `text` and `bool` also appear as token
+ *  names elsewhere in the reference, so only a hit INSIDE this section counts as documentation. */
+function schemaArtifactSection(reference: string): string | null {
+  const lines = reference.split('\n');
+  const start = lines.findIndex((line) => /^#{2,4} .*schema artifact/i.test(line));
+  if (start === -1) return null;
+  const opener = /^#+/.exec(lines[start]);
+  const level = opener ? opener[0].length : 2;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const heading = /^(#+) /.exec(lines[i]);
+    if (heading && heading[1].length <= level) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+/** A whitespace-normalized window starting at the first occurrence of `needle`, so a statement that
+ *  wraps across markdown lines still reads as one span. */
+function windowAround(text: string, needle: string, span = 300): string | null {
+  const flat = text.replace(/\s+/g, ' ');
+  const at = flat.indexOf(needle);
+  return at === -1 ? null : flat.slice(at, at + span);
+}
+
+async function testSchemaArtifactDocumented(): Promise<void> {
+  section('Tripwire: docs/sdk-reference.md documents the storage schema artifact');
+
+  const reference = loadSdkReference(repoRoot);
+  const artifactSection = schemaArtifactSection(reference);
+  check(
+    'sdk reference: a storage schema-artifact section exists',
+    artifactSection !== null,
+    'no "… schema artifact" heading in docs/sdk-reference.md',
+  );
+  const body = artifactSection ?? '';
+
+  // The six types come from the engine's own closed set, so adding a seventh without documenting
+  // it fails here rather than silently teaching the model an incomplete list.
+  check('field-type set is six wide (sanity vs the engine contract)', FIELD_TYPES.length === 6, `engine declares ${FIELD_TYPES.length} field types`);
+  for (const type of FIELD_TYPES) {
+    check(
+      `sdk reference: field type "${type}" is named in the schema-artifact section`,
+      new RegExp('[`\'"]' + type + '[`\'"]').test(body),
+      `field type "${type}" is undocumented`,
+    );
+  }
+
+  check('sdk reference: the schema-artifact section documents `tombstones`', /tombstones/.test(body), 'the section never mentions tombstones');
+  check(
+    'sdk reference: a `date` field is stated to be an epoch-millisecond integer',
+    /epoch-millisecond/i.test(body),
+    'the schema-artifact section never says a `date` field is epoch-milliseconds',
+  );
+  check(
+    'sdk reference: the epoch-millisecond statement carries a worked Date.now() example',
+    /Date\.now\(\)/.test(body),
+    'no worked Date.now() example in the schema-artifact section',
+  );
+
+  const dayPoint = windowAround(reference, 'DayPoint.date');
+  check(
+    "sdk reference: `DayPoint.date` is disambiguated from the storage `date` field type",
+    dayPoint !== null && /YYYY-MM-DD/.test(dayPoint) && /unrelated/i.test(dayPoint) && /storage/i.test(dayPoint),
+    dayPoint === null ? 'the reference never names `DayPoint.date`' : `not disambiguated near: ${dayPoint.slice(0, 140)}`,
+  );
 }
 
 // ── §Tripwire 2: every curated few-shot fixture is honest ────────────────────
@@ -360,7 +685,10 @@ export async function runPromptsTests(): Promise<void> {
   await testScriptedModelClient();
   await testPromptInputLoading();
   await testMessageBuilders();
+  await testEditTurnPrompt();
+  await testEditTurnThreading();
   await testExportsDocumented();
+  await testSchemaArtifactDocumented();
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();
 }

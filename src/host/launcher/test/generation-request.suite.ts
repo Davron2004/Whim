@@ -19,7 +19,8 @@ import { Harness } from './harness';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
 import { StoreAccess } from '../store-access';
-import { buildGenerateRequest, AppliedSchemaReader } from '../generation-request';
+import { buildGenerateRequest, buildRewriteAppContext, AppliedSchemaReader } from '../generation-request';
+import type { InstalledApp } from '../app-index';
 import { createEngine } from '../../storage-engine/engine';
 import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../../storage-engine/bindings/node-sqlite';
 import { SchemaArtifact } from '../../storage-engine/contract';
@@ -66,6 +67,32 @@ const sharersAddedField: SchemaArtifact = {
   schemaVersion: 1,
   collections: { Notes: { id: 'c1', tombstones: [], fields: { notes: { id: 'f9', type: 'text', default: '' } } } },
 };
+
+/** A storage app whose display names differ from the burned ids underneath them, so a context
+ *  carrying either can be told apart. */
+const habitsSchema: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {
+    Completions: {
+      id: 'c1',
+      tombstones: [],
+      fields: { Date: { id: 'f1', type: 'date' }, Note: { id: 'f2', type: 'text' } },
+    },
+  },
+};
+
+/** An installed entry with no store behind it — enough for the pure rewrite-context builder.
+ *  `recordName` defaults to `name` (the usual case); passing it separately builds the DIVERGENT
+ *  state a rebuild leaves behind, where the grid and the stored record disagree. */
+function entryFor(id: string, name: string, schemaArtifact?: SchemaArtifact, recordName = name): InstalledApp {
+  return {
+    id,
+    name,
+    createdAt: 0,
+    lineageId: 'main',
+    record: { ...REC(id, schemaArtifact), name: recordName },
+  };
+}
 
 function fieldIds(applied: unknown, collectionId: string): string[] {
   const collections = (applied as { collections: { id: string; active: { id: string }[] }[] }).collections;
@@ -143,6 +170,61 @@ export async function runGenerationRequestTests(h: Harness): Promise<void> {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // ── buildRewriteAppContext — what the plan step tells the rewrite about the app it changes
+  //    (spec "A rewrite for an edit carries the app it is changing"). Pure: plain entries, no
+  //    store, no engine.
+
+  await h.test('rewrite-context: a re-prompt carries the app name and its collections by display name', () => {
+    const entry = entryFor('habits', 'Habit Tracker', habitsSchema);
+    h.eq(
+      buildRewriteAppContext(entry),
+      { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
+      'the display names the user would use, in artifact order',
+    );
+  });
+
+  await h.test('rewrite-context: the name is the one the grid shows, not the stored record\'s', () => {
+    // A rebuild whose model renamed the app unprompted leaves the two divergent: `StoreAccess`
+    // never refreshes `entry.name` from the wire record, so the tile still reads the user's
+    // name while `record.name` reads the model's. The re-prompt must present the user's — that
+    // is how the next rewrite heals an unprompted rename instead of ratifying it.
+    const renamed = entryFor('habits', 'Habit Tracker', habitsSchema, 'Streak Tracker');
+    h.eq(renamed.record.name, 'Streak Tracker', 'setup: the stored record carries the model\'s rename');
+    h.eq(
+      buildRewriteAppContext(renamed)?.name,
+      'Habit Tracker',
+      'the context carries the user-visible entry name, never record.name',
+    );
+  });
+
+  await h.test('rewrite-context: display names only — no ids, no source, no records', () => {
+    const rendered = JSON.stringify(buildRewriteAppContext(entryFor('habits', 'Habit Tracker', habitsSchema)));
+    for (const forbidden of ['c1', 'f1', 'f2', 'schemaVersion', 'tombstones', 'type', 'appId']) {
+      h.ok(!rendered.includes(forbidden), `the context carries no "${forbidden}"`);
+    }
+  });
+
+  await h.test('rewrite-context: composing a new app (no editing) has no context at all', () => {
+    h.eq(buildRewriteAppContext(undefined), undefined, 'undefined, so the request sends no app key');
+  });
+
+  await h.test('rewrite-context: an app that stores nothing is named with no collections key', () => {
+    const context = buildRewriteAppContext(entryFor('tips', 'Tip Splitter'));
+    h.eq(context, { name: 'Tip Splitter' }, 'the name alone — absent and empty mean the same thing');
+  });
+
+  await h.test('rewrite-context: a collection whose fields were all retired is still a concept it keeps', () => {
+    const retired: SchemaArtifact = {
+      schemaVersion: 1,
+      collections: { Completions: { id: 'c1', tombstones: ['f1'], fields: {} } },
+    };
+    h.eq(
+      buildRewriteAppContext(entryFor('habits', 'Habit Tracker', retired)),
+      { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: [] }] },
+      'listed with an empty field list rather than dropped',
+    );
   });
 
   await h.test('generation-request: an ungrouped entry with no live db yet gets the empty applied schema', async () => {

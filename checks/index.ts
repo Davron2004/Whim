@@ -11,6 +11,7 @@
  */
 
 import type { AppliedSchema } from '../src/host/storage-engine/schema';
+import type { StorageSurface } from './storage-surface';
 import { CheckReport, Diagnostic } from './contract';
 import { parseSource } from './internal/parse';
 import { buildContext, Pass } from './internal/scope';
@@ -21,6 +22,13 @@ import { capabilityDirectionsPass } from './passes/capabilities';
 import { screenGraphPass } from './passes/screens';
 import { sdkLintPass } from './passes/sdk-lint';
 import { schemaCheckPass } from './passes/schema-check';
+import { storageContinuityPass } from './passes/storage-continuity';
+
+// The storage-surface scanner is public but is NOT a pass: the edit turn's prompt context and
+// the continuity check must read ONE extractor (generation-pipeline req "The storage-surface
+// instruction and the drift check read one scanner"), and the server imports it from here.
+export { scanStorageSurface } from './storage-surface';
+export type { StorageSurface, StorageReference, DynamicStorageSite, StorageFacade } from './storage-surface';
 
 /** Passes that run once the source parses, in order. Manifest extraction runs before the
  *  passes that consume `ctx.manifest` (capabilities/screens/schema). */
@@ -32,16 +40,29 @@ const PASSES: readonly Pass[] = [
   screenGraphPass,
   sdkLintPass,
   schemaCheckPass,
+  storageContinuityPass,
 ];
 
-export function runStaticChecks(source: string, opts?: { appliedSchema?: AppliedSchema; filename?: string }): CheckReport {
+/**
+ * Runs the pipeline over one candidate source.
+ *
+ * `appliedSchema` and `previousSurface` are the two EDIT-TURN inputs: each is what the app the
+ * candidate replaces already occupies (its physical schema, its named storage locations), and
+ * each switches on the continuity rule that guards it (`schema_identity_drift` in the schema
+ * pass, `storage_surface_drift`/`storage_surface_dynamic` in the continuity pass). Absent, a
+ * candidate is a first generation and neither rule constrains it.
+ */
+export function runStaticChecks(
+  source: string,
+  opts?: { appliedSchema?: AppliedSchema; previousSurface?: StorageSurface; filename?: string },
+): CheckReport {
   const { sourceFile, diagnostics: parseDiagnostics } = parseSource(source, opts?.filename);
   if (parseDiagnostics.length > 0) {
     return { ok: false, diagnostics: parseDiagnostics };
   }
 
   const diagnostics: Diagnostic[] = [];
-  const ctx = buildContext(source, sourceFile, (d) => diagnostics.push(d), opts?.appliedSchema);
+  const ctx = buildContext(source, sourceFile, (d) => diagnostics.push(d), opts?.appliedSchema, opts?.previousSurface);
   for (const pass of PASSES) pass(ctx);
 
   return { ok: diagnostics.length === 0, diagnostics, manifest: ctx.manifest };

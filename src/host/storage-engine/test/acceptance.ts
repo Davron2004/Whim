@@ -460,6 +460,71 @@ test('§B a rollback-shaped (older-subset) open produces zero DDL', () => {
   eq(ddl.length, 0, 'older-subset open executes no collection DDL');
 });
 
+test('§B abandoning a collection id orphans its table: rows byte-identical, invisible through the new artifact', () => {
+  const { store, rec } = memEngine();
+  store.open(expensesV1);
+  store.records.append('Expenses', { amount: 100, note: 'a "quoted" note', spentAt: 1_700_000_000_000 });
+  store.records.append('Expenses', { amount: 250, note: 'second', spentAt: 1_700_000_086_400 });
+
+  const before = rec.execute('SELECT * FROM "c1" ORDER BY "id"').rows;
+  const beforeDefinition = rec.execute('SELECT sql FROM sqlite_master WHERE name = \'c1\'').rows;
+
+  // A regeneration that keeps the display name but mints a FRESH collection id abandons c1 — it
+  // does not rename it. Accepted (an artifact legitimately stops declaring an id), never migrated.
+  const replacedId: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c2', tombstones: [], fields: { amount: { id: 'f1', type: 'int' }, note: { id: 'f2', type: 'text' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  const mark = rec.mark();
+  store.open(replacedId); // must not throw: abandonment is not an engine error
+  const emitted = rec.log.slice(mark).map(e => e.sql);
+  eq(emitted.filter(s => /\b(DROP|RENAME)\b/i.test(s)).length, 0, 'no DROP/RENAME touches the abandoned table');
+  eq(emitted.filter(s => /^CREATE TABLE "c2"/.test(s)).length, 1, 'the fresh id gets its own new, empty table');
+
+  eq(rec.execute('SELECT * FROM "c1" ORDER BY "id"').rows, before, 'every abandoned row is byte-identical after the new artifact is applied');
+  eq(rec.execute('SELECT sql FROM sqlite_master WHERE name = \'c1\'').rows, beforeDefinition, 'the abandoned table definition is untouched');
+  eq(store.records.list('Expenses'), [], 'reads through the new artifact see none of the orphaned rows');
+
+  const applied = readAppliedSchema(rec);
+  eq(
+    applied.collections.map(c => c.id).sort((a, b) => a.localeCompare(b)),
+    ['c1', 'c2'],
+    'the accumulated schema keeps the abandoned id alongside the new one (monotone union, not last-applied)',
+  );
+  store.close();
+});
+
+test('§B abandoning a field id leaves its column untouched across every update through the new artifact', () => {
+  const { store, rec } = memEngine();
+  store.open(expensesV1);
+  const a = store.records.append('Expenses', { amount: 10, note: 'keep me A', spentAt: 1 });
+  const b = store.records.append('Expenses', { amount: 20, note: 'keep me B', spentAt: 2 });
+  const beforeNotes = rec.execute('SELECT "id", "f2" FROM "c1" ORDER BY "id"').rows;
+
+  // gen N+1 simply stops declaring f2 — no tombstone, no error.
+  const withoutNote: SchemaArtifact = {
+    schemaVersion: 1,
+    collections: { Expenses: { id: 'c1', tombstones: [], fields: { amount: { id: 'f1', type: 'int' }, spentAt: { id: 'f3', type: 'date' } } } },
+  };
+  const mark = rec.mark();
+  store.open(withoutNote);
+  const emitted = rec.log.slice(mark).map(e => e.sql);
+  eq(emitted.filter(s => /\b(DROP|RENAME)\b/i.test(s)).length, 0, 'omitting a field emits no DROP/RENAME');
+  eq(emitted.filter(s => /^(CREATE TABLE|ALTER TABLE)/.test(s)).length, 0, 'omitting a field emits no DDL at all');
+
+  store.records.update('Expenses', a.id, { amount: 11 });
+  store.records.update('Expenses', b.id, { amount: 21, spentAt: 22 });
+
+  eq(rec.execute('SELECT "id", "f2" FROM "c1" ORDER BY "id"').rows, beforeNotes, 'the abandoned column is untouched on every record the update wrote');
+  eq(rec.execute('SELECT "f1" FROM "c1" ORDER BY "id"').rows.map(r => r.f1), [11, 21], 'the same updates did write the fields they named');
+  ok(store.records.list('Expenses').every(r => !('note' in r)), 'reads through the new artifact do not surface the abandoned field');
+
+  // and because nothing migrated, re-declaring the same id + type finds the original data intact.
+  store.open(expensesV1);
+  eq(store.records.list('Expenses').map(r => r.note), ['keep me A', 'keep me B'], 'the retained column still holds its original values');
+  store.close();
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §C  ★ INJECTION INVARIANT BLOCK ★  (never-regress security invariant, §16.4)
 //

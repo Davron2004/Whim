@@ -23,7 +23,9 @@ import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { getDeviceId } from '../device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
+import { buildRewriteAppContext } from '../generation-request';
 import type { ClientOptions } from '../generation-client';
+import type { InstalledApp } from '../app-index';
 import type { GenerationEvent } from '@whim/contract';
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
 import { log } from '../../logging';
@@ -77,6 +79,31 @@ function abortableSseResponse(startEvent: GenerationEvent, signal: AbortSignal |
 }
 
 const BASE: ClientOptions = { baseUrl: 'https://example.invalid', deviceId: 'device-1' };
+
+/** One installed entry to re-prompt: a storage app whose display names ("Completions", "Date",
+ *  "Note") are deliberately different from the burned ids underneath them ("c1", "f1", "f2"), so
+ *  a body carrying either can be told apart. */
+const HABITS: InstalledApp = {
+  id: 'habits',
+  name: 'Habit Tracker',
+  createdAt: 0,
+  lineageId: 'main',
+  record: {
+    appId: 'habits',
+    name: 'Habit Tracker',
+    manifest: { capabilities: ['storage'] },
+    schemaArtifact: {
+      schemaVersion: 1,
+      collections: {
+        Completions: {
+          id: 'c1',
+          tombstones: [],
+          fields: { Date: { id: 'f1', type: 'date' }, Note: { id: 'f2', type: 'text' } },
+        },
+      },
+    },
+  },
+};
 
 /** The connect window used by the timeout scenarios below — milliseconds, not the production
  *  15s, so the suite proves the behaviour without sleeping through it. */
@@ -165,6 +192,34 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       'attaches the x-whim-device header',
     );
     h.eq(JSON.parse(String(capturedInit?.body)), { prompt: 'hi' }, 'sends the prompt as the request body');
+  });
+
+  // rewritePrompt: the app a re-prompt is changing (spec "A rewrite for an edit carries the app
+  // it is changing"). Driven through `buildRewriteAppContext` from a stored entry, the way the
+  // shell drives it, so this covers the whole device seam: entry → context → request body.
+  await h.test('rewritePrompt: a re-prompt carries the app being changed; a new app carries none', async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ rewrittenPrompt: 'r' }), { status: 200 });
+    }) as typeof fetch;
+
+    await rewritePrompt({ ...BASE, fetchImpl }, 'add a streak count', [], buildRewriteAppContext(HABITS));
+    h.eq(
+      bodies[0],
+      {
+        prompt: 'add a streak count',
+        app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
+      },
+      'the body carries the app name and its collections by display name',
+    );
+    h.ok(
+      !JSON.stringify(bodies[0]).includes('c1') && !JSON.stringify(bodies[0]).includes('f1'),
+      'and carries no burned collection/field ids',
+    );
+
+    await rewritePrompt({ ...BASE, fetchImpl }, 'a brew timer', [], buildRewriteAppContext(undefined));
+    h.eq(bodies[1], { prompt: 'a brew timer' }, 'composing a new app sends no app key at all');
   });
 
   // rewritePrompt: generic HTTP error
@@ -378,7 +433,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   await h.test('rewritePrompt: the caller signal reaches the request and an abort surfaces as AbortError, not a network failure', async () => {
     const record: { signal?: AbortSignal } = {};
     const controller = new AbortController();
-    const pending = rewritePrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', [], controller.signal);
+    const pending = rewritePrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', [], undefined, controller.signal);
     const caught = settledOrHung(pending, 1000);
     h.ok(record.signal !== undefined, 'the signal is threaded into the fetch call');
     controller.abort();

@@ -24,8 +24,9 @@ import { REJECTED_FORGERY_CAP } from '../contract';
 import { SynthRunSession, type RunContext } from '../session';
 import { wireCapabilityBridge } from '../capability';
 import type { AppRecord } from '../../src/host/bridge';
+import { storageError, type StorageEngine } from '../../src/host/storage-engine/contract';
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
-import { createRunCandidate } from '../report';
+import { createRunCandidate, denialDiagnostic } from '../report';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -119,6 +120,9 @@ async function main(): Promise<void> {
 
   // ── chain 5 (task 5.3): the assembled RunCandidate — end-to-end acceptance ──────────────────
   await testRunCandidate();
+
+  // ── §denial diagnostics (rewrite-preserves-user-data, tasks 5.1–5.3) ────────────────────────
+  await testDenialDiagnostics();
 
   console.log('');
   if (failures.length === 0) {
@@ -1365,6 +1369,155 @@ async function testRunCandidate(): Promise<void> {
       const report = await runCandidate(FIXTURE_HARMLESS, { budgets: { mountBudgetMs: 5000 } });
       ok(report.ok === true, `a harmless candidate is clean (got ${JSON.stringify(report.diagnostics)})`);
       ok(report.diagnostics.length === 0, 'no diagnostics leak in from the hostile fixture above being run in the same suite');
+    });
+  } finally {
+    await session.close();
+  }
+}
+
+// ── §denial diagnostics (rewrite-preserves-user-data, tasks 5.1–5.3) ─────────────────────────
+// Spec §"Verb-time storage denials are candidate diagnostics; host faults are not": the six
+// verb-time engine kinds are ERROR diagnostics carrying the engine's own kind, the denied method
+// and the engine's own hint; `not_open`/`corrupt_storage` are the harness's own engine state and
+// are excluded from diagnostics while staying verbatim in the trace.
+
+/** The six kinds the engine refuses a VERB with — a mistake in the candidate's own code. Written
+ *  out here rather than imported so the test states the roster independently of the module under
+ *  test (a rename in `report.ts` alone must go red, not quietly agree with itself). */
+const VERB_TIME_KINDS = ['type_mismatch', 'unknown_collection', 'unknown_field', 'unknown_record', 'unqueryable_field', 'kv_too_large'];
+/** The two kinds that describe the HARNESS's engine, not the candidate. */
+const HOST_FAULT_KINDS = ['not_open', 'corrupt_storage'];
+
+function denialEntry(errorKind: string, method: string, hint: string): { kind: 'denial'; method: string; atMs: number; errorKind: string; hint: string } {
+  return { kind: 'denial', method, atMs: 0, errorKind, hint };
+}
+
+/**
+ * A storage engine that launches fine (`open` applies the artifact) but reports a HOST FAULT at
+ * verb time. Injected because the real per-run `:memory:` engine is open by construction: there is
+ * no candidate source that can provoke `not_open` out of it, so the only honest way to exercise
+ * the exclusion end-to-end is to hand the production dispatcher an engine that raises it.
+ */
+function hostFaultEngine(): StorageEngine {
+  const fault = (): never => {
+    throw storageError({ kind: 'not_open', hint: 'The store is not open. This is a host fault, not a candidate mistake.' });
+  };
+  return {
+    open: () => {
+      /* the artifact applies; only the verbs fault */
+    },
+    kv: { get: fault, set: fault, remove: fault },
+    records: { append: fault, list: fault, update: fault, remove: fault },
+    close: () => {
+      /* nothing to release */
+    },
+  };
+}
+
+// A candidate whose OWN declared schema types `at` as `date` — INTEGER epoch-milliseconds in the
+// engine's closed six-type set. The value it writes is the variable under test; the rejected
+// promise is always swallowed, so nothing about the outcome is visible in the candidate's DOM and
+// the report can only be coming from the host-side denial record.
+function dateFieldCandidate(name: string, atExpression: string): string {
+  return `import { defineApp, Screen, Stack, Heading, useEffect, storage, type SchemaArtifact } from 'vc-sdk';
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: { Entries: { id: 'c1', tombstones: [], fields: { at: { id: 'f1', type: 'date' } } } },
+};
+function Home() {
+  useEffect(() => { storage.records.append('Entries', { at: ${atExpression} }).catch(() => {}); }, []);
+  return <Screen><Stack><Heading size="title">${name}</Heading></Stack></Screen>;
+}
+export default defineApp({ name: '${name}', initial: 'Home', screens: { Home }, capabilities: ['storage'], schema: SCHEMA });
+`;
+}
+
+/** The spec's own scenario: a formatted date string into a `date` field. */
+const FIXTURE_DATE_STRING_WRITE = dateFieldCandidate('DateString', `'2026-08-23'`);
+/** The same candidate with the ONE difference that matters — a real epoch-ms value. */
+const FIXTURE_DATE_EPOCH_WRITE = dateFieldCandidate('DateEpoch', 'Date.now()');
+
+async function testDenialDiagnostics(): Promise<void> {
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+  await test('§denial diagnostics: every verb-time engine kind maps to an error diagnostic under the engine\'s own name', () => {
+    for (const kind of VERB_TIME_KINDS) {
+      const d = denialDiagnostic(denialEntry(kind, 'storage.records.list', `engine hint for ${kind}`));
+      ok(d?.kind === kind, `${kind} is carried verbatim as its own diagnostic kind (got ${d?.kind ?? 'none'})`);
+      ok(d?.severity === 'error', `${kind} is an error, never a warning (got ${d?.severity ?? 'none'})`);
+      ok(d?.message.includes('storage.records.list') ?? false, `${kind} names the denied method (got ${d?.message ?? 'none'})`);
+      ok(d?.hint === `engine hint for ${kind}`, `${kind} carries the engine's own hint verbatim (got ${d?.hint ?? 'none'})`);
+    }
+  });
+
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+  await test('§denial diagnostics: a host fault is no candidate diagnostic, and an unknown kind is still never minted', () => {
+    for (const kind of HOST_FAULT_KINDS) {
+      ok(
+        denialDiagnostic(denialEntry(kind, 'storage.kv.set', 'the store is unavailable')) === null,
+        `${kind} describes the harness's engine, so it produces no candidate diagnostic`,
+      );
+    }
+    ok(
+      denialDiagnostic(denialEntry('some_future_engine_kind', 'storage.kv.set', 'unknown')) === null,
+      'a kind outside the closed vocabulary is dropped from diagnostics rather than minted',
+    );
+    // The gate's own denials keep mapping — this filter narrowed nothing that used to pass.
+    ok(
+      denialDiagnostic(denialEntry('undeclared_capability', 'cues.haptic', 'declare cues'))?.kind === 'undeclared_capability',
+      'a capability-gate denial still becomes its own diagnostic',
+    );
+  });
+
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+  await test('§denial diagnostics: a host-fault denial stays VERBATIM in the trace (never dropped from both)', async () => {
+    const wiring = wireCapabilityBridge(APP_STORAGE, { engineFactory: hostFaultEngine });
+    const sysretRaw = await wiring.dispatch(
+      JSON.stringify({ whim: 'syscall', v: 1, id: 1, gen: 1, method: 'storage.kv.set', params: { key: 'k', value: 'v' } }),
+    );
+    const sysret = sysretRaw ? (JSON.parse(sysretRaw) as { ok: boolean }) : null;
+    ok(sysret?.ok === false, `the production dispatcher refused the verb (got ${sysretRaw})`);
+
+    const entry = wiring.trace.find((t) => t.kind === 'denial');
+    ok(entry?.kind === 'denial' && entry.errorKind === 'not_open', `the host fault is recorded in the trace under its own kind (got ${entry?.kind === 'denial' ? entry.errorKind : 'none'})`);
+    ok(entry?.kind === 'denial' && entry.method === 'storage.kv.set', 'the trace entry names the method that faulted');
+    ok(
+      entry?.kind === 'denial' && entry.hint === 'The store is not open. This is a host fault, not a candidate mistake.',
+      "the engine's own hint is in the trace verbatim",
+    );
+    ok(entry?.kind === 'denial' && denialDiagnostic(entry) === null, 'and the same entry produces no diagnostic — excluded, but visible');
+  });
+
+  const session = await SynthRunSession.launch({ concurrency: 2 });
+  try {
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('§denial diagnostics: a date STRING into a date field fails the run with a type_mismatch (spec "A bad date write fails the run")', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_DATE_STRING_WRITE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.ok === false, `a candidate whose write the engine refused is not ok (got diagnostics: ${JSON.stringify(report.diagnostics)})`);
+      const mismatches = report.diagnostics.filter((d) => d.kind === 'type_mismatch');
+      ok(mismatches.length === 1, `exactly one type_mismatch diagnostic is reported (got ${mismatches.length} of ${JSON.stringify(report.diagnostics.map((d) => d.kind))})`);
+      ok(mismatches[0]?.severity === 'error', `the verb-time denial is an error (got ${mismatches[0]?.severity})`);
+      ok(mismatches[0]?.message.includes('storage.records.append') ?? false, `the diagnostic names the denied method (got ${mismatches[0]?.message})`);
+
+      // The denial is in BOTH places, and the hint is the ENGINE's, not one this harness wrote.
+      const traced = report.trace.find((t) => t.kind === 'denial') as { errorKind?: string; hint?: string } | undefined;
+      ok(traced?.errorKind === 'type_mismatch', `the denial is in the trace too, under the engine's own kind (got ${traced?.errorKind ?? 'none'})`);
+      ok((mismatches[0]?.hint.length ?? 0) > 0 && mismatches[0]?.hint === traced?.hint, `the diagnostic carries the engine's hint verbatim (diagnostic: ${mismatches[0]?.hint}, trace: ${traced?.hint})`);
+      ok(mismatches[0]?.hint.includes('at') ?? false, "the engine's hint names the field it refused");
+      ok(report.contained === true, 'a refused write is a candidate mistake, not a containment failure');
+    });
+
+    // RED-CHECK (non-vacuity): the SAME candidate with a legal epoch-ms value must be clean — so
+    // the diagnostic above tracks the value the candidate wrote, not merely its use of storage.
+    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+    await test('§denial diagnostics red-check: the same candidate writing a real epoch-ms value is clean', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_DATE_EPOCH_WRITE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.ok === true, `a well-typed write produces no diagnostics at all (got ${JSON.stringify(report.diagnostics)})`);
+      ok(!report.trace.some((t) => t.kind === 'denial'), `and nothing was denied (got ${JSON.stringify(report.trace)})`);
+      ok(report.trace.some((t) => t.kind === 'syscall' && t.method === 'storage.records.append'), 'the append really happened — the fixture exercises the same path');
     });
   } finally {
     await session.close();
