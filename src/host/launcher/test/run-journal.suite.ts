@@ -1,9 +1,11 @@
 /**
- * run-journal Node suite (generation-observability chain-1, task 1.4), from
+ * run-journal Node suite (generation-observability chain-1, task 1.4; build-liveness B4), from
  * `generation-run-journal/spec.md`: creation alongside the pending record, the wire stage
  * vocabulary, unthrottled stage writes, the ~5s aggregate throttle, the always-immediate terminal
  * entry, the counts-and-hints-only content rule, the ~200 cap with aggregate-first eviction, the
- * move to `lastrun:<appId>`, survival on failure, and deletion on dismiss.
+ * move to `lastrun:<appId>`, survival on failure, deletion on dismiss, and the additive
+ * `thinkingChars` count (omitted rather than a fabricated zero, so a journal written before this
+ * change still parses unmodified).
  *
  * The store's clock is injected, so the throttle is exercised by advancing a number, never by
  * sleeping (a suite that sleeps is a suite that hangs).
@@ -130,6 +132,42 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.eq(typeof entry.aggregates!.chars, 'number', 'chars is numeric');
     h.eq(typeof entry.aggregates!.tokens, 'number', 'tokens is numeric');
     h.ok(entry.stage === undefined && entry.failure === undefined, 'an aggregate entry carries nothing else');
+  });
+
+  // ── thinking counts (build-liveness B4) ─────────────────────────────────────
+  await h.test('run-journal: an aggregate entry carries thinkingChars alongside chars/tokens when it is nonzero', async () => {
+    const t = makeStore();
+    t.store.appendAggregate('a', { chars: 10, tokens: 2, thinkingChars: 3_400 });
+    const entry = t.store.get('a')![0];
+    h.eq(entry.aggregates, { chars: 10, tokens: 2, thinkingChars: 3_400 }, 'all three counts are stored together');
+  });
+
+  await h.test('run-journal: thinkingChars is OMITTED, not written as a zero, when nothing was ever thought', async () => {
+    const t = makeStore();
+    t.store.appendAggregate('a', { chars: 10, tokens: 2 });
+    h.eq(t.store.get('a')![0].aggregates, { chars: 10, tokens: 2 }, 'a run with no thinking event reads exactly as it did before this change');
+    t.store.appendAggregate('b', { chars: 10, tokens: 2, thinkingChars: 0 });
+    h.eq(t.store.get('b')![0].aggregates, { chars: 10, tokens: 2 }, 'an explicit zero is treated the same as absent — never written');
+  });
+
+  await h.test('run-journal: a journal written before build-liveness (no thinkingChars key at all) still parses', async () => {
+    // Hand-crafted, the way a pre-existing on-device journal would actually look: no `thinkingChars`
+    // key anywhere, because the field did not exist yet when it was written.
+    const map = new Map<string, string>([
+      ['journal:legacy', JSON.stringify([{ t: 1, kind: 'aggregate', aggregates: { chars: 40, tokens: 8 } }])],
+    ]);
+    const { store } = makeStore(map);
+    const entries = store.get('legacy')!;
+    h.eq(entries.length, 1, 'the legacy entry reads back at all');
+    h.eq(entries[0].aggregates, { chars: 40, tokens: 8 }, 'exactly as it was written, with no field invented');
+  });
+
+  await h.test('run-journal: the terminal flush carries thinkingChars only when the run actually thought', async () => {
+    const t = makeStore();
+    t.store.appendTerminal('a', { aggregates: { chars: 500, tokens: 40, thinkingChars: 12_000 }, observedDiagnostics: 0 });
+    h.eq(t.store.get('a')![0].aggregates, { chars: 500, tokens: 40, thinkingChars: 12_000 }, 'the flush carries all three counts');
+    t.store.appendTerminal('b', { aggregates: { chars: 500, tokens: 40 }, observedDiagnostics: 0 });
+    h.eq(t.store.get('b')![0].aggregates, { chars: 500, tokens: 40 }, 'and omits it entirely when the run never thought');
   });
 
   // ── terminal entries ────────────────────────────────────────────────────────

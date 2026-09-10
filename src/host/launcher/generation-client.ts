@@ -12,7 +12,8 @@
  * frame that fails to parse as valid JSON or fails shape validation raises
  * `GenerationClientError{kind:'stream_parse'}` rather than silently passing bad data to the UI.
  * Keepalive comment lines (`: ...`) are recognized and skipped, never treated as malformed
- * frames.
+ * frames — but they still fire `ClientOptions.onKeepalive` (build-liveness B2), since a keepalive
+ * is real evidence the connection is alive even though it carries no `GenerationEvent`.
  *
  * `fetchImpl` defaults to global `fetch` and is injectable so `launcher:test` can supply canned
  * `Response` objects with no real HTTP server. `POST /v1/generate`'s stream additionally has its
@@ -148,6 +149,8 @@ function isGenerationEvent(value: unknown): value is GenerationEvent {
       );
     case 'token':
       return typeof value.text === 'string';
+    case 'thinking':
+      return typeof value.chars === 'number' && Number.isInteger(value.chars) && value.chars > 0;
     case 'diagnostic':
       return isDiagnostic(value.diagnostic);
     case 'usage':
@@ -266,16 +269,22 @@ export async function rewritePrompt(
   return bodyJson;
 }
 
-/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited) into a
- *  validated `GenerationEvent`, or `undefined` for a keepalive comment block. Raises
- *  `GenerationClientError{kind:'stream_parse'}` for anything else that fails to parse. */
-function parseSseBlock(block: string): GenerationEvent | undefined {
+/** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
+ *  build-liveness B2 — transport noise, never a `GenerationEvent`), or a truly empty block (an
+ *  incidental extra blank line, distinct from a keepalive so only the real keepalive frame ever
+ *  invokes `onKeepalive`). */
+type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' };
+
+/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited). Raises
+ *  `GenerationClientError{kind:'stream_parse'}` for anything that looks like a real frame but
+ *  fails to parse. */
+function parseSseBlock(block: string): SseBlockResult {
   const lines = block.split('\n').filter((l) => l.length > 0);
   if (lines.length === 0) {
-    return undefined;
+    return { kind: 'empty' };
   }
   if (lines.every((l) => l.startsWith(':'))) {
-    return undefined; // keepalive comment block
+    return { kind: 'keepalive' };
   }
 
   const dataLine = lines.find((l) => l.startsWith('data: '));
@@ -293,7 +302,7 @@ function parseSseBlock(block: string): GenerationEvent | undefined {
   if (!isGenerationEvent(dataJson)) {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame did not match GenerationEvent' });
   }
-  return dataJson;
+  return { kind: 'event', event: dataJson };
 }
 
 function connectTimeoutError(opts: ClientOptions): GenerationClientError {
@@ -465,11 +474,16 @@ async function readNext(reader: ResponseBodyReader): Promise<ReadOutcome> {
   }
 }
 
-function* framesIn(blocks: string[], from: number, to: number): Generator<GenerationEvent> {
+/** `onKeepalive` fires once per real keepalive block in range — never for a merely-empty one, and
+ *  never as a `GenerationEvent` (build-liveness B2: "do NOT add a client-local event type to the
+ *  GenerationEvent union"). */
+function* framesIn(blocks: string[], from: number, to: number, onKeepalive?: () => void): Generator<GenerationEvent> {
   for (let i = from; i < to; i++) {
-    const event = parseSseBlock(blocks[i]);
-    if (event) {
-      yield event;
+    const result = parseSseBlock(blocks[i]);
+    if (result.kind === 'event') {
+      yield result.event;
+    } else if (result.kind === 'keepalive') {
+      onKeepalive?.();
     }
   }
 }
@@ -525,7 +539,7 @@ export async function* generateApp(
     // Every block is complete except a possible trailing partial one — UNLESS the stream is
     // done, in which case the trailing block (if any) is final too.
     const completeCount = chunk.done ? blocks.length : blocks.length - 1;
-    yield* framesIn(blocks, emittedBlocks, completeCount);
+    yield* framesIn(blocks, emittedBlocks, completeCount, opts.onKeepalive);
     emittedBlocks = completeCount;
 
     if (chunk.done) {

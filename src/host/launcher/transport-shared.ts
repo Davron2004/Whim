@@ -73,13 +73,21 @@ type StreamTransport = (
  *  `rewritePrompt` call and the fetch-based stream path's own request when it is in effect.
  *
  *  `connectTimeoutMs` overrides the shared connect / first-event window (`CONNECT_TIMEOUT_MS`)
- *  applied by both stream transports. */
+ *  applied by both stream transports.
+ *
+ *  `onKeepalive` fires once per SSE comment-only block (the server's `: keepalive\n\n` frame,
+ *  `server/src/main.ts` `keepaliveMs: 15_000`) — build-liveness B2: a keepalive is transport noise,
+ *  never a `GenerationEvent`, so it is a plain callback here rather than a new union arm. Both
+ *  transports feed it through the SAME `generateApp` SSE-block parser
+ *  (`generation-client.ts#parseSseBlock`/`framesIn`), so this one option point covers the fetch
+ *  path and the XHR path identically — neither transport module parses SSE framing itself. */
 export interface ClientOptions {
   baseUrl: string;
   deviceId: string;
   fetchImpl?: typeof fetch;
   streamTransport?: StreamTransport;
   connectTimeoutMs?: number;
+  onKeepalive?: () => void;
 }
 
 /** The connect / first-event window for `POST /v1/generate` (design "flow-wait-hygiene" D2):

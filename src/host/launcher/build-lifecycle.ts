@@ -110,18 +110,23 @@ export function startPendingBuild(pending: PendingBuildStore, start: AttemptStar
 /**
  * Fold ONE stream event into the attempt's journal AND its in-memory run signals — the whole of
  * what the shell's stream loop does with an event beyond its own screen state
- * (`generation-run-journal` spec; design D3/D6). Lives here rather than in the shell for the same
- * reason the delivery ordering does: `LauncherRoot.tsx` cannot be imported under Node, and the
- * write CADENCE is the property worth watching — a `stage` event journals immediately, a `token`
- * event goes through `appendAggregate`, which throttles internally, and every other event writes
- * nothing at all.
+ * (`generation-run-journal` spec; design D3/D6; build-liveness B1/B4). Lives here rather than in
+ * the shell for the same reason the delivery ordering does: `LauncherRoot.tsx` cannot be imported
+ * under Node, and the write CADENCE is the property worth watching — a `stage` event journals
+ * immediately, `token`/`thinking` go through `appendAggregate`, which throttles internally, and
+ * every other event writes nothing at all.
  *
  * `at` is the arrival time (the caller's single clock reading for the event). Returns the signals
- * the next event should be folded into — the same object by reference when nothing moved, so a
- * caller holding these in React state sees no spurious change.
+ * the next event should be folded into. `lastFrameAt` moves for EVERY event this function sees
+ * (build-liveness B1: "ANY frame ... starts liveness") — a `diagnostic`/`usage`/terminal event
+ * still proves the connection is alive even though it journals nothing and moves no counter, so
+ * this never returns the exact same object by reference the way the pre-liveness version did.
+ * (The keepalive COMMENT frame is a separate case entirely — `prompt-flow.ts#withKeepalive` — it
+ * never reaches this function at all, since it is not a `GenerationEvent`.)
  *
- * The token's TEXT is never carried out of here: `accumulateRunAggregates` counts it and discards
- * it, which is what keeps the counter inside the no-internals rule.
+ * The token's and thinking delta's TEXT are never carried out of here: `accumulateRunAggregates`
+ * counts them and discards the text, which is what keeps the counters inside the no-internals
+ * rule.
  */
 export function journalStreamEvent(
   journal: RunJournalStore,
@@ -136,16 +141,26 @@ export function journalStreamEvent(
     // each stage a second, bogus duration measured across the gap to the next stage. `start` is
     // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
     // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
-    // heartbeat's arrival stamp, it just writes nothing.
+    // any-frame clock, it just writes nothing.
     if (event.status === 'start') journal.appendStage(launcherId, event.stage);
-    return { ...signals, lastArrivalAt: at };
+    return { ...signals, lastFrameAt: at };
   }
   if (event.type === 'token') {
     const aggregates = accumulateRunAggregates(signals.aggregates, event);
     journal.appendAggregate(launcherId, aggregates);
-    return { ...signals, aggregates, lastArrivalAt: at };
+    return { ...signals, aggregates, lastTokenAt: at, lastFrameAt: at };
   }
-  return signals;
+  if (event.type === 'thinking') {
+    // Same throttle, same entry kind as a token's — the journal's aggregate entry carries
+    // `thinkingChars` ALONGSIDE `chars`/`tokens` (build-liveness B4), never a second entry kind.
+    const aggregates = accumulateRunAggregates(signals.aggregates, event);
+    journal.appendAggregate(launcherId, aggregates);
+    return { ...signals, aggregates, lastThinkingAt: at, lastFrameAt: at };
+  }
+  // `diagnostic`, `usage`, and the terminal events (handled by the caller, not here) still count
+  // as liveness — the stream is plainly still alive if the server just sent one of these — but
+  // none of them writes a journal entry or moves a counter.
+  return { ...signals, lastFrameAt: at };
 }
 
 /**

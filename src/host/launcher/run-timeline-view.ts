@@ -53,15 +53,21 @@ export interface TimelineRow {
   readonly text: string;
 }
 
-/** The newest cumulative character count the journal holds, or `null` when none was ever written
- *  (a run that failed before any output arrived). Deliberately NOT restricted to `aggregate`
- *  entries: the terminal entry carries the end-of-stream flush, and it is the only entry that can
- *  hold the counts from the last, never-closed throttle window — so preferring the newest entry
- *  that carries counts at all is what makes the growth row the run's TRUE final figure. */
-function outputChars(journal: readonly RunJournalEntry[]): number | null {
+/** The newest cumulative counts the journal holds — `chars` and `thinkingChars` together, since
+ *  both are written by the same `appendAggregate`/`appendTerminal` calls and so always come from
+ *  the SAME entry — or `null` when none was ever written (a run that failed before any output
+ *  arrived). Deliberately NOT restricted to `aggregate` entries: the terminal entry carries the
+ *  end-of-stream flush, and it is the only entry that can hold the counts from the last,
+ *  never-closed throttle window — so preferring the newest entry that carries counts at all is
+ *  what makes the growth row the run's TRUE final figures. `thinkingChars` defaults to 0 for a
+ *  journal written before build-liveness B4 (or a run whose model never reasoned) — absent and
+ *  zero mean the same thing, the same convention `run-journal.ts`'s own re-projection uses. */
+function outputCounts(journal: readonly RunJournalEntry[]): { chars: number; thinkingChars: number } | null {
   for (let i = journal.length - 1; i >= 0; i -= 1) {
     const entry = journal[i];
-    if (entry.aggregates != null) return entry.aggregates.chars;
+    if (entry.aggregates != null) {
+      return { chars: entry.aggregates.chars, thinkingChars: entry.aggregates.thinkingChars ?? 0 };
+    }
   }
   return null;
 }
@@ -120,10 +126,13 @@ export function runTimelineRows(
 
   // No output, no growth row — and since every attempt now ends with a terminal flush, "no output"
   // reaches here as a recorded ZERO rather than as an absent count. A run that failed during
-  // planning would otherwise be summarised as "0 characters written", which reads as a finding
-  // about the run instead of the absence it actually is.
-  const chars = outputChars(journal);
-  if (chars != null && chars > 0) rows.push({ key: 'growth', kind: 'growth', text: timelineGrowthLine(chars) });
+  // planning would otherwise be summarised as "Wrote 0 characters", which reads as a finding about
+  // the run instead of the absence it actually is. (A run that only ever THOUGHT — no `token` at
+  // all, `chars` stays 0 — still gets no growth row: there is nothing it wrote to report on.)
+  const counts = outputCounts(journal);
+  if (counts != null && counts.chars > 0) {
+    rows.push({ key: 'growth', kind: 'growth', text: timelineGrowthLine(counts.chars, counts.thinkingChars) });
+  }
 
   const failure = lastFailure(journal);
   if (failure != null) {

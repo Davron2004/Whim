@@ -13,7 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { COPY, buildActivityLine, buildQuietLine } from '../copy';
+import { COPY } from '../copy';
 import { GenerationClientError } from '../transport-shared';
 import {
   BUILD_STEPS,
@@ -476,23 +476,15 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(!/log|terminal/i.test(buildSrc), 'no log or terminal panel');
   });
 
-  await h.test('build: the activity line states the clock and an output SIZE, never the output', () => {
-    h.eq(buildActivityLine('0:42', 1204), '0:42 · 1204 characters so far', 'the clock and the character count, in that order');
-    h.eq(buildActivityLine('0:00', 0), '0:00 · 0 characters so far', 'a stream that has produced nothing yet still states its size');
-    h.eq(buildActivityLine('0:01', 1), '0:01 · 1 character so far', 'one character is not "1 characters"');
-  });
-
-  await h.test('build: the heartbeat states how long the stream has been quiet', () => {
-    h.eq(buildQuietLine(9), 'Quiet for 9s', 'the spec’s "quiet for Ns" statement');
-    h.eq(buildQuietLine(31), 'Quiet for 31s', 'and it advances with the quiet duration');
-  });
-
-  await h.test('build: elapsed, the counter and the heartbeat are derived per render, from the props', () => {
-    h.ok(/elapsedLabel\(signals\.startedAt, now\)/.test(buildSrc), 'the clock is derived from the attempt start and the render’s own now');
-    h.ok(/quietSecondsSince\(signals\.lastArrivalAt, now\)/.test(buildSrc), 'the heartbeat is measured from the last arrival, so a fresh arrival clears it');
-    h.ok(buildSrc.includes('signals.aggregates.chars'), 'the counter renders the cumulative character count');
-    h.ok(!/aggregates\.tokens/.test(buildSrc), 'never a raw count of stream events');
-    h.ok(/quietSeconds !== null &&/.test(buildSrc), 'a stream inside the threshold shows no quiet indication at all');
+  // build-liveness B1/B3 replaced the single "quiet for Ns" heartbeat (and its `buildActivityLine`/
+  // `buildQuietLine`/`quietSecondsSince` API) with a three-clock liveness derivation that tells
+  // thinking from hanging — see `run-signals.suite.ts` for the copy/derivation coverage. This
+  // screen's own remaining claim is architectural: it derives everything from props each render
+  // and holds no state of its own.
+  await h.test('build: liveness is derived per render, from the props, through the shared helpers', () => {
+    h.ok(/livenessOf\(signals, now\)/.test(buildSrc), 'the liveness state is derived from the attempt’s signals and the render’s own now');
+    h.ok(/buildLivenessLine\(liveness, signals, now\)/.test(buildSrc), 'and its phrase comes from the one liveness-copy function');
+    h.ok(!/buildActivityLine|buildQuietLine|quietSecondsSince|HEARTBEAT_QUIET_MS/.test(buildSrc), 'the retired single-heartbeat API is gone');
     h.ok(!/journal|Store|useState|useRef/.test(buildSrc), 'the screen holds no state of its own and never reads a store');
   });
 

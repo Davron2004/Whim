@@ -1,14 +1,16 @@
 /**
  * BuildStep — generation progress without internals (`prompt-flow` spec "Generation progress is
- * shown without exposing internals").
+ * shown without exposing internals"; build-liveness B3).
  *
  * Four named steps derived from `stage` events, one plain-words sentence for the current action,
- * the attempt's derived activity signals, and nothing else: no raw `token` text, no
- * `diagnostic.kind`/`symbol`, no log or terminal panel.
+ * the attempt's derived LIVENESS — thinking distinguished from hanging (the reported bug: "'quiet
+ * for x s' is misleading ... we need to differentiate thinking from hanging") — and nothing else:
+ * no raw `token`/`thinking` text, no `diagnostic.kind`/`symbol`, no log or terminal panel.
  * Arriving text is never faded in or typed in per character — this screen holds no animation at
- * all, which is how that stays true. The elapsed clock, the output-size counter and the stall
- * heartbeat move by re-render on the shell's tick (design D6/D8): they are computed from `signals`
- * and `now` on every render, and this screen never reads the run journal itself.
+ * all, which is how that stays true. The liveness line moves by re-render on the shell's tick
+ * (design D6/D8) via `WorkingLine`'s own internal timer: `livenessOf`/`buildLivenessLine` are
+ * computed from `signals` and `now` on every render, and this screen never reads the run journal
+ * itself.
  *
  * `Leave it running` returns to the shell WITHOUT cancelling the run (the shell keeps delivering
  * it). Hardware back is the separate, older contract — navigating away from the progress screen
@@ -18,14 +20,15 @@
 import React, { useEffect } from 'react';
 import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { COPY, buildActivityLine, buildQuietLine } from './copy';
+import { buildLivenessLine, buildTitle, COPY } from './copy';
+import { EditingEyebrow } from './flow-chrome';
+import { WorkingLine } from './flow-working';
 import {
   BUILD_STEPS,
   buildProgressFraction,
   buildStepStatuses,
   currentActionSentence,
-  elapsedLabel,
-  quietSecondsSince,
+  livenessOf,
   type RunSignals,
   type Stage,
 } from './prompt-flow';
@@ -48,6 +51,11 @@ export interface BuildStepProps {
   signals: RunSignals | null;
   /** The render's own clock reading, moved by the shell's tick. */
   now: number;
+  /** This attempt is re-prompting an installed app rather than making a new one (C1/B3): swaps
+   *  `COPY.buildTitle` for `COPY.buildTitleEdit` and shows the shared `EditingEyebrow` above it. */
+  editing?: boolean;
+  /** The app being changed, for the eyebrow's "Changing <name>" line. Only read while `editing`. */
+  editingName?: string;
   /** Returns to the shell; the run keeps going and its result is still delivered. */
   onLeaveRunning: () => void;
   /** Hardware back: aborts the in-flight request, installing and updating nothing. */
@@ -62,6 +70,8 @@ export default function BuildStep({
   delivering,
   signals,
   now,
+  editing = false,
+  editingName,
   onLeaveRunning,
   onCancel,
   onShowDetails,
@@ -70,7 +80,8 @@ export default function BuildStep({
   const p = shellPalette(theme);
   const statuses = buildStepStatuses(stage, delivering);
   const pct = buildProgressFraction(stage, delivering);
-  const quietSeconds = signals === null ? null : quietSecondsSince(signals.lastArrivalAt, now);
+  const liveness = signals === null ? null : livenessOf(signals, now);
+  const livenessTone = liveness === 'stalled' ? 'stalled' : 'accent';
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -83,7 +94,8 @@ export default function BuildStep({
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.content}>
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.buildTitle}</Text>
+        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{buildTitle(editing)}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>{COPY.buildSubtitle}</Text>
 
         <View style={[styles.progressTrack, { backgroundColor: SHELL_COLORS.border }]}>
@@ -94,16 +106,13 @@ export default function BuildStep({
           {currentActionSentence(stage, delivering)}
         </Text>
 
-        {signals !== null && (
-          <Text style={[TYPE_SCALE.caption, styles.activity, { color: p.textMuted }]}>
-            {buildActivityLine(elapsedLabel(signals.startedAt, now), signals.aggregates.chars)}
-          </Text>
-        )}
-
-        {quietSeconds !== null && (
-          <Text style={[TYPE_SCALE.caption, styles.quiet, { color: p.textMuted }]}>
-            {buildQuietLine(quietSeconds)}
-          </Text>
+        {signals !== null && liveness !== null && (
+          <WorkingLine
+            phrase={buildLivenessLine(liveness, signals, now)}
+            startedAt={signals.startedAt}
+            tone={livenessTone}
+            clock={false}
+          />
         )}
 
         <View style={styles.steps}>
@@ -150,8 +159,6 @@ const styles = StyleSheet.create({
   progressTrack: { marginTop: 20, height: 4, borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: '100%' },
   current: { marginTop: SPACING.xl },
-  activity: { marginTop: SPACING.xs },
-  quiet: { marginTop: SPACING.xs },
   steps: { marginTop: SPACING.lg, gap: SPACING.sm },
   details: { marginTop: SPACING.lg, alignSelf: 'flex-start' },
   step: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },

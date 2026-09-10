@@ -19,7 +19,7 @@ import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { journalStreamEvent } from '../build-lifecycle';
 import { COPY, timelineDurationLabel, timelineGrowthLine, timelineStageLabel } from '../copy';
-import { EMPTY_RUN_AGGREGATES } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, type RunSignals } from '../prompt-flow';
 import { RunJournalStore, type RunJournalEntry } from '../run-journal';
 import {
   SHOW_RUN_TIMELINE_DIAGNOSTICS,
@@ -37,15 +37,15 @@ function code(src: string): string {
 }
 
 const stage = (t: number, s: RunJournalEntry['stage']): RunJournalEntry => ({ t, kind: 'stage', stage: s });
-const aggregate = (t: number, chars: number, tokens: number): RunJournalEntry => ({
+const aggregate = (t: number, chars: number, tokens: number, thinkingChars = 0): RunJournalEntry => ({
   t,
   kind: 'aggregate',
-  aggregates: { chars, tokens },
+  aggregates: { chars, tokens, ...(thinkingChars > 0 ? { thinkingChars } : {}) },
 });
 const terminal = (
   t: number,
   failure?: RunJournalEntry['failure'],
-  flush?: { aggregates?: { chars: number; tokens: number }; observedDiagnostics?: number },
+  flush?: { aggregates?: { chars: number; tokens: number; thinkingChars?: number }; observedDiagnostics?: number },
 ): RunJournalEntry => ({
   t,
   kind: 'terminal',
@@ -113,11 +113,11 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     const journal = [stage(1_000, 'generate'), aggregate(2_000, 40, 8), aggregate(7_000, 910, 96)];
     const growth = runTimelineRows(journal).filter((r) => r.kind === 'growth').map((r) => r.text);
     h.eq(growth, [timelineGrowthLine(910)], 'one row, from the newest aggregate entry');
-    h.eq(timelineGrowthLine(910), '910 characters written', 'it states a character count');
-    h.eq(timelineGrowthLine(1), '1 character written', 'one character is not "1 characters"');
+    h.eq(timelineGrowthLine(910), 'Wrote 910 characters', 'it states a character count');
+    h.eq(timelineGrowthLine(1), 'Wrote 1 character', 'one character is not "1 characters"');
     // The SHIPPING shape of a zero-output run: it failed during planning, no `token` ever arrived,
     // and its terminal entry still flushes counts — so the zero is RECORDED, not absent, and only
-    // an explicit suppression keeps "0 characters written" off the screen.
+    // an explicit suppression keeps "Wrote 0 characters" off the screen.
     const noOutput = [
       stage(1_000, 'plan'),
       terminal(3_000, { reason: 'The app could not be built from that description.' }, {
@@ -154,6 +154,33 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
       [timelineGrowthLine(910)],
       'and a terminal entry with no flush leaves the newest aggregate as the honest best figure',
     );
+  });
+
+  // ── thinking joins the growth row (build-liveness B4) ───────────────────────
+  await h.test('timeline: the growth row adds a thinking clause only when the run actually thought', () => {
+    h.eq(timelineGrowthLine(910, 0), 'Wrote 910 characters', 'no thinking observed reads exactly as the plain line');
+    h.eq(timelineGrowthLine(910), 'Wrote 910 characters', 'and the parameter defaults to that same case');
+    h.eq(
+      timelineGrowthLine(910, 4_200),
+      'Wrote 910 characters after thinking through 4200 characters',
+      'a run that thought gets a second clause naming how much',
+    );
+    h.eq(timelineGrowthLine(0, 1), 'Wrote 0 characters after thinking through 1 character', 'singular thinking count reads correctly');
+
+    const journal = [
+      stage(1_000, 'generate'),
+      aggregate(6_000, 300, 40, 5_000),
+      terminal(9_000, undefined, { aggregates: { chars: 300, tokens: 40, thinkingChars: 5_000 }, observedDiagnostics: 0 }),
+    ];
+    const growth = runTimelineRows(journal).filter((r) => r.kind === 'growth').map((r) => r.text);
+    h.eq(growth, [timelineGrowthLine(300, 5_000)], 'the row is composed from BOTH counts on the same closing entry');
+  });
+
+  await h.test('timeline: a journal written before build-liveness (no thinkingChars anywhere) still renders its growth row', () => {
+    // Exactly the shape a pre-existing on-device journal has: no `thinkingChars` field at all.
+    const journal = [stage(1_000, 'generate'), { t: 4_000, kind: 'terminal' as const, aggregates: { chars: 500, tokens: 60 } }];
+    const growth = runTimelineRows(journal).filter((r) => r.kind === 'growth').map((r) => r.text);
+    h.eq(growth, ['Wrote 500 characters'], 'reads as "no thinking recorded", never a thrown error or a fabricated clause');
   });
 
   // ── failure detail (task 5.3) ───────────────────────────────────────────────
@@ -207,7 +234,7 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     // what the timeline shows must be the run, not the run's edges.
     let clock = 1_000;
     const journal = new RunJournalStore(new MapKVBackend(), () => clock);
-    let signals = { startedAt: clock, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: clock };
+    let signals: RunSignals = { startedAt: clock, aggregates: EMPTY_RUN_AGGREGATES, lastTokenAt: null, lastThinkingAt: null, lastFrameAt: clock };
     const wire = [
       ['plan', 'start'], ['plan', 'done'],
       ['generate', 'start'], ['generate', 'done'],
@@ -372,14 +399,42 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.eq((rootSrc.match(/journal\.get\(/g) ?? []).length, 2, 'exactly two reads exist: the details affordance and the failure screen’s');
   });
 
-  await h.test('timeline: the details view is an overlay, and back closes it instead of cancelling the run', () => {
+  await h.test('timeline: the details view is a bottom sheet, and back closes it instead of cancelling the run', () => {
     const rootSrc = code(readSource('LauncherRoot.tsx'));
-    h.ok(/\{timeline !== null && \(/.test(rootSrc), 'the overlay renders only while it is open');
-    h.ok(/<RunTimeline entries=\{timeline\} devMode=\{timelineDevMode\} \/>/.test(rootSrc), 'over the entries read on open');
-    h.ok(/onPress=\{\(\) => setTimeline\(null\)\}/.test(rootSrc) && rootSrc.includes('COPY.timelineClose'), 'and it offers a labelled way out');
+    h.ok(/<RunDetailsSheet/.test(rootSrc), 'the build screen’s details view is the sheet component');
+    h.ok(/open=\{timeline !== null\}/.test(rootSrc), 'told to open/close from the same `timeline` state as before');
+    h.ok(/entries=\{timeline\}/.test(rootSrc), 'over the entries read on open');
+    h.ok(/devMode=\{timelineDevMode\}/.test(rootSrc), 'and the same dev-mode verdict every other timeline surface uses');
+    h.ok(/onClose=\{\(\) => setTimeline\(null\)\}/.test(rootSrc), 'and it offers a labelled way out');
     const backEffect = rootSrc.slice(rootSrc.indexOf('if (timeline === null) return undefined;'), rootSrc.indexOf("if (screen.kind !== 'build') setTimeline(null);"));
     h.ok(backEffect.includes('hardwareBackPress') && backEffect.includes('setTimeline(null)'), 'hardware back closes the details view');
     h.ok(backEffect.includes('return true;'), 'and stops there, so the build screen’s cancel never fires underneath it');
     h.ok(rootSrc.includes("if (screen.kind !== 'build') setTimeline(null);"), 'leaving the build screen closes it, so it can never reopen onto a previous attempt');
+  });
+
+  // ── the overlay is gone; the sheet respects the top safe zone by construction (build-liveness B5) ──
+  await h.test('timeline: LauncherRoot no longer renders the old absolute-overlay details view', () => {
+    const rootSrc = readSource('LauncherRoot.tsx');
+    h.ok(!/timelineOverlay/.test(rootSrc), 'the styles the old overlay used are gone, not merely unreferenced');
+    h.ok(!/timelineBody/.test(rootSrc) && !/\btimelineClose\b/.test(rootSrc), 'and its two supporting styles with it');
+  });
+
+  await h.test('RunDetailsSheet: anchored to the bottom, capped well short of the status bar, no top inset', () => {
+    const src = code(readSource('RunDetailsSheet.tsx'));
+    h.ok(/justifyContent:\s*'flex-end'/.test(src), 'the scrim pins its content to the bottom edge');
+    h.ok(/SHEET_MAX_HEIGHT_FRACTION\s*=\s*0\.72/.test(src), 'capped at 72% of the window — it can never reach the status bar');
+    h.ok(!/useSafeAreaInsets\(\)\.top|insets\.top/.test(src), 'and never reads a top inset, because it never needs one');
+    h.ok(/insets\.bottom/.test(src), 'only the bottom inset — the edge this sheet actually touches — is honoured');
+    h.ok(/borderTopLeftRadius:\s*RADIUS\.sheet/.test(src) && /borderTopRightRadius:\s*RADIUS\.sheet/.test(src), 'RADIUS.sheet on both top corners');
+    h.ok(/MOTION\.sheetRise/.test(src), 'rises on the same timing token the orb menu uses');
+  });
+
+  await h.test('build: the liveness line comes from buildLivenessLine/livenessOf/WorkingLine, never the retired heartbeat', () => {
+    const buildSrc = code(readSource('BuildStep.tsx'));
+    h.ok(/buildLivenessLine\(/.test(buildSrc), 'the phrase is composed by the one liveness-copy function');
+    h.ok(/livenessOf\(/.test(buildSrc), 'the liveness state is derived by the one liveness function');
+    h.ok(/<WorkingLine\b/.test(buildSrc), 'and rendered through the shared WorkingLine, like every other wait in the flow');
+    h.ok(/clock=\{false\}/.test(buildSrc), 'without a second, differently-sourced clock suffix');
+    h.ok(!/buildActivityLine|buildQuietLine|quietSecondsSince|HEARTBEAT_QUIET_MS/.test(buildSrc), 'the retired single-heartbeat API is gone from this screen entirely');
   });
 }
