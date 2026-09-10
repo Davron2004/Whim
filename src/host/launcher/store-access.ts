@@ -12,11 +12,14 @@
  * data even though it shares a repo. This is load-bearing (D8): the realm launches with the
  * launcher id as its engine appId, while version-store access uses `storeId` + lineage.
  *
- * Lineage discipline: exactly one mini-app is foregrounded (one WebView == one realm) and all
- * store access is serialized here, so a small in-memory per-repo lineage cache lets the wrapper
- * `switchLineage` only on an ACTUAL change (D2 "checks first"). `fork()` switches the repo HEAD
- * to the new lineage as a side effect; the cache records that, and the next access to the
- * ORIGINAL switches back. On a fresh process the cache is empty → one safe switch on first use.
+ * Lineage discipline: a repo's HEAD is a single shared mutable cursor, and one repo is shared by
+ * an original and ALL of its forks (`storeIdOf`), which are distinct launcher ids. So every
+ * operation is serialized PER REPO here (`serial`), which is what makes the small in-memory
+ * per-repo lineage cache safe: switch-then-read is atomic against other operations on the same
+ * repo, and the cache lets the wrapper `switchLineage` only on an ACTUAL change (D2 "checks
+ * first"). `fork()` switches the repo HEAD to the new lineage as a side effect; the cache records
+ * that, and the next access to the ORIGINAL switches back. On a fresh process the cache is empty
+ * → one safe switch on first use. Operations on DIFFERENT repos stay fully concurrent.
  */
 
 import type { VersionStore, Snapshot, Pin, FileChange } from '../version-store';
@@ -78,12 +81,45 @@ export class StoreAccess {
   private readonly now: () => number;
   /** repoId → the lineage the repo HEAD is currently on (this session's knowledge). */
   private readonly repoLineage = new Map<string, string>();
+  /** repoId → the tail of that repo's in-flight operation chain (see `serial`). */
+  private readonly chains = new Map<string, Promise<unknown>>();
 
   constructor(opts: StoreAccessOptions) {
     this.store = opts.store;
     this.index = opts.index;
     this.deleteStorage = opts.deleteStorage ?? (() => {});
     this.now = opts.now ?? (() => Date.now());
+  }
+
+  /**
+   * Per-repo async mutex: `op` runs with exclusive access to one version-store repo.
+   *
+   * Every public method here is a check-then-act across `await`s — `ensureLineage` reads the
+   * per-repo lineage cache, `switchLineage`s the repo HEAD, then reads/writes through that HEAD —
+   * and one repo is shared by an original and all of its forks, which are DIFFERENT launcher ids.
+   * The launcher's per-app busy gate (`app-busy.ts`) is keyed by launcher id, so it does not
+   * serialize them: an un-awaited call on a fork (the prompt flow's `activeDescription`) can
+   * interleave with an "Open" on the original, and the loser's read lands on the other lineage's
+   * snapshot — wrong data, silently. Chaining each operation onto the previous one for the same
+   * repo makes switch + read atomic against every other operation on that repo. Different repos
+   * never share a chain, so they stay fully concurrent.
+   */
+  private serial<T>(repo: string, op: () => Promise<T>): Promise<T> {
+    const prev = this.chains.get(repo);
+    // `prev` is a neutralized tail (below), so it never rejects: a failed operation ORDERS the
+    // next one without failing it. That rejection is not lost — it is delivered to its own caller
+    // through the `result` promise that caller already holds; it is swallowed for chaining only.
+    const result = prev != null ? prev.then(op) : op();
+    // Both handlers, so the tail settles whatever the operation did. It also drains its own map
+    // entry once the repo goes idle, so a long-lived StoreAccess doesn't retain one settled
+    // promise per repo forever — guarded, because a later operation may already own the slot.
+    const slot: { tail?: Promise<void> } = {};
+    const drain = (): void => {
+      if (this.chains.get(repo) === slot.tail) this.chains.delete(repo);
+    };
+    slot.tail = result.then(drain, drain);
+    this.chains.set(repo, slot.tail);
+    return result;
   }
 
   /**
@@ -109,26 +145,28 @@ export class StoreAccess {
    * is the source of truth). Used by first-run seeding (D7) and, later, #7's generation flow.
    */
   async install(spec: InstallSpec): Promise<InstalledApp> {
-    await this.store.snapshot(
-      spec.id,
-      {
-        'bundle.js': spec.bundleSource,
-        ...(spec.source != null ? { 'source.ts': spec.source } : {}),
-        ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
-      },
-      spec.prompt,
-    );
-    this.repoLineage.set(spec.id, 'main');
-    const entry: InstalledApp = {
-      id: spec.id,
-      name: spec.name,
-      example: spec.example,
-      createdAt: this.now(),
-      record: spec.record,
-      lineageId: 'main',
-    };
-    this.index.put(entry);
-    return entry;
+    return this.serial(spec.id, async () => {
+      await this.store.snapshot(
+        spec.id,
+        {
+          'bundle.js': spec.bundleSource,
+          ...(spec.source != null ? { 'source.ts': spec.source } : {}),
+          ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
+        },
+        spec.prompt,
+      );
+      this.repoLineage.set(spec.id, 'main');
+      const entry: InstalledApp = {
+        id: spec.id,
+        name: spec.name,
+        example: spec.example,
+        createdAt: this.now(),
+        record: spec.record,
+        lineageId: 'main',
+      };
+      this.index.put(entry);
+      return entry;
+    });
   }
 
   /**
@@ -137,34 +175,38 @@ export class StoreAccess {
    * record refresh. `id`/`lineageId`/`createdAt` are untouched; only `record` changes.
    */
   async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
-    await this.ensureLineage(entry);
-    await this.store.snapshot(
-      storeIdOf(entry),
-      {
-        'bundle.js': spec.bundleSource,
-        ...(spec.source != null ? { 'source.ts': spec.source } : {}),
-        ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
-      },
-      spec.prompt,
-    );
-    // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
-    // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
-    // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
-    // via `AppTile`); build-lifecycle.ts's `deliverResult` PRESERVE comment depends on this holding
-    // in the other direction. Adopting the new name here would move that app's hue on its next
-    // rename-carrying rebuild. Pinned: store-access.suite.ts §34.
-    const updated: InstalledApp = { ...entry, record: spec.record };
-    this.index.put(updated);
-    return updated;
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      await this.store.snapshot(
+        storeIdOf(entry),
+        {
+          'bundle.js': spec.bundleSource,
+          ...(spec.source != null ? { 'source.ts': spec.source } : {}),
+          ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
+        },
+        spec.prompt,
+      );
+      // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
+      // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
+      // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `appColor(name)`
+      // via `AppTile`); build-lifecycle.ts's `deliverResult` PRESERVE comment depends on this holding
+      // in the other direction. Adopting the new name here would move that app's hue on its next
+      // rename-carrying rebuild. Pinned: store-access.suite.ts §34.
+      const updated: InstalledApp = { ...entry, record: spec.record };
+      this.index.put(updated);
+      return updated;
+    });
   }
 
   /** The active snapshot's bundle source for an entry (switching to its lineage first). */
   async activeBundle(entry: InstalledApp): Promise<string> {
-    await this.ensureLineage(entry);
-    const active = await this.store.active(storeIdOf(entry));
-    const src = active?.artifacts['bundle.js'];
-    if (src == null) throw new Error(`no active bundle for "${entry.id}"`);
-    return src;
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      const active = await this.store.active(storeIdOf(entry));
+      const src = active?.artifacts['bundle.js'];
+      if (src == null) throw new Error(`no active bundle for "${entry.id}"`);
+      return src;
+    });
   }
 
   /** The active snapshot's ORIGINAL TypeScript source for an entry (#52-D5 / D14) — the genuine
@@ -172,9 +214,11 @@ export class StoreAccess {
    *  this snapshot predates source tracking: absence is a legitimate legacy state, reported
    *  honestly, never silently substituted with the bundle. */
   async activeSource(entry: InstalledApp): Promise<string | undefined> {
-    await this.ensureLineage(entry);
-    const active = await this.store.active(storeIdOf(entry));
-    return active?.artifacts['source.ts'];
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      const active = await this.store.active(storeIdOf(entry));
+      return active?.artifacts['source.ts'];
+    });
   }
 
   /**
@@ -188,55 +232,71 @@ export class StoreAccess {
    * field entirely).
    */
   async activeDescription(entry: InstalledApp): Promise<string | undefined> {
-    await this.ensureLineage(entry);
-    const active = await this.store.active(storeIdOf(entry));
-    if (active == null) return undefined;
-    return parsePromptEnvelope(active.prompt).text;
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      const active = await this.store.active(storeIdOf(entry));
+      if (active == null) return undefined;
+      return parsePromptEnvelope(active.prompt).text;
+    });
   }
 
   /** This entry's own lineage line, newest-first (D6) — an ancestry walk from its active tip. */
   async history(entry: InstalledApp, opts?: { limit?: number }): Promise<Snapshot[]> {
-    await this.ensureLineage(entry);
-    return this.store.history(storeIdOf(entry), opts);
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.history(storeIdOf(entry), opts);
+    });
   }
 
   /** Same as `history`, but survives a rollback: later same-line snapshots stay listed (D6). */
   async timeline(entry: InstalledApp, opts?: { limit?: number }): Promise<Snapshot[]> {
-    await this.ensureLineage(entry);
-    return this.store.timeline(storeIdOf(entry), opts);
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.timeline(storeIdOf(entry), opts);
+    });
   }
 
   /** Move this entry's active snapshot (non-destructive — later snaps stay reachable) (D6). */
   async rollback(entry: InstalledApp, snapshotId: string): Promise<{ activeId: string }> {
-    await this.ensureLineage(entry);
-    return this.store.rollback(storeIdOf(entry), snapshotId);
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.rollback(storeIdOf(entry), snapshotId);
+    });
   }
 
   /** Label a snapshot (D6/D8): re-pinning an existing label MOVES it (last write wins) —
    *  verified against the engine's tag-based pin storage (`force: true`, never throws). */
   async pin(entry: InstalledApp, snapshotId: string, label: string): Promise<Pin> {
-    await this.ensureLineage(entry);
-    return this.store.pin(storeIdOf(entry), snapshotId, label);
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.pin(storeIdOf(entry), snapshotId, label);
+    });
   }
 
   /** This entry's pins (D6). */
   async listPins(entry: InstalledApp): Promise<Pin[]> {
-    await this.ensureLineage(entry);
-    return this.store.listPins(storeIdOf(entry));
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.listPins(storeIdOf(entry));
+    });
   }
 
   /** Per-file changes between two of this entry's snapshots (D6). */
   async diff(entry: InstalledApp, fromId: string, toId: string): Promise<FileChange[]> {
-    await this.ensureLineage(entry);
-    return this.store.diff(storeIdOf(entry), fromId, toId);
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      return this.store.diff(storeIdOf(entry), fromId, toId);
+    });
   }
 
   /** This entry's current active snapshot id, or null if it has never snapshotted (D6). Thin
    *  wrapper over `active()` for the history screen's current-marker. */
   async activeId(entry: InstalledApp): Promise<string | null> {
-    await this.ensureLineage(entry);
-    const active = await this.store.active(storeIdOf(entry));
-    return active?.id ?? null;
+    return this.serial(storeIdOf(entry), async () => {
+      await this.ensureLineage(entry);
+      const active = await this.store.active(storeIdOf(entry));
+      return active?.id ?? null;
+    });
   }
 
   /**
@@ -256,30 +316,32 @@ export class StoreAccess {
    */
   async fork(entry: InstalledApp, versionId?: string, opts?: { shareData?: boolean }): Promise<InstalledApp> {
     const repo = storeIdOf(entry);
-    await this.ensureLineage(entry);
-    let snapshotId: string;
-    if (versionId != null) {
-      snapshotId = versionId;
-    } else {
-      const active = await this.store.active(repo);
-      if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
-      snapshotId = active.id;
-    }
-    const { lineageId } = await this.store.fork(repo, snapshotId);
-    // fork() left the repo HEAD on the new lineage.
-    this.repoLineage.set(repo, lineageId);
-    const forkEntry: InstalledApp = {
-      id: `${repo}__${lineageId}`,
-      name: entry.name,
-      createdAt: this.now(),
-      record: entry.record,
-      storeId: repo,
-      lineageId,
-      forkedFrom: { id: entry.id, name: entry.name },
-      storageGroupId: opts?.shareData ? (entry.storageGroupId ?? entry.id) : undefined,
-    };
-    this.index.put(forkEntry);
-    return forkEntry;
+    return this.serial(repo, async () => {
+      await this.ensureLineage(entry);
+      let snapshotId: string;
+      if (versionId != null) {
+        snapshotId = versionId;
+      } else {
+        const active = await this.store.active(repo);
+        if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
+        snapshotId = active.id;
+      }
+      const { lineageId } = await this.store.fork(repo, snapshotId);
+      // fork() left the repo HEAD on the new lineage.
+      this.repoLineage.set(repo, lineageId);
+      const forkEntry: InstalledApp = {
+        id: `${repo}__${lineageId}`,
+        name: entry.name,
+        createdAt: this.now(),
+        record: entry.record,
+        storeId: repo,
+        lineageId,
+        forkedFrom: { id: entry.id, name: entry.name },
+        storageGroupId: opts?.shareData ? (entry.storageGroupId ?? entry.id) : undefined,
+      };
+      this.index.put(forkEntry);
+      return forkEntry;
+    });
   }
 
   /**
@@ -293,14 +355,16 @@ export class StoreAccess {
    */
   async remove(entry: InstalledApp): Promise<void> {
     const repo = storeIdOf(entry);
-    const groupId = this.engineAppId(entry);
-    this.index.remove(entry.id);
-    if (this.index.storageRefCount(groupId) === 0) {
-      await this.deleteStorage(groupId); // no residue once no entry resolves to the group (D3)
-    }
-    if (this.index.refCount(repo) === 0) {
-      await this.store.remove(repo);
-      this.repoLineage.delete(repo);
-    }
+    return this.serial(repo, async () => {
+      const groupId = this.engineAppId(entry);
+      this.index.remove(entry.id);
+      if (this.index.storageRefCount(groupId) === 0) {
+        await this.deleteStorage(groupId); // no residue once no entry resolves to the group (D3)
+      }
+      if (this.index.refCount(repo) === 0) {
+        await this.store.remove(repo);
+        this.repoLineage.delete(repo);
+      }
+    });
   }
 }
