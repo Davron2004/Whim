@@ -190,6 +190,10 @@ export const COPY = {
   appErrorBody: 'It stopped and can’t carry on right now. Try again, or go back to your apps.',
   appErrorRetry: 'Try again',
   failureTitle: 'Couldn’t build this app',
+  // What a delivered bundle that defines no app reads as (bundle-validity guard): the generation
+  // came back with nothing usable, so it is refused at delivery rather than stored and only
+  // discovered broken the next time the app is opened.
+  failureEmptyBuild: 'The app came back empty. Try again.',
   failureHintsTitle: 'What to try',
   failureRephrase: 'Try rephrasing',
   // The failure screen's two exits are deliberately NOT interchangeable: `failureBack` leaves the
