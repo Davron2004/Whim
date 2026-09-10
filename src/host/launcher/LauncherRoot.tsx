@@ -64,7 +64,7 @@ import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
-import RunTimeline from './RunTimeline';
+import RunDetailsSheet from './RunDetailsSheet';
 import { runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeGridSkeleton } from './flow-skeletons';
 import {
@@ -83,6 +83,7 @@ import {
   updatePlanRow,
   withAnswer,
   withDelivering,
+  withKeepalive,
   withPlan,
   withQuestions,
   withStage,
@@ -764,8 +765,21 @@ function LauncherShell({
     // and the attempt's derived signals start from the same instant the request does.
     journal.create(attemptId);
     const startedAt = Date.now();
-    let signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
+    let signals: RunSignals = {
+      startedAt,
+      aggregates: EMPTY_RUN_AGGREGATES,
+      lastTokenAt: null,
+      lastThinkingAt: null,
+      lastFrameAt: startedAt,
+    };
     signalsRef.current = signals;
+    // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
+    // a `GenerationEvent` — it reaches here through `ClientOptions.onKeepalive`, not the stream
+    // loop below, and moves ONLY the any-frame clock (`withKeepalive` never touches the journal).
+    const onKeepalive = () => {
+      signals = withKeepalive(signals, Date.now());
+      signalsRef.current = signals;
+    };
     /** What the terminal entry flushes, read at the instant the stream ends: the final cumulative
      *  counts (the throttle's last window has no later arrival to close it) and the diagnostics
      *  tally. Numbers only — the same redaction rule every journal entry lives under. */
@@ -791,7 +805,7 @@ function LauncherShell({
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
-      for await (const event of generateApp(clientOptions, request, controller.signal)) {
+      for await (const event of generateApp({ ...clientOptions, onKeepalive }, request, controller.signal)) {
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
@@ -1136,26 +1150,18 @@ function LauncherShell({
           delivering={from.delivering}
           signals={signalsRef.current}
           now={Date.now()}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
           onLeaveRunning={onLeaveRunning}
           onCancel={() => onCancelGeneration(from.editing, from.text)}
           onShowDetails={onShowDetails}
         />
-        {timeline !== null && (
-          <View style={[styles.timelineOverlay, { backgroundColor: palette.bg }]}>
-            {/* The inset edges are DEFINED here, so the padding that keeps the list off them has
-                to live on an inner view — an absolutely-positioned box ignores its own padding. */}
-            <View style={styles.timelineBody}>
-              <RunTimeline entries={timeline} devMode={timelineDevMode} />
-            </View>
-            <TouchableOpacity
-              onPress={() => setTimeline(null)}
-              accessibilityRole="button"
-              style={[styles.timelineClose, { borderColor: palette.cardBorder }]}
-            >
-              <Text style={[TYPE_SCALE.bodyEmphatic, { color: palette.textMuted }]}>{COPY.timelineClose}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        <RunDetailsSheet
+          open={timeline !== null}
+          entries={timeline}
+          devMode={timelineDevMode}
+          onClose={() => setTimeline(null)}
+        />
       </>
     );
   } else if (screen.kind === 'done') {
@@ -1218,18 +1224,8 @@ function LauncherShell({
 const styles = StyleSheet.create({
   root: { flex: 1 },
   loading: { flex: 1, padding: SPACING.lg },
-  // The details view sits OVER the build screen rather than replacing it: the run carries on
-  // behind it, and closing it returns to a progress screen that never went away.
-  timelineOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  timelineBody: { flex: 1, paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
-  timelineClose: {
-    marginHorizontal: SPACING.lg,
-    marginBottom: SPACING.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: RADIUS.card,
-    paddingVertical: SPACING.sm,
-    alignItems: 'center',
-  },
+  // The details view is `RunDetailsSheet` (build-liveness B5) — a bottom sheet anchored to its
+  // own edge, not an absolutely-positioned overlay sized off this component's styles.
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,

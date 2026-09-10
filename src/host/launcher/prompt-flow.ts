@@ -418,11 +418,11 @@ export function workingTitleFromPrompt(text: string): string {
   return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
 }
 
-// ── Derived run signals (generation-observability design D6) ────────────────────────────────────
-// Elapsed time, the output counter and the heartbeat are DERIVED in memory from the request's own
-// start timestamp and the same cumulative counts the journal throttles into entries — they are
-// never separately persisted, and they never read the journal back. All four helpers below are
-// pure so the build screen's liveness signals are Node-testable without a clock or a render.
+// ── Derived run signals (generation-observability design D6; build-liveness B1) ─────────────────
+// Elapsed time, the output counters and the liveness verdict are DERIVED in memory from the
+// request's own start timestamp and the same cumulative counts the journal throttles into entries
+// — they are never separately persisted, and they never read the journal back. Every helper below
+// is pure so the build screen's liveness signals are Node-testable without a clock or a render.
 
 /** Cumulative output counts before any token has arrived. */
 export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
@@ -430,14 +430,26 @@ export const EMPTY_RUN_AGGREGATES: RunAggregates = { chars: 0, tokens: 0 };
 /**
  * Everything the build screen's liveness signals are derived FROM, held in memory for the life of
  * one attempt and never read back out of the journal (design D6): the moment the attempt started,
- * the cumulative counts folded from its stream, and when its last `token`/`stage` event arrived.
- * The rendered values — `elapsedLabel(startedAt, now)`, `quietSecondsSince(lastArrivalAt, now)` —
- * are computed per render from a single `now`, so the clock and the heartbeat can never disagree.
+ * the cumulative counts folded from its stream, and three separate arrival clocks (build-liveness
+ * B1) — because "quiet" used to mean one thing (no `token`/`stage` since X) when the roster's
+ * reasoning models made it mean two different things: the model can be reasoning for minutes with
+ * nothing to show, or the connection itself can have gone dead. One clock cannot tell those apart,
+ * so there are three:
+ *   - `lastTokenAt` — the last VISIBLE output arrived (the stream is writing).
+ *   - `lastThinkingAt` — the last reasoning delta arrived (the model is thinking, not hung).
+ *   - `lastFrameAt` — ANY frame arrived at all, INCLUDING the transport's own keepalive comment
+ *     (`ClientOptions.onKeepalive`) — the one clock that answers "is the connection still there",
+ *     independent of what the model is doing. Starts at `startedAt`.
+ * `livenessOf` folds the three into the one state the build screen renders; the rendered values —
+ * `buildLivenessLine(liveness, s, now)` — are computed per render from a single `now`, so the
+ * clock and the liveness verdict can never disagree.
  */
 export interface RunSignals {
   startedAt: number;
   aggregates: RunAggregates;
-  lastArrivalAt: number;
+  lastTokenAt: number | null;
+  lastThinkingAt: number | null;
+  lastFrameAt: number;
 }
 
 /** How often the shell re-renders a live build screen so its derived clock moves (design D6/D8):
@@ -445,15 +457,22 @@ export interface RunSignals {
 export const RUN_SIGNAL_TICK_MS = 1_000;
 
 /**
- * Fold one stream event into the running totals. Only a `token` event moves them: `chars` by the
- * token's character count, `tokens` by one. The token's TEXT is counted and discarded — it is
- * never carried in the returned value, which is what keeps the derived counter inside the
- * no-internals rule. Any other event returns `prev` unchanged (same reference, so a React state
- * setter sees no spurious change).
+ * Fold one stream event into the running totals. A `token` event moves `chars`/`tokens`; a
+ * `thinking` event moves `thinkingChars` by its own reported length (build-liveness B1) — the
+ * reasoning TEXT never crosses the wire at all (`contract/src/index.ts`'s `thinking` doc comment),
+ * so there is nothing here to discard, only a length to add. Both texts are counted and never
+ * carried in the returned value, which is what keeps the derived counters inside the no-internals
+ * rule. Any other event returns `prev` unchanged (same reference, so a React state setter sees no
+ * spurious change).
  */
 export function accumulateRunAggregates(prev: RunAggregates, event: GenerationEvent): RunAggregates {
-  if (event.type !== 'token') return prev;
-  return { chars: prev.chars + event.text.length, tokens: prev.tokens + 1 };
+  if (event.type === 'token') {
+    return { ...prev, chars: prev.chars + event.text.length, tokens: prev.tokens + 1 };
+  }
+  if (event.type === 'thinking') {
+    return { ...prev, thinkingChars: (prev.thinkingChars ?? 0) + event.chars };
+  }
+  return prev;
 }
 
 const MS_PER_SECOND = 1000;
@@ -485,21 +504,49 @@ export function workingLineText(phrase: string, startedAt: number, now: number):
   return `${phrase} · ${elapsedLabel(startedAt, now)}`;
 }
 
-/** How long the stream may go without a `token` or `stage` event before the screen says so
- *  (`prompt-flow` spec, "A stall heartbeat visibly reports when the stream goes quiet"). Wholly
- *  independent of the journal's own aggregate write throttle (design D6). */
-export const HEARTBEAT_QUIET_MS = 8_000;
+// ── Liveness: thinking from hanging (build-liveness B1) ──────────────────────────────────────────
+// "'quiet for x s' is misleading. is it really quiet? or is it thinking ... it was 'quiet' for
+// minutes at a time then suddenly would add thousands of characters to the count" (the reported
+// bug). One heartbeat could not answer "what is happening right now" once the roster's models
+// started reasoning for minutes before writing — `livenessOf` answers it from the three
+// `RunSignals` clocks, cascading from the most specific truth to the least: writing beats
+// thinking beats merely connected beats stalled, each window independently sized and all
+// INCLUSIVE at the boundary (`now - last <= window` is still the earlier state, matching
+// `elapsedLabel`'s own "exceeded, not merely reached" rounding discipline).
+
+/** A `token` within this long still reads as "writing" even through a short gap between chunks. */
+export const WRITING_WINDOW_MS = 4_000;
+
+/** A `thinking` event within this long still reads as "thinking it through" between deltas. */
+export const THINKING_WINDOW_MS = 4_000;
+
+/** No frame at all — not even a keepalive — within this long is a stall, not merely a quiet
+ *  moment. The server's own keepalive is every 15s, so two missed keepalives plus margin is the
+ *  earliest a silence can honestly be called "nothing has arrived", never a normal gap. */
+export const STALL_MS = 40_000;
+
+/** The four things the build screen can honestly say is happening right now. `writing` and
+ *  `thinking` are DISTINCT states on purpose — the whole point of this design is to stop
+ *  collapsing "the model is composing an answer" and "the model has gone quiet for minutes" into
+ *  one ambiguous "quiet" reading. */
+export type Liveness = 'writing' | 'thinking' | 'connected' | 'stalled';
+
+export function livenessOf(s: RunSignals, now: number): Liveness {
+  if (s.lastTokenAt != null && now - s.lastTokenAt <= WRITING_WINDOW_MS) return 'writing';
+  if (s.lastThinkingAt != null && now - s.lastThinkingAt <= THINKING_WINDOW_MS) return 'thinking';
+  if (now - s.lastFrameAt <= STALL_MS) return 'connected';
+  return 'stalled';
+}
 
 /**
- * Whole seconds the stream has been quiet, or `null` when it has not been quiet long enough to
- * report — which is the "show no quiet indication" case, including the instant a fresh event
- * arrives and resets `lastArrivalAt`. The threshold must be EXCEEDED, so exactly
- * `HEARTBEAT_QUIET_MS` still reads as healthy.
+ * The keepalive comment frame (`: keepalive\n\n`, `ClientOptions.onKeepalive`) folded into
+ * `RunSignals`: pure transport liveness, so it moves `lastFrameAt` ONLY — never `aggregates`,
+ * never `lastTokenAt`/`lastThinkingAt`, and (unlike `journalStreamEvent`) it never touches a
+ * `RunJournalStore` at all, by construction: this function does not take one. A keepalive is
+ * transport noise, not something a run's history should record.
  */
-export function quietSecondsSince(lastArrivalAt: number, now: number): number | null {
-  const quietMs = now - lastArrivalAt;
-  if (quietMs <= HEARTBEAT_QUIET_MS) return null;
-  return Math.floor(quietMs / MS_PER_SECOND);
+export function withKeepalive(signals: RunSignals, at: number): RunSignals {
+  return { ...signals, lastFrameAt: at };
 }
 
 /** One stage transition as the timeline renders it. `durationMs` is `null` for a stage that never

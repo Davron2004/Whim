@@ -1,8 +1,8 @@
 /**
- * generation-client Node suite (prompt-flow-ux chain-1, tasks 1.1/2.1) — `device-id.ts` and
- * `generation-client.ts` against canned `fetchImpl`/`Response` objects, no real HTTP server.
- * Mirrors `server/test/sse-reader.ts`'s SSE-framing idiom, inverted (this reads frames the
- * server writes, per `server/src/sse.ts`).
+ * generation-client Node suite (prompt-flow-ux chain-1, tasks 1.1/2.1; build-liveness B1/B2) —
+ * `device-id.ts` and `generation-client.ts` against canned `fetchImpl`/`Response` objects, no real
+ * HTTP server. Mirrors `server/test/sse-reader.ts`'s SSE-framing idiom, inverted (this reads
+ * frames the server writes, per `server/src/sse.ts`).
  *
  * Scenarios (spec `prompt-flow/spec.md` "Every server request carries a persisted anonymous
  * device identity" / "Generation progress is shown without exposing internals" / "Failure is
@@ -13,10 +13,14 @@
  *   - rewritePrompt: a 200 JSON response parses to `RewriteResponse`, sending the prompt body
  *     and the `x-whim-device` header; a non-2xx HTTP response raises `kind:'http'`; a 400
  *     `DeviceIdError`-shaped body raises `kind:'device_id'` carrying its `hint`.
- *   - generateApp: stage/token/diagnostic/usage/result/failure SSE frames all parse into their
- *     validated `GenerationEvent` shapes, in order; a frame whose `data:` JSON does not match
- *     `GenerationEvent` raises `kind:'stream_parse'`; a stream aborted mid-flight (`AbortError`
- *     from the reader) ends iteration with no terminal event and does not throw.
+ *   - generateApp: stage/token/thinking/diagnostic/usage/result/failure SSE frames all parse into
+ *     their validated `GenerationEvent` shapes, in order, with a PARITY test feeding one instance
+ *     of every union arm through the real guard so a future contract addition cannot silently
+ *     break the device the way `thinking`'s own guard arm was initially missed; a frame whose
+ *     `data:` JSON does not match `GenerationEvent` raises `kind:'stream_parse'`; a stream aborted
+ *     mid-flight (`AbortError` from the reader) ends iteration with no terminal event and does not
+ *     throw; a keepalive comment block (`: keepalive\n\n`) fires `ClientOptions.onKeepalive`, never
+ *     an event.
  */
 
 import { Harness } from './harness';
@@ -284,10 +288,11 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     }
   });
 
-  // generateApp: parses stage/token/diagnostic/usage/result frames, in order
-  await h.test('generateApp: parses stage/token/diagnostic/usage/result frames off the Response', async () => {
+  // generateApp: parses stage/token/thinking/diagnostic/usage/result frames, in order
+  await h.test('generateApp: parses stage/token/thinking/diagnostic/usage/result frames off the Response', async () => {
     const events: GenerationEvent[] = [
       { type: 'stage', stage: 'generate', status: 'start' },
+      { type: 'thinking', chars: 1_200 },
       { type: 'token', text: 'const x = 1;' },
       { type: 'diagnostic', diagnostic: { kind: 'type-error', symbol: 'x', hint: 'declare a type' } },
       { type: 'usage', usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } },
@@ -300,6 +305,32 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     const fetchImpl = (async () => sseResponse([text])) as typeof fetch;
     const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'make a tip splitter' }));
     h.eq(got, events, 'yields every frame, validated, in order');
+  });
+
+  // Parity test (build-liveness review finding): every arm of the CONTRACT'S union must have a
+  // matching arm in this client's hand-rolled `isGenerationEvent` guard, or the device throws
+  // `stream_parse` on a perfectly valid frame the moment the server starts sending it — exactly
+  // what happened here for `thinking` before this change. One canned frame per union arm, fed
+  // through the real SSE path, is what makes "the guard accepts everything the contract allows"
+  // a fact about the code rather than an assumption a future contract addition can silently break.
+  await h.test('generateApp: accepts one valid instance of EVERY GenerationEvent union arm', async () => {
+    const oneOfEach: GenerationEvent[] = [
+      { type: 'stage', stage: 'plan', status: 'start' },
+      { type: 'token', text: 'x' },
+      { type: 'thinking', chars: 1 },
+      { type: 'diagnostic', diagnostic: { kind: 'type-error', hint: 'declare a type' } },
+      { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+      {
+        type: 'result',
+        app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
+      },
+      { type: 'failure', reason: 'nope', attempts: 1, diagnostics: [] },
+    ];
+    for (const event of oneOfEach) {
+      const fetchImpl = (async () => sseResponse([sseFrame(event, 1)])) as typeof fetch;
+      const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+      h.eq(got, [event], `the "${event.type}" arm parses without throwing`);
+    }
   });
 
   await h.test('generateApp: parses a failure terminal frame', async () => {
@@ -321,6 +352,25 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     const fetchImpl = (async () => sseResponse([frame.slice(0, mid), frame.slice(mid), ': keepalive\n\n'])) as typeof fetch;
     const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
     h.eq(got, [event], 'reassembles the split frame and skips the keepalive comment');
+  });
+
+  // build-liveness B2: the keepalive comment is transport noise (never a GenerationEvent), but it
+  // still has to reach the caller SOMEHOW — through `ClientOptions.onKeepalive`.
+  await h.test('generateApp: a keepalive comment block fires onKeepalive exactly once, never as an event', async () => {
+    const event: GenerationEvent = { type: 'token', text: 'hi' };
+    const fetchImpl = (async () =>
+      sseResponse([sseFrame(event, 1), ': keepalive\n\n', ': keepalive\n\n'])) as typeof fetch;
+    let keepalives = 0;
+    const got = await collect(generateApp({ ...BASE, fetchImpl, onKeepalive: () => keepalives++ }, { prompt: 'p' }));
+    h.eq(got, [event], 'still yields only the real event');
+    h.eq(keepalives, 2, 'and the caller hears about both keepalive frames');
+  });
+
+  await h.test('generateApp: with no onKeepalive supplied, a keepalive comment is silently skipped as before', async () => {
+    const event: GenerationEvent = { type: 'token', text: 'hi' };
+    const fetchImpl = (async () => sseResponse([sseFrame(event, 1), ': keepalive\n\n'])) as typeof fetch;
+    const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+    h.eq(got, [event], 'an absent callback is a no-op, not a throw');
   });
 
   // generateApp: malformed frame — unrecognized discriminant

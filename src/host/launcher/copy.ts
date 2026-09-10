@@ -250,27 +250,54 @@ export function readyTitle(name: string): string {
   return `${name} is ready`;
 }
 
-/**
- * The build screen's activity line: how long the attempt has been running, and how much output has
- * come back so far. `elapsed` is the `m:ss` clock; `chars` is a cumulative character COUNT — a
- * size, never any of the generated text itself.
- */
-export function buildActivityLine(elapsed: string, chars: number): string {
-  const written = chars === 1 ? '1 character' : `${chars} characters`;
-  return `${elapsed} · ${written} so far`;
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+
+/** Elapsed wall time as `m:ss`, independent of `prompt-flow.ts#elapsedLabel` — the same
+ *  standalone-arithmetic discipline `timelineDurationLabel` below keeps, and for the same reason:
+ *  `prompt-flow.ts` imports `COPY` from HERE, so the reverse import would be a cycle. */
+function livenessElapsedLabel(startedAt: number, now: number): string {
+  const totalSeconds = Math.max(0, Math.floor((now - startedAt) / MS_PER_SECOND));
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const seconds = totalSeconds % SECONDS_PER_MINUTE;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-/** The stall heartbeat's statement, shown only once the quiet threshold has been exceeded. */
-export function buildQuietLine(seconds: number): string {
-  return `Quiet for ${seconds}s`;
+/**
+ * The build screen's ONE liveness line (build-liveness B1/B3, replacing the old "quiet for Ns"
+ * heartbeat the user reported as misleading — see the module-level rationale in `prompt-flow.ts`'s
+ * `livenessOf`). `s`/`now` are typed structurally rather than importing `RunSignals` from
+ * `prompt-flow.ts` — this module imports nothing else, the same discipline `timelineDurationLabel`
+ * already keeps. `liveness` is the bare literal union for the same reason `ghostStateCaption`'s
+ * `state` parameter is.
+ *
+ * No word here is "model" or "server" (`product-verbs.suite.ts` "the launcher surface speaks
+ * product verbs only" — mechanism words, not merely git vocabulary, are the ones this line has to
+ * dodge): a wait that is thinking reads as "thinking", never "the model is thinking".
+ */
+export function buildLivenessLine(
+  liveness: 'writing' | 'thinking' | 'connected' | 'stalled',
+  s: { readonly startedAt: number; readonly aggregates: { readonly chars: number }; readonly lastFrameAt: number },
+  now: number,
+): string {
+  if (liveness === 'writing') {
+    return `Writing · ${s.aggregates.chars.toLocaleString()} characters`;
+  }
+  if (liveness === 'thinking') {
+    return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
+  }
+  if (liveness === 'connected') {
+    return `Connected, waiting for a reply · ${livenessElapsedLabel(s.startedAt, now)}`;
+  }
+  const quietSeconds = Math.max(0, Math.floor((now - s.lastFrameAt) / MS_PER_SECOND));
+  return `Nothing has arrived for ${quietSeconds}s`;
 }
 
 // ── the run timeline's lines (generation-observability, design D7) ───────────
 // The timeline's rows ARE copy — which words a stage reads as, how a duration is written — so they
 // live here beside the checklist rows, in the one module the launcher's Node suite can import.
+// `MS_PER_SECOND`/`SECONDS_PER_MINUTE` are declared above, alongside `livenessElapsedLabel`.
 
-const MS_PER_SECOND = 1000;
-const SECONDS_PER_MINUTE = 60;
 const TENTHS_PER_SECOND = 10;
 
 /** A stage's plain-words label. Kept as the bare literal union rather than importing `Stage`, the
@@ -298,9 +325,16 @@ export function timelineStageLine(label: string, durationMs: number | null): str
   return `${label} · ${durationMs == null ? COPY.timelineStillGoing : timelineDurationLabel(durationMs)}`;
 }
 
-/** The output-growth row: a cumulative character COUNT — a size, never any of the text itself. */
-export function timelineGrowthLine(chars: number): string {
-  return chars === 1 ? '1 character written' : `${chars} characters written`;
+/** The output-growth row: cumulative character COUNTS — sizes, never any of the text itself.
+ *  `thinkingChars` (build-liveness B4) is a SEPARATE tally the model reasoned through before/between
+ *  writing (`contract/src/index.ts`'s `thinking` event) — omitted whenever it is zero, so a run
+ *  from before this change (or one whose roster model never reasoned) reads exactly as it always
+ *  did. */
+export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
+  const written = chars === 1 ? 'Wrote 1 character' : `Wrote ${chars} characters`;
+  if (thinkingChars <= 0) return written;
+  const thinking = thinkingChars === 1 ? '1 character' : `${thinkingChars} characters`;
+  return `${written} after thinking through ${thinking}`;
 }
 
 /** The clarify step's headline, counted: one, two or three quick things. */

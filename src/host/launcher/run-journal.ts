@@ -26,10 +26,16 @@ import type { Stage } from './prompt-flow';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
-/** Cumulative output counts observed so far in the attempt — never a per-tick delta (design D2). */
+/** Cumulative output counts observed so far in the attempt — never a per-tick delta (design D2).
+ *  `thinkingChars` (build-liveness B1/B4) is OPTIONAL rather than required: absent and zero mean
+ *  the same thing (the convention this module already uses for `schemaArtifact`/`diagnostics`/
+ *  etc), which is what lets a journal written before this change — carrying only `chars`/`tokens`
+ *  — still parse as "no thinking observed" instead of failing to read. A caller that never sees a
+ *  `thinking` event simply never sets it. */
 export interface RunAggregates {
   chars: number;
   tokens: number;
+  thinkingChars?: number;
 }
 
 /** The only failure detail a journal may hold: the same fields the failure screen already permits
@@ -178,10 +184,11 @@ export class RunJournalStore {
       if (at - e.t < AGGREGATE_THROTTLE_MS) return;
       break;
     }
+    const thinkingChars = aggregates.thinkingChars ?? 0;
     this.appendEntry(launcherId, {
       t: at,
       kind: 'aggregate',
-      aggregates: { chars: aggregates.chars, tokens: aggregates.tokens },
+      aggregates: { chars: aggregates.chars, tokens: aggregates.tokens, ...(thinkingChars > 0 ? { thinkingChars } : {}) },
     });
   }
 
@@ -203,11 +210,18 @@ export class RunJournalStore {
   ): void {
     const failure = terminal.failure;
     const aggregates = terminal.aggregates;
+    const thinkingChars = aggregates ? Number(aggregates.thinkingChars ?? 0) : 0;
     this.appendEntry(launcherId, {
       t: this.now(),
       kind: 'terminal',
       ...(aggregates
-        ? { aggregates: { chars: Number(aggregates.chars), tokens: Number(aggregates.tokens) } }
+        ? {
+            aggregates: {
+              chars: Number(aggregates.chars),
+              tokens: Number(aggregates.tokens),
+              ...(thinkingChars > 0 ? { thinkingChars } : {}),
+            },
+          }
         : {}),
       ...(terminal.observedDiagnostics !== undefined
         ? { observedDiagnostics: Number(terminal.observedDiagnostics) }

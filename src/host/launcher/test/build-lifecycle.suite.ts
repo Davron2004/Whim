@@ -28,7 +28,7 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, ghostTileColorFor } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, ghostTileColorFor, withKeepalive } from '../prompt-flow';
 import type { RunSignals } from '../prompt-flow';
 import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
@@ -462,19 +462,26 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(retryBuildScreen(store.get(id)!, APP).editing, APP, 'a rebuild retry stays scoped to its app');
   });
 
-  // ── the stream loop's journal writes and derived signals (generation-run-journal) ─────────────
+  // ── the stream loop's journal writes and derived signals (generation-run-journal; build-liveness B1/B4) ──
 
   const RUN = 'app-journalled';
   const STAGE = (stage: 'plan' | 'generate' | 'check', status: 'start' | 'done' = 'start'): GenerationEvent =>
     ({ type: 'stage', stage, status });
   const TOKEN = (text: string): GenerationEvent => ({ type: 'token', text });
+  const THINKING = (chars: number): GenerationEvent => ({ type: 'thinking', chars });
 
   /** A journal store over an injected clock, so the ~5s aggregate throttle is driven rather than
    *  slept through, plus the empty signals an attempt starts from. */
   function attemptFixture(startedAt = 1_000) {
     let clock = startedAt;
     const journal = new RunJournalStore(new MapKVBackend(), () => clock);
-    const signals: RunSignals = { startedAt, aggregates: EMPTY_RUN_AGGREGATES, lastArrivalAt: startedAt };
+    const signals: RunSignals = {
+      startedAt,
+      aggregates: EMPTY_RUN_AGGREGATES,
+      lastTokenAt: null,
+      lastThinkingAt: null,
+      lastFrameAt: startedAt,
+    };
     return { journal, signals, at: () => clock, tick: (ms: number) => (clock += ms) };
   }
 
@@ -489,7 +496,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(entries.length, 3, 'one entry per transition, none throttled away');
     h.eq(entries.map((e) => e.kind), ['stage', 'stage', 'stage'], 'each is a stage entry');
     h.eq(entries.map((e) => e.stage), ['plan', 'generate', 'check'], 'in arrival order, in the WIRE vocabulary');
-    h.eq(signals.lastArrivalAt, f.at(), 'and the heartbeat’s arrival stamp follows the last one');
+    h.eq(signals.lastFrameAt, f.at(), 'and the any-frame clock follows the last one');
   });
 
   await h.test('journal: a realistic start/done stream journals ONE entry per stage, on its start edge', async () => {
@@ -523,7 +530,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
       2,
       'two repair attempts — the same figure the shell’s own `status === "start"` tally reports',
     );
-    h.eq(signals.lastArrivalAt, f.at(), 'a `done` edge still counts as liveness for the heartbeat');
+    h.eq(signals.lastFrameAt, f.at(), 'a `done` edge still counts as liveness for the any-frame clock');
   });
 
   await h.test('journal: a burst of tokens is bounded by elapsed time, never one entry per token', async () => {
@@ -548,27 +555,88 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.ok(!JSON.stringify(aggregates).includes('abcde'), 'and never the token text itself');
   });
 
-  await h.test('journal: an event that is neither stage nor token writes nothing and moves nothing', async () => {
+  await h.test('journal: an event that is neither stage/token/thinking writes and counts nothing — but still IS liveness', async () => {
     const f = attemptFixture();
     const diagnostic: GenerationEvent = {
       type: 'diagnostic',
       diagnostic: { kind: 'type', symbol: 'x', message: 'boom', hint: 'try again' },
     };
     const after = journalStreamEvent(f.journal, RUN, f.signals, diagnostic, f.at() + 5_000);
-    h.ok(after === f.signals, 'the same signals object comes back — a React setter sees no change');
+    // Build-liveness B1: "ANY frame" moves the any-frame clock, so this is no longer the same
+    // object by reference the way the pre-liveness version was — a diagnostic still proves the
+    // connection is alive even though it journals nothing.
+    h.ok(after !== f.signals, 'a diagnostic still moves the any-frame clock, so this is a new object');
+    h.eq(after.lastFrameAt, f.at() + 5_000, 'to the diagnostic’s own arrival time');
+    h.eq(after.lastTokenAt, f.signals.lastTokenAt, 'but the token clock is untouched');
+    h.eq(after.lastThinkingAt, f.signals.lastThinkingAt, 'and so is the thinking clock');
+    h.eq(after.aggregates, f.signals.aggregates, 'and no counter moves');
     h.eq(f.journal.get(RUN) ?? [], [], 'and no entry is written for it');
   });
 
-  await h.test('journal: the arrival stamp the heartbeat measures from moves on stage AND token', async () => {
+  await h.test('journal: the any-frame clock moves on stage AND token; the token clock moves ONLY on token', async () => {
     const f = attemptFixture();
     f.tick(3_000);
     const afterStage = journalStreamEvent(f.journal, RUN, f.signals, STAGE('generate'), f.at());
-    h.eq(afterStage.lastArrivalAt, f.at(), 'a stage arrival is liveness');
+    h.eq(afterStage.lastFrameAt, f.at(), 'a stage arrival is liveness');
+    h.eq(afterStage.lastTokenAt, null, 'but a stage is not a token — the writing clock stays unset');
     h.eq(afterStage.startedAt, f.signals.startedAt, 'the attempt’s start never moves');
     f.tick(3_000);
     const afterToken = journalStreamEvent(f.journal, RUN, afterStage, TOKEN('xy'), f.at());
-    h.eq(afterToken.lastArrivalAt, f.at(), 'so is a token arrival');
+    h.eq(afterToken.lastFrameAt, f.at(), 'a token is liveness too');
+    h.eq(afterToken.lastTokenAt, f.at(), 'and now the writing clock is set');
     h.eq(afterToken.aggregates, { chars: 2, tokens: 1 }, 'which is also the only thing that moves the counts');
+  });
+
+  // ── thinking distinguished from hanging (build-liveness B1/B4) ──────────────
+  await h.test('journal: a thinking event bumps the thinking clock and the any-frame clock, and folds into aggregates', async () => {
+    const f = attemptFixture();
+    let signals = f.signals;
+    f.tick(2_000);
+    signals = journalStreamEvent(f.journal, RUN, signals, THINKING(800), f.at());
+    h.eq(signals.lastThinkingAt, f.at(), 'the thinking clock moves');
+    h.eq(signals.lastFrameAt, f.at(), 'so does the any-frame clock');
+    h.eq(signals.lastTokenAt, null, 'but not the writing clock — nothing has been written yet');
+    h.eq(signals.aggregates, { chars: 0, tokens: 0, thinkingChars: 800 }, 'thinkingChars accumulates, separate from chars/tokens');
+    const entries = f.journal.get(RUN)!;
+    h.eq(entries.length, 1, 'one aggregate entry, the same throttle path a token uses');
+    h.eq(entries[0], { t: f.at(), kind: 'aggregate', aggregates: { chars: 0, tokens: 0, thinkingChars: 800 } }, 'and it carries thinkingChars alongside the other two counts');
+  });
+
+  await h.test('journal: thinking and token aggregate writes share the SAME ~5s throttle window', async () => {
+    const f = attemptFixture();
+    let signals = f.signals;
+    f.tick(100);
+    signals = journalStreamEvent(f.journal, RUN, signals, THINKING(50), f.at());
+    f.tick(100);
+    signals = journalStreamEvent(f.journal, RUN, signals, TOKEN('hi'), f.at());
+    const aggregates = f.journal.get(RUN)!.filter((e) => e.kind === 'aggregate');
+    h.eq(aggregates.length, 1, 'the token arrival lands inside the window the thinking write opened — one entry, not two');
+    h.eq(
+      aggregates[0].aggregates,
+      { chars: 0, tokens: 0, thinkingChars: 50 },
+      'the stored entry is whatever the window-OPENING write captured (thinking’s own counts) — the throttle drops the token write entirely, same as it always drops any write inside an open window',
+    );
+    h.eq(
+      signals.aggregates,
+      { chars: 2, tokens: 1, thinkingChars: 50 },
+      'but the IN-MEMORY counters are never throttled — they fold every event regardless of the journal’s write cadence',
+    );
+  });
+
+  // ── the keepalive comment frame never reaches the journal at all (build-liveness B2) ─────────
+  await h.test('withKeepalive: bumps only the any-frame clock, and the journal it never touched stays exactly as it was', async () => {
+    const f = attemptFixture();
+    let signals = f.signals;
+    f.tick(1_000);
+    signals = journalStreamEvent(f.journal, RUN, signals, STAGE('generate'), f.at());
+    const before = f.journal.get(RUN);
+    f.tick(15_000);
+    const afterKeepalive = withKeepalive(signals, f.at());
+    h.eq(afterKeepalive.lastFrameAt, f.at(), 'the any-frame clock moves to the keepalive');
+    h.eq(afterKeepalive.lastTokenAt, signals.lastTokenAt, 'the writing clock is untouched');
+    h.eq(afterKeepalive.lastThinkingAt, signals.lastThinkingAt, 'so is the thinking clock');
+    h.eq(afterKeepalive.aggregates, signals.aggregates, 'and no counter moves');
+    h.eq(f.journal.get(RUN), before, 'the journal is byte-for-byte unchanged — `withKeepalive` takes no journal at all');
   });
 
   // ── the persisted payload round-trips into the failure screen's own shape ─────────────────────

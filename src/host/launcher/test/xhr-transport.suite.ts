@@ -138,6 +138,22 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     h.eq(await collected, [event], 'yields only the real event; the keepalive block produces nothing and no error');
   });
 
+  // build-liveness B2: the XHR path shares `generateApp`'s SSE-block parser (it never parses
+  // framing itself — see `generation-client.ts`'s module doc), so `onKeepalive` fires identically
+  // over this transport too.
+  await h.test('openXhrGenerateStream: onKeepalive fires over the XHR transport too, never as an event', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    const event: GenerationEvent = { type: 'token', text: 'hello' };
+    let keepalives = 0;
+    const collected = collect(generateApp({ ...withFakeXhr(fakeXhr), onKeepalive: () => keepalives++ }, { prompt: 'p' }));
+    fakeXhr.respondHeaders(200);
+    fakeXhr.respondIncremental(sseFrame(event, 1));
+    fakeXhr.respondIncremental(': keepalive\n\n');
+    fakeXhr.respondComplete();
+    h.eq(await collected, [event], 'still yields only the real event');
+    h.eq(keepalives, 1, 'and the caller hears about the keepalive frame');
+  });
+
   await h.test(
     'openXhrGenerateStream: a multi-byte UTF-8 character delivered adjacent to an XHR chunk boundary decodes intact',
     async () => {
