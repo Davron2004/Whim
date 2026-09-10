@@ -9,6 +9,7 @@
  * No route imports this module in this change (#8); it is wired in #11.
  */
 import { Usage } from '@whim/contract';
+import type { ModelDelta } from './generation/model';
 export { Usage };
 
 // ─── Typed error classes ─────────────────────────────────────────────────────
@@ -55,14 +56,19 @@ export interface OpenRouterOptions {
   maxTokens?: number;
   /** Temperature (0–1). */
   temperature?: number;
+  /** Ask OpenRouter to include the model's reasoning stream (`{ reasoning: { enabled: true } }` on
+   *  the wire) rather than hiding it, as it does by default. See `ModelRequest.reasoning`'s doc
+   *  comment (`../generation/model.ts`) for why a caller sets this. */
+  reasoning?: boolean;
   /** Optional abort signal, forwarded to the injected transport's request-init. */
   signal?: AbortSignal;
 }
 
 /** Result of a streaming completion. */
 export interface StreamResult {
-  /** Async iterable of text deltas in arrival order. */
-  deltas: AsyncIterable<string>;
+  /** Async iterable of deltas in arrival order — both visible text and (roster-dependent)
+   *  reasoning, tagged by `ModelDelta.kind` so a consumer can tell them apart. */
+  deltas: AsyncIterable<ModelDelta>;
   /** Resolves with the captured usage once the stream ends. */
   usage: Promise<Usage>;
   /**
@@ -83,10 +89,16 @@ interface ParsedSseFrame {
   id?: string;
   usage?: Usage;
   content?: string;
+  reasoning?: string;
 }
 
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+// OpenRouter hides a model's reasoning stream by default — the roster models (DeepSeek v4) emit
+// nothing under `delta.reasoning` unless a request opts in. We ask for it (`{ enabled: true }`,
+// confirmed live against WHIM_ENGINEER_MODEL) purely so the device can show "thinking" instead of
+// silence while the model works; no `effort` budget is set, so the model keeps its own default
+// reasoning behavior — this only unhides a stream that already happens, it doesn't change it.
 function requestBody(options: OpenRouterOptions): string {
   return JSON.stringify({
     model: options.model,
@@ -94,6 +106,7 @@ function requestBody(options: OpenRouterOptions): string {
     stream: true,
     ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+    ...(options.reasoning ? { reasoning: { enabled: true } } : {}),
     stream_options: { include_usage: true },
   });
 }
@@ -120,13 +133,25 @@ function idFrom(parsed: Record<string, unknown>): string | undefined {
   return typeof parsed.id === 'string' ? parsed.id : undefined;
 }
 
-function contentFrom(parsed: Record<string, unknown>): string | undefined {
+function deltaOf(parsed: Record<string, unknown>): Record<string, unknown> | undefined {
   const choices = parsed.choices;
   if (!Array.isArray(choices) || choices.length === 0) return undefined;
   const delta = (choices[0] as Record<string, unknown>).delta;
-  if (!delta || typeof delta !== 'object') return undefined;
-  const content = (delta as Record<string, unknown>).content;
+  return delta && typeof delta === 'object' ? (delta as Record<string, unknown>) : undefined;
+}
+
+function contentFrom(parsed: Record<string, unknown>): string | undefined {
+  const content = deltaOf(parsed)?.content;
   return typeof content === 'string' && content.length > 0 ? content : undefined;
+}
+
+/** The roster models (DeepSeek v4 via OpenRouter) emit reasoning ahead of their visible content —
+ *  some providers key it `reasoning`, others `reasoning_content`. Both are read here, since which
+ *  one a given provider uses is not itself part of this contract. */
+function reasoningFrom(parsed: Record<string, unknown>): string | undefined {
+  const delta = deltaOf(parsed);
+  const reasoning = delta?.reasoning ?? delta?.reasoning_content;
+  return typeof reasoning === 'string' && reasoning.length > 0 ? reasoning : undefined;
 }
 
 function parseSseLine(line: string): ParsedSseFrame | null {
@@ -136,7 +161,12 @@ function parseSseLine(line: string): ParsedSseFrame | null {
   if (payload === '[DONE]') return null;
   try {
     const parsed = JSON.parse(payload) as Record<string, unknown>;
-    return { id: idFrom(parsed), usage: usageFrom(parsed), content: contentFrom(parsed) };
+    return {
+      id: idFrom(parsed),
+      usage: usageFrom(parsed),
+      content: contentFrom(parsed),
+      reasoning: reasoningFrom(parsed),
+    };
   // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed SSE data line is just not a usable frame — returns null
   } catch {
     return null;
@@ -155,8 +185,9 @@ export class OpenRouterClient {
   }
 
   /**
-   * Start a streaming chat completion. Returns deltas (AsyncIterable<string>),
-   * a Promise<Usage> that resolves when the stream ends, and a Promise<id>
+   * Start a streaming chat completion. Returns deltas (AsyncIterable<ModelDelta> — text and,
+   * roster-dependent, reasoning), a Promise<Usage> that resolves when the stream ends, and a
+   * Promise<id>
    * that resolves with the generation id parsed from the first SSE chunk
    * (or `undefined` if the stream ends before any chunk arrives).
    *
@@ -191,7 +222,7 @@ export class OpenRouterClient {
       resolveId(id);
     }
 
-    async function* makeDeltas(): AsyncIterable<string> {
+    async function* makeDeltas(): AsyncIterable<ModelDelta> {
       let response: Response;
       try {
         response = await fetchFn('https://openrouter.ai/api/v1/chat/completions', {
@@ -233,13 +264,15 @@ export class OpenRouterClient {
       let buffer = '';
 
       // Apply one parsed SSE frame: capture the generation id, remember usage, emit any
-      // content delta. Shared by the per-line loop and the trailing-buffer flush so the two
-      // paths cannot drift — a new field (reasoning deltas, tool calls) is handled once.
-      function* emitFrame(rawLine: string): Generator<string> {
+      // reasoning delta then any content delta (reasoning precedes the content it led to within
+      // one frame). Shared by the per-line loop and the trailing-buffer flush so the two paths
+      // cannot drift — a new field (tool calls) is handled once.
+      function* emitFrame(rawLine: string): Generator<ModelDelta> {
         const frame = parseSseLine(rawLine);
         if (frame) captureId(frame.id);
         if (frame?.usage) capturedUsage = frame.usage;
-        if (frame?.content) yield frame.content;
+        if (frame?.reasoning) yield { kind: 'reasoning', text: frame.reasoning };
+        if (frame?.content) yield { kind: 'text', text: frame.content };
       }
 
       try {

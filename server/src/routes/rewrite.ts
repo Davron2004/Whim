@@ -16,7 +16,7 @@
  */
 import { Hono } from 'hono';
 import { RewriteRequest, RewriteResponse, type ApiError, type PlanRow } from '@whim/contract';
-import type { ModelClient, ModelRoster } from '../generation/model';
+import type { ModelClient, ModelMessage, ModelRoster } from '../generation/model';
 import type { UsageStore } from '../usage-store';
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
@@ -60,6 +60,42 @@ function shapeRewrite(text: string): RewriteResponse {
   return rows.length > 0 ? { rewrittenPrompt, plan: rows } : { rewrittenPrompt };
 }
 
+/**
+ * Runs the rewrite turn, re-asking once when the reply shapes to no plan. The plan step cannot
+ * render without rows, so any reply with no usable `plan` — an empty stream, JSON truncated before
+ * `rewrittenPrompt`/`plan` ever appear, or plain prose with no structured rows — costs one extra
+ * model call BY DESIGN: that is cheaper than showing the device an empty or malformed plan screen.
+ * A second such reply is still returned rather than tried a third time: retrying forever on a
+ * model that keeps answering the same way just delays the response for no better outcome.
+ * Extracted from the route handler so the retry loop doesn't push the handler's own branching over
+ * the cognitive-complexity budget.
+ */
+async function rewriteWithRetry(
+  model: ModelClient,
+  roster: ModelRoster,
+  messages: ModelMessage[],
+  signal: AbortSignal | undefined,
+  usageStore: UsageStore,
+  deviceId: string,
+): Promise<{ ok: true; response: RewriteResponse } | { ok: false }> {
+  let shaped: RewriteResponse | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const stream = model.stream({ model: roster.rewrite, messages }, signal);
+    let raw = '';
+    try {
+      for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
+      const usage = await stream.usage;
+      await usageStore.credit(deviceId, usage);
+    // eslint-disable-next-line no-restricted-syntax -- intentional: stream/parse failure surfaces to the client as a 502, not silence
+    } catch {
+      return { ok: false };
+    }
+    shaped = shapeRewrite(raw);
+    if (shaped.rewrittenPrompt.length > 0 && shaped.plan) break;
+  }
+  return { ok: true, response: shaped as RewriteResponse };
+}
+
 export interface RewriteRouteOptions {
   /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): a prompt
    *  carrying the stub pipeline's `[[fail]]` marker is passed through raw, with no model call —
@@ -98,19 +134,10 @@ export function makeRewriteRoute(
     if (!model || !roster) return c.json(NOT_CONFIGURED, 502);
 
     const messages = buildRewriteMessages({ request: parsed.data });
-    const stream = model.stream({ model: roster.rewrite, messages }, c.req.raw.signal);
+    const outcome = await rewriteWithRetry(model, roster, messages, c.req.raw.signal, usageStore, deviceId);
+    if (!outcome.ok) return c.json(MODEL_FAILURE, 502);
 
-    let raw = '';
-    try {
-      for await (const delta of stream.deltas) raw += delta;
-      const usage = await stream.usage;
-      await usageStore.credit(deviceId, usage);
-    // eslint-disable-next-line no-restricted-syntax -- intentional: stream/parse failure surfaces to the client as a 502, not silence
-    } catch {
-      return c.json(MODEL_FAILURE, 502);
-    }
-
-    return c.json(shapeRewrite(raw) satisfies RewriteResponse, 200);
+    return c.json(outcome.response, 200);
   });
 
   return app;

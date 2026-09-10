@@ -18,10 +18,15 @@ import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@wh
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
 // §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
-// given the same single rewrite turn, must surface the same (non-echoed) response.
+// given the same rewrite turns, must surface the same (non-echoed) response.
+//
+// The route re-asks once when a reply has no `plan` (a prose reply parses with `rewrittenPrompt`
+// set but no structured rows), so a prose-only fixture must script TWO identical turns — the
+// second is the one the route actually keeps.
 const REWRITE_TEST_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-test', engineer: 'vendor/engineer-test' };
 function scriptedRewriteApp() {
   const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+    { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },
     { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },
   ]);
   return createApp({
@@ -319,8 +324,10 @@ async function testStubPipelineEndpoints(): Promise<void> {
 
   // §5.5 — a re-prompt's app context validates and reaches the model turn unchanged: the route
   // adds nothing and drops nothing (spec "A rewrite for an edit carries the app it is changing").
+  // Two identical turns: a prose reply has no `plan`, which the route re-asks for once.
   {
     const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+      { role: 'rewrite', deltas: ['Track habits and show a streak count.'] },
       { role: 'rewrite', deltas: ['Track habits and show a streak count.'] },
     ]);
     const app = createApp({

@@ -214,7 +214,7 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
             () => undefined,
           );
           let text = '';
-          for await (const delta of stream.deltas) text += delta;
+          for await (const delta of stream.deltas) if (delta.kind === 'text') text += delta.text;
           const usage = await settledUsage;
           const summary = shapeSummary(parseJsonBlock(text), fallbackKindFor(input));
           return summary ? { summary, usage } : { usage };

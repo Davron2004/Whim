@@ -10,7 +10,11 @@
 // No `\s*` alongside `[\s\S]*?` — an unbounded whitespace matcher adjacent to an unbounded dot-all
 // matcher over an overlapping character class is a classic catastrophic-backtracking shape; the
 // surrounding whitespace is trimmed below instead.
-const FENCE = /```(?:json)?([\s\S]*?)```/i;
+//
+// The closing ``` is optional: a reply truncated (context limit, a dropped connection) before the
+// fence closes still has its JSON captured here rather than falling through to the plain-text
+// fallback, which would otherwise render the raw, half-finished JSON as prose on the device.
+const FENCE = /```(?:json)?([\s\S]*?)(?:```|$)/i;
 
 /** Parse a model turn's text as JSON, tolerating a ```json fenced block. `undefined` = "not JSON". */
 export function parseJsonBlock(text: string): unknown {

@@ -7,7 +7,7 @@
  * that write code, the `PromptInputs` loaded once at composition-root time. Every builder returns
  * `ModelMessage[]`, the provider-agnostic shape `../model.ts` declares.
  */
-import type { Clarification, ClarifyRequest, GenerateRequest, RewriteRequest, Diagnostic } from '@whim/contract';
+import type { AppContext, Clarification, ClarifyRequest, GenerateRequest, RewriteRequest, Diagnostic } from '@whim/contract';
 import type { ModelMessage } from '../model';
 import type { SummariserInput } from '../summarise';
 import type { PromptInputs } from './inputs';
@@ -133,12 +133,14 @@ export interface RewriteTurnContext {
   request: RewriteRequest;
 }
 
-/** The app a rewrite is CHANGING, stated in the user's own vocabulary (spec "A rewrite for an edit
- *  carries the app it is changing"). `RewriteRequest.app` is display names only — no source, no
- *  burned ids, no records — so this section can say what the app is called and what it already
- *  keeps, and nothing more. Absent for a new app, which then carries no continuity language at all.
- *  The instruction itself lives in `REWRITE_SYSTEM`; this section is the facts it acts on. */
-function rewriteAppSection(app: RewriteRequest['app']): string {
+/** The app a request is CHANGING, stated in the user's own vocabulary (spec "A rewrite for an edit
+ *  carries the app it is changing") — shared by the rewrite AND clarify turns, since both need the
+ *  same "this is an edit, not a new app" facts. `AppContext` is display names (plus an optional
+ *  plain-words `description`) only — no source, no burned ids, no records — so this section can
+ *  say what the app is called, what it already keeps, and what it currently does, and nothing
+ *  more. Absent for a new app, which then carries no continuity language at all. The instruction
+ *  itself lives in each turn's system prompt; this section is the facts it acts on. */
+function appContextSection(app: AppContext | undefined): string {
   if (!app) return '';
   const collections = (app.collections ?? []).filter((c) => c.name.trim().length > 0);
   const collectionLine = (c: { name: string; fields: string[] }): string =>
@@ -147,7 +149,10 @@ function rewriteAppSection(app: RewriteRequest['app']): string {
     collections.length > 0
       ? '\nIt already keeps track of:\n' + collections.map(collectionLine).join('\n')
       : '';
-  return `This request changes an app the user already has, called "${app.name}".${kept}`;
+  const described = app.description && app.description.trim().length > 0
+    ? `\nIt is currently described as: ${app.description.trim()}`
+    : '';
+  return `This request changes an app the user already has, called "${app.name}".${kept}${described}`;
 }
 
 /** The four labels the plan screen renders (design D10). The rewrite model is asked for exactly
@@ -179,7 +184,7 @@ export function buildRewriteMessages(ctx: RewriteTurnContext): ModelMessage[] {
       role: 'user',
       content: nonEmptySections(
         ctx.request.prompt,
-        rewriteAppSection(ctx.request.app),
+        appContextSection(ctx.request.app),
         clarificationsSection(ctx.request.clarifications),
       ),
     },
@@ -200,12 +205,19 @@ const CLARIFY_SYSTEM = [
   'At most THREE questions, each with two to four short answer options. If nothing genuinely needs',
   'clarifying, return an empty "questions" list — that is a good answer, not a failure. Write in',
   "the user's own words: no SDK names, no component names, no engineering internals.",
+  'When the request changes an app the user already has, the app is described with it. Never ask',
+  'what the app is, what kind of app it is, or who it is for: that is settled. Ask only about the',
+  'change itself, and only if the answer would change what gets built. If the change is clear,',
+  'return an empty list.',
 ].join(' ');
 
 export function buildClarifyMessages(ctx: ClarifyTurnContext): ModelMessage[] {
   return [
     { role: 'system', content: CLARIFY_SYSTEM },
-    { role: 'user', content: ctx.request.prompt },
+    {
+      role: 'user',
+      content: nonEmptySections(ctx.request.prompt, appContextSection(ctx.request.app)),
+    },
   ];
 }
 
@@ -302,6 +314,18 @@ const GENERATE_INSTRUCTIONS = [
   'Write ONE TypeScript file that default-exports the result of `defineApp({...})`, following the',
   'vc-sdk reference below exactly — never invent a prop, component, or token it does not document.',
   'Follow the validated plan. Reply with the TypeScript source ONLY — no explanation, no markdown fence.',
+  // Without this, generated apps default to bare, unstyled layouts and lose settings on reopen —
+  // both read as broken to a user even though nothing failed. Naming the concrete components and
+  // the storage discipline up front (rather than leaving "make it look nice" implicit) is what
+  // actually changes what the model writes.
+  'Make the app look finished the moment it opens: sensible defaults instead of empty states, the',
+  'main content inside a Card, the headline number as display-size Text, a ProgressBar for anything',
+  'that progresses, a Badge for the current status, and a SegmentedControl for presets or modes.',
+  'Every user-adjustable setting is persisted with storage.kv under a SHORT LITERAL string key',
+  '(never a computed or aliased key), loaded once on mount and saved on every change, so the app',
+  'reopens exactly as the user left it. When this is an edit of an existing app, keep every existing',
+  'storage.kv key and every existing records collection and field exactly as they are, and keep the',
+  'existing layout and controls recognisable — add to the app, do not redesign it.',
 ].join(' ');
 
 export function buildGenerateMessages(ctx: GenerateTurnContext, inputs: PromptInputs): ModelMessage[] {

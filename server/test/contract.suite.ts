@@ -7,6 +7,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   ApiError,
+  AppContext,
+  ClarifyRequest,
   Diagnostic,
   DeviceIdError,
   GenerateRequest,
@@ -41,6 +43,7 @@ export function runContractTests(): void {
     { label: 'stage run/done', value: { type: 'stage', stage: 'run', status: 'done' } },
     { label: 'stage repair/start', value: { type: 'stage', stage: 'repair', status: 'start' } },
     { label: 'token', value: { type: 'token', text: 'hello' } },
+    { label: 'thinking', value: { type: 'thinking', chars: 42 } },
     {
       label: 'diagnostic',
       value: {
@@ -70,6 +73,14 @@ export function runContractTests(): void {
 
   // §1.4 — closed union rejects unknown type.
   check('unknown event type rejected', !GenerationEvent.safeParse({ type: 'bogus' }).success);
+
+  // `thinking`: chars is a positive integer — the reasoning TEXT never crosses the wire, only a
+  // length, so there is nothing for a "zero-length reasoning delta" to mean.
+  check('thinking accepts a positive integer chars', GenerationEvent.safeParse({ type: 'thinking', chars: 1 }).success);
+  check('thinking rejects chars: 0', !GenerationEvent.safeParse({ type: 'thinking', chars: 0 }).success);
+  check('thinking rejects a non-integer chars', !GenerationEvent.safeParse({ type: 'thinking', chars: 1.5 }).success);
+  check('thinking rejects a negative chars', !GenerationEvent.safeParse({ type: 'thinking', chars: -1 }).success);
+  check('thinking requires chars', !GenerationEvent.safeParse({ type: 'thinking' }).success);
 
   // §1.2 — mandatory non-empty hint; open kind.
   check('Diagnostic rejects empty hint', !Diagnostic.safeParse({ kind: 'X', hint: '' }).success);
@@ -203,6 +214,41 @@ export function runContractTests(): void {
     !('id' in parsedCollection) && parsedCollection.name === 'Completions',
   );
   check('RewriteResponse shape', RewriteResponse.safeParse({ rewrittenPrompt: 'r' }).success);
+
+  // AppContext — the shared display-name-only edit context, and its use in ClarifyRequest.
+  check('AppContext accepts a bare name', AppContext.safeParse({ name: 'Tip Splitter' }).success);
+  check('AppContext requires a name', !AppContext.safeParse({ collections: [] }).success);
+  const described = AppContext.safeParse({
+    name: 'Habit Tracker',
+    collections: [{ name: 'Completions', fields: ['Date'] }],
+    description: 'Tracks daily habit completions with a streak count.',
+  });
+  check('AppContext accepts a description', described.success);
+  check(
+    'AppContext round-trips name, collections, and description',
+    described.success &&
+      described.data.name === 'Habit Tracker' &&
+      described.data.collections?.[0]?.name === 'Completions' &&
+      described.data.description === 'Tracks daily habit completions with a streak count.',
+  );
+  check('AppContext description is optional', AppContext.safeParse({ name: 'Tip Splitter' }).data?.description === undefined);
+
+  check('ClarifyRequest accepts a bare prompt (a new app)', ClarifyRequest.safeParse({ prompt: 'a water tracker' }).success);
+  check(
+    'ClarifyRequest app is optional and, absent, stays absent',
+    ClarifyRequest.safeParse({ prompt: 'p' }).data?.app === undefined,
+  );
+  const clarifyWithApp = ClarifyRequest.safeParse({
+    prompt: 'add a fruit tea section',
+    app: { name: 'Tea Menu', description: 'A menu app listing teas by category.' },
+  });
+  check('ClarifyRequest accepts an app context (an edit)', clarifyWithApp.success);
+  check(
+    'ClarifyRequest app context round-trips',
+    clarifyWithApp.success &&
+      clarifyWithApp.data.app?.name === 'Tea Menu' &&
+      clarifyWithApp.data.app.description === 'A menu app listing teas by category.',
+  );
 
   // ApiError — the shape every non-SSE /v1/* error body validates against.
   check(
