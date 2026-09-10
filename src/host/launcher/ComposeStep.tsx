@@ -92,16 +92,22 @@ export default function ComposeStep({
 
         <Text style={[TYPE_SCALE.caption, styles.helper, { color: p.textMuted }]}>{COPY.composeHelper}</Text>
 
-        <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.composeChipsEyebrow}</Text>
-        {CHIPS.map((chip) => (
-          <TouchableOpacity
-            key={chip}
-            onPress={() => onChangeText(chip)}
-            style={[styles.chip, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
-          >
-            <Text style={[TYPE_SCALE.body, { color: p.text }]}>{chip}</Text>
-          </TouchableOpacity>
-        ))}
+        {!editing && (
+          <>
+            <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>
+              {COPY.composeChipsEyebrow}
+            </Text>
+            {CHIPS.map((chip) => (
+              <TouchableOpacity
+                key={chip}
+                onPress={() => onChangeText(chip)}
+                style={[styles.chip, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+              >
+                <Text style={[TYPE_SCALE.body, { color: p.text }]}>{chip}</Text>
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
       </ScrollView>
 
       {/* Compose has no busy state of its own: tapping Continue moves synchronously to the

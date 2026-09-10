@@ -442,6 +442,12 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     );
   });
 
+  await h.test('edit flow: compose hides the "start from" chips while editing an existing app', () => {
+    // The chips are starters for a blank app; on an edit they suggest overwriting the prompt with
+    // an unrelated app idea, so the whole eyebrow+chips block is gated on `!editing`.
+    h.ok(composeSrc.includes('{!editing && (') && composeSrc.includes('COPY.composeChipsEyebrow'), 'chips block is conditioned on !editing');
+  });
+
   await h.test('edit flow: the primary action does not render at all while a gated step is loading', () => {
     // A disabled button under a skeleton is noise — there is nothing to confirm/approve yet, so
     // the whole control is absent, not merely greyed out. `WorkingLine` is the only liveness
