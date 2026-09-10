@@ -34,7 +34,7 @@ import {
   type Summariser,
   type SummariserInput,
 } from '../src/generation/summarise';
-import type { ModelRoster } from '../src/generation/model';
+import type { ModelDelta, ModelRoster } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   ClarifyResponse,
@@ -310,15 +310,60 @@ async function testRewriteClarificationsAndPlan(): Promise<void> {
     check('a malformed plan row is dropped', !(body.plan ?? []).some((row) => row.label === ''));
   }
 
-  // A model that answers in plain prose still conforms: no rows, the prose is the rewrite.
+  // A model that answers in plain prose still conforms: no rows, the prose is the rewrite. A
+  // prose reply has no `plan`, so the route re-asks once (§rewrite retry) — two identical turns.
   {
     const { app } = appWithModel([
+      { role: 'rewrite', deltas: ['A water tracker that counts glasses.'], usage: TURN_USAGE },
       { role: 'rewrite', deltas: ['A water tracker that counts glasses.'], usage: TURN_USAGE },
     ]);
     const res = await post(app, '/v1/rewrite', { prompt: 'a water tracker' }, DEVICE_HEADER);
     const body = RewriteResponse.parse(await res.json());
     eq('plain prose becomes the rewritten prompt', body.rewrittenPrompt, 'A water tracker that counts glasses.');
     eq('plain prose yields no plan rows', body.plan, undefined);
+  }
+}
+
+// ── §4b Rewrite: retries once on an empty or plan-less reply, never a third time ─────────────
+
+async function testRewriteRetry(): Promise<void> {
+  section('Wire v2 — POST /v1/rewrite retries once on an empty or plan-less reply');
+
+  const goodPlanned = {
+    rewrittenPrompt: 'A pomodoro timer that tracks focus sessions.',
+    plan: [{ label: 'What it is', text: 'A focus timer.' }],
+  };
+
+  // First reply is an empty stream (renders as an empty rewrittenPrompt) — retried once, and the
+  // second (good, plan-carrying) reply wins. Usage is credited for BOTH calls.
+  {
+    const { app, model, usageStore } = appWithModel([
+      { role: 'rewrite', deltas: [], usage: TURN_USAGE },
+      { role: 'rewrite', deltas: [JSON.stringify(goodPlanned)], usage: TURN_USAGE },
+    ]);
+    const res = await post(app, '/v1/rewrite', { prompt: 'a pomodoro timer' }, DEVICE_HEADER);
+    eq('empty-then-good rewrite → 200', res.status, 200);
+    const body = RewriteResponse.parse(await res.json());
+    eq('the good reply wins', body.rewrittenPrompt, goodPlanned.rewrittenPrompt);
+    eq("the good reply's plan comes back", body.plan?.length, 1);
+    eq('exactly two model calls were made', model.requests.length, 2);
+    const usage = await usageStore.read(DEVICE_ID);
+    eq('usage is credited for both calls', usage.totalTokens, TURN_USAGE.totalTokens * 2);
+  }
+
+  // Two bad (plan-less) replies in a row: the route returns the LAST shaped reply rather than
+  // trying a third time — a third call would throw ScriptedModelClientExhaustedError, proving it
+  // never happens.
+  {
+    const { app, model } = appWithModel([
+      { role: 'rewrite', deltas: ['I cannot help with that.'], usage: TURN_USAGE },
+      { role: 'rewrite', deltas: ['I still cannot help with that.'], usage: TURN_USAGE },
+    ]);
+    const res = await post(app, '/v1/rewrite', { prompt: 'a pomodoro timer' }, DEVICE_HEADER);
+    eq('two bad replies → still 200', res.status, 200);
+    const body = RewriteResponse.parse(await res.json());
+    eq('the LAST shaped reply is returned', body.rewrittenPrompt, 'I still cannot help with that.');
+    eq('exactly two model calls were made, no third', model.requests.length, 2);
   }
 }
 
@@ -471,9 +516,9 @@ async function testModelSummariser(): Promise<void> {
   {
     const hanging = {
       stream: () => ({
-        deltas: (async function* () {
+        deltas: (async function* (): AsyncGenerator<ModelDelta> {
           await new Promise<void>(() => {});
-          yield '';
+          yield { kind: 'text', text: '' };
         })(),
         usage: new Promise<never>(() => {}),
         id: Promise.resolve(undefined),
@@ -679,6 +724,7 @@ export async function runWireV2Tests(): Promise<void> {
   await testWholeRouteTableIsGated();
   await testClarifyEndpoint();
   await testRewriteClarificationsAndPlan();
+  await testRewriteRetry();
   testTileColorExtraction();
   testSummaryShaping();
   await testModelSummariser();

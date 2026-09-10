@@ -21,28 +21,33 @@ import { check, eq, caught, section } from './harness';
 import { captureLogs } from './log-capture';
 import { OpenRouterClient, OpenRouterNetworkError } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
-import { openRouterModelClient, type ModelRoster } from '../src/generation/model';
+import { openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
 import { ScriptedModelClient, ScriptedModelClientExhaustedError, ScriptedModelClientRoleMismatchError, noNetworkTransport } from './scripted-model';
 import type { CapturedRequest, ScriptedTurn } from './scripted-model';
 import { loadSdkReference, loadFewShotExamples, loadPromptInputs, PromptInputError } from '../src/generation/prompts/inputs';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   buildRewriteMessages,
+  buildClarifyMessages,
   buildPlanMessages,
   buildGenerateMessages,
   buildRepairMessages,
   type PromptPlan,
 } from '../src/generation/prompts';
 import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
+import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
 import { FIELD_TYPES } from '../../src/host/storage-engine/contract';
 import type { GenerateRequest, Diagnostic, GenerationEvent } from '@whim/contract';
 
 const repoRoot = path.resolve(process.cwd());
 
-async function drain(iter: AsyncIterable<unknown>): Promise<string[]> {
+/** Drains a `ModelDelta` stream into its text, in arrival order — reasoning deltas included, since
+ *  every call site here either doesn't care about the content (draining to unblock `usage`) or
+ *  compares against a text-only fixture (no test in this file scripts a reasoning delta). */
+async function drain(iter: AsyncIterable<ModelDelta>): Promise<string[]> {
   const out: string[] = [];
-  for await (const v of iter) out.push(String(v));
+  for await (const delta of iter) out.push(delta.text);
   return out;
 }
 
@@ -249,6 +254,38 @@ async function testMessageBuilders(): Promise<void> {
   check(
     'rewrite (edit, no collections): names the app but renders no dangling "keeps track of" heading',
     storeNothingRewriteUser.includes('Tip Splitter') && !storeNothingRewriteUser.includes('keeps track of'),
+  );
+
+  // ── clarify: an edit carries the app it is changing, and never asks what the app already is
+  // (spec-parallel to the rewrite edit case above — same AppContext, same "this is settled" facts).
+  const clarifyNewApp = buildClarifyMessages({ request: { prompt: 'a water tracker' } });
+  assertNonEmptyMessages('clarify (new app)', clarifyNewApp);
+  const clarifyNewAppUser = clarifyNewApp.find((m) => m.role === 'user')?.content ?? '';
+  check(
+    'clarify (new app): the user message is the bare prompt, no continuity language',
+    clarifyNewAppUser === 'a water tracker',
+  );
+
+  const clarifyEdit = buildClarifyMessages({
+    request: {
+      prompt: 'add a fruit tea section',
+      app: {
+        name: 'Tea Menu',
+        collections: [{ name: 'Teas', fields: ['Name', 'Category'] }],
+        description: 'A menu app that lists teas by category.',
+      },
+    },
+  });
+  assertNonEmptyMessages('clarify (edit)', clarifyEdit);
+  const clarifyEditUser = clarifyEdit.find((m) => m.role === 'user')?.content ?? '';
+  const clarifyEditSystem = clarifyEdit.find((m) => m.role === 'system')?.content ?? '';
+  check('clarify (edit): the prompt still reaches the user message', clarifyEditUser.includes('add a fruit tea section'));
+  check('clarify (edit): the app name reaches the prompt', clarifyEditUser.includes('Tea Menu'));
+  check('clarify (edit): what it already keeps reaches the prompt', clarifyEditUser.includes('Teas') && clarifyEditUser.includes('Name, Category'));
+  check('clarify (edit): the description reaches the prompt', clarifyEditUser.includes('A menu app that lists teas by category.'));
+  check(
+    'clarify (edit): the system message tells the model not to ask what the app is',
+    /Never ask.*what the app is/i.test(clarifyEditSystem),
   );
 
   const planMessages = buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' });
@@ -678,6 +715,25 @@ async function testNoModelIdLiteral(): Promise<void> {
   }
 }
 
+function testJsonBlockParsing(): void {
+  section('json-block.ts — parseJsonBlock: tolerant of an unclosed fence');
+
+  const payload = { rewrittenPrompt: 'a tip splitter', plan: [] };
+
+  const closed = parseJsonBlock('```json\n' + JSON.stringify(payload) + '\n```');
+  eq('parseJsonBlock: a properly closed fence parses', closed, payload);
+
+  // A reply truncated (context limit, dropped connection) before the closing ``` ever arrives.
+  const unclosed = parseJsonBlock('```json\n' + JSON.stringify(payload));
+  eq('parseJsonBlock: an UNCLOSED fence still parses', unclosed, payload);
+
+  const bare = parseJsonBlock(JSON.stringify(payload));
+  eq('parseJsonBlock: bare JSON (no fence at all) parses', bare, payload);
+
+  check('parseJsonBlock: malformed JSON inside an unclosed fence yields undefined, not a throw', parseJsonBlock('```json\n{ not json') === undefined);
+  check('parseJsonBlock: empty input yields undefined', parseJsonBlock('   ') === undefined);
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runPromptsTests(): Promise<void> {
@@ -691,4 +747,5 @@ export async function runPromptsTests(): Promise<void> {
   await testSchemaArtifactDocumented();
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();
+  testJsonBlockParsing();
 }

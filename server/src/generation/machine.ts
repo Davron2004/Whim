@@ -480,7 +480,10 @@ export class GenerationMachine {
   }
 
   /** Calls the engineer model, accumulating usage/trace, and — when `emitTokens` — streaming
-   *  `token` events (spec: only `generate` and a `repair` stream tokens; `plan` does not). */
+   *  `token` events (spec: only `generate` and a `repair` stream tokens; `plan` does not).
+   *  Reasoning deltas surface as `thinking` events (length only, never the reasoning text) in
+   *  EVERY turn regardless of `emitTokens`: the device needs to know the model is working during
+   *  the plan turn just as much as during generate/repair — it is the silent one otherwise. */
   private async *runModelTurn(
     messages: ModelMessage[],
     signal: AbortSignal | undefined,
@@ -488,7 +491,10 @@ export class GenerationMachine {
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
-    const stream = this.deps.model.stream({ model: this.deps.roster.engineer, messages }, signal);
+    // `reasoning: true` on every turn (plan/generate/repair all route through here) — see
+    // `ModelRequest.reasoning`'s doc comment for why: without it the device sees only silence
+    // while the model thinks.
+    const stream = this.deps.model.stream({ model: this.deps.roster.engineer, messages, reasoning: true }, signal);
     const usageResult = settle(stream.usage);
     const idResult = settle(stream.id).then((result) => {
       // Start observing the id immediately, rather than after the delta stream completes. The id
@@ -500,8 +506,12 @@ export class GenerationMachine {
     let text = '';
     for await (const delta of stream.deltas) {
       if (signal?.aborted) return { text, aborted: true };
-      text += delta;
-      if (emitTokens) yield { type: 'token', text: delta };
+      if (delta.kind === 'reasoning') {
+        yield { type: 'thinking', chars: delta.text.length };
+        continue;
+      }
+      text += delta.text;
+      if (emitTokens) yield { type: 'token', text: delta.text };
     }
     if (signal?.aborted) return { text, aborted: true };
     const settledUsage = await usageResult;

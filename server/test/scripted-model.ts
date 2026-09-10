@@ -6,7 +6,7 @@
  * any real `OpenRouterClient` a test happens to construct, so a stray real call fails loudly
  * instead of hanging or hitting the network.
  */
-import type { ModelClient, ModelRequest, ModelRole, ModelRoster, ModelStream } from '../src/generation/model';
+import type { ModelClient, ModelDelta, ModelRequest, ModelRole, ModelRoster, ModelStream } from '../src/generation/model';
 import type { FetchFn } from '../src/openrouter';
 import type { Usage } from '@whim/contract';
 
@@ -15,10 +15,16 @@ const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0
 /** One recorded turn: which role it must be requested for, the deltas to replay, and (optionally)
  *  a captured id/usage or a terminal error to raise after the deltas (§"A model failure is an
  *  honest failure" — lets a test simulate the wrapper's typed errors, e.g. `OpenRouterAuthError`,
- *  without ever touching the network). */
+ *  without ever touching the network).
+ *
+ *  `deltas` keeps the ergonomics of a plain string list even though a real turn's deltas are
+ *  `ModelDelta`s: a bare `string` element replays as a text delta (`{ kind: 'text', text }`), and
+ *  `{ reasoning: string }` replays as a reasoning delta (`{ kind: 'reasoning', text: reasoning }`)
+ *  — a test scripts a reasoning-carrying turn as e.g. `[{ reasoning: 'thinking...' }, 'the reply']`
+ *  rather than constructing `ModelDelta` objects by hand. */
 export interface ScriptedTurn {
   role: ModelRole;
-  deltas: string[];
+  deltas: Array<string | { reasoning: string }>;
   usage?: Usage;
   id?: string;
   /** Thrown from the deltas iterator after replaying `deltas`, and used to reject `usage` — mirrors
@@ -68,8 +74,10 @@ function scriptedStream(turn: ScriptedTurn): ModelStream {
   });
   const id = Promise.resolve(turn.id);
 
-  async function* makeDeltas(): AsyncIterable<string> {
-    for (const delta of turn.deltas) yield delta;
+  async function* makeDeltas(): AsyncIterable<ModelDelta> {
+    for (const delta of turn.deltas) {
+      yield typeof delta === 'string' ? { kind: 'text', text: delta } : { kind: 'reasoning', text: delta.reasoning };
+    }
     if (turn.error !== undefined) {
       rejectUsage(turn.error);
       throw turn.error;

@@ -30,7 +30,7 @@ import {
   type RunStage,
   type RunTrace,
 } from '../src/generation/machine';
-import type { ModelClient, ModelRoster, ModelStream } from '../src/generation/model';
+import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import type { Diagnostic, GenerateRequest, GenerationEvent } from '@whim/contract';
 
@@ -282,6 +282,56 @@ async function testHappyPath(): Promise<void> {
     eq('happy path: usage totals sum every model call', secondLast.usage, { promptTokens: 2, completionTokens: 2, totalTokens: 4 });
   }
   if (last.type === 'result') eq('happy path: delivered record matches the run stage record', last.app, WIRE_RECORD);
+}
+
+async function testThinkingEvents(): Promise<void> {
+  section('machine — thinking events: reasoning deltas surface in every turn, regardless of emitTokens');
+
+  const planReasoning = 'weighing which screens this needs';
+  const generateReasoning = 'working out how to write the code';
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'engineer', deltas: [{ reasoning: planReasoning }, VALID_PLAN_JSON], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+    { role: 'engineer', deltas: [{ reasoning: generateReasoning }, 'export default {}; // v1'], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+  ]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+  });
+  const machine = new GenerationMachine(deps);
+  const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('thinking events', events);
+
+  eq('thinking events: exactly one per turn', events.filter((e) => e.type === 'thinking').length, 2);
+  eq(
+    'thinking events: chars matches each reasoning delta length',
+    events.filter((e) => e.type === 'thinking').map((e) => (e.type === 'thinking' ? e.chars : -1)),
+    [planReasoning.length, generateReasoning.length],
+  );
+
+  // The plan turn's reasoning surfaces even though `emitTokens` is false for it — no token event
+  // rides along with it, and it lands before `plan:done`.
+  const planDoneIndex = events.findIndex((e) => e.type === 'stage' && e.stage === 'plan' && e.status === 'done');
+  const firstThinkingIndex = events.findIndex((e) => e.type === 'thinking');
+  check('thinking: the plan turn\'s reasoning precedes plan:done', firstThinkingIndex >= 0 && firstThinkingIndex < planDoneIndex);
+  eq('thinking: no token event was emitted for the plan turn', events.filter((e) => e.type === 'token').length, 1);
+
+  // The generate turn's reasoning precedes its token stream (thinking, then token — never the
+  // reverse, and never interleaved out of order).
+  const generateStartIndex = events.findIndex((e) => e.type === 'stage' && e.stage === 'generate' && e.status === 'start');
+  const secondThinkingIndex = events.findIndex((e, i) => e.type === 'thinking' && i > firstThinkingIndex);
+  const firstTokenIndex = events.findIndex((e) => e.type === 'token');
+  check(
+    "thinking: the generate turn's reasoning lands after generate:start and before its token event",
+    secondThinkingIndex > generateStartIndex && secondThinkingIndex < firstTokenIndex,
+  );
+  eq('thinking: the generate token carries only the text-kind delta', events.filter((e) => e.type === 'token').map((e) => (e.type === 'token' ? e.text : '')), [
+    'export default {}; // v1',
+  ]);
+
+  // Usage/terminal ordering is untouched by the interleaved thinking events.
+  check('thinking: usage still immediately precedes the terminal', events.at(-2)?.type === 'usage' && events.at(-1)?.type === 'result');
 }
 
 async function testRepairThenSuccess(): Promise<void> {
@@ -639,18 +689,18 @@ async function testAbortDuringGenerateTokens(): Promise<void> {
       signals.push(signal);
       if (calls === 1) {
         return {
-          deltas: (async function* () {
-            yield VALID_PLAN_JSON;
+          deltas: (async function* (): AsyncGenerator<ModelDelta> {
+            yield { kind: 'text', text: VALID_PLAN_JSON };
           })(),
           usage: Promise.resolve(ZERO_USAGE),
           id: Promise.resolve('gen-plan-before-abort'),
         };
       }
       return {
-        deltas: (async function* () {
-          yield 'partial ';
+        deltas: (async function* (): AsyncGenerator<ModelDelta> {
+          yield { kind: 'text', text: 'partial ' };
           controller.abort();
-          yield 'never observed';
+          yield { kind: 'text', text: 'never observed' };
         })(),
         usage: Promise.resolve(ZERO_USAGE),
         id: Promise.resolve('gen-generate-aborted'),
@@ -905,8 +955,8 @@ async function testUsageRejectionAfterDeltasLogsAtThrowSite(): Promise<void> {
   const model: ModelClient = {
     stream(): ModelStream {
       return {
-        deltas: (async function* () {
-          yield VALID_PLAN_JSON;
+        deltas: (async function* (): AsyncGenerator<ModelDelta> {
+          yield { kind: 'text', text: VALID_PLAN_JSON };
         })(),
         usage: Promise.reject(new Error('usage promise rejected after deltas')),
         id: Promise.resolve('gen-usage-rejected'),
@@ -1003,6 +1053,7 @@ export async function runMachineTests(): Promise<void> {
   testPlanParsing();
   testPlanValidation();
   await testHappyPath();
+  await testThinkingEvents();
   await testRepairThenSuccess();
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();

@@ -26,12 +26,28 @@ export interface ModelRequest {
   messages: ModelMessage[];
   maxTokens?: number;
   temperature?: number;
+  /** Ask the provider to surface its reasoning stream (`ModelDelta`'s `'reasoning'` kind) rather
+   *  than emitting only visible text. OpenRouter hides a roster model's reasoning by default; the
+   *  generation machine sets this `true` for every engineer turn (plan/generate/repair) so the
+   *  device can show "thinking" instead of going quiet while the model works. The rewrite and
+   *  clarify routes leave it unset — their replies are unary JSON, not a stream a device watches,
+   *  so there is nothing to surface reasoning INTO. */
+  reasoning?: boolean;
 }
+
+/** One streamed unit from a model turn: either visible completion text (`'text'`) or reasoning the
+ *  model emits before/between writing (`'reasoning'`, roster models on OpenRouter — see
+ *  `../openrouter.ts`'s `emitFrame`). Consumers that only care about the model's actual output
+ *  (route handlers building JSON, the summariser) accumulate `kind === 'text'` only; a caller that
+ *  wants to surface reasoning as it happens (the generation machine's `thinking` event) reads the
+ *  `'reasoning'` deltas too, but the reasoning TEXT itself is discarded there by design — only its
+ *  length crosses the wire (contract `GenerationEvent`'s `thinking` variant). */
+export type ModelDelta = { kind: 'text'; text: string } | { kind: 'reasoning'; text: string };
 
 /** Structurally identical to `OpenRouterClient.stream`'s `StreamResult` (design D3) — the
  *  adapter below is a thin pass-through, not a re-shaping. */
 export interface ModelStream {
-  deltas: AsyncIterable<string>;
+  deltas: AsyncIterable<ModelDelta>;
   usage: Promise<Usage>;
   id: Promise<string | undefined>;
 }
@@ -94,6 +110,7 @@ export function openRouterModelClient(client: OpenRouterClient): ModelClient {
         messages: req.messages,
         maxTokens: req.maxTokens,
         temperature: req.temperature,
+        reasoning: req.reasoning,
         signal,
       });
     },

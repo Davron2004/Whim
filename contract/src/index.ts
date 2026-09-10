@@ -95,9 +95,28 @@ export const ClarifyQuestion = z.object({
 });
 export type ClarifyQuestion = z.infer<typeof ClarifyQuestion>;
 
+/** The display-name-only context of an app a request CHANGES: its current name, the collections
+ *  (and fields) it already keeps, and a plain-words `description` of what it currently is (the
+ *  device sends the prompt text that produced the current version). Shared verbatim by
+ *  `RewriteRequest.app` and `ClarifyRequest.app` — one shape for "this describes an edit, not a
+ *  new app" wherever that fact needs to cross the wire. Carries no source, bundle, burned ids, or
+ *  record contents; see `RewriteRequest.app`'s doc comment for why. */
+export const AppContext = z.object({
+  name: z.string(),
+  collections: z
+    .array(z.object({ name: z.string(), fields: z.array(z.string()) }))
+    .optional(),
+  description: z.string().optional(),
+});
+export type AppContext = z.infer<typeof AppContext>;
+
 /** `POST /v1/clarify` request. Unary — clarify happens BEFORE any generation request exists, so it
- *  is deliberately NOT a `GenerationEvent` stage and opens no stream (design D1). */
-export const ClarifyRequest = z.object({ prompt: z.string() });
+ *  is deliberately NOT a `GenerationEvent` stage and opens no stream (design D1).
+ *
+ *  `app` is OPTIONAL, mirroring `RewriteRequest.app`: its presence means "this clarify exchange is
+ *  about a change to an app the user already has", so the clarifier can ask about the CHANGE
+ *  instead of re-deriving what the app already is. Absent means a new app. */
+export const ClarifyRequest = z.object({ prompt: z.string(), app: AppContext.optional() });
 export type ClarifyRequest = z.infer<typeof ClarifyRequest>;
 
 /** `POST /v1/clarify` response: an ORDERED list of AT MOST THREE questions. An empty list is valid
@@ -144,23 +163,16 @@ export type GenerateRequest = z.infer<typeof GenerateRequest>;
  *  both mean "the user answered nothing".
  *
  *  `app` is the OPTIONAL context of the app this rewrite CHANGES: its presence means "this
- *  request describes a change to an app that already exists", its absence means a new app. It
- *  carries DISPLAY NAMES ONLY — the app's current name, and the names of the collections and
- *  fields it already keeps — because the rewrite turn writes a product description, not code: it
- *  never needs (and so never receives) source, bundle text, burned collection/field ids, applied
- *  schemas, record contents, or any device-side identity. Anything else a client sends inside
- *  `app` is stripped here rather than forwarded. */
+ *  request describes a change to an app that already exists", its absence means a new app. It is
+ *  an `AppContext` — DISPLAY NAMES ONLY (plus an optional plain-words `description`) — because the
+ *  rewrite turn writes a product description, not code: it never needs (and so never receives)
+ *  source, bundle text, burned collection/field ids, applied schemas, record contents, or any
+ *  device-side identity. Anything else a client sends inside `app` is stripped here rather than
+ *  forwarded. */
 export const RewriteRequest = z.object({
   prompt: z.string(),
   clarifications: z.array(Clarification).optional(),
-  app: z
-    .object({
-      name: z.string(),
-      collections: z
-        .array(z.object({ name: z.string(), fields: z.array(z.string()) }))
-        .optional(),
-    })
-    .optional(),
+  app: AppContext.optional(),
 });
 export type RewriteRequest = z.infer<typeof RewriteRequest>;
 
@@ -211,7 +223,14 @@ export type RunSummary = z.infer<typeof RunSummary>;
 
 /** The SSE payload — a discriminated union on `type`. Unknown `type` is rejected (clients can trust
  *  the union is closed at a given contract version). `usage` is emitted before the terminal event on
- *  BOTH success and failure. `result`/`failure` are the two terminal events. */
+ *  BOTH success and failure. `result`/`failure` are the two terminal events.
+ *
+ *  `thinking`: the model is reasoning before or between writing; carries only a length. Some
+ *  roster models emit a distinct reasoning stream ahead of (or interleaved with) their visible
+ *  content, and without a signal for it the device sees total silence for minutes and then
+ *  thousands of characters at once. `chars` is the length of ONE reasoning delta — the reasoning
+ *  TEXT itself never crosses the wire: it is not user-facing, and the run journal must never carry
+ *  raw model text it did not ask to keep. */
 export const GenerationEvent = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('stage'),
@@ -220,6 +239,7 @@ export const GenerationEvent = z.discriminatedUnion('type', [
     attempt: z.number().optional(),
   }),
   z.object({ type: z.literal('token'), text: z.string() }),
+  z.object({ type: z.literal('thinking'), chars: z.number().int().positive() }),
   z.object({ type: z.literal('diagnostic'), diagnostic: Diagnostic }),
   z.object({ type: z.literal('usage'), usage: Usage }),
   // `summary` is OPTIONAL so the stub pipeline, a server whose summariser failed, and an older

@@ -110,7 +110,7 @@ export function makeClarifyRoute(
 
     let raw = '';
     try {
-      for await (const delta of stream.deltas) raw += delta;
+      for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
       const usage = await stream.usage;
       await usageStore.credit(deviceId, usage);
     // eslint-disable-next-line no-restricted-syntax -- intentional: stream/parse failure surfaces to the client as a 502, not silence

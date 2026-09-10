@@ -137,7 +137,8 @@ export async function runOpenRouterTests(): Promise<void> {
 
     const collected: string[] = [];
     for await (const delta of deltas) {
-      collected.push(delta);
+      check('deltas: content-only frames yield text-kind deltas', delta.kind === 'text');
+      collected.push(delta.text);
     }
 
     eq('deltas: first delta', collected[0], 'Hello');
@@ -161,7 +162,7 @@ export async function runOpenRouterTests(): Promise<void> {
 
     const collected: string[] = [];
     for await (const delta of deltas) {
-      collected.push(delta);
+      collected.push(delta.text);
     }
 
     check('flush: trailing no-newline final delta is not dropped', collected.includes('X'));
@@ -219,6 +220,40 @@ export async function runOpenRouterTests(): Promise<void> {
     if (capturedCall) {
       const body = JSON.parse(capturedCall.init?.body as string) as Record<string, unknown>;
       eq('model-id passthrough: model appears verbatim', body.model, MODEL_ID);
+    }
+  }
+
+  // §7.3b — `reasoning: true` asks OpenRouter to surface its reasoning stream; omitted, the
+  // request carries no `reasoning` field at all (the provider's own default, unopened).
+  {
+    let capturedCall: CapturedCall | undefined;
+    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }));
+    const { deltas } = client.stream({
+      model: MODEL_ID,
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoning: true,
+    });
+    await drain(deltas);
+
+    check('reasoning option: request captured', capturedCall !== undefined);
+    if (capturedCall) {
+      const body = JSON.parse(capturedCall.init?.body as string) as Record<string, unknown>;
+      eq('reasoning option set: request body asks to enable it, no effort budget', body.reasoning, { enabled: true });
+    }
+  }
+  {
+    let capturedCall: CapturedCall | undefined;
+    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }));
+    const { deltas } = client.stream({
+      model: MODEL_ID,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    await drain(deltas);
+
+    check('reasoning option unset: request captured', capturedCall !== undefined);
+    if (capturedCall) {
+      const body = JSON.parse(capturedCall.init?.body as string) as Record<string, unknown>;
+      check('reasoning option unset: no reasoning field on the wire', !('reasoning' in body));
     }
   }
 
@@ -320,7 +355,7 @@ export async function runOpenRouterTests(): Promise<void> {
 
     const collected: string[] = [];
     for await (const delta of deltas) {
-      collected.push(delta);
+      collected.push(delta.text);
       controller.abort();
     }
 
@@ -334,4 +369,69 @@ export async function runOpenRouterTests(): Promise<void> {
 
   // §7.5 — no key required by suite: OPENROUTER_API_KEY is not read by these tests
   check('no API key required by suite', true); // structural — the tests above never read process.env.OPENROUTER_API_KEY
+
+  // §7.7 — reasoning deltas: the roster models (DeepSeek v4 via OpenRouter) emit reasoning ahead
+  // of their visible content, keyed either `reasoning` or `reasoning_content` depending on the
+  // provider. Both are surfaced as `{ kind: 'reasoning' }` deltas, distinct from `{ kind: 'text' }`.
+  {
+    const REASONING_FRAMES = [
+      'data: {"id":"chatcmpl-r1","choices":[{"index":0,"delta":{"role":"assistant","reasoning":"Let me think about this."}}]}\n\n',
+      'data: {"id":"chatcmpl-r1","choices":[{"index":0,"delta":{"content":"Hello."}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const client = new OpenRouterClient(makeSseFetch(REASONING_FRAMES));
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    const collected: Array<{ kind: string; text: string }> = [];
+    for await (const delta of deltas) collected.push(delta);
+
+    eq('reasoning (delta.reasoning): exactly 2 deltas', collected.length, 2);
+    eq('reasoning (delta.reasoning): first delta is reasoning-kind', collected[0]?.kind, 'reasoning');
+    eq('reasoning (delta.reasoning): reasoning text is captured', collected[0]?.text, 'Let me think about this.');
+    eq('reasoning (delta.reasoning): second delta is text-kind', collected[1]?.kind, 'text');
+    eq('reasoning (delta.reasoning): content text is captured', collected[1]?.text, 'Hello.');
+  }
+
+  // §7.7b — the alternate provider field name, `reasoning_content`.
+  {
+    const REASONING_CONTENT_FRAMES = [
+      'data: {"id":"chatcmpl-r2","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Considering the options."}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const client = new OpenRouterClient(makeSseFetch(REASONING_CONTENT_FRAMES));
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    const collected: Array<{ kind: string; text: string }> = [];
+    for await (const delta of deltas) collected.push(delta);
+
+    eq('reasoning (delta.reasoning_content): exactly 1 delta', collected.length, 1);
+    eq('reasoning (delta.reasoning_content): delta is reasoning-kind', collected[0]?.kind, 'reasoning');
+    eq('reasoning (delta.reasoning_content): reasoning text is captured', collected[0]?.text, 'Considering the options.');
+  }
+
+  // §7.7c — a single frame carrying BOTH reasoning and content yields reasoning first, then text.
+  {
+    const MIXED_FRAME = [
+      'data: {"id":"chatcmpl-r3","choices":[{"index":0,"delta":{"reasoning":"Weighing it up.","content":"Sure."}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const client = new OpenRouterClient(makeSseFetch(MIXED_FRAME));
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    const collected: Array<{ kind: string; text: string }> = [];
+    for await (const delta of deltas) collected.push(delta);
+
+    eq('reasoning+content in one frame: reasoning then text, in that order', collected.map((d) => d.kind), ['reasoning', 'text']);
+    eq('reasoning+content in one frame: reasoning text', collected[0]?.text, 'Weighing it up.');
+    eq('reasoning+content in one frame: content text', collected[1]?.text, 'Sure.');
+  }
+
+  // §7.7d — content-only frames (the original SUCCESS_FRAMES) are unchanged: every delta is
+  // text-kind, and nothing regresses the pre-existing §7.1 assertions above.
+  {
+    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES));
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    const collected: Array<{ kind: string; text: string }> = [];
+    for await (const delta of deltas) collected.push(delta);
+
+    check('content-only frames: every delta is text-kind', collected.every((d) => d.kind === 'text'));
+    eq('content-only frames: unchanged delta count', collected.length, 3);
+  }
 }
