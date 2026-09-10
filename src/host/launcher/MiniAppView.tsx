@@ -7,13 +7,15 @@
 // Android system back (D4) both exit to the launcher; the realm can reach neither. LauncherRoot
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
 import { shellPalette } from './theme';
@@ -53,15 +55,29 @@ export default function MiniAppView({
   // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
   const [webKey, setWebKey] = useState(0);
 
-  // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1).
-  // onLoadEnd fires once per <WebView> instance: once on the component's normal first mount
-  // (keyed by launcher id), and again each time Retry bumps webKey to remount after a post-
-  // delivery error -- theme is re-captured at each such delivery, matching the "theme applies at
-  // delivery" model (design sdk-design-system Non-Goals): a running realm never re-themes live.
+  // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1) --
+  // exactly ONCE per <WebView> instance. Android's WebView does NOT promise one onPageFinished
+  // (RN's onLoadEnd) per page load: it fires more than once on some devices/WebView versions, and
+  // a second delivery would bind a new host generation and reinject into the live page, tearing
+  // down the realm the user is already looking at. `deliveredKey` records the mount delivery
+  // happened for, so the two legitimate deliveries still happen -- the component's first mount
+  // (keyed by launcher id), and every Retry remount (a bumped webKey, i.e. a RECREATED realm,
+  // spike2 §5) -- while a repeat for the same key is dropped. Theme is re-captured at each real
+  // delivery, matching the "theme applies at delivery" model (design sdk-design-system Non-Goals):
+  // a running realm never re-themes live.
+  const deliveredKey = useRef<number | null>(null);
   const handleLoadEnd = useCallback(() => {
+    if (loadEndAction(deliveredKey.current, webKey) === 'duplicate') {
+      log.debug(CHANNELS.app, 'duplicate onLoadEnd for a delivered realm, not delivering again', {
+        appId: record.appId,
+        webKey,
+      });
+      return;
+    }
+    deliveredKey.current = webKey;
     host.deliverBySource(record, bundleSource, engineAppId, theme);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [webKey]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails
@@ -152,7 +168,8 @@ const styles = StyleSheet.create({
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
   errorTitle: { textAlign: 'center', marginBottom: SPACING.sm },
   errorBody: { textAlign: 'center', marginBottom: SPACING.lg },
-  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field },
+  // marginBottom, not a bare stack: two flush pills read as one overlapping shape on device.
+  errorButton: { paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.field, marginBottom: SPACING.sm },
   boot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: SPACING.xl },
   bootTitle: { textAlign: 'center', marginBottom: SPACING.md },
   bootMark: { width: SPACING.xl, height: SPACING.xs, borderRadius: RADIUS.chip, marginBottom: SPACING.md },
