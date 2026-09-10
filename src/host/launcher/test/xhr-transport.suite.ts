@@ -9,6 +9,10 @@
  * Every "this resolves before the stream completes" assertion below races the awaited promise
  * against a short timeout (`withTimeout`) rather than a bare `await`, so a regression to
  * buffer-until-complete fails the check cleanly instead of hanging the whole suite.
+ *
+ * It also owns the streaming loop's COST, not just its output: the last two checks pin that a
+ * reasoning-length stream is decoded, split and parsed once end to end rather than once per
+ * delivery, and that a block separator landing across two deliveries still closes its frame.
  */
 
 import { Harness } from './harness';
@@ -79,6 +83,98 @@ function sleep(ms: number): Promise<void> {
 
 function withFakeXhrTimeout(fakeXhr: FakeXMLHttpRequest): ClientOptions {
   return { ...withFakeXhr(fakeXhr), connectTimeoutMs: WINDOW_MS };
+}
+
+// --- fixtures for the linear-consumption check below ---
+
+/** A reasoning run's frame counts, as observed on the device: the server forwards EVERY reasoning
+ *  delta as its own `thinking` frame, so they outnumber `token` frames roughly ten to one. */
+const THINKING_FRAMES = 20_000;
+const TOKEN_FRAMES = 2_000;
+/** How many XHR progress deliveries carry them. Fewer than one per frame -- deliberately the
+ *  GENEROUS end of what the device sees, since the cost being pinned grows with this number. */
+const PROGRESS_DELIVERIES = 500;
+/** How many times over the body may be decoded before the loop is no longer "decode once". Slack
+ *  for the trailing partial block each delivery re-buffers, not for a second full pass. */
+const DECODE_BUDGET = 2;
+/** Wall-clock backstop for the same input (measured ~0.1s; see the check's comment). */
+const LINEAR_CONSUMPTION_BUDGET_MS = 2_000;
+
+/** `thinkingCount` `thinking` frames interleaved with `tokenCount` `token` frames, a keepalive
+ *  comment every 500 frames, and a terminal `result` -- one canned SSE body, plus what a correct
+ *  consumer must observe in it. */
+function thinkingHeavyBody(
+  thinkingCount: number,
+  tokenCount: number,
+): { text: string; eventCount: number; keepaliveCount: number } {
+  const parts: string[] = [];
+  let id = 0;
+  let events = 0;
+  let keepalives = 0;
+  const everyNth = Math.max(1, Math.round(thinkingCount / tokenCount));
+  parts.push(sseFrame({ type: 'stage', stage: 'generate', status: 'start' }, id++));
+  events++;
+  for (let i = 0; i < thinkingCount; i++) {
+    parts.push(sseFrame({ type: 'thinking', chars: 3 }, id++));
+    events++;
+    if (i % everyNth === everyNth - 1) {
+      parts.push(sseFrame({ type: 'token', text: 'abcdefgh' }, id++));
+      events++;
+    }
+    if (i % 500 === 499) {
+      parts.push(': keepalive\n\n');
+      keepalives++;
+    }
+  }
+  parts.push(sseFrame(RESULT_EVENT, id++));
+  events++;
+  return { text: parts.join(''), eventCount: events, keepaliveCount: keepalives };
+}
+
+/** The terminal frame the canned body ends with. `bundle` must carry the runnable-bundle marker
+ *  the client's own `GenerationEvent` guard checks for. */
+const RESULT_EVENT: GenerationEvent = {
+  type: 'result',
+  app: {
+    name: 'Timer',
+    bundle: 'var App = 1; // __WHIM_APP_MODULE__',
+    source: 'export default function App() {}',
+    manifest: {},
+    schema: {},
+  },
+};
+
+/** `text` cut into `count` roughly equal pieces -- one XHR progress delivery each. */
+function splitIntoChunks(text: string, count: number): string[] {
+  const size = Math.ceil(text.length / count);
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+  return out;
+}
+
+/** Bytes handed to `TextDecoder.decode` since the counting decoder was last installed. */
+let decodedByteTotal = 0;
+
+/** Install a `TextDecoder` that counts what it is asked to decode over the global one
+ *  `generation-client.ts` constructs, and return the restore function. Measuring the loop's
+ *  APPETITE rather than its wall time is what makes the check below independent of how fast the
+ *  machine running the suite happens to be. */
+function installCountingDecoder(): () => void {
+  const NativeTextDecoder = TextDecoder;
+  decodedByteTotal = 0;
+  class CountingTextDecoder extends NativeTextDecoder {
+    decode(input?: Uint8Array | ArrayBuffer): string {
+      if (input !== undefined) {
+        decodedByteTotal += input instanceof ArrayBuffer ? input.byteLength : input.length;
+      }
+      return super.decode(input);
+    }
+  }
+  const globals = globalThis as unknown as { TextDecoder: unknown };
+  globals.TextDecoder = CountingTextDecoder;
+  return () => {
+    globals.TextDecoder = NativeTextDecoder;
+  };
 }
 
 /** Await `promise`, resolving to its rejection value, or to `'hung'` if it never settles within
@@ -464,6 +560,78 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
   );
 
   // --- task 3.5 / spec "Incremental delivery has a negative control" ---
+
+  // --- the streaming loop's cost (bug: the build screen froze for minutes mid-generation) ---
+
+  await h.test(
+    'generateApp: a thinking-heavy stream is consumed in linear time -- every byte decoded, split and parsed ONCE',
+    async () => {
+      // The shape of a real reasoning run since the server began forwarding every reasoning delta
+      // as its own `thinking` frame: tens of thousands of tiny frames, ~1.4MB of body, arriving
+      // over hundreds of XHR progress deliveries. Re-decoding the accumulated body on every
+      // delivery costs O(deliveries x body) and froze the device's JS thread for minutes -- the
+      // liveness clock stopped, the step checkmarks stopped advancing, taps did nothing.
+      const body = thinkingHeavyBody(THINKING_FRAMES, TOKEN_FRAMES);
+      const deliveries = splitIntoChunks(body.text, PROGRESS_DELIVERIES);
+      const fakeXhr = new FakeXMLHttpRequest();
+      let keepalives = 0;
+
+      const restoreDecoder = installCountingDecoder();
+      const startedAt = Date.now();
+      let events: GenerationEvent[];
+      try {
+        const collected = collect(generateApp({ ...withFakeXhr(fakeXhr), onKeepalive: () => keepalives++ }, { prompt: 'p' }));
+        fakeXhr.respondHeaders(200);
+        for (const delivery of deliveries) fakeXhr.respondIncremental(delivery);
+        fakeXhr.respondComplete();
+        events = await collected;
+      } finally {
+        restoreDecoder();
+      }
+      const elapsedMs = Date.now() - startedAt;
+
+      h.eq(events.length, body.eventCount, 'every event still arrives, none dropped or doubled');
+      h.eq(keepalives, body.keepaliveCount, 'and every keepalive comment still fires onKeepalive exactly once');
+      h.eq(events[events.length - 1].type, 'result', 'the terminal result still ends the stream');
+
+      // THE DISCRIMINATING CHECK. Wall time alone cannot carry this test: Node decodes natively and
+      // even the quadratic version finishes the same input in a few hundred milliseconds here,
+      // while the DEVICE decoder is `text-encoding-polyfill`'s pure-JS one (Hermes ships no
+      // TextDecoder), where the same input took 66s before this bound existed and 0.3s after.
+      // Counting decoded bytes measures the property directly and is machine-independent: linear
+      // is ~1x the body, the quadratic version was ~250x it.
+      h.ok(
+        decodedByteTotal <= body.text.length * DECODE_BUDGET,
+        `the stream is decoded ~once (decoded ${decodedByteTotal} bytes for a ${body.text.length}-byte body; ` +
+          `budget ${body.text.length * DECODE_BUDGET})`,
+      );
+      // A generous wall-clock backstop for costs the byte counter cannot see (re-splitting,
+      // re-parsing, buffer copies). Measured at ~0.1s on the fix, ~0.3s on the quadratic version
+      // with Node's native decoder.
+      h.ok(elapsedMs < LINEAR_CONSUMPTION_BUDGET_MS, `consumed in ${elapsedMs}ms (budget ${LINEAR_CONSUMPTION_BUDGET_MS}ms)`);
+    },
+  );
+
+  await h.test(
+    'generateApp: a block separator split across two XHR deliveries still closes its frame',
+    async () => {
+      // The buffering loop scans only the bytes each delivery ADDED, which is only correct if the
+      // scan starts one byte early -- otherwise a `\n\n` with one newline in each delivery is
+      // never seen and the frame before it is never yielded.
+      const fakeXhr = new FakeXMLHttpRequest();
+      const first: GenerationEvent = { type: 'token', text: 'one' };
+      const second: GenerationEvent = { type: 'token', text: 'two' };
+      const frames = sseFrame(first, 1) + sseFrame(second, 2);
+      const splitAt = sseFrame(first, 1).length - 1; // between the two newlines ending frame one
+
+      const collected = collect(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }));
+      fakeXhr.respondHeaders(200);
+      fakeXhr.respondIncremental(frames.slice(0, splitAt)); // ends on the FIRST newline of `\n\n`
+      fakeXhr.respondIncremental(frames.slice(splitAt)); // opens with the second
+      fakeXhr.respondComplete();
+      h.eq(await collected, [first, second], 'both frames are yielded, in order');
+    },
+  );
 
   await h.test(
     'negative control: the first event resolves before the stream completes (red-checked in the chain-4 report by ' +

@@ -95,6 +95,22 @@ export class RunJournalStore {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** The timestamp of the newest `aggregate` entry this instance KNOWS an attempt's journal to
+   *  hold — whether it wrote that entry or read it back off the journal. A positive cache in FRONT
+   *  of `appendAggregate`'s throttle check, never a replacement for it: a hit skips the read, a
+   *  miss falls through to deriving the answer from the journal exactly as before.
+   *
+   *  It exists because the throttle bounds WRITES by time but the check itself ran per event: one
+   *  `getString` + a `JSON.parse` of the whole journal for every `token` AND every `thinking`
+   *  delta. A reasoning model emits thousands of those a minute, and on the device that read is a
+   *  native MMKV call feeding a Hermes `JSON.parse` — per-event work that has no business being
+   *  proportional to anything.
+   *
+   *  It cannot loosen the throttle. Under the single-writer discipline this store already requires,
+   *  no one else appends to the same journal, so the remembered timestamp is never OLDER than the
+   *  truth; and if it somehow were, the fall-through re-derives from the journal itself. */
+  private readonly newestAggregateAt = new Map<string, number>();
+
   private read(key: string): RunJournalEntry[] | null {
     const raw = this.kv.getString(key);
     if (!raw) return null;
@@ -138,6 +154,9 @@ export class RunJournalStore {
   /** Create an empty journal for an attempt, at the same moment its pending-build record is
    *  created. Re-creating an id discards whatever was there — an attempt starts with no history. */
   create(launcherId: string): void {
+    // A re-created journal has no aggregate entries, so anything remembered about the previous
+    // attempt under this id would throttle the new one against a window it never lived in.
+    this.newestAggregateAt.delete(launcherId);
     this.write(JOURNAL_KEY(launcherId), []);
   }
 
@@ -177,14 +196,21 @@ export class RunJournalStore {
    */
   appendAggregate(launcherId: string, aggregates: RunAggregates): void {
     const at = this.now();
+    // Inside a window this instance already knows about, the answer is "no" without reading
+    // anything (see `newestAggregateAt`) — the hot path for a `thinking`-heavy stream.
+    const known = this.newestAggregateAt.get(launcherId);
+    if (known !== undefined && at - known < AGGREGATE_THROTTLE_MS) return;
+
     const entries = this.read(JOURNAL_KEY(launcherId)) ?? [];
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i];
       if (e.kind !== 'aggregate') continue;
+      this.newestAggregateAt.set(launcherId, e.t);
       if (at - e.t < AGGREGATE_THROTTLE_MS) return;
       break;
     }
     const thinkingChars = aggregates.thinkingChars ?? 0;
+    this.newestAggregateAt.set(launcherId, at);
     this.appendEntry(launcherId, {
       t: at,
       kind: 'aggregate',
@@ -246,11 +272,13 @@ export class RunJournalStore {
   moveToLastRun(launcherId: string, appId: string): void {
     const entries = this.read(JOURNAL_KEY(launcherId));
     if (entries) this.write(LAST_RUN_KEY(appId), entries);
+    this.newestAggregateAt.delete(launcherId);
     this.kv.delete(JOURNAL_KEY(launcherId));
   }
 
   /** Drop an attempt's journal (dismissing its ghost). A no-op if it was never there. */
   delete(launcherId: string): void {
+    this.newestAggregateAt.delete(launcherId);
     this.kv.delete(JOURNAL_KEY(launcherId));
   }
 
