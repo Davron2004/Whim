@@ -20,6 +20,7 @@ import {
   deliverAndSettle,
   deliverResult,
   dropPendingBuild,
+  EmptyBundleError,
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
@@ -38,7 +39,9 @@ import type { WireAppRecord } from '@whim/contract';
 const WIRE: WireAppRecord = {
   name: 'Tip Splitter',
   source: 'export default () => null;',
-  bundle: '(()=>{})()',
+  // Must satisfy `bundleDefinesApp` (the install-time guard `deliverResult` now runs) — a bundle
+  // that never assigns `__WHIM_APP_MODULE__` is exactly the stub-bundle shape it exists to refuse.
+  bundle: 'var __WHIM_APP_MODULE__ = (() => ({}))();',
   manifest: {},
   schema: {},
 };
@@ -318,6 +321,53 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     const rebuilt = updates[0].spec.record;
     h.eq(rebuilt.manifest.tileColor, '#2f6feb', 'the new declaration replaces the old colour');
     h.eq(tileColor(rebuilt.name, rebuilt.manifest), '#2f6feb', 'and that is what every surface resolves');
+  });
+
+  // ── the install-time bundle guard (the stub-bundle incident) ────────────────────────────────
+
+  await h.test('guard: a delivered stub bundle never reaches install, and the previous version stays active', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const installs: InstallSpec[] = [];
+    const id = startPendingBuild(store, { text: 'a tip splitter' });
+    const stub = { ...WIRE, bundle: '(()=>{ /* stub bundle */ })();' };
+    let threw: unknown;
+    try {
+      await deliverAndSettle(store, { access: fakeAccess({ installs }), appId: id, text: 'a tip splitter', wire: stub });
+    } catch (e) {
+      threw = e;
+    }
+    h.ok(threw instanceof EmptyBundleError, 'the stub is refused with the dedicated error, not stored');
+    h.eq(installs, [], 'access.install is never called');
+    h.eq(store.get(id)!.state, 'building', 'delivery never resolved, so the record is not settled away');
+  });
+
+  await h.test('guard: a delivered stub bundle never reaches update on a rebuild, either', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const updates: { entry: InstalledApp; spec: UpdateSpec }[] = [];
+    const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
+    const atTip = {
+      ...fakeAccess({ updates }),
+      timeline: async () => [{ id: 'snap-1' }],
+      activeId: async () => 'snap-1',
+    } as unknown as StoreAccess;
+    const stub = { ...WIRE, bundle: '(()=>{ /* stub bundle */ })();' };
+    let threw: unknown;
+    try {
+      await deliverResult({ access: atTip, appId: id, editing: APP, text: 'add a dark mode', wire: stub });
+    } catch (e) {
+      threw = e;
+    }
+    h.ok(threw instanceof EmptyBundleError, 'refused before update, same as the new-install path');
+    h.eq(updates, [], 'access.update is never called — the app being rebuilt keeps its working version');
+  });
+
+  await h.test('guard: a valid bundle still installs exactly as before', async () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const installs: InstallSpec[] = [];
+    const id = startPendingBuild(store, { text: 'a tip splitter' });
+    const delivered = await deliverAndSettle(store, { access: fakeAccess({ installs }), appId: id, text: 'a tip splitter', wire: WIRE });
+    h.eq(delivered.id, id, 'delivery proceeds normally for a bundle that defines an app');
+    h.eq(installs.length, 1, 'and install is called exactly once');
   });
 
   // ── the ordering that a crash mid-delivery depends on ────────────────────────────────────────

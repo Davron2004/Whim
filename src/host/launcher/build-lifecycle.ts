@@ -36,6 +36,24 @@ import { accumulateRunAggregates, ghostTileColorFor, workingTitleFromPrompt } fr
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
+import { bundleDefinesApp } from './bundle-validity';
+import { COPY } from './copy';
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
+
+/**
+ * Thrown by `deliverResult` when a delivered wire record's bundle fails `bundleDefinesApp` —
+ * the install-time guard the stub-bundle incident calls for (never written to the store; the
+ * previous version, if any, stays active). `LauncherRoot.tsx`'s generic catch maps this to
+ * `COPY.failureEmptyBuild` through `errorReason`, the same failure screen a terminal `failure`
+ * event reaches — a bad delivery is a failed generation, not a crash.
+ */
+export class EmptyBundleError extends Error {
+  constructor() {
+    super(COPY.failureEmptyBuild);
+    this.name = 'EmptyBundleError';
+  }
+}
 
 /** A fresh, sufficiently-unique launcher id for a brand-new install. Not a security-sensitive
  *  value (only used as a local index/store key), so a timestamp+random string is enough — no new
@@ -188,6 +206,15 @@ export interface DeliverSpec {
 
 export async function deliverResult(spec: DeliverSpec): Promise<InstalledApp> {
   const { access, editing, wire } = spec;
+  // The install-time guard (the stub-bundle incident): refuse BEFORE either `access.install` or
+  // `access.update` runs, while the previous good version (if any) is still the active one. A
+  // mount-time failure can only show a broken app; this one leaves the grid exactly as it was.
+  if (!bundleDefinesApp(wire.bundle)) {
+    log.error(CHANNELS.gen, 'delivered bundle defines no app, refusing to store it', {
+      bundleLength: wire.bundle.length,
+    });
+    throw new EmptyBundleError();
+  }
   const prompt = promptEnvelope(spec.text, spec.summary);
   const schemaJson = Object.keys(wire.schema).length > 0 ? JSON.stringify(wire.schema) : undefined;
 

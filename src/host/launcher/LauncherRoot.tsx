@@ -40,6 +40,7 @@ import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
+  EmptyBundleError,
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
@@ -169,6 +170,12 @@ function defaultSeeds(): SeedSpec[] {
 function errorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
   if (err instanceof GenerationClientError && err.hint) {
     return { reason: err.hint, diagnostics: [] };
+  }
+  // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
+  // no app is a failed generation, not a crash, so it reads with its own honest reason rather than
+  // the generic one.
+  if (err instanceof EmptyBundleError) {
+    return { reason: err.message, diagnostics: [] };
   }
   return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
 }

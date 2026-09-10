@@ -13,6 +13,7 @@
 import type { AppRecord } from '../bridge/contract';
 import { AppIndex } from './app-index';
 import { StoreAccess } from './store-access';
+import { bundleDefinesApp } from './bundle-validity';
 
 /** Bump when the seed SET changes meaningfully. A higher marker means "already seeded this set";
  *  deleting an example does NOT lower it, so deleted examples stay deleted (D7). Version 2 adds
@@ -41,6 +42,12 @@ export async function seedFirstRun(
   if (index.seedVersion() >= seedVersion) return;
   for (const s of seeds) {
     if (index.has(s.id)) continue; // never double-install
+    // A seed fixture that defines no app is a build bug, not a runtime condition to route
+    // through the failure screen — there is no user attempt or previous version to protect here,
+    // just a generated fixture that shipped broken.
+    if (!bundleDefinesApp(s.bundleSource)) {
+      throw new Error(`seed fixture "${s.id}" defines no app (bundle is ${s.bundleSource.length} bytes)`);
+    }
     await access.install({
       id: s.id,
       name: s.name,

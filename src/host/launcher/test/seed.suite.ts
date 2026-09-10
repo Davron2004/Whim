@@ -12,9 +12,13 @@ import { seedFirstRun, SeedSpec, SEED_VERSION } from '../seed';
 import type { AppRecord } from '../../bridge/contract';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: [] } });
+// A fixture must satisfy `bundleDefinesApp` (the install-time guard `seedFirstRun` now runs) to
+// stand in for a real bundle — a bare label string no longer does. The label survives inside the
+// assignment so fixtures stay distinguishable at a glance.
+const BUNDLE = (label: string): string => `var __WHIM_APP_MODULE__ = ${label};`;
 const SEEDS: SeedSpec[] = [
-  { id: 'tip-splitter', name: 'Tip Splitter', prompt: 'Example: split a bill with tip', record: REC('tip-splitter'), bundleSource: 'TIP_SRC' },
-  { id: 'water-counter', name: 'Water Counter', prompt: 'Example: track glasses of water', record: REC('water-counter'), bundleSource: 'WATER_SRC' },
+  { id: 'tip-splitter', name: 'Tip Splitter', prompt: 'Example: split a bill with tip', record: REC('tip-splitter'), bundleSource: BUNDLE('TIP_SRC') },
+  { id: 'water-counter', name: 'Water Counter', prompt: 'Example: track glasses of water', record: REC('water-counter'), bundleSource: BUNDLE('WATER_SRC') },
 ];
 // The v2 seed set (sdk-design-system D9): the original two plus the style-gallery example.
 const SEEDS3: SeedSpec[] = [
@@ -24,7 +28,7 @@ const SEEDS3: SeedSpec[] = [
     name: 'Style Gallery',
     prompt: 'Example: every SDK component in one screen',
     record: REC('style-gallery'),
-    bundleSource: 'GALLERY_SRC',
+    bundleSource: BUNDLE('GALLERY_SRC'),
   },
 ];
 
@@ -45,7 +49,7 @@ export async function runSeedTests(h: Harness): Promise<void> {
     h.ok(index.list().every(a => a.example === true), 'both labeled as examples');
     h.eq((await store.history('tip-splitter')).length, 1, 'tip splitter has snapshot #1');
     h.eq((await store.history('water-counter')).length, 1, 'water counter has snapshot #1');
-    h.eq(await access.activeBundle(index.get('water-counter')!), 'WATER_SRC', 'bundle source stored');
+    h.eq(await access.activeBundle(index.get('water-counter')!), BUNDLE('WATER_SRC'), 'bundle source stored');
     h.eq(index.seedVersion(), SEED_VERSION, 'marker recorded');
   });
 
@@ -100,5 +104,18 @@ export async function runSeedTests(h: Harness): Promise<void> {
     );
     h.eq((await store.history('tip-splitter')).length, 1, 'original not re-snapshotted');
     h.eq(index2.seedVersion(), SEED_VERSION, 'marker advances to version 2');
+  });
+
+  await h.test('seed: a fixture that defines no app throws — a bad fixture is a build bug, not a runtime condition', async () => {
+    const { index, access } = rig();
+    const broken: SeedSpec[] = [{ ...SEEDS[0], bundleSource: '(()=>{ /* stub bundle */ })();' }];
+    let threw: unknown;
+    try {
+      await seedFirstRun(index, access, broken);
+    } catch (e) {
+      threw = e;
+    }
+    h.ok(threw instanceof Error, 'a broken fixture throws rather than silently installing');
+    h.eq(index.list(), [], 'and nothing was installed');
   });
 }
