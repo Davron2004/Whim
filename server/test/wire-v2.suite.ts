@@ -365,6 +365,41 @@ async function testRewriteRetry(): Promise<void> {
     eq('the LAST shaped reply is returned', body.rewrittenPrompt, 'I still cannot help with that.');
     eq('exactly two model calls were made, no third', model.requests.length, 2);
   }
+
+  // Good prose first, then an empty stream on the retry: the retry is worse (empty), so the
+  // BEST attempt (the first) wins rather than the last — regression guard for the "kept only the
+  // last attempt" bug where a decent first reply was clobbered by a bad second one.
+  {
+    const { app, model } = appWithModel([
+      { role: 'rewrite', deltas: ['A pomodoro timer that tracks focus sessions.'], usage: TURN_USAGE },
+      { role: 'rewrite', deltas: [], usage: TURN_USAGE },
+    ]);
+    const res = await post(app, '/v1/rewrite', { prompt: 'a pomodoro timer' }, DEVICE_HEADER);
+    eq('good-prose-then-empty → 200', res.status, 200);
+    const body = RewriteResponse.parse(await res.json());
+    eq('the first (best) reply is kept', body.rewrittenPrompt, 'A pomodoro timer that tracks focus sessions.');
+    eq('exactly two model calls were made', model.requests.length, 2);
+  }
+
+  // A client that has already disconnected (an aborted signal) never gets a model call — not even
+  // the first one. No turns are scripted at all: a model call here would throw
+  // ScriptedModelClientExhaustedError, proving the abort check runs before the call is constructed.
+  {
+    const { app, model } = appWithModel([]);
+    const controller = new AbortController();
+    controller.abort();
+    const res = await app.request(
+      '/v1/rewrite',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...DEVICE_HEADER },
+        body: JSON.stringify({ prompt: 'a pomodoro timer' }),
+        signal: controller.signal,
+      },
+    );
+    eq('an already-aborted request → 502', res.status, 502);
+    eq('no model call was made', model.requests.length, 0);
+  }
 }
 
 // ── §5 tileColor rides through the one extraction (C5) ───────────────────────

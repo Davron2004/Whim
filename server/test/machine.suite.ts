@@ -332,6 +332,10 @@ async function testThinkingEvents(): Promise<void> {
 
   // Usage/terminal ordering is untouched by the interleaved thinking events.
   check('thinking: usage still immediately precedes the terminal', events.at(-2)?.type === 'usage' && events.at(-1)?.type === 'result');
+
+  // Every pipeline turn (plan and generate alike) asks for reasoning — the thinking events above
+  // only exist because `reasoning: true` is set on the request, not because the model volunteered it.
+  check('thinking: every model request set reasoning: true', model.requests.every((r) => r.request.reasoning === true));
 }
 
 async function testRepairThenSuccess(): Promise<void> {

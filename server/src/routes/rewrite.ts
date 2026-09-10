@@ -78,8 +78,9 @@ async function rewriteWithRetry(
   usageStore: UsageStore,
   deviceId: string,
 ): Promise<{ ok: true; response: RewriteResponse } | { ok: false }> {
-  let shaped: RewriteResponse | undefined;
+  let best: RewriteResponse | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal?.aborted) return { ok: false };
     const stream = model.stream({ model: roster.rewrite, messages }, signal);
     let raw = '';
     try {
@@ -90,10 +91,13 @@ async function rewriteWithRetry(
     } catch {
       return { ok: false };
     }
-    shaped = shapeRewrite(raw);
+    const shaped = shapeRewrite(raw);
+    if (!best || shaped.rewrittenPrompt.length > 0) best = shaped;
     if (shaped.rewrittenPrompt.length > 0 && shaped.plan) break;
   }
-  return { ok: true, response: shaped as RewriteResponse };
+  // `best` is always set: attempt 0 always runs (the loop bound is fixed at 2, not data-dependent)
+  // and the first shaped reply always satisfies `!best`.
+  return { ok: true, response: best! };
 }
 
 export interface RewriteRouteOptions {
