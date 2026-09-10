@@ -16,9 +16,10 @@ import React, { useEffect, useState } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
-import { COPY } from './copy';
+import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
-import { FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { WorkingLine } from './flow-working';
 import type { FlowPlanRow } from './prompt-flow';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
@@ -56,6 +57,12 @@ export interface PlanStepProps {
   rows: readonly FlowPlanRow[];
   /** The rewrite response has not arrived yet: skeleton rows, and the action stays busy. */
   loading: boolean;
+  /** When the in-flight rewrite request started, for `WorkingLine`'s clock. Only read while
+   *  `loading`. */
+  startedAt?: number;
+  /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
+  editing: boolean;
+  editingName?: string;
   /** Commits an inline edit of the row at `index` to `text` — `prompt-flow.ts#updatePlanRow`. */
   onChangeRow: (index: number, text: string) => void;
   onBuild: () => void;
@@ -64,7 +71,16 @@ export interface PlanStepProps {
   onBack: () => void;
 }
 
-export default function PlanStep({ rows, loading, onChangeRow, onBuild, onBack }: Readonly<PlanStepProps>) {
+export default function PlanStep({
+  rows,
+  loading,
+  startedAt,
+  editing,
+  editingName,
+  onChangeRow,
+  onBuild,
+  onBack,
+}: Readonly<PlanStepProps>) {
   const { theme } = useTheme();
   const p = shellPalette(theme);
 
@@ -106,11 +122,15 @@ export default function PlanStep({ rows, loading, onChangeRow, onBuild, onBack }
       <FlowHeader step="plan" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.planHeadline}</Text>
+        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
 
         {loading ? (
-          <PlanRowsSkeleton color={p.card} />
+          <>
+            <PlanRowsSkeleton color={p.card} />
+            <WorkingLine phrase={workingPlanPhrase(editing)} startedAt={startedAt ?? Date.now()} />
+          </>
         ) : (
           rows.map((row, index) => {
             const key = `${index}:${row.label}`;
@@ -164,7 +184,10 @@ export default function PlanStep({ rows, loading, onChangeRow, onBuild, onBack }
         <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
       </ScrollView>
 
-      <PrimaryAction step="plan" busy={loading} enabled={!loading} palette={p} onPress={onBuild} />
+      {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
+          action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
+          element while loading. */}
+      {!loading && <PrimaryAction step="plan" busy={false} enabled editing={editing} palette={p} onPress={onBuild} />}
     </View>
   );
 }

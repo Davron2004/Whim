@@ -62,11 +62,16 @@ export const COPY = {
   highlightingHint: 'Colours and marks in what Whim tells you.',
 
   // ── the five-step prompt flow (2a) ──────────────────────────────────────────
-  /** Every forward step's primary action while its request is in flight. Never a bare spinner. */
-  flowBusy: 'One moment',
   flowContinue: 'Continue',
   composeHeadline: 'What should it do?',
+  /** The edit flow's compose headline — "Prompt again"/"Change it" on an app that already
+   *  exists, never the new-app question (`editingEyebrow`/`composeHeadline` "the edit flow reads
+   *  as editing, on every step"). */
+  composeHeadlineEdit: 'What should change?',
   composeHelper: 'Plain words are enough. Whim will ask if something is unclear.',
+  /** The edit flow's compose field placeholder — `homeComposerPlaceholder` stays the new-app one
+   *  (it is shared with the home screen's own composer row). */
+  composePlaceholderEdit: 'Add, change, or remove something…',
   composeChipsEyebrow: 'Or start from',
   composeChipTimer: 'a timer with my pour-over recipe',
   composeChipTracker: 'a tracker for how often I water the plants',
@@ -75,12 +80,23 @@ export const COPY = {
   clarifyHeadlineTwo: 'Two quick things',
   clarifyHeadlineThree: 'Three quick things',
   clarifyHelper: 'Skip these and Whim will pick sensible answers.',
+  /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
+  workingClarify: 'Thinking about what to ask',
   planHeadline: 'Here’s the plan',
+  /** The edit flow's plan headline — the SAME approval gate, over a change instead of a new app. */
+  planHeadlineEdit: 'Here’s the change',
   planSubhead: 'Tap anything to change it before building.',
   planFooter: 'Nothing here is final — you can keep changing the app after it’s built.',
   planBuild: 'Build it',
+  /** The edit flow's plan primary action. */
+  planBuildEdit: 'Make the change',
   planRowSave: 'Save',
+  /** The liveness phrase under the plan skeleton, new-app and edit variants. */
+  workingPlan: 'Writing the plan',
+  workingPlanEdit: 'Writing up the change',
   buildTitle: 'Making it',
+  /** The edit flow's build title — copy only; `BuildStep.tsx` is placed by another task. */
+  buildTitleEdit: 'Changing it',
   buildSubtitle: 'This takes about a minute. You can leave and come back.',
   buildStepReading: 'Reading your plan',
   buildStepWriting: 'Writing the app',
@@ -292,6 +308,46 @@ export function clarifyHeadline(questionCount: number): string {
   if (questionCount <= 1) return COPY.clarifyHeadlineOne;
   if (questionCount === 2) return COPY.clarifyHeadlineTwo;
   return COPY.clarifyHeadlineThree;
+}
+
+// ── the edit flow reads as editing, on every step (C1) ────────────────────────
+// One function per branching string, so a step screen reads through a function rather than an
+// inline ternary — `prompt-flow-screens.suite.ts`'s static check pins that every gated step
+// actually calls these, so the branch cannot silently regress back to one un-branched string.
+
+/** The compose step's headline: the new-app question, or the edit flow's own. */
+export function composeHeadline(editing: boolean): string {
+  return editing ? COPY.composeHeadlineEdit : COPY.composeHeadline;
+}
+
+/** The compose field's placeholder: the new-app prompt, or the edit flow's own. */
+export function composePlaceholder(editing: boolean): string {
+  return editing ? COPY.composePlaceholderEdit : COPY.homeComposerPlaceholder;
+}
+
+/** The plan step's headline: "the plan" for a new app, "the change" for an edit — the SAME
+ *  approval gate either way. */
+export function planHeadline(editing: boolean): string {
+  return editing ? COPY.planHeadlineEdit : COPY.planHeadline;
+}
+
+/** The build step's title (copy only — `BuildStep.tsx` is out of this change's boundary; another
+ *  task wires this in). */
+export function buildTitle(editing: boolean): string {
+  return editing ? COPY.buildTitleEdit : COPY.buildTitle;
+}
+
+/** The plan skeleton's liveness phrase (`WorkingLine`): what the wait says while the rewrite is
+ *  still in flight. */
+export function workingPlanPhrase(editing: boolean): string {
+  return editing ? COPY.workingPlanEdit : COPY.workingPlan;
+}
+
+/** The shared "you are changing this app" eyebrow line, shown above every gated step's headline
+ *  while `editing` is present (`flow-chrome.tsx#EditingEyebrow`). Sentence case here; the eyebrow
+ *  style itself renders it uppercase. */
+export function editingEyebrow(name: string): string {
+  return `Changing ${name}`;
 }
 
 /** The history header's subtitle: "7 versions · started 3 days ago". */

@@ -52,20 +52,37 @@ export interface ComposeScreen {
   editing?: InstalledApp;
   /** The user's own words, verbatim — never live-lexed while it is being typed. */
   text: string;
+  /** The prompt that produced `editing`'s CURRENT version (`AppContext.description`) — best-effort
+   *  context for the clarify/rewrite exchange, resolved once when the flow enters compose for an
+   *  edit (`LauncherRoot.tsx#openCompose`). Absent for a new app, and absent (never invented) when
+   *  the read failed or the app has no snapshot. Carried forward through clarify and plan so both
+   *  wire calls send the SAME description. */
+  about?: string;
 }
 
 export interface ClarifyScreen {
   kind: 'clarify';
   editing?: InstalledApp;
   text: string;
+  about?: string;
   questions: readonly FlowQuestion[];
   answers: FlowAnswers;
+  /** The clarify exchange is still in flight: the step opens under this loading state the moment
+   *  compose's primary action is tapped, so the wait is the clarify screen itself, never a grey
+   *  compose button (`prompt-flow` "the clarify wait is a screen"). `withQuestions` clears it. */
+  loading: boolean;
+  /** When this clarify exchange started — `WorkingLine`'s clock reads from here (C3), never from
+   *  a render or mount moment, so it survives a re-render untouched. Set once by `clarifyStep`;
+   *  meaningless (and never read) once `loading` is false, so `backFrom`'s reconstruction of an
+   *  already-answered clarify step omits it. */
+  startedAt?: number;
 }
 
 export interface PlanScreen {
   kind: 'plan';
   editing?: InstalledApp;
   text: string;
+  about?: string;
   /** Carried so a back press can rebuild the clarify step it came from, answers intact. Empty
    *  when the clarify step was skipped — a back press then lands on compose. */
   questions: readonly FlowQuestion[];
@@ -78,6 +95,9 @@ export interface PlanScreen {
   /** The rewrite request is still in flight: the rows are genuinely coming and their shape is
    *  known, which is the only state a skeleton may stand in for. */
   loading: boolean;
+  /** When the rewrite request started — `WorkingLine`'s clock reads from here (C3). Set once by
+   *  `planStep`; meaningless (and never read) once `loading` is false. */
+  startedAt?: number;
   /** Set the moment any row is edited inline on this step, and never cleared. Flips
    *  `promptForBuild` from trusting `rewritten` to assembling the prompt from `rows` instead —
    *  the two are independent strings the rewrite endpoint returns together, so once a row has
@@ -109,9 +129,11 @@ export interface DoneScreen {
 
 export type FlowScreen = ComposeScreen | ClarifyScreen | PlanScreen | BuildScreen | DoneScreen;
 
-/** The compose step, optionally scoped to an app being re-prompted and optionally prefilled. */
-export function composeStep(editing?: InstalledApp, text = ''): ComposeScreen {
-  return { kind: 'compose', ...(editing ? { editing } : {}), text };
+/** The compose step, optionally scoped to an app being re-prompted and optionally prefilled.
+ *  `about` is the resolved edit description (`ComposeScreen.about`) — absent for a new app, and a
+ *  legitimate absence for an edit whose description could not be resolved yet or at all. */
+export function composeStep(editing?: InstalledApp, text = '', about?: string): ComposeScreen {
+  return { kind: 'compose', ...(editing ? { editing } : {}), text, ...(about != null ? { about } : {}) };
 }
 
 /**
@@ -142,9 +164,31 @@ export function isClarifySkip(err: unknown): boolean {
   return err instanceof GenerationClientError && err.status === 502;
 }
 
-/** The clarify step, carrying the user's own words forward to echo. */
-export function clarifyStep(prev: ComposeScreen, questions: readonly FlowQuestion[]): ClarifyScreen {
-  return { kind: 'clarify', ...(prev.editing ? { editing: prev.editing } : {}), text: prev.text, questions, answers: {} };
+/**
+ * The clarify step opens the moment compose's primary action is tapped, carrying the user's own
+ * words forward to echo — UNDER LOADING, before the clarify exchange has even been asked
+ * (`prompt-flow` "the clarify wait is the clarify screen loading"). `withQuestions` is what fills
+ * it in once the response lands; zero questions never reaches this screen at all
+ * (`stepAfterClarifyExchange` sends that case straight to `planStep`).
+ */
+export function clarifyStep(prev: ComposeScreen): ClarifyScreen {
+  return {
+    kind: 'clarify',
+    ...(prev.editing ? { editing: prev.editing } : {}),
+    text: prev.text,
+    ...(prev.about != null ? { about: prev.about } : {}),
+    questions: [],
+    answers: {},
+    loading: true,
+    startedAt: Date.now(),
+  };
+}
+
+/** The clarify exchange answered: the skeleton is replaced by the real questions and the step
+ *  goes live. Everything else about the screen — the echoed prompt, any answers already given —
+ *  is carried through untouched. */
+export function withQuestions(screen: ClarifyScreen, questions: readonly FlowQuestion[]): ClarifyScreen {
+  return { ...screen, questions, loading: false };
 }
 
 /** Single-select: tapping an option only ever SETS that question's answer, never clears it. */
@@ -190,11 +234,13 @@ export function planStep(prev: ComposeScreen | ClarifyScreen): PlanScreen {
     kind: 'plan',
     ...(prev.editing ? { editing: prev.editing } : {}),
     text: prev.text,
+    ...(prev.about != null ? { about: prev.about } : {}),
     questions: prev.kind === 'clarify' ? prev.questions : [],
     answers: prev.kind === 'clarify' ? prev.answers : {},
     rewritten: '',
     rows: [],
     loading: true,
+    startedAt: Date.now(),
     edited: false,
   };
 }
@@ -270,26 +316,34 @@ export function backFrom(screen: FlowScreen): FlowScreen | 'home' | null {
     case 'compose':
       return 'home';
     case 'clarify':
-      return composeStep(screen.editing, screen.text);
+      return composeStep(screen.editing, screen.text, screen.about);
     case 'plan':
       return screen.questions.length > 0
         ? {
             kind: 'clarify',
             ...(screen.editing ? { editing: screen.editing } : {}),
             text: screen.text,
+            ...(screen.about != null ? { about: screen.about } : {}),
             questions: screen.questions,
             answers: screen.answers,
+            // A clarify step reached by going BACK already has its questions answered (or was
+            // skipped past) — never the loading state a forward move into it opens under.
+            loading: false,
           }
-        : composeStep(screen.editing, screen.text);
+        : composeStep(screen.editing, screen.text, screen.about);
     default:
       return null;
   }
 }
 
-/** The primary action's label: plain words always, never a bare spinner. */
-export function primaryActionLabel(step: FlowStep, busy: boolean): string {
-  if (busy) return COPY.flowBusy;
-  return step === 'plan' ? COPY.planBuild : COPY.flowContinue;
+/** The primary action's label: plain words always, and the SAME words whether or not the step is
+ *  busy — a busy action only softens (`PrimaryAction`'s own opacity/disabled state), it never
+ *  relabels to a "One moment" placeholder (`prompt-flow` "the clarify wait is a screen, not a
+ *  grey button"). `editing` swaps the plan step's label to the edit flow's own words; every other
+ *  step's label is unbranched. */
+export function primaryActionLabel(step: FlowStep, editing: boolean): string {
+  if (step !== 'plan') return COPY.flowContinue;
+  return editing ? COPY.planBuildEdit : COPY.planBuild;
 }
 
 /** The four named build steps, in order — derived from `stage` events, never from raw tokens. */
@@ -415,6 +469,20 @@ export function elapsedLabel(startedAt: number, now: number): string {
   const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
   const seconds = totalSeconds % SECONDS_PER_MINUTE;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** Below this, `WorkingLine` shows the phrase alone — a clock that has barely moved reads as
+ *  theatre, not honesty (`flow-working.tsx#WorkingLine`). */
+const WORKING_LINE_CLOCK_THRESHOLD_MS = 5_000;
+
+/**
+ * `WorkingLine`'s rendered text: the phrase alone under the threshold, and `phrase · m:ss` once
+ * `now - startedAt` reaches it. The phrase itself never changes here — a rotating phrase reads as
+ * theatre (`flow-working.tsx` doc comment) — only whether the clock suffix has appeared yet.
+ */
+export function workingLineText(phrase: string, startedAt: number, now: number): string {
+  if (now - startedAt < WORKING_LINE_CLOCK_THRESHOLD_MS) return phrase;
+  return `${phrase} · ${elapsedLabel(startedAt, now)}`;
 }
 
 /** How long the stream may go without a `token` or `stage` event before the screen says so

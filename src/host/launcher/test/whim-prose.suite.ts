@@ -331,7 +331,7 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
 
   await h.test('copy: the v2 screens have their strings — no screen chain needs to invent one', () => {
     const required = [
-      'homeComposerPlaceholder', 'flowBusy', 'flowContinue', 'composeHeadline', 'composeHelper',
+      'homeComposerPlaceholder', 'flowContinue', 'composeHeadline', 'composeHelper',
       'composeChipsEyebrow', 'clarifyHelper', 'planHeadline', 'planSubhead', 'planFooter',
       'planBuild', 'buildTitle', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
       'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'doneBody', 'doneOpen',
@@ -344,7 +344,9 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     for (const key of required) {
       h.ok(typeof COPY[key] === 'string' && COPY[key].length > 0, `COPY.${key} is seeded`);
     }
-    h.eq(COPY.flowBusy, 'One moment', 'the busy label keeps its words');
+    // `flowBusy` ("One moment") is gone — the clarify wait is the clarify screen's own loading
+    // state now, never a relabelled compose button (C2, `prompt-flow-screens.suite.ts`).
+    h.ok(!('flowBusy' in COPY), 'the grey-button placeholder label was removed, not merely renamed');
     h.eq(
       [COPY.buildStepReading, COPY.buildStepWriting, COPY.buildStepChecking, COPY.buildStepInstalling],
       ['Reading your plan', 'Writing the app', 'Checking it runs safely', 'Putting it on your home screen'],

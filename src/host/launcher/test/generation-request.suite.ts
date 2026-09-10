@@ -19,7 +19,12 @@ import { Harness } from './harness';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
 import { StoreAccess } from '../store-access';
-import { buildGenerateRequest, buildRewriteAppContext, AppliedSchemaReader } from '../generation-request';
+import {
+  buildGenerateRequest,
+  buildRewriteAppContext,
+  APP_CONTEXT_DESCRIPTION_MAX_CHARS,
+  AppliedSchemaReader,
+} from '../generation-request';
 import type { InstalledApp } from '../app-index';
 import { createEngine } from '../../storage-engine/engine';
 import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../../storage-engine/bindings/node-sqlite';
@@ -225,6 +230,36 @@ export async function runGenerationRequestTests(h: Harness): Promise<void> {
       { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: [] }] },
       'listed with an empty field list rather than dropped',
     );
+  });
+
+  // ── buildRewriteAppContext — description (shared by the clarify AND rewrite calls) ───────────
+
+  await h.test('rewrite-context: a supplied description is carried, trimmed of nothing under the cap', () => {
+    const entry = entryFor('habits', 'Habit Tracker', habitsSchema);
+    h.eq(
+      buildRewriteAppContext(entry, 'Tracks daily habits and streaks.'),
+      { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }], description: 'Tracks daily habits and streaks.' },
+      'the description rides alongside the name and collections',
+    );
+  });
+
+  await h.test('rewrite-context: an absent or empty description sends no description key at all', () => {
+    const entry = entryFor('tips', 'Tip Splitter');
+    h.eq(buildRewriteAppContext(entry), { name: 'Tip Splitter' }, 'no description argument at all');
+    h.eq(buildRewriteAppContext(entry, undefined), { name: 'Tip Splitter' }, 'explicitly undefined');
+    h.eq(buildRewriteAppContext(entry, ''), { name: 'Tip Splitter' }, 'an empty string is the same absence, not a blank key');
+  });
+
+  await h.test('rewrite-context: a description is capped at 1200 chars, at the wire boundary', () => {
+    const entry = entryFor('tips', 'Tip Splitter');
+    const long = 'x'.repeat(APP_CONTEXT_DESCRIPTION_MAX_CHARS + 500);
+    const context = buildRewriteAppContext(entry, long);
+    h.eq(context?.description?.length, APP_CONTEXT_DESCRIPTION_MAX_CHARS, 'the builder itself re-enforces the cap, regardless of what the caller already trimmed');
+    h.eq(context?.description, 'x'.repeat(APP_CONTEXT_DESCRIPTION_MAX_CHARS), 'and keeps the FIRST N characters, not an arbitrary slice');
+  });
+
+  await h.test('rewrite-context: composing a new app carries no description either', () => {
+    h.eq(buildRewriteAppContext(undefined, 'irrelevant — there is no app to describe'), undefined, 'undefined editing wins regardless of description');
   });
 
   await h.test('generation-request: an ungrouped entry with no live db yet gets the empty applied schema', async () => {

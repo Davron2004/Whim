@@ -180,10 +180,16 @@ function messageOf(err: unknown): string {
  * empty list rather than an error. A `502` (`clarify_not_configured`/`model_failure`) surfaces as
  * `GenerationClientError{kind:'http', status:502}`, which the flow treats as "skip to the plan
  * step" rather than a dead end (`prompt-flow.ts#isClarifySkip`).
- */
+ *
+ * `app` is the SAME display-name context `rewritePrompt` carries (`generation-request.ts
+ * #buildRewriteAppContext`, shared by `RewriteRequest.app` and `ClarifyRequest.app`): its presence
+ * tells the clarifier this exchange is about a CHANGE to an app the user already has, so it can
+ * ask about the change instead of re-deriving what the app already is. Omitted entirely when
+ * absent — no `app` key is what tells the server this is a new app. */
 export async function clarifyPrompt(
   opts: ClientOptions,
   prompt: string,
+  app?: ClarifyRequest['app'],
   signal?: AbortSignal,
 ): Promise<ClarifyResponse> {
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -192,7 +198,7 @@ export async function clarifyPrompt(
     response = await fetchImpl(`${opts.baseUrl}/v1/clarify`, {
       method: 'POST',
       headers: requestHeaders(opts),
-      body: JSON.stringify({ prompt } satisfies ClarifyRequest),
+      body: JSON.stringify({ prompt, ...(app ? { app } : {}) } satisfies ClarifyRequest),
       signal,
     });
   } catch (err) {

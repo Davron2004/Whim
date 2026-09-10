@@ -10,6 +10,7 @@ import { Harness } from './harness';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
+import { promptEnvelope } from '../prompt-envelope';
 import type { AppRecord } from '../../bridge/contract';
 
 const REC = (id: string): AppRecord => ({ appId: id, name: id, manifest: { capabilities: ['storage'] } });
@@ -346,5 +347,25 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const changes = await access.diff(orig, g1, g2);
     const bundle = changes.find(c => c.file === 'bundle.js');
     h.ok(!!bundle && bundle.status === 'modified' && bundle.after === 'V2', 'diff wrapper delegates through and reports the bundle change');
+  });
+
+  // ── activeDescription — the edit flow's re-prompt context (`AppContext.description`) ─────────
+
+  await h.test('store-access: activeDescription resolves the CURRENT version\'s prompt, envelope or raw', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({
+      id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: promptEnvelope('a timer for my pour-over recipe'),
+    });
+    h.eq(await access.activeDescription(orig), 'a timer for my pour-over recipe', 'reads the v2 envelope\'s text');
+
+    const legacy = await access.install({ id: 'legacy', name: 'Legacy', record: REC('legacy'), bundleSource: 'V1', prompt: 'a raw legacy prompt' });
+    h.eq(await access.activeDescription(legacy), 'a raw legacy prompt', 'a raw string reads as its own text, same as history-logic');
+  });
+
+  await h.test('store-access: activeDescription tracks the CURRENT version, not the first one', async () => {
+    const { access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: promptEnvelope('add a timer') });
+    const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: promptEnvelope('add a fruit tea section') });
+    h.eq(await access.activeDescription(updated), 'add a fruit tea section', 'the latest delivered prompt, not the install one');
   });
 }
