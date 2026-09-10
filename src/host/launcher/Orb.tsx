@@ -20,6 +20,7 @@
 // "sheet" concept (and the fourth, undesigned `copy` action) is gone.
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
@@ -32,8 +33,7 @@ import {
   type OrbActionId,
 } from './orb-actions';
 
-const ORB_SIZE = 62;
-const ORB_BOTTOM = 130;
+const ORB_SIZE = 54;
 // The menu rises from the bottom edge — the edge it collapses back to on close/dismiss (design
 // doc "Sheet rise": "Sheets enter from the edge they will return to").
 const MENU_RISE_DISTANCE = 24;
@@ -51,6 +51,7 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
   // Same `whim.launcher` KVBackend id every other launcher setting persists through (see
   // highlighting.ts) — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
+  const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
   const riseAnim = useRef(new Animated.Value(0)).current;
 
@@ -87,7 +88,7 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
     <>
       <Pressable
         onPress={onOrbPress}
-        style={[styles.btn, menuOpen && styles.btnMenuOpen]}
+        style={[styles.btn, { bottom: insets.bottom + SPACING.lg }, menuOpen && styles.btnMenuOpen]}
         accessibilityRole="button"
         accessibilityLabel={menuOpen ? COPY.orbMenuCloseLabel : COPY.orbMenuOpenLabel}
       >
@@ -98,7 +99,7 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
 
       {menuOpen && (
         <Pressable
-          style={styles.scrim}
+          style={[styles.scrim, { paddingBottom: insets.bottom + SPACING.lg + ORB_SIZE + SPACING.sm }]}
           onPress={closeAll}
           accessibilityRole="none"
           accessibilityLabel={COPY.orbMenuDismissLabel}
@@ -140,12 +141,13 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
 const styles = StyleSheet.create({
   btn: {
     position: 'absolute',
-    bottom: ORB_BOTTOM,
-    alignSelf: 'center',
+    right: SPACING.lg,
     width: ORB_SIZE,
     height: ORB_SIZE,
     borderRadius: ORB_SIZE / 2,
-    backgroundColor: SHELL_COLORS.ink,
+    // Translucent at rest — chrome floating over the mini-app's own content, not a focused
+    // control (user feedback: "semi-transparent"). Solid once the menu is open, below.
+    backgroundColor: 'rgba(23,23,26,0.58)',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -154,9 +156,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
   },
-  btnMenuOpen: { transform: [{ scale: 0.92 }] },
-  bar: { width: 12, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.75)' },
-  barMenuOpen: { width: 20, backgroundColor: 'rgba(255,255,255,0.9)' },
+  btnMenuOpen: { backgroundColor: SHELL_COLORS.ink, transform: [{ scale: 0.92 }] },
+  bar: { width: 12, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.92)' },
+  barMenuOpen: { width: 20, backgroundColor: 'rgba(255,255,255,1)' },
   barGap: { marginVertical: 3 },
   scrim: {
     position: 'absolute',
@@ -166,10 +168,10 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(24,22,20,0.5)',
     justifyContent: 'flex-end',
-    paddingHorizontal: SPACING.lg,
-    paddingBottom: ORB_BOTTOM + ORB_SIZE + SPACING.sm,
+    alignItems: 'flex-end',
+    paddingRight: SPACING.lg,
   },
-  menu: { gap: SPACING.xs },
+  menu: { gap: SPACING.xs, alignItems: 'stretch', minWidth: 212 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

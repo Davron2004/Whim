@@ -9,7 +9,6 @@
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
@@ -48,7 +47,6 @@ export default function MiniAppView({
   onChangeIt,
 }: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
-  const insets = useSafeAreaInsets();
   const p = shellPalette(theme);
   const bg = p.bg;
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
@@ -75,7 +73,7 @@ export default function MiniAppView({
   // bundle -- show honest product copy instead of a blank realm, with a way back to Home.
   if (surface === 'launch-failed') {
     return (
-      <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
+      <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.launchFailedTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
         <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={onExit}>
@@ -97,7 +95,7 @@ export default function MiniAppView({
       setWebKey((k) => k + 1);
     };
     return (
-      <View style={[styles.root, styles.errorRoot, { paddingTop: insets.top, backgroundColor: p.bg }]}>
+      <View style={[styles.root, styles.errorRoot, { backgroundColor: p.bg }]}>
         <Text style={[TYPE_SCALE.screenTitle, styles.errorTitle, { color: p.text }]}>{COPY.appErrorTitle}</Text>
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
         <Pressable style={[styles.errorButton, { backgroundColor: p.accent }]} onPress={retry}>
@@ -111,7 +109,7 @@ export default function MiniAppView({
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, backgroundColor: bg }]}>
+    <View style={[styles.root, { backgroundColor: bg }]}>
       <WebView
         key={webKey}
         ref={host.webRef}
@@ -127,13 +125,13 @@ export default function MiniAppView({
       />
       {/* The boot state: branded and minimal, drawn OVER a WebView that stays mounted and keeps
           loading -- a realm reset is a recreate, never a re-inject (spike2 §5), so the overlay must
-          never gate the mount. It defines all four insets, so it spans the root's full border-box
-          (Yoga: an absolutely-positioned child that defines its insets ignores the parent's
-          padding) and carries the safe-area padding itself. `pointerEvents="none"` keeps the orb's
-          guaranteed exit reachable throughout the wait. */}
+          never gate the mount. It defines all four insets, so it spans the root's full border-box.
+          The root already sits below the status bar (the launcher's top SafeAreaView is the one
+          place the top inset is applied), so the overlay adds no inset of its own.
+          `pointerEvents="none"` keeps the orb's guaranteed exit reachable throughout the wait. */}
       {surface === 'boot' && (
         <View
-          style={[styles.boot, { backgroundColor: bg, paddingTop: insets.top }]}
+          style={[styles.boot, { backgroundColor: bg }]}
           pointerEvents="none"
           accessibilityRole="progressbar"
           accessibilityLabel={COPY.appBootA11yLabel}
