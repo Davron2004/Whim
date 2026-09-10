@@ -175,6 +175,15 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.ok(!/recordOrbAction/.test(onOrbPressBody), 'toggling the orb itself never instruments an action');
   });
 
+  await h.test('orb-menu: the orb sits in the bottom-right thumb zone and honours the device inset', async () => {
+    h.ok(/right:\s*SPACING\.lg/.test(orbCode), 'the button is right-anchored, not centered');
+    h.ok(/useSafeAreaInsets/.test(orbCode), 'Orb reads its own safe-area insets rather than a passed-in prop');
+  });
+
+  await h.test('orb-menu: the orb is translucent at rest, opaque once the menu opens', async () => {
+    h.ok(orbCode.includes('rgba(23,23,26,0.58)'), 'the resting fill is translucent ink, not solid');
+  });
+
   await h.test('orb-menu: FloatingExit is gone, replaced by the orb', async () => {
     h.ok(!fs.existsSync(path.join(process.cwd(), 'src/host/launcher/FloatingExit.tsx')), 'FloatingExit.tsx no longer exists');
     const miniAppView = read('MiniAppView.tsx');
