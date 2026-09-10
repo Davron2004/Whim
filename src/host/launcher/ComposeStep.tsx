@@ -108,7 +108,6 @@ export default function ComposeStep({
           clarify step's own loading screen (C2), so this action is never anything but live. */}
       <PrimaryAction
         step="compose"
-        busy={false}
         enabled={serverConfigured && trimmed.length > 0}
         palette={p}
         onPress={onContinue}

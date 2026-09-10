@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { shellPalette } from '../theme';
+import { inkAlpha, shellPalette } from '../theme';
 import { appColor, DEFAULT_THEME, sanitizeTheme } from '../../../sdk/theme';
 
 /** Every file under `src/`, recursively — no exclusions: `invariants/` (the owner-authored
@@ -65,6 +65,11 @@ export async function runThemeTests(h: Harness): Promise<void> {
     const a = shellPalette(DEFAULT_THEME);
     const b = shellPalette(DEFAULT_THEME);
     h.eq(a, b, 'two calls against the same theme produce the same palette');
+  });
+
+  // inkAlpha — SHELL_COLORS.ink derived to an rgba string, so a caller never hand-types its digits.
+  await h.test('theme inkAlpha: derives SHELL_COLORS.ink’s rgba at the given alpha', async () => {
+    h.eq(inkAlpha(0.58), 'rgba(23,23,26,0.58)', 'ink (#17171a) at 0.58 alpha');
   });
 
   // sanitizeTheme — the mini-app-side trust boundary, now theme-shape-free.

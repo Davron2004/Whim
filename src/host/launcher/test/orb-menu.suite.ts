@@ -181,7 +181,8 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   });
 
   await h.test('orb-menu: the orb is translucent at rest, opaque once the menu opens', async () => {
-    h.ok(orbCode.includes('rgba(23,23,26,0.58)'), 'the resting fill is translucent ink, not solid');
+    h.ok(orbCode.includes('inkAlpha(0.58)'), 'the resting fill is `ink` at 0.58 alpha, derived rather than a hand-typed rgba literal');
+    h.ok(!/rgba\(23,\s*23,\s*26/.test(orbCode), 'and never restated as a literal `ink` rgb triple');
   });
 
   await h.test('orb-menu: FloatingExit is gone, replaced by the orb', async () => {

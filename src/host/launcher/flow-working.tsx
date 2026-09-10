@@ -38,7 +38,7 @@ export interface WorkingLineProps {
   /** The dot's colour role. Defaults to the accent — the same "something is alive" role the step
    *  indicator's reached bars use. `stalled` is the reserved grey (`STATUS_COLORS.waiting`) AND
    *  turns the breathing off — the only tone that renders a plain, still `View` in its place. */
-  tone?: 'accent' | 'muted' | 'stalled';
+  tone?: 'accent' | 'stalled';
   /** Whether this line appends its OWN `· m:ss` clock suffix (`workingLineText`). Defaults `true`
    *  — every pre-existing call site (`ClarifyStep`/`PlanStep`) keeps ticking its own clock exactly
    *  as before. `false` renders `phrase` verbatim, no suffix, no internal ticking timer: the
@@ -64,7 +64,6 @@ export function WorkingLine({ phrase, startedAt, tone = 'accent', clock = true }
 
   const TONE_COLOR: Record<NonNullable<WorkingLineProps['tone']>, string> = {
     stalled: STATUS_COLORS.waiting,
-    muted: p.textMuted,
     accent: p.accent,
   };
   const dotColor = TONE_COLOR[tone];

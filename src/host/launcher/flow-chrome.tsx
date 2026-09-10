@@ -46,7 +46,6 @@ export function FlowHeader({ step, palette, onBack }: Readonly<FlowHeaderProps>)
 
 export interface PrimaryActionProps {
   step: FlowStep;
-  busy: boolean;
   /** False greys the control out — an unusable action never pretends otherwise. */
   enabled: boolean;
   /** Swaps the plan step's label to the edit flow's own words (C1). Every other step's label is
@@ -56,22 +55,17 @@ export interface PrimaryActionProps {
   onPress: () => void;
 }
 
-/** The busy action keeps its full size, colour and words — it only softens, so nothing moves. */
-export const BUSY_OPACITY = 0.6;
-
-export function PrimaryAction({ step, busy, enabled, editing = false, palette, onPress }: Readonly<PrimaryActionProps>) {
+export function PrimaryAction({ step, enabled, editing = false, palette, onPress }: Readonly<PrimaryActionProps>) {
   const label = primaryActionLabel(step, editing);
-  const live = enabled && !busy;
-  const opacity = busy ? BUSY_OPACITY : 1;
   return (
     <TouchableOpacity
       onPress={onPress}
-      disabled={!live}
+      disabled={!enabled}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={[
         styles.primary,
-        { backgroundColor: enabled ? palette.accent : palette.card, borderColor: palette.cardBorder, opacity },
+        { backgroundColor: enabled ? palette.accent : palette.card, borderColor: palette.cardBorder },
       ]}
     >
       <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? palette.onAccent : palette.textMuted }]}>
