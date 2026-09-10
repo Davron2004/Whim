@@ -12,8 +12,8 @@
 import React, { useEffect } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { COPY } from './copy';
-import { FlowHeader, PrimaryAction } from './flow-chrome';
+import { COPY, composeHeadline, composePlaceholder } from './copy';
+import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
 
@@ -24,11 +24,14 @@ export interface ComposeStepProps {
   text: string;
   /** Whether a server address has been entered in Settings. */
   serverConfigured: boolean;
-  /** The clarify request is in flight — the primary action keeps its words and reads `One moment`. */
-  busy: boolean;
+  /** Scopes the screen to a re-prompt (C1: "the edit flow reads as editing, on every step") —
+   *  present together with `editingName`, the app's current display name for the eyebrow line. */
+  editing: boolean;
+  editingName?: string;
   onChangeText: (text: string) => void;
   onContinue: () => void;
-  /** Immediate: back from compose is a return to the home grid, with no busy state. */
+  /** Immediate: back from compose is a return to the home grid. Tapping Continue moves straight
+   *  to the clarify step's own loading state (C2) — compose never has a busy state of its own. */
   onBack: () => void;
   onOpenSettings: () => void;
 }
@@ -36,7 +39,8 @@ export interface ComposeStepProps {
 export default function ComposeStep({
   text,
   serverConfigured,
-  busy,
+  editing,
+  editingName,
   onChangeText,
   onContinue,
   onBack,
@@ -60,7 +64,8 @@ export default function ComposeStep({
       <FlowHeader step="compose" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{COPY.composeHeadline}</Text>
+        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{composeHeadline(editing)}</Text>
 
         {!serverConfigured && (
           <View style={[styles.notice, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
@@ -76,7 +81,7 @@ export default function ComposeStep({
         <TextInput
           value={text}
           onChangeText={onChangeText}
-          placeholder={COPY.homeComposerPlaceholder}
+          placeholder={composePlaceholder(editing)}
           placeholderTextColor={p.textMuted}
           style={[TYPE_SCALE.body, styles.field, { color: p.text, backgroundColor: p.card, borderColor: p.cardBorder }]}
           multiline
@@ -99,9 +104,11 @@ export default function ComposeStep({
         ))}
       </ScrollView>
 
+      {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
+          clarify step's own loading screen (C2), so this action is never anything but live. */}
       <PrimaryAction
         step="compose"
-        busy={busy}
+        busy={false}
         enabled={serverConfigured && trimmed.length > 0}
         palette={p}
         onPress={onContinue}

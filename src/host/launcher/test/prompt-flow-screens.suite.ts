@@ -37,7 +37,9 @@ import {
   withAnswer,
   withDelivering,
   withPlan,
+  withQuestions,
   withStage,
+  workingLineText,
 } from '../prompt-flow';
 import type { ClarifyScreen, ComposeScreen, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
@@ -65,7 +67,7 @@ function composedFlow(text = 'a timer for my pour-over'): ComposeScreen {
 }
 
 function clarifiedFlow(): ClarifyScreen {
-  return clarifyStep(composedFlow(), acceptClarifyQuestions(QUESTIONS));
+  return withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions(QUESTIONS));
 }
 
 function plannedFlow(rows?: { label: string; text: string }[]): PlanScreen {
@@ -77,11 +79,39 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // ── the five steps, in order ────────────────────────────────────────────────────────────────
 
   await h.test('flow: compose → clarify carries the user’s own words and asks nothing yet', () => {
-    const clarify = clarifyStep(composedFlow('make me a dice roller'), acceptClarifyQuestions(QUESTIONS));
+    const clarify = withQuestions(clarifyStep(composedFlow('make me a dice roller')), acceptClarifyQuestions(QUESTIONS));
     h.eq(clarify.kind, 'clarify', 'the step after compose is clarify');
     h.eq(clarify.text, 'make me a dice roller', 'the submitted prompt is carried verbatim');
     h.eq(clarify.answers, {}, 'no question is answered for the user');
     h.eq(clarify.questions.length, 2, 'both questions reach the step');
+  });
+
+  await h.test('flow: the clarify step opens loading, carrying compose’s text and editing scope', () => {
+    const loading = clarifyStep(composedFlow('a dice roller'));
+    h.eq(loading.kind, 'clarify', 'still the clarify step');
+    h.eq(loading.loading, true, 'the exchange has not answered yet');
+    h.eq(loading.text, 'a dice roller', 'the submitted prompt is carried immediately, before any request resolves');
+    h.eq(loading.questions, [], 'nothing is invented while the request is in flight');
+    h.eq(loading.editing?.id, EDITED.id, 'the edit scope is carried too');
+  });
+
+  await h.test('flow: withQuestions fills a loading clarify step and clears loading', () => {
+    const loading = clarifyStep(composedFlow());
+    const filled = withQuestions(loading, acceptClarifyQuestions(QUESTIONS));
+    h.eq(filled.loading, false, 'the wait is over');
+    h.eq(filled.questions.length, 2, 'the real questions replace the empty placeholder');
+    h.eq(filled.text, loading.text, 'nothing else about the step moves');
+  });
+
+  await h.test('flow: a compose continue with zero questions goes straight to the plan step, never an empty clarify', () => {
+    // `stepAfterClarifyExchange` is the single source of truth `LauncherRoot.tsx#onComposeContinue`
+    // reads: zero questions means the clarify screen the user is already looking at (loading) is
+    // replaced by the plan step directly — never rendered with an empty question list.
+    const loading = clarifyStep(composedFlow());
+    h.eq(stepAfterClarifyExchange(acceptClarifyQuestions([])), 'plan', 'zero questions never opens the clarify step for real');
+    const plan = planStep(loading);
+    h.eq(plan.kind, 'plan', 'the loading clarify screen can seed the plan step directly');
+    h.eq(plan.questions, [], 'with no questions to carry');
   });
 
   await h.test('flow: zero questions skips the clarify step entirely', () => {
@@ -131,11 +161,14 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     const pending = planStep(clarifiedFlow());
     h.eq(pending.loading, true, 'the rows are still coming');
     h.eq(pending.rows, [], 'nothing is invented while they are');
-    h.eq(primaryActionLabel('plan', pending.loading), COPY.flowBusy, 'the action keeps plain words while it waits');
+    // The primary action's WORDS never depend on being busy (`prompt-flow` "the clarify wait is a
+    // screen, not a grey button") — only whether the screen is scoped to an edit moves the label;
+    // `PrimaryAction`'s own busy/disabled state is what changes while `pending.loading` is true.
+    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'a new app reads Build it, loading or not');
     const live = withPlan(pending, { rewrittenPrompt: 'a brew timer', plan: [{ label: 'What it is', text: 'A brew timer.' }] });
     h.eq(live.loading, false, 'the arrived response clears the loading state');
     h.eq(live.rewritten, 'a brew timer', 'the rewritten prompt is what generation will be asked for');
-    h.eq(primaryActionLabel('plan', live.loading), COPY.planBuild, 'the action reads Build it once the plan is there');
+    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'and still Build it once the plan is there');
   });
 
   await h.test('flow: an unstructured plan still renders as one approvable row', () => {
@@ -285,14 +318,25 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
 
   // ── the primary action ──────────────────────────────────────────────────────────────────────
 
-  await h.test('flow: every busy primary action keeps plain words', () => {
+  await h.test('flow: the primary action’s words never depend on being busy — only editing branches them', () => {
+    // C2: a busy primary action keeps its REAL label, at `flow-chrome.ts#BUSY_OPACITY` — never a
+    // "One moment" placeholder (removed with `COPY.flowBusy`; the wait is the clarify screen's own
+    // loading state instead, `prompt-flow` "the clarify wait is a screen, not a grey button").
     h.eq(primaryActionLabel('compose', false), COPY.flowContinue, 'compose reads Continue');
     h.eq(primaryActionLabel('clarify', false), COPY.flowContinue, 'clarify reads Continue');
-    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'plan reads Build it');
-    for (const step of ['compose', 'clarify', 'plan'] as const) {
-      h.eq(primaryActionLabel(step, true), COPY.flowBusy, `${step} reads One moment while its request is in flight`);
-    }
-    h.eq(COPY.flowBusy, 'One moment', 'the busy label is words, not a spinner');
+    h.eq(primaryActionLabel('clarify', true), COPY.flowContinue, 'clarify is unbranched by editing too');
+    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'a new app’s plan reads Build it');
+    h.eq(primaryActionLabel('plan', true), COPY.planBuildEdit, 'an edit’s plan reads Make the change');
+    h.ok(!('flowBusy' in COPY), 'the grey-button placeholder label is gone entirely');
+  });
+
+  await h.test('WorkingLine: no clock suffix under 5s, the phrase alone; a clock past it', () => {
+    const startedAt = 1_000_000;
+    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt), 'Thinking about what to ask', 'at the very start, no clock');
+    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 4_999), 'Thinking about what to ask', 'still no clock just under 5s');
+    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 5_000), 'Thinking about what to ask · 0:05', 'the clock appears at exactly 5s');
+    h.eq(workingLineText('Thinking about what to ask', startedAt, startedAt + 7_000), 'Thinking about what to ask · 0:07', 'and keeps advancing');
+    h.eq(workingLineText('Writing the plan', startedAt, startedAt + 65_000), 'Writing the plan · 1:05', 'minutes read the same as elapsedLabel elsewhere');
   });
 
   // ── the build step's four named steps ───────────────────────────────────────────────────────
@@ -369,7 +413,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
     h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    h.ok(/<PrimaryAction step="clarify" busy=\{busy\} enabled palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers');
+    h.ok(/\{!loading && <PrimaryAction step="clarify" busy=\{false\} enabled editing=\{editing\} palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
   });
 
   await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
@@ -378,8 +422,51 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(!/onEditRow|reopenCompose/.test(planSrc), 'the old reopen-compose wiring is gone');
     h.ok(/<TextInput/.test(planSrc), 'the editing row renders a real text field, not a read-only card');
     h.ok(planSrc.includes('COPY.planRowSave') && planSrc.includes('COPY.cancel'), 'the edit mode offers save and cancel, from the copy table');
-    h.ok(planSrc.includes('COPY.planHeadline') && planSrc.includes('COPY.planSubhead') && planSrc.includes('COPY.planFooter'), 'headline, subhead and footer all come from the copy table');
+    h.ok(planSrc.includes('planHeadline(editing)') && planSrc.includes('COPY.planSubhead') && planSrc.includes('COPY.planFooter'), 'headline, subhead and footer all come from the copy table');
     h.ok(!/generateApp|rewritePrompt|fetch\(/.test(planSrc), 'the approval screen never sends a request itself');
+  });
+
+  // ── C1: the edit flow reads as editing, on every gated step ─────────────────────────────────
+  // The branch is copy functions, not inline ternaries, precisely so it is greppable: a step that
+  // silently regressed back to one un-branched string would still typecheck and still render
+  // something, so the requirement can only be pinned at the source level (the `orb-menu.suite.ts`
+  // idiom for a claim that lives in JSX rather than in pure logic).
+
+  await h.test('edit flow: every gated step calls the editing-aware copy functions, never a bare literal', () => {
+    h.ok(composeSrc.includes('composeHeadline(editing)'), 'compose branches its headline');
+    h.ok(composeSrc.includes('composePlaceholder(editing)'), 'and its field placeholder');
+    h.ok(planSrc.includes('planHeadline(editing)'), 'plan branches its headline');
+    h.ok(planSrc.includes('workingPlanPhrase(editing)'), 'and its working-line phrase');
+    h.ok(
+      /\{!loading && <PrimaryAction step="plan" busy=\{false\} enabled editing=\{editing\}/.test(planSrc),
+      'plan\'s primary action is told whether it is editing, so Build it can become Make the change',
+    );
+  });
+
+  await h.test('edit flow: the primary action does not render at all while a gated step is loading', () => {
+    // A disabled button under a skeleton is noise — there is nothing to confirm/approve yet, so
+    // the whole control is absent, not merely greyed out. `WorkingLine` is the only liveness
+    // element under either skeleton.
+    const rendersUnconditionally = (src: string): boolean => src.split('\n').some((line) => line.trim().startsWith('<PrimaryAction'));
+    h.ok(!rendersUnconditionally(clarifySrc), 'clarify never renders it unconditionally');
+    h.ok(!rendersUnconditionally(planSrc), 'nor does plan');
+  });
+
+  await h.test('edit flow: every gated step renders the shared eyebrow, scoped to editing', () => {
+    for (const [name, src] of [['compose', composeSrc], ['clarify', clarifySrc], ['plan', planSrc]] as const) {
+      h.ok(src.includes('EditingEyebrow'), `${name} renders the shared eyebrow component`);
+      h.ok(/editing && editingName != null/.test(src), `${name} only shows it while editing`);
+    }
+  });
+
+  await h.test('edit flow: the clarify loading state renders the skeleton and a WorkingLine, no numbered headline', () => {
+    h.ok(clarifySrc.includes('ClarifyQuestionsSkeleton'), 'the loading clarify screen shows the shared skeleton');
+    h.ok(clarifySrc.includes('<WorkingLine phrase={COPY.workingClarify}'), 'and the shared liveness line, with its own phrase');
+    h.ok(/\{!loading && \(\s*<Text style=\{\[TYPE_SCALE\.stepTitle/.test(clarifySrc), 'the counted headline is withheld until the count is known');
+  });
+
+  await h.test('edit flow: the plan loading state renders a WorkingLine under its row skeleton', () => {
+    h.ok(planSrc.includes('<WorkingLine phrase={workingPlanPhrase(editing)}'), 'the plan skeleton gets the same liveness line, editing-aware');
   });
 
   await h.test('build: no raw log, no token text, no diagnostic internals', () => {
@@ -437,11 +524,13 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
 
   await h.test('flow screens: every string they show exists in the copy table', () => {
     const keys = [
-      'flowBusy', 'flowContinue', 'composeHeadline', 'composeHelper', 'composeChipsEyebrow',
-      'composeChipTimer', 'composeChipTracker', 'composeChipDice', 'clarifyHelper', 'planHeadline',
-      'planSubhead', 'planFooter', 'planBuild', 'buildTitle', 'buildSubtitle', 'buildStepReading',
-      'buildStepWriting', 'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails',
-      'doneBody', 'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
+      'flowContinue', 'composeHeadline', 'composeHeadlineEdit', 'composeHelper',
+      'composePlaceholderEdit', 'composeChipsEyebrow', 'composeChipTimer', 'composeChipTracker',
+      'composeChipDice', 'clarifyHelper', 'workingClarify', 'planHeadline', 'planHeadlineEdit',
+      'planSubhead', 'planFooter', 'planBuild', 'planBuildEdit', 'workingPlan', 'workingPlanEdit',
+      'buildTitle', 'buildTitleEdit', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
+      'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails', 'doneBody',
+      'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
       'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureBack',
       'failureDismiss',
     ] as const;

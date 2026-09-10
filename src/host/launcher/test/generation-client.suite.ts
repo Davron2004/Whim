@@ -222,6 +222,32 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(bodies[1], { prompt: 'a brew timer' }, 'composing a new app sends no app key at all');
   });
 
+  // clarifyPrompt: the SAME app context, so the clarifier never re-asks what the app already is
+  // (`ClarifyRequest.app` mirrors `RewriteRequest.app` exactly — `AppContext`).
+  await h.test('clarifyPrompt: an edit carries the app being changed; a new app carries none', async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ questions: [] }), { status: 200 });
+    }) as typeof fetch;
+
+    await clarifyPrompt({ ...BASE, fetchImpl }, 'add a fruit tea section', buildRewriteAppContext(HABITS));
+    h.eq(
+      bodies[0],
+      {
+        prompt: 'add a fruit tea section',
+        app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
+      },
+      'the clarify body carries the same app context a rewrite would',
+    );
+
+    await clarifyPrompt({ ...BASE, fetchImpl }, 'a brew timer', buildRewriteAppContext(undefined));
+    h.eq(bodies[1], { prompt: 'a brew timer' }, 'composing a new app sends no app key at all');
+
+    await clarifyPrompt({ ...BASE, fetchImpl }, 'a dice roller');
+    h.eq(bodies[2], { prompt: 'a dice roller' }, 'and an omitted app argument sends the same shape');
+  });
+
   // rewritePrompt: generic HTTP error
   await h.test('rewritePrompt: a non-2xx response raises GenerationClientError{kind:"http"}', async () => {
     const fetchImpl = (async () =>
@@ -420,7 +446,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   await h.test('clarifyPrompt: the caller signal reaches the request and an abort surfaces as AbortError, not a network failure', async () => {
     const record: { signal?: AbortSignal } = {};
     const controller = new AbortController();
-    const pending = clarifyPrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', controller.signal);
+    const pending = clarifyPrompt({ ...BASE, fetchImpl: hangingFetch(record) }, 'hi', undefined, controller.signal);
     const caught = settledOrHung(pending, 1000);
     h.ok(record.signal !== undefined, 'the signal is threaded into the fetch call');
     controller.abort();

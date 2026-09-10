@@ -22,6 +22,7 @@
 import type { VersionStore, Snapshot, Pin, FileChange } from '../version-store';
 import type { AppRecord } from '../bridge/contract';
 import { AppIndex, InstalledApp } from './app-index';
+import { parsePromptEnvelope } from './prompt-envelope';
 
 /** Drop an installed app's per-app user-data store (the storage engine's SQLite db). Device →
  *  op-sqlite `db.delete()`; Node tests → a spy. Injected so store-access stays device-free. */
@@ -174,6 +175,23 @@ export class StoreAccess {
     await this.ensureLineage(entry);
     const active = await this.store.active(storeIdOf(entry));
     return active?.artifacts['source.ts'];
+  }
+
+  /**
+   * The prompt that produced this entry's CURRENT version, as the user's own words — read-only,
+   * best-effort context for a re-prompt (`generation-request.ts#buildRewriteAppContext`'s
+   * `description`, sent to both the clarify and rewrite calls). Resolved through
+   * `parsePromptEnvelope` the same way `history-logic.ts#buildHistoryRows` reads a snapshot's
+   * prompt, so a v1 envelope or a raw legacy string reads exactly as honestly here as there.
+   * `undefined` when the entry has never snapshotted — a legitimate state, never an error; callers
+   * decide what "no description" means for their own request (`buildRewriteAppContext` omits the
+   * field entirely).
+   */
+  async activeDescription(entry: InstalledApp): Promise<string | undefined> {
+    await this.ensureLineage(entry);
+    const active = await this.store.active(storeIdOf(entry));
+    if (active == null) return undefined;
+    return parsePromptEnvelope(active.prompt).text;
   }
 
   /** This entry's own lineage line, newest-first (D6) — an ancestry walk from its active tip. */

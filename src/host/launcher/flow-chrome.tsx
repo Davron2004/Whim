@@ -11,7 +11,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { COPY } from './copy';
+import { COPY, editingEyebrow } from './copy';
 import { primaryActionLabel, type FlowStep } from './prompt-flow';
 import type { ShellPalette } from './theme';
 
@@ -49,15 +49,18 @@ export interface PrimaryActionProps {
   busy: boolean;
   /** False greys the control out — an unusable action never pretends otherwise. */
   enabled: boolean;
+  /** Swaps the plan step's label to the edit flow's own words (C1). Every other step's label is
+   *  unbranched, so an absent value is the same as `false`. */
+  editing?: boolean;
   palette: ShellPalette;
   onPress: () => void;
 }
 
 /** The busy action keeps its full size, colour and words — it only softens, so nothing moves. */
-const BUSY_OPACITY = 0.6;
+export const BUSY_OPACITY = 0.6;
 
-export function PrimaryAction({ step, busy, enabled, palette, onPress }: Readonly<PrimaryActionProps>) {
-  const label = primaryActionLabel(step, busy);
+export function PrimaryAction({ step, busy, enabled, editing = false, palette, onPress }: Readonly<PrimaryActionProps>) {
+  const label = primaryActionLabel(step, editing);
   const live = enabled && !busy;
   const opacity = busy ? BUSY_OPACITY : 1;
   return (
@@ -78,7 +81,30 @@ export function PrimaryAction({ step, busy, enabled, palette, onPress }: Readonl
   );
 }
 
+export interface EditingEyebrowProps {
+  /** The app being changed, in its current display name. */
+  name: string;
+  palette: ShellPalette;
+}
+
+/**
+ * "Changing <app name>" — the one line every gated step of the edit flow shares (C1: "the edit
+ * flow reads as editing, on every step"), so a re-prompt can never again read like the new-app
+ * flow (the reported bug: asked "what kind of app am I adding it to" while adding a section to an
+ * existing one). Rendered only when the screen has `editing`; callers own that check.
+ *
+ * `BuildStep.tsx` is out of this change's boundary — another task places this component there.
+ */
+export function EditingEyebrow({ name, palette }: Readonly<EditingEyebrowProps>) {
+  return (
+    <Text style={[TYPE_SCALE.eyebrow, styles.editingEyebrow, { color: palette.textMuted }]}>
+      {editingEyebrow(name)}
+    </Text>
+  );
+}
+
 const styles = StyleSheet.create({
+  editingEyebrow: { marginBottom: SPACING.xs },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

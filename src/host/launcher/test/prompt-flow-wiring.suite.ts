@@ -333,36 +333,48 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(leaveFn.includes("flowRequests.abort('compose')") && leaveFn.includes("flowRequests.abort('plan')"), 'the leave-handler aborts the step being left');
     h.ok(/const goHome = \(\) => \{\s*leaveFlowStep\(screen\.kind\);/.test(rootSrc), 'going Home leaves the current step');
     h.ok(/const goBack = \(from: FlowScreen\) => \{\s*leaveFlowStep\(from\.kind\);/.test(rootSrc), 'and so does a back press — which is what the hardware back button calls');
-    h.ok(/onOpenSettings=\{\(\) => \{\s*leaveFlowStep\('compose'\);/.test(rootSrc), 'opening Settings out of compose leaves it too');
+    // Compose itself never owns a request any more (C2: tapping Continue moves synchronously to
+    // the clarify step's own loading state, so nothing is in flight while the screen is still
+    // `compose`) — leaving it via Settings is a bare navigation, and `leaveFlowStep('clarify')` is
+    // what now aborts the SAME `'compose'`-labelled slot, from the screen that actually shows it.
+    h.ok(rootSrc.includes("onOpenSettings={() => setScreen({ kind: 'settings' })}"), 'opening Settings out of compose is a plain navigation — nothing to cancel there');
+    h.ok(leaveFn.includes("if (kind === 'clarify')"), 'the loading clarify screen is what leaving actually cancels');
   });
 
-  await h.test('rewrite-wiring: the plan step tells the rewrite which app it is changing', () => {
+  await h.test('rewrite-wiring: the plan step tells the rewrite which app it is changing, and what it currently is', () => {
     // Same failure mode as the cancel wires above, and the same reason it is asserted statically:
-    // drop `buildRewriteAppContext(plan.editing)` from the call and the request simply stops
-    // carrying the app context — the builder's own suite still passes, the rewrite still
-    // succeeds, and the model quietly loses the names it was supposed to keep.
+    // drop `buildRewriteAppContext(plan.editing, plan.about)` from the call and the request simply
+    // stops carrying the app context — the builder's own suite still passes, the rewrite still
+    // succeeds, and the model quietly loses the names (and description) it was supposed to keep.
     const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
     h.ok(
-      /rewritePrompt\([\s\S]*?buildRewriteAppContext\(plan\.editing\)/.test(planFn),
-      'the rewrite call carries the app context built from the app being edited',
+      /rewritePrompt\([\s\S]*?buildRewriteAppContext\(plan\.editing, plan\.about\)/.test(planFn),
+      'the rewrite call carries the app context — name, collections AND description — built from the app being edited',
+    );
+    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
+    h.ok(
+      /clarifyPrompt\([\s\S]*?buildRewriteAppContext\(from\.editing, from\.about\)/.test(composeFn),
+      'the clarify call carries the SAME shape of context — the clarifier never re-asks what kind of app it is',
     );
   });
 
   await h.test('cancel-wiring: every post-await screen write in the flow is guarded', () => {
     // The B1 fix: aborting alone cannot stop a promise that had already resolved when the user
-    // navigated away, so each write after an `await` re-checks the step that started it.
+    // navigated away, so each write after an `await` re-checks the step that started it. The ONE
+    // exception is the synchronous, pre-await move onto the loading clarify screen itself — there
+    // is nothing to guard against yet, the same idiom `runAttempt`'s own `setScreen(building)` and
+    // `openPlan`'s call sites already rely on for their own first, synchronous write.
     const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
     const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
     const writes = (src: string) => src.match(/setScreen\(/g) ?? [];
     const guarded = (src: string) => src.match(/setScreen\(onlyOnStep</g) ?? [];
-    h.eq(guarded(composeFn).length, writes(composeFn).length, 'no unguarded setScreen survives in onComposeContinue');
-    h.eq(guarded(planFn).length, writes(planFn).length, 'nor in openPlan');
-    h.ok(composeFn.includes('if (request.cancelled) return;'), 'a cancelled clarify returns before touching busy or the screen');
+    h.eq(writes(composeFn).length - guarded(composeFn).length, 1, 'exactly one unguarded write in onComposeContinue — the synchronous move onto the loading clarify screen');
+    h.ok(/setScreen\(loading\);/.test(composeFn), 'and it is that move, by name');
+    h.eq(guarded(planFn).length, writes(planFn).length, 'every write in openPlan is guarded');
+    h.ok(composeFn.includes('if (request.cancelled) return;'), 'a cancelled clarify returns before touching the screen');
     h.ok(planFn.includes('if (request.cancelled) return;'), 'and a cancelled rewrite before showing any failure');
     h.ok(composeFn.indexOf('if (request.cancelled) return;') < composeFn.indexOf("logGenError('clarify failed'"), 'the abort is swallowed before any failure breadcrumb is logged');
     h.ok(planFn.indexOf('if (request.cancelled) return;') < planFn.indexOf("logGenError('rewrite failed'"), 'on the rewrite path too');
-    const leaveFn = rootSrc.slice(rootSrc.indexOf('const leaveFlowStep'), rootSrc.indexOf('const onServerUrlChange'));
-    h.ok(leaveFn.includes('setBusy(false)'), 'leaving compose clears the busy primary action the guarded reset can no longer clear');
   });
 
   await h.test('build: only `stage` reaches screen state — never token text or diagnostic fields', () => {

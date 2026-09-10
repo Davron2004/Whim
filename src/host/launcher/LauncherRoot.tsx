@@ -84,6 +84,7 @@ import {
   withAnswer,
   withDelivering,
   withPlan,
+  withQuestions,
   withStage,
 } from './prompt-flow';
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
@@ -315,7 +316,6 @@ function LauncherShell({
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
 
@@ -472,13 +472,14 @@ function LauncherShell({
     });
 
   /** The leave-handler half of the flow's cancellation pattern: the step being left cancels its
-   *  OWN in-flight request and nothing else. Compose drops its busy state on the way out too —
-   *  the primary action is busy only for the clarify request this just cancelled, and its
-   *  post-await reset is guarded, so nothing else would ever clear it. */
+   *  OWN in-flight request and nothing else. The clarify exchange now starts the moment compose's
+   *  primary action is tapped — the screen is already `clarify` (loading) by the time anything is
+   *  in flight (C2), so it is leaving THAT step, never `compose`, that aborts the `'compose'`-
+   *  labelled request (the internal slot name is unchanged; only which screen owns the wait is
+   *  new). Compose itself never has a request of its own to cancel. */
   const leaveFlowStep = (kind: Screen['kind']) => {
-    if (kind === 'compose') {
+    if (kind === 'clarify') {
       flowRequests.abort('compose');
-      setBusy(false);
     } else if (kind === 'plan') {
       flowRequests.abort('plan');
     }
@@ -536,7 +537,30 @@ function LauncherShell({
     };
   };
 
-  const openCompose = (editing?: InstalledApp, text?: string) => setScreen(composeStep(editing, text ?? ''));
+  /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
+   *  rewrite `app.description`) is resolved AFTER the screen is already showing — best effort,
+   *  never blocking the field the user is about to type into — and applied only while they are
+   *  still on the SAME compose screen it was resolved for (`onlyOnStep`, plus an identity check:
+   *  two fast "Prompt again" taps for different apps must not cross-apply). A read that fails or
+   *  finds no snapshot leaves `about` absent, which `buildRewriteAppContext` already treats as "no
+   *  description" — a degraded edit flow, never a blocked one. */
+  const openCompose = (editing?: InstalledApp, text?: string) => {
+    setScreen(composeStep(editing, text ?? ''));
+    if (!editing) return;
+    (async () => {
+      let about: string | undefined;
+      try {
+        about = await access.activeDescription(editing);
+      } catch (e) {
+        log.debug(CHANNELS.app, 'edit description unavailable', { operation: 'openCompose', ...errorFields(e) });
+        return;
+      }
+      if (about == null) return;
+      setScreen(
+        onlyOnStep<Screen, 'compose'>('compose', (s) => (s.editing?.id === editing.id ? { ...s, about } : s)),
+      );
+    })();
+  };
 
   const goBack = (from: FlowScreen) => {
     leaveFlowStep(from.kind);
@@ -559,8 +583,9 @@ function LauncherShell({
         clientOptions,
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
-        // A re-prompt tells the rewrite which app it is changing; composing a new app sends none.
-        buildRewriteAppContext(plan.editing),
+        // A re-prompt tells the rewrite which app it is changing, and what it currently is;
+        // composing a new app sends neither.
+        buildRewriteAppContext(plan.editing, plan.about),
         request.controller.signal,
       );
       if (request.cancelled) return;
@@ -576,38 +601,51 @@ function LauncherShell({
     }
   };
 
-  /** compose → clarify, or straight past it when the exchange has nothing to ask. A clarify
-   *  `502` means "skip to the plan step", not a dead end (`isClarifySkip`). */
+  /** compose → clarify, or straight past it when the exchange has nothing to ask. The clarify step
+   *  opens IMMEDIATELY, under its own loading state — the wait is that screen, never a grey compose
+   *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
+   *  "skip to the plan step", not a dead end (`isClarifySkip`). */
   const onComposeContinue = async (from: ComposeScreen) => {
     if (!clientOptions) return;
-    setBusy(true);
+    const loading = clarifyStep(from);
+    setScreen(loading);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
     try {
       questions = acceptClarifyQuestions(
-        (await clarifyPrompt(clientOptions, from.text, request.controller.signal)).questions,
+        (
+          await clarifyPrompt(
+            clientOptions,
+            from.text,
+            // The same context a rewrite would carry (name, collections, description) — so the
+            // clarifier never re-asks what kind of app it is talking to.
+            buildRewriteAppContext(from.editing, from.about),
+            request.controller.signal,
+          )
+        ).questions,
       );
     } catch (e) {
-      // The user left compose while this was in flight: the abort surfaces here as a plain
-      // `AbortError`, and it is swallowed — no failure screen, no breadcrumb, and `busy` was
-      // already cleared by the leave-handler that cancelled it.
+      // The user left the loading clarify screen while this was in flight (back to compose, or
+      // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
+      // screen, no breadcrumb.
       if (request.cancelled) return;
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
-        setBusy(false);
         const failed = failure(from.editing, from.text, e, 'clarify failed');
-        setScreen(onlyOnStep<Screen, 'compose'>('compose', () => failed));
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => failed));
         return;
       }
     } finally {
       flowRequests.release('compose', request);
     }
     if (request.cancelled) return;
-    setBusy(false);
     if (stepAfterClarifyExchange(questions) === 'clarify') {
-      setScreen(onlyOnStep<Screen, 'compose'>('compose', () => clarifyStep(from, questions)));
+      setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withQuestions(s, questions)));
     } else {
-      await openPlan(from);
+      // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
+      // step — its own skeleton replaces this one, so the wait reads as continuous, never as a
+      // clarify screen that flashed empty.
+      await openPlan(loading);
     }
   };
 
@@ -1051,14 +1089,12 @@ function LauncherShell({
       <ComposeStep
         text={from.text}
         serverConfigured={clientOptions != null}
-        busy={busy}
+        editing={from.editing != null}
+        editingName={from.editing?.name}
         onChangeText={(text) => setScreen({ ...from, text })}
         onContinue={() => onComposeContinue(from)}
         onBack={() => goBack(from)}
-        onOpenSettings={() => {
-          leaveFlowStep('compose');
-          setScreen({ kind: 'settings' });
-        }}
+        onOpenSettings={() => setScreen({ kind: 'settings' })}
       />
     );
   } else if (screen.kind === 'clarify') {
@@ -1068,7 +1104,10 @@ function LauncherShell({
         prompt={from.text}
         questions={from.questions}
         answers={from.answers}
-        busy={false}
+        loading={from.loading}
+        startedAt={from.startedAt}
+        editing={from.editing != null}
+        editingName={from.editing?.name}
         onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
         onContinue={() => openPlan(from)}
         onBack={() => goBack(from)}
@@ -1080,6 +1119,9 @@ function LauncherShell({
       <PlanStep
         rows={from.rows}
         loading={from.loading}
+        startedAt={from.startedAt}
+        editing={from.editing != null}
+        editingName={from.editing?.name}
         onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
         onBuild={() => onBuildIt(from)}
         onBack={() => goBack(from)}

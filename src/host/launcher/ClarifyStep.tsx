@@ -13,7 +13,9 @@ import React, { useEffect } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyHeadline } from './copy';
-import { FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { ClarifyQuestionsSkeleton } from './flow-skeletons';
+import { WorkingLine } from './flow-working';
 import type { FlowAnswers, FlowQuestion } from './prompt-flow';
 import { shellPalette } from './theme';
 import { useTheme } from './theme-context';
@@ -23,10 +25,18 @@ export interface ClarifyStepProps {
   prompt: string;
   questions: readonly FlowQuestion[];
   answers: FlowAnswers;
-  busy: boolean;
+  /** The clarify exchange is still in flight (C2): the step renders its own loading state —
+   *  `ClarifyQuestionsSkeleton` plus a `WorkingLine` — instead of the real questions. */
+  loading: boolean;
+  /** When the in-flight exchange started, for `WorkingLine`'s clock. Only read while `loading`. */
+  startedAt?: number;
+  /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
+  editing: boolean;
+  editingName?: string;
   onAnswer: (questionId: string, answer: string) => void;
   onContinue: () => void;
-  /** Immediate: back lands on compose with the prompt intact. */
+  /** Immediate: back lands on compose with the prompt intact. While `loading`, the caller also
+   *  aborts the in-flight clarify request — this screen only navigates. */
   onBack: () => void;
 }
 
@@ -34,7 +44,10 @@ export default function ClarifyStep({
   prompt,
   questions,
   answers,
-  busy,
+  loading,
+  startedAt,
+  editing,
+  editingName,
   onAnswer,
   onContinue,
   onBack,
@@ -55,7 +68,13 @@ export default function ClarifyStep({
       <FlowHeader step="clarify" palette={p} onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{clarifyHeadline(questions.length)}</Text>
+        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+
+        {/* The counted headline ("One/Two/Three quick things") depends on data that does not
+            exist yet while loading — it appears only once the real questions have landed. */}
+        {!loading && (
+          <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{clarifyHeadline(questions.length)}</Text>
+        )}
 
         {/*
           The echoed prompt is a standalone block of the user's own words (design doc "`yours` —
@@ -74,38 +93,50 @@ export default function ClarifyStep({
           {prompt}
         </Text>
 
-        {questions.map((question) => (
-          <View key={question.id} style={styles.question}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{question.question}</Text>
-            <View style={styles.options}>
-              {question.options.map((option) => {
-                const selected = answers[question.id] === option;
-                return (
-                  <TouchableOpacity
-                    key={option}
-                    onPress={() => onAnswer(question.id, option)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected }}
-                    style={[
-                      styles.pill,
-                      {
-                        backgroundColor: selected ? p.accent : p.bg,
-                        borderColor: selected ? p.accent : p.cardBorder,
-                      },
-                    ]}
-                  >
-                    <Text style={[TYPE_SCALE.controlLabel, { color: selected ? p.onAccent : p.text }]}>{option}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        ))}
+        {loading ? (
+          <>
+            <ClarifyQuestionsSkeleton color={p.card} />
+            <WorkingLine phrase={COPY.workingClarify} startedAt={startedAt ?? Date.now()} />
+          </>
+        ) : (
+          <>
+            {questions.map((question) => (
+              <View key={question.id} style={styles.question}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.text }]}>{question.question}</Text>
+                <View style={styles.options}>
+                  {question.options.map((option) => {
+                    const selected = answers[question.id] === option;
+                    return (
+                      <TouchableOpacity
+                        key={option}
+                        onPress={() => onAnswer(question.id, option)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected }}
+                        style={[
+                          styles.pill,
+                          {
+                            backgroundColor: selected ? p.accent : p.bg,
+                            borderColor: selected ? p.accent : p.cardBorder,
+                          },
+                        ]}
+                      >
+                        <Text style={[TYPE_SCALE.controlLabel, { color: selected ? p.onAccent : p.text }]}>{option}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
 
-        <Text style={[TYPE_SCALE.caption, styles.helper, { color: p.textMuted }]}>{COPY.clarifyHelper}</Text>
+            <Text style={[TYPE_SCALE.caption, styles.helper, { color: p.textMuted }]}>{COPY.clarifyHelper}</Text>
+          </>
+        )}
       </ScrollView>
 
-      <PrimaryAction step="clarify" busy={busy} enabled palette={p} onPress={onContinue} />
+      {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
+          action mounts once the real questions have landed; `WorkingLine` is the only liveness
+          element while loading. */}
+      {!loading && <PrimaryAction step="clarify" busy={false} enabled editing={editing} palette={p} onPress={onContinue} />}
     </View>
   );
 }
