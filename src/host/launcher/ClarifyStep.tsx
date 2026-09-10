@@ -136,7 +136,7 @@ export default function ClarifyStep({
       {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
           action mounts once the real questions have landed; `WorkingLine` is the only liveness
           element while loading. */}
-      {!loading && <PrimaryAction step="clarify" busy={false} enabled editing={editing} palette={p} onPress={onContinue} />}
+      {!loading && <PrimaryAction step="clarify" enabled editing={editing} palette={p} onPress={onContinue} />}
     </View>
   );
 }

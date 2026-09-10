@@ -52,19 +52,12 @@ export interface ComposeScreen {
   editing?: InstalledApp;
   /** The user's own words, verbatim — never live-lexed while it is being typed. */
   text: string;
-  /** The prompt that produced `editing`'s CURRENT version (`AppContext.description`) — best-effort
-   *  context for the clarify/rewrite exchange, resolved once when the flow enters compose for an
-   *  edit (`LauncherRoot.tsx#openCompose`). Absent for a new app, and absent (never invented) when
-   *  the read failed or the app has no snapshot. Carried forward through clarify and plan so both
-   *  wire calls send the SAME description. */
-  about?: string;
 }
 
 export interface ClarifyScreen {
   kind: 'clarify';
   editing?: InstalledApp;
   text: string;
-  about?: string;
   questions: readonly FlowQuestion[];
   answers: FlowAnswers;
   /** The clarify exchange is still in flight: the step opens under this loading state the moment
@@ -82,7 +75,6 @@ export interface PlanScreen {
   kind: 'plan';
   editing?: InstalledApp;
   text: string;
-  about?: string;
   /** Carried so a back press can rebuild the clarify step it came from, answers intact. Empty
    *  when the clarify step was skipped — a back press then lands on compose. */
   questions: readonly FlowQuestion[];
@@ -129,11 +121,9 @@ export interface DoneScreen {
 
 export type FlowScreen = ComposeScreen | ClarifyScreen | PlanScreen | BuildScreen | DoneScreen;
 
-/** The compose step, optionally scoped to an app being re-prompted and optionally prefilled.
- *  `about` is the resolved edit description (`ComposeScreen.about`) — absent for a new app, and a
- *  legitimate absence for an edit whose description could not be resolved yet or at all. */
-export function composeStep(editing?: InstalledApp, text = '', about?: string): ComposeScreen {
-  return { kind: 'compose', ...(editing ? { editing } : {}), text, ...(about != null ? { about } : {}) };
+/** The compose step, optionally scoped to an app being re-prompted and optionally prefilled. */
+export function composeStep(editing?: InstalledApp, text = ''): ComposeScreen {
+  return { kind: 'compose', ...(editing ? { editing } : {}), text };
 }
 
 /**
@@ -176,7 +166,6 @@ export function clarifyStep(prev: ComposeScreen): ClarifyScreen {
     kind: 'clarify',
     ...(prev.editing ? { editing: prev.editing } : {}),
     text: prev.text,
-    ...(prev.about != null ? { about: prev.about } : {}),
     questions: [],
     answers: {},
     loading: true,
@@ -234,7 +223,6 @@ export function planStep(prev: ComposeScreen | ClarifyScreen): PlanScreen {
     kind: 'plan',
     ...(prev.editing ? { editing: prev.editing } : {}),
     text: prev.text,
-    ...(prev.about != null ? { about: prev.about } : {}),
     questions: prev.kind === 'clarify' ? prev.questions : [],
     answers: prev.kind === 'clarify' ? prev.answers : {},
     rewritten: '',
@@ -316,21 +304,20 @@ export function backFrom(screen: FlowScreen): FlowScreen | 'home' | null {
     case 'compose':
       return 'home';
     case 'clarify':
-      return composeStep(screen.editing, screen.text, screen.about);
+      return composeStep(screen.editing, screen.text);
     case 'plan':
       return screen.questions.length > 0
         ? {
             kind: 'clarify',
             ...(screen.editing ? { editing: screen.editing } : {}),
             text: screen.text,
-            ...(screen.about != null ? { about: screen.about } : {}),
             questions: screen.questions,
             answers: screen.answers,
             // A clarify step reached by going BACK already has its questions answered (or was
             // skipped past) — never the loading state a forward move into it opens under.
             loading: false,
           }
-        : composeStep(screen.editing, screen.text, screen.about);
+        : composeStep(screen.editing, screen.text);
     default:
       return null;
   }

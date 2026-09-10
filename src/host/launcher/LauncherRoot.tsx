@@ -46,7 +46,7 @@ import {
   retryBuildScreen,
   startPendingBuild,
 } from './build-lifecycle';
-import { buildGenerateRequest, buildRewriteAppContext } from './generation-request';
+import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY } from './copy';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
@@ -342,6 +342,16 @@ function LauncherShell({
   // the CURRENT request, not the one a stale render closed over.
   const flowRequests = useRef(new FlowRequests()).current;
 
+  // The edit flow's resolved description (design "the edit flow's shared clarify/rewrite
+  // `app.description`"), read directly by `onComposeContinue`/`openPlan` rather than through
+  // whatever screen happens to be showing: `openCompose` resolves it asynchronously and a user who
+  // taps Continue before it lands must still get it on the request that follows (task: the "about"
+  // race). Keyed by the editing app's id so a resolution that lands late for an app the user has
+  // since left can never apply to the one now in the flow. Cleared when the flow leaves (`goHome`).
+  const aboutRef = useRef<{ id: string; about: string } | null>(null);
+  const aboutFor = (editing?: InstalledApp): string | undefined =>
+    editing != null && aboutRef.current?.id === editing.id ? aboutRef.current.about : undefined;
+
   // The home grid's per-app wait affordances (`app-busy.ts`): which app is opening, forking or
   // being deleted right now. A ref for the guard — two taps in one frame both read the same
   // `useState` value, so state alone could not refuse the second — plus a mirrored snapshot in
@@ -488,6 +498,7 @@ function LauncherShell({
 
   const goHome = () => {
     leaveFlowStep(screen.kind);
+    aboutRef.current = null;
     refresh();
     setScreen({ kind: 'home' });
   };
@@ -540,11 +551,14 @@ function LauncherShell({
 
   /** Opens compose, optionally scoped to a re-prompt. `about` (the edit flow's shared clarify/
    *  rewrite `app.description`) is resolved AFTER the screen is already showing — best effort,
-   *  never blocking the field the user is about to type into — and applied only while they are
-   *  still on the SAME compose screen it was resolved for (`onlyOnStep`, plus an identity check:
-   *  two fast "Prompt again" taps for different apps must not cross-apply). A read that fails or
-   *  finds no snapshot leaves `about` absent, which `buildRewriteAppContext` already treats as "no
-   *  description" — a degraded edit flow, never a blocked one. */
+   *  never blocking the field the user is about to type into — and lands directly in `aboutRef`,
+   *  keyed by `editing.id`, rather than onto the screen: a user who taps Continue before it
+   *  resolves must still get it on the clarify/rewrite request that follows (the "about" race), and
+   *  `aboutRef` is read at request time regardless of which screen is showing when the read lands.
+   *  Capped here too, not only where `buildRewriteAppContext` sends it (`generation-request.ts`'s
+   *  `APP_CONTEXT_DESCRIPTION_MAX_CHARS` doc comment) — a cap enforced only on the read side is not
+   *  a cap. A read that fails or finds no snapshot leaves `aboutRef` untouched for this id, which
+   *  `aboutFor` already treats as "no description" — a degraded edit flow, never a blocked one. */
   const openCompose = (editing?: InstalledApp, text?: string) => {
     setScreen(composeStep(editing, text ?? ''));
     if (!editing) return;
@@ -557,9 +571,7 @@ function LauncherShell({
         return;
       }
       if (about == null) return;
-      setScreen(
-        onlyOnStep<Screen, 'compose'>('compose', (s) => (s.editing?.id === editing.id ? { ...s, about } : s)),
-      );
+      aboutRef.current = { id: editing.id, about: about.trim().slice(0, APP_CONTEXT_DESCRIPTION_MAX_CHARS) };
     })();
   };
 
@@ -585,8 +597,9 @@ function LauncherShell({
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
         // A re-prompt tells the rewrite which app it is changing, and what it currently is;
-        // composing a new app sends neither.
-        buildRewriteAppContext(plan.editing, plan.about),
+        // composing a new app sends neither. `aboutFor`, not `plan.about` — the description can
+        // still resolve after the user has already moved past compose (the "about" race).
+        buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
         request.controller.signal,
       );
       if (request.cancelled) return;
@@ -619,8 +632,9 @@ function LauncherShell({
             clientOptions,
             from.text,
             // The same context a rewrite would carry (name, collections, description) — so the
-            // clarifier never re-asks what kind of app it is talking to.
-            buildRewriteAppContext(from.editing, from.about),
+            // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
+            // `from.about` — see `aboutRef`'s doc comment.
+            buildRewriteAppContext(from.editing, aboutFor(from.editing)),
             request.controller.signal,
           )
         ).questions,

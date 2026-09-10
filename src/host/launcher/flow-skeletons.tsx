@@ -75,10 +75,9 @@ export function HomeGridSkeleton({ count, columns, gap, color }: Readonly<HomeGr
 }
 
 /** A clarify pill's real rendered height (`ClarifyStep.tsx`'s `styles.pill`): two `SPACING.xs`
- *  vertical paddings plus the control label's own line height. Exported so the pill and its
- *  skeleton occupy identical space — the same discipline `PLAN_ROW_MIN_HEIGHT` follows for the
- *  plan step's rows. */
-export const CLARIFY_PILL_HEIGHT = SPACING.xs * 2 + TYPE_SCALE.controlLabel.lineHeight;
+ *  vertical paddings plus the control label's own line height — read by `styles.clarifyPill`
+ *  two lines down, so the skeleton pill occupies identical space, and nowhere else. */
+const CLARIFY_PILL_HEIGHT = SPACING.xs * 2 + TYPE_SCALE.controlLabel.lineHeight;
 
 /** Two question groups' worth of skeleton, deliberately irregular so identical bars never read as
  *  a progress indicator (design D9, same rule `PlanRowsSkeleton` follows). Each group is one

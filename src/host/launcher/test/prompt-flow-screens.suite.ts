@@ -163,12 +163,11 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(pending.rows, [], 'nothing is invented while they are');
     // The primary action's WORDS never depend on being busy (`prompt-flow` "the clarify wait is a
     // screen, not a grey button") — only whether the screen is scoped to an edit moves the label;
-    // `PrimaryAction`'s own busy/disabled state is what changes while `pending.loading` is true.
+    // `PrimaryAction`'s own disabled state is what changes while `pending.loading` is true.
     h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'a new app reads Build it, loading or not');
     const live = withPlan(pending, { rewrittenPrompt: 'a brew timer', plan: [{ label: 'What it is', text: 'A brew timer.' }] });
     h.eq(live.loading, false, 'the arrived response clears the loading state');
     h.eq(live.rewritten, 'a brew timer', 'the rewritten prompt is what generation will be asked for');
-    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'and still Build it once the plan is there');
   });
 
   await h.test('flow: an unstructured plan still renders as one approvable row', () => {
@@ -319,9 +318,9 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // ── the primary action ──────────────────────────────────────────────────────────────────────
 
   await h.test('flow: the primary action’s words never depend on being busy — only editing branches them', () => {
-    // C2: a busy primary action keeps its REAL label, at `flow-chrome.ts#BUSY_OPACITY` — never a
-    // "One moment" placeholder (removed with `COPY.flowBusy`; the wait is the clarify screen's own
-    // loading state instead, `prompt-flow` "the clarify wait is a screen, not a grey button").
+    // C2: the label is the same whether or not the step is busy — never a "One moment" placeholder
+    // (removed with `COPY.flowBusy`; the wait is the clarify screen's own loading state instead,
+    // `prompt-flow` "the clarify wait is a screen, not a grey button").
     h.eq(primaryActionLabel('compose', false), COPY.flowContinue, 'compose reads Continue');
     h.eq(primaryActionLabel('clarify', false), COPY.flowContinue, 'clarify reads Continue');
     h.eq(primaryActionLabel('clarify', true), COPY.flowContinue, 'clarify is unbranched by editing too');
@@ -413,7 +412,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
     h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    h.ok(/\{!loading && <PrimaryAction step="clarify" busy=\{false\} enabled editing=\{editing\} palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
+    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled editing=\{editing\} palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
   });
 
   await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
@@ -438,7 +437,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(planSrc.includes('planHeadline(editing)'), 'plan branches its headline');
     h.ok(planSrc.includes('workingPlanPhrase(editing)'), 'and its working-line phrase');
     h.ok(
-      /\{!loading && <PrimaryAction step="plan" busy=\{false\} enabled editing=\{editing\}/.test(planSrc),
+      /\{!loading && <PrimaryAction step="plan" enabled editing=\{editing\}/.test(planSrc),
       'plan\'s primary action is told whether it is editing, so Build it can become Make the change',
     );
   });

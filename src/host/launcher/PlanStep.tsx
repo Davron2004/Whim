@@ -187,7 +187,7 @@ export default function PlanStep({
       {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
           action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
           element while loading. */}
-      {!loading && <PrimaryAction step="plan" busy={false} enabled editing={editing} palette={p} onPress={onBuild} />}
+      {!loading && <PrimaryAction step="plan" enabled editing={editing} palette={p} onPress={onBuild} />}
     </View>
   );
 }

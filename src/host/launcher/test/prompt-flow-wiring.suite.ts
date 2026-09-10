@@ -343,19 +343,34 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
 
   await h.test('rewrite-wiring: the plan step tells the rewrite which app it is changing, and what it currently is', () => {
     // Same failure mode as the cancel wires above, and the same reason it is asserted statically:
-    // drop `buildRewriteAppContext(plan.editing, plan.about)` from the call and the request simply
-    // stops carrying the app context — the builder's own suite still passes, the rewrite still
-    // succeeds, and the model quietly loses the names (and description) it was supposed to keep.
+    // drop `buildRewriteAppContext(plan.editing, aboutFor(plan.editing))` from the call and the
+    // request simply stops carrying the app context — the builder's own suite still passes, the
+    // rewrite still succeeds, and the model quietly loses the names (and description) it was
+    // supposed to keep. `aboutFor` reads `aboutRef`, not the screen's own field (the "about" race
+    // fix: a description that resolves after the user has moved on must still reach the request).
     const planFn = rootSrc.slice(rootSrc.indexOf('const openPlan'), rootSrc.indexOf('const onComposeContinue'));
     h.ok(
-      /rewritePrompt\([\s\S]*?buildRewriteAppContext\(plan\.editing, plan\.about\)/.test(planFn),
+      /rewritePrompt\([\s\S]*?buildRewriteAppContext\(plan\.editing, aboutFor\(plan\.editing\)\)/.test(planFn),
       'the rewrite call carries the app context — name, collections AND description — built from the app being edited',
     );
     const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
     h.ok(
-      /clarifyPrompt\([\s\S]*?buildRewriteAppContext\(from\.editing, from\.about\)/.test(composeFn),
+      /clarifyPrompt\([\s\S]*?buildRewriteAppContext\(from\.editing, aboutFor\(from\.editing\)\)/.test(composeFn),
       'the clarify call carries the SAME shape of context — the clarifier never re-asks what kind of app it is',
     );
+  });
+
+  await h.test('about-wiring: the resolved description reaches the request even if it lands after Continue', () => {
+    // The bug this closes: `about` used to be written onto the compose SCREEN, so a resolution
+    // that landed after the user had already tapped Continue (moved past `compose`) was discarded
+    // — both the clarify and rewrite requests then went out with no description at all.
+    h.ok(rootSrc.includes('const aboutRef = useRef<'), 'the resolved description lives in a ref, not screen state');
+    const openComposeFn = rootSrc.slice(rootSrc.indexOf('const openCompose'), rootSrc.indexOf('const goBack'));
+    h.ok(
+      /aboutRef\.current = \{ id: editing\.id, about: /.test(openComposeFn),
+      'openCompose writes the resolution into the ref, keyed by the editing app’s id',
+    );
+    h.ok(!/setScreen\(\s*onlyOnStep/.test(openComposeFn), 'and no longer races a screen-state write against the user leaving compose');
   });
 
   await h.test('cancel-wiring: every post-await screen write in the flow is guarded', () => {

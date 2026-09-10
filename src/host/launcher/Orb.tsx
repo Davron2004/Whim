@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import { COPY } from './copy';
+import { inkAlpha } from './theme';
 import {
   ORB_ACTIONS,
   ORB_ROW_GLYPH,
@@ -147,7 +148,7 @@ const styles = StyleSheet.create({
     borderRadius: ORB_SIZE / 2,
     // Translucent at rest — chrome floating over the mini-app's own content, not a focused
     // control (user feedback: "semi-transparent"). Solid once the menu is open, below.
-    backgroundColor: 'rgba(23,23,26,0.58)',
+    backgroundColor: inkAlpha(0.58),
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
