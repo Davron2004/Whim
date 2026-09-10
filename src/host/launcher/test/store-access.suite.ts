@@ -32,6 +32,90 @@ function harnessAccess() {
   return { store, index, access, deleted };
 }
 
+type Store = ReturnType<typeof createMemoryStore>;
+
+/** A promise plus its resolver — a gate the test holds open and releases on cue. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(res => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Guard against the bare-await hang: a promise that must settle within `ms` (a deadlocked mutex
+ *  would otherwise hang the whole launcher suite with no test named). */
+function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} never settled within ${ms}ms`)), ms).unref?.()),
+  ]);
+}
+
+/** Let every ready continuation run: a macrotask boundary drains the microtask queue, so anything
+ *  that COULD have proceeded (the whole MemoryFs-backed read path is promise-only) HAS proceeded. */
+async function flush(turns = 3): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+}
+
+/** A held switch: `landed` resolves the moment the real checkout has moved the repo HEAD, while
+ *  the call itself is still in flight; `release` lets it return. */
+interface HeldSwitch {
+  landed: Promise<void>;
+  release: () => void;
+}
+
+/**
+ * Instrument a REAL store so a test can (a) see the exact order of the two repo operations that
+ * race — `switchLineage` and the `active()` read — and (b) hold one switch open.
+ *
+ * The hold models the genuine interleaving window, not a stall: the wrapped call performs the real
+ * switch FIRST (the checkout moves the repo HEAD) and only then waits on the gate, because that is
+ * exactly the window in which a concurrent `active()` read observes another lineage's snapshot. A
+ * fake that also delayed the effect would hide the bug it is here to catch. `landed` exposes that
+ * instant so a test can start the second operation inside the window deterministically, instead of
+ * racing the real checkout for it.
+ */
+function instrumentRepoOps(store: Store): { calls: string[]; hold: (appId: string, lineageId: string) => HeldSwitch } {
+  const calls: string[] = [];
+  const gates = new Map<string, { open: Promise<void>; landed: () => void }>();
+  const realSwitch = store.switchLineage.bind(store);
+  const realActive = store.active.bind(store);
+  store.switchLineage = async (appId, lineageId) => {
+    const key = `sw:${appId}:${lineageId}`;
+    calls.push(key);
+    const res = await realSwitch(appId, lineageId);
+    const gate = gates.get(key);
+    if (gate != null) {
+      gate.landed(); // the HEAD has already moved; the call just hasn't returned yet
+      await gate.open;
+    }
+    return res;
+  };
+  store.active = async appId => {
+    calls.push(`rd:${appId}`);
+    return realActive(appId);
+  };
+  return {
+    calls,
+    hold(appId, lineageId) {
+      const key = `sw:${appId}:${lineageId}`;
+      const open = deferred();
+      const landed = deferred();
+      gates.set(key, { open: open.promise, landed: landed.resolve });
+      return {
+        landed: landed.promise,
+        release: () => {
+          gates.delete(key);
+          open.resolve();
+        },
+      };
+    },
+  };
+}
+
 export async function runStoreAccessTests(h: Harness): Promise<void> {
   // §9 fork mapping
   await h.test('store-access §9 fork creates a new entry: shared repo, new lineage, provenance', async () => {
@@ -367,5 +451,98 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: promptEnvelope('add a timer') });
     const updated = await access.update(orig, { record: orig.record, bundleSource: 'V2', prompt: promptEnvelope('add a fruit tea section') });
     h.eq(await access.activeDescription(updated), 'add a fruit tea section', 'the latest delivered prompt, not the install one');
+  });
+
+  // ── per-repo serialization: a fork and its original are ONE repo ────────────────────────────
+  // A repo's HEAD is a single shared mutable cursor and `ensureLineage` is a check-then-act across
+  // an await, while the launcher's busy gate (app-busy.ts) is keyed by LAUNCHER id — which a fork
+  // and its original do not share. So "Prompt again" on a fork (an un-awaited `activeDescription`)
+  // racing "Open" on the original used to leave the loser reading the other lineage's snapshot:
+  // wrong data, silently. `StoreAccess.serial` makes switch-then-read atomic per repo.
+
+  await h.test('store-access: concurrent ops on ONE shared repo serialize — each read sees its own lineage', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1_MAIN', prompt: 'the original prompt' });
+    const fork = await access.fork(orig); // repo HEAD is now on the fork lineage
+    await store.snapshot(storeIdOf(fork), { 'bundle.js': 'V2_FORK' }, promptEnvelope('the fork prompt'));
+    await access.activeBundle(orig); // switch back to main, so the cache reads 'main' as in the bug report
+    h.eq(storeIdOf(fork), storeIdOf(orig), 'precondition: the fork and the original share one repo');
+
+    const spy = instrumentRepoOps(store);
+    const held = spy.hold('wc', fork.lineageId); // A's switch lands, then hangs
+
+    let aRead: string | undefined;
+    let bRead: string | undefined;
+    // A: "Prompt again" on the FORK — fired without awaiting, exactly as the prompt flow does.
+    const pA = access.activeDescription(fork).then(v => { aRead = v; });
+    // Wait for A's checkout to have actually moved the repo HEAD onto the fork lineage. That is
+    // the window the bug lives in: A has switched but not yet read, and B's own lineage check is
+    // about to consult a cache that still says 'main'.
+    await within(held.landed, 5000, "A's switch landing on the repo");
+    // B: "Open" on the ORIGINAL, fired inside that window.
+    const pB = access.activeBundle(orig).then(v => { bRead = v; });
+    await flush();
+
+    h.eq(spy.calls, [`sw:wc:${fork.lineageId}`], 'B has not touched the repo while A holds it: no switch, no read');
+    h.eq(bRead, undefined, "B's read has not landed while A holds the repo");
+
+    held.release();
+    await within(pA, 5000, 'A (activeDescription on the fork)');
+    await within(pB, 5000, 'B (activeBundle on the original)');
+
+    h.eq(
+      spy.calls,
+      [`sw:wc:${fork.lineageId}`, 'rd:wc', 'sw:wc:main', 'rd:wc'],
+      "B's switch runs only after A's WHOLE operation (switch + read) finished — switch-then-read is atomic per repo",
+    );
+    h.eq(aRead, 'the fork prompt', "A observed the FORK's snapshot");
+    h.eq(bRead, 'V1_MAIN', "B observed the ORIGINAL's snapshot, not the fork's V2_FORK");
+  });
+
+  await h.test('store-access: ops on DIFFERENT repos still run concurrently (the mutex is per repo, not global)', async () => {
+    const { store, index, access } = harnessAccess();
+    const alpha = await access.install({ id: 'alpha', name: 'Alpha', record: REC('alpha'), bundleSource: 'ALPHA_V1', prompt: 'a' });
+    const beta = await access.install({ id: 'beta', name: 'Beta', record: REC('beta'), bundleSource: 'BETA_V1', prompt: 'b' });
+    // A second wrapper over the same store starts with an EMPTY lineage cache (the fresh-process
+    // case), so the first read of each repo genuinely switches.
+    const fresh = new StoreAccess({ store, index });
+
+    const spy = instrumentRepoOps(store);
+    const held = spy.hold('alpha', 'main');
+
+    let aRead: string | undefined;
+    let bRead: string | undefined;
+    const pA = fresh.activeBundle(alpha).then(v => { aRead = v; });
+    await within(held.landed, 5000, "alpha's switch landing on its repo");
+    const pB = fresh.activeBundle(beta).then(v => { bRead = v; });
+    await flush();
+
+    h.eq(spy.calls, ['sw:alpha:main', 'sw:beta:main', 'rd:beta'], "beta switched and read while alpha's switch is still in flight");
+    h.eq(bRead, 'BETA_V1', 'the beta read completed without waiting for alpha');
+    h.eq(aRead, undefined, 'alpha is still held, so nothing of its own has resolved');
+
+    held.release();
+    await within(pA, 5000, 'alpha (the held read)');
+    await within(pB, 5000, 'beta (the concurrent read)');
+    h.eq(aRead, 'ALPHA_V1', 'alpha completes with its own bundle once released');
+  });
+
+  await h.test('store-access: a failed op orders the next one without failing it (the chain is not poisoned)', async () => {
+    const { store, access } = harnessAccess();
+    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1_MAIN', prompt: 'p1' });
+    const realActive = store.active.bind(store);
+    let failNext = true;
+    store.active = async appId => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('boom: transient store failure');
+      }
+      return realActive(appId);
+    };
+    // Both ops are on the SAME repo chain; the second is queued behind the failing first.
+    const pFail = access.activeBundle(orig);
+    const pNext = access.activeBundle(orig);
+    await h.throws(() => within(pFail, 5000, 'the failing op'), 'boom', 'the failure is delivered to its OWN caller, not swallowed');
+    h.eq(await within(pNext, 5000, 'the op queued behind a failure'), 'V1_MAIN', 'the next op on that repo still runs and resolves normally');
   });
 }
