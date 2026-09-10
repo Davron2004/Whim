@@ -14,6 +14,7 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { RunJournalStore, JOURNAL_ENTRY_CAP, AGGREGATE_THROTTLE_MS } from '../run-journal';
+import type { KVBackend } from '../../version-store/fs/kv-fs';
 import type { RunJournalEntry } from '../run-journal';
 
 /** A store over a Map backend with a hand-driven clock. */
@@ -33,6 +34,28 @@ function makeStore(map = new Map<string, string>()) {
       return clock;
     },
   };
+}
+
+/** A `KVBackend` that counts reads, for the one property that is about COST rather than content:
+ *  the aggregate throttle bounds how often the journal is WRITTEN, and it must bound how often the
+ *  journal is READ too. On the device that read is a native MMKV call feeding a `JSON.parse` of the
+ *  whole journal, and it used to run once per `token` AND once per `thinking` delta. */
+class CountingKv implements KVBackend {
+  reads = 0;
+  constructor(private readonly inner: KVBackend) {}
+  getString(key: string): string | undefined {
+    this.reads++;
+    return this.inner.getString(key);
+  }
+  set(key: string, value: string): void {
+    this.inner.set(key, value);
+  }
+  delete(key: string): void {
+    this.inner.delete(key);
+  }
+  getAllKeys(): string[] {
+    return this.inner.getAllKeys();
+  }
 }
 
 const kinds = (journal: readonly RunJournalEntry[] | null) => (journal ?? []).map((e) => e.kind);
@@ -123,6 +146,39 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.eq(aggregates.length, 2, 'at the boundary the next entry is written');
     h.eq(aggregates[1].aggregates, { chars: 30, tokens: 6 }, 'carrying the latest running totals, not a per-tick delta');
   });
+
+  await h.test(
+    'run-journal: inside a throttle window the aggregate path reads storage ZERO times, however many events arrive',
+    async () => {
+      // A reasoning model emits thousands of `thinking` deltas a minute and every one of them
+      // reaches `appendAggregate`. Throttling only the WRITE still left a full journal read +
+      // JSON.parse per event on the JS thread.
+      const kv = new CountingKv(new MapKVBackend());
+      let clock = 1_000;
+      const store = new RunJournalStore(kv, () => clock);
+      store.create('a');
+      store.appendStage('a', 'generate');
+
+      kv.reads = 0;
+      store.appendAggregate('a', { chars: 1, tokens: 1, thinkingChars: 3 });
+      const readsForTheFirstEntry = kv.reads;
+      h.ok(readsForTheFirstEntry > 0, 'the first aggregate of a window still consults the journal');
+
+      kv.reads = 0;
+      for (let i = 0; i < 4_000; i++) {
+        clock += 1; // 4s of stream: 4,000 events, all inside the one 5s window
+        store.appendAggregate('a', { chars: i, tokens: i, thinkingChars: i * 3 });
+      }
+      h.eq(kv.reads, 0, '4,000 throttled events later, storage has not been read once');
+      h.eq(store.get('a')!.filter((e) => e.kind === 'aggregate').length, 1, 'and exactly one entry was written');
+
+      clock += AGGREGATE_THROTTLE_MS;
+      store.appendAggregate('a', { chars: 9_999, tokens: 99, thinkingChars: 12 });
+      const aggregates = store.get('a')!.filter((e) => e.kind === 'aggregate');
+      h.eq(aggregates.length, 2, 'the window still reopens on time — the skipped reads did not disable the throttle');
+      h.eq(aggregates[1].aggregates, { chars: 9_999, tokens: 99, thinkingChars: 12 }, 'carrying the latest totals');
+    },
+  );
 
   await h.test('run-journal: an aggregate entry carries only numeric counts, never token text', async () => {
     const t = makeStore();

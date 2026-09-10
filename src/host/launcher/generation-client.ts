@@ -474,18 +474,42 @@ async function readNext(reader: ResponseBodyReader): Promise<ReadOutcome> {
   }
 }
 
-/** `onKeepalive` fires once per real keepalive block in range — never for a merely-empty one, and
- *  never as a `GenerationEvent` (build-liveness B2: "do NOT add a client-local event type to the
- *  GenerationEvent union"). */
-function* framesIn(blocks: string[], from: number, to: number, onKeepalive?: () => void): Generator<GenerationEvent> {
-  for (let i = from; i < to; i++) {
-    const result = parseSseBlock(blocks[i]);
+/** `onKeepalive` fires once per real keepalive block — never for a merely-empty one, and never as
+ *  a `GenerationEvent` (build-liveness B2: "do NOT add a client-local event type to the
+ *  GenerationEvent union"). Every block handed here is one the caller has already decided is
+ *  COMPLETE, so each is parsed exactly once over the life of the stream. */
+function* framesIn(blocks: string[], onKeepalive?: () => void): Generator<GenerationEvent> {
+  for (const block of blocks) {
+    const result = parseSseBlock(block);
     if (result.kind === 'event') {
       yield result.event;
     } else if (result.kind === 'keepalive') {
       onKeepalive?.();
     }
   }
+}
+
+/** `\n`. An SSE block separator is two of these, and — UTF-8 being self-synchronizing — this byte
+ *  can never occur INSIDE a multi-byte sequence, which is what makes "decode everything up to a
+ *  separator" safe to do with a non-streaming decoder. */
+const LF = 0x0a;
+
+/** The two bytes of the `\n\n` block separator. */
+const SEPARATOR_LENGTH = 2;
+
+/** The index of the LAST `\n\n` in `bytes` at or after `from`, or `-1` when there is none.
+ *
+ *  Searching BACKWARDS from the end is what makes the common case cheap: a read that completed at
+ *  least one frame stops on its first comparison. `from` bounds the other case — it is set by the
+ *  caller to just before the bytes this read added, so a read that completed no frame scans only
+ *  its own new bytes and never the whole buffer again. */
+function lastBlockSeparator(bytes: Uint8Array, from: number): number {
+  for (let i = bytes.length - SEPARATOR_LENGTH; i >= from; i--) {
+    if (bytes[i] === LF && bytes[i + 1] === LF) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {
@@ -508,9 +532,21 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  * Hermes ships a TextDecoder polyfill whose streaming-decode option is unverified (this
  * project's own ambient TextDecoder type — `src/host/version-store/env.d.ts` — declares only the
  * single-argument, non-streaming `decode(input)` form). To stay correct across multi-byte UTF-8
- * characters split at a chunk boundary, this buffers RAW BYTES across reads and re-runs a full,
- * non-streaming decode of the accumulated buffer each time, tracking how many complete
- * `\n\n`-delimited blocks have already been yielded by index (never re-parsing one twice).
+ * characters split at a chunk boundary, this buffers RAW BYTES across reads and decodes with the
+ * single-argument form only.
+ *
+ * EACH BYTE IS DECODED, SPLIT AND PARSED EXACTLY ONCE, and that is a performance CONTRACT, not an
+ * incidental property. The buffer holds only the tail after the last completed block; a read
+ * decodes just the blocks that read completed. Re-decoding the whole accumulated body on every
+ * read instead costs O(reads x body) — with a reasoning model's `thinking` deltas that is
+ * thousands of reads over a body of hundreds of KB, and the device's TextDecoder is the pure-JS
+ * `text-encoding-polyfill` (Hermes ships none), so the JS thread stops answering for minutes:
+ * the clock freezes, the steps stop advancing, taps do nothing. Regression-pinned by
+ * `xhr-transport.suite.ts` ("a thinking-heavy stream is consumed in linear time").
+ *
+ * Decoding only up to a separator is what keeps the non-streaming decode correct: `\n` never
+ * appears inside a multi-byte UTF-8 sequence, so a block boundary is always a character boundary,
+ * and any partial character stays in the byte buffer until the block it belongs to is complete.
  */
 export async function* generateApp(
   opts: ClientOptions,
@@ -523,8 +559,13 @@ export async function* generateApp(
   }
 
   const decoder = new TextDecoder();
-  const chunks: Uint8Array[] = [];
-  let emittedBlocks = 0;
+  // The bytes that have arrived and are NOT yet part of a completed block: at most one partial
+  // frame, never the accumulated body.
+  let pending: Uint8Array = new Uint8Array(0);
+  // How far into `pending` the separator search has already looked. It trails the buffer's end by
+  // one byte rather than sitting on it, because a `\n\n` whose two bytes arrive in different
+  // reads must still be found.
+  let searchedThrough = 0;
 
   while (true) {
     const chunk = await readNext(reader);
@@ -532,18 +573,28 @@ export async function* generateApp(
       return;
     }
     if (chunk.value) {
-      chunks.push(chunk.value);
+      pending = concatBytes([pending, chunk.value]);
     }
 
-    const blocks = decoder.decode(concatBytes(chunks)).split('\n\n');
-    // Every block is complete except a possible trailing partial one — UNLESS the stream is
-    // done, in which case the trailing block (if any) is final too.
-    const completeCount = chunk.done ? blocks.length : blocks.length - 1;
-    yield* framesIn(blocks, emittedBlocks, completeCount, opts.onKeepalive);
-    emittedBlocks = completeCount;
-
     if (chunk.done) {
+      // Nothing follows, so the trailing block (if any) is final too — the one case where a block
+      // with no separator after it is still complete.
+      if (pending.length > 0) {
+        yield* framesIn(decoder.decode(pending).split('\n\n'), opts.onKeepalive);
+      }
       break;
+    }
+
+    const separator = lastBlockSeparator(pending, searchedThrough);
+    if (separator >= 0) {
+      const completed = decoder.decode(pending.subarray(0, separator));
+      // COPIED out, not a view: a `subarray` would keep the whole consumed buffer alive behind the
+      // few bytes of the next partial frame.
+      pending = concatBytes([pending.subarray(separator + SEPARATOR_LENGTH)]);
+      searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
+      yield* framesIn(completed.split('\n\n'), opts.onKeepalive);
+    } else {
+      searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
     }
   }
 }
