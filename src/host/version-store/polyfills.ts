@@ -26,17 +26,17 @@ export function installHermesPolyfills(): void {
   installed = true;
   const g = globalThis as any;
 
-  if (typeof g.Buffer === 'undefined') {
+  if (g.Buffer === undefined) {
     g.Buffer = BufferPolyfill;
   }
 
   // 3-line process shim — Hermes provides a partial `process`; fill the gaps.
-  if (typeof g.process === 'undefined') g.process = {};
-  if (typeof g.process.env === 'undefined') g.process.env = {};
-  if (typeof g.process.platform === 'undefined') g.process.platform = 'android';
+  if (g.process === undefined) g.process = {};
+  if (g.process.env === undefined) g.process.env = {};
+  if (g.process.platform === undefined) g.process.platform = 'android';
 
   // Hermes has TextEncoder but not TextDecoder. text-encoding-polyfill installs both.
-  if (typeof g.TextDecoder === 'undefined') {
+  if (g.TextDecoder === undefined) {
     require('text-encoding-polyfill');
   }
 }

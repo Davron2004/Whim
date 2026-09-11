@@ -110,9 +110,9 @@ export interface VersionStoreOptions {
 }
 
 export class VersionStore {
-  private backend: MemoryFs;
-  private client: { promises: MemoryFs };
-  private config: VersionStoreConfig;
+  private readonly backend: MemoryFs;
+  private readonly client: { promises: MemoryFs };
+  private readonly config: VersionStoreConfig;
 
   constructor(options: VersionStoreOptions) {
     // Code/data boundary guard (task 2.3 / D2): the store accepts ONLY an FS backend.

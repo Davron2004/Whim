@@ -16,7 +16,7 @@
  * pins, and forks all survive intact because git's whole state lives in those paths.
  */
 
-import { MemoryFs, FsNode, dirnameOf, MODE_FILE } from './memory-fs';
+import { MemoryFs, FsNode, MODE_FILE } from './memory-fs';
 
 /**
  * The minimal key-value surface we need. Deliberately matches `react-native-mmkv`'s
@@ -69,7 +69,7 @@ function serializedFromNode(node: FsNode): SerializedNode {
 }
 
 export class KvBackedFs extends MemoryFs {
-  private kv: KVBackend;
+  private readonly kv: KVBackend;
 
   constructor(kv: KVBackend) {
     super();
@@ -116,7 +116,7 @@ export class KvBackedFs extends MemoryFs {
 
 /** A Map-backed KVBackend for Node tests and restart simulation. */
 export class MapKVBackend implements KVBackend {
-  private map: Map<string, string>;
+  private readonly map: Map<string, string>;
   constructor(map?: Map<string, string>) {
     this.map = map ?? new Map();
   }
@@ -140,4 +140,4 @@ export class MapKVBackend implements KVBackend {
 
 // dirnameOf is re-exported here only to keep the persistence layer self-describing
 // for callers that walk the KV namespace; it is the same helper MemoryFs uses.
-export { dirnameOf };
+export { dirnameOf } from './memory-fs';
