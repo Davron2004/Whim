@@ -44,12 +44,18 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 /** Guard against the bare-await hang: a promise that must settle within `ms` (a deadlocked mutex
- *  would otherwise hang the whole launcher suite with no test named). */
+ *  would otherwise hang the whole launcher suite with no test named).
+ *
+ *  The timer is deliberately NOT `unref`'d. A deadlocked mutex leaves the loop with nothing else
+ *  pending, and an unref'd guard lets Node exit as "unsettled top-level await" (exit 13, no test
+ *  named) — the very hang this helper exists to turn into a named failure. It is cleared the
+ *  instant the raced promise settles, so a passing check never holds the process open. */
 function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} never settled within ${ms}ms`)), ms).unref?.()),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const expiry = new Promise<T>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`${what} never settled within ${ms}ms`)), ms);
+  });
+  return Promise.race([p, expiry]).finally(() => clearTimeout(timer));
 }
 
 /** Let every ready continuation run: a macrotask boundary drains the microtask queue, so anything
@@ -511,11 +517,18 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const held = spy.hold('alpha', 'main');
 
     let aRead: string | undefined;
-    let bRead: string | undefined;
     const pA = fresh.activeBundle(alpha).then(v => { aRead = v; });
     await within(held.landed, 5000, "alpha's switch landing on its repo");
-    const pB = fresh.activeBundle(beta).then(v => { bRead = v; });
-    await flush();
+
+    // Beta's WHOLE operation is awaited to completion while alpha's gate is still shut — the
+    // independence is proved by construction, not by giving beta a tick budget and hoping it
+    // fits. (It does not always fit: one read is ~10 `crypto.subtle.digest` round-trips through
+    // isomorphic-git, each off the event loop, so on a loaded CI runner the read needs more
+    // macrotask turns than any fixed flush allows. That is what made the old `await flush()`
+    // form report a slow read as a serialization bug.) Under a single global mutex this await is
+    // a deadlock — `held.release()` is below it and unreachable — which `within` turns into a
+    // named failure instead of a suite-wide hang.
+    const bRead = await within(fresh.activeBundle(beta), 5000, "beta's read while alpha is held");
 
     h.eq(spy.calls, ['sw:alpha:main', 'sw:beta:main', 'rd:beta'], "beta switched and read while alpha's switch is still in flight");
     h.eq(bRead, 'BETA_V1', 'the beta read completed without waiting for alpha');
@@ -523,7 +536,6 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
 
     held.release();
     await within(pA, 5000, 'alpha (the held read)');
-    await within(pB, 5000, 'beta (the concurrent read)');
     h.eq(aRead, 'ALPHA_V1', 'alpha completes with its own bundle once released');
   });
 
