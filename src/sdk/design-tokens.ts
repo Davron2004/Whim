@@ -211,7 +211,7 @@ export const TYPE_SCALE: Record<
   // `fontFamily` by exact file base name. Judged in the R8 pass.
   kindBadge: { fontFamily: FONT_FAMILY.monoMedium, fontSize: 9.5, lineHeight: 9.5, letterSpacing: 0.95, fontWeight: '600', textTransform: 'uppercase' },
   // The undecorated one (mockup :35, :36 — "when"/"version"): no uppercase, no tracking, on purpose.
-  metaPlain: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10.5, lineHeight: 10.5, letterSpacing: 0, fontWeight: '400' },
+  metaPlain: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10.5, lineHeight: 12.6, letterSpacing: 0, fontWeight: '400' },
   metaWide: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 10, lineHeight: 10, letterSpacing: 1.2, fontWeight: '400', textTransform: 'uppercase' },
   quote: { fontFamily: FONT_FAMILY.serifItalic, fontSize: 17, lineHeight: 27.2, letterSpacing: 0, fontWeight: '400', fontStyle: 'italic', color: SHELL_COLORS.yours },
 };
