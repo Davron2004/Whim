@@ -34,10 +34,10 @@ jobs:
       - name: Lint (eslint --max-warnings 0)
         run: npm run lint -- --max-warnings 0
       - name: Dead code (knip)
-        run: npx knip
+        run: npx --ignore-scripts --package=knip@6.16.1 knip
       # openspec resolves from node_modules/.bin via the @fission-ai/openspec devDep + the npm ci above.
       - name: OpenSpec validate
-        run: npx openspec validate --all --strict
+        run: npx --ignore-scripts --package=@fission-ai/openspec@1.4.1 openspec validate --all --strict
       # Mirror of the gate.sh scaffolding tripwire; `! grep` fails the step on any match.
       - name: Scaffolding tripwires
         run: |
@@ -93,7 +93,7 @@ jobs:
       # false-positive gate and the pinned latency-probe expected-flagged sample — must pass.
       - name: Run the static-checks acceptance suite (blocks on red)
         run: npm run checks:test
-      - run: npx playwright install --with-deps chromium
+      - run: npx --ignore-scripts --package=playwright@1.60.0 playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
       - name: Run the §16.2 isolation suite (blocks on red)
