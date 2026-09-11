@@ -85,7 +85,7 @@ await test('§2.2 the code-artifact set is tracked incl. prompt.md', async () =>
     'build it',
   );
   const snap = await s.getSnapshot('app', 'g1');
-  const names = Object.keys(snap.artifacts).sort();
+  const names = Object.keys(snap.artifacts).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   eq(names, ['LEARNED.md', 'bundle.js', 'manifest.json', 'prompt.md'], 'all four artifacts tracked');
   eq(snap.artifacts['prompt.md'], 'build it', 'prompt is tracked as prompt.md');
 });

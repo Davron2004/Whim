@@ -196,7 +196,7 @@ export class MemoryFs implements FsBackend {
   async readlink(path: string): Promise<string> {
     const np = normalizePath(path);
     const node = this.entries.get(np);
-    if (!node || node.type !== 'symlink') throw fsError('ENOENT', `not a symlink '${path}'`);
+    if (node?.type !== 'symlink') throw fsError('ENOENT', `not a symlink '${path}'`);
     return node.target!;
   }
 
@@ -206,7 +206,7 @@ export class MemoryFs implements FsBackend {
     const np = normalizePath(path);
     const parent = dirnameOf(np);
     const parentNode = this.entries.get(parent);
-    if (!parentNode || parentNode.type !== 'dir') throw fsError('ENOENT', `no such directory for '${path}'`);
+    if (parentNode?.type !== 'dir') throw fsError('ENOENT', `no such directory for '${path}'`);
     const existing = this.entries.get(np);
     const mode = (typeof options === 'object' && options?.mode) || existing?.mode || MODE_FILE;
     const t = this.tick();
@@ -236,7 +236,7 @@ export class MemoryFs implements FsBackend {
     const parent = dirnameOf(np);
     if (parent !== np) {
       const parentNode = this.entries.get(parent);
-      if (!parentNode || parentNode.type !== 'dir') throw fsError('ENOENT', `no such parent directory for '${path}'`);
+      if (parentNode?.type !== 'dir') throw fsError('ENOENT', `no such parent directory for '${path}'`);
     }
     const t = this.tick();
     const node: FsNode = { type: 'dir', mode: MODE_DIR, mtimeMs: t, ctimeMs: t, ino: this.nextIno() };
