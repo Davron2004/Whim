@@ -174,7 +174,7 @@ export default function HomeScreen({
                   onLongPress={() => setSelected(app)}
                 >
                   <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} />
-                  {app.example && (
+                  {app.example && !rebuild && (
                     <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
                       <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>
                     </View>
@@ -416,13 +416,14 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.chip,
     paddingHorizontal: 6,
   },
-  /** The rebuild accent (design D8) — bottom-right, so it never collides with the top-right
-   *  "Example" badge above. `building` is the plain card treatment (neutral, informational
-   *  only); `failed`/`interrupted` overrides to the alert hue and IS its own tap target
-   *  (`RebuildBadge`), opening the failure screen without stealing the tile's `onOpen`. */
+  /** The rebuild accent (design D8) — top-right, same anchor as the "Example" badge below (the
+   *  two never render together; see the render site). `building` is the plain card treatment
+   *  (neutral, informational only); `failed`/`interrupted` overrides to the alert hue and IS its
+   *  own tap target (`RebuildBadge`), opening the failure screen without stealing the tile's
+   *  `onOpen`. */
   rebuildBadge: {
     position: 'absolute',
-    bottom: SPACING.xs,
+    top: SPACING.xs,
     right: SPACING.xs,
     borderWidth: 1,
     borderRadius: RADIUS.chip,
