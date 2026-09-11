@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import { Harness } from './harness';
 import { composeGrid, GridTile } from '../grid-composition';
 import { ghostStateCaption } from '../copy';
+import { tilePillFor, TILE_PILL } from '../tile-pill';
 import type { InstalledApp } from '../app-index';
 import type { PendingBuildRecord } from '../pending-builds';
 
@@ -181,7 +182,8 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
 
   await h.test('HomeScreen: a ghost tile taps onOpenPending, never onOpen — no mini-app realm opens from a ghost', async () => {
     const src = read('HomeScreen.tsx');
-    const ghostTileFn = src.slice(src.indexOf('function GhostGridTile'), src.indexOf('function RebuildBadge'));
+    const ghostTileFn = src.slice(src.indexOf('function GhostGridTile'), src.indexOf('function GhostActionRow'));
+    h.ok(ghostTileFn.length > 0, 'the GhostGridTile slice is non-empty — a future rename must fail loudly, not test an empty string');
     h.ok(ghostTileFn.includes('onOpenPending?.(rec)'), 'tapping a ghost calls onOpenPending');
     h.ok(!ghostTileFn.includes('onOpen('), 'and never the installed-app onOpen — spec "A ghost tile does not launch an app"');
   });
@@ -200,7 +202,8 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
 
   await h.test('HomeScreen: the ghost tile’s label is workingTitle — never the prompt or the id', async () => {
     const src = read('HomeScreen.tsx');
-    const ghostTileFn = src.slice(src.indexOf('function GhostGridTile'), src.indexOf('function RebuildBadge'));
+    const ghostTileFn = src.slice(src.indexOf('function GhostGridTile'), src.indexOf('function GhostActionRow'));
+    h.ok(ghostTileFn.length > 0, 'the GhostGridTile slice is non-empty — a future rename must fail loudly, not test an empty string');
     h.ok(ghostTileFn.includes('name={rec.workingTitle}'), 'the label is the precomputed working title');
     h.ok(!ghostTileFn.includes('rec.prompt'), 'never re-derived from the raw prompt');
   });
@@ -209,7 +212,16 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     const src = read('app-tile.tsx');
     h.ok(/ghost\?: 'building' \| 'failed' \| 'interrupted';/.test(src), 'the ghost prop is the exact three-state union');
     h.ok(/tileGhost: \{ opacity: /.test(src), 'a ghost tile is rendered at reduced opacity (greyed/desaturated)');
-    h.ok(!/onCancelPending|onDismissPending|onPress/.test(src), 'AppTile never wires a press handler of its own — no tile-face control');
+    h.ok(!/onCancelPending|onDismissPending/.test(src), 'AppTile never wires a cancel/dismiss control of its own — that stays the long-press sheet’s job');
+    // Exactly one `onPress={...}` wire may exist in this file: the pill's own (design D8's
+    // failed/interrupted pill, `TilePill` in `tile-pill-view.tsx`) — orthogonal to `ghost` and
+    // asserted behaviorally elsewhere (the `TILE_PILL` test below). Matching the `onPress=`
+    // ASSIGNMENT (never the bare word, which also turns up in the prop's type and doc comment)
+    // keeps the original invariant alive: a future SECOND hand-wired control on the tile face
+    // (e.g. a stray `onPress` on the ghost caption) still trips this.
+    h.eq((src.match(/onPress=/g) ?? []).length, 1, 'exactly one onPress={...} wire in this file — the pill’s, and nothing else');
+    h.ok(src.includes('onPress={pill.onPress}'), 'and that one wire is the pill’s own onPress, not a second ad hoc control');
+    h.ok(/\{!isDone && ghost && \(\s*<Text style=\{ghostCaptionStyle\}/.test(src), 'the ghost caption renders as plain text on the tile face, never a tap target');
   });
 
   await h.test('AppTile: failed/interrupted carry a shared alert accent distinct from building’s neutral one', async () => {
@@ -230,12 +242,44 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     h.eq((rowFn.match(/return \(/g) ?? []).length, 2, 'exactly two return sites — a row is always exactly one of the two, never both');
   });
 
-  await h.test('HomeScreen: a `building` rebuild shows a passive badge; failed/interrupted is its own tap target opening the failure screen', async () => {
+  await h.test('a building rebuild shows a passive badge; failed/interrupted is its own tap target', async () => {
+    h.ok(!TILE_PILL.building.tappable, 'building is passive — no dedicated tap target');
+    h.ok(TILE_PILL.failed.tappable, 'failed is its own tap target');
+    h.ok(TILE_PILL.interrupted.tappable, 'interrupted is its own tap target');
+    h.eq(TILE_PILL.example.tone, 'neutral', 'example is the neutral tone');
+    h.eq(TILE_PILL.building.tone, 'neutral', 'building is the neutral tone');
+    h.eq(TILE_PILL.failed.tone, 'alert', 'failed is the alert tone');
+    h.eq(TILE_PILL.interrupted.tone, 'alert', 'interrupted is the alert tone');
+
+    // What the table itself cannot pin: that HomeScreen actually wires a tappable pill's press
+    // through to `onOpenPending`, rather than computing the table right and then dropping the
+    // wire at the render site.
     const src = read('HomeScreen.tsx');
-    const badgeFn = src.slice(src.indexOf('function RebuildBadge'), src.indexOf('function GhostActionRow'));
-    h.ok(/if \(rebuild\.state === 'building'\) \{/.test(badgeFn), 'building is the early-return branch');
-    h.ok(badgeFn.includes('COPY.ghostCaptionBuilding'), 'building shows its own neutral caption');
-    h.ok(!/<TouchableOpacity[\s\S]*COPY\.ghostCaptionBuilding/.test(badgeFn), 'the building badge is a plain View, not a tap target');
-    h.ok(badgeFn.includes('onOpenPending?.(rebuild)'), 'the failed/interrupted badge opens the failure screen on its own tap');
+    h.ok(/TILE_PILL\[pillKind\]\.tappable[\s\S]{0,40}onOpenPending\?\.\(rebuild\)/.test(src), 'HomeScreen wires a tappable pill’s press to onOpenPending');
+  });
+
+  // ── tilePillFor precedence ───────────────────────────────────────────────────
+  await h.test('tilePillFor: an example app with no rebuild shows the example pill', () => {
+    h.eq(tilePillFor({ example: true }, null), 'example', 'no rebuild in flight — the example pill is the only candidate');
+  });
+
+  await h.test('tilePillFor: an example app with an interrupted rebuild shows interrupted, not example', () => {
+    const rec = pendingRecord('p1', { state: 'interrupted', editingAppId: 'a1' });
+    h.eq(tilePillFor({ example: true }, rec), 'interrupted', 'a rebuild record’s state wins over `example`');
+  });
+
+  await h.test('tilePillFor: an example app with a building rebuild shows building, not example', () => {
+    const rec = pendingRecord('p1', { state: 'building', editingAppId: 'a1' });
+    h.eq(tilePillFor({ example: true }, rec), 'building', 'a rebuild record’s state wins over `example`');
+  });
+
+  await h.test('tilePillFor: a plain app with no rebuild shows no pill', () => {
+    h.eq(tilePillFor({ example: false }, null), null, 'nothing to show');
+    h.eq(tilePillFor({}, undefined), null, 'nothing to show, `example` omitted entirely');
+  });
+
+  await h.test('tilePillFor: a plain app with a failed rebuild shows failed', () => {
+    const rec = pendingRecord('p1', { state: 'failed', editingAppId: 'a1' });
+    h.eq(tilePillFor({ example: false }, rec), 'failed', 'the rebuild record’s state, not the plain app’s lack of one');
   });
 }
