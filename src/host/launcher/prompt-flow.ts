@@ -323,6 +323,19 @@ export function backFrom(screen: FlowScreen): FlowScreen | 'home' | null {
   }
 }
 
+/**
+ * Hardware back on the build screen (bug fix: back must never cancel a run — see `BuildStep.tsx`'s
+ * header comment and `LauncherRoot.tsx`'s build-screen `onBack`). The details sheet, when open,
+ * has no back handling of its own (`RunDetailsSheet.tsx`), so the shell must decide between the
+ * sheet and the run itself from the one signal it has: whether the sheet is open. `close-sheet`
+ * only ever closes the sheet; `leave` is exactly the `onLeaveRunning` action — the run keeps going
+ * and is still delivered, it just stops taking over the screen. Cancellation is reachable only
+ * from explicit affordances elsewhere (a ghost tile's own Cancel action), never from back.
+ */
+export function buildBackAction(sheetOpen: boolean): 'close-sheet' | 'leave' {
+  return sheetOpen ? 'close-sheet' : 'leave';
+}
+
 /** The primary action's label: plain words always, and the SAME words whether or not the step is
  *  busy — a busy action only softens (`PrimaryAction`'s own opacity/disabled state), it never
  *  relabels to a "One moment" placeholder (`prompt-flow` "the clarify wait is a screen, not a

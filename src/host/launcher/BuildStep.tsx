@@ -13,8 +13,14 @@
  * itself.
  *
  * `Leave it running` returns to the shell WITHOUT cancelling the run (the shell keeps delivering
- * it). Hardware back is the separate, older contract — navigating away from the progress screen
- * aborts the request and installs nothing — so the two actions are deliberately not the same call.
+ * it). Hardware back does NOT cancel either (bug fix: it used to abort the run outright, dropping
+ * the user on compose with no interrupted tile, because this screen's own `hardwareBackPress`
+ * listener — re-registered every liveness tick — ran ahead of the details sheet's). This screen no
+ * longer decides what back means at all: it only forwards the press, once, to the caller's `onBack`
+ * — which closes the details sheet if it is open, or otherwise defers to the SAME action as
+ * `Leave it running` (`LauncherRoot.tsx`'s build-screen `onBack`, `prompt-flow.ts#buildBackAction`).
+ * Cancellation is reachable only from other explicit affordances (a ghost tile's own Cancel), never
+ * from this screen's back handling.
  */
 
 import React, { useEffect } from 'react';
@@ -58,8 +64,11 @@ export interface BuildStepProps {
   editingName?: string;
   /** Returns to the shell; the run keeps going and its result is still delivered. */
   onLeaveRunning: () => void;
-  /** Hardware back: aborts the in-flight request, installing and updating nothing. */
-  onCancel: () => void;
+  /** Hardware back: the caller decides what this means (close the details sheet if it is open,
+   *  otherwise leave the run running) — this screen only forwards the press. MUST be a stable
+   *  identity (the caller's `useCallback`), so the listener below registers once per mount rather
+   *  than once per liveness tick — the exact bug this contract replaces. */
+  onBack: () => void;
   /** Activating the details affordance: the caller shows this attempt's run timeline, reading it
    *  once on open — never per render and never per tick. */
   onShowDetails?: () => void;
@@ -73,7 +82,7 @@ export default function BuildStep({
   editing = false,
   editingName,
   onLeaveRunning,
-  onCancel,
+  onBack,
   onShowDetails,
 }: Readonly<BuildStepProps>) {
   const { theme } = useTheme();
@@ -85,11 +94,11 @@ export default function BuildStep({
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onCancel();
+      onBack();
       return true;
     });
     return () => sub.remove();
-  }, [onCancel]);
+  }, [onBack]);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

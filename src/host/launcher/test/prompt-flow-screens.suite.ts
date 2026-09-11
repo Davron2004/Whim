@@ -19,6 +19,7 @@ import {
   BUILD_STEPS,
   acceptClarifyQuestions,
   backFrom,
+  buildBackAction,
   buildProgressFraction,
   buildStep,
   buildStepStatuses,
@@ -315,6 +316,15 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(backFrom(doneStep(buildStep(plannedFlow()), EDITED)), null, 'the done step is not backed out of');
   });
 
+  // Regression coverage for the reported bug: hardware back on the build screen used to cancel
+  // the whole generation regardless of whether the details sheet was open. `buildBackAction` is
+  // the pure decision the shell's build-screen `onBack` is built from — it never resolves to a
+  // cancel, only `close-sheet` or `leave` (the same, non-cancelling action as `Leave it running`).
+  await h.test('build back: closes the sheet when open, otherwise leaves the run running — never cancels', () => {
+    h.eq(buildBackAction(true), 'close-sheet', 'sheet open: back closes it');
+    h.eq(buildBackAction(false), 'leave', 'sheet closed: back leaves the run running');
+  });
+
   // ── the primary action ──────────────────────────────────────────────────────────────────────
 
   await h.test('flow: the primary action’s words never depend on being busy — only editing branches them', () => {
@@ -502,7 +512,20 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   await h.test('build: arriving text is never faded in or typed in per character', () => {
     h.ok(!/Animated|Easing|typewriter|fadeIn/i.test(buildSrc), 'the build screen holds no animation at all');
     h.ok(buildSrc.includes('COPY.buildLeaveRunning') && buildSrc.includes('onLeaveRunning'), 'it offers Leave it running');
-    h.ok(/onCancel\(\)/.test(buildSrc) && buildSrc.includes('hardwareBackPress'), 'hardware back is the separate cancel contract');
+  });
+
+  // Regression: hardware back on the build screen used to cancel the whole run (BuildStep's
+  // `onCancel` prop, registered with deps `[onCancel]`, re-registered every liveness tick and so
+  // was always the newest `hardwareBackPress` listener — always running ahead of the details
+  // sheet's own listener). The fix: this screen no longer decides anything about back at all, it
+  // only forwards the press to one `onBack` prop with a STABLE dependency, and the caller
+  // (`LauncherRoot.tsx`) is the one place that decides sheet-close vs leave-running.
+  await h.test('build: hardware back only forwards to onBack, registered with a stable dependency', () => {
+    h.ok(!/\bonCancel\b/.test(buildSrc), 'the old cancel-on-back prop is gone entirely');
+    h.ok(/onBack: \(\) => void/.test(buildSrc), 'onBack is declared as a plain callback prop');
+    const backEffect = buildSrc.slice(buildSrc.indexOf('useEffect(() => {\n    const sub'), buildSrc.indexOf('return () => sub.remove();') + 30);
+    h.ok(backEffect.includes("addEventListener('hardwareBackPress'") && /onBack\(\);/.test(backEffect), 'the listener calls onBack, nothing else');
+    h.ok(/\}, \[onBack\]\);/.test(buildSrc), 'the effect depends on onBack alone — stable in the caller, so this registers once per mount');
   });
 
   await h.test('done: Open it and Back to your apps are two distinct destinations', () => {

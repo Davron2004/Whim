@@ -406,9 +406,9 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.ok(/entries=\{timeline\}/.test(rootSrc), 'over the entries read on open');
     h.ok(/devMode=\{timelineDevMode\}/.test(rootSrc), 'and the same dev-mode verdict every other timeline surface uses');
     h.ok(/onClose=\{\(\) => setTimeline\(null\)\}/.test(rootSrc), 'and it offers a labelled way out');
-    const backEffect = rootSrc.slice(rootSrc.indexOf('if (timeline === null) return undefined;'), rootSrc.indexOf("if (screen.kind !== 'build') setTimeline(null);"));
-    h.ok(backEffect.includes('hardwareBackPress') && backEffect.includes('setTimeline(null)'), 'hardware back closes the details view');
-    h.ok(backEffect.includes('return true;'), 'and stops there, so the build screen’s cancel never fires underneath it');
+    const onBuildBack = rootSrc.slice(rootSrc.indexOf('const onBuildBack = useCallback('), rootSrc.indexOf('}, []);', rootSrc.indexOf('const onBuildBack = useCallback(')));
+    h.ok(onBuildBack.includes("=== 'close-sheet'") && onBuildBack.includes('setTimeline(null)'), 'hardware back closes the details view when it is open');
+    h.ok(onBuildBack.includes('return;') && onBuildBack.includes('onLeaveRunningRef.current()'), 'and stops there; otherwise it leaves the run running, never cancelling it');
     h.ok(rootSrc.includes("if (screen.kind !== 'build') setTimeline(null);"), 'leaving the build screen closes it, so it can never reopen onto a previous attempt');
   });
 

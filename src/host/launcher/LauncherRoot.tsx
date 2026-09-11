@@ -14,8 +14,8 @@
 // the same `whim.launcher` KVBackend the installed-apps index uses. One WebView == one realm ==
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -73,6 +73,7 @@ import {
   RUN_SIGNAL_TICK_MS,
   acceptClarifyQuestions,
   backFrom,
+  buildBackAction,
   buildStep,
   clarifyStep,
   clarificationsFrom,
@@ -392,17 +393,6 @@ function LauncherShell({
   // screen should re-render — and the read happens there, never on the tick above.
   const [timeline, setTimeline] = useState<RunJournal | null>(null);
 
-  // While the details view is up, hardware back closes IT rather than cancelling the run: this
-  // listener is registered after the build screen's own, and the newest listener runs first.
-  useEffect(() => {
-    if (timeline === null) return undefined;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      setTimeline(null);
-      return true;
-    });
-    return () => sub.remove();
-  }, [timeline]);
-
   // Leaving the build screen closes it, so returning to a later attempt never opens onto the
   // previous one's entries.
   useEffect(() => {
@@ -714,8 +704,10 @@ function LauncherShell({
     refresh();
   };
 
-  /** The abort + record deletion both cancel routes share: the build step's own back press and a
-   *  Cancel chosen from a `building` ghost's quick actions. */
+  /** The abort + record deletion behind an explicit cancel — today reachable only from a Cancel
+   *  chosen on a `building` ghost's quick actions (`onCancelPending`, below). Hardware back on the
+   *  build screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
+   *  `prompt-flow.ts#buildBackAction`. */
   const abortLiveAttempt = () => {
     const ctl = genRef.current;
     if (ctl) {
@@ -842,7 +834,7 @@ function LauncherShell({
         }
       }
 
-      if (ctl.cancelled) return; // cancel-on-navigate-away: the cancel path deleted the record
+      if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
       releaseGenRef(ctl);
 
       if (terminal == null) {
@@ -934,14 +926,29 @@ function LauncherShell({
     goHome();
   };
 
-  /** Hardware back out of the build step (design "cancel-on-navigate-away"): aborts the in-flight
-   *  request, deletes the attempt's pending record and returns to compose with the text preserved
-   *  — nothing is installed or updated, since the generation loop bails out on `ctl.cancelled`
-   *  before ever reaching delivery, and no ghost or failure record is left behind. */
-  const onCancelGeneration = (editing: InstalledApp | undefined, text: string) => {
-    abortLiveAttempt();
-    openCompose(editing, text);
-  };
+  // `onBuildBack` reads the latest `timeline`/`onLeaveRunning` through refs so its identity never
+  // changes: a dependency on either would hand `BuildStep` a new callback on every render, including
+  // the once-a-second liveness tick, and `BuildStep` would re-register its back listener each tick.
+  // That re-registration was the old bug: the build screen's listener was always the newest, ran
+  // ahead of the sheet's, and cancelled the run instead of closing the sheet.
+  const timelineRef = useRef(timeline);
+  timelineRef.current = timeline;
+  const onLeaveRunningRef = useRef(onLeaveRunning);
+  onLeaveRunningRef.current = onLeaveRunning;
+
+  /** Hardware back on the build screen (bug fix — see `BuildStep.tsx`'s header comment and
+   *  `prompt-flow.ts#buildBackAction`): NEVER cancels. Closes the details sheet if it is open;
+   *  otherwise defers to `onLeaveRunning`, the exact action the "Leave it running" button performs.
+   *  A stable identity (empty dependency array) so `BuildStep`'s listener is registered once per
+   *  mount, never once per tick. Cancellation stays reachable only from other explicit affordances
+   *  (a ghost tile's own Cancel, `onCancelPending` below). */
+  const onBuildBack = useCallback(() => {
+    if (buildBackAction(timelineRef.current !== null) === 'close-sheet') {
+      setTimeline(null);
+      return;
+    }
+    onLeaveRunningRef.current();
+  }, []);
 
   // ── Ghost-tile handlers (design D7) ────────────────────────────────────────────────────────
   // The grid's four entry points into a pending-build record. Chain-3's tiles bind them;
@@ -989,8 +996,9 @@ function LauncherShell({
     setScreen(live.screen);
   };
 
-  /** Cancel from a `building` ghost's quick actions: the same abort + delete the build step's own
-   *  back press does, without taking the user off the grid. */
+  /** Cancel from a `building` ghost's quick actions: `abortLiveAttempt`'s abort + delete, without
+   *  taking the user off the grid. The one remaining reachable path to cancellation — the build
+   *  screen's own hardware back no longer takes this route (`prompt-flow.ts#buildBackAction`). */
   const onCancelPending = (rec: PendingBuildRecord) => {
     if (liveRef.current?.id === rec.id) {
       abortLiveAttempt();
@@ -1174,7 +1182,7 @@ function LauncherShell({
           editing={from.editing != null}
           editingName={from.editing?.name}
           onLeaveRunning={onLeaveRunning}
-          onCancel={() => onCancelGeneration(from.editing, from.text)}
+          onBack={onBuildBack}
           onShowDetails={onShowDetails}
         />
         <RunDetailsSheet
