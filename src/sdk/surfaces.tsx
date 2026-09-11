@@ -184,7 +184,11 @@ export function List({ children }: ListProps) {
       React.createElement(
         'div',
         {
-          key: i,
+          // `React.Children.toArray` above already assigns every element a stable,
+          // position-scoped key — reuse it (falling back to the index only for a
+          // non-element child, which carries no key of its own) instead of keying
+          // this wrapper on the index directly.
+          key: React.isValidElement(child) && child.key !== null ? child.key : i,
           style: i > 0 ? { borderTop: `1px solid ${color('border')}` } : undefined,
         },
         child,
