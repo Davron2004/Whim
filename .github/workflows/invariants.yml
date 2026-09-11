@@ -26,6 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - run: npm ci
       - name: Build generated runtime modules
         run: npm run build
@@ -53,6 +54,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22 # pinned per the DEVLOG build-env gotcha
+          cache: npm
       - run: npm ci
       - name: Build generated runtime modules
         run: npm run build
@@ -93,6 +95,12 @@ jobs:
       # false-positive gate and the pinned latency-probe expected-flagged sample — must pass.
       - name: Run the static-checks acceptance suite (blocks on red)
         run: npm run checks:test
+      # Key is pinned to the playwright version above — bump it in lockstep if that version changes.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-1.60.0
       - run: npx --ignore-scripts --package=playwright@1.60.0 playwright install --with-deps chromium
       - name: Build the retained runtime + bundles
         run: npm run build
