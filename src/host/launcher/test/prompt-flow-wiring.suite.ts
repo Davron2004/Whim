@@ -14,7 +14,10 @@
  *   - clarify is a pre-stream exchange: zero questions is a success, a 502 skips to the plan.
  *   - answers reach the rewrite and the generation request, by value.
  *   - nothing is generated before the plan's `Build it`.
- *   - `Leave it running` does not cancel; hardware back out of the build step does.
+ *   - `Leave it running` does not cancel, and neither does hardware back out of the build step
+ *     (bug fix, `prompt-flow.ts#buildBackAction`): it closes the details sheet if open, otherwise
+ *     it is the same non-cancelling `onLeaveRunning` action. Cancellation is reachable only from a
+ *     `building` ghost's explicit Cancel action.
  *   - leaving compose or plan cancels that step's own in-flight request, and a response to a
  *     request the user has left cannot move the screen.
  *   - a delivered generation tracks `{v:2, text, summary?}`; v1 and raw strings still read.
@@ -398,24 +401,36 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!/event\.diagnostic\.(kind|symbol)/.test(attemptFn), 'a diagnostic’s kind/symbol is never read');
   });
 
-  await h.test('leave-it-running does not cancel; hardware back out of the build step does', () => {
-    const leaveFn = rootSrc.slice(rootSrc.indexOf('const onLeaveRunning'), rootSrc.indexOf('const onCancelGeneration'));
+  // Regression: hardware back on the build screen used to reach `onCancelGeneration` and abort the
+  // whole run — with the details sheet open it cancelled the run INSTEAD of closing the sheet
+  // (BuildStep's old `onCancel` prop re-registered its listener every liveness tick, so it was
+  // always the newest `hardwareBackPress` listener and always ran first). The fix removes that
+  // route entirely: `onBuildBack` never calls `abortLiveAttempt`, and cancellation is reachable
+  // only from a `building` ghost's own explicit Cancel action (`onCancelPending`).
+  await h.test('leave-it-running does not cancel; neither does hardware back out of the build step', () => {
+    const leaveFn = rootSrc.slice(rootSrc.indexOf('const onLeaveRunning'), rootSrc.indexOf('const onLeaveRunningRef'));
     h.ok(leaveFn.includes('detached = true') && leaveFn.includes('goHome()'), 'leaving detaches and returns to the shell');
     h.ok(!leaveFn.includes('abort()'), 'and never aborts the run');
     const abortFn = rootSrc.slice(rootSrc.indexOf('const abortLiveAttempt'), rootSrc.indexOf('const showStreamFailure'));
-    h.ok(abortFn.includes('ctl.cancelled = true') && abortFn.includes('ctl.controller.abort()'), 'backing out marks intent and aborts');
+    h.ok(abortFn.includes('ctl.cancelled = true') && abortFn.includes('ctl.controller.abort()'), 'the one cancel route marks intent and aborts');
     // Bounded by the next CODE declaration, never by the decorative banner that happens to sit
     // between them: `indexOf` on a reworded banner returns -1, `slice(start, -1)` silently widens
-    // the region to the rest of the file, and `onCancelPending`'s own `abortLiveAttempt()` would
-    // keep the assertion below green while it tested nothing.
-    const cancelFn = rootSrc.slice(rootSrc.indexOf('const onCancelGeneration'), rootSrc.indexOf('const failureFromRecord'));
-    // The wiring link, not just the helper's existence: the assertions above prove `abortLiveAttempt`
-    // marks intent and aborts, and this proves the hardware-back handler is what reaches it.
-    h.ok(cancelFn.includes('abortLiveAttempt()'), 'the hardware-back handler is what invokes that abort');
-    h.ok(cancelFn.includes('openCompose(editing, text)'), 'and returns to compose with the text preserved');
-    h.ok(!cancelFn.includes('deliverAndSettle'), 'cancel itself never delivers');
+    // the region to the rest of the file, and a later `abortLiveAttempt()` call site would keep the
+    // negative assertion below green while it tested nothing.
+    const backFn = rootSrc.slice(rootSrc.indexOf('const onBuildBack'), rootSrc.indexOf('const failureFromRecord'));
+    h.ok(!backFn.includes('abortLiveAttempt'), 'the build screen’s hardware-back handler never reaches the cancel route');
+    h.ok(backFn.includes('buildBackAction(') && backFn.includes('onLeaveRunningRef.current()'), 'back either closes the sheet or defers to the exact same non-cancelling leave action');
+    const cancelPendingFn = rootSrc.slice(rootSrc.indexOf('const onCancelPending'), rootSrc.indexOf('const onDismissPending'));
+    h.ok(cancelPendingFn.includes('abortLiveAttempt()'), 'the one remaining path to cancellation is the ghost tile’s own explicit Cancel action');
+    h.ok(!cancelPendingFn.includes('deliverAndSettle') && !cancelPendingFn.includes('openCompose'), 'cancelling a ghost never delivers and never reopens compose');
     h.ok(/if \(ctl\.cancelled\) return;/.test(attemptFn), 'the loop bails out on a cancelled run before delivering');
     h.ok(/if \(ctl\.detached\) return;/.test(attemptFn), 'a detached run still delivers, it just does not take over the screen');
+  });
+
+  await h.test('build screen: no separate sheet back-listener — one hardware-back path, in the shell', () => {
+    h.ok(!rootSrc.includes("if (timeline === null) return undefined;"), 'the old ordering-dependent sheet listener is gone');
+    h.ok((rootSrc.match(/hardwareBackPress/g) ?? []).length === 0, 'LauncherRoot registers no hardwareBackPress listener of its own for the build screen — BuildStep owns the one listener, LauncherRoot only decides what it means');
+    h.ok(rootSrc.includes('onBack={onBuildBack}'), 'BuildStep is wired to the stable callback');
   });
 
   await h.test('delivery (D5): result routes through isAtTip to install / update / fork-then-update', () => {
