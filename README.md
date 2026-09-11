@@ -39,20 +39,20 @@ The generation is done by a model. The interesting part is everything around the
 
 ```mermaid
 flowchart TB
-    subgraph RN["React Native host, trusted"]
-        subgraph WV["WebView outer document, trusted"]
-            subgraph IF["cross-origin iframe: sandbox=allow-scripts, opaque origin"]
-                direction TB
-                NEU["neutralize.js strips the window's reach:<br/>fetch, XHR, WebSocket, RTCPeerConnection,<br/>localStorage, indexedDB, Worker, sendBeacon"]
-                LD["loader: holds nothing stronger than parent.postMessage"]
-                SDK["vc-sdk plus one shared React"]
-                APP["untrusted mini-app bundle"]
-            end
-        end
+    HOST["WebView outer document and<br/>React Native host, trusted"]
+    CSP["Leg 1, CSP: script-src without unsafe-eval,<br/>default-src none, connect-src none"]
+    subgraph IF["Leg 2, cross-origin iframe: sandbox=allow-scripts, opaque origin"]
+        direction TB
+        NEU["Leg 3, neutralize.js strips the window's reach:<br/>fetch, XHR, WebSocket, RTCPeerConnection,<br/>localStorage, indexedDB, Worker, sendBeacon"]
+        APP["untrusted mini-app bundle"]
+        SDK["vc-sdk plus one shared React"]
+        LD["loader: holds nothing stronger<br/>than parent.postMessage"]
     end
-    CSP["CSP: script-src without unsafe-eval,<br/>default-src none, connect-src none"] -. enforced on .-> IF
-    APP -- "renders through vc-sdk only" --> SDK
-    IF -- "nonce-authenticated frames" --> WV
+    HOST ~~~ CSP
+    CSP -. "enforced on" .-> APP
+    NEU -. "runs before" .-> APP
+    APP -- "renders through vc-sdk" --> SDK
+    LD -- "nonce-authenticated frames" --> HOST
 ```
 
 The iframe has an opaque origin, so `parent.document`, `top.location` and the native bridge are all a `SecurityError`. The CSP is the only thing that closes `({}).constructor.constructor('...')`, because every object reaches `Function` through its prototype chain and no amount of global stripping can stop that; `eval` and `Function` are left in place because React needs them and the CSP kills code generation at the engine level anyway. The global strip covers what CSP cannot, such as WebRTC, which ignores `connect-src`. A bundle shares scope with the loader and can forge its own "I am contained" report, so the host trusts only a verdict from closure-captured probes it cannot overwrite, delivered in frames authenticated by a per-load nonce. A new realm is created for every load, because an earlier generation can otherwise reach the next one through `Object.prototype`. That last one was found on a real device and is now a regression test.
