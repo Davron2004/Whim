@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LinkedIn cut, shot 3 — kill + reopen: the setting the user just changed survives a cold start.
+# Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/3-persistence-reopen.yaml \
+#        --device emulator-5554 --out demo/raw/tea-3-persistence-reopen --name take-1 \
+#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#
+# PRECONDITION: Whim foregrounded INSIDE the tea timer, on the changed state (film straight after
+# shot 2). The one flow in the set that must `launchApp`, so its long waits are unreliable
+# (filmkit FEEDBACK #4) — the re-entry wait is doubled, as in ../6-persistence-reopen.yaml.
+# `stopApp` shows the real Android home for ~1s; that cut is hidden in the edit.
+appId: com.whim
+env:
+  TILE_RE: "Tea Steep Timer"
+  SETTING_RE: "400"
+---
+- tapOn:
+    point: "50%,32%"
+- extendedWaitUntil:
+    visible: ${SETTING_RE}
+    timeout: 30000
+
+# Beat 1 — hold on the changed state.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+
+# Beat 2 — kill the process outright.
+- stopApp
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+
+# Beat 3 — cold start, back to the grid.
+- launchApp
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 30000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }
+
+# Beat 4 — back in: the setting is still there.
+- tapOn: ${TILE_RE}
+- extendedWaitUntil:
+    visible: ${SETTING_RE}
+    timeout: 40000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+- tapOn:
+    point: "50%,32%"
+- extendedWaitUntil:
+    visible: ${SETTING_RE}
+    timeout: 40000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 4000, optional: true }

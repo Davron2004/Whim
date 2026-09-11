@@ -1,0 +1,115 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 7 — "Second prompt: add streaks → build → the streak UI, with the seeded data
+# still in it". One continuous take, same grammar as the first build. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/7-add-streaks.yaml \
+#        --device emulator-5554 --out demo/raw/7-add-streaks --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITIONS
+#   * Whim foregrounded ON the launcher grid, exactly one "Habit Tracker" tile, no forks.
+#   * That tracker already holds a seeded week (shots 5 and 6 are filmed before this one) — the
+#     whole point of the beat is that the rewrite keeps the data.
+#   * Generation server up. This take spends a real generation; get it right first time.
+#
+# "Prompt again" opens the SAME compose step a new app uses (`openCompose(app)` with empty text),
+# so every selector here is shared with `1-4-compose-to-transmute.yaml` — including the clarify
+# step, which the server may or may not ask for, hence the `runFlow: when:` branch. See that
+# file's header for why the branch exists and how the generated chips are tapped without knowing
+# their labels.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold on the grid with the finished app on it, then reach for it.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+- longPressOn: "Habit Tracker"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+
+# Beat 2 — the sheet's fourth row: change the app you already have.
+- tapOn: "Prompt again"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+
+# Beat 3 — the ask. Short on purpose: this is the "just say the next thing" beat.
+- inputText: "add a streak counter to each habit"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- hideKeyboard
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
+- tapOn: "Continue"
+
+# Beat 4 — clarify, if the server asks for it at all.
+- extendedWaitUntil:
+    visible: ".*quick thing.*|THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+      - tapOn:
+          text: ".*"
+          below:
+            text: ".*\\?"
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+      - tapOn: "Continue"
+
+# Beat 5 — the plan for the CHANGE, not for a new app.
+- extendedWaitUntil:
+    visible: "THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
+- tapOn: "Build it"
+
+# Beat 6 — leave it running and watch the tile from the grid.
+- extendedWaitUntil:
+    visible: "Leave it running"
+    timeout: 90000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+- tapOn: "Leave it running"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*Building.*"
+    timeout: 30000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 7 — a real condition, not a guessed pause: the caption goes when the new version lands.
+- extendedWaitUntil:
+    notVisible: ".*Building.*"
+    timeout: 720000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 8 — open it. Same habits, same week, now with streaks. Hold long: this is the payoff.
+#
+# EVERY SELECTOR HERE IS DELIBERATELY TOLERANT, because this beat is filming a claim rather than
+# asserting one. The change under test ("a rewrite keeps the user's data and the app's name")
+# used to fail: the rewrite renamed the app and reinvented its habits. If it regresses, the tile
+# is no longer called "Habit Tracker" and "Drink water" is no longer on screen — and a strict
+# selector would abort the flow exactly at the payoff, leaving no footage of the regression.
+# `.*Habit.*` still matches a renamed tile ("Habit Streaks"), and the closing waits are optional
+# so the hold happens either way. Whatever the app does here, it is on camera for 8 seconds.
+- tapOn: ".*Habit.*"
+- extendedWaitUntil:
+    visible: ".*Drink water.*"
+    timeout: 45000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+- tapOn:
+    point: "50%,78%"
+- extendedWaitUntil:
+    visible: ".*Drink water.*"
+    timeout: 45000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 8000, optional: true }

@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LinkedIn cut, shot 1 — cold open on the grid → compose → (clarify) → plan → inline row edit →
+# Build → ghost tile waits → transmutes. One continuous take, 4:5 frame. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/1-compose-to-transmute.yaml \
+#        --device emulator-5554 --out demo/raw/tea-1-compose-to-transmute --name take-1 \
+#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#
+# PRECONDITIONS (see ../1-4-compose-to-transmute.yaml for the reasoning behind every idiom here):
+#   * Display override `wm size 1344x1680` (4:5) in place; SystemUI demo mode on (clean status bar).
+#   * Whim foregrounded ON the grid, only the three EXAMPLE tiles. No `launchApp`, so the long
+#     build wait holds (filmkit FEEDBACK #4).
+#   * Generation server up on :8787 with the demo prompt addendum.
+#
+# This take creates the ONE tea-timer instance every later shot is filmed on.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — cold open: hold the grid.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 2 — into the composer.
+- tapOn: ".*Describe an app.*"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+
+# Beat 3 — the ask. Loose enough to leave the server room to ask a question.
+- inputText: "A tea steeping timer with presets for green, black and herbal tea. Big countdown, a progress bar, and let me tweak the steep time and remember it"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- hideKeyboard
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
+- tapOn: "Continue"
+
+# Beat 4 — clarify lands, or the plan does. Branch on whichever shows.
+- extendedWaitUntil:
+    visible: ".*quick thing.*|THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+      - tapOn:
+          text: ".*"
+          below:
+            text: ".*\\?"
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+      - tapOn: "Continue"
+
+# Beat 5 — the plan drafts itself.
+- extendedWaitUntil:
+    visible: "THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 6 — REMOVED (2026-09-04 reshoot): the inline row edit (tap THE SCREEN /
+# inputText / Save) focused the field programmatically with no soft keyboard, so
+# Gboard showed its floating toolbar pill on camera. Plan screen holds as-is.
+
+# Beat 7 — Build, then leave it running.
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "Leave it running"
+    timeout: 90000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
+- tapOn: "Leave it running"
+- waitForAnimationToEnd
+
+# Beat 8 — the ghost tile, captioned "Building…".
+- extendedWaitUntil:
+    visible: ".*Building.*"
+    timeout: 30000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 9 — THE moment: the caption goes when the finished app replaces its ghost.
+- extendedWaitUntil:
+    notVisible: ".*Building.*"
+    timeout: 720000
+- waitForAnimationToEnd
+
+# Beat 10 — hold on the transmuted tile.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 5200, optional: true }

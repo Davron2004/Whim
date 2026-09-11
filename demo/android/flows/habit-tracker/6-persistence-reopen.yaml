@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 6 — "Kill + reopen persistence proof". Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/6-persistence-reopen.yaml \
+#        --device emulator-5554 --out demo/raw/6-persistence-reopen --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITION: Whim is foregrounded INSIDE the tracker, with today's habits already ticked
+# (film this straight after shot 5). The shot has to start on the ticked state, get killed, and
+# come back to the same ticked state — starting on the grid would prove nothing.
+#
+# A TICKED habit's accessible name is "✓ Drink water", not "Drink water", and Maestro matches
+# `text:` as a whole-string regex — so the exact label that worked before the tick silently stops
+# matching after it. Every selector below that has to survive a state change is written
+# `.*Drink water.*`. That mismatch cost take-2 of this shot.
+#
+# This is the one flow in the set that must run `launchApp`, because killing and relaunching IS
+# the shot. That costs it the reliable long hold: in a flow containing `launchApp`, Maestro 2.6.0
+# returns from `extendedWaitUntil` after ~7-8s no matter what timeout it was given (filmkit
+# FEEDBACK #4). The re-entry wait is therefore doubled — an optional one that may come back early,
+# a beat, then a real one that resolves instantly once the WebView's accessibility tree is warm.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+# A touch inside the WebView before anything else: an idle mini-app can present to Maestro as one
+# bare `WebView` node with no text under it at all, and waiting does not fix that — a touch event
+# does. This one lands on empty space below the heatmap, so it changes nothing on screen and
+# nothing in the app.
+- tapOn:
+    point: "50%,78%"
+- extendedWaitUntil:
+    visible: ".*Drink water.*"
+    timeout: 30000
+
+# Beat 1 — hold on the ticked state, so what survives is on screen before anything happens.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 2 — kill it outright. Not a back press, not a home press: the process goes away.
+- stopApp
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+
+# Beat 3 — cold start, back to the grid.
+- launchApp
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 30000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 4 — back into the app. The ticks and the week are still there.
+- tapOn: "Habit Tracker"
+- extendedWaitUntil:
+    visible: ".*Drink water.*"
+    timeout: 40000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+- tapOn:
+    point: "50%,78%"
+- extendedWaitUntil:
+    visible: ".*Drink water.*"
+    timeout: 40000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 4200, optional: true }

@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LinkedIn cut, shot 2 — the app, v1: open it from the grid, drag the steep time, scroll, Start,
+# hold on the live countdown. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/2-walkthrough.yaml \
+#        --device emulator-5554 --out demo/raw/tea-2-walkthrough --name take-1 \
+#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#
+# PRECONDITION: Whim foregrounded ON the grid with the "Tea Steep Timer" tile (the instance take-7 of
+# shot 1 built). The app reopens on Green with Green's saved time, so the setting changed here is
+# Green's — that is what shot 3 shows surviving a cold start.
+#
+# WRITTEN FOR THE INSTANCE GENERATED 2026-09-04 ("Tea Steep Timer"). Geometry, measured on the 4:5
+# frame, unscrolled: the steep-time slider thumb sits at ~28% x for 180s on a ~10%→90% track
+# (roughly 0→~960s); the row sits at ~85% of the screen height. A swipe that starts ON the
+# thumb moves it (the SDK Slider is pointer-driven); one that starts on the track does nothing.
+# Start/Reset sit at the bottom edge, visible without scrolling (the flow still scrolls gently,
+# as before).
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold on the grid with the new tile, then open it.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- tapOn: "Tea Steep Timer"
+- extendedWaitUntil:
+    visible: ".*Steep.*"
+    timeout: 40000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1200, optional: true }
+- tapOn:
+    point: "50%,32%"
+- extendedWaitUntil:
+    visible: ".*Steep.*"
+    timeout: 40000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 2 — tweak the steep time: drag the thumb right. The number field and the display follow.
+# (Take-4 history: the first filming dragged 180→215 but its Beat-3 scroll started ON the
+# slider track and tap-set 215→315 on camera. The scroll is gone now — Start is visible
+# without it — and the drag starts on the thumb's CURRENT position. Green's saved value is
+# 315 from take-4, so this drag starts at ~50% and goes right.)
+- swipe:
+    start: "50%,85%"
+    end: "62%,85%"
+    duration: 1100
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+
+# Beat 3 — Start is visible without scrolling on this layout: hold, then Start.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+
+# Beat 4 — Start, and hold on the running countdown and the progress bar.
+- tapOn: "Start"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 9000, optional: true }

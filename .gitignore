@@ -102,6 +102,7 @@ evals/.reports/
 # never committed artifacts — demo/lib, demo/cli.mjs, demo/flows, demo/README.md stay tracked.
 demo/out/
 demo/.pages/
+demo/raw/
 
 # Graphify knowledge graph: local dev aid only (post-commit hook regenerates it from the
 # manifest, so a tracked copy would churn every commit). The skill (.agents/skills/graphify/)

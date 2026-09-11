@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 5 — "App v1 walkthrough: check-off, the weekly heatmap". Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/5-app-walkthrough.yaml \
+#        --device emulator-5554 --out demo/raw/5-app-walkthrough --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITIONS
+#   * Whim foregrounded ON the launcher grid (no `launchApp` — see 1-4's header for why).
+#   * The tracker is seeded: four days of this week already carry completions, today is 0/4.
+#   * Emulator date is Thu Aug 27 2026, deliberately mid-week so the heatmap reads as a week
+#     in progress rather than an empty one (its "This week" is Sun→Sat, NOT a rolling 7 days —
+#     seeding days from the previous week fills a grid nobody ever sees).
+#
+# WHAT THIS GENERATED APP ACTUALLY IS (the storyboard guessed differently): one scrolling screen,
+# not two. The check-list, the "This week" heatmap and the habit rows all live together, so
+# "navigate to the heatmap" is a hold, not a navigation. Ticking a habit repaints today's row in
+# the heatmap live — that repaint IS the beat this shot is built around.
+#
+# THE MINI-APP'S ACCESSIBILITY TREE IS COLD ON ARRIVAL. Whim renders the app inside a WebView;
+# Android exposes its contents to Maestro, but not instantly — a dump taken right after the realm
+# loads can come back as a single bare `WebView` node with no text in it at all. Every selector
+# below therefore waits on a real condition with a generous timeout rather than assuming the tree
+# is there. Do NOT "fix" a flaky run here by adding a fixed pause.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold on the grid, then open the tracker.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }
+- tapOn: "Habit Tracker"
+- extendedWaitUntil:
+    visible: "Drink water"
+    timeout: 40000
+- waitForAnimationToEnd
+
+# Beat 2 — let the app read: four habits, none done today, four days of history below.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
+
+# Beat 3 — the check-off. Today's row in the heatmap colours in as each one lands.
+- tapOn: "Drink water"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- tapOn: "Read"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+- tapOn: "Sleep 7+ hours"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
+
+# Beat 4 — a slow pass down to the heatmap and back, so the week reads on its own.
+- swipe:
+    start: 50%, 60%
+    end: 50%, 48%
+    duration: 1100
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+- swipe:
+    start: 50%, 48%
+    end: 50%, 60%
+    duration: 1100
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }
+
+# Beat 5 — back out to the grid and hold.
+- back
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }

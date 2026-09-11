@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shots 1→4 in ONE continuous take: cold open on the grid → compose → clarify →
+# answer → plan → inline row edit → Build → ghost tile waits → transmutes. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/1-4-compose-to-transmute.yaml \
+#        --device emulator-5554 --out demo/raw/1-4-compose-to-transmute --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITIONS
+#   * Whim already foregrounded ON the launcher grid. Deliberately NO `launchApp`: the cold open
+#     must start on the grid, not on a cold-start splash — and a `launchApp` in the flow is also
+#     what makes `extendedWaitUntil` return after ~7-8s regardless of its timeout (filmkit
+#     FEEDBACK #4). This flow's build wait needs to hold for MINUTES, so the launch is kept out.
+#     Verified on this AVD: without `launchApp`, a 45 000 ms `extendedWaitUntil` in a multi-step
+#     flow held the full 45s.
+#   * The grid holds no habit tracker (delete any leftover tracker + its forks first). This take
+#     creates the ONE tracker instance every downstream shot (5–11) is filmed on.
+#   * Generation server up on :8787, emulator kept awake (`svc power stayon true`).
+#
+# SELECTORS THAT ARE NOT LITERAL, AND WHY
+#   * The clarify questions and their option chips are GENERATED — different text on every run,
+#     so no chip label can be hard-coded. `text: ".*"` + `below: {text: ".*\?"}` taps the first
+#     tappable thing under the first question (every generated question ends in "?"), which is
+#     that question's first chip. Measured: Maestro's relative selectors resolve to the FIRST
+#     hierarchy match among the filtered set, not the nearest one — which is exactly why an
+#     `above:` anchor on the fixed helper line does NOT work here (it lands on "Back").
+#   * The plan row LABELS are fixed server-side ("What it is" / "The screen" / "When a step ends" /
+#     "What it remembers") and reach the a11y tree already uppercased by the eyebrow type style,
+#     so `THE SCREEN` is a literal, stable selector while the row's prose is not.
+#   * `Building…` is `COPY.ghostCaptionBuilding`, rendered under the ghost tile. Matching it as
+#     `.*Building.*` keeps the U+2026 out of the selector.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 (shot 1) — cold open: hold the grid so the starting state reads before anything moves.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 2 (shot 1) — into the composer. The field autofocuses, so `inputText` needs no tap of its
+# own; the keyboard comes up with the screen.
+- tapOn: ".*Describe an app.*"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+
+# Beat 3 (shot 1) — the ask, typed in. Keep the wording loose: an over-specified prompt gets NO
+# clarify questions at all (measured — adding "Nothing else for now." made the server skip the
+# clarify step entirely and jump to the plan, which cost take-1).
+- inputText: "A habit tracker: a few daily habits I check off, with a weekly calendar heatmap of how I did"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- hideKeyboard
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
+- tapOn: "Continue"
+
+# Beat 4 (shot 2) — the clarify step lands... USUALLY. Whether the server asks anything at all is
+# its call, so wait on "either screen" and put the clarify beats behind a `when:`. Without the
+# branch, a no-questions run fails the flow after a two-minute stall.
+- extendedWaitUntil:
+    visible: ".*quick thing.*|THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+      # Beat 5 (shot 2) — answer it on camera: the first chip under the first question fills in.
+      - tapOn:
+          text: ".*"
+          below:
+            text: ".*\\?"
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+      - tapOn: "Continue"
+
+# Beat 6 (shot 3) — the plan drafts itself. Rows arrive after a skeleton, so wait on a row label,
+# not on the headline.
+- extendedWaitUntil:
+    visible: "THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 7 (shot 3) — edit a row before anything exists. Tapping the row opens it inline with the
+# caret at the end of the existing text, so the sentence appends (`inputText` never replaces).
+- tapOn: "THE SCREEN"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- inputText: " Put the heatmap right under the habit list."
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+- tapOn: "Save"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }
+
+# Beat 8 (shot 3) — Build. The progress screen names its four steps; hold on it before leaving.
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "Leave it running"
+    timeout: 90000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
+- tapOn: "Leave it running"
+- waitForAnimationToEnd
+
+# Beat 9 (shot 4) — the ghost tile is on the grid, captioned "Building…".
+- extendedWaitUntil:
+    visible: ".*Building.*"
+    timeout: 30000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 10 (shot 4) — THE moment. A real condition, not a guessed pause: the caption goes away the
+# instant the finished app replaces its own ghost. Up to 12 minutes of headroom.
+- extendedWaitUntil:
+    notVisible: ".*Building.*"
+    timeout: 720000
+- waitForAnimationToEnd
+
+# Beat 11 (shot 4) — hold on the transmuted tile.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 5200, optional: true }

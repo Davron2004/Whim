@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 8 — "Version history: scroll summaries, filter pills, tap-expand". Real time,
+# and the storyboard is explicit that this one gets air. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/8-version-history.yaml \
+#        --device emulator-5554 --out demo/raw/8-version-history --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITIONS: Whim foregrounded ON the launcher grid; exactly one "Habit Tracker", no forks;
+# the app has at least two versions (film after shot 7).
+#
+# SELECTORS. The version markers "v1"/"v2" are the only stable handles on a history row — every
+# other line in a row is generated prose that changes on every re-film, and the kind badge
+# ("ADDED" / "CHANGED" / "LOOK" / "FIXED") depends on how the server classified the change.
+# Tapping "v2" expands that row. The filter pills are `COPY.historyFilter*`, but only the ones
+# with entries are rendered, so "What it does" being there is a property of THIS lineage, not a
+# constant; the "all" pill carries its count ("All 2") and is matched loosely.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — from the grid into the app's lineage.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- longPressOn: "Habit Tracker"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1500, optional: true }
+- tapOn: "History"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*history"
+    timeout: 15000
+
+# Beat 2 — hold. Two versions, each summarised in plain words, newest first.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
+
+# Beat 3 — a slow pass down the timeline and back.
+- swipe:
+    start: 50%, 70%
+    end: 50%, 52%
+    duration: 1200
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+- swipe:
+    start: 50%, 52%
+    end: 50%, 70%
+    duration: 1200
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+
+# Beat 4 — the filter pills: narrow to one category, then back to everything.
+- tapOn: "What it does"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+- tapOn: ".*All.*"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+
+# Beat 5 — expand the newest version: what it touched, and the door back into it.
+- tapOn: "v2"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 4000, optional: true }
+
+# Beat 6 — out, and hold on the grid.
+- tapOn: "Back"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
