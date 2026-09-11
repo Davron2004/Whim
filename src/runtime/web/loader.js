@@ -99,14 +99,14 @@
   window.__whimAfterBundle = function () {
     if (mountedGen === window.__whimGeneration) return; // already mounted this generation
     mountedGen = window.__whimGeneration;
-    var React = window.React, ReactDOM = window.ReactDOM;
-    var appModule = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') ? window.__WHIM_APP_MODULE__ : null;
+    const React = window.React, ReactDOM = window.ReactDOM;
+    const appModule = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') ? window.__WHIM_APP_MODULE__ : null;
     if (!appModule || !appModule.default) {
       post('error', { where: 'bundle', message: 'no AppSpec default export (did the inline script execute?)' });
       return;
     }
-    var spec = appModule.default;
-    var gen = window.__whimGeneration;
+    const spec = appModule.default;
+    const gen = window.__whimGeneration;
     try {
       if (!whimRoot) whimRoot = ReactDOM.createRoot(document.getElementById('whim-root'));
       // The bundle does not know it is in an iframe/WebView — it just described screens.
@@ -131,7 +131,7 @@
   };
 
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
-  var deliveryBusy = false;
+  let deliveryBusy = false;
 
   function installTheme(theme) {
     if (theme === null || typeof theme !== 'object') return false;
@@ -194,12 +194,12 @@
     // REFUSED under the locked CSP (`script-src 'unsafe-inline'` has no `blob:`). We try
     // it on purpose; it must NOT execute. Never widen script-src to make this "work" — an
     // attacker who can mint a same-origin blob would gain a script surface.
-    var blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
-    var bs = document.createElement('script');
+    const blobUrl = URL.createObjectURL(new Blob([wrapped], { type: 'application/javascript' }));
+    const bs = document.createElement('script');
     bs.src = blobUrl;
     (document.head || document.documentElement).appendChild(bs);
     window.setTimeout(function () {
-      var ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
+      const ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
       post('delivery', {
         accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
         note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
@@ -210,7 +210,7 @@
   }
 
   function deliverInline(wrapped) {
-    var s = document.createElement('script');
+    const s = document.createElement('script');
     s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
     (document.head || document.documentElement).appendChild(s);
     post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
@@ -235,9 +235,9 @@
   }
 
   window.addEventListener('message', function (ev) {
-    var data = ev.data;
+    const data = ev.data;
     if (typeof data !== 'string') return;
-    var msg;
+    let msg;
     try { msg = JSON.parse(data); } catch (e) { return; }
     if (!msg) return;
 

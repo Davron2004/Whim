@@ -48,7 +48,7 @@
 
   // An object whose every property access/call throws — for ambient stores.
   function inertStore(name) {
-    var handler = {
+    const handler = {
       get: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
       set: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
       apply: function () { throw new TypeError(name + ' is disabled in the Whim sandbox'); },
@@ -56,7 +56,7 @@
     try { return new Proxy(function () { }, handler); } catch (e) { return undefined; }
   }
 
-  var report = {};
+  const report = {};
 
   // Network primitives. RTCPeerConnection is load-bearing here: WebRTC is NOT covered by
   // `connect-src 'none'`, so the value-strip is the only thing that closes it.

