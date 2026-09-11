@@ -1,0 +1,118 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LinkedIn cut, shot 5 — fork at v1 behind the confirm sheet → new tile → open the fork (v1, own
+# storage) → back to the original (v2). One uncut real-time run. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/5-fork.yaml \
+#        --device emulator-5554 --out demo/raw/tea-5-fork --name take-1 \
+#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#
+# PRECONDITION: grid holds exactly ONE tea-timer tile and no forks. Once the fork exists both tiles
+# carry the same a11y label, so tile taps are disambiguated by `index` (0 original, 1 fork).
+# Idioms explained in ../10-fork-divergence.yaml. Fill TILE / V2_RE / V1_RE after generation.
+# NOTE (take-5): Maestro `text:` is a WHOLE-STRING regex (filmkit FEEDBACK #14.5) — a bare
+# "Steep time" never matches the node "Steep time (seconds)". Value regexes need .*….*.
+appId: com.whim
+env:
+  TILE: "Tea Steep Timer"
+  V2_RE: ".*Strength.*"   # something only the rewritten original renders (e.g. Strength)
+  V1_RE: ".*Steep time.*"   # something both versions render (the slider label)
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+
+# Beat 1 — long-press the original, into History.
+- longPressOn:
+    text: ${TILE}
+    index: 0
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- tapOn: "History"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+
+# Beat 2 — expand v1 and fork it behind the confirm sheet.
+- tapOn: "Where this app began"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+# On the 4:5 frame the expanded row's chips and its "Start a copy here" button sit below the
+# fold; until scrolled into view they exist only inside the row's combined a11y label, so the
+# button is not a tappable node yet (cost take-1).
+- swipe:
+    start: "50%,85%"
+    end: "50%,40%"
+    duration: 700
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- tapOn: "Start a copy here"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Make the copy"
+    timeout: 8000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- tapOn: "Make the copy"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+
+# Beat 3 — back out: the new tile has landed.
+- tapOn: "Back"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Forked from .*"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 4 — open the fork: v1, no strength selector, its own storage.
+# (Take-3–5 history: the V1_RE wait timed out twice while v1 sat on screen. Root cause
+# was whole-string regex matching (see header note), not a sleeping tree — but the
+# title gate stays anyway: it proves the tile tap opened the app instead of burning
+# 90s on the grid during a reflow. The countdown taps wake the WebView tree on cold
+# opens; harmless once warm.)
+- tapOn:
+    text: ${TILE}
+    index: 1
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Tea Steep Timer"
+    timeout: 30000
+- tapOn:
+    point: "50%,62%"
+- extendedWaitUntil:
+    visible: ${V1_RE}
+    timeout: 45000
+    optional: true
+- tapOn:
+    point: "50%,62%"
+- extendedWaitUntil:
+    visible: ${V1_RE}
+    timeout: 45000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 5 — back, and into the original: same name, v2, the strength selector.
+- back
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- tapOn:
+    text: ${TILE}
+    index: 0
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Tea Steep Timer"
+    timeout: 30000
+- tapOn:
+    point: "50%,62%"
+- extendedWaitUntil:
+    visible: ${V2_RE}
+    timeout: 45000
+    optional: true
+- tapOn:
+    point: "50%,62%"
+- extendedWaitUntil:
+    visible: ${V2_RE}
+    timeout: 45000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 6 — tail: the grid with both tiles.
+- back
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }

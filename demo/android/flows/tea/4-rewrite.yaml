@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LinkedIn cut, shot 4 — "Prompt again": add a strength selector → build → payoff: the same app,
+# the saved steep time still there, plus the new control. One continuous take. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/4-rewrite.yaml \
+#        --device emulator-5554 --out demo/raw/tea-4-rewrite --name take-1 \
+#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#
+# PRECONDITIONS: Whim foregrounded ON the grid, exactly one tea-timer tile, no forks; the user's
+# setting already changed in-app (shots 2–3 filmed first). Spends a real generation.
+# Every idiom here is explained in ../7-add-streaks.yaml. TILE_RE / SETTING_RE are filled in after
+# the app exists (`maestro hierarchy`).
+appId: com.whim
+env:
+  TILE_RE: "Tea Steep Timer"
+  SETTING_RE: "400"
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold on the grid, reach for the tile.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+- longPressOn: ${TILE_RE}
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+
+# Beat 2 — Prompt again.
+- tapOn: "Prompt again"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+
+# Beat 3 — the ask, short.
+- inputText: "add a strength selector: light, medium, strong. Medium keeps my saved steep time, light is shorter, strong is longer"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- hideKeyboard
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
+- tapOn: "Continue"
+
+# Beat 4 — clarify, if asked.
+- extendedWaitUntil:
+    visible: ".*quick thing.*|THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+      - tapOn:
+          text: ".*"
+          below:
+            text: ".*\\?"
+      - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+      - tapOn: "Continue"
+
+# Beat 5 — the plan for the change.
+- extendedWaitUntil:
+    visible: "THE SCREEN"
+    timeout: 180000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
+- tapOn: "Build it"
+
+# Beat 6 — leave it running, watch the tile.
+- extendedWaitUntil:
+    visible: "Leave it running"
+    timeout: 90000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+- tapOn: "Leave it running"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*Building.*"
+    timeout: 30000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 7 — the new version lands.
+- extendedWaitUntil:
+    notVisible: ".*Building.*"
+    timeout: 720000
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+
+# Beat 8 — open it: same app, saved setting intact, new control. Tolerant selectors: this beat
+# films a claim, it does not assert one (see ../7-add-streaks.yaml).
+- tapOn: ${TILE_RE}
+- extendedWaitUntil:
+    visible: ${SETTING_RE}
+    timeout: 45000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+- tapOn:
+    point: "50%,32%"
+- extendedWaitUntil:
+    visible: ${SETTING_RE}
+    timeout: 45000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 8000, optional: true }

@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 10 — "Fork: sheet → tile → side-by-side divergence" (the money shot).
+# One uncut real-time run, no internal cuts. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/10-fork-divergence.yaml \
+#        --device emulator-5554 --out demo/raw/10-fork-divergence --name take-N \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITION: the launcher grid holds exactly ONE "Habit Tracker" and no fork tiles. Both
+# tiles carry the identical accessibility label ("HT, HT, Habit Tracker") once a fork exists,
+# so every tile tap below is disambiguated by `index` — index 0 is the original, index 1 the
+# fork. Delete leftover forks before each take or those indices shift under you.
+#
+# WRITTEN FOR THE APP INSTANCE BUILT ON 2026-08-23 EVENING (the third one filmed, the one
+# `1-4-compose-to-transmute/take-7` creates). Takes 1–5 were filmed on two earlier trackers and
+# their literals no longer apply. Two things changed and both matter here:
+#
+#   * THE ORIGINAL'S v2 IS STILL CALLED "Habit Tracker". On the earlier instance the rewrite
+#     renamed the app to "Habit Streaks", and beat 9 used that as its "this is the original, not
+#     the fork" handle. The rewrite-preserves-user-data fix means the name now survives, so the
+#     two tiles and both app titles read identically and the name is no longer a discriminator.
+#     What tells them apart is the streak line the rewrite added: only the original renders
+#     "<n>-day streak" under each habit, so `.*streak.*` is the handle now.
+#   * THIS v1 SHIPS WITH NO HABITS. The fork gets the v1 bundle plus its OWN storage (decision
+#     #43b), so it opens on "No habits yet" while the original holds four habits and a seeded
+#     week. That emptiness IS the divergence, and it is a stronger reading of it than the old
+#     take's "tick two boxes in the fork" — so the fork beat adds a habit of its own instead,
+#     which the original will not have.
+#
+# Two things about selecting inside the mini-app, both learned the expensive way:
+#   * A TICKED habit's accessible name is "✓ Drink water", not "Drink water", and Maestro matches
+#     `text:` as a whole-string regex, so any selector that has to survive a tick is written
+#     `.*Drink water.*`.
+#   * An idle WebView can present to Maestro as one bare `WebView` node with no text under it.
+#     Waiting does not fix that; a touch event does — hence the taps on empty space at 78%.
+#   * `hideKeyboard` LEAVES the app inside a WebView (filmkit FEEDBACK #14), so the habit this
+#     flow types is committed by tapping "Add" with the IME still up. "Add" sits at ~37% of the
+#     screen height, well clear of the keyboard.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+# No `launchApp` any more (takes 1–3 had one): in a flow that launches the app, Maestro 2.6.0
+# returns from `extendedWaitUntil` after ~7-8s regardless of the timeout it was given (filmkit
+# FEEDBACK #4), and this revision needs 45s waits for the mini-app realm to come up. Foreground
+# Whim on the grid before rolling instead.
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold on the grid so the starting state reads before anything moves.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+
+# Beat 2 — long-press the original tile, take the History route into its lineage.
+- longPressOn:
+    text: "Habit Tracker"
+    index: 0
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- tapOn: "History"
+- waitForAnimationToEnd
+
+# Beat 3 — the shot's lead-in: hold on the history screen before the fork gesture.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+
+# Beat 4 — expand v1, the version the app began at.
+- tapOn: "Where this app began"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+
+# Beat 5 — fork behind the confirm sheet.
+- tapOn: "Start a copy here"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Make the copy"
+    timeout: 8000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- tapOn: "Make the copy"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+
+# Beat 6 — back out: the new tile has landed on the grid.
+- tapOn: "Back"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Forked from Habit Tracker"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
+
+# Beat 7 — open the fork: it is v1, and its storage is its own, so it opens empty.
+- tapOn:
+    text: "Habit Tracker"
+    index: 1
+- extendedWaitUntil:
+    visible: "No habits yet"
+    timeout: 45000
+    optional: true
+- tapOn:
+    point: "50%,78%"
+- extendedWaitUntil:
+    visible: "No habits yet"
+    timeout: 45000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+
+# Beat 8 — the divergence, made active: give the fork a habit the original does not have, and
+# tick it. Committed with "Add" while the IME is up — see the header on `hideKeyboard`.
+# "Habit name" is the field's LABEL, a node of its own sitting above the input — tapping it
+# focuses nothing. The input itself carries only a placeholder, so it is reached by point.
+- tapOn:
+    point: "42%,32%"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1200, optional: true }
+- inputText: "Walk the dog"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- tapOn: "Add"
+- extendedWaitUntil:
+    visible: ".*Walk the dog.*"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
+- tapOn: ".*Walk the dog.*"
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
+
+# Beat 9 — out, and into the original. Same name, same tile, entirely different contents: four
+# habits, the seeded week, and the streak lines the fork's v1 has never heard of.
+- back
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- tapOn:
+    text: "Habit Tracker"
+    index: 0
+- extendedWaitUntil:
+    visible: ".*streak.*"
+    timeout: 45000
+    optional: true
+- tapOn:
+    point: "50%,78%"
+- extendedWaitUntil:
+    visible: ".*streak.*"
+    timeout: 45000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3800, optional: true }
+
+# Beat 10 — tail: the grid with both tiles, two lineages side by side.
+- back
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3400, optional: true }
