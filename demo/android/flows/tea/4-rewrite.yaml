@@ -3,17 +3,34 @@
 # the saved steep time still there, plus the new control. One continuous take. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/4-rewrite.yaml \
-#        --device emulator-5554 --out demo/raw/tea-4-rewrite --name take-1 \
-#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --device emulator-5554 --out demo/raw/2026-09-11/shot-4 --name take-1 \
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
 #
-# PRECONDITIONS: Whim foregrounded ON the grid, exactly one tea-timer tile, no forks; the user's
-# setting already changed in-app (shots 2–3 filmed first). Spends a real generation.
-# Every idiom here is explained in ../7-add-streaks.yaml. TILE_RE / SETTING_RE are filled in after
-# the app exists (`maestro hierarchy`).
+# PRECONDITIONS: Whim foregrounded ON the grid at top, exactly one tea-timer tile ("Tea Steeper",
+# slot 4), no forks; the user's setting already changed in-app to 440 s / 7:20 (shots 2–3 filmed
+# first). Spends a real generation, 4–8 min wall. No `launchApp`, so the long build wait holds
+# (filmkit FEEDBACK #4). Every idiom here is explained in ../7-add-streaks.yaml.
+#
+# WRITTEN FOR THE INSTANCE GENERATED 2026-09-11 ("Tea Steeper"), stock 1344x2992 frame.
+# The long-press sheet is Open / Fork / History / Prompt again / Delete / Cancel (measured).
+# The REWRITE composer is its own screen ("CHANGING TEA STEEPER" / "What should change?" /
+# "Add, change, or remove something…"), NOT the first-run composer's "What should it do?" — that
+# wrong gate cost take-1. Its field takes `inputText` with no tap and raises a real soft keyboard
+# (so no Gboard floating toolbar pill), which `hideKeyboard` then drops.
+# The a11y tree is populated on open without a wake tap on this instance (measured warm AND cold),
+# so there is no wake tap and no stray tap ring in dead space.
+# Beats 4–5 gate on the plan screen's primary CTA, not on a plan row label like "THE SCREEN": the
+# row labels are the rewrite MODEL's output and a run that omits them would hang here. The CTA is
+# host copy that mounts only once the rewrite response lands, so it also means "rows are on
+# screen". Same idiom as 1-compose-to-transmute.yaml — but note the REWRITE plan screen's CTA is
+# "Make the change", NOT the first-run "Build it" (that wrong gate cost take-2, a full 180 s hang
+# with the plan sitting on screen). Header there reads "Here's the change".
+# The "Leave it running" sheet is tolerated rather than required: if the rewrite path ever skips
+# it, the run still reaches the build wait instead of hanging with the sheet undismissed.
 appId: com.whim
 env:
-  TILE_RE: "Tea Steep Timer"
-  SETTING_RE: "400"
+  TILE_RE: "Tea Steeper"
+  SETTING_RE: ".*7:20.*"
 ---
 - extendedWaitUntil:
     visible: "YOUR APPS"
@@ -29,20 +46,23 @@ env:
 - tapOn: "Prompt again"
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "What should it do\\?"
+    visible: "What should change\\?"
     timeout: 15000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
 
-# Beat 3 — the ask, short.
-- inputText: "add a strength selector: light, medium, strong. Medium keeps my saved steep time, light is shorter, strong is longer"
+# Beat 3 — the ask, short. The trailing "Keep everything else exactly as it is." is load-bearing,
+# not politeness: take-3's rewrite died on eight `storage_surface_drift` findings because the model
+# restructured the saved-kv reads behind a helper the checker cannot see through. Discouraging
+# restructuring is what keeps the storage surface legible to the checker.
+- inputText: "add a strength selector: light, medium, strong. Medium keeps my saved steep time, light is 25% shorter, strong is 25% longer. Keep everything else exactly as it is."
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
 - hideKeyboard
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 900, optional: true }
 - tapOn: "Continue"
 
-# Beat 4 — clarify, if asked.
+# Beat 4 — clarify lands, or the plan does. Branch on whichever shows.
 - extendedWaitUntil:
-    visible: ".*quick thing.*|THE SCREEN"
+    visible: ".*quick thing.*|Make the change"
     timeout: 180000
 - waitForAnimationToEnd
 - runFlow:
@@ -57,21 +77,26 @@ env:
       - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
       - tapOn: "Continue"
 
-# Beat 5 — the plan for the change.
+# Beat 5 — the plan for the change drafts itself.
 - extendedWaitUntil:
-    visible: "THE SCREEN"
+    visible: "Make the change"
     timeout: 180000
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
-- tapOn: "Build it"
+- tapOn: "Make the change"
 
 # Beat 6 — leave it running, watch the tile.
 - extendedWaitUntil:
     visible: "Leave it running"
     timeout: 90000
+    optional: true
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3000, optional: true }
-- tapOn: "Leave it running"
-- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: "Leave it running"
+    commands:
+      - tapOn: "Leave it running"
+      - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: ".*Building.*"
     timeout: 30000
@@ -89,13 +114,6 @@ env:
 - tapOn: ${TILE_RE}
 - extendedWaitUntil:
     visible: ${SETTING_RE}
-    timeout: 45000
+    timeout: 60000
     optional: true
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
-- tapOn:
-    point: "50%,32%"
-- extendedWaitUntil:
-    visible: ${SETTING_RE}
-    timeout: 45000
-    optional: true
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 8000, optional: true }
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 9000, optional: true }
