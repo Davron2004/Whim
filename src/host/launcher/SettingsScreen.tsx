@@ -3,7 +3,7 @@
 // not one" — the theme preset/accent/corners picker is CUT, the shell is fixed and
 // non-themeable).
 // ─────────────────────────────────────────────────────────────────────────────
-// Colors come only from `shellPalette(theme)` (now always the same v2 values — never a hex
+// Colors come only from `SHELL_PALETTE` (the shell's one fixed palette — never a hex
 // literal of its own) and type faces from the SDK's v2 `TYPE_SCALE`/`RADIUS` (`vc-sdk`'s theme
 // module). This screen is not a mini-app host: it owns its own hardware-back binding directly,
 // and never touches `BackPolicy` (which only ever binds inside `useMiniAppHost`).
@@ -11,8 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface SettingsScreenProps {
   /** Returns to the home screen — supplied by `LauncherRoot`. */
@@ -35,9 +34,8 @@ export default function SettingsScreen({
   highlighting,
   onHighlightingChange,
 }: Readonly<SettingsScreenProps>) {
-  const { theme } = useTheme();
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {

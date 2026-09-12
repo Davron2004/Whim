@@ -21,7 +21,6 @@ import { monogram, tileColor } from './tiles';
 import { ghostStateCaption } from './copy';
 import TilePill from './tile-pill-view';
 import type { TilePillKind } from './tile-pill';
-import type { ShellPalette } from './theme';
 import type { AppManifest } from '../bridge/contract';
 
 /** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
@@ -86,15 +85,12 @@ export interface AppTileProps {
   busy?: boolean;
   /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an "Example" label,
    *  or an accent naming an in-flight rebuild of this already-installed app. Rendered inside the
-   *  square, top-right, never affecting the square's own launchable/ghost look. Carries its own
-   *  `palette` rather than this tile deriving one — the caller (`HomeScreen`) already resolves a
-   *  `ShellPalette` from whatever theme it's given, and threading that same value through is what
-   *  keeps a future theme picker from leaving the pill on a stale default. `onPress` is read only
-   *  for a tappable kind (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`); ignored for
-   *  a passive one. Omitted or `null` renders no pill. Never combined with `ghost` — a ghost tile
-   *  has no pill (it isn't installed yet, so it can neither be the seeded example nor be
-   *  rebuilding). */
-  pill?: { kind: TilePillKind; palette: ShellPalette; onPress?: () => void } | null;
+   *  square, top-right, never affecting the square's own launchable/ghost look. `onPress` is read
+   *  only for a tappable kind (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`);
+   *  ignored for a passive one. Omitted or `null` renders no pill. Never combined with `ghost` — a
+   *  ghost tile has no pill (it isn't installed yet, so it can neither be the seeded example nor
+   *  be rebuilding). */
+  pill?: { kind: TilePillKind; onPress?: () => void } | null;
 }
 
 /** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
@@ -149,7 +145,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
-        {!isDone && pill != null && <TilePill kind={pill.kind} palette={pill.palette} onPress={pill.onPress} />}
+        {!isDone && pill != null && <TilePill kind={pill.kind} onPress={pill.onPress} />}
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}
       {!isDone && ghost && (

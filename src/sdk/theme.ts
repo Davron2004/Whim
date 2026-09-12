@@ -3,14 +3,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure data + pure functions. NO React import, NO DOM access, NO side effects — this file is
 // imported directly by BOTH sides of the sandbox boundary: the mini-app SDK (tokens.ts resolves
-// color()/radius() through it) and the RN launcher shell (src/host/launcher/theme.ts derives
-// shellPalette() from the same WhimTheme), so the two halves can never grow a second, drifted
-// palette (D4 — one source file, two hosts).
+// color()/radius() through it) and the RN launcher shell (src/host/launcher/theme.ts derives its
+// fixed `SHELL_PALETTE` constant from the same `DEFAULT_THEME`), so the two halves can never grow
+// a second, drifted palette (D4 — one source file, two hosts).
 //
 // v2: the six theme presets, the accent picker, and the shape picker are CUT (design doc "Two
 // systems, not one" — "the shell is fixed... not themeable, not configurable, identical on every
-// device"). `WhimTheme` is now a single resolved value (`DEFAULT_THEME` below), never a family
-// resolved from a `ThemePref`. Zero migration: because the SDK is tokens-not-values (#13), every
+// device"). `WhimTheme` is now a single resolved value (`DEFAULT_THEME` below) — there is no
+// preference to resolve it from. Zero migration: because the SDK is tokens-not-values (#13), every
 // existing mini-app re-renders under these fixed values automatically — no per-app pinning, no
 // frozen-palette fallback.
 //

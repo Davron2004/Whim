@@ -2,16 +2,14 @@
  * theme — the launcher shell's named RN colors (v2; docs/design/README.md "Two systems, not
  * one").
  *
- * The shell theme is now fixed (`DEFAULT_THEME` from the SDK) — there is no preset/accent/shape
- * picker left to persist a pref for (that surface is CUT, see `SettingsScreen.tsx`). This module
- * is now only `shellPalette()`: the one place the RN launcher derives its named colors from a
- * `WhimTheme` (D4) — the shell must never grow a second palette of its own hex literals.
+ * The shell has one fixed theme, `DEFAULT_THEME` from the SDK, and one derived palette,
+ * `SHELL_PALETTE` below — there is no theme parameter anywhere in the launcher, and no second
+ * palette of hex literals: every shell color reads from this one constant.
  */
 
-import { SHELL_COLORS, type WhimTheme } from '../../sdk/theme';
+import { DEFAULT_THEME, SHELL_COLORS } from '../../sdk/theme';
 
-/** The launcher shell's named RN colors, derived from a resolved `WhimTheme` (D4) — the shell
- *  never grows its own second palette. */
+/** The launcher shell's named RN colors, the type of `SHELL_PALETTE` below. */
 export interface ShellPalette {
   bg: string;
   card: string;
@@ -23,18 +21,18 @@ export interface ShellPalette {
   danger: string;
 }
 
-export function shellPalette(theme: WhimTheme): ShellPalette {
-  return {
-    bg: theme.colors.bg,
-    card: theme.colors.surface,
-    cardBorder: theme.colors.border,
-    text: theme.colors.text,
-    textMuted: theme.colors['text-muted'],
-    accent: theme.colors.primary,
-    onAccent: theme.colors['on-primary'],
-    danger: theme.colors.danger,
-  };
-}
+/** The shell's one fixed palette, derived once from `DEFAULT_THEME` — never recomputed, never
+ *  parameterised by a theme. */
+export const SHELL_PALETTE: ShellPalette = Object.freeze({
+  bg: DEFAULT_THEME.colors.bg,
+  card: DEFAULT_THEME.colors.surface,
+  cardBorder: DEFAULT_THEME.colors.border,
+  text: DEFAULT_THEME.colors.text,
+  textMuted: DEFAULT_THEME.colors['text-muted'],
+  accent: DEFAULT_THEME.colors.primary,
+  onAccent: DEFAULT_THEME.colors['on-primary'],
+  danger: DEFAULT_THEME.colors.danger,
+});
 
 /** `SHELL_COLORS.ink` at `alpha`, e.g. `inkAlpha(0.58)` -> `'rgba(23,23,26,0.58)'` — derived from
  *  the hex literal rather than a hand-typed rgb triple, so a caller that wants ink at some

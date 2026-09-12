@@ -17,8 +17,7 @@ import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
 import type { FlowAnswers, FlowQuestion } from './prompt-flow';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface ClarifyStepProps {
   /** The user's submitted prompt, echoed verbatim as their own words. */
@@ -52,8 +51,7 @@ export default function ClarifyStep({
   onContinue,
   onBack,
 }: Readonly<ClarifyStepProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -65,10 +63,10 @@ export default function ClarifyStep({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="clarify" palette={p} onBack={onBack} />
+      <FlowHeader step="clarify" onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        {editing && editingName != null && <EditingEyebrow name={editingName} />}
 
         {/* The counted headline ("One/Two/Three quick things") depends on data that does not
             exist yet while loading — it appears only once the real questions have landed. */}
@@ -136,7 +134,7 @@ export default function ClarifyStep({
       {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
           action mounts once the real questions have landed; `WorkingLine` is the only liveness
           element while loading. */}
-      {!loading && <PrimaryAction step="clarify" enabled editing={editing} palette={p} onPress={onContinue} />}
+      {!loading && <PrimaryAction step="clarify" enabled editing={editing} onPress={onContinue} />}
     </View>
   );
 }

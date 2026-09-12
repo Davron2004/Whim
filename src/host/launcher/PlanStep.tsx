@@ -21,8 +21,7 @@ import { BreathingView } from './flow-skeletons';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
 import type { FlowPlanRow } from './prompt-flow';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** Row geometry, exported so the loading skeleton imports it rather than restating any value
  *  (`sdk-design-system` "Loading skeletons derive their geometry from exported component
@@ -81,8 +80,7 @@ export default function PlanStep({
   onBuild,
   onBack,
 }: Readonly<PlanStepProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   // Only one row is ever editable at a time: `editingIndex` names it, `draft` is its in-progress
   // text. Indexed rather than keyed by `label:text` because two rows can carry identical text —
@@ -119,10 +117,10 @@ export default function PlanStep({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="plan" palette={p} onBack={onBack} />
+      <FlowHeader step="plan" onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        {editing && editingName != null && <EditingEyebrow name={editingName} />}
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
 
@@ -187,7 +185,7 @@ export default function PlanStep({
       {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
           action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
           element while loading. */}
-      {!loading && <PrimaryAction step="plan" enabled editing={editing} palette={p} onPress={onBuild} />}
+      {!loading && <PrimaryAction step="plan" enabled editing={editing} onPress={onBuild} />}
     </View>
   );
 }

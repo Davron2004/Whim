@@ -38,8 +38,7 @@ import {
   type RunSignals,
   type Stage,
 } from './prompt-flow';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** A step that has not started is dimmed rather than hidden — the whole list is legible from the
  *  first frame, so nothing appears or moves as the run progresses. */
@@ -85,8 +84,7 @@ export default function BuildStep({
   onBack,
   onShowDetails,
 }: Readonly<BuildStepProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const statuses = buildStepStatuses(stage, delivering);
   const pct = buildProgressFraction(stage, delivering);
   const liveness = signals === null ? null : livenessOf(signals, now);
@@ -103,7 +101,7 @@ export default function BuildStep({
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={styles.content}>
-        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        {editing && editingName != null && <EditingEyebrow name={editingName} />}
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{buildTitle(editing)}</Text>
         <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>{COPY.buildSubtitle}</Text>
 

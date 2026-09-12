@@ -14,8 +14,7 @@ import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity,
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** The three "Or start from" suggestions, verbatim from the copy table. */
 const CHIPS: readonly string[] = [COPY.composeChipTimer, COPY.composeChipTracker, COPY.composeChipDice];
@@ -46,8 +45,7 @@ export default function ComposeStep({
   onBack,
   onOpenSettings,
 }: Readonly<ComposeStepProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -61,10 +59,10 @@ export default function ComposeStep({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="compose" palette={p} onBack={onBack} />
+      <FlowHeader step="compose" onBack={onBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {editing && editingName != null && <EditingEyebrow name={editingName} palette={p} />}
+        {editing && editingName != null && <EditingEyebrow name={editingName} />}
         <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{composeHeadline(editing)}</Text>
 
         {!serverConfigured && (
@@ -115,7 +113,6 @@ export default function ComposeStep({
       <PrimaryAction
         step="compose"
         enabled={serverConfigured && trimmed.length > 0}
-        palette={p}
         onPress={onContinue}
       />
     </View>

@@ -4,19 +4,17 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Plain English and one retry affordance. The thrown error NEVER reaches the surface — it went to
 // the logging seam before this rendered; here it only decides that something failed. Styled from
-// the v2 tokens alone (`TYPE_SCALE`/`SPACING`/`RADIUS` + `shellPalette`): no hex, no numeric
+// the v2 tokens alone (`TYPE_SCALE`/`SPACING`/`RADIUS` + `SHELL_PALETTE`): no hex, no numeric
 // font-size or radius literal. Every string comes from `copy.ts`.
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import type { ScreenFallbackProps } from './ScreenBoundary';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export default function ScreenErrorFallback({ resetErrorBoundary }: Readonly<ScreenFallbackProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

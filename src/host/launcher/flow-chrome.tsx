@@ -13,30 +13,29 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, editingEyebrow } from './copy';
 import { primaryActionLabel, type FlowStep } from './prompt-flow';
-import type { ShellPalette } from './theme';
+import { SHELL_PALETTE } from './theme';
 
 /** The gated steps, in order — the step indicator's three bars. */
 const INDICATOR_STEPS: readonly FlowStep[] = ['compose', 'clarify', 'plan'];
 
 export interface FlowHeaderProps {
   step: FlowStep;
-  palette: ShellPalette;
   /** Immediate, never busy: backward movement has no in-flight state. */
   onBack: () => void;
 }
 
-export function FlowHeader({ step, palette, onBack }: Readonly<FlowHeaderProps>) {
+export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
   const reached = INDICATOR_STEPS.indexOf(step);
   return (
     <View style={styles.header}>
       <TouchableOpacity onPress={onBack} hitSlop={10}>
-        <Text style={[TYPE_SCALE.controlLabel, { color: palette.textMuted }]}>{COPY.backLabel}</Text>
+        <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
       </TouchableOpacity>
       <View style={styles.bars}>
         {INDICATOR_STEPS.map((s, i) => (
           <View
             key={s}
-            style={[styles.bar, { backgroundColor: i <= reached ? palette.accent : palette.cardBorder }]}
+            style={[styles.bar, { backgroundColor: i <= reached ? SHELL_PALETTE.accent : SHELL_PALETTE.cardBorder }]}
           />
         ))}
       </View>
@@ -51,11 +50,10 @@ export interface PrimaryActionProps {
   /** Swaps the plan step's label to the edit flow's own words (C1). Every other step's label is
    *  unbranched, so an absent value is the same as `false`. */
   editing?: boolean;
-  palette: ShellPalette;
   onPress: () => void;
 }
 
-export function PrimaryAction({ step, enabled, editing = false, palette, onPress }: Readonly<PrimaryActionProps>) {
+export function PrimaryAction({ step, enabled, editing = false, onPress }: Readonly<PrimaryActionProps>) {
   const label = primaryActionLabel(step, editing);
   return (
     <TouchableOpacity
@@ -65,10 +63,10 @@ export function PrimaryAction({ step, enabled, editing = false, palette, onPress
       accessibilityLabel={label}
       style={[
         styles.primary,
-        { backgroundColor: enabled ? palette.accent : palette.card, borderColor: palette.cardBorder },
+        { backgroundColor: enabled ? SHELL_PALETTE.accent : SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder },
       ]}
     >
-      <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? palette.onAccent : palette.textMuted }]}>
+      <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? SHELL_PALETTE.onAccent : SHELL_PALETTE.textMuted }]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -78,7 +76,6 @@ export function PrimaryAction({ step, enabled, editing = false, palette, onPress
 export interface EditingEyebrowProps {
   /** The app being changed, in its current display name. */
   name: string;
-  palette: ShellPalette;
 }
 
 /**
@@ -89,9 +86,9 @@ export interface EditingEyebrowProps {
  *
  * `BuildStep.tsx` is out of this change's boundary — another task places this component there.
  */
-export function EditingEyebrow({ name, palette }: Readonly<EditingEyebrowProps>) {
+export function EditingEyebrow({ name }: Readonly<EditingEyebrowProps>) {
   return (
-    <Text style={[TYPE_SCALE.eyebrow, styles.editingEyebrow, { color: palette.textMuted }]}>
+    <Text style={[TYPE_SCALE.eyebrow, styles.editingEyebrow, { color: SHELL_PALETTE.textMuted }]}>
       {editingEyebrow(name)}
     </Text>
   );

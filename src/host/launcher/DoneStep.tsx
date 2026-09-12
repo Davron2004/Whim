@@ -11,8 +11,7 @@ import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import type { InstalledApp } from './app-index';
 import AppTile from './app-tile';
 import { COPY, readyTitle } from './copy';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface DoneStepProps {
   app: InstalledApp;
@@ -23,8 +22,7 @@ export interface DoneStepProps {
 }
 
 export default function DoneStep({ app, onOpen, onBackToApps }: Readonly<DoneStepProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

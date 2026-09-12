@@ -14,23 +14,22 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import { TILE_PILL, type TilePillKind } from './tile-pill';
-import type { ShellPalette } from './theme';
+import { SHELL_PALETTE } from './theme';
 
 export interface TilePillProps {
   kind: TilePillKind;
-  palette: ShellPalette;
   /** Only read for a tappable kind (`failed`/`interrupted`); ignored otherwise. */
   onPress?: () => void;
 }
 
-export default function TilePill({ kind, palette, onPress }: Readonly<TilePillProps>) {
+export default function TilePill({ kind, onPress }: Readonly<TilePillProps>) {
   const spec = TILE_PILL[kind];
   const alert = spec.tone === 'alert';
   const containerStyle = [
     styles.pill,
-    alert ? styles.pillAlert : { backgroundColor: palette.card, borderColor: palette.cardBorder },
+    alert ? styles.pillAlert : { backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder },
   ];
-  const textStyle = [TYPE_SCALE.eyebrow, alert ? styles.pillAlertText : { color: palette.textMuted }];
+  const textStyle = [TYPE_SCALE.eyebrow, alert ? styles.pillAlertText : { color: SHELL_PALETTE.textMuted }];
 
   if (spec.tappable) {
     return (

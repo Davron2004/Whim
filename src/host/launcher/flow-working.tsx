@@ -22,8 +22,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import { BreathingView } from './flow-skeletons';
 import { RUN_SIGNAL_TICK_MS, workingLineText } from './prompt-flow';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface WorkingLineProps {
   /** The plain-words phrase describing what is happening right now (`COPY.workingClarify`,
@@ -52,8 +51,7 @@ const DOT_SIZE = 8;
  *  every other skeleton in the flow breathes on. `tone: 'stalled'` is the one exception: it never
  *  breathes at all. */
 export function WorkingLine({ phrase, startedAt, tone = 'accent', clock = true }: Readonly<WorkingLineProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
