@@ -996,3 +996,45 @@ re-invocation of the server rewrite was rejected — the model is free to rephra
 user never touched, which would make an edit to row 2 silently mutate row 1 out from under the user.
 Rows, once trusted, stay the single source of truth rather than being re-derived from a call the user
 didn't ask for.
+
+### 62. The theme picker's code shape is collapsed to one module constant `[DECIDED — openspec: collapse-shell-theme; closes the gap left by #59, which cut #45's picker without recording the cut]`
+
+**What #59 cut, and what it left standing.** #59 replaced #45's theme picker (six presets, ten
+accents, three corner shapes, a persisted `ThemePref`) with one fixed v2 token set, but the cut
+itself never got a numbered entry, and it only removed the picker's user-facing surface. The code
+shape survived: `theme-context.tsx`'s `ThemeProvider`/`useTheme()` kept handing every screen a
+`{ theme }` that could in principle vary, `shellPalette(theme)` kept taking a theme as a parameter,
+and a whole family of other call sites — an app-tile pill prop, `GhostActionRow`, three
+`flow-chrome.tsx` prop types, two `FailureScreen.tsx` helpers, `LauncherRoot.tsx`'s `DevLogTools`,
+and four `HistoryScreen.tsx` components — threaded a `ShellPalette` through explicitly even though
+there was only one value it could ever be. (`MiniAppView.tsx`'s `theme: WhimTheme` prop is not part
+of this family — it forwards the fixed theme opaquely into mini-app delivery, a separate, still-
+required contract; see the carve-out below.)
+
+**Why that shape re-seeds the picker.** `app-tile.tsx`'s doc comment on its `pill.palette` prop
+said the caller "already resolves a `ShellPalette` from whatever theme it's given, and threading
+that same value through is what keeps a future theme picker from leaving the pill on a stale
+default." Written after the picker was gone, about a prop added after the picker was gone, that
+sentence justifies the picker's plumbing by appeal to the picker. An agent reading `useTheme()`
+plus a parameterized `shellPalette(theme)` has every reason to infer themes vary at runtime, and to
+keep threading the pattern into whatever it builds next — which is exactly what happened at every
+one of the sites listed above.
+
+**The new invariant.** The launcher exposes its shell palette as one module constant
+(`SHELL_PALETTE` in `theme.ts`, derived once from the fixed v2 theme). No launcher component, hook,
+context, or helper may accept a theme or palette as a prop, argument, or context value, except the
+fixed theme forwarded opaquely into mini-app delivery (`MiniAppView.tsx`'s `theme: WhimTheme` prop,
+required by `app-launcher`'s "A launched mini-app receives the active theme at delivery"); and no
+launcher source may name a theme picker or theme preference. `theme-context.tsx` is deleted; every
+palette prop/parameter named above is removed in favor of reading the constant directly.
+
+**The tripwire.** `theme.suite.ts` already scans all of `src/` for one retired surface (the
+`#4f46e5` hex and `Space Grotesk` face, per `sdk-design-system`); it gains a second, narrower-scoped
+scan over `src/host/launcher/` only, since the theme-picker's code shape is a launcher-only concern.
+It fails, naming the file, on `useTheme`, `ThemeProvider`, `ThemePref`, `shellPalette(`, the phrase
+"theme picker", or the identifier `ShellPalette` named anywhere outside `theme.ts` itself — not
+merely typed onto a prop or parameter, but named at all, since `theme.ts` is the only file allowed
+to name the type, in its interface declaration and the constant's own annotation — with a
+non-vacuity assertion that the walk actually inspects `LauncherRoot.tsx` and `HomeScreen.tsx`.
+Mini-app delivery theme, `sanitizeTheme`, `__WHIM_THEME__`, and the tile-colour system are a
+separate SDK-side contract and are untouched.

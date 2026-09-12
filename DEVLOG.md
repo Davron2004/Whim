@@ -766,3 +766,22 @@ green on merged main.
    deliberately gitignored (zero tracked files); a worker following the plan's "commit the
    regenerated artifacts" instruction force-added them before the orchestrator caught it in the
    deviation report. `.gitignore` + `git ls-files` is the ground truth for what a commit may contain.
+
+---
+
+## `collapse-shell-theme` — 2026-09-11
+
+**Result:** `#59` cut the launcher's theme picker (presets, accents, shapes, the persisted pref)
+but left its code shape standing — a context always resolving to one value, a function always
+taking one argument, six props always carrying one palette. The shape kept growing after the cut:
+an app-tile doc comment justified a new palette prop by naming "a future theme picker" that no
+longer existed, and three suites locked the wrong invariant, asserting the parameterized call
+instead of the one true constant.
+
+### Lesson
+
+Cutting a feature's user-facing surface while leaving its code shape in place doesn't remove the
+feature — it leaves a wired socket for the next agent to plug a second value into, and the next
+agent will read the socket, not the changelog. The fix isn't a comment or a policy: delete the
+shape (context → module constant, parameter → nothing) and add a tripwire that names the file if
+the shape reappears. A cut that isn't load-bearing in the code is a cut that will re-seed itself.
