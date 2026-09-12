@@ -25,6 +25,8 @@ The generation is done by a model. The interesting part is everything around the
 
 *One real run on the emulator: the prompt was "A log for my sourdough starter: feeding time, flour, water, and how it smelled". Five minutes later the app on the right existed and had an entry in it.*
 
+There is also a [one-minute video of a full session](https://www.linkedin.com/feed/update/urn:li:activity:7504626219317923840/): a tea timer described in a sentence, built, changed, force-quit and reopened, then forked from an older version.
+
 ## What a session looks like
 
 1. **Describe.** Type what you want. Whim asks a few quick questions with tappable answers, or you skip them and it picks. Then it shows the plan in plain words, and you can tap any line to change it before building.
