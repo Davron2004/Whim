@@ -2,7 +2,7 @@
 // FailureScreen — failure shown honestly, never as a crash (design `3b`, obs-v1 design D7,
 // spec "Failure is shown honestly, never as a crash").
 // ─────────────────────────────────────────────────────────────────────────────
-// A full-screen sibling of the other launcher screens: `shellPalette(theme)`, own hardware-back
+// A full-screen sibling of the other launcher screens: `SHELL_PALETTE`, own hardware-back
 // binding (routed to `onBack`, the NON-destructive exit — the hardware gesture must never delete
 // an attempt), every string from `copy.ts`. HINT-ONLY BY CONSTRUCTION: this
 // component's props carry `reason` (the terminal event's or the client error's plain-English
@@ -29,8 +29,7 @@ import {
 } from './copy';
 import RunTimeline from './RunTimeline';
 import type { RunJournalEntry } from './run-journal';
-import { shellPalette, type ShellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface FailureScreenProps {
   /** The terminal `failure` event's `reason`, or a plain-English client/stream-error summary. */
@@ -98,15 +97,15 @@ const TIMELINE_MAX_HEIGHT = 180;
 const PANEL_FILL_ALPHA = '14';
 const PANEL_BORDER_ALPHA = '3d';
 
-function segmentColor(segment: AttemptSegment, p: ShellPalette): string {
-  if (segment === 'spent') return p.danger;
-  return segment === 'current' ? p.accent : p.cardBorder;
+function segmentColor(segment: AttemptSegment): string {
+  if (segment === 'spent') return SHELL_PALETTE.danger;
+  return segment === 'current' ? SHELL_PALETTE.accent : SHELL_PALETTE.cardBorder;
 }
 
 /** A row's ring, fill and mark (design html:943). `wait` is an outline with no mark. */
-function rowIcon(kind: FailureRowKind, p: ShellPalette): { ring: string; fill: string; mark: string } {
+function rowIcon(kind: FailureRowKind): { ring: string; fill: string; mark: string } {
   if (kind === 'done') return { ring: STATUS_COLORS.done, fill: STATUS_COLORS.done, mark: '✓' };
-  if (kind === 'bad') return { ring: p.danger, fill: p.danger, mark: '!' };
+  if (kind === 'bad') return { ring: SHELL_PALETTE.danger, fill: SHELL_PALETTE.danger, mark: '!' };
   return { ring: STATUS_COLORS.waiting, fill: 'transparent', mark: '' };
 }
 
@@ -124,8 +123,7 @@ export default function FailureScreen({
   onBack,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -153,7 +151,7 @@ export default function FailureScreen({
               {attemptSegments(attempts).map((segment, index) => (
                 <View
                   key={`${index}:${segment}`}
-                  style={[styles.attemptBar, { backgroundColor: segmentColor(segment, p) }]}
+                  style={[styles.attemptBar, { backgroundColor: segmentColor(segment) }]}
                 />
               ))}
             </View>
@@ -170,7 +168,7 @@ export default function FailureScreen({
           ]}
         >
           {rows.map((row, index) => {
-            const icon = rowIcon(row.kind, p);
+            const icon = rowIcon(row.kind);
             return (
               <View key={`${index}:${row.kind}`} style={styles.row}>
                 <View style={[styles.rowIcon, { borderColor: icon.ring, backgroundColor: icon.fill }]}>

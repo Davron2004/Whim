@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 9 — "Restore flow incl. confirm sheet (B-roll)". The sheet is the point; the
+# shot backs out of it rather than committing, so nothing on the device changes. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/9-restore-confirm.yaml \
+#        --device emulator-5554 --out demo/raw/9-restore-confirm --name take-1 \
+#        --size 960x2136 --bit-rate 20000000 --tighten
+#
+# PRECONDITIONS: Whim foregrounded ON the launcher grid; exactly one "Habit Tracker", no forks.
+# Because this take cancels, those preconditions still hold afterwards — shot 10 can follow it
+# straight away.
+#
+# "Start a copy here" only exists once its version's row is EXPANDED, and the version markers
+# ("v1") are the only stable handle on a row — see `8-version-history.yaml`'s header.
+#
+# `__whim_pause__` never appears anywhere in the app; `optional: true` demotes the inevitable
+# "not found" to a WARNED step. That is Maestro's only fixed-duration sleep.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — into the lineage.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+- longPressOn: "Habit Tracker"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- tapOn: "History"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*history"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2400, optional: true }
+
+# Beat 2 — open the version the app began at.
+- tapOn: "v1"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Start a copy here"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
+
+# Beat 3 — the confirm sheet: what forking here would mean, in plain words.
+- tapOn: "Start a copy here"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Make the copy"
+    timeout: 8000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3600, optional: true }
+
+# Beat 4 — back out of it. Nothing is created; the grid is unchanged.
+- tapOn: "Cancel"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- tapOn: "Back"
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 15000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }

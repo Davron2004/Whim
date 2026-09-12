@@ -6,16 +6,21 @@
  * inset white border at 30% opacity. The app's name renders beneath the tile, never inside it.
  *
  * Purely presentational: colour resolution delegates to `tiles.ts#tileColor` (the one path every
- * surface uses), so a tile never holds a second name->colour mapping. Press handling, the example
- * badge, and grid layout stay the caller's concern (group D) — this component only ever renders
- * one tile, matching "the grid SHALL show tiles at a uniform size and SHALL NOT vary treatment per
- * app: the app's colour is the only thing that differs between two tiles."
+ * surface uses), so a tile never holds a second name->colour mapping. Press handling and grid
+ * layout stay the caller's concern (group D) — but the tile's own overlay pill (`pill`, design D8)
+ * is rendered here, inside the square's own container, so it is always positioned relative to the
+ * square itself and never to a wrapper that also includes the name label beneath it. This
+ * component still renders one tile, matching "the grid SHALL show tiles at a uniform size and
+ * SHALL NOT vary treatment per app: the app's colour is the only thing that differs between two
+ * tiles."
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, STATUS_COLORS } from '../../sdk/theme';
 import { monogram, tileColor } from './tiles';
 import { ghostStateCaption } from './copy';
+import TilePill from './tile-pill-view';
+import type { TilePillKind } from './tile-pill';
 import type { AppManifest } from '../bridge/contract';
 
 /** The tile's geometry (design-extract §2b: 88x88, tile radius) — 88 is now the DEFAULT width a
@@ -78,6 +83,14 @@ export interface AppTileProps {
    *  would render as nothing at all on Android. Orthogonal to `ghost`, which is a different (and
    *  never simultaneous) state — a ghost tile is not launchable, so it can never be opening. */
   busy?: boolean;
+  /** The tile's one overlay pill (`tile-pill.ts`'s `tilePillFor`, design D8) — an "Example" label,
+   *  or an accent naming an in-flight rebuild of this already-installed app. Rendered inside the
+   *  square, top-right, never affecting the square's own launchable/ghost look. `onPress` is read
+   *  only for a tappable kind (`failed`/`interrupted` — see `TILE_PILL` in `tile-pill.ts`);
+   *  ignored for a passive one. Omitted or `null` renders no pill. Never combined with `ghost` — a
+   *  ghost tile has no pill (it isn't installed yet, so it can neither be the seeded example nor
+   *  be rebuilding). */
+  pill?: { kind: TilePillKind; onPress?: () => void } | null;
 }
 
 /** `failed` and `interrupted` share one alert treatment, distinct from `building`'s neutral one
@@ -86,7 +99,7 @@ function isAlertGhost(ghost: AppTileProps['ghost']): boolean {
   return ghost === 'failed' || ghost === 'interrupted';
 }
 
-export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy }: Readonly<AppTileProps>) {
+export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, ghost, busy, pill }: Readonly<AppTileProps>) {
   const mono = monogram(name);
   const bg = tileColor(name, manifest);
   const isDone = size === 'done';
@@ -132,6 +145,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
         <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
+        {!isDone && pill != null && <TilePill kind={pill.kind} onPress={pill.onPress} />}
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}
       {!isDone && ghost && (

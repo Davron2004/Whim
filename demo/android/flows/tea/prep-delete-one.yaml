@@ -1,0 +1,14 @@
+# Unfilmed prep: delete ONE non-EXAMPLE tile named by env TILE (index IDX). Run repeatedly.
+appId: com.whim
+---
+- longPressOn:
+    text: ${TILE}
+    index: ${IDX}
+- waitForAnimationToEnd
+- tapOn: "Delete"
+- extendedWaitUntil:
+    visible: "Delete this app\\?"
+    timeout: 8000
+- tapOn: "DELETE"
+- waitForAnimationToEnd
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1500, optional: true }

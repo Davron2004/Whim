@@ -2,7 +2,7 @@
 // HistoryScreen — the `4a` timeline (shell-redesign-v2 chain-E; version-history spec).
 // ─────────────────────────────────────────────────────────────────────────────
 // A full-screen sibling of SettingsScreen: its own hardware-back binding returning to Home,
-// `shellPalette(theme)` colors, `TYPE_SCALE` faces, and every label from `copy.ts`. History is
+// `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`. History is
 // only reachable from the home action sheet, so the app itself is never running while this
 // screen is open — no live-realm interaction to design for. All store access goes through
 // `StoreAccess` (never a raw `VersionStore`); the row model (summary-or-prompt headline, kind
@@ -53,8 +53,7 @@ import {
   type RestoreDiffState,
 } from './history-wait';
 import { BreathingView } from './flow-skeletons';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
 import WhimProse from '../ui/whim-prose/WhimProse';
 
@@ -124,8 +123,7 @@ const KIND_LABEL: Record<SummaryKind, string> = {
 };
 
 export default function HistoryScreen({ app, access, onBack, onChangeIt }: Readonly<HistoryScreenProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const appHue = tileColor(app.name, app.record.manifest);
 
   // One state object rather than three: `loading`, the snapshot list and the active id all land
@@ -233,7 +231,6 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
       expanded={item.id === expandedId}
       isFirst={index === 0}
       isLast={index === filtered.length - 1}
-      palette={p}
       onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
       onChangeIt={() => onChangeIt?.(app)}
       onGoBack={() => setConfirm({ kind: 'restore', row: item })}
@@ -289,7 +286,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
       )}
 
       {loading ? (
-        <HistoryLoadingRows palette={p} />
+        <HistoryLoadingRows />
       ) : (
         <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
       )}
@@ -309,7 +306,6 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
                 appName={app.name}
                 diff={restoreDiff}
                 busy={confirmBusy}
-                palette={p}
                 onCancel={() => setConfirm(null)}
                 onConfirmRestore={confirmRestore}
                 onConfirmCopy={confirmCopy}
@@ -334,7 +330,6 @@ interface HistoryRowViewProps {
    *  change re-terminates the visible list rather than the unfiltered one. */
   isFirst: boolean;
   isLast: boolean;
-  palette: ReturnType<typeof shellPalette>;
   onToggle: () => void;
   onChangeIt: () => void;
   onGoBack: () => void;
@@ -350,12 +345,12 @@ function HistoryRowView({
   expanded,
   isFirst,
   isLast,
-  palette: p,
   onToggle,
   onChangeIt,
   onGoBack,
   onStartCopy,
 }: Readonly<HistoryRowViewProps>) {
+  const p = SHELL_PALETTE;
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
   const badge = row.kind ? KIND_BADGE[row.kind] : null;
   const proseApps = useMemo(() => [{ name: app.name, color: appHue }], [app.name, appHue]);
@@ -447,13 +442,13 @@ function HistoryRowView({
             )}
             <View style={styles.actionRow}>
               {row.actions.includes('change-from-here') && (
-                <ActionButton label={COPY.historyChangeFromHere} primary onPress={onChangeIt} palette={p} />
+                <ActionButton label={COPY.historyChangeFromHere} primary onPress={onChangeIt} />
               )}
               {row.actions.includes('go-back') && (
-                <ActionButton label={COPY.historyGoBackToThis} primary onPress={onGoBack} palette={p} />
+                <ActionButton label={COPY.historyGoBackToThis} primary onPress={onGoBack} />
               )}
               {row.actions.includes('start-copy') && (
-                <ActionButton label={COPY.historyStartCopyHere} primary={false} onPress={onStartCopy} palette={p} />
+                <ActionButton label={COPY.historyStartCopyHere} primary={false} onPress={onStartCopy} />
               )}
             </View>
           </View>
@@ -472,8 +467,8 @@ function ActionButton({
   label,
   primary,
   onPress,
-  palette: p,
-}: Readonly<{ label: string; primary: boolean; onPress: () => void; palette: ReturnType<typeof shellPalette> }>) {
+}: Readonly<{ label: string; primary: boolean; onPress: () => void }>) {
+  const p = SHELL_PALETTE;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -498,7 +493,6 @@ function ConfirmBody({
   appName,
   diff,
   busy,
-  palette: p,
   onCancel,
   onConfirmRestore,
   onConfirmCopy,
@@ -509,11 +503,11 @@ function ConfirmBody({
   /** A restore/fork is running for this confirmation: the consequential control says so and stops
    *  accepting taps until it settles. */
   busy: boolean;
-  palette: ReturnType<typeof shellPalette>;
   onCancel: () => void;
   onConfirmRestore: () => void;
   onConfirmCopy: () => void;
 }>) {
+  const p = SHELL_PALETTE;
   const isRestore = confirm.kind === 'restore';
   const title = isRestore ? restoreSheetTitle(confirm.row.version) : copySheetTitle(confirm.row.version);
   const body = isRestore ? restoreSheetBody(confirm.row.version) : copySheetBody(appName);
@@ -560,7 +554,8 @@ function ConfirmBody({
  * only motion is `BreathingView`'s. The row COUNT is unknown before the read, so it is a small
  * fixed number that reads as "a list is coming" rather than a promise of how long it is.
  */
-function HistoryLoadingRows({ palette: p }: Readonly<{ palette: ReturnType<typeof shellPalette> }>) {
+function HistoryLoadingRows() {
+  const p = SHELL_PALETTE;
   return (
     <View style={styles.list} accessibilityRole="progressbar" accessibilityLabel={COPY.historyLoadingLabel}>
       {Array.from({ length: HISTORY_SKELETON_ROWS }, (_, i) => (

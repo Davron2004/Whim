@@ -31,8 +31,7 @@ import {
   formatRecordTime,
   visibleRecords,
 } from './dev-log-view';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 const LABELS = { title: 'Logs', close: 'Close', empty: 'Nothing logged yet', all: 'all' } as const;
 
@@ -44,8 +43,7 @@ export interface DevLogOverlayProps {
 }
 
 export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }: Readonly<DevLogOverlayProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const [channel, setChannel] = useState<Channel | typeof ALL_CHANNELS_FILTER>(DEFAULT_DEV_LOG_FILTER.channel);
   const [minLevel, setMinLevel] = useState<LogLevel>(DEFAULT_DEV_LOG_FILTER.minLevel);
   const [snapshot, setSnapshot] = useState<readonly DevLogRecord[]>([]);

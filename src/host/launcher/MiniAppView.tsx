@@ -18,7 +18,7 @@ import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
-import { shellPalette } from './theme';
+import { SHELL_PALETTE } from './theme';
 import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
@@ -49,7 +49,7 @@ export default function MiniAppView({
   onChangeIt,
 }: Readonly<MiniAppViewProps>) {
   const host = useMiniAppHost({ onExit });
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const bg = p.bg;
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
   // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.

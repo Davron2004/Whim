@@ -19,22 +19,22 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { FONT_FAMILY, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
+import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { InstalledApp } from './app-index';
 import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
-import { COPY, deleteBody, forkedFromLabel, ghostStateCaption } from './copy';
+import { COPY, deleteBody, forkedFromLabel } from './copy';
 import { composeGrid, InstalledTile } from './grid-composition';
+import { tilePillFor, TILE_PILL } from './tile-pill';
 import {
   HOME_GRID_COLUMN_GAP,
   HOME_GRID_ROW_GAP,
   HOME_GRID_SIDE_PADDING,
   homeGridCellWidth,
 } from './home-grid';
-import { shellPalette, ShellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** The grid's geometry and its cell-width derivation live in `home-grid.ts` — a module free of
  *  `react-native` so the arithmetic that decides whether the row wraps can be tested under Node.
@@ -105,8 +105,7 @@ export default function HomeScreen({
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const [selectedGhost, setSelectedGhost] = useState<PendingBuildRecord | null>(null);
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
   // Ghosts newest-first, before installed apps; dedupe-by-id (pending wins) and rebuild
@@ -166,6 +165,8 @@ export default function HomeScreen({
               );
             }
             const { app, rebuild } = tile;
+            const pillKind = tilePillFor(app, rebuild);
+            const onPressPill = rebuild && pillKind && TILE_PILL[pillKind].tappable ? () => onOpenPending?.(rebuild) : undefined;
             return (
               <View key={app.id} style={{ width: cellWidth }}>
                 <TouchableOpacity
@@ -173,13 +174,7 @@ export default function HomeScreen({
                   onPress={() => onOpen(app)}
                   onLongPress={() => setSelected(app)}
                 >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} />
-                  {app.example && (
-                    <View style={[styles.badge, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-                      <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.exampleBadge}</Text>
-                    </View>
-                  )}
-                  {rebuild && <RebuildBadge rebuild={rebuild} palette={p} onOpenPending={onOpenPending} />}
+                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, onPress: onPressPill } : null} />
                 </TouchableOpacity>
                 {app.forkedFrom && (
                   <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]} numberOfLines={1}>
@@ -217,7 +212,6 @@ export default function HomeScreen({
             {selectedRebuild && (
               <GhostActionRow
                 rec={selectedRebuild}
-                palette={p}
                 onCancelPending={onCancelPending}
                 onDismissPending={onDismissPending}
                 onDone={() => setSelected(null)}
@@ -252,7 +246,6 @@ export default function HomeScreen({
             {selectedGhost && (
               <GhostActionRow
                 rec={selectedGhost}
-                palette={p}
                 onCancelPending={onCancelPending}
                 onDismissPending={onDismissPending}
                 onDone={() => setSelectedGhost(null)}
@@ -294,51 +287,17 @@ function GhostGridTile({
   );
 }
 
-/** The rebuild accent on an already-installed tile (design D8): the tile itself stays fully
- *  launchable — this is a small overlay badge, never the greyed `ghost` treatment. `building` is
- *  a passive caption (no dedicated tap target: the tile's normal tap stays `onOpen`, and Cancel
- *  lives in the long-press sheet); `failed`/`interrupted` is tappable on its own, opening the
- *  failure screen without stealing the tile's own `onOpen`. */
-function RebuildBadge({
-  rebuild,
-  palette,
-  onOpenPending,
-}: Readonly<{ rebuild: PendingBuildRecord; palette: ShellPalette; onOpenPending?: (rec: PendingBuildRecord) => void }>) {
-  if (rebuild.state === 'building') {
-    return (
-      <View style={[styles.rebuildBadge, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}>
-        <Text style={[TYPE_SCALE.eyebrow, { color: palette.textMuted }]} numberOfLines={1}>
-          {COPY.ghostCaptionBuilding}
-        </Text>
-      </View>
-    );
-  }
-  return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      style={[styles.rebuildBadge, styles.rebuildBadgeAlert]}
-      onPress={() => onOpenPending?.(rebuild)}
-    >
-      <Text style={[TYPE_SCALE.eyebrow, styles.rebuildBadgeAlertText]} numberOfLines={1}>
-        {ghostStateCaption(rebuild.state)}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 /** The long-press quick action a ghost/rebuild record offers: Cancel while `building`, Dismiss
  *  once `failed`/`interrupted` — never both (spec "Long-press on a ghost tile offers Cancel or
  *  Dismiss, never both"). Shared by the pure-ghost sheet and the installed-tile sheet's rebuild
  *  row, so the two never drift. */
 function GhostActionRow({
   rec,
-  palette,
   onCancelPending,
   onDismissPending,
   onDone,
 }: Readonly<{
   rec: PendingBuildRecord;
-  palette: ShellPalette;
   onCancelPending?: (rec: PendingBuildRecord) => void;
   onDismissPending?: (rec: PendingBuildRecord) => void;
   onDone: () => void;
@@ -347,8 +306,8 @@ function GhostActionRow({
     return (
       <SheetRow
         label={COPY.actionCancelBuild}
-        color={palette.danger}
-        borderColor={palette.cardBorder}
+        color={SHELL_PALETTE.danger}
+        borderColor={SHELL_PALETTE.cardBorder}
         onPress={() => { onDone(); onCancelPending?.(rec); }}
       />
     );
@@ -356,8 +315,8 @@ function GhostActionRow({
   return (
     <SheetRow
       label={COPY.actionDismissBuild}
-      color={palette.danger}
-      borderColor={palette.cardBorder}
+      color={SHELL_PALETTE.danger}
+      borderColor={SHELL_PALETTE.cardBorder}
       onPress={() => { onDone(); onDismissPending?.(rec); }}
     />
   );
@@ -408,28 +367,6 @@ const styles = StyleSheet.create({
     columnGap: HOME_GRID_COLUMN_GAP,
     rowGap: HOME_GRID_ROW_GAP,
   },
-  badge: {
-    position: 'absolute',
-    top: SPACING.xs,
-    right: SPACING.xs,
-    borderWidth: 1,
-    borderRadius: RADIUS.chip,
-    paddingHorizontal: 6,
-  },
-  /** The rebuild accent (design D8) — bottom-right, so it never collides with the top-right
-   *  "Example" badge above. `building` is the plain card treatment (neutral, informational
-   *  only); `failed`/`interrupted` overrides to the alert hue and IS its own tap target
-   *  (`RebuildBadge`), opening the failure screen without stealing the tile's `onOpen`. */
-  rebuildBadge: {
-    position: 'absolute',
-    bottom: SPACING.xs,
-    right: SPACING.xs,
-    borderWidth: 1,
-    borderRadius: RADIUS.chip,
-    paddingHorizontal: 6,
-  },
-  rebuildBadgeAlert: { backgroundColor: STATUS_COLORS.broken, borderColor: STATUS_COLORS.broken },
-  rebuildBadgeAlertText: { color: '#ffffff' },
   empty: { paddingVertical: SPACING.xl },
   composer: {
     flexDirection: 'row',

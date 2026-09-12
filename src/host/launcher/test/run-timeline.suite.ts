@@ -381,7 +381,9 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.ok(!/fontSize\s*:/.test(src), 'no numeric font-size literal — faces come from TYPE_SCALE');
     h.ok(!/borderRadius\s*:\s*\d/.test(src), 'no numeric radius literal');
     h.ok(/TYPE_SCALE/.test(src) && /SPACING/.test(src), 'the v2 tokens are what it styles from');
-    h.ok(/shellPalette\(theme\)/.test(src), 'colours come from shellPalette, not a second palette');
+    h.ok(/SHELL_PALETTE/.test(src), 'colours come from SHELL_PALETTE, not a second palette');
+    h.ok(!/shellPalette\(/.test(src), 'the retired shellPalette() function is gone');
+    h.ok(!/\buseTheme\b/.test(src), 'no theme context — the shell theme is fixed');
   });
 
   await h.test('timeline: the build screen’s details affordance reads the journal ON OPEN', () => {

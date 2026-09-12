@@ -20,7 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
-import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { DEFAULT_THEME, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import type { AppRecord } from '../bridge';
@@ -92,8 +92,7 @@ import {
 } from './prompt-flow';
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { FlowRequests, onlyOnStep } from './flow-request';
-import { shellPalette } from './theme';
-import { ThemeProvider, useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 import { loadServerUrl, saveServerUrl } from './server-address';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
@@ -273,11 +272,7 @@ export default function LauncherRoot() {
     };
   }, []);
 
-  return (
-    <ThemeProvider>
-      <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} />
-    </ThemeProvider>
-  );
+  return <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} />;
 }
 
 /**
@@ -286,7 +281,7 @@ export default function LauncherRoot() {
  * not merely a dead route. It is a modal above the live screen rather than a `Screen` variant, so
  * a developer reads the log of the screen they are looking at without navigating away from it.
  */
-function DevLogTools({ palette }: Readonly<{ palette: ReturnType<typeof shellPalette> }>) {
+function DevLogTools() {
   const [open, setOpen] = useState(false);
   if (!devLogOverlayEnabled(__DEV__)) {
     return null;
@@ -296,9 +291,9 @@ function DevLogTools({ palette }: Readonly<{ palette: ReturnType<typeof shellPal
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { backgroundColor: palette.card, borderColor: palette.cardBorder }]}
+        style={[styles.devLogBtn, { backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
       >
-        <Text style={[TYPE_SCALE.eyebrow, { color: palette.textMuted }]}>{DEV_LOG_LABEL}</Text>
+        <Text style={[TYPE_SCALE.eyebrow, { color: SHELL_PALETTE.textMuted }]}>{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
       <DevLogOverlay visible={open} onClose={() => setOpen(false)} />
     </>
@@ -318,8 +313,7 @@ function LauncherShell({
   journal: RunJournalStore;
   kv: KVBackend;
 }>) {
-  const { theme } = useTheme();
-  const palette = shellPalette(theme);
+  const palette = SHELL_PALETTE;
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [apps, setApps] = useState<InstalledApp[]>([]);
@@ -1099,7 +1093,7 @@ function LauncherShell({
         record={screen.record}
         bundleSource={screen.source}
         engineAppId={screen.engineAppId}
-        theme={theme}
+        theme={DEFAULT_THEME}
         onExit={goHome}
         onVersions={() => onHistory(screen.app)}
         onChangeIt={() => openCompose(screen.app)}
@@ -1244,7 +1238,7 @@ function LauncherShell({
         <ScreenBoundary screen={screen.kind} FallbackComponent={ScreenErrorFallback}>
           {content}
         </ScreenBoundary>
-        <DevLogTools palette={palette} />
+        <DevLogTools />
       </SafeAreaView>
     </HighlightingProvider>
   );

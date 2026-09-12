@@ -19,8 +19,7 @@ import { SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import type { RunJournalEntry } from './run-journal';
 import { runTimelineRows, type TimelineRow } from './run-timeline-view';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 export interface RunTimelineProps {
   /** The journal the caller read ON OPEN. `null` = there was none to read. */
@@ -30,8 +29,7 @@ export interface RunTimelineProps {
 }
 
 export default function RunTimeline({ entries, devMode = false }: Readonly<RunTimelineProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const rows = runTimelineRows(entries ?? [], devMode);
 
   /** The stage spine reads in the text colour; everything hanging off it is secondary. */

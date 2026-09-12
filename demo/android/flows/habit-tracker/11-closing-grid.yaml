@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Storyboard shot 11 — "Closing grid pan, 4–6 installed apps". The final beat: the launcher
+# grid, held still, with a slow pass through it. Film it with:
+#
+#   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/habit-tracker/11-closing-grid.yaml \
+#        --device emulator-5554 --size 960x2136 --bit-rate 20000000 --out ~/Work/other/filmkit/out
+#
+# PRECONDITION: Whim is already foregrounded on the launcher grid. There is deliberately no
+# `launchApp` here — the closing shot must open ON the grid, not on the Android home screen or a
+# cold-start splash, and screenrecord rolls ~1.5s before Maestro's first step.
+#
+# DURATION BUDGET: film-android.mjs wraps every flow in ~7.5s of recorded-but-unscripted time
+# (1.5s recorder warmup + the maestro JVM's connect + 2s post-SIGINT finalize), all of it a
+# static frame of whatever is on screen. The holds below are therefore authored SHORT — the
+# ~6.4s of scripted beats lands as a ~14s recording, and the head/tail overhead is itself extra
+# stillness on the grid, not dead black. Measured on take 1: 11.8s authored -> 19.45s recorded.
+#
+# The grid's ScrollView does not overflow at 5 tiles (content ends around 47% of the screen), so
+# the swipes register as a gentle overscroll rather than a scroll. They start from empty space
+# BELOW the last tile row, so no tile flashes its pressed state; they are kept because they read
+# as a live surface and self-correct if the grid ever grows past one screen.
+appId: com.whim
+---
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+
+# Beat 1 — hold the whole grid still.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2000, optional: true }
+
+# Beat 2 — a slow pass down the grid and back up.
+- swipe:
+    start: 50%, 75%
+    end: 50%, 55%
+    duration: 1200
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 600, optional: true }
+- swipe:
+    start: 50%, 55%
+    end: 50%, 75%
+    duration: 1200
+
+# Beat 3 — hold again to close on.
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }

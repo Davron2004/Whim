@@ -194,7 +194,9 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
       h.ok(!FONT_SIZE_LITERAL.test(src), `${file}: no numeric font-size literal — faces come from TYPE_SCALE`);
       h.ok(!RADIUS_LITERAL.test(src), `${file}: no numeric radius literal — radii come from RADIUS`);
       h.ok(/TYPE_SCALE/.test(src) && /SPACING/.test(src) && /RADIUS/.test(src), `${file}: the v2 tokens are what it styles from`);
-      h.ok(/shellPalette\(theme\)/.test(src), `${file}: colours come from shellPalette, not a second palette`);
+      h.ok(/SHELL_PALETTE/.test(src), `${file}: colours come from SHELL_PALETTE, not a second palette`);
+      h.ok(!/shellPalette\(/.test(src), `${file}: the retired shellPalette() function is gone`);
+      h.ok(!/\buseTheme\b/.test(src), `${file}: no theme context — the shell theme is fixed`);
     }
     // Non-vacuity: the three scans do fire on the shapes they are meant to catch.
     h.ok(HEX.test('color: #fef2f2'), 'the hex scan matches a hex colour');

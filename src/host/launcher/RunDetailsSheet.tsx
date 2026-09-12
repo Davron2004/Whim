@@ -26,8 +26,7 @@ import { MOTION, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import RunTimeline from './RunTimeline';
 import type { RunJournalEntry } from './run-journal';
-import { shellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** The scrim colour `Orb.tsx`'s menu dismiss layer already uses — one reserved "something is
  *  covering the screen" tone, not a second one invented for this sheet. */
@@ -59,8 +58,7 @@ export interface RunDetailsSheetProps {
 }
 
 export default function RunDetailsSheet({ open, entries, devMode = false, onClose }: Readonly<RunDetailsSheetProps>) {
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const riseAnim = useRef(new Animated.Value(0)).current;
