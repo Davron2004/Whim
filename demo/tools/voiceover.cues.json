@@ -1,0 +1,21 @@
+{
+  "video": "demo/out/linkedin-2026-09-11.mp4",
+  "duration": 73.8,
+  "notes": "Cue times come from demo/out/linkedin-2026-09-11.recipe.md (cumulative segment durations). `at` is when the line starts; `until` is when the NEXT caption appears, i.e. the latest the spoken line may end. `caption` is the on-screen text, `line` is what the voice actually says.",
+  "cues": [
+    { "id": "00", "at": 0.30,  "until": 2.50,  "caption": "Whim. Say what you want. Get an app.",                            "line": "Whim. Say what you want, get an app." },
+    { "id": "01", "at": 2.50,  "until": 8.53,  "caption": "Describe it in plain words",                                      "line": "Describe it in plain words." },
+    { "id": "02", "at": 8.53,  "until": 12.53, "caption": "It asks when something's unclear",                                "line": "It asks when something's unclear." },
+    { "id": "03", "at": 12.53, "until": 16.53, "caption": "A plan you can read before it builds",                            "line": "You get a plan you can read before it builds." },
+    { "id": "04", "at": 16.53, "until": 19.23, "caption": "Building… (5 min, sped up)",                                      "line": "Then it builds." },
+    { "id": "05", "at": 19.23, "until": 23.33, "caption": "Done. It's on your home screen.",                                 "line": "Done. It's on your home screen." },
+    { "id": "06", "at": 23.33, "until": 31.33, "caption": "Tweak it. Run it.",                                               "line": "Tweak it. Run it." },
+    { "id": "07", "at": 31.33, "until": 34.93, "caption": "Force-quit. Reopen.",                                             "line": "Force-quit. Reopen." },
+    { "id": "08", "at": 34.93, "until": 43.90, "caption": "Still there.",                                                    "line": "Still there." },
+    { "id": "09", "at": 43.90, "until": 49.80, "caption": "Change your mind? Just ask again.",                               "line": "Change your mind? Just ask again." },
+    { "id": "11", "at": 52.10, "until": 56.70, "caption": "New feature. Old settings kept.",                                 "line": "New feature. Your old settings are kept." },
+    { "id": "12", "at": 56.70, "until": 63.90, "caption": "Every version is kept. Fork any of them.",                        "line": "Every version is kept, and you can fork any of them." },
+    { "id": "13", "at": 63.90, "until": 70.80, "caption": "The copy runs the old version / The original keeps the new one",  "line": "The copy runs the old version. The original keeps the new one." },
+    { "id": "14", "at": 70.80, "until": 73.80, "caption": "Whim / Describe the app you want.",                               "line": "Whim. Describe the app you want." }
+  ]
+}
