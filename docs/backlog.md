@@ -70,6 +70,70 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 - **Suggested approach:** human makes both edits, then dispatch chain-B.
 - **Source:** `static-check-pipeline` chains.md chain-A note.
 
+### [low] A finished build lands in a different grid slot than its ghost
+- [ ] open
+- **Where:** `src/host/launcher/HomeScreen.tsx` grid ordering; `src/host/launcher/app-tile.tsx` (ghost vs finished tile).
+- **What:** while building, the ghost tile sits in slot 1 (ahead of the three example tiles). When the build lands, the finished tile appears in slot 4, after the examples, and the examples shift back. Seen in both the 2026-09-04 and 2026-09-11 demo shoots (`demo/raw/2026-09-11/shot-1`, raw take at ~477 s).
+- **Why it matters:** the "transmute" moment, the one beat every demo is built around, reads as a jump, not a morph. It also breaks the user's mental model of where the app went.
+- **Suggested approach:** give the ghost the slot the finished app will occupy (sort by creation time consistently for both states), or keep the finished app in the ghost's slot.
+- **Source:** demo shoot 2026-09-11 (orchestrator review of shot 1); first noted in `demo/raw/PROGRESS.md` take-3 notes.
+
+### [low] Generated apps mislabel derived state (a "Preset" pill that survives a custom value)
+- [ ] open
+- **Where:** generation quality, not host code: `server/src/generation/prompts/index.ts` (engineer prompt), evals in `docs/evals.md`.
+- **What:** the 2026-09-11 demo instance ("Tea Steeper") keeps a `Preset` pill next to the tea name on its card after the steep time was changed from the preset 180 s to 440 s, while its adjust screen correctly flips `Selected Green` to `Saved`. The same generation asks for plan-row eyebrows (`THE SCREEN` etc.) that the host renders verbatim from the model reply, so a run that drops or renames a label changes the plan screen's structure.
+- **Why it matters:** small inconsistencies like this are what make a generated app feel generated. The plan-row point also means demo flows can't gate on those labels (the 2026-09-11 flows now gate on the host's `Build it` instead).
+- **Suggested approach:** add a "derived labels stay consistent after edits" check to the eval corpus; consider making plan-row eyebrows host copy keyed by row kind rather than model text.
+- **Source:** demo shoot 2026-09-11 (shot 2 payoff frame; shot-1 flow review).
+
+### [high] Rewrite loops on `storage_surface_drift` when the model reaches kv keys through an alias
+- [ ] open
+- **Where:** `checks/storage-surface.ts:15-19` (documented alias hole), `checks/passes/storage-continuity.ts:81-93` (dynamic-suppression trigger), `server/src/generation/machine.ts:672` (repair loop).
+- **What:** a "Prompt again" rewrite of a working v1 ("add a strength selector…", 2026-09-11 demo shoot, server log `~/.cache/whim-readme/server.log` lines 225-337) failed after three rounds. Round 1 was a parse error (see next item); rounds 2-4 each produced the same eight `storage_surface_drift` errors. The candidate kept every kv key but read them through a helper, so `scanStorageSurface` collected nothing, no `storage_surface_dynamic` warning fired, and all eight keys read as abandoned. The repair hint ("Keep reading the kv key X") describes what the model already does, so repair changes nothing.
+- **Why it matters:** a deterministic failure on a legitimate rewrite, and the user pays ~10 minutes and three model calls to learn nothing. Rewrites are the feature that distinguishes Whim from one-shot generators.
+- **Suggested approach:** resolve simple aliases in the scanner, or fire the dynamic-suppression path whenever storage access is not facade-shaped; and cap identical-diagnostic repair rounds at one.
+- **Source:** demo shoot 2026-09-11, server-side diagnosis (opus subagent) of the failed `/v1/generate` at 01:47 UTC.
+
+### [med] No fence or prose stripping between the model reply and the TypeScript checker
+- [ ] open
+- **Where:** `server/src/generation/machine.ts:606` and `:643` (`turn.text` returned verbatim to `runStaticChecks`), `checks/internal/parse.ts:33`, `server/src/generation/json-block.ts:17` (a `FENCE` regex that already exists but is used only for JSON turns).
+- **What:** the prompts ask for "source only, no fence", but nothing enforces it. A fenced or prose-wrapped reply goes straight into `ts.createSourceFile` and burns a whole repair round on 17 identical `parse_error` hints (round 1 of the failure above).
+- **Why it matters:** one wasted round per fenced reply, on every model that is casual about fences.
+- **Suggested approach:** unwrap a leading/trailing code fence (and drop a leading prose line) before the checker, reusing the `FENCE` regex.
+- **Source:** same diagnosis as above.
+
+### [med] The failure screen shows the run's cumulative findings, not the last round's
+- [ ] open
+- **Where:** `server/src/generation/machine.ts:402` (terminal failure ships `state.diagnostics`, accumulated at `:775`), `src/host/launcher/copy.ts:455`, `src/host/launcher/run-timeline-view.ts:141` (one row per hint, no dedup, no kind), `src/host/launcher/run-journal.ts:42` (drops `Diagnostic.message`, keeps the hint only).
+- **What:** after a multi-round failure the device lists round 1's 17 syntax-error hints above the 8 drift hints that actually killed the run, so the headline reads "Fix the TypeScript syntax error" for a run that died on something else. The real TypeScript message never reaches disk anywhere (server logs kind counts only; `source`/`code` are pino redact paths).
+- **Why it matters:** misdirects the user ("try describing it differently") and anyone debugging; today it cost a diagnosis pass to find the real cause.
+- **Suggested approach:** ship only the last round's diagnostics in the terminal event (or tag each with its round and show the last), dedupe identical hints with a count, and keep `Diagnostic.message` in the journal.
+- **Source:** same diagnosis as above.
+
+### [low] Fork tile subtitle truncates on the grid ("Forked from Tea Ste…")
+- [ ] open
+- **Where:** `src/host/launcher/app-tile.tsx` (tile caption/subtitle), `src/host/launcher/HomeScreen.tsx` (three-column grid).
+- **What:** a fork's "Forked from <name>" subtitle is cut to one line under a three-column tile, so any parent name longer than about eight characters ends in an ellipsis (2026-09-11 shoot, `demo/raw/2026-09-11/shot-5`).
+- **Why it matters:** the fork relationship is the one thing that subtitle exists to say, and it is unreadable for most names.
+- **Suggested approach:** drop the "Forked from" prefix on the tile (keep it in the action sheet/History), or allow two lines for the subtitle.
+- **Source:** demo shoot 2026-09-11, shot 5 review.
+
+### [low] Generated apps flash default values for one frame before saved state hydrates
+- [ ] open
+- **Where:** generated-app pattern (the mini-app renders its defaults, then reads kv and re-renders); SDK surface for persisted state (`src/sdk/`), engineer prompt in `server/src/generation/prompts/index.ts`.
+- **What:** on a cold open, the 2026-09-11 demo instance shows "3:00" for one frame (≤ 0.1 s) before the saved "7:20" lands; measured at 30 fps in `demo/out/linkedin-2026-09-11.mp4` sources (shot 3 reopen, shot 4 payoff). Warm opens don't flash.
+- **Why it matters:** a one-frame wrong value on the exact beat that demonstrates persistence; a viewer who pauses sees the app "forgetting". Any generated app with a saved setting has the same pattern.
+- **Suggested approach:** give the SDK a way to render persisted state without a default-first paint (a synchronous initial read, or a "loading" gate the engineer prompt is told to use), and add an eval that diffs the first painted frame against the settled one.
+- **Source:** demo shoot 2026-09-11, final-cut frame review.
+
+### [idea — post-v1] Account sync: back up apps and their data, use them across devices
+- [ ] open
+- **Where:** new capability; touches the version store (`src/host/version-store/`, the per-app snapshot repo), the storage engine (`src/host/storage-engine/`, per-app SQLite user data), and a server side that does not exist yet (`server/` is the generation stub only).
+- **What:** a signed-in account that backs up every app's version history and its user data, so the same apps with the same state show up on another phone after logging in. Today everything lives on one device and is lost with it.
+- **Why it matters:** it is the one thing Whim could reasonably charge for later. Generation is bring-your-own-key and stays free; hosted backup and cross-device sync is the paid-tier candidate. Not a commitment, and not for v1.
+- **Suggested approach:** the version store already speaks in snapshots, so sync is push/pull of those plus a storage-engine export; decide identity (account provider), conflict rule (last-writer-wins per app is probably enough for an audience of one), and what "delete my account" means before writing any code. Needs its own OpenSpec change when picked up.
+- **Source:** conversation while writing the launch post, 2026-09-12.
+
 ---
 
 ## Done
