@@ -3,19 +3,34 @@
 # storage) → back to the original (v2). One uncut real-time run. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/5-fork.yaml \
-#        --device emulator-5554 --out demo/raw/tea-5-fork --name take-1 \
-#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --device emulator-5554 --out demo/raw/2026-09-11/shot-5 --name take-1 \
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
 #
-# PRECONDITION: grid holds exactly ONE tea-timer tile and no forks. Once the fork exists both tiles
-# carry the same a11y label, so tile taps are disambiguated by `index` (0 original, 1 fork).
-# Idioms explained in ../10-fork-divergence.yaml. Fill TILE / V2_RE / V1_RE after generation.
-# NOTE (take-5): Maestro `text:` is a WHOLE-STRING regex (filmkit FEEDBACK #14.5) — a bare
-# "Steep time" never matches the node "Steep time (seconds)". Value regexes need .*….*.
+# PRECONDITION: grid holds exactly ONE tea-timer tile ("Tea Steeper") on v2, and no forks. Once the
+# fork exists both tiles carry the same a11y label, so tile taps are disambiguated by `index`
+# (0 original, 1 fork). Idioms explained in ../10-fork-divergence.yaml.
+#
+# WRITTEN FOR THE INSTANCE GENERATED 2026-09-11 ("Tea Steeper"), stock 1344x2992 frame, measured
+# off-camera with v1 AND v2 present:
+#   * History: "Tea Steeper history" / "2 versions · started 1h ago" / per-version rows. Only an
+#     OLDER version's row expands to "Start a copy here"; the row you are currently on expands to
+#     "Change it from here" instead — so this flow can only ever run after a rewrite.
+#   * NO SCROLL NEEDED. On this frame the expanded v1 row puts "Start a copy here" at y≈1734 of
+#     2992, a real tappable node. The old 4:5 flow's Beat-2 swipe is gone; swiping here would just
+#     scroll the button out from under the tap.
+#   * Confirm sheet reads "Start a second app from v1?" / "You'll have two Tea Steepers. The one
+#     you're using now stays exactly as it is." / Cancel / "Make the copy".
+#   * The History screen has no "Back" text node — leave it with the device back button.
+# NOTE (take-5, older shoot): Maestro `text:` is a WHOLE-STRING regex (filmkit FEEDBACK #14.5) — a
+# bare "Steep time" never matches the node "Steep time (seconds)". Value regexes need .*….*.
+# V1_RE / V2_RE are genuinely version-exclusive on this pair: the rewrite renamed the card's
+# readout label from "Saved steep time" (v1) to "Steep time" (v2), and only v2 renders "Strength".
+# Both are `optional` at the assert: this shot FILMS the divergence, the contact sheet judges it.
 appId: com.whim
 env:
-  TILE: "Tea Steep Timer"
-  V2_RE: ".*Strength.*"   # something only the rewritten original renders (e.g. Strength)
-  V1_RE: ".*Steep time.*"   # something both versions render (the slider label)
+  TILE: "Tea Steeper"
+  V2_RE: ".*Strength.*"          # only v2 renders the strength selector
+  V1_RE: ".*Saved steep time.*"  # v1's card readout label; v2 renamed it to "Steep time"
 ---
 - extendedWaitUntil:
     visible: "YOUR APPS"
@@ -30,87 +45,77 @@ env:
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
 - tapOn: "History"
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: ".*versions.*"
+    timeout: 15000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2800, optional: true }
 
 # Beat 2 — expand v1 and fork it behind the confirm sheet.
 - tapOn: "Where this app began"
 - waitForAnimationToEnd
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
-# On the 4:5 frame the expanded row's chips and its "Start a copy here" button sit below the
-# fold; until scrolled into view they exist only inside the row's combined a11y label, so the
-# button is not a tappable node yet (cost take-1).
-- swipe:
-    start: "50%,85%"
-    end: "50%,40%"
-    duration: 700
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1400, optional: true }
+- extendedWaitUntil:
+    visible: "Start a copy here"
+    timeout: 10000
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
 - tapOn: "Start a copy here"
 - waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "Make the copy"
     timeout: 8000
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2200, optional: true }
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 - tapOn: "Make the copy"
 - waitForAnimationToEnd
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 1800, optional: true }
 
-# Beat 3 — back out: the new tile has landed.
-- tapOn: "Back"
+# Beat 3 — back out: the new tile has landed. Everything from here is tolerant — the copy is made
+# and must never be made twice, so a missed selector must not abort the run.
+- back
 - waitForAnimationToEnd
 - extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
+- extendedWaitUntil:
     visible: "Forked from .*"
-    timeout: 10000
+    timeout: 12000
+    optional: true
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 2600, optional: true }
 
-# Beat 4 — open the fork: v1, no strength selector, its own storage.
-# (Take-3–5 history: the V1_RE wait timed out twice while v1 sat on screen. Root cause
-# was whole-string regex matching (see header note), not a sleeping tree — but the
-# title gate stays anyway: it proves the tile tap opened the app instead of burning
-# 90s on the grid during a reflow. The countdown taps wake the WebView tree on cold
-# opens; harmless once warm.)
+# Beat 4 — open the fork: v1, no strength selector, its own storage (so its own steep time, not
+# the original's 7:20).
 - tapOn:
     text: ${TILE}
     index: 1
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Tea Steep Timer"
-    timeout: 30000
-- tapOn:
-    point: "50%,62%"
-- extendedWaitUntil:
-    visible: ${V1_RE}
+    visible: "Adjust Time"
     timeout: 45000
     optional: true
-- tapOn:
-    point: "50%,62%"
 - extendedWaitUntil:
     visible: ${V1_RE}
-    timeout: 45000
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+    timeout: 30000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 4000, optional: true }
 
 # Beat 5 — back, and into the original: same name, v2, the strength selector.
 - back
 - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 20000
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 1600, optional: true }
 - tapOn:
     text: ${TILE}
     index: 0
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Tea Steep Timer"
-    timeout: 30000
-- tapOn:
-    point: "50%,62%"
-- extendedWaitUntil:
-    visible: ${V2_RE}
+    visible: "Adjust Time"
     timeout: 45000
     optional: true
-- tapOn:
-    point: "50%,62%"
 - extendedWaitUntil:
     visible: ${V2_RE}
-    timeout: 45000
-- extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
+    timeout: 30000
+    optional: true
+- extendedWaitUntil: { visible: "__whim_pause__", timeout: 4000, optional: true }
 
 # Beat 6 — tail: the grid with both tiles.
 - back

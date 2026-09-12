@@ -1,16 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # LinkedIn cut, shot 1 — cold open on the grid → compose → (clarify) → plan → inline row edit →
-# Build → ghost tile waits → transmutes. One continuous take, 4:5 frame. Film it with:
+# Build → ghost tile waits → transmutes. One continuous take, native frame. Film it with:
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/1-compose-to-transmute.yaml \
-#        --device emulator-5554 --out demo/raw/tea-1-compose-to-transmute --name take-1 \
-#        --size 960x1200 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --device emulator-5554 --out demo/raw/<date>/shot-1 --name take-1 \
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
 #
 # PRECONDITIONS (see ../1-4-compose-to-transmute.yaml for the reasoning behind every idiom here):
-#   * Display override `wm size 1344x1680` (4:5) in place; SystemUI demo mode on (clean status bar).
+#   * Stock geometry (no `wm size` override). `--size 1080x2404` keeps the native aspect; the
+#     emulator's encoder refuses 1344x2992 and silently falls back to a pillarboxed 720x1280.
+#     SystemUI demo mode on (clean status bar).
 #   * Whim foregrounded ON the grid, only the three EXAMPLE tiles. No `launchApp`, so the long
 #     build wait holds (filmkit FEEDBACK #4).
-#   * Generation server up on :8787 with the demo prompt addendum.
+#   * Generation server up on :8787 (stock prompts; the 2026-09 demo addendum is gone for good).
 #
 # This take creates the ONE tea-timer instance every later shot is filmed on.
 appId: com.whim
@@ -38,8 +40,11 @@ appId: com.whim
 - tapOn: "Continue"
 
 # Beat 4 — clarify lands, or the plan does. Branch on whichever shows.
+# `Build it` (host copy, PrimaryAction) is the gate, not a plan row label: the row labels
+# ("THE SCREEN" et al.) are the rewrite MODEL's output and a run that omits them would hang here.
+# `Build it` mounts only once the rewrite response lands, so it also means "rows are on screen".
 - extendedWaitUntil:
-    visible: ".*quick thing.*|THE SCREEN"
+    visible: ".*quick thing.*|Build it"
     timeout: 180000
 - waitForAnimationToEnd
 - runFlow:
@@ -56,7 +61,7 @@ appId: com.whim
 
 # Beat 5 — the plan drafts itself.
 - extendedWaitUntil:
-    visible: "THE SCREEN"
+    visible: "Build it"
     timeout: 180000
 - waitForAnimationToEnd
 - extendedWaitUntil: { visible: "__whim_pause__", timeout: 3200, optional: true }
