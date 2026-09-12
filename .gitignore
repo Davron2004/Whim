@@ -98,10 +98,9 @@ server/.logs/
 # tracked; this is scratch OUTPUT only.
 evals/.reports/
 
-# Demo-video tool (demo/): rendered videos + the assembled-HTML scratch dir are build OUTPUT,
-# never committed artifacts — demo/lib, demo/cli.mjs, demo/flows, demo/README.md stay tracked.
+# Demo pipeline (demo/): raw Maestro takes and rendered cuts are OUTPUT, never committed —
+# the flows (demo/android/flows/), the cut/voiceover tools (demo/tools/) and demo/README.md stay tracked.
 demo/out/
-demo/.pages/
 demo/raw/
 
 # Graphify knowledge graph: local dev aid only (post-commit hook regenerates it from the
