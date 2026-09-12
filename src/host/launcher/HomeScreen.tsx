@@ -34,8 +34,7 @@ import {
   HOME_GRID_SIDE_PADDING,
   homeGridCellWidth,
 } from './home-grid';
-import { shellPalette, ShellPalette } from './theme';
-import { useTheme } from './theme-context';
+import { SHELL_PALETTE } from './theme';
 
 /** The grid's geometry and its cell-width derivation live in `home-grid.ts` — a module free of
  *  `react-native` so the arithmetic that decides whether the row wraps can be tested under Node.
@@ -106,8 +105,7 @@ export default function HomeScreen({
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const [selectedGhost, setSelectedGhost] = useState<PendingBuildRecord | null>(null);
-  const { theme } = useTheme();
-  const p = shellPalette(theme);
+  const p = SHELL_PALETTE;
   const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
   // Ghosts newest-first, before installed apps; dedupe-by-id (pending wins) and rebuild
@@ -176,7 +174,7 @@ export default function HomeScreen({
                   onPress={() => onOpen(app)}
                   onLongPress={() => setSelected(app)}
                 >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, palette: p, onPress: onPressPill } : null} />
+                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, onPress: onPressPill } : null} />
                 </TouchableOpacity>
                 {app.forkedFrom && (
                   <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]} numberOfLines={1}>
@@ -214,7 +212,6 @@ export default function HomeScreen({
             {selectedRebuild && (
               <GhostActionRow
                 rec={selectedRebuild}
-                palette={p}
                 onCancelPending={onCancelPending}
                 onDismissPending={onDismissPending}
                 onDone={() => setSelected(null)}
@@ -249,7 +246,6 @@ export default function HomeScreen({
             {selectedGhost && (
               <GhostActionRow
                 rec={selectedGhost}
-                palette={p}
                 onCancelPending={onCancelPending}
                 onDismissPending={onDismissPending}
                 onDone={() => setSelectedGhost(null)}
@@ -297,13 +293,11 @@ function GhostGridTile({
  *  row, so the two never drift. */
 function GhostActionRow({
   rec,
-  palette,
   onCancelPending,
   onDismissPending,
   onDone,
 }: Readonly<{
   rec: PendingBuildRecord;
-  palette: ShellPalette;
   onCancelPending?: (rec: PendingBuildRecord) => void;
   onDismissPending?: (rec: PendingBuildRecord) => void;
   onDone: () => void;
@@ -312,8 +306,8 @@ function GhostActionRow({
     return (
       <SheetRow
         label={COPY.actionCancelBuild}
-        color={palette.danger}
-        borderColor={palette.cardBorder}
+        color={SHELL_PALETTE.danger}
+        borderColor={SHELL_PALETTE.cardBorder}
         onPress={() => { onDone(); onCancelPending?.(rec); }}
       />
     );
@@ -321,8 +315,8 @@ function GhostActionRow({
   return (
     <SheetRow
       label={COPY.actionDismissBuild}
-      color={palette.danger}
-      borderColor={palette.cardBorder}
+      color={SHELL_PALETTE.danger}
+      borderColor={SHELL_PALETTE.cardBorder}
       onPress={() => { onDone(); onDismissPending?.(rec); }}
     />
   );

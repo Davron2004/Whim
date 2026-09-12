@@ -422,7 +422,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
     h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled editing=\{editing\} palette/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
+    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled editing=\{editing\} onPress/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
   });
 
   await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
