@@ -30,12 +30,31 @@ export type RuntimeDiagnostic = Omit<StaticDiagnostic, 'line'> & { line?: number
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The minimum every trace entry carries; chain 3 extends this into a discriminated union of
- *  concrete syscall/cue/denial record shapes (its own contract owns those fields). */
+ *  concrete syscall/cue/denial record shapes (its own contract owns those fields).
+ *  `egress_blocked` is the harness's own entry, `EgressBlockedTraceEntry` below. */
 export interface TraceEntry {
-  kind: 'syscall' | 'cue' | 'denial';
+  kind: 'syscall' | 'cue' | 'denial' | 'egress_blocked';
   method: string;
   /** Milliseconds since the run's `startedAt` anchor (`RunContext.startedAt`, session.ts). */
   atMs: number;
+}
+
+/** The fixed cap for the blocked-egress count. Refusals beyond it saturate, exactly like
+ *  `REJECTED_FORGERY_CAP`: the signal needed is "did this candidate try to reach the network, once
+ *  or repeatedly", and a candidate must not be able to grow the report by retrying. */
+export const BLOCKED_EGRESS_CAP = 16;
+
+/** Spec §A synthetic run has no network egress: every request or WebSocket the run's browser
+ *  context aborted, recorded as the FACT (this entry is present) plus a BOUNDED count. At most one
+ *  per report, appended last, and only when something was refused. It never carries a URL: the
+ *  destination is candidate-chosen text. */
+export interface EgressBlockedTraceEntry extends TraceEntry {
+  kind: 'egress_blocked';
+  method: 'network';
+  /** When the first refusal happened, from the run's `startedAt` anchor. */
+  atMs: number;
+  /** Refusals observed, saturating at `BLOCKED_EGRESS_CAP` (read a capped value as "at least"). */
+  count: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

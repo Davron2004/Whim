@@ -15,6 +15,57 @@ declare module 'node:os' {
 }
 declare module 'node:path' {
   export function join(...parts: string[]): string;
+  export function resolve(...parts: string[]): string;
+  export function relative(from: string, to: string): string;
+}
+
+// The egress probe (`session.ts`) and the isolation suite's loopback canaries (`test/isolation.ts`).
+declare module 'node:net' {
+  export interface AddressInfo {
+    address: string;
+    family: string;
+    port: number;
+  }
+}
+declare module 'node:http' {
+  import type { AddressInfo } from 'node:net';
+  export interface IncomingMessage {
+    url?: string;
+  }
+  export interface ServerResponse {
+    end(body?: string): void;
+  }
+  export interface Server {
+    on(event: 'connection', listener: () => void): Server;
+    once(event: 'error', listener: (err: Error) => void): Server;
+    listen(port: number, host: string, callback: () => void): Server;
+    address(): AddressInfo | string | null;
+    closeAllConnections(): void;
+    close(callback?: () => void): Server;
+  }
+  export function createServer(handler: (req: IncomingMessage, res: ServerResponse) => void): Server;
+}
+declare module 'node:dgram' {
+  import type { AddressInfo } from 'node:net';
+  export interface Socket {
+    on(event: 'message', listener: () => void): Socket;
+    bind(port: number, host: string, callback: () => void): void;
+    address(): AddressInfo;
+    close(callback?: () => void): void;
+  }
+  export function createSocket(type: 'udp4'): Socket;
+}
+declare module 'node:fs' {
+  export interface Dirent {
+    name: string;
+    isDirectory(): boolean;
+  }
+  export function existsSync(path: string): boolean;
+  export function readFileSync(path: string, encoding: 'utf8'): string;
+  export function readdirSync(path: string, options: { withFileTypes: true }): Dirent[];
+}
+declare module 'node:child_process' {
+  export function execFileSync(file: string, args: string[], options: { encoding: 'utf8' }): string;
 }
 
 // `process.cwd()` (repo-root path resolution, `builder.ts`/`page.ts`) and `process.exit()`

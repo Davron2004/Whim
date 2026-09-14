@@ -27,6 +27,7 @@ import type { AppRecord } from '../../src/host/bridge';
 import { storageError, type StorageEngine } from '../../src/host/storage-engine/contract';
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
 import { createRunCandidate, denialDiagnostic } from '../report';
+import { testIsolation } from './isolation';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -123,6 +124,9 @@ async function main(): Promise<void> {
 
   // ── §denial diagnostics (rewrite-preserves-user-data, tasks 5.1–5.3) ────────────────────────
   await testDenialDiagnostics();
+
+  // ── public-generation-server tasks 7.3–7.4: OS sandbox, no egress, builder file reads ───────
+  await testIsolation({ test, ok });
 
   console.log('');
   if (failures.length === 0) {

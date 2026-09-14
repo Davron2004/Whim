@@ -16,9 +16,9 @@ import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
 import { wireCapabilityBridge, type CapabilityTraceEntry } from './capability';
 import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
-import type { SynthRunSession } from './session';
+import type { RunContext, SynthRunSession } from './session';
 import { sweepApp } from './sweep';
-import type { RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
+import type { EgressBlockedTraceEntry, RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
 
 const CLOSED_KINDS: readonly string[] = DIAGNOSTIC_KINDS;
 
@@ -89,6 +89,12 @@ export function denialDiagnostic(entry: DenialTraceEntry): RuntimeDiagnostic | n
       : `${entry.method}: gate denied (${entry.errorKind})`,
     hint: entry.hint,
   };
+}
+
+/** The run's egress refusals as its one `egress_blocked` trace entry: the fact and the saturated
+ *  count, anchored on the run's `startedAt`. Nothing about any attempted destination. */
+function egressBlockedEntry(ctx: RunContext): EgressBlockedTraceEntry {
+  return { kind: 'egress_blocked', method: 'network', atMs: (ctx.egress.firstAt ?? ctx.startedAt) - ctx.startedAt, count: ctx.egress.count };
 }
 
 /**
@@ -214,7 +220,8 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
           sweepMs,
           perScreenMs,
         },
-        trace: wiring.trace,
+        // Read once, here: refusals recorded after this point belong to a report already built.
+        trace: ctx.egress.count > 0 ? [...wiring.trace, egressBlockedEntry(ctx)] : wiring.trace,
         screens: { declared, visited },
         budgets,
       };
