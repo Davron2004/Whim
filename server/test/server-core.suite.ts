@@ -82,11 +82,14 @@ function checkStageOrder(events: GenerationEvent[]): boolean {
 async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
-  // §3.3 — /healthz is exempt (no device header needed)
+  // §3.3 — /healthz is exempt (no device header needed) and identifies the service
   {
     const app = testApp();
     const res = await app.request('/healthz');
-    eq('/healthz anonymous 200', res.status, 200);
+    eq('/healthz anonymous (no x-whim-device) 200', res.status, 200);
+    const body = (await res.json()) as { ok?: unknown; service?: unknown };
+    eq('/healthz body ok field', body.ok, true);
+    eq('/healthz body service field', body.service, 'whim-server');
   }
 
   // §3.1 — missing x-whim-device → 400 JSON, no stream (generate)

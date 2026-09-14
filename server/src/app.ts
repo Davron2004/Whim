@@ -96,7 +96,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   });
 
   // Health check — no auth
-  app.get('/healthz', (c) => c.text('ok', 200));
+  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server' }, 200));
 
   // Device-identity middleware for all /v1/* routes
   app.use('/v1/*', async (c, next) => {
