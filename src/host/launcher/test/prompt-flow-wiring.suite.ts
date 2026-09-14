@@ -325,16 +325,28 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
    *  Retry both enter through — the stream loop and its settlements all live inside it. */
   const attemptFn = rootSrc.slice(rootSrc.indexOf('const runAttempt'), rootSrc.indexOf('const onBuildIt'));
 
-  await h.test('home: the composer row and "Prompt again" both open the compose step', () => {
-    h.ok(/onCreate=\{\(\) => openCompose\(\)\}/.test(rootSrc), 'the composer row opens compose with no app being edited');
-    h.ok(/onPromptAgain=\{\(app\) => openCompose\(app\)\}/.test(rootSrc), '"Prompt again" opens compose scoped to that app');
+  await h.test('home: the composer row and "Prompt again" both open the compose step through the consent gate', () => {
+    // store-launch-compliance chain-3: every data-sending entry point routes through
+    // `openWithConsent` (ai-data-consent "The first action that would send data asks for consent
+    // at that moment") rather than calling `openCompose` directly.
+    h.ok(
+      /onCreate=\{\(\) => openWithConsent\(\{ kind: 'compose' \}\)\}/.test(rootSrc),
+      'the composer row opens compose with no app being edited, through the gate',
+    );
+    h.ok(
+      /onPromptAgain=\{\(app\) => openWithConsent\(\{ kind: 'compose', editing: app \}\)\}/.test(rootSrc),
+      '"Prompt again" opens compose scoped to that app, through the gate',
+    );
     h.ok(homeSrc.includes('onCreate') && homeSrc.includes('COPY.homeComposerPlaceholder'), 'the home screen renders the composer entry row');
     h.ok(homeSrc.includes('onPromptAgain(a)') && homeSrc.includes('COPY.actionPromptAgain'), 'the action sheet still offers "Prompt again"');
     h.ok(homeSrc.includes('<AppTile'), 'the grid renders group F’s tile rather than its own');
   });
 
-  await h.test('history: "Change it from here" opens the compose step for that app', () => {
-    h.ok(/onChangeIt=\{\(app\) => openCompose\(app\)\}/.test(rootSrc), 'the history screen’s current-version action reaches the flow');
+  await h.test('history: "Change it from here" opens the compose step for that app, through the consent gate', () => {
+    h.ok(
+      /onChangeIt=\{\(app\) => openWithConsent\(\{ kind: 'compose', editing: app \}\)\}/.test(rootSrc),
+      'the history screen’s current-version action reaches the flow, through the gate',
+    );
   });
 
   await h.test('approve-order: nothing is generated before the plan’s Build it', () => {
@@ -369,9 +381,10 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(/const goBack = \(from: FlowScreen\) => \{\s*leaveFlowStep\(from\.kind\);/.test(rootSrc), 'and so does a back press — which is what the hardware back button calls');
     // Compose itself never owns a request any more (C2: tapping Continue moves synchronously to
     // the clarify step's own loading state, so nothing is in flight while the screen is still
-    // `compose`) — leaving it via Settings is a bare navigation, and `leaveFlowStep('clarify')` is
-    // what now aborts the SAME `'compose'`-labelled slot, from the screen that actually shows it.
-    h.ok(rootSrc.includes("onOpenSettings={() => setScreen({ kind: 'settings' })}"), 'opening Settings out of compose is a plain navigation — nothing to cancel there');
+    // `compose`) — `leaveFlowStep('clarify')` is what now aborts the SAME `'compose'`-labelled
+    // slot, from the screen that actually shows it. (store-launch-compliance chain-3: compose no
+    // longer has any way to reach Settings directly — the "set an address in Settings" notice was
+    // removed, since the compose step opens only once AI-data consent is granted.)
     h.ok(leaveFn.includes("if (kind === 'clarify')"), 'the loading clarify screen is what leaving actually cancels');
   });
 
@@ -530,7 +543,13 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     const actionsFn = rootSrc.slice(rootSrc.indexOf('const failureActions'), rootSrc.indexOf('const statusBarStyle'));
     h.ok(actionsFn.includes('pending.get(s.pendingId)'), 'the actions are decided by whether the record is still there');
     h.ok(actionsFn.includes('retryable: true'), 'a still-present record makes the primary action a Retry');
-    h.ok(actionsFn.includes('onRetryPending(ghost)') && actionsFn.includes('onDismissPending(ghost)'), 'wired to Retry and Discard on that record');
+    // store-launch-compliance chain-3: Retry is a data-sending action, so it routes through the
+    // consent gate (`openWithConsent`) rather than calling `onRetryPending` directly — `onRetryPending`
+    // itself is still the runner underneath (pinned separately below, via `retryFn`).
+    h.ok(
+      actionsFn.includes("openWithConsent({ kind: 'retry', record: ghost })") && actionsFn.includes('onDismissPending(ghost)'),
+      'wired to the consent-gated Retry and to Discard on that record',
+    );
     h.ok(actionsFn.includes('retryable: false'), 'and a record dismissed in the meantime falls back to the live Rephrase/Back shape');
     h.ok(rootSrc.includes('{...failureActions(screen)}'), 'the failure screen is rendered with those actions — without this the wiring is inert');
     h.ok(/\{retryable \? COPY\.screenErrorRetry : COPY\.failureRephrase\}/.test(read('FailureScreen.tsx')), 'and `retryable` is what relabels the primary action');
@@ -815,9 +834,14 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!threw, 'loadHighlighting must never throw on a null read');
   });
 
-  await h.test('server address: every request is gated on clientOptions, device id attached once', () => {
-    h.ok(rootSrc.includes('serverConfigured={clientOptions != null}'), 'the compose step is told whether a server is configured');
-    h.ok(rootSrc.includes('if (!clientOptions) return;'), 'each forward step bails out honestly when unconfigured');
+  await h.test('server address: every request is gated on consented client options, device id attached once', () => {
+    // store-launch-compliance chain-3: `clientOptions` is now the AI-data consent gate itself
+    // (design D2) — derived from `consentStatus(kv)`, not a raw address check.
+    h.ok(
+      rootSrc.includes('consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)'),
+      'clientOptions is derived through the one consent gate',
+    );
+    h.ok(rootSrc.includes('if (!clientOptions) return;'), 'each forward step bails out honestly when consent is not current');
     h.ok(rootSrc.includes('getDeviceId(kv)'), 'the persisted device id is read once');
     h.ok(settingsSrc.includes('COPY.serverAddressSectionTitle') && settingsSrc.includes('onServerUrlChange'), 'Settings still owns the address field');
   });

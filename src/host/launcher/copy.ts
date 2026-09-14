@@ -213,15 +213,44 @@ export const COPY = {
   failureRowLastVersionWorks: 'The version you already had still works and is still installed',
   failureRowSayItDifferently: 'Describing it differently usually gets past this',
 
+  // ── AI-data consent (ai-data-consent; design D4/D5) ─────────────────────────
+  // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
+  // only the bottom actions below differ by mode.
+  consentTitle: 'Before Whim makes apps for you',
+  consentLead:
+    'To make or change an app, Whim sends your request to AnyCognition’s server. The server uses AI models from other companies, reached through OpenRouter, to write the app.',
+  consentWhatSentTitle: 'What gets sent',
+  consentWhatSentRequest: 'What you ask for: your description, your answers to Whim’s questions, and the plan you approve',
+  consentWhatSentEdit: 'When you change an app: its code, its current description, and the layout of its saved data',
+  consentWhatSentDevice: 'An anonymous ID for this phone, used for daily limits',
+  consentWhatNeverSentTitle: 'What never gets sent',
+  consentWhatNeverSent: 'Anything you save inside your apps',
+  consentFootnote: 'You can turn this off in Settings. Apps you already have keep working either way.',
+  // Shown above the disclosure only when the stored grant is outdated (spec "A policy change asks again").
+  consentOutdatedLine: 'What Whim sends has changed since you last agreed.',
+  consentAgree: 'Agree and continue',
+  consentDecline: 'Not now',
+  // Review mode's action set (spec "Settings shows consent and can review or turn it off"): the
+  // large button is always the safe one — keeping AI features on, or turning them on from off.
+  consentReviewKeepOn: 'Keep AI features on',
+  consentReviewTurnOff: 'Turn off AI features',
+  consentReviewTurnOn: 'Turn on AI features',
+  // Shared between the consent screen's own link and the Settings About row (identical text, two
+  // surfaces) — one key, so the two can never read differently.
+  privacyPolicyLabel: 'Privacy policy',
+  supportLabel: 'Support',
+
   // ── settings ────────────────────────────────────────────────────────────────
+  settingsAISectionTitle: 'AI features',
+  settingsAIOff: 'Off',
+  settingsAboutSectionTitle: 'About',
+  settingsAdvancedSectionTitle: 'Advanced',
+  settingsUseDefaultServer: 'Use Whim’s server',
+  // Shown in place of the save-time probe result while AI features are off (server-connectivity
+  // "Without a current consent grant the system SHALL NOT probe").
+  settingsProbeNeutral: 'Checked once AI features are on',
   serverAddressSectionTitle: 'Server address',
-  // v1 is LAN-dev/personal-use only (design D3, prompt-flow-ux) — the address is an
-  // unauthenticated LAN address the user enters themselves, not a security boundary.
-  // eslint-disable-next-line sonarjs/no-clear-text-protocols
-  serverAddressPlaceholder: 'http://192.168.1.20:4000',
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
-  promptServerUnconfigured: 'Set your server’s address in Settings before making an app.',
-  promptOpenSettings: 'Open Settings',
   // The debounced save-time probe's three-way inline result (server-connectivity, design.md
   // decision 3) — shown under the server-address field a moment after the user stops typing.
   serverProbeVerified: 'Verified — this is a Whim server.',
@@ -232,11 +261,18 @@ export const COPY = {
   // The home screen's quiet indicator and the compose entry point's advisory notice, both keyed
   // off the session's `connectivity` state (server-connectivity spec "The home screen shows a
   // quiet connectivity indicator" / "The compose entry point shows a server-unreachable notice
-  // without blocking generation"). Distinct from `promptServerUnconfigured` above: that string is
-  // for no address at all, these are for a configured address that isn't answering right now.
+  // without blocking generation") — the compose step opens only once AI-data consent is granted,
+  // so there is no separate "no address configured" message any more (a server address always
+  // exists, per `release-config`).
   homeOfflineIndicator: 'Can’t reach the server',
   promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
 } as const;
+
+/** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
+ *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */
+export function aiFeaturesStatusLine(kind: 'granted' | 'absent' | 'outdated', sinceLabel?: string): string {
+  return kind === 'granted' && sinceLabel != null ? `On since ${sinceLabel}` : COPY.settingsAIOff;
+}
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
 export function forkedFromLabel(name: string): string {

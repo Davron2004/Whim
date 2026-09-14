@@ -198,13 +198,17 @@ export async function runSettingsProbeTests(h: Harness): Promise<void> {
   const screenSrc = readSource('SettingsScreen.tsx');
 
   await h.test('SettingsScreen: save is unconditional — onServerUrlChange is called before the probe is scheduled, never gated on its result', () => {
-    const handler = screenSrc.slice(screenSrc.indexOf('onChangeText={(next)'), screenSrc.indexOf('placeholder={COPY.serverAddressPlaceholder}'));
+    const handler = screenSrc.slice(screenSrc.indexOf('onChangeText={(next)'), screenSrc.indexOf("placeholder={RELEASE.serverUrl"));
     h.ok(handler.includes('onServerUrlChange(next)'), 'the save call site must exist in the handler');
     h.ok(handler.includes('debouncedProbe.schedule('), 'the debounced probe must be scheduled from the same handler');
     const saveIdx = handler.indexOf('onServerUrlChange(next)');
     const scheduleIdx = handler.indexOf('debouncedProbe.schedule(');
     h.ok(saveIdx < scheduleIdx, 'save runs before the probe is scheduled — never behind an if on the probe result');
-    h.ok(!/if\s*\([^)]*probe/i.test(handler), 'the save call is not conditioned on any probe check');
+    // store-launch-compliance chain-3: the probe itself is now ALSO gated on `canProbe` (consent),
+    // so the old blanket "no if(...probe...) anywhere in the handler" check would fire on
+    // `if (canProbe)` too. The save call's own unconditional-ness is what still must hold: it sits
+    // before that gate, not inside it.
+    h.ok(saveIdx < handler.indexOf('if (canProbe)'), 'the save call precedes the consent-gated probe check, never inside it');
   });
 
   await h.test('SettingsScreen: cleared field resolves through sanitizeServerUrl, never an unsanitized draft', () => {

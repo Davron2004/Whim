@@ -61,6 +61,7 @@ import PlanStep from './PlanStep';
 import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
+import ConsentScreen from './ConsentScreen';
 import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
@@ -93,15 +94,19 @@ import {
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { loadServerUrl, saveServerUrl } from './server-address';
+import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from './server-address';
 import { probeServer } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
+import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
 import type { ConsentedClientOptions } from './generation-client';
+import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
+import { declineTarget, entryDecision } from './consent-flow';
+import type { ConsentContinuation } from './consent-flow';
+import { serviceRefusalOf } from './service-refusal';
 
 type Screen =
   | { kind: 'home' }
@@ -109,6 +114,12 @@ type Screen =
   | { kind: 'dev' }
   | { kind: 'settings' }
   | { kind: 'history'; app: InstalledApp }
+  // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `ask` opens in place of a
+  // data-sending action taken with no current grant, carrying the continuation to resume on
+  // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
+  // from Settings' AI features row and shows the identical disclosure.
+  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdated: boolean }
+  | { kind: 'consent'; mode: 'review' }
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
   | FlowScreen
@@ -304,6 +315,42 @@ function DevLogTools() {
   );
 }
 
+/**
+ * The consent screen's two modes (design D5), in one small switch — kept out of `LauncherShell`'s
+ * own screen-kind chain so branching between them never adds to that function's own complexity.
+ */
+function ConsentScreenForShell({
+  screen,
+  onAskAgree,
+  onAskDecline,
+  onReviewTurnOn,
+  onReviewTurnOff,
+  onReviewClose,
+  consentOn,
+}: Readonly<{
+  screen: Extract<Screen, { kind: 'consent' }>;
+  onAskAgree: (continuation: ConsentContinuation) => void;
+  onAskDecline: (returnTo: Screen) => void;
+  onReviewTurnOn: () => void;
+  onReviewTurnOff: () => void;
+  onReviewClose: () => void;
+  consentOn: boolean;
+}>) {
+  if (screen.mode === 'ask') {
+    return (
+      <ConsentScreen
+        mode="ask"
+        outdated={screen.outdated}
+        onAgree={() => onAskAgree(screen.continuation)}
+        onClose={() => onAskDecline(screen.returnTo)}
+      />
+    );
+  }
+  return (
+    <ConsentScreen mode="review" consentOn={consentOn} onAgree={onReviewTurnOn} onTurnOff={onReviewTurnOff} onClose={onReviewClose} />
+  );
+}
+
 function LauncherShell({
   index,
   access,
@@ -327,14 +374,20 @@ function LauncherShell({
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
 
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
-  // TEMPORARY bridge for store-launch-compliance chain-2's `ConsentedClientOptions` brand
-  // (design D2): this memo still has no AI-data consent gating — chain-3 (task 3.4) replaces it
-  // outright with `consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)`.
-  // The cast exists only so `clarifyPrompt`/`rewritePrompt`/`generateApp`'s tightened parameter
-  // type still compiles in the meantime; it grants no consent that wasn't already implicit here.
+  // The one gate `clarifyPrompt`/`rewritePrompt`/`generateApp`/the connectivity probe read their
+  // options through (design D2; spec ai-data-consent "Request options ... SHALL come from one
+  // gate that yields nothing without a current grant"): `null` unless AI-data consent is CURRENT.
+  // `consentTick` has no other purpose than forcing this memo to re-read `consentStatus(kv)` after
+  // `grantConsent`/`revokeConsent` mutate the store out from under it (a plain KV write is not
+  // itself a React dependency).
+  const [consentTick, setConsentTick] = useState(0);
   const clientOptions = useMemo<ConsentedClientOptions | null>(
-    () => (serverUrl != null ? ({ baseUrl: serverUrl, deviceId } as ConsentedClientOptions) : null),
-    [serverUrl, deviceId],
+    () => consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId),
+    // consentTick/serverUrl stand in for the KV reads above (grantConsent/revokeConsent/
+    // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
+    // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [consentTick, serverUrl, deviceId, kv],
   );
 
   // Session connectivity (design decisions 4-6; `connectivity.ts` owns the state machine). A
@@ -351,12 +404,12 @@ function LauncherShell({
     connectivityLoopRef.current?.markOnline();
   }, []);
 
-  // `clientOptions == null` leaves `connectivity` at its `'unknown'` default — nothing
-  // configured, nothing to check, and distinct from `'offline'` (configured but unreachable;
-  // spec "No server address configured is distinct from an unreachable configured address").
-  // Once configured, a fresh `ConnectivityLoop` owns the checking → probe → online/offline+
-  // backoff cycle; the cleanup stops it, so a stale schedule never survives an address change or
-  // unmount (mirrors the `serverUrl`-keyed dev-log-sink effect below).
+  // `clientOptions == null` leaves `connectivity` at its `'unknown'` default — no current AI-data
+  // consent grant, so there is nothing to probe (spec ai-data-consent "Nothing is sent to the
+  // server before consent is granted"), distinct from `'offline'` (probed and unreachable).
+  // `clientOptions` is keyed on `consentTick` above (design D2), so granting consent starts a
+  // fresh `ConnectivityLoop` here and revoking it tears the old one down through the SAME cleanup
+  // that runs on an address change or unmount — one effect serves startup, grant and revoke alike.
   useEffect(() => {
     if (clientOptions == null) {
       connectivityLoopRef.current = null;
@@ -559,6 +612,105 @@ function LauncherShell({
     setHighlighting(enabled);
   };
 
+  const onUseDefaultServer = () => {
+    clearServerUrl(kv);
+    setServerUrl(loadServerUrl(kv));
+  };
+
+  /** Forces `clientOptions` (and every other `consentStatus(kv)` read this render produces) to
+   *  reflect a grant/revoke that just happened — see the `clientOptions` memo's own doc comment. */
+  const bumpConsent = () => setConsentTick((t) => t + 1);
+
+  const onGrantConsent = () => {
+    grantConsent(kv, new Date().toISOString());
+    bumpConsent();
+  };
+
+  const onRevokeConsent = () => {
+    revokeConsent(kv);
+    bumpConsent();
+  };
+
+  // ── The AI-data consent gate (design D1/D2/D5) ─────────────────────────────────────────────
+  // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
+  // history's "Change it from here", and Retry — calls `openWithConsent` instead of acting
+  // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
+  // only inside a closure that never runs before this render completes, so its declaration order
+  // doesn't matter — the same pattern `onLeaveRunningRef.current = onLeaveRunning` already relies
+  // on further down this component.
+
+  /** What a gated action resumes once consent is current: a compose continuation reopens the
+   *  composer, scoped exactly as the entry point asked; a retry continuation re-runs the stored
+   *  prompt on the SAME pending-build record, exactly as an unguarded Retry would. */
+  const runContinuation = (continuation: ConsentContinuation) => {
+    if (continuation.kind === 'compose') {
+      openCompose(continuation.editing);
+    } else {
+      onRetryPending(continuation.record);
+    }
+  };
+
+  /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
+   *  that would send data asks for consent at that moment"): a current grant runs the
+   *  continuation right away; otherwise the consent screen opens in the entry point's place,
+   *  carrying the continuation and the screen it replaced (`returnTo`), so declining knows where
+   *  to land (design D5). */
+  const openWithConsent = (continuation: ConsentContinuation) => {
+    const status = consentStatus(kv);
+    const decision = entryDecision(status, continuation);
+    if (decision.kind === 'continue') {
+      runContinuation(continuation);
+      return;
+    }
+    setScreen({
+      kind: 'consent',
+      mode: 'ask',
+      continuation: decision.continuation,
+      returnTo: screen,
+      outdated: status.kind === 'outdated',
+    });
+  };
+
+  /** Ask mode's `Agree and continue`: grants, then resumes exactly the continuation that opened
+   *  this screen (spec "After the user agrees, the action they started SHALL continue as if
+   *  consent had already existed"). */
+  const onConsentAskAgree = (continuation: ConsentContinuation) => {
+    onGrantConsent();
+    runContinuation(continuation);
+  };
+
+  /** Ask mode's decline (`Not now`, and hardware back — both routed through `ConsentScreen`'s one
+   *  `onClose`): grants nothing, and returns to whatever screen this one replaced (design D5:
+   *  Home for a running mini-app, since a torn-down realm is never resumed). */
+  const onConsentAskDecline = (returnTo: Screen) => {
+    setScreen(declineTarget<Screen>(returnTo));
+  };
+
+  /** Opens the consent screen in review mode, from Settings' AI features row. */
+  const onOpenAIFeaturesReview = () => {
+    setScreen({ kind: 'consent', mode: 'review' });
+  };
+
+  /** Review mode with consent off: the one action grants and returns to Settings. */
+  const onConsentReviewTurnOn = () => {
+    onGrantConsent();
+    setScreen({ kind: 'settings' });
+  };
+
+  /** Review mode with consent on: the plain-text action deletes the grant and returns to
+   *  Settings — the connectivity effect above (keyed on `clientOptions`) cancels any scheduled
+   *  probe and resets the state to unknown as a consequence, with no separate call needed here. */
+  const onConsentReviewTurnOff = () => {
+    onRevokeConsent();
+    setScreen({ kind: 'settings' });
+  };
+
+  /** Review mode's `Keep AI features on` (consent on) and hardware back (either sub-state):
+   *  nothing changes, just return to Settings. */
+  const onConsentReviewClose = () => {
+    setScreen({ kind: 'settings' });
+  };
+
   // ── The `2a` flow (group D) ────────────────────────────────────────────────────────────────
   // compose → clarify → plan → build → done. Every forward move is gated by a primary action and
   // carries one request; every backward move is immediate (`prompt-flow.ts#backFrom`). The step
@@ -653,6 +805,11 @@ function LauncherShell({
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
       if (request.cancelled) return;
+      // A structured service refusal proves the server answered — proof of connectivity
+      // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
+      // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
+      // connectivity").
+      if (serviceRefusalOf(e)) markOnline();
       logGenError('rewrite failed', e);
       const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
       setScreen(onlyOnStep<Screen, 'plan'>('plan', () => failed));
@@ -693,6 +850,11 @@ function LauncherShell({
       // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
       // screen, no breadcrumb.
       if (request.cancelled) return;
+      // A structured service refusal proves the server answered (spec "A real generation or
+      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+      // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
+      // reads as one (that path is 502-only).
+      if (serviceRefusalOf(e)) markOnline();
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
         const failed = failure(from.editing, from.text, e, 'clarify failed');
@@ -960,6 +1122,10 @@ function LauncherShell({
       setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
+      // A structured service refusal proves the server answered (spec "A real generation or
+      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+      // as proof of connectivity").
+      if (serviceRefusalOf(e)) markOnline();
       releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
@@ -1119,7 +1285,10 @@ function LauncherShell({
     if (ghost != null) {
       return {
         retryable: true,
-        onRephrase: () => onRetryPending(ghost),
+        // Retry is a data-sending action (spec ai-data-consent "The first action that would send
+        // data asks for consent at that moment") — gated the same way as the other four entry
+        // points, through `openWithConsent`.
+        onRephrase: () => openWithConsent({ kind: 'retry', record: ghost }),
         onBack: onLeaveFailure,
         onDismiss: () => onDismissPending(ghost),
       };
@@ -1158,7 +1327,7 @@ function LauncherShell({
         theme={DEFAULT_THEME}
         onExit={goHome}
         onVersions={() => onHistory(screen.app)}
-        onChangeIt={() => openCompose(screen.app)}
+        onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
       />
     );
   } else if (screen.kind === 'dev') {
@@ -1169,8 +1338,24 @@ function LauncherShell({
         onBack={goHome}
         serverUrl={serverUrl}
         onServerUrlChange={onServerUrlChange}
+        onUseDefaultServer={onUseDefaultServer}
         highlighting={highlighting}
         onHighlightingChange={onHighlightingChange}
+        consentStatus={consentStatus(kv)}
+        canProbe={clientOptions != null}
+        onOpenAIFeatures={onOpenAIFeaturesReview}
+      />
+    );
+  } else if (screen.kind === 'consent') {
+    content = (
+      <ConsentScreenForShell
+        screen={screen}
+        onAskAgree={onConsentAskAgree}
+        onAskDecline={onConsentAskDecline}
+        onReviewTurnOn={onConsentReviewTurnOn}
+        onReviewTurnOff={onConsentReviewTurnOff}
+        onReviewClose={onConsentReviewClose}
+        consentOn={consentStatus(kv).kind === 'granted'}
       />
     );
   } else if (screen.kind === 'history') {
@@ -1179,7 +1364,7 @@ function LauncherShell({
         app={screen.app}
         access={access}
         onBack={goHome}
-        onChangeIt={(app) => openCompose(app)}
+        onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
       />
     );
   } else if (screen.kind === 'compose') {
@@ -1187,14 +1372,12 @@ function LauncherShell({
     content = (
       <ComposeStep
         text={from.text}
-        serverConfigured={clientOptions != null}
         serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
         editing={from.editing != null}
         editingName={from.editing?.name}
         onChangeText={(text) => setScreen({ ...from, text })}
         onContinue={() => onComposeContinue(from)}
         onBack={() => goBack(from)}
-        onOpenSettings={() => setScreen({ kind: 'settings' })}
       />
     );
   } else if (screen.kind === 'clarify') {
@@ -1278,8 +1461,8 @@ function LauncherShell({
         onDelete={onDelete}
         appBusy={appBusy}
         onHistory={onHistory}
-        onPromptAgain={(app) => openCompose(app)}
-        onCreate={() => openCompose()}
+        onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
+        onCreate={() => openWithConsent({ kind: 'compose' })}
         onSettings={() => setScreen({ kind: 'settings' })}
         onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
         offline={showOfflineIndicator(connectivity)}

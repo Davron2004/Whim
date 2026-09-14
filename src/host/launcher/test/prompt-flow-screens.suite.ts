@@ -551,7 +551,10 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
       'buildTitle', 'buildTitleEdit', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
       'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails', 'doneBody',
       'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
-      'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureBack',
+      // `promptServerUnconfigured`/`promptOpenSettings` retired (store-launch-compliance chain-3):
+      // compose opens only once AI-data consent is granted and a server address always exists, so
+      // the "set an address in Settings" notice they gated no longer has any way to happen.
+      'promptServerUnreachable', 'failureTitle', 'failureRephrase', 'failureBack',
       'failureDismiss',
     ] as const;
     for (const key of keys) {
