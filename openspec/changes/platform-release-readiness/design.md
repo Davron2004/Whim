@@ -2,10 +2,11 @@
 
 Both native projects are still their templates. iOS has the placeholder id `com.whim`, no team, no entitlements, a multi-slot icon set with no images, and the stock launch screen (research.md "Current behavior", iOS items). Android's release build type is the v0.1 emulator shortcut: debug-signed, debuggable, and allowing cleartext to five dev hosts in every build type. Its own comment says to drop that for production (research.md "Android build"). Nothing is scripted. The runtime has three latent problems of its own. `marshal.ts` builds a `TextDecoder` at module load with no polyfill edge, `polyfills.ts` hard-codes `process.platform = 'android'`, and `WhimTone` exists only in Kotlin (research.md "Polyfills", "Cues").
 
-Four outside inputs shape the design:
+Five outside inputs shape the design:
 
 - **Launch decisions** (launch-context, platform-context): id `com.anycognition.whim`, AnyCognition team, automatic signing, an upload keystore in `~/.config/whim/`, Play App Signing, HTTPS only, attended uploads, and fastlane allowed if it's the cleanest path with no new Ruby dependencies.
-- **store-launch-compliance**, which applies before this change. D17 fixes the native link contract. D6 puts `WHIM_DOMAIN` in `src/host/launcher/release-config.ts`. D5 fixes what the consent screen says is sent. D18 creates `docs/store/review-notes.md` with draft form answers. Its chains own the launcher files for the next several hours, so no chain here may touch them.
+- **The 2026-09-14 WebRTC audit** (`docs/security/2026-09-14-webrtc-alias.md`). Its open item is frame self-navigation: a mini-app's sandboxed frame can navigate itself to any URL, and the GET leaves the device. The three web legs can't stop it and the phone has no guard (research.md E). D17 answers it.
+- **store-launch-compliance**, which applies before this change. Its D17 fixes the native link contract. D6 puts `WHIM_DOMAIN` in `src/host/launcher/release-config.ts`. D5 fixes what the consent screen says is sent. D18 creates `docs/store/review-notes.md` with draft form answers. Its chains own the launcher files for the next several hours, so no chain here may touch them.
 - **The harness.** `package.json` is in the gate's `CONFIG_SET`, so its edits are HUMAN-BOOTSTRAP. Repo-wide checks reach the fast gate through `checks/test/acceptance.ts` with no gate edit (research.md "Integration points"). knip ignores `scripts/`, and tsc typechecks `.ts` there.
 - **The machine.** Team id `2B7K4YLS34`, Homebrew fastlane 2.237.0, a Play service account already in `~/.config/whim/`, and a paired iPhone 16 Pro Max (research.md D).
 
@@ -18,12 +19,15 @@ Four outside inputs shape the design:
 - The TextDecoder crash class and the wrong iOS platform are gone structurally, and iOS cues sound like Android's.
 - Icons and launch screens come from one source, and nothing flashes between launch and the first frame.
 - Listing text and privacy answers are files that the checks keep consistent with each other and with the consent disclosure.
+- No mini-app can make the phone send a network request by navigating a frame, on either platform, and a canary shows it before and after the fix on both engines.
 
 **Non-Goals:**
 - Launcher screens and copy, server and deploy work, and hosting the web pages and association files. This change specifies their exact content, nothing more.
 - Submitting for App Store review or promoting a Play release to production. The runbook covers those as console steps.
 - Final brand artwork. The pipeline is built around a source the user provides, and a placeholder ships meanwhile.
 - The iOS launcher UI fixes and iOS haptics (see "Follow-ups").
+- WebRTC, WebSocket and WebTransport stay with the legs that already close them (neutralization and CSP, per the audit table). D17's Android mechanism doesn't reach them, and the design doesn't claim it does.
+- A JavaScript navigation guard on the mini-app `<WebView>` (D17 says why).
 
 ## Decisions
 
@@ -49,7 +53,7 @@ I picked xcconfig because Xcode reads it natively and it's trivial to parse else
 The launcher's `WHIM_DOMAIN` stays a JS constant (compliance D6 rejected Babel injection). A lockstep suite compares the two. So a domain change is two one-line edits the gate holds together, down from three edits held together by a checklist.
 
 ### D2. One identity everywhere, including dev builds
-Every configuration and build type uses `com.anycognition.whim`, with no `applicationIdSuffix`. One id keeps D17's filter and the AASA valid on developer installs, and Xcode's automatic signing registers one App ID with the Associated Domains capability. The Kotlin namespace stays `com.whim`, as decided. The six Maestro flows in `demo/android/flows/tea/` switch their `appId`. Existing `com.whim` installs become a separate app, and the runbook says to uninstall them.
+Every configuration and build type uses `com.anycognition.whim`, with no `applicationIdSuffix`. One id keeps compliance D17's filter and the AASA valid on developer installs, and Xcode's automatic signing registers one App ID with the Associated Domains capability. The Kotlin namespace stays `com.whim`, as decided. The six Maestro flows in `demo/android/flows/tea/` switch their `appId`. Existing `com.whim` installs become a separate app, and the runbook says to uninstall them.
 
 ### D3. Build numbers are minutes since 2026-01-01T00:00Z
 `buildNumberAt(date) = floor((date − 2026-01-01T00:00Z) / 60 s)` gives 369,360 at noon on 2026-09-14. At that rate it stays under Play's 2,100,000,000 ceiling for millennia, it's a valid iOS `CFBundleVersion`, and it needs no state or credentials to compute. A lane computes it once at start unless the operator passes `build:<n>`, so a release of both platforms can carry one number. The preflight still compares it with the store's highest (`latest_testflight_build_number`, and the maximum of `google_play_track_version_codes` over internal, alpha, beta and production) and refuses anything not greater.
@@ -179,13 +183,55 @@ The Android lane passes `-PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86_64
 The preflight refuses `WHIM_DOMAIN = example.com` unless the lane gets `placeholder_domain:true`. The override exists for two jobs only: the Play Console's mandatory manual first upload, and internal TestFlight smoke builds of native changes. Such builds reach no server (compliance D6).
 
 ### D15. Association files are printed, not committed
-`association-files` prints the AASA and assetlinks JSON exactly as D17 fixes them, or writes them with `--out`. It uses the team id, the app id and the two fingerprint files, Play signing first. Ops copies the output, so the server repo never re-types a fingerprint.
+`association-files` prints the AASA and assetlinks JSON exactly as compliance D17 fixes them, or writes them with `--out`. It uses the team id, the app id and the two fingerprint files, Play signing first. Ops copies the output, so the server repo never re-types a fingerprint.
 
 ### D16. Chains stay off launcher files; one chain waits for compliance
 No chain touches `LauncherRoot.tsx`, `copy.ts`, `HomeScreen.tsx`, `SettingsScreen.tsx`, prompt-flow screens or `src/host/launcher/test/acceptance.ts`. Three tasks need things only `store-launch-compliance` provides, so they sit in a final chain that runs after that whole change:
 - the domain lockstep suite, which imports `release-config.ts`
 - turning `docs/store/review-notes.md` §1–4 into `release/store/app-store/review_information/notes.txt` (at most 4000 characters) and replacing its §5 draft answers with pointers to the release files
 - the decision log entry and the `.gitignore` additions (`*.jks`, `*.p8`, `play-publisher*.json`)
+
+D17 needs no prop on `MiniAppView.tsx` or `DevProbeScreen.tsx`, so none of its chains waits for compliance on their account. Its probe imports `src/host/launcher/deliver.ts` without editing it, and no compliance task edits that file. Only its records chain waits for compliance, because it appends to the decision log after chain-11 and compliance chain-7 do.
+
+### D17. A fourth containment leg: the WebView refuses network loads natively
+Mini-apps never need the network. Generation, the server probe and reports all go through RN networking in native code, which no WebView setting touches, so the WebView can refuse every network load and lose nothing. That closes self-navigation, which no web leg can: CSP has no directive for a frame navigating itself, the sandbox has no token against it, and `location` can't be stripped (research.md E). The leg is additive. The CSP doesn't change, `Function` and `eval` stay untouched, and a realm reset still recreates the iframe.
+
+The deny belongs to the WebView, not to a prop a mount has to remember. On Android it applies to every view the `RNCWebView` view manager creates, which today means `MiniAppView` and `DevProbeScreen`. On iOS it applies to every `WKWebView` in the process. Whim has no in-process web page that needs the network (privacy and support open in the system browser through `Linking.openURL`), and I'd rather a future screen that wants one had to revisit this decision than silently inherit an open WebView.
+
+**Android: an app-level view manager subclass sets `blockNetworkLoads`.** `com.whim.webview.NetworkDeniedWebViewManager` extends `RNCWebViewManager` and overrides `createViewInstance(ThemedReactContext)`: it calls `super`, sets `wrapper.webView.settings.blockNetworkLoads = true`, and returns the wrapper. RN calls that method before it applies props, so the setting is in place before the `source` prop loads anything (`ViewManager.java:224-229`, research.md E). `NetworkDeniedWebViewPackage` extends `RNCWebViewPackage` and returns only that manager, keeping the parent's `RNCWebViewModule`. `MainApplication` replaces the one autolinked `RNCWebViewPackage` in `PackageList(this).packages` at its index and stops startup with `check` unless it replaced exactly one. I replace rather than append because two managers named `RNCWebView` resolve last-wins through an unguarded TODO in `ReactInstance.kt`. The Fabric component descriptor comes from `autolinking.cpp`, not the Java list, so the swap doesn't disturb it.
+
+Chromium turns `blockNetworkLoads` into cache-only load flags on every request its URL loader proxy handles, and that proxy handles main-frame and subframe navigations as well as subresources (research.md E). A cache hit can't carry data out, and nothing is ever cached, because every Whim WebView is denied. The leg covers navigations, subresources, `fetch`/XHR, beacons and prefetches. It doesn't cover WebSocket, WebTransport or WebRTC, which don't use that proxy and keep their existing legs.
+
+If the post-fix probe shows a leak on some WebView version, the fallback is `shouldInterceptRequest` in an `RNCWebViewClient` subclass that the manager installs from an `addEventEmitters` override (`RNCWebViewManager.java:512-516`), answering every `http(s)` request with an empty 403. It isn't the first choice because it's app code running per request on a background thread, and a bug in it fails open, while the setting is enforced inside Chromium's network stack.
+
+**iOS: an initializer hook attaches a compiled `WKContentRuleList`.** `ios/Whim/WhimWebViewNetworkDeny.m` is Objective-C in the `Whim` target. Swift never calls it, so no bridging header is needed.
+- `+load` swaps `-[WKWebView initWithFrame:configuration:]` with a category method `initWhimNetworkDeniedWithFrame:configuration:`, once. It then queues, on the main queue, a compile of the bundled `WebViewNetworkDeny.json` into `WKContentRuleListStore.defaultStore` under the identifier `whim-webview-network-deny-v1`. It compiles on every launch, so the list always matches the file in the bundle.
+- The replacement adds the compiled list to `configuration.userContentController` when the list exists. When it doesn't (not compiled yet, compile failed, file missing), it sets `configuration.defaultWebpagePreferences.allowsContentJavaScript = NO` and logs one line. Either way it then calls the original initializer. With page scripts off, the runtime page never starts, nothing is delivered, and `useMiniAppHost`'s watchdog puts up the app error surface. Retry remounts after the compile has finished.
+- The replacement's selector has to start with `init` and a capital letter. ARC then treats it as an init-family method that consumes `self` and returns a retained object, matching the original. A name like `whim_initWithFrame:` would compile and mismanage ownership, so the checks hold the prefix.
+- The rule file holds exactly two rules, `{"trigger":{"url-filter":"^https?:"},"action":{"type":"block"}}` and the same for `^wss?:`. There's no `resource-type`, `load-type` or `load-context` key, so top and child frame documents are both covered. It takes two rules because `url-filter` has no `|`. I scoped them by scheme instead of `.*` so `about:blank`, `about:srcdoc`, `data:` and `blob:` keep working.
+
+The initializer is the right place because react-native-webview has exactly one creation site, `[[RNCWKWebView alloc] initWithFrame:configuration:]`, which runs before `visitSource` loads anything and runs again for every recycled view. The selector is a public Apple initializer rather than a private method of the package, and nothing in the package ever removes a rule list. The list also refuses the package's popup path, which turns a subframe `window.open` into a top-level `loadRequest:` (research.md E). I picked `+load` over a call from `AppDelegate.swift` because it installs the swap before any app code runs and keeps that file out of the chain order. The compile completes asynchronously, but a mini-app WebView can't mount until seconds after launch, and the fail-closed branch covers the window anyway. The leg covers `http(s)` and `ws(s)` loads from every frame; WebRTC stays with neutralization.
+
+**What the runtime page loads.** Nothing from the network. The page is inline HTML under `about:blank` on both platforms, bundles arrive by `postMessage`, and the srcdoc CSP allows only `data:` images (research.md E). So the deny breaks no page load, no delivery, no bridge message, and nothing `probes.js` relies on.
+
+**Rejected alternatives.**
+- `onShouldStartLoadWithRequest` on `MiniAppView`. On Android it allows the load when JS doesn't answer within 250 ms or a debugger is attached (research.md E), and nobody has shown it sees `http(s)` subframe navigations there. On iOS it's a JS round trip per navigation. It would also be a launcher edit that every future mount has to repeat.
+- A new prop added with patch-package. That means a new dependency and a `postinstall` in the protected `package.json`, a codegen spec edit inside `node_modules` that changes the bundle `guard:metro` measures, and a patch to re-derive on every upgrade. The subclass and the hook get the same result through public API.
+- A native module keyed by view tag, called after mount. It races the first load, makes delivery wait on it (a `useMiniAppHost` edit, a file compliance chain-5 also edits), and leaves any mount that forgets the call open.
+- `limitsNavigationsToAppBoundDomains` with `WKAppBoundDomains`. It's an allowlist of domains rather than a deny, it limits navigations only, it restricts script injection and message handlers on pages outside the list, which the bridge needs, and Android has nothing like it.
+- `WKWebsiteDataStore.proxyConfigurations` aimed at a dead proxy. It needs iOS 17 (the target is 15.1) and still opens a connection.
+
+**Reproduce first, then prove.** The proof is built before the fix and has to fail against today's build.
+- `src/host/NetworkDenyProbeScreen.tsx`, behind `RUN_NETDENY_PROBE` in `App.tsx`, runs variants one at a time. For each it fetches a compiled canary mini-app from the canary with RN `fetch`, mounts a fresh `<WebView>` with `MiniAppView`'s props and `RUNTIME_HTML`, delivers with `deliverBySourceJs` on the first `onLoadEnd`, and waits. The screen shows the run id and, per variant, the paint, verdict and load-error events. It logs through `src/host/logging`, since the logging suite fails `console.*` and `[whim]` in `src/host`.
+- The variants are `loc-href`, `loc-assign`, `meta-refresh` and `anchor-click` over `http`, `loc-href-https` to the canary's TLS port, and `dns-name` over `http` to `wnd-<run>.whim-netdeny.test`. Each canary app paints a heading and acts after `delay(300)`, so the screen shows a delivered, trusted, painted realm before the navigation. A last variant, `host-top-frame`, injects a top-frame navigation into the outer page, which tests the native deny where the WebView does report a load error.
+- `node scripts/netdeny/run.mjs canary` bundles `scripts/netdeny/canary.ts` with the repo's esbuild runner idiom. It serves `/wnd/bundle/<variant>` compiled by `synthrun/builder.ts`'s `buildCandidateSource`, the production bundle contract. It counts `/wnd/hit/*` requests on the HTTP port and accepted connections on the TLS port, prints a table, and exits by `--expect leak|zero`. Bundle fetches come from RN networking and are counted apart, never as hits. DNS is watched separately with `tcpdump` for the run's label.
+- The canary host defaults to `10.0.2.2` on Android and `127.0.0.1` on iOS; a physical iPhone takes a local override to the Mac's LAN address. Because the probe fetched its bundles over the same route, zero hits means the WebView refused the load, not that cleartext policy or Local Network permission blocked the path.
+- Chain-15 runs the probe against today's build on the emulator and the simulator, and every navigation variant must leak on both. Chain-12 runs it after the fix, where every count must be zero, then removes the deny with a local edit and needs the leak back. That red check separates the native deny from confounders like the network security config. On the simulator it also points the loader at a missing file name with a local edit, once, to exercise the fail-closed branch.
+- `checks/test/release/native-network-deny.suite.ts` locks the wiring in the gate. It checks that the package list replaces the stock package and doesn't keep it alongside, that the setting sits in `createViewInstance`, that the package returns the denied manager, that the rule file covers exactly what's described above, that the Objective-C file swaps the initializer in `+load` with an init-family replacement and has the fail-closed branch, and that both iOS files sit in the target's Sources and Resources phases. Each case is red-checked against the weaker variant tasks 17.4 and 18.4 name. This repo keeps source checks for standing invariants only, and a containment leg the gate can't execute is one.
+
+**What the desktop invariants can and can't cover.** `npm run invariants` and `npm run bridge:invariants` drive headless Chromium through Playwright, and the audit added Playwright's WebKit by hand. That's where the three web legs are proven, including out-of-band canaries against a bare browser. None of it can exercise this leg. `setBlockNetworkLoads` exists only in the Android WebView embedder, and `WKContentRuleList` only through `WKWebView`; Playwright drives neither, and its route interception or offline mode would test the harness instead. They also can't see the wiring: the package swap, the `+load` swap, or compile timing. So the desktop suites keep asserting the web legs, the release checks guard the wiring, and the device probe is the verdict for leg four. Self-navigation still leaks on desktop, and that is expected.
+
+**Records.** Chain-18 runs after the device acceptance, so the records carry measured results. It appends the decision entry and reads its number from the tail when it commits, after chain-11 and compliance chain-7 have appended theirs (`public-generation-server`'s design also claims #64). It closes the security doc's open item with pointers here, replaces CLAUDE.md's "three legs" bullet in place without growing it, and adds a dated note under `docs/spike2-findings.md`'s security model. For `invariants/`, which agents don't edit, it writes a proposal into the security doc: a line in `invariants/sandbox-isolation/README.md` saying leg four is verified on device by the probe, plus the stale 42/42 count the audit already flagged. It proposes no desktop test, for the reason above.
 
 ## Risks / Trade-offs
 
@@ -201,15 +247,24 @@ No chain touches `LauncherRoot.tsx`, `copy.ts`, `HomeScreen.tsx`, `SettingsScree
 - [The placeholder mark ships to testers] → It's a clean, deliberate mark, not the template robot. Replacing it is one file plus one command.
 - [A non-debuggable release blocks `run-as` and WebView inspection] → The `offline` build keeps both for development.
 - [Decision number contention with the two in-flight changes] → The post-compliance chain reads the tail at merge time.
+- [The emulator's or the phone's WebView reaches the network by a path `blockNetworkLoads` doesn't cover] → The post-fix probe runs on the API 36 image, and on API 29 if installed. A leak there switches Android to D17's `shouldInterceptRequest` fallback as a fix-loop finding.
+- [A react-native-webview upgrade reshapes `RNCWebViewManager`, `RNCWebViewPackage` or the iOS creation path] → The Kotlin subclass stops compiling, the startup `check` fails if autolinking stops listing exactly one package, and the release checks and the device probe run again for every release. The initializer swap doesn't depend on the package's private names.
+- [The rule list isn't compiled when the first WKWebView initializes, or WebKit rejects it] → That web view runs no page script, so the launch ends on the error surface and Retry works once compiled. A permanent compile failure breaks every mini-app loudly in the device acceptance.
+- [DNS prefetching or another side channel outside URL loads still leaks a hostname] → The reproduction and the acceptance watch DNS for the run's label. A post-fix query becomes a finding, and the fix would be a `build/*` change the owner makes (Open Questions).
+- [The process-wide iOS hook blocks a web page Whim wants later] → Deliberate. Such a screen uses the system browser or a new decision.
+- [The on-device reproduction doesn't leak] → Chain-15 stops there, files a finding, and chains 16 and 17 don't dispatch until the premise is understood.
+- [WebRTC, WebSocket and WebTransport on Android aren't covered by leg four] → They keep neutralization and CSP, as the audit measured. D17 and the decision entry say so plainly.
 
 ## Migration Plan
 
 1. This change's chains 1–10 run on `integration/store-launch` alongside `store-launch-compliance`'s chains. They share no files with them.
 2. The human applies chain-0 (`package.json`) once chain-4 has merged.
-3. The attended device chain runs as soon as chains 0, 2, 5 and 7 have merged. The TextDecoder fix doesn't wait for compliance.
+3. The attended device chain runs as soon as chains 0, 2, 5, 7, 14, 16 and 17 have merged. The TextDecoder fix doesn't wait for compliance.
 4. Chain-11 runs after `store-launch-compliance` finishes. Then the attended upload chain runs.
-5. Developers uninstall `com.whim` from emulators and devices. The orchestrator updates the memory notes that say `android:release` is debug-signed.
-6. Rollback is reverting the merges. Store records and the upload key survive a revert, and a later re-release needs a build number above whatever was uploaded, which D3 guarantees.
+5. The network deny runs in its own order. Chain-14 (probe and canary) has no dependencies and dispatches at once. Chain-15, the attended reproduction, runs as soon as chain-14 merges, before chains 16 and 17 can merge. Chain-16 (Android) follows chains 1 and 15. Chain-17 (iOS) follows chains 3, 5, 15 and 16. Because the attended device chain waits for 16 and 17, the first store uploads carry the leg. Chain-18 (records) follows chains 11, 12, 16 and 17.
+6. Developers uninstall `com.whim` from emulators and devices. The orchestrator updates the memory notes that say `android:release` is debug-signed.
+7. Rollback is reverting the merges. Store records and the upload key survive a revert, and a later re-release needs a build number above whatever was uploaded, which D3 guarantees. Reverting chain-16 or chain-17 reopens self-navigation, so neither belongs in a rollback unless a replacement leg ships with it.
+8. At archive, the `sandbox-isolation` line in `docs/capabilities.md` gains the native leg.
 
 ## Open Questions
 
@@ -221,6 +276,11 @@ No chain touches `LauncherRoot.tsx`, `copy.ts`, `HomeScreen.tsx`, `SettingsScree
 - **Data safety deletion mechanism.** Default: none declared. There are no accounts, and reports expire under the server's retention period.
 - **The age rating's user-generated-content answer.** Default: no, since nothing is shared between users. 13+ comes from the override.
 - **Screenshots.** Default: captured in the attended chain from the iPhone 17 Pro Max simulator (1320×2868) and the emulator at 1080×2160, against the production server.
+- **DNS side channel.** Neither engine's anchor DNS prefetching is characterized for these WebViews, and a hostname alone can carry data. Default: chain-15 and chain-12 record whether a query for the run's label leaves; a post-fix query becomes a finding, and the likely fix is `<meta http-equiv="x-dns-prefetch-control" content="off">` in the srcdoc, which is a `build/assemble.mjs` change only the owner makes.
+- **iOS hook scope.** Default: every `WKWebView` in the process. The narrower choice, adding the initializer only to react-native-webview's private `RNCWKWebView` class, would fail silently if that class were renamed.
+- **An "armed" signal the host checks before delivering.** Default: none. Android arms synchronously in view creation, iOS fails closed natively, and the checks guard the wiring. A JS check would add a `useMiniAppHost` edit and couldn't prove which native path created a given view.
+- **Android Safe Browsing lookups for blocked URLs.** Default: left on. They go to Google as hash prefixes, not to the page's chosen host.
+- **A Mac-only check of the rule file in a real macOS `WKWebView`.** Default: not added. The simulator probe exercises the same file in the engine that ships.
 
 ## Follow-ups (not in this change)
 
