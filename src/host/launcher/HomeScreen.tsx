@@ -66,6 +66,10 @@ export interface HomeScreenProps {
   onSettings: () => void;
   /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
   onOpenDevProbe?: () => void;
+  /** The session connectivity indicator (server-connectivity, design.md decision 7): visible only
+   *  while the configured server is unreachable — omitted/false for `'unknown'`, `'checking'` and
+   *  `'online'`. Never obscures or gates the grid below it. */
+  offline?: boolean;
 
   // ── Pending builds (launcher-ghost-tiles; contract `handoff/ghost-handlers.md`) ─────────────
   // The shell supplies all four together or none of them. The grid composition and the ghost
@@ -97,6 +101,7 @@ export default function HomeScreen({
   onCreate,
   onSettings,
   onOpenDevProbe,
+  offline,
   pending,
   onOpenPending,
   onCancelPending,
@@ -136,6 +141,12 @@ export default function HomeScreen({
             {COPY.homeTitle}
           </Text>
           <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
+          {offline && (
+            <View style={styles.offlineRow}>
+              <View style={[styles.offlineDot, { backgroundColor: p.textMuted }]} />
+              <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.homeOfflineIndicator}</Text>
+            </View>
+          )}
         </View>
         <TouchableOpacity
           onPress={onSettings}
@@ -352,6 +363,11 @@ const styles = StyleSheet.create({
   },
   headerText: { flexShrink: 1 },
   eyebrow: { marginTop: SPACING.xs },
+  // The quiet offline indicator (server-connectivity, design.md decision 7): a small muted dot
+  // plus a caption, sitting under the eyebrow — never a banner, never anything that competes with
+  // the grid for attention.
+  offlineRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginTop: SPACING.xs },
+  offlineDot: { width: 6, height: 6, borderRadius: 3 },
   settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   /** design html:386 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
    *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height
