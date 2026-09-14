@@ -12,10 +12,10 @@
 
 ## 3. Session connectivity state and retry loop (LauncherRoot)
 
-- [ ] 3.1 Add `connectivity: 'unknown' | 'checking' | 'online' | 'offline'` state to `LauncherRoot.tsx`, plus a `markOnline()` helper (design.md decision 6) that sets `'online'` and cancels any pending scheduled retry; idempotent when already online.
-- [ ] 3.2 Add the startup/retry effect keyed on `clientOptions` (design.md decision 4-5): `clientOptions == null` → stays `'unknown'`; on becoming non-null, `'checking'` → probe → `'online'` via `markOnline()` on success (verified or unverified both count), or `'offline'` + scheduled retry (2s doubling to a 30s cap) on `'unreachable'`. Effect cleanup clears the pending timer.
-- [ ] 3.3 Wire `markOnline()` into the existing `clarifyPrompt`/`generateApp` call sites (`LauncherRoot.tsx`) so a real successful call stops the retry loop, per design.md decision 6.
-- [ ] 3.4 Node suite coverage: backoff schedule values, stop-after-first-success (including via `markOnline()` from a simulated successful call, not just the probe), unknown-vs-offline distinction (no address configured never reaches offline), no scheduled retry after online.
+- [x] 3.1 Add `connectivity: 'unknown' | 'checking' | 'online' | 'offline'` state to `LauncherRoot.tsx`, plus a `markOnline()` helper (design.md decision 6) that sets `'online'` and cancels any pending scheduled retry; idempotent when already online.
+- [x] 3.2 Add the startup/retry effect keyed on `clientOptions` (design.md decision 4-5): `clientOptions == null` → stays `'unknown'`; on becoming non-null, `'checking'` → probe → `'online'` via `markOnline()` on success (verified or unverified both count), or `'offline'` + scheduled retry (2s doubling to a 30s cap) on `'unreachable'`. Effect cleanup clears the pending timer.
+- [x] 3.3 Wire `markOnline()` into the existing `clarifyPrompt`/`generateApp` call sites (`LauncherRoot.tsx`) so a real successful call stops the retry loop, per design.md decision 6.
+- [x] 3.4 Node suite coverage: backoff schedule values, stop-after-first-success (including via `markOnline()` from a simulated successful call, not just the probe), unknown-vs-offline distinction (no address configured never reaches offline), no scheduled retry after online.
 
 ## 4. Settings save-time verification
 
