@@ -108,9 +108,19 @@ The prices are placeholders in DeepSeek's historical range, since `deepseek-v4-p
 | Prompt / report source caps | 16 KiB / 256 KiB | Plan-row prompts run 3–5 KB. |
 | Generation wall clock / unary model timeout | 10 min / 60 s | Honest runs take minutes (demo generations about 6 min). Stalled providers must not hold slots. |
 
-**Recommended OpenRouter key credit limit: $250 to start** (about three days of the worst-case ceiling), topped up after reviewing `whim-admin usage`. It goes in the runbook, not in code.
+**Recommended OpenRouter key credit limit: $50 to start.** The global daily ceiling, not the credit limit, is the control that shapes day-to-day spend — the limit is a coarse backstop against the ceiling being misconfigured or bypassed, not the primary lever. $50 covers roughly two days at the worst-case ceiling, enough to catch a bad deploy before it burns real money, and it is raised once `whim-admin usage` shows real cost per generation instead of the placeholder table above.
 
 *Alternatives:* per-IP limits. Rejected: carrier-grade NAT makes an IP a crowd, and trusting `X-Forwarded-For` adds a spoofing surface. A short-window burst limiter was also rejected, because it would need a refusal code outside the decided set, and the daily cap already bounds cost.
+
+### D6a. Pre-admission credit check, cached and fail-open
+The provider credit limit (D6) is a backstop, not a checked control — nothing before this stopped the server from admitting work once it was exhausted, so every in-flight request past that point failed at the model call, mid-stream, after the device had already committed to a wait. `server/src/admission/credit.ts` adds a route-agnostic check ahead of drain, concurrency, and daily-unit accounting on `/v1/clarify`, `/v1/rewrite`, and `/v1/generate`: it reads `GET https://openrouter.ai/api/v1/key`, caches `data.limit_remaining` in memory for `WHIM_CREDIT_CACHE_TTL_MS` (default 60000), and refuses with `budget_exhausted` when the cached value is a number below `WHIM_MIN_CREDIT_USD` (default 0.50).
+
+The cache exists because the key endpoint is an extra network round-trip the admission path cannot afford on every request; a minute of staleness is an acceptable trade against that cost, and a mid-flight `402` (D-below) invalidates it immediately rather than waiting out the TTL.
+
+The lookup fails open: a transport error, non-2xx status, or malformed body admits the request and logs a warning instead of refusing. This is the opposite of the content-policy check's fail-closed default, and the asymmetry is deliberate — content policy protects against a reputational and legal risk with no other backstop, where refusing safely is more important than staying available; the credit check protects against spend that the provider's own `402` already catches, so failing closed here would trade a rare lookup outage for taking down the whole service over a control that is redundant with the provider's own enforcement.
+
+### D6b. A 402 mid-flight ends the request and invalidates the cache
+A `402` from OpenRouter during a unary call (clarify or rewrite) maps to the same `503 budget_exhausted` the pre-admission check would have produced, rather than the generic `502` honest failure. During a generation stream it ends the run the same way every other ending does — one terminal `failure` event — with no repair attempt, because a repair spends more of an already-exhausted budget. Either path invalidates the credit-check cache immediately, so the next request refuses up front instead of being admitted into a run that will also fail.
 
 ### D7. The request ledger lives in the usage store
 The existing store is the only durable state and is enforced against (R3 §Constraints), so admission reads and writes it rather than a second store. `usage.db` gains a table:
@@ -158,8 +168,9 @@ Hints (server-owned, one sentence each):
 | `server_busy` (global ceiling) | "Whim has reached today's building capacity. Please try again after midnight UTC." |
 | `content_policy` | "Whim can't make that kind of app. Try describing something else." |
 | `policy_unavailable` | "We couldn't check this request right now. Please try again in a moment." |
+| `budget_exhausted` | "Whim has used up its generation budget for now. Try again later." |
 
-`ServiceRefusalCode` in the contract names the six identifiers, so the device side can match on a shared vocabulary. `ApiError` is unchanged.
+`ServiceRefusalCode` in the contract names the seven identifiers, so the device side can match on a shared vocabulary. `ApiError` is unchanged.
 
 ### D9. Content policy: a cached, fail-closed classifier on the rewrite model
 `server/src/policy/` holds four pieces:
