@@ -36,8 +36,8 @@ A user speaks/types a prompt on the phone → server harness (plan → generate 
 synthetic run → repair ≤ 3) returns a verified bundle → it installs to the launcher, runs in
 the hardened sandbox, persists data, and every generation is a tagged snapshot with
 rollback/pin/fork. **Tier-0 SDK only** (UI + local storage + v0.3 effects/cues). Two-stage
-prompt (rewrite → preview → engineer model) **is in v1**. Android only, personal use, no
-sharing/billing/network/sensors, one engineer model (picked by bakeoff). "v1" = first complete
+prompt (rewrite → preview → engineer model) **is in v1**. iOS + Android, tested on Android so
+far, personal use, no sharing/billing/network/sensors, one engineer model (picked by bakeoff). "v1" = first complete
 coded version, not a public release.
 
 The v1 corpus = the 11 Tier-0 apps in `docs/app-corpus.md`. v1 is done when the

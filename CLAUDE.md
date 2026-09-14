@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Whim is
 
-A React Native (Android-first) host app where users vibe-code tiny "mini-apps" by talking. Mini-apps are LLM-generated TypeScript targeting a private SDK (`vc-sdk`), executed inside a hardened WebView sandbox. The repo now spans both halves: on-device (sandbox runtime, SDK, storage engine, version store, capability bridge, launcher shell) and a stub server half (`contract/`, `server/`) for the future generation harness.
+A React Native (iOS + Android; tested on Android so far) host app where users vibe-code tiny "mini-apps" by talking. Mini-apps are LLM-generated TypeScript targeting a private SDK (`vc-sdk`), executed inside a hardened WebView sandbox. The repo now spans both halves: on-device (sandbox runtime, SDK, storage engine, version store, capability bridge, launcher shell) and a stub server half (`contract/`, `server/`) for the future generation harness.
 
 ## Source of truth: docs/, not code
 

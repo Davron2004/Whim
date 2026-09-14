@@ -1038,3 +1038,22 @@ to name the type, in its interface declaration and the constant's own annotation
 non-vacuity assertion that the walk actually inspects `LauncherRoot.tsx` and `HomeScreen.tsx`.
 Mini-app delivery theme, `sanitizeTheme`, `__WHIM_THEME__`, and the tile-colour system are a
 separate SDK-side contract and are untouched.
+
+### 63. Whim targets iOS and Android; "Android-first" was test order, not product scope `[DECIDED — corrects the scope reading of #10 and other Android-only phrasing in older entries, which is historical]`
+
+**Whim is built in React Native precisely so it ships on both iOS and Android.** #10's "Android
+first" decided *build and test order* — prove the sandbox and the harness on one platform before
+touching the other — never product scope. Older entries and docs that read as Android-only
+(#10 itself, `docs/spec.md` §15.4, and similar) are **historical**: accurate to what had been
+built and verified at the time, not a scope restriction. They are left as written per this log's
+append-only rule; this entry is the correction, not a rewrite of them.
+
+**The Apple-rejection worry is resolved.** #10's rationale leaned on Android tolerating the
+"vibe-coded mini-app" category more comfortably than iOS's App Review. That worry is now moot:
+the Replit iOS app runs AI-generated code on-device under the same App Store review Whim would
+face, so Whim falls into an established, already-approved category rather than a novel one.
+
+**Status as of 2026-09-13: iOS is untested.** Every on-device acceptance run to date (#35, #36,
+#38, #40, #41, #43b and their descendants) ran on the real Android System WebView, per #10's test
+order. Nothing about the containment model, the SDK, or the storage/version-store engines is
+Android-specific; running on iOS is a **standing open item**, not a known gap.
