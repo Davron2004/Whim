@@ -25,9 +25,13 @@
  *     matching this fake's synchronous callback invocation.
  *
  * Deliberately NOT modeled (per `xhr-transport.md` §5, this module's tests place no requirement
- * on them): `getResponseHeader`, `getAllResponseHeaders`, `responseURL`, `response` (non-text),
- * `timeout` (value), `withCredentials`, `upload`, `addEventListener`/`removeEventListener`, and
+ * on them): `getAllResponseHeaders`, `responseURL`, `response` (non-text), `timeout` (value),
+ * `withCredentials`, `upload`, `addEventListener`/`removeEventListener`, and
  * `onloadstart`/`onloadend`.
+ *
+ * `getResponseHeader` IS modeled (store-launch-compliance chain-2, task 2.1): a minimal
+ * case-insensitive lookup over headers a test sets with `setResponseHeaders`, since
+ * `xhr-transport.ts#finishHttpError`'s fake `Response` adapter reads `Retry-After` through it.
  *
  * Residual risk (explicitly out of scope — design §Risks: "only the device proves the
  * transport"): whether Android's native decoder can ever expose a `responseText` growth that
@@ -53,6 +57,7 @@ export class FakeXMLHttpRequest {
   readyState: number = READY_STATE.UNSENT;
   status = 0;
   responseText = '';
+  private responseHeaders: Record<string, string> = {};
 
   onreadystatechange: (() => void) | null = null;
   onprogress: (() => void) | null = null;
@@ -79,6 +84,18 @@ export class FakeXMLHttpRequest {
 
   setRequestHeader(name: string, value: string): void {
     this.requestHeaders[name] = value;
+  }
+
+  /** Test helper: set the headers `getResponseHeader` observes. Not driven by `respondHeaders`
+   *  itself, so most tests (which never call this) see no headers at all, matching real XHR
+   *  before any response header has arrived. */
+  setResponseHeaders(headers: Record<string, string>): void {
+    this.responseHeaders = headers;
+  }
+
+  getResponseHeader(name: string): string | null {
+    const key = Object.keys(this.responseHeaders).find(k => k.toLowerCase() === name.toLowerCase());
+    return key === undefined ? null : this.responseHeaders[key];
   }
 
   send(body: string): void {

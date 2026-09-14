@@ -16,8 +16,8 @@
  */
 
 import { Harness } from './harness';
-import { generateApp, GenerationClientError } from '../generation-client';
-import type { ClientOptions } from '../generation-client';
+import { generateApp, GenerationClientError, rewritePrompt } from '../generation-client';
+import type { ConsentedClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import type { GenerationEvent } from '@whim/contract';
@@ -36,16 +36,16 @@ async function collect(source: AsyncIterable<GenerationEvent>): Promise<Generati
   return out;
 }
 
-const BASE: ClientOptions = { baseUrl: 'https://example.invalid', deviceId: 'device-1' };
+const BASE = { baseUrl: 'https://example.invalid', deviceId: 'device-1' } as ConsentedClientOptions;
 
 /** Wire `generateApp` to drive `openXhrGenerateStream` against `fakeXhr`, bypassing the module's
  *  own runtime capability probe (`ClientOptions.streamTransport`, per `generation-client.ts`). */
-function withFakeXhr(fakeXhr: FakeXMLHttpRequest): ClientOptions {
+function withFakeXhr(fakeXhr: FakeXMLHttpRequest): ConsentedClientOptions {
   return {
     ...BASE,
     streamTransport: (opts, request, signal) =>
       openXhrGenerateStream(opts, request, signal, () => fakeXhr as unknown as XMLHttpRequest),
-  };
+  } as ConsentedClientOptions;
 }
 
 type NextResult = IteratorResult<GenerationEvent, void>;
@@ -81,8 +81,8 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function withFakeXhrTimeout(fakeXhr: FakeXMLHttpRequest): ClientOptions {
-  return { ...withFakeXhr(fakeXhr), connectTimeoutMs: WINDOW_MS };
+function withFakeXhrTimeout(fakeXhr: FakeXMLHttpRequest): ConsentedClientOptions {
+  return { ...withFakeXhr(fakeXhr), connectTimeoutMs: WINDOW_MS } as ConsentedClientOptions;
 }
 
 // --- fixtures for the linear-consumption check below ---
@@ -465,6 +465,99 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     h.eq(caught, undefined, 'no error is raised past the abort');
   });
 
+  // --- store-launch-compliance chain-2 task 2.1: code/retryAfterSeconds over the XHR transport ---
+
+  await h.test(
+    'openXhrGenerateStream: a 429 refusal carries code and retryAfterSeconds from the body and the Retry-After header',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      fakeXhr.setResponseHeaders({ 'Retry-After': '120' });
+      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+      fakeXhr.respondHeaders(429);
+      fakeXhr.respondIncremental(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }));
+      fakeXhr.respondComplete();
+      const caught = (await expectThrow(first)) as GenerationClientError;
+      h.ok(caught instanceof GenerationClientError, 'throws GenerationClientError');
+      h.eq(caught.kind, 'http', 'kind is http');
+      h.eq(caught.status, 429, 'status is carried through');
+      h.eq(caught.code, 'server_busy', "code carries the body's ApiError identifier");
+      h.eq(caught.hint, 'Try again soon', 'hint is carried through');
+      h.eq(
+        caught.retryAfterSeconds,
+        120,
+        'retryAfterSeconds reads xhr.getResponseHeader through the fake Response adapter',
+      );
+    },
+  );
+
+  await h.test(
+    'openXhrGenerateStream: a malformed Retry-After is dropped without changing kind/status/code/hint',
+    async () => {
+      const fakeXhr = new FakeXMLHttpRequest();
+      fakeXhr.setResponseHeaders({ 'Retry-After': 'soon' });
+      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+      fakeXhr.respondHeaders(429);
+      fakeXhr.respondIncremental(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }));
+      fakeXhr.respondComplete();
+      const caught = (await expectThrow(first)) as GenerationClientError;
+      h.eq(caught.retryAfterSeconds, undefined, 'a non-integer Retry-After leaves the field absent');
+      h.eq(caught.kind, 'http', 'kind is unaffected');
+      h.eq(caught.status, 429, 'status is unaffected');
+      h.eq(caught.code, 'server_busy', 'code is unaffected');
+      h.eq(caught.hint, 'Try again soon', 'hint is unaffected');
+    },
+  );
+
+  await h.test('openXhrGenerateStream: a non-ApiError body leaves code absent', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+    fakeXhr.respondHeaders(500);
+    fakeXhr.respondIncremental(JSON.stringify({ oops: true }));
+    fakeXhr.respondComplete();
+    const caught = (await expectThrow(first)) as GenerationClientError;
+    h.eq(caught.code, undefined, 'a body with no error identifier leaves code absent');
+    h.eq(caught.kind, 'http', 'still classified http');
+  });
+
+  await h.test(
+    'generation-stream-transport delta: fetch and XHR classify the same 429/Retry-After:120/server_busy refusal identically',
+    async () => {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
+          status: 429,
+          headers: { 'Retry-After': '120' },
+        })) as typeof fetch;
+      let fetchCaught: GenerationClientError | undefined;
+      try {
+        await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+      } catch (err) {
+        fetchCaught = err as GenerationClientError;
+      }
+
+      const fakeXhr = new FakeXMLHttpRequest();
+      fakeXhr.setResponseHeaders({ 'Retry-After': '120' });
+      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+      fakeXhr.respondHeaders(429);
+      fakeXhr.respondIncremental(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }));
+      fakeXhr.respondComplete();
+      const xhrCaught = (await expectThrow(first)) as GenerationClientError;
+
+      h.ok(fetchCaught instanceof GenerationClientError, 'the fetch path (rewritePrompt) raised GenerationClientError');
+      const fieldsOf = (e: GenerationClientError) => ({
+        kind: e.kind,
+        status: e.status,
+        code: e.code,
+        hint: e.hint,
+        retryAfterSeconds: e.retryAfterSeconds,
+      });
+      h.eq(
+        fieldsOf(xhrCaught),
+        fieldsOf(fetchCaught as GenerationClientError),
+        'both transports classify the identical refusal identically',
+      );
+    },
+  );
+
   // --- flow-wait-hygiene chain-1: the connect / first-event window on the XHR transport ---
 
   await h.test(
@@ -540,14 +633,14 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
         type: 'result',
         app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
       };
-      const opts: ClientOptions = {
+      const opts = {
         ...BASE,
         fetchImpl,
         streamTransport: (o, r, s) => {
           transportCalls++;
           return openXhrGenerateStream(o, r, s, () => fakeXhr as unknown as XMLHttpRequest);
         },
-      };
+      } as ConsentedClientOptions;
       const collected = collect(generateApp(opts, { prompt: 'p' }));
       fakeXhr.respondHeaders(200);
       fakeXhr.respondIncremental(sseFrame(event, 1));

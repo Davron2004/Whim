@@ -52,6 +52,9 @@ import { runHistoryWaitTests } from './history-wait.suite';
 import { runReleaseConfigTests } from './release-config.suite';
 import { runAiConsentTests } from './ai-consent.suite';
 import { runAppLinkTests } from './app-link.suite';
+import { runTransportSharedTests } from './transport-shared.suite';
+import { runServiceRefusalTests } from './service-refusal.suite';
+import { runReportPayloadTests } from './report-payload.suite';
 
 const h = new Harness();
 
@@ -101,6 +104,9 @@ await runHistoryWaitTests(h);
 await runReleaseConfigTests(h);
 await runAiConsentTests(h);
 await runAppLinkTests(h);
+await runTransportSharedTests(h);
+await runServiceRefusalTests(h);
+await runReportPayloadTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

@@ -101,7 +101,7 @@ import { showOfflineIndicator, showServerUnreachableNotice } from './connectivit
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
-import type { ClientOptions } from './generation-client';
+import type { ConsentedClientOptions } from './generation-client';
 
 type Screen =
   | { kind: 'home' }
@@ -327,8 +327,13 @@ function LauncherShell({
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
 
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
-  const clientOptions = useMemo<ClientOptions | null>(
-    () => (serverUrl != null ? { baseUrl: serverUrl, deviceId } : null),
+  // TEMPORARY bridge for store-launch-compliance chain-2's `ConsentedClientOptions` brand
+  // (design D2): this memo still has no AI-data consent gating — chain-3 (task 3.4) replaces it
+  // outright with `consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)`.
+  // The cast exists only so `clarifyPrompt`/`rewritePrompt`/`generateApp`'s tightened parameter
+  // type still compiles in the meantime; it grants no consent that wasn't already implicit here.
+  const clientOptions = useMemo<ConsentedClientOptions | null>(
+    () => (serverUrl != null ? ({ baseUrl: serverUrl, deviceId } as ConsentedClientOptions) : null),
     [serverUrl, deviceId],
   );
 

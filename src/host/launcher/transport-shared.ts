@@ -23,6 +23,7 @@
  */
 
 import type { DeviceIdError, GenerateRequest } from '@whim/contract';
+import type { ConsentStatus } from './ai-consent';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -52,6 +53,29 @@ function isDeviceIdError(value: unknown): value is DeviceIdError {
     (value.error === 'missing_device_id' || value.error === 'invalid_device_id') &&
     isNonEmptyString(value.hint)
   );
+}
+
+/** Structural mirror of `@whim/contract`'s `ApiError` (`{ error: string, hint: string.min(1) }`)
+ *  — the shape design D8 requires before `GenerationClientError.code` is filled (store-launch-
+ *  compliance, spec "A refusal is recognised by the contract's closed refusal vocabulary"). */
+function isApiErrorBody(value: unknown): value is { error: string; hint: string } {
+  return isRecord(value) && typeof value.error === 'string' && isNonEmptyString(value.hint);
+}
+
+/** The response's `Retry-After` header as a positive integer number of seconds, or `undefined`
+ *  for a missing, non-integer, zero, or negative value (spec "The streaming transport preserves
+ *  the client error taxonomy" — a malformed header SHALL NOT change the error's `kind`, and
+ *  SHALL simply leave this field absent). `response.headers` is optional-chained: every REAL
+ *  `Response` (fetch's, and `xhr-transport.ts`'s fake-`Response` adapter) has one, but several
+ *  existing test doubles across this codebase build a bare `{ status, json }` stand-in with no
+ *  `headers` at all — that is simply another shape of "missing", not a reason to throw. */
+function retryAfterSecondsOf(response: Response): number | undefined {
+  const raw = response.headers?.get('Retry-After') ?? null;
+  if (raw === null) {
+    return undefined;
+  }
+  const seconds = Number(raw);
+  return Number.isInteger(seconds) && seconds > 0 ? seconds : undefined;
 }
 
 /** The exact shape `openGenerateStream` resolves to (`generation-client.ts`). Any conforming
@@ -95,6 +119,33 @@ export interface ClientOptions {
  *  observed both transports disarm, so a long generation runs indefinitely. Overridable per
  *  request through `ClientOptions.connectTimeoutMs` solely so the acceptance suites can drive the
  *  window in milliseconds instead of sleeping fifteen seconds; production callers never set it. */
+/** Unexported brand key — see `ConsentedClientOptions` below. Nothing outside this module can
+ *  spell this symbol, so a plain object literal can never structurally satisfy the branded type
+ *  by accident. */
+declare const CONSENTED: unique symbol;
+
+/** A `ClientOptions` proven to have been built from a CURRENT AI-data consent grant (design D2;
+ *  spec ai-data-consent "Nothing is sent to the server before consent is granted" — "Request
+ *  options for clarify, rewrite, generate and connectivity probes SHALL come from one gate that
+ *  yields nothing without a current grant, so a call site cannot build a request that skips it").
+ *  `consentedClientOptions` below is the only constructor. `sendReport` is the deliberate
+ *  exception (design D3) and keeps taking plain `ClientOptions`. */
+export type ConsentedClientOptions = ClientOptions & { readonly [CONSENTED]: true };
+
+/** The one gate `clarifyPrompt`, `rewritePrompt` and `generateApp` require their options through.
+ *  Returns `null` unless `status.kind === 'granted'` — an `absent` or `outdated` grant yields no
+ *  options, so a caller has nothing to send a request with. */
+export function consentedClientOptions(
+  status: ConsentStatus,
+  baseUrl: string,
+  deviceId: string,
+): ConsentedClientOptions | null {
+  if (status.kind !== 'granted') {
+    return null;
+  }
+  return { baseUrl, deviceId } as ConsentedClientOptions;
+}
+
 export const CONNECT_TIMEOUT_MS = 15_000;
 
 export function connectTimeoutOf(opts: ClientOptions): number {
@@ -113,18 +164,30 @@ export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stre
  * - `http`       — any other non-2xx response.
  * - `stream_parse` — a `generateApp` SSE frame failed JSON parsing or `GenerationEvent`
  *   validation.
+ *
+ * `code` and `retryAfterSeconds` are `http`-only (store-launch-compliance design D8/D11):
+ * `code` is the body's `ApiError.error` identifier, present only when the body structurally
+ * validates as `ApiError`; `retryAfterSeconds` is the response's `Retry-After` header, present
+ * only when it is a positive integer. Both are `undefined` on every other `kind`.
  */
 export class GenerationClientError extends Error {
   readonly kind: GenerationClientErrorKind;
   readonly status?: number;
   readonly hint?: string;
+  readonly code?: string;
+  readonly retryAfterSeconds?: number;
 
-  constructor(kind: GenerationClientErrorKind, opts?: { status?: number; hint?: string }) {
+  constructor(
+    kind: GenerationClientErrorKind,
+    opts?: { status?: number; hint?: string; code?: string; retryAfterSeconds?: number },
+  ) {
     super(opts?.hint ?? kind);
     this.name = 'GenerationClientError';
     this.kind = kind;
     this.status = opts?.status;
     this.hint = opts?.hint;
+    this.code = opts?.code;
+    this.retryAfterSeconds = opts?.retryAfterSeconds;
   }
 }
 
@@ -176,6 +239,8 @@ export async function httpErrorFrom(response: Response, path: string, baseUrl: s
     bodyJson !== null && typeof bodyJson === 'object' && typeof (bodyJson as Record<string, unknown>).hint === 'string'
       ? ((bodyJson as Record<string, unknown>).hint as string)
       : undefined;
+  const code = isApiErrorBody(bodyJson) ? bodyJson.error : undefined;
+  const retryAfterSeconds = retryAfterSecondsOf(response);
   logMappedError(path, baseUrl, 'http', { status: response.status, message: hint });
-  return new GenerationClientError('http', { status: response.status, hint });
+  return new GenerationClientError('http', { status: response.status, hint, code, retryAfterSeconds });
 }
