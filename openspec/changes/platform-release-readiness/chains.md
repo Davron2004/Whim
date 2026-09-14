@@ -9,20 +9,31 @@
     wave 3: chain-0 (HUMAN-BOOTSTRAP, after chain-4) ∥ chain-7 (after 3, 4, 6) ∥ chain-8 (after 3)
     wave 4: chain-5 (after 3, 0) ∥ chain-9 (after 4, 6, 8)
     wave 5: chain-10 (after 9)
-    attended: chain-12 (after 0, 2, 5, 7). It doesn't wait for store-launch-compliance.
+    network deny (design D17), reproduce first:
+      chain-14 (no deps, dispatch now) → chain-15 (attended reproduction, after 14; must finish
+      before 16 and 17 dispatch) → chain-16 (after 1, 15) → chain-17 (after 3, 5, 15, 16)
+    attended: chain-12 (after 0, 2, 5, 7, 14, 16, 17). It doesn't wait for store-launch-compliance.
     after store-launch-compliance has fully merged: chain-11 (after 10), then chain-13 (attended, after 11, 12)
+      and chain-18 (network deny records, after 11, 12, 16, 17)
 
   Parallel-safety rules every dispatched chain inherits:
   - Launcher files are off limits: src/host/launcher/** (LauncherRoot.tsx, copy.ts, HomeScreen.tsx,
     SettingsScreen.tsx, prompt-flow screens, test/acceptance.ts). chain-11 only IMPORTS
     src/host/launcher/release-config.ts and edits docs/store/review-notes.md, which is why it
     waits for store-launch-compliance.
-  - A chain edits only the files its block lists. checks/test/acceptance.ts and
-    checks/test/release/index.ts are edited once, by chain-1. Each later suite fills its own
-    pre-created checks/test/release/<name>.suite.ts. scripts/release/cli.ts is created by chain-1
-    and extended only by chain-6, then chain-9, in that order. ios/Whim.xcodeproj/project.pbxproj
-    goes chain-3, then chain-5. ios/Whim/AppDelegate.swift goes chain-3, then chain-7.
-    AndroidManifest.xml goes chain-4, then chain-7.
+  - A chain edits only the files its block lists. checks/test/acceptance.ts is edited once, by
+    chain-1. checks/test/release/index.ts is created by chain-1 and gets one more import and call
+    from chain-16. Each later suite fills its own pre-created checks/test/release/<name>.suite.ts,
+    except native-network-deny.suite.ts, which chain-16 creates and chain-17 extends.
+    scripts/release/cli.ts is created by chain-1 and extended only by chain-6, then chain-9, in
+    that order. ios/Whim.xcodeproj/project.pbxproj goes chain-3, then chain-5, then chain-17.
+    ios/Whim/AppDelegate.swift goes chain-3, then chain-7; the network deny doesn't touch it.
+    AndroidManifest.xml goes chain-4, then chain-7. MainApplication.kt is chain-16 only. App.tsx
+    is chain-14 only (attended chains flip its flags locally and never commit them).
+    docs/decisions.md goes chain-11, then chain-18.
+  - The network deny needs no prop on src/host/launcher/MiniAppView.tsx or DevProbeScreen.tsx, so
+    no network deny chain edits a launcher file. chain-14 only IMPORTS
+    src/host/launcher/deliver.ts, which no store-launch-compliance task edits.
   - Suites stay pure and portable, because the gate also runs in the Linux devcontainer. They never
     shell out to xcrun, xcodebuild, keytool, aapt2, gradle, fastlane or Playwright; only `git
     ls-files` is allowed. Tool-driven code lives behind CLI commands and is tested through pure
@@ -31,7 +42,7 @@
     ESLint config, knip.json, babel/metro config, Gemfile or package-lock.json. package.json is
     chain-0 only.
   - Worktrees: symlink the primary tree's node_modules before self-gating (memory
-    whim-worktree-module-resolution). The native build steps in 4.7, 5.7, 6.5 and 8.5 are
+    whim-worktree-module-resolution). The native build steps in 4.7, 5.7, 6.5, 8.5, 17.5 and 18.5 are
     evidence, not the gate. Report "not run" when the toolchain or network isn't available;
     never claim a build ran. Run `bundle` with `BUNDLE_PATH=vendor/bundle`.
   - Every chain not marked HUMAN-BOOTSTRAP or attended is dispatchable.
@@ -149,11 +160,11 @@
 
 ## chain-12: attended-device-acceptance — separate-session (attended, human-run)
 
-- tasks: 13.1–13.7
-- rationale: these checks need the paired iPhone 16 Pro Max, Xcode signed into the AnyCognition team, a running Android emulator, and ears and eyes for tones and launch frames. No dispatched implementer has any of that. Results are recorded PENDING at merge and don't block the gate. They include the on-device proof of the TextDecoder fix and the WebKit containment probe on physical hardware.
-- reads: docs/release/mobile.md; specs/hermes-runtime-prerequisites/spec.md; specs/mini-app-cues/spec.md (delta); specs/app-icon-and-launch/spec.md §"Launch shows the mark on the shell paper color with no flash"; specs/app-links/spec.md §"The iOS app delivers universal links to the launcher", §"The Android app verifies and delivers app links"
+- tasks: 13.1–13.9
+- rationale: these checks need the paired iPhone 16 Pro Max, Xcode signed into the AnyCognition team, a running Android emulator, a canary on the Mac with `sudo tcpdump`, and ears and eyes for tones and launch frames. No dispatched implementer has any of that. Results are recorded PENDING at merge and don't block the gate. They include the on-device proof of the TextDecoder fix, the WebKit containment probe on physical hardware, and the network deny's post-fix pass, negative control and fail-closed check on both platforms.
+- reads: docs/release/mobile.md; specs/hermes-runtime-prerequisites/spec.md; specs/mini-app-cues/spec.md (delta); specs/app-icon-and-launch/spec.md §"Launch shows the mark on the shell paper color with no flash"; specs/app-links/spec.md §"The iOS app delivers universal links to the launcher", §"The Android app verifies and delivers app links"; specs/sandbox-isolation/spec.md (delta, all three requirements); design.md D17 "Reproduce first, then prove"; progress.md "Network deny reproduction"; handoff: handoff/netdeny-probe.md, handoff/android-network-deny.md, handoff/ios-network-deny.md
 - writes-contract: none (results go to progress.md; failures become fix-loop findings)
-- after: chain-0, chain-2, chain-5, chain-7
+- after: chain-0, chain-2, chain-5, chain-7, chain-14, chain-16, chain-17
 
 ## chain-13: attended-accounts-and-uploads — separate-session (attended, human-run)
 
@@ -162,3 +173,46 @@
 - reads: docs/release/mobile.md; handoff/release-cli.md; specs/store-release-pipeline/spec.md; specs/store-listing/spec.md
 - writes-contract: none (commits only `release/android-upload-cert.sha256`, `release/android-play-signing-cert.sha256`, `release/store/play/data-safety.csv` and screenshots)
 - after: chain-11, chain-12
+
+## chain-14: network-deny-probe-and-canary
+
+- tasks: 15.1–15.5
+- rationale: the reproduction tooling for design D17, built before the fix so it can fail against today's build. It holds the canary mini-app sources, the canary server that compiles them with the production bundle contract and counts hits, the flag-gated on-device probe screen, and its `App.tsx` flag. It shares one vocabulary (variants, run id, hits) and touches no native file.
+- files: `scripts/netdeny/{variants.ts,canary.ts,run.mjs}` (new), `src/host/NetworkDenyProbeScreen.tsx` (new), `App.tsx`
+- reads: specs/sandbox-isolation/spec.md (delta) §"The WebView that hosts mini-apps refuses network loads natively", §"The native refusal is locked by the checks and proven on device" (the device scenario); design.md D17 ("Reproduce first, then prove", "What the runtime page loads"); research.md E ("Mounts", "The runtime page needs no network", "Probe constraints"); docs/security/2026-09-14-webrtc-alias.md §"Reproduction", §"Open item"; `synthrun/builder.ts` (`buildCandidateSource`, import only); `synthrun/test/isolation.ts:310-352` (attack shape); `src/host/launcher/deliver.ts` (import only); `src/host/launcher/MiniAppView.tsx:129-141` (props to mirror, read only); `checks/test/run.mjs` (runner idiom); handoff: none
+- writes-contract: handoff/netdeny-probe.md (the `NetdenyVariant` members and `NAVIGATION_VARIANTS` verbatim; the canary command line, flags, defaults, routes, output line format and exit codes; the `--expect leak` pass rule; the `RUN_NETDENY_PROBE` flag and `NETDENY_CANARY_HOST_OVERRIDE` constant; default hosts and ports per platform; the probe-only string literal an operator greps for in a bundle; what each on-screen row shows)
+
+## chain-15: network-deny-reproduction — separate-session (attended)
+
+- tasks: 16.1–16.5
+- rationale: the failing baseline, on real engines, before any fix lands. It needs the Android emulator, the iOS simulator with Xcode, a canary on the Mac and `sudo tcpdump`, so a foreground attended session runs it (a human, or an attended agent session with those tools). Its stop rule gates chains 16 and 17.
+- reads: handoff/netdeny-probe.md; design.md D17 "Reproduce first, then prove"; CLAUDE.md "Android build & run"; tasks.md 4.7 (the iOS simulator Release build); docs/security/2026-09-14-webrtc-alias.md §"On-device confirmation" item 4
+- writes-contract: none (results go to progress.md "Network deny reproduction", which chains 16, 17 and 18 read)
+- after: chain-14
+
+## chain-16: android-webview-network-deny
+
+- tasks: 17.1–17.5
+- rationale: the Android half of the leg in one context: the view manager subclass that sets `blockNetworkLoads` at creation, the package that serves only it, the in-place replacement of the autolinked package, and the suite that locks all three.
+- files: `android/app/src/main/java/com/whim/webview/{NetworkDeniedWebViewManager.kt,NetworkDeniedWebViewPackage.kt}` (new), `android/app/src/main/java/com/whim/MainApplication.kt`, `checks/test/release/native-network-deny.suite.ts` (new), `checks/test/release/index.ts` (one import and one call)
+- reads: specs/sandbox-isolation/spec.md (delta, all three requirements; Android sentences and scenarios); design.md D17 (opening paragraphs, "Android", the suite paragraph of "Reproduce first, then prove"); research.md E ("No supported prop", "Android extension point", "Android ordering", "Android duplicate managers", "Chromium semantics"); progress.md "Network deny reproduction" (Android); `node_modules/react-native-webview/android/src/newarch/com/reactnativecommunity/webview/RNCWebViewManager.java` and `.../main/java/com/reactnativecommunity/webview/RNCWebViewPackage.java` (read only); handoff: handoff/release-tooling.md (suite convention, `checks/test/harness.ts` imports, the `index.ts` shape), handoff/netdeny-probe.md (for 17.5)
+- writes-contract: handoff/android-network-deny.md (the Kotlin class names and package; the `MainApplication` replacement and its `check` message; the suite file's exported `run()`, its fixture helper signatures and where chain-17 adds iOS cases; the exact one-line local edit that removes the deny for chain-12's negative control, and how to confirm the rebuilt APK carries it)
+- after: chain-1, chain-15
+
+## chain-17: ios-webview-network-deny
+
+- tasks: 18.1–18.5
+- rationale: the iOS half of the leg in one context: the rule file, the `+load` initializer swap with its fail-closed branch, the target membership, and the iOS cases of the shared suite.
+- files: `ios/Whim/WebViewNetworkDeny.json` (new), `ios/Whim/WhimWebViewNetworkDeny.m` (new), `ios/Whim.xcodeproj/project.pbxproj` (Sources and Resources membership only), `checks/test/release/native-network-deny.suite.ts` (iOS cases)
+- reads: specs/sandbox-isolation/spec.md (delta, all three requirements; iOS sentences and scenarios); design.md D17 (opening paragraphs, "iOS", the suite paragraph of "Reproduce first, then prove"); research.md E ("No supported prop", "iOS extension point", "WebKit semantics", "iOS project"); progress.md "Network deny reproduction" (iOS); `node_modules/react-native-webview/apple/RNCWebViewImpl.m:423-519` (read only); handoff: handoff/ios-project.md (the `xcodeproj` gem command, the pbxproj reader), handoff/android-network-deny.md (suite structure), handoff/netdeny-probe.md (for 18.5)
+- writes-contract: handoff/ios-network-deny.md (the rule list identifier and file name; the `WhimNetworkDeny:` log lines verbatim; the exact local edit that removes the deny for chain-12's negative control; the exact local edit that points the loader at a missing file for the fail-closed check; the `xcodeproj` commands used)
+- after: chain-3 (project.pbxproj, handoff/ios-project.md), chain-5 (project.pbxproj), chain-15, chain-16 (native-network-deny.suite.ts, handoff/android-network-deny.md)
+
+## chain-18: network-deny-records
+
+- tasks: 19.1–19.4
+- rationale: the written record of the leg, once its proof exists: the decision entry, the audit's open item and on-device results, the containment bullet agents read first, and the spike note. It waits for chain-11 because both append to `docs/decisions.md` and chain-11 comes after every compliance merge, so the contested number is read last. It waits for chain-12 so the security doc carries measured results.
+- files: `docs/decisions.md` (one appended entry), `docs/security/2026-09-14-webrtc-alias.md`, `CLAUDE.md` (the "Containment is three legs" bullet only), `docs/spike2-findings.md` (one dated note)
+- reads: design.md D17; specs/sandbox-isolation/spec.md (delta); progress.md "Network deny reproduction" and "Network deny acceptance"; the landed `docs/decisions.md` tail; docs/decisions.md #35, #37, #64; handoff: handoff/netdeny-probe.md, handoff/android-network-deny.md, handoff/ios-network-deny.md
+- writes-contract: none
+- after: chain-11, chain-12, chain-16, chain-17
