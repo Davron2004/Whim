@@ -94,6 +94,9 @@ import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScree
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { loadServerUrl, saveServerUrl } from './server-address';
+import { probeServer } from './server-probe';
+import { ConnectivityLoop } from './connectivity';
+import type { Connectivity } from './connectivity';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
@@ -327,6 +330,52 @@ function LauncherShell({
     () => (serverUrl != null ? { baseUrl: serverUrl, deviceId } : null),
     [serverUrl, deviceId],
   );
+
+  // Session connectivity (design decisions 4-6; `connectivity.ts` owns the state machine). A
+  // ref, not state, holds the loop itself — `markOnline()` below needs a stable identity that
+  // always reaches the CURRENT loop, the same reason `genRef`/`liveRef` are refs.
+  const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
+  const connectivityLoopRef = useRef<ConnectivityLoop | null>(null);
+
+  /** The shared success hook (design decision 6, spec "A real generation or rewrite call
+   *  succeeding..."): cancels any pending scheduled retry and marks the session online. Wired
+   *  into the `clarifyPrompt`/`generateApp` call sites below. Idempotent — a no-op once already
+   *  online, and a no-op if no loop is running (`clientOptions == null`). */
+  const markOnline = useCallback((): void => {
+    connectivityLoopRef.current?.markOnline();
+  }, []);
+
+  // `clientOptions == null` leaves `connectivity` at its `'unknown'` default — nothing
+  // configured, nothing to check, and distinct from `'offline'` (configured but unreachable;
+  // spec "No server address configured is distinct from an unreachable configured address").
+  // Once configured, a fresh `ConnectivityLoop` owns the checking → probe → online/offline+
+  // backoff cycle; the cleanup stops it, so a stale schedule never survives an address change or
+  // unmount (mirrors the `serverUrl`-keyed dev-log-sink effect below).
+  useEffect(() => {
+    if (clientOptions == null) {
+      connectivityLoopRef.current = null;
+      setConnectivity('unknown');
+      return undefined;
+    }
+    const loop = new ConnectivityLoop({
+      probe: () => probeServer(clientOptions.baseUrl),
+      publish: setConnectivity,
+    });
+    connectivityLoopRef.current = loop;
+    loop.start();
+    return () => {
+      loop.stop();
+      if (connectivityLoopRef.current === loop) connectivityLoopRef.current = null;
+    };
+  }, [clientOptions]);
+
+  // A breadcrumb for every connectivity transition, the same device-observability discipline as
+  // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of
+  // its own yet (offline-ux-surfaces, a later change reads it off this shell), so the seam is the
+  // only place a transition is currently observable.
+  useEffect(() => {
+    log.debug(CHANNELS.app, 'connectivity state changed', { connectivity });
+  }, [connectivity]);
 
   /** How many tiles the grid is known to be about to show — the skeleton's exact count. Read
    *  synchronously from the index at mount, before first-run seeding resolves. */
@@ -630,6 +679,9 @@ function LauncherShell({
           )
         ).questions,
       );
+      // A resolved `clarifyPrompt` is a real server response — proof of connectivity equivalent
+      // to a successful dedicated probe (spec "A real generation or rewrite call succeeding...").
+      markOnline();
     } catch (e) {
       // The user left the loading clarify screen while this was in flight (back to compose, or
       // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
@@ -827,6 +879,10 @@ function LauncherShell({
           terminal = event;
         }
       }
+      // The stream loop completed without throwing a transport-classified error — a real server
+      // response, proof of connectivity equivalent to a successful dedicated probe (spec "A real
+      // generation or rewrite call succeeding...").
+      markOnline();
 
       if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
       releaseGenRef(ctl);
