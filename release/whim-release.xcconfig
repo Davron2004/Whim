@@ -1,0 +1,18 @@
+// Whim's one native release file (design D1, platform-release-readiness). Read by the Xcode
+// project level (this file as `baseConfigurationReference`), by `android/app/build.gradle`'s
+// own small Groovy parser, and by `scripts/release/lib/native-config.ts` for the release
+// checks and the release CLI — never duplicated as a literal anywhere else.
+//
+// Grammar is strict: "KEY = VALUE" lines, "//" comment lines, and blank lines only. No
+// `#include`, no `$(...)` references — every value below is a literal. The release checks
+// reject any other line, naming its line number.
+//
+// WHIM_DOMAIN must stay in lockstep with the WHIM_DOMAIN constant in
+// src/host/launcher/release-config.ts — the domain-lockstep suite fails the gate if they drift.
+// See docs/release/mobile.md for how a release run uses these values.
+
+WHIM_APP_ID = com.anycognition.whim
+WHIM_APPLE_TEAM_ID = 2B7K4YLS34
+WHIM_MARKETING_VERSION = 1.0.0
+WHIM_BUILD_NUMBER = 1
+WHIM_DOMAIN = example.com

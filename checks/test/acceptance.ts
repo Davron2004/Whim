@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, report, assert, assertHasKind, assertNoKind, findByKind, kindsOf } from './harness';
 import { runHostileCorpus } from './hostile/corpus';
+import { runReleaseSuites } from './release';
 import {
   CAPABILITY_EXPORTS,
   CheckReport,
@@ -1402,6 +1403,7 @@ async function main(): Promise<void> {
   await testAssemblyOrderingPurity();
   await testHonestFixturesAndLatencyProbe();
   await runHostileCorpus();
+  await runReleaseSuites();
 }
 
 main()
