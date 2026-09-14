@@ -9,8 +9,13 @@
 // and never touches `BackPolicy` (which only ever binds inside `useMiniAppHost`).
 import React, { useEffect, useState } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { RADIUS, TYPE_SCALE } from '../../sdk/theme';
-import { COPY } from './copy';
+import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
+import { COPY, serverProbeLabel } from './copy';
+import { sanitizeServerUrl } from './server-address';
+import type { ProbeResult } from './server-probe';
+import { probeServer } from './server-probe';
+import { DebouncedProbe } from './settings-probe';
+import type { SettingsProbeState } from './settings-probe';
 import { SHELL_PALETTE } from './theme';
 
 export interface SettingsScreenProps {
@@ -27,6 +32,18 @@ export interface SettingsScreenProps {
   onHighlightingChange: (enabled: boolean) => void;
 }
 
+/** The save-time probe result's colour (design.md decision 1's three-way classification), drawn
+ *  from the same status hues the rest of the launcher uses for state (`STATUS_COLORS`) plus
+ *  `SHELL_PALETTE.danger` (passed in as a plain string — `SettingsScreen` is the one caller, so
+ *  this takes no palette-typed parameter of its own) — no hex literal of this screen's own.
+ *  `verified` reads as done (teal), `unreachable` as the shell's danger red, `unverified` as the
+ *  reserved muted grey — the only third distinct hue this token set offers. */
+function probeResultColor(result: ProbeResult, dangerColor: string): string {
+  if (result === 'verified') return STATUS_COLORS.done;
+  if (result === 'unreachable') return dangerColor;
+  return STATUS_COLORS.waiting;
+}
+
 export default function SettingsScreen({
   onBack,
   serverUrl,
@@ -35,7 +52,15 @@ export default function SettingsScreen({
   onHighlightingChange,
 }: Readonly<SettingsScreenProps>) {
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
+  const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
   const p = SHELL_PALETTE;
+
+  // The debounced probe (design.md decision 3) is created once and lives for the screen's own
+  // lifetime — `publish` is a stable `setState` dispatch, `probe` a stable module import, so no
+  // dependency ever changes under it.
+  const [debouncedProbe] = useState(
+    () => new DebouncedProbe({ probe: (url) => probeServer(url), publish: setProbeState }),
+  );
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -44,6 +69,11 @@ export default function SettingsScreen({
     });
     return () => sub.remove();
   }, [onBack]);
+
+  // Cancels any pending debounce timer / in-flight probe on unmount — the screen's own lifetime
+  // is the probe's scope (design.md decision 3: "SettingsScreen owns this local debounce/probe-
+  // state ... the result never needs to outlive the screen").
+  useEffect(() => () => debouncedProbe.cancel(), [debouncedProbe]);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -70,7 +100,15 @@ export default function SettingsScreen({
         </Text>
         <TextInput
           value={serverUrlDraft}
-          onChangeText={(next) => { setServerUrlDraft(next); onServerUrlChange(next); }}
+          onChangeText={(next) => {
+            // Save is unchanged: immediate and unconditional, regardless of the probe below.
+            setServerUrlDraft(next);
+            onServerUrlChange(next);
+            // Only the informational probe is debounced (design.md decision 3) — the same
+            // normalization `saveServerUrl` applies before persisting, so the probe never trips
+            // over a trailing slash the save itself would have stripped.
+            debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
+          }}
           placeholder={COPY.serverAddressPlaceholder}
           placeholderTextColor={p.textMuted}
           autoCapitalize="none"
@@ -83,6 +121,11 @@ export default function SettingsScreen({
           ]}
         />
         <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+        {probeState !== 'idle' && probeState !== 'checking' ? (
+          <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeResultColor(probeState, p.danger) }]}>
+            {serverProbeLabel(probeState)}
+          </Text>
+        ) : null}
 
         <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
           {COPY.highlightingSectionTitle}

@@ -222,6 +222,11 @@ export const COPY = {
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
   promptServerUnconfigured: 'Set your server’s address in Settings before making an app.',
   promptOpenSettings: 'Open Settings',
+  // The debounced save-time probe's three-way inline result (server-connectivity, design.md
+  // decision 3) — shown under the server-address field a moment after the user stops typing.
+  serverProbeVerified: 'Verified — this is a Whim server.',
+  serverProbeUnverified: 'Something answered, but it doesn’t look like a Whim server.',
+  serverProbeUnreachable: 'Can’t reach this address.',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
@@ -236,6 +241,16 @@ export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'):
   if (state === 'building') return COPY.ghostCaptionBuilding;
   if (state === 'failed') return COPY.ghostCaptionFailed;
   return COPY.ghostCaptionInterrupted;
+}
+
+/** The Settings screen's save-time probe result (server-connectivity, design.md decision 1;
+ *  `server-probe.ts`'s `ProbeResult`). Kept as the bare literal union rather than importing
+ *  `ProbeResult` — `copy.ts` stays free of any non-`react`/non-`react-native` module dependency,
+ *  the same discipline `ghostStateCaption` keeps. */
+export function serverProbeLabel(result: 'verified' | 'unverified' | 'unreachable'): string {
+  if (result === 'verified') return COPY.serverProbeVerified;
+  if (result === 'unverified') return COPY.serverProbeUnverified;
+  return COPY.serverProbeUnreachable;
 }
 
 /** The delete confirmation body for a named app. */
