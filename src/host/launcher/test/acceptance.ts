@@ -49,6 +49,9 @@ import { runAppBusyTests } from './app-busy.suite';
 import { runBootStateTests } from './boot-state.suite';
 import { runRealmDeliveryTests } from './realm-delivery.suite';
 import { runHistoryWaitTests } from './history-wait.suite';
+import { runReleaseConfigTests } from './release-config.suite';
+import { runAiConsentTests } from './ai-consent.suite';
+import { runAppLinkTests } from './app-link.suite';
 
 const h = new Harness();
 
@@ -95,6 +98,9 @@ await runAppBusyTests(h);
 await runBootStateTests(h);
 await runRealmDeliveryTests(h);
 await runHistoryWaitTests(h);
+await runReleaseConfigTests(h);
+await runAiConsentTests(h);
+await runAppLinkTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

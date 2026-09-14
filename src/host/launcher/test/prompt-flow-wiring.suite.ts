@@ -32,7 +32,8 @@ import { MapKVBackend } from '../../version-store';
 import { PendingBuildStore } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
 import { dropPendingBuild } from '../build-lifecycle';
-import { loadServerUrl, saveServerUrl } from '../server-address';
+import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from '../server-address';
+import { RELEASE } from '../release-config';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ClientOptions } from '../generation-client';
 import { buildGenerateRequest } from '../generation-request';
@@ -124,6 +125,35 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     // also tolerate a backend that returns null (the documented KVBackend contract allows either).
     const nullish = { ...kv, getString: () => null } as unknown as MapKVBackend;
     h.eq(loadServerUrl(nullish), undefined, 'a null read must resolve to undefined, not throw');
+  });
+
+  // ── effectiveServerUrl / clearServerUrl (release-config "The compiled-in server is used
+  // unless the user sets an override") ───────────────────────────────────────────────────────
+
+  await h.test('effectiveServerUrl: a fresh store resolves to the compiled-in production server', () => {
+    const kv = new MapKVBackend();
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'no saved override -> RELEASE.serverUrl');
+  });
+
+  await h.test('effectiveServerUrl: a saved override wins over the compiled-in server', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, '10.0.2.2:8787');
+    h.eq(effectiveServerUrl(kv), '10.0.2.2:8787', 'a saved override takes priority');
+  });
+
+  await h.test('effectiveServerUrl: a whitespace-only saved value falls back to the default', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, '   ');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'blank/whitespace counts as no override');
+  });
+
+  await h.test('clearServerUrl: removes a saved override, restoring the compiled-in default', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, '10.0.2.2:8787');
+    h.eq(effectiveServerUrl(kv), '10.0.2.2:8787', 'override is active before clearing');
+    clearServerUrl(kv);
+    h.eq(loadServerUrl(kv), undefined, 'the saved key is gone');
+    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
   });
 
   // ── the clarify exchange, over an injected fetch ────────────────────────────────────────────

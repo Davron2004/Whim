@@ -10,6 +10,7 @@
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
+import { RELEASE } from './release-config';
 
 const SERVER_URL_KEY = 'whim.server-url:v1';
 
@@ -48,4 +49,22 @@ export function saveServerUrl(kv: KVBackend, raw: string): void {
   } else {
     kv.set(SERVER_URL_KEY, sanitized);
   }
+}
+
+/**
+ * The server every request actually goes to (release-config "The compiled-in server is used
+ * unless the user sets an override"): the saved override when one is set — a blank or
+ * whitespace-only saved value already reads as "no override" via `loadServerUrl` — else the
+ * compiled-in production server.
+ */
+export function effectiveServerUrl(kv: KVBackend): string {
+  return loadServerUrl(kv) ?? RELEASE.serverUrl;
+}
+
+/**
+ * Remove the saved override so the next request goes to the compiled-in server, with no restart
+ * needed (same spec, "Clearing the override restores the default").
+ */
+export function clearServerUrl(kv: KVBackend): void {
+  kv.delete(SERVER_URL_KEY);
 }
