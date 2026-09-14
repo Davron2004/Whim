@@ -13,3 +13,4 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - 17:45 dispatched chain-5 BASE e3eb022
 - 17:52 chain-5 report: complete, GATE PASS, class-A (pure connectivity-ux.ts helper) · integrity OK · merged · regate-pass. All 16 tasks done.
 - 17:56 gate-full on staging tip 51f95bc: FULL GATE PASSED · reviewer dispatched on 889bc2d..51f95bc (server-connectivity paths)
+- 17:59 reviewer: APPROVE, spec conformance full, report honesty matches. Correction to the chain-2 line: ProbeResultForTest never landed (fixed before commit). Deferred to the launch fix batch: a behavioural ConnectivityLoop.stop() test (clears the pending timer). Closure folds into the single store-launch PR.
