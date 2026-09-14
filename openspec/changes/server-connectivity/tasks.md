@@ -2,8 +2,8 @@
 
 ## 1. Server-side healthz identity stamp
 
-- [ ] 1.1 Change `server/src/app.ts`'s `GET /healthz` handler to return `c.json({ ok: true, service: 'whim-server' }, 200)` instead of `c.text('ok', 200)`; keep the route outside `/v1/*` and the device-header gate unchanged.
-- [ ] 1.2 Update/extend the server suite's healthz coverage (`npm run server:test`): body shape assertion, still-anonymous (no device header required, still 200) assertion.
+- [x] 1.1 Change `server/src/app.ts`'s `GET /healthz` handler to return `c.json({ ok: true, service: 'whim-server' }, 200)` instead of `c.text('ok', 200)`; keep the route outside `/v1/*` and the device-header gate unchanged.
+- [x] 1.2 Update/extend the server suite's healthz coverage (`npm run server:test`): body shape assertion, still-anonymous (no device header required, still 200) assertion.
 
 ## 2. Client probe helper (Node-suite testable, no RN import)
 
