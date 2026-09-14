@@ -227,6 +227,15 @@ export const COPY = {
   serverProbeVerified: 'Verified — this is a Whim server.',
   serverProbeUnverified: 'Something answered, but it doesn’t look like a Whim server.',
   serverProbeUnreachable: 'Can’t reach this address.',
+
+  // ── connectivity (offline UX surfaces, design.md decision 7) ────────────────
+  // The home screen's quiet indicator and the compose entry point's advisory notice, both keyed
+  // off the session's `connectivity` state (server-connectivity spec "The home screen shows a
+  // quiet connectivity indicator" / "The compose entry point shows a server-unreachable notice
+  // without blocking generation"). Distinct from `promptServerUnconfigured` above: that string is
+  // for no address at all, these are for a configured address that isn't answering right now.
+  homeOfflineIndicator: 'Can’t reach the server',
+  promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
 } as const;
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */

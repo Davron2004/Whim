@@ -23,6 +23,10 @@ export interface ComposeStepProps {
   text: string;
   /** Whether a server address has been entered in Settings. */
   serverConfigured: boolean;
+  /** The configured server's last probe/retry failed (server-connectivity, design.md decision 7).
+   *  Advisory only — never gates the field or the primary action, and never shown together with
+   *  the unconfigured notice above (that one already implies this is false). */
+  serverUnreachable?: boolean;
   /** Scopes the screen to a re-prompt (C1: "the edit flow reads as editing, on every step") —
    *  present together with `editingName`, the app's current display name for the eyebrow line. */
   editing: boolean;
@@ -38,6 +42,7 @@ export interface ComposeStepProps {
 export default function ComposeStep({
   text,
   serverConfigured,
+  serverUnreachable,
   editing,
   editingName,
   onChangeText,
@@ -73,6 +78,15 @@ export default function ComposeStep({
                 {COPY.promptOpenSettings}
               </Text>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Advisory only (spec "does not gate submission"): a configured-but-unreachable server,
+            distinct from and never shown alongside the unconfigured notice above. Neither the
+            field's `editable` nor the primary action's `enabled` below reads this prop. */}
+        {serverConfigured && serverUnreachable && (
+          <View style={[styles.notice, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+            <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.promptServerUnreachable}</Text>
           </View>
         )}
 

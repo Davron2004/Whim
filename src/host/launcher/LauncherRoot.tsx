@@ -97,6 +97,7 @@ import { loadServerUrl, saveServerUrl } from './server-address';
 import { probeServer } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
+import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
@@ -1182,6 +1183,7 @@ function LauncherShell({
       <ComposeStep
         text={from.text}
         serverConfigured={clientOptions != null}
+        serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
         editing={from.editing != null}
         editingName={from.editing?.name}
         onChangeText={(text) => setScreen({ ...from, text })}
@@ -1275,6 +1277,7 @@ function LauncherShell({
         onCreate={() => openCompose()}
         onSettings={() => setScreen({ kind: 'settings' })}
         onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
+        offline={showOfflineIndicator(connectivity)}
         onOpenPending={onOpenPending}
         onCancelPending={onCancelPending}
         onDismissPending={onDismissPending}
