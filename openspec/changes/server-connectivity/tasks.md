@@ -19,10 +19,10 @@
 
 ## 4. Settings save-time verification
 
-- [ ] 4.1 `SettingsScreen.tsx`: add local debounced (~600ms, design.md decision 3) probe state (`'idle' | 'checking' | ProbeResult`) driven off the existing `onChangeText`/save path — save behavior itself (immediate, unconditional) stays unchanged; only the probe is debounced and cancels on a new edit.
-- [ ] 4.2 Render the inline result under the server-address field: verified/reachable, unreachable, and a distinct unverified-warning treatment, using `copy.ts` strings and the shell palette (no hex literals, matching the screen's existing token-only styling).
-- [ ] 4.3 Add the three result strings (and any label) to `copy.ts` following existing tone conventions; product-verbs guard applies.
-- [ ] 4.4 Node suite coverage: debounce cancels an in-flight probe on rapid retyping, save persists regardless of probe result, each of the three classifications renders its distinct copy.
+- [x] 4.1 `SettingsScreen.tsx`: add local debounced (~600ms, design.md decision 3) probe state (`'idle' | 'checking' | ProbeResult`) driven off the existing `onChangeText`/save path — save behavior itself (immediate, unconditional) stays unchanged; only the probe is debounced and cancels on a new edit.
+- [x] 4.2 Render the inline result under the server-address field: verified/reachable, unreachable, and a distinct unverified-warning treatment, using `copy.ts` strings and the shell palette (no hex literals, matching the screen's existing token-only styling).
+- [x] 4.3 Add the three result strings (and any label) to `copy.ts` following existing tone conventions; product-verbs guard applies.
+- [x] 4.4 Node suite coverage: debounce cancels an in-flight probe on rapid retyping, save persists regardless of probe result, each of the three classifications renders its distinct copy.
 
 ## 5. Offline UX surfaces
 
