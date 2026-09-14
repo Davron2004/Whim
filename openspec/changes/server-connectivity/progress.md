@@ -11,3 +11,4 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - 17:31 dispatched chain-4 BASE 9f1893e
 - 17:45 chain-4 report: complete, GATE PASS, class-A (sanitizeServerUrl exported for the probe) · integrity OK · merged · regate-pass
 - 17:45 dispatched chain-5 BASE e3eb022
+- 17:52 chain-5 report: complete, GATE PASS, class-A (pure connectivity-ux.ts helper) · integrity OK · merged · regate-pass. All 16 tasks done.
