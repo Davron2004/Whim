@@ -7,13 +7,21 @@
 // literal of its own) and type faces from the SDK's v2 `TYPE_SCALE`/`RADIUS` (`vc-sdk`'s theme
 // module). This screen is not a mini-app host: it owns its own hardware-back binding directly,
 // and never touches `BackPolicy` (which only ever binds inside `useMiniAppHost`).
+//
+// Four sections, in order (design D7; app-launcher "Settings groups its controls into titled
+// sections, with the server address under Advanced"): AI features (opens the consent screen in
+// review mode), Highlighting (unchanged), About (privacy policy + support), Advanced (the server
+// address override, collapsed unless one is saved).
 import React, { useEffect, useState } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { BackHandler, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
-import { COPY, serverProbeLabel } from './copy';
+import type { ConsentStatus } from './ai-consent';
+import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
+import { RELEASE } from './release-config';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
+import { advancedInitiallyOpen } from './settings-sections';
 import { DebouncedProbe } from './settings-probe';
 import type { SettingsProbeState } from './settings-probe';
 import { SHELL_PALETTE } from './theme';
@@ -26,10 +34,22 @@ export interface SettingsScreenProps {
   /** Persists the entered address — `LauncherRoot` writes it via `saveServerUrl` and re-reads
    *  the sanitized result back into its own state, same round-trip `server-address.ts` uses. */
   onServerUrlChange: (url: string) => void;
+  /** Clears the saved override so the next request targets the compiled-in server (design D7,
+   *  app-launcher "Going back to the default"). Shown only while an override is saved. */
+  onUseDefaultServer: () => void;
   /** Whether Whim Syntax prose highlighting is on (default true; `highlighting.ts`). */
   highlighting: boolean;
   /** Persists the toggle — `LauncherRoot` writes it via `saveHighlighting`. */
   onHighlightingChange: (enabled: boolean) => void;
+  /** The AI features row's own state (ai-data-consent "Settings shows consent and can review or
+   *  turn it off") — read fresh by the caller on every render, never cached here. */
+  consentStatus: ConsentStatus;
+  /** Whether the save-time probe may run at all (server-connectivity "Without a current consent
+   *  grant the system SHALL NOT probe" — design D2/D7): gates BOTH the probe request itself and
+   *  which result line renders. */
+  canProbe: boolean;
+  /** Opens the consent screen in review mode. */
+  onOpenAIFeatures: () => void;
 }
 
 /** The save-time probe result's colour (design.md decision 1's three-way classification), drawn
@@ -48,11 +68,16 @@ export default function SettingsScreen({
   onBack,
   serverUrl,
   onServerUrlChange,
+  onUseDefaultServer,
   highlighting,
   onHighlightingChange,
+  consentStatus,
+  canProbe,
+  onOpenAIFeatures,
 }: Readonly<SettingsScreenProps>) {
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
+  const [advancedOpen, setAdvancedOpen] = useState(() => advancedInitiallyOpen(serverUrl));
   const p = SHELL_PALETTE;
 
   // The debounced probe (design.md decision 3) is created once and lives for the screen's own
@@ -75,6 +100,31 @@ export default function SettingsScreen({
   // state ... the result never needs to outlive the screen").
   useEffect(() => () => debouncedProbe.cancel(), [debouncedProbe]);
 
+  const onUseDefault = () => {
+    setServerUrlDraft('');
+    debouncedProbe.cancel();
+    setProbeState('idle');
+    onUseDefaultServer();
+  };
+
+  const aiFeaturesSubtitle =
+    consentStatus.kind === 'granted'
+      ? aiFeaturesStatusLine('granted', new Date(consentStatus.grantedAt).toLocaleDateString())
+      : aiFeaturesStatusLine(consentStatus.kind);
+
+  // The save-time probe's inline result (design.md decision 3): the neutral line while AI
+  // features are off (server-connectivity "Without a current consent grant the system SHALL NOT
+  // probe"), the settled classification once AI features are on and the probe has resolved, or
+  // nothing while a probe is still in flight / the field is untouched.
+  let probeLine: string | null = null;
+  let probeLineColor = p.textMuted;
+  if (!canProbe) {
+    probeLine = COPY.settingsProbeNeutral;
+  } else if (probeState !== 'idle' && probeState !== 'checking') {
+    probeLine = serverProbeLabel(probeState);
+    probeLineColor = probeResultColor(probeState, p.danger);
+  }
+
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
@@ -95,38 +145,20 @@ export default function SettingsScreen({
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* AI features (ai-data-consent "Settings shows consent and can review or turn it off") */}
         <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.serverAddressSectionTitle}
+          {COPY.settingsAISectionTitle}
         </Text>
-        <TextInput
-          value={serverUrlDraft}
-          onChangeText={(next) => {
-            // Save is unchanged: immediate and unconditional, regardless of the probe below.
-            setServerUrlDraft(next);
-            onServerUrlChange(next);
-            // Only the informational probe is debounced (design.md decision 3) — the same
-            // normalization `saveServerUrl` applies before persisting, so the probe never trips
-            // over a trailing slash the save itself would have stripped.
-            debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
-          }}
-          placeholder={COPY.serverAddressPlaceholder}
-          placeholderTextColor={p.textMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          style={[
-            TYPE_SCALE.body,
-            styles.serverInput,
-            { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
-          ]}
-        />
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
-        {probeState !== 'idle' && probeState !== 'checking' ? (
-          <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeResultColor(probeState, p.danger) }]}>
-            {serverProbeLabel(probeState)}
-          </Text>
-        ) : null}
+        <TouchableOpacity
+          onPress={onOpenAIFeatures}
+          accessibilityRole="button"
+          style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
+          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
+        </TouchableOpacity>
 
+        {/* Highlighting (unchanged) */}
         <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
           {COPY.highlightingSectionTitle}
         </Text>
@@ -140,6 +172,87 @@ export default function SettingsScreen({
           />
         </View>
         <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.highlightingHint}</Text>
+
+        {/* About */}
+        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+          {COPY.settingsAboutSectionTitle}
+        </Text>
+        <TouchableOpacity
+          onPress={() => Linking.openURL(RELEASE.privacyPolicyUrl)}
+          accessibilityRole="button"
+          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => Linking.openURL(RELEASE.supportUrl)}
+          accessibilityRole="button"
+          style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
+        </TouchableOpacity>
+
+        {/* Advanced (app-launcher "Settings groups its controls...with the server address under
+            Advanced") — one row that expands inline; already open while an override is saved. */}
+        <TouchableOpacity
+          onPress={() => setAdvancedOpen((open) => !open)}
+          accessibilityRole="button"
+          style={styles.advancedHeader}
+        >
+          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
+          <View
+            style={[
+              styles.advancedChevron,
+              { borderColor: p.textMuted },
+              advancedOpen ? styles.advancedChevronOpen : styles.advancedChevronClosed,
+            ]}
+          />
+        </TouchableOpacity>
+
+        {advancedOpen && (
+          <>
+            <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+              {COPY.serverAddressSectionTitle}
+            </Text>
+            <TextInput
+              value={serverUrlDraft}
+              onChangeText={(next) => {
+                // Save is unchanged: immediate and unconditional, regardless of the probe below.
+                setServerUrlDraft(next);
+                onServerUrlChange(next);
+                // The informational probe is BOTH debounced (design.md decision 3) AND gated on
+                // consent (server-connectivity "Without a current consent grant the system SHALL
+                // NOT probe" — design D2/D7) — the same normalization `saveServerUrl` applies
+                // before persisting, so the probe never trips over a trailing slash the save
+                // itself would have stripped.
+                if (canProbe) {
+                  debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
+                }
+              }}
+              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+              placeholderTextColor={p.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              style={[
+                TYPE_SCALE.body,
+                styles.serverInput,
+                { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
+              ]}
+            />
+            <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+            {probeLine != null && (
+              <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
+            )}
+            {serverUrlDraft.trim().length > 0 && (
+              <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, styles.useDefaultAction, { color: p.accent }]}>
+                  {COPY.settingsUseDefaultServer}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -178,8 +291,6 @@ const styles = StyleSheet.create({
   },
   content: { padding: 16, paddingBottom: 40 },
   sectionTitle: { marginTop: 24, marginBottom: 10 },
-  serverInput: { borderWidth: 1, borderRadius: RADIUS.field, paddingHorizontal: 12, paddingVertical: 10 },
-  hint: { marginTop: 6 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -189,4 +300,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
+  rowStacked: { marginBottom: 10 },
+  advancedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 24,
+    paddingVertical: 10,
+  },
+  advancedChevron: { width: 8, height: 8, borderRightWidth: 2, borderBottomWidth: 2 },
+  advancedChevronClosed: { transform: [{ rotate: '-45deg' }] },
+  advancedChevronOpen: { transform: [{ rotate: '135deg' }] },
+  serverInput: { borderWidth: 1, borderRadius: RADIUS.field, paddingHorizontal: 12, paddingVertical: 10 },
+  hint: { marginTop: 6 },
+  useDefaultAction: { marginTop: 10 },
 });

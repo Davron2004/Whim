@@ -70,17 +70,20 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     );
   });
 
-  await h.test('wiring: the compose notice never renders alongside the unconfigured notice', () => {
-    h.ok(composeStepSrc.includes('COPY.promptServerUnreachable'), 'ComposeStep must render the unreachable-notice copy');
-    h.ok(
-      /serverConfigured && serverUnreachable/.test(composeStepSrc),
-      'the unreachable notice must require serverConfigured, so it can never coincide with the unconfigured notice',
-    );
+  await h.test('wiring: no "set an address in Settings" notice exists any more', () => {
+    // store-launch-compliance chain-3 (prompt-flow "The compose entry point shows a
+    // server-unreachable notice without blocking generation"): compose opens only once AI-data
+    // consent is granted, and a server address always exists (an override or the compiled-in
+    // default from `release-config`), so the old unconfigured notice — and the `serverConfigured`
+    // prop that gated it — no longer has any way to happen.
+    h.ok(composeStepSrc.includes('COPY.promptServerUnreachable'), 'ComposeStep must still render the offline-notice copy');
+    h.ok(!composeStepSrc.includes('serverConfigured'), 'the retired serverConfigured prop is gone entirely');
+    h.ok(!composeStepSrc.includes('promptServerUnconfigured'), 'and so is the "set an address in Settings" notice it gated');
   });
 
-  await h.test('wiring: the notice never gates submission — enabled stays keyed on serverConfigured only', () => {
+  await h.test('wiring: the notice never gates submission — enabled is keyed on the prompt text alone', () => {
     h.ok(
-      /enabled=\{serverConfigured && trimmed\.length > 0\}/.test(composeStepSrc),
+      /enabled=\{trimmed\.length > 0\}/.test(composeStepSrc),
       'PrimaryAction enablement must be unaffected by serverUnreachable',
     );
   });

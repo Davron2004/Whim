@@ -55,6 +55,8 @@ import { runAppLinkTests } from './app-link.suite';
 import { runTransportSharedTests } from './transport-shared.suite';
 import { runServiceRefusalTests } from './service-refusal.suite';
 import { runReportPayloadTests } from './report-payload.suite';
+import { runConsentFlowTests } from './consent-flow.suite';
+import { runSettingsSectionsTests } from './settings-sections.suite';
 
 const h = new Harness();
 
@@ -107,6 +109,8 @@ await runAppLinkTests(h);
 await runTransportSharedTests(h);
 await runServiceRefusalTests(h);
 await runReportPayloadTests(h);
+await runConsentFlowTests(h);
+await runSettingsSectionsTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
