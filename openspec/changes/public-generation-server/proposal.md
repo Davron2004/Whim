@@ -23,14 +23,14 @@ Non-goals: app or launcher UI (the sibling `store-launch-compliance` change), BY
 
 ### New Capabilities
 - `server-deployment`: the production build and start path, the self-contained runtime tree and boot preflight, production config refusals, the container image, graceful drain, the boot self-test, the Caddy TLS front with unbuffered SSE, the GCP VM deploy artifacts (compose, seccomp, egress firewall, persistent disk, secrets), the deploy script and the runbook.
-- `server-admission-control`: body and prompt caps, per-device daily limits, per-device generation exclusivity, global concurrency and daily ceilings, drain refusal, `Retry-After`, check ordering, env-configurable limits, the request ledger with per-request cost, and the operator usage report.
+- `server-admission-control`: body and prompt caps, per-device daily limits, per-device generation exclusivity, global concurrency and daily ceilings, a cached pre-admission check of the operator's own provider credit, drain refusal, `Retry-After`, check ordering, env-configurable limits, the request ledger with per-request cost, and the operator usage report.
 - `content-policy`: the fail-closed pre-model content check on the three prompt routes, the 13+ policy document as the single source, the in-memory-only verdict cache, deterministic stub behavior, metering of the check, and the rating rule in generation prompts.
 - `content-reports`: `POST /v1/report`, report validation and caps, the separate report store, retention purge, report caps, operator listing, and logging without content.
 
 ### Modified Capabilities
-- `generation-server`: the runtime and dependency budget (harness deps declared, production start, configurable bind), device identity behind an injectable verifier, client disconnect proven over real TCP with bounded teardown and slot release, the server-state rule (usage store plus user-sent reports replace "only a token counter"), and blocking-suite wording (loopback sockets allowed).
-- `generation-contract`: `ReportRequest`/`ReportResponse` shapes and a closed `ServiceRefusalCode` enum naming the six refusal identifiers. `ApiError` is unchanged.
-- `generation-pipeline`: a wall-clock run budget that ends in one `failure`, and cost resolution for every run (token reconciliation still only on abort).
+- `generation-server`: the runtime and dependency budget (harness deps declared, production start, configurable bind), device identity behind an injectable verifier, client disconnect proven over real TCP with bounded teardown and slot release, the server-state rule (usage store plus user-sent reports replace "only a token counter"), blocking-suite wording (loopback sockets allowed), and a mid-call provider `402` mapping to `503 budget_exhausted` on clarify and rewrite.
+- `generation-contract`: `ReportRequest`/`ReportResponse` shapes and a closed `ServiceRefusalCode` enum naming the seven refusal identifiers, including `budget_exhausted`. `ApiError` is unchanged.
+- `generation-pipeline`: a wall-clock run budget that ends in one `failure`, a mid-run provider `402` that ends a generation the same way with no repair attempt, and cost resolution for every run (token reconciliation still only on abort).
 - `synthetic-run`: OS sandbox always on, no network egress with an out-of-band proof, a build that reads nothing from disk, abort honored at every wait, and browser crash replacement.
 - `static-checks`: the import allowlist also rejects `export … from` and `import x = require(…)` specifiers.
 

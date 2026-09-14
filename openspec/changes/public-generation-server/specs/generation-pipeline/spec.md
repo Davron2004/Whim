@@ -13,6 +13,19 @@ When the budget elapses before the run ends, the pipeline SHALL abort its in-fli
 - **WHEN** the client aborts a run before its budget elapses
 - **THEN** no terminal event is emitted, and none is emitted later when the budget would have elapsed
 
+### Requirement: A run ends cleanly when the operator's provider credit is exhausted
+The pipeline SHALL treat an HTTP `402` from the model provider during a run's model call as the operator's credit running out, not as an ordinary model failure. It SHALL make no repair attempt after a `402` and SHALL end the stream with the same single-terminal-event shape as every other ending: exactly one `failure` event whose `reason` says in plain words that Whim has run out of generation budget for now and invites a later retry, with no stage name, provider name, or dollar amount in the text.
+
+The server SHALL treat a `402` as authoritative and invalidate its operator-credit cache (specs/server-admission-control "The server refuses admission when the operator's provider credit is exhausted") so that subsequent admissions refuse up front as `budget_exhausted` rather than starting another run that will also fail.
+
+#### Scenario: A mid-run 402 ends in one failure with no repair
+- **WHEN** the scripted model client raises a `402` mid-generate
+- **THEN** no repair attempt is made, and the stream ends with a single `failure` terminal event whose reason mentions the generation budget running out, not a model error
+
+#### Scenario: A 402 invalidates the cached credit check
+- **WHEN** a run ends because of a `402` and the calling device immediately posts another generation
+- **THEN** the new request is refused as `budget_exhausted` rather than being admitted and failing again mid-run
+
 ## MODIFIED Requirements
 
 ### Requirement: Aborted runs reconcile their authoritative usage

@@ -91,8 +91,31 @@ The global ceiling SHALL be checked in the same atomic admission step as the dev
 - **WHEN** a client sends generations under 500 freshly minted device UUIDs on one UTC day with the ceiling at 400
 - **THEN** no more than 400 generations are admitted that day
 
+### Requirement: The server refuses admission when the operator's provider credit is exhausted
+The server SHALL check the operator's OpenRouter key credit before any model work on `/v1/clarify`, `/v1/rewrite`, and `/v1/generate`, placed immediately after the size and device-identity checks and before drain state, concurrency, and daily-unit accounting. It SHALL query `GET https://openrouter.ai/api/v1/key` and read `data.limit_remaining` (`null` meaning the key carries no limit), caching the result in memory for a configurable TTL (`WHIM_CREDIT_CACHE_TTL_MS`, default 60000) so the lookup is not made on every request.
+
+When the cached remaining credit is a number below a configurable floor (`WHIM_MIN_CREDIT_USD`, default 0.50), the server SHALL refuse with HTTP `503`, `error: 'budget_exhausted'`, and no `Retry-After` header, because the refill time is unknowable. A `budget_exhausted` refusal SHALL consume no daily-limit unit.
+
+When the credit lookup itself fails — a transport error, a non-2xx response, or a malformed body — the server SHALL admit the request and log a warning, deliberately failing open. This is a departure from the content-policy check's fail-closed default (specs/content-policy): the provider's own `402` on the model call is the real backstop, so an unreachable credit lookup costs availability, not spend, if it fails open.
+
+#### Scenario: Exhausted credit refuses before any model work
+- **WHEN** the cached `limit_remaining` is `0.10` and `WHIM_MIN_CREDIT_USD` is `0.50`, and a device posts a valid `GenerateRequest`
+- **THEN** the response is `503` with `error: 'budget_exhausted'`, no `Retry-After` header, no daily unit consumed, and no model or policy call made
+
+#### Scenario: A key with no limit never refuses on budget
+- **WHEN** the key lookup returns `data.limit_remaining: null`
+- **THEN** no request is ever refused as `budget_exhausted`
+
+#### Scenario: A lookup within the cache TTL is not repeated
+- **WHEN** two admissions occur for different devices inside `WHIM_CREDIT_CACHE_TTL_MS` of each other
+- **THEN** the key endpoint is queried once and both admissions use the cached value
+
+#### Scenario: A failed lookup fails open with a warning
+- **WHEN** the key endpoint call errors or returns an unparseable body
+- **THEN** the request is admitted, a warning is logged, and no `budget_exhausted` refusal occurs for that request
+
 ### Requirement: Admission checks run in a fixed order before any model work
-For `/v1/clarify`, `/v1/rewrite`, and `/v1/generate` the server SHALL apply its checks in this order and stop at the first refusal: device identity (`400`), raw body cap (`413`), body validation (`400`), prompt byte cap (`413`), drain state (`429 server_busy`), device generation exclusivity (`429 device_busy`, generate only), global concurrency cap (`429 server_busy`), daily units (`429 daily_limit`, then `429 server_busy` for a global ceiling), content policy (`422 content_policy` / `503 policy_unavailable`), then the route's work.
+For `/v1/clarify`, `/v1/rewrite`, and `/v1/generate` the server SHALL apply its checks in this order and stop at the first refusal: device identity (`400`), raw body cap (`413`), body validation (`400`), prompt byte cap (`413`), operator credit (`503 budget_exhausted`), drain state (`429 server_busy`), device generation exclusivity (`429 device_busy`, generate only), global concurrency cap (`429 server_busy`), daily units (`429 daily_limit`, then `429 server_busy` for a global ceiling), content policy (`422 content_policy` / `503 policy_unavailable`), then the route's work.
 
 For `/v1/report` the order SHALL be: device identity, raw body cap, body validation, prompt and source byte caps, drain state, daily units, then storage. No check after body validation SHALL be skipped for any route, and no model call or stream SHALL begin before the last check passes.
 
@@ -108,6 +131,10 @@ For `/v1/report` the order SHALL be: device identity, raw body cap, body validat
 - **WHEN** any refusal in the ordered list is returned
 - **THEN** the scripted model client records no call for that request, including no policy classification call when the refusal precedes the policy step
 
+#### Scenario: Exhausted credit is checked before concurrency and daily accounting
+- **WHEN** the operator's credit is exhausted while the global concurrency cap and every device's daily allowance still have room
+- **THEN** the refusal is `budget_exhausted`, not `server_busy` or `daily_limit`, and no slot is acquired
+
 ### Requirement: Every refusal is a structured, user-facing ApiError
 Every `413`, `422`, `429`, and `503` body produced by admission control or the content policy SHALL validate as `ApiError`, its `error` SHALL be a member of the contract's `ServiceRefusalCode`, and its `hint` SHALL be one user-facing sentence.
 
@@ -122,7 +149,7 @@ The hint SHALL contain no internal identifiers, limit names, environment variabl
 - **THEN** only the `daily_limit` refusal carries `Retry-After`
 
 ### Requirement: Admission limits are environment-configurable with public-beta defaults
-Every admission limit SHALL be read once at startup from the environment through one typed configuration module, SHALL default to the public-beta value below when unset, and SHALL fail startup with an error naming the variable when set to anything other than a positive integer.
+Every admission limit SHALL be read once at startup from the environment through one typed configuration module, SHALL default to the public-beta value below when unset, and SHALL fail startup with an error naming the variable when set to anything other than a positive integer, except `WHIM_MIN_CREDIT_USD`, which SHALL be a non-negative decimal USD amount.
 
 | Variable | Default |
 |---|---|
@@ -142,6 +169,8 @@ Every admission limit SHALL be read once at startup from the environment through
 | `WHIM_MAX_REPORT_SOURCE_BYTES` | 262144 |
 | `WHIM_UNARY_MODEL_TIMEOUT_MS` | 60000 |
 | `WHIM_GENERATION_MAX_MS` | 600000 |
+| `WHIM_MIN_CREDIT_USD` | 0.50 |
+| `WHIM_CREDIT_CACHE_TTL_MS` | 60000 |
 
 The time source used for UTC-day arithmetic SHALL be injectable, so tests can cross midnight without waiting.
 

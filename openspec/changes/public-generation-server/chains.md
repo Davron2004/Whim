@@ -6,8 +6,8 @@
   Dependency waves (dependency-free chains run in parallel, merges strictly serial):
     wave 0: chain-0 (HUMAN-BOOTSTRAP) ∥ chain-6
     wave 1: chain-1                      ∥ chain-7 (after chain-6)
-    wave 2: chain-2 ∥ chain-3 ∥ chain-4 ∥ chain-8
-    wave 3: chain-5 (after chain-2)
+    wave 2: chain-2 ∥ chain-3 ∥ chain-4
+    wave 3: chain-5 (after chain-2) ∥ chain-8 (after chain-3, for invalidateCreditCache)
     wave 4: chain-9
     wave 5: chain-10
     wave 6: chain-11 (also needs chain-7)
@@ -47,8 +47,8 @@
 
 - tasks: 2.1–2.5
 - rationale: These are the shared vocabularies every server chain reads: the wire shapes and refusal codes in `contract/src/index.ts`, the one typed env config module, and the suite registry. They are grouped so later chains can run in parallel without touching `acceptance.ts` or re-deriving variable names.
-- reads: specs/generation-contract/spec.md §Report request and response shapes, §Service refusal codes are a closed vocabulary; specs/server-admission-control/spec.md §Admission limits are environment-configurable with public-beta defaults; specs/server-deployment/spec.md §Production configuration refuses dev-only modes; design.md D6, D8, D13, D16, D18; handoff: none
-- writes-contract: handoff/wire-and-config.md (`ReportRequest`/`ReportResponse`/`ServiceRefusalCode` verbatim, `ServerConfig` type verbatim, `loadServerConfig` signature and error type, the suite-module ownership map: module name → owning chain)
+- reads: specs/generation-contract/spec.md §Report request and response shapes, §Service refusal codes are a closed vocabulary; specs/server-admission-control/spec.md §Admission limits are environment-configurable with public-beta defaults, §The server refuses admission when the operator's provider credit is exhausted; specs/server-deployment/spec.md §Production configuration refuses dev-only modes; design.md D6, D6a, D8, D13, D16, D18; handoff: none
+- writes-contract: handoff/wire-and-config.md (`ReportRequest`/`ReportResponse`/`ServiceRefusalCode` verbatim including `budget_exhausted`, `ServerConfig` type verbatim including `minCreditUsd` and `creditCacheTtlMs`, `loadServerConfig` signature and error type, the suite-module ownership map: module name → owning chain)
 - after: chain-0 (both edit `server/test/contract.suite.ts`)
 
 ## chain-2: usage-ledger-and-resolver
@@ -60,10 +60,10 @@
 
 ## chain-3: admission-core-and-identity
 
-- tasks: 4.1–4.4
-- rationale: These are the pure in-memory admission primitives (slots, draining, refusal bodies with `Retry-After`) and the device-verifier seam. They are route-agnostic modules with no persistence and no shared files with chain-2 or chain-4.
-- reads: specs/server-admission-control/spec.md §A device runs at most one generation at a time, §Global concurrency caps protect the server, §Every refusal is a structured, user-facing ApiError; specs/generation-server/spec.md §Device-identity middleware; design.md D8, D15; handoff: handoff/wire-and-config.md
-- writes-contract: handoff/admission-core.md (slot controller API and handle semantics, refusal-builder signatures, the hint table, `DeviceVerifier` and `shapeOnlyVerifier` verbatim)
+- tasks: 4.1–4.5
+- rationale: These are the pure in-memory admission primitives (slots, draining, refusal bodies with `Retry-After`), the device-verifier seam, and the operator-credit check. They are route-agnostic modules with no persistence and no shared files with chain-2 or chain-4. The credit check belongs here rather than with a route because both the unary chain (chain-9) and the generate chain (chain-10) need the identical primitive, and chain-8's mid-run `402` path needs its `invalidateCreditCache()` export too.
+- reads: specs/server-admission-control/spec.md §A device runs at most one generation at a time, §Global concurrency caps protect the server, §Every refusal is a structured, user-facing ApiError, §The server refuses admission when the operator's provider credit is exhausted; specs/generation-server/spec.md §Device-identity middleware; design.md D6a, D8, D15; handoff: handoff/wire-and-config.md
+- writes-contract: handoff/admission-core.md (slot controller API and handle semantics, refusal-builder signatures, the hint table including `budget_exhausted`, `DeviceVerifier` and `shapeOnlyVerifier` verbatim, `checkCredit` and `invalidateCreditCache` signatures and the fail-open contract verbatim)
 
 ## chain-4: content-policy
 
@@ -97,25 +97,26 @@
 
 ## chain-8: generation-wall-clock-budget
 
-- tasks: 9.1–9.3
-- rationale: This is a machine-internal change (deadline, cause tracking, terminal emission) confined to `machine.ts`, the pipeline factory and the machine suite. It is disjoint from every wave-2 sibling.
-- reads: specs/generation-pipeline/spec.md §A run is bounded in wall-clock time, and live §Exactly one terminal event per completed run, §Cancellation aborts the pipeline at every boundary; design.md D13; handoff: handoff/wire-and-config.md
-- writes-contract: handoff/pipeline-budget.md (the `maxRunMs` option, the `RunTrace.outcome` union and when each value is set, the expiry failure reason text)
+- tasks: 9.1–9.4
+- rationale: This is a machine-internal change (deadline, cause tracking, terminal emission, and now provider-credit exhaustion) confined to `machine.ts`, the pipeline factory and the machine suite. It is disjoint from every wave-2 sibling. The `402` mid-flight case belongs here because it is the same top-level model-call catch the expiry path already uses (research.md: `machine.ts`'s catch swallows `OpenRouterNetworkError`); it depends on chain-3's `invalidateCreditCache()` only by name, which `handoff/admission-core.md` already carries.
+- reads: specs/generation-pipeline/spec.md §A run is bounded in wall-clock time, §A run ends cleanly when the operator's provider credit is exhausted, and live §Exactly one terminal event per completed run, §Cancellation aborts the pipeline at every boundary; design.md D6b, D13; handoff: handoff/wire-and-config.md, handoff/admission-core.md
+- writes-contract: handoff/pipeline-budget.md (the `maxRunMs` option, the `RunTrace.outcome` union and when each value is set, the expiry failure reason text, the `402`-detection point in the model-call catch and its failure reason text)
+- after: chain-3 (for `invalidateCreditCache()`)
 
 ## chain-9: app-options-unary-and-report-routes
 
 - tasks: 10.1–10.5
-- rationale: This is the first integration layer: `createApp`'s new dependencies, the verifier-backed middleware, and the admission and policy ordering applied to the unary and report routes, plus the stream probe. All of it lives in `app.ts` and `routes/{clarify,rewrite,report}.ts` with one route-level suite.
-- reads: specs/server-admission-control/spec.md §Request bodies and prompts are size-capped before any work, §Admission checks run in a fixed order before any model work, §Every refusal is a structured, user-facing ApiError, §Unary model calls have a bounded lifetime; specs/content-policy/spec.md §Every prompt-accepting route checks content before any model work, §The policy check fails closed; specs/content-reports/spec.md §Devices can report content with POST /v1/report, §Report payloads and volume are bounded, §Report handling logs no report content; specs/server-deployment/spec.md §An anonymous stream probe verifies proxy flushing; specs/generation-server/spec.md §Device-identity middleware; design.md D8, D10, D15; handoff: handoff/wire-and-config.md, handoff/usage-ledger.md, handoff/admission-core.md, handoff/content-policy.md, handoff/reports-admin.md
-- writes-contract: handoff/app-options.md (the `createApp` options type verbatim, which options are required, the admission helper routes call, the in-flight tracking hook drain will use)
+- rationale: This is the first integration layer: `createApp`'s new dependencies, the verifier-backed middleware, and the admission and policy ordering applied to the unary and report routes, plus the stream probe. All of it lives in `app.ts` and `routes/{clarify,rewrite,report}.ts` with one route-level suite. It wires chain-3's `checkCredit`/`invalidateCreditCache` into clarify and rewrite, both for pre-admission refusal and for the mid-call `402` mapping to `503 budget_exhausted`.
+- reads: specs/server-admission-control/spec.md §Request bodies and prompts are size-capped before any work, §Admission checks run in a fixed order before any model work, §Every refusal is a structured, user-facing ApiError, §Unary model calls have a bounded lifetime, §The server refuses admission when the operator's provider credit is exhausted; specs/content-policy/spec.md §Every prompt-accepting route checks content before any model work, §The policy check fails closed; specs/content-reports/spec.md §Devices can report content with POST /v1/report, §Report payloads and volume are bounded, §Report handling logs no report content; specs/server-deployment/spec.md §An anonymous stream probe verifies proxy flushing; specs/generation-server/spec.md §Device-identity middleware, §Clarify endpoint, §Rewrite endpoint over the real rewrite model; design.md D6a, D6b, D8, D10, D15; handoff: handoff/wire-and-config.md, handoff/usage-ledger.md, handoff/admission-core.md, handoff/content-policy.md, handoff/reports-admin.md
+- writes-contract: handoff/app-options.md (the `createApp` options type verbatim including `creditTransport`, which options are required, the admission helper routes call, the in-flight tracking hook drain will use)
 - after: chain-5
 
 ## chain-10: generate-route-and-disconnect-proof
 
 - tasks: 11.1–11.5
-- rationale: The generate route's admission, slot teardown, ledger settlement and resolver hand-off, the `main.ts` composition of the new dependencies, and the real-TCP proof all form one context. The disconnect test only means something once the route releases slots on its teardown path.
-- reads: specs/server-admission-control/spec.md §A device runs at most one generation at a time, §Global daily ceilings bound total spend, §Admission checks run in a fixed order before any model work; specs/generation-server/spec.md §Client disconnect aborts the pipeline, §Server state is the usage store and user-sent reports, §Blocking server suite in CI; design.md D7, D8, D12; handoff: handoff/app-options.md, handoff/pipeline-budget.md, handoff/usage-ledger.md, handoff/admission-core.md, handoff/content-policy.md
-- writes-contract: handoff/composition.md (what `main.ts` constructs and in what order, the stub-vs-real policy selection, the in-flight registry and its abort handles)
+- rationale: The generate route's admission, slot teardown, ledger settlement and resolver hand-off, the `main.ts` composition of the new dependencies, and the real-TCP proof all form one context. The disconnect test only means something once the route releases slots on its teardown path. It wires chain-3's `checkCredit` into the generate route's pre-admission order and composes the real credit transport in `main.ts`; the mid-run `402` ending itself is chain-8's, this chain only needs the slot to be released on that path too.
+- reads: specs/server-admission-control/spec.md §A device runs at most one generation at a time, §Global daily ceilings bound total spend, §Admission checks run in a fixed order before any model work, §The server refuses admission when the operator's provider credit is exhausted; specs/generation-pipeline/spec.md §A run ends cleanly when the operator's provider credit is exhausted; specs/generation-server/spec.md §Client disconnect aborts the pipeline, §Server state is the usage store and user-sent reports, §Blocking server suite in CI; design.md D6a, D6b, D7, D8, D12; handoff: handoff/app-options.md, handoff/pipeline-budget.md, handoff/usage-ledger.md, handoff/admission-core.md, handoff/content-policy.md
+- writes-contract: handoff/composition.md (what `main.ts` constructs and in what order, including the credit transport and its config, the stub-vs-real policy selection, the in-flight registry and its abort handles)
 - after: chain-8, chain-9
 
 ## chain-11: lifecycle-drain-production-build
