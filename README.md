@@ -5,7 +5,7 @@
 [![invariants](https://github.com/Davron2004/Whim/actions/workflows/invariants.yml/badge.svg)](https://github.com/Davron2004/Whim/actions/workflows/invariants.yml)
 [![quality gate](https://sonarcloud.io/api/project_badges/measure?project=Davron2004_Whim&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Davron2004_Whim)
 ![React Native 0.85](https://img.shields.io/badge/React%20Native-0.85-61dafb)
-![Android first](https://img.shields.io/badge/platform-Android%20first-3ddc84)
+![iOS + Android](https://img.shields.io/badge/platform-iOS%20%2B%20Android-3ddc84)
 
 Most software people want is too small to exist. A timer for one pour-over recipe. A log for a sourdough starter. A tracker for a thing only you care about. Nobody will build it, and no store will list it. Whim is a phone app where you type a sentence, answer a question or two, wait a few minutes, and the app is on your home screen. You can change it the same way, and every version is kept.
 

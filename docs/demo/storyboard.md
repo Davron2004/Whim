@@ -76,7 +76,7 @@
 
 ## Appendix B — Handoff prompt (paste into another AI)
 
-You are producing the raw footage for a product demo of **Whim**, an Android launcher where users create mini-apps by describing them. Everything runs locally: an RN host app (offline release build, no Metro needed), a local generation server, apps rendered in a sandboxed WebView.
+You are producing the raw footage for a product demo of **Whim**, a phone launcher (iOS + Android, tested on Android so far) where users create mini-apps by describing them. Everything runs locally: an RN host app (offline release build, no Metro needed), a local generation server, apps rendered in a sandboxed WebView.
 
 Setup: Node 22 (`node -v` must confirm), then `npm run android:release`. Boot one emulator (device frame OFF, fixed window size). Install the release APK if not auto-installed. Confirm the generation server responds before filming anything.
 
