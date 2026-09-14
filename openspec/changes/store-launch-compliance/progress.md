@@ -7,3 +7,5 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - 18:05 dispatched chain-2 BASE 9b537eb
 - 18:28 chain-2 report: complete, GATE PASS, class-A x5 (contract-mirror.ts until server chain-1 lands; fake-xhr headers; optional headers read; 3-line LauncherRoot bridge cast replaced by chain-3; logging example renamed) · integrity OK · merged · regate-pass. RECONCILE when public-generation-server chain-1 merges: delete contract-mirror.ts, repoint imports to @whim/contract.
 - 18:28 dispatched chain-3 BASE cba972c
+- 19:00 chain-3 report: complete, GATE PASS (launcher 9030), class-A x4 (returnTo attached in LauncherRoot; ConsentScreenForShell for cognitive complexity; retired unconfigured-server copy and updated 4 source-pinned suites; server section label kept inside Advanced) · integrity OK · merged · regate-pass. Watch: brittle source-text assertions recur in later chains.
+- 19:00 dispatched chain-4 BASE 78eba26
