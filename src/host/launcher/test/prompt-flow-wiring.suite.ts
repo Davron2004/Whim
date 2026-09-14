@@ -35,7 +35,7 @@ import { dropPendingBuild } from '../build-lifecycle';
 import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from '../server-address';
 import { RELEASE } from '../release-config';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
-import type { ClientOptions } from '../generation-client';
+import type { ConsentedClientOptions } from '../generation-client';
 import { buildGenerateRequest } from '../generation-request';
 import { isClarifySkip } from '../prompt-flow';
 import { FlowRequests, onlyOnStep } from '../flow-request';
@@ -66,11 +66,12 @@ function stubFetch(status: number, body: unknown, captured: CapturedRequest[]): 
   }) as unknown as typeof fetch;
 }
 
-const OPTS = (fetchImpl: typeof fetch): ClientOptions => ({
-  baseUrl: 'http://server.test',
-  deviceId: '11111111-1111-4111-8111-111111111111',
-  fetchImpl,
-});
+const OPTS = (fetchImpl: typeof fetch): ConsentedClientOptions =>
+  ({
+    baseUrl: 'http://server.test',
+    deviceId: '11111111-1111-4111-8111-111111111111',
+    fetchImpl,
+  }) as ConsentedClientOptions;
 
 const SUMMARY: RunSummary = {
   text: 'It saves every brew now.',

@@ -1,0 +1,123 @@
+/**
+ * service-refusal Node suite (store-launch-compliance chain-2, task 2.2) — `serviceRefusalOf`,
+ * `retryAtOf` and `retryLine` against `GenerationClientError` fixtures, no real HTTP.
+ *
+ * Covers spec `service-refusals`:
+ *   - "A refusal is recognised by the contract's closed refusal vocabulary" — all seven codes
+ *     recognised, an out-of-vocabulary identifier and a hint-less body are not refusals, and the
+ *     table's keys are checked against the real (mirrored) `ServiceRefusalCode.options`.
+ *   - "Retry-After holds the retry action until the window passes" — the line-format thresholds
+ *     only (seconds, minutes, same local day, tomorrow), per this chain's declared read scope.
+ */
+import { Harness } from './harness';
+import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
+import { GenerationClientError } from '../transport-shared';
+import { ServiceRefusalCode } from '../contract-mirror';
+
+const HINT = 'Whim is busy right now. Try again in a bit.';
+
+function httpError(code: string, opts: { hint?: string; status?: number; retryAfterSeconds?: number } = {}): GenerationClientError {
+  return new GenerationClientError('http', {
+    status: opts.status ?? 429,
+    hint: opts.hint === undefined ? HINT : opts.hint,
+    code,
+    retryAfterSeconds: opts.retryAfterSeconds,
+  });
+}
+
+export async function runServiceRefusalTests(h: Harness): Promise<void> {
+  await h.test("REFUSAL_RULES' keys equal the real ServiceRefusalCode vocabulary exactly", () => {
+    const tableKeys = Object.keys(REFUSAL_RULES).sort((a, b) => a.localeCompare(b));
+    const realCodes = [...ServiceRefusalCode.options].sort((a, b) => a.localeCompare(b));
+    h.eq(tableKeys, realCodes, 'no code is missing and none is extra');
+    h.eq(realCodes.length, 7, 'the vocabulary has exactly seven members');
+    h.ok(tableKeys.includes('budget_exhausted'), 'budget_exhausted specifically is present');
+  });
+
+  await h.test('every contract code is recognised as a refusal carrying that code and hint', () => {
+    for (const code of ServiceRefusalCode.options) {
+      const refusal = serviceRefusalOf(httpError(code));
+      h.ok(refusal !== undefined, `${code} is recognised`);
+      if (refusal) {
+        h.eq(refusal.code, code, 'the code round-trips');
+        h.eq(refusal.hint, HINT, 'the hint round-trips');
+      }
+    }
+  });
+
+  await h.test('an identifier outside the vocabulary is not a refusal', () => {
+    const refusal = serviceRefusalOf(httpError('rate_limited'));
+    h.eq(refusal, undefined, 'rate_limited takes the existing failure handling, not a refusal one');
+  });
+
+  await h.test('a body without a hint is not a refusal', () => {
+    const refusal = serviceRefusalOf(httpError('content_policy', { hint: '' }));
+    h.eq(refusal, undefined, 'an empty hint means no refusal, even with a vocabulary code');
+  });
+
+  await h.test('a non-http-kind error, and a plain Error, are never refusals', () => {
+    h.eq(serviceRefusalOf(new GenerationClientError('network', { hint: 'offline' })), undefined, 'network kind is never a refusal');
+    h.eq(serviceRefusalOf(new Error('boom')), undefined, 'a non-GenerationClientError value is never a refusal');
+  });
+
+  await h.test('retryAtOf derives the re-enable moment from receivedAt + seconds, or is absent without a window', () => {
+    const receivedAt = 1_000_000;
+    const withWindow = serviceRefusalOf(httpError('daily_limit', { retryAfterSeconds: 5400 }));
+    const withoutWindow = serviceRefusalOf(httpError('device_busy'));
+    h.ok(withWindow !== undefined && withoutWindow !== undefined, 'both fixtures are recognised refusals');
+    if (withWindow) {
+      h.eq(retryAtOf(withWindow, receivedAt), receivedAt + 5400 * 1000, 'retryAt is receivedAt plus the window in ms');
+    }
+    if (withoutWindow) {
+      h.eq(retryAtOf(withoutWindow, receivedAt), undefined, 'no Retry-After means no retryAt');
+    }
+  });
+
+  const fixedTime = (date: Date) => `${date.getUTCHours()}:00`;
+  // Formats by absolute instant rather than a wall-clock field, so these two checks stay correct
+  // under any machine timezone: `retryLine`'s same-day/tomorrow branch reads LOCAL date fields
+  // (design D11 — "the same local day"), and only the branch choice, not a specific hour string,
+  // is what these two checks pin.
+  const markTime = (date: Date) => `TIME(${date.getTime()})`;
+
+  await h.test('retryLine: under a minute reads in seconds', () => {
+    const now = Date.parse('2026-09-14T10:00:00Z');
+    h.eq(retryLine(now + 45_000, now, fixedTime), 'in about 45 seconds', 'seconds bucket');
+  });
+
+  await h.test('retryLine: under an hour reads in minutes', () => {
+    const now = Date.parse('2026-09-14T10:00:00Z');
+    h.eq(retryLine(now + 90_000, now, fixedTime), 'in about 2 minutes', 'rounds to the nearest minute');
+    h.eq(retryLine(now + 30 * 60_000, now, fixedTime), 'in about 30 minutes', 'minutes bucket');
+  });
+
+  await h.test('retryLine: later the same local day reads "after <time>"', () => {
+    // Local-constructed (not `Date.parse(...Z)`) so "same local day" holds under any timezone.
+    const now = new Date(2026, 8, 14, 10, 0, 0).getTime();
+    const retryAt = now + 90 * 60_000;
+    h.eq(retryLine(retryAt, now, markTime), `after ${markTime(new Date(retryAt))}`, 'same-day bucket uses the injected formatter');
+  });
+
+  await h.test('retryLine: beyond the same local day reads "tomorrow after <time>"', () => {
+    // 23:00 local plus three hours always crosses local midnight, regardless of timezone.
+    const now = new Date(2026, 8, 14, 23, 0, 0).getTime();
+    const retryAt = now + 3 * 60 * 60_000;
+    h.eq(
+      retryLine(retryAt, now, markTime),
+      `tomorrow after ${markTime(new Date(retryAt))}`,
+      'crossing local midnight',
+    );
+  });
+
+  await h.test('retryLine: falls back to hours when Intl is missing', () => {
+    const now = Date.parse('2026-09-14T10:00:00Z');
+    const globals = globalThis as unknown as { Intl?: unknown };
+    const realIntl = globals.Intl;
+    globals.Intl = undefined;
+    try {
+      h.eq(retryLine(now + 90 * 60_000, now, fixedTime), 'in about 2 hours', 'no Intl means the hours fallback, not a formatted time');
+    } finally {
+      globals.Intl = realIntl;
+    }
+  });
+}

@@ -36,25 +36,27 @@ import type {
   Usage,
   WireAppRecord,
 } from '@whim/contract';
+import type { ReportRequest, ReportResponse } from './contract-mirror';
 
 import { openXhrGenerateStream } from './xhr-transport';
 import {
   CONNECT_TIMEOUT_HINT,
   GenerationClientError,
   connectTimeoutOf,
+  consentedClientOptions,
   httpErrorFrom,
   isNonEmptyString,
   isRecord,
   logMappedError,
   requestHeaders,
 } from './transport-shared';
-import type { ClientOptions } from './transport-shared';
+import type { ClientOptions, ConsentedClientOptions } from './transport-shared';
 
 /** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
  *  the acceptance suites) — the canonical definitions now live in `transport-shared.ts`, shared
  *  with `xhr-transport.ts` without either transport module importing the other. */
-export { GenerationClientError };
-export type { ClientOptions };
+export { GenerationClientError, consentedClientOptions };
+export type { ClientOptions, ConsentedClientOptions };
 
 /**
  * Hand-rolled structural guards standing in for `@whim/contract`'s zod schemas
@@ -74,6 +76,10 @@ function isOptionalNumber(value: unknown): boolean {
 
 function isRewriteResponse(value: unknown): value is RewriteResponse {
   return isRecord(value) && typeof value.rewrittenPrompt === 'string';
+}
+
+function isReportResponse(value: unknown): value is ReportResponse {
+  return isRecord(value) && isNonEmptyString(value.reportId);
 }
 
 function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
@@ -190,7 +196,7 @@ function messageOf(err: unknown): string {
  * ask about the change instead of re-deriving what the app already is. Omitted entirely when
  * absent — no `app` key is what tells the server this is a new app. */
 export async function clarifyPrompt(
-  opts: ClientOptions,
+  opts: ConsentedClientOptions,
   prompt: string,
   app?: ClarifyRequest['app'],
   signal?: AbortSignal,
@@ -231,7 +237,7 @@ export async function clarifyPrompt(
  *  `generation-request.ts#buildRewriteAppContext` — this client only carries it. Omitted entirely
  *  when absent: no `app` key is what tells the server this is a new app. */
 export async function rewritePrompt(
-  opts: ClientOptions,
+  opts: ConsentedClientOptions,
   prompt: string,
   clarifications: readonly Clarification[] = [],
   app?: RewriteRequest['app'],
@@ -265,6 +271,45 @@ export async function rewritePrompt(
   const bodyJson: unknown = await response.json().catch(() => null);
   if (!isRewriteResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
+  }
+  return bodyJson;
+}
+
+/** `POST /v1/report` (design D14) — the ONE call that does NOT require AI-data consent (design
+ *  D3, spec ai-data-consent "A report is the only exception"): it takes plain `ClientOptions`,
+ *  not `ConsentedClientOptions`. Resolves the server's `reportId` on `202`; a non-2xx response
+ *  throws through the shared `httpErrorFrom`, so a `payload_too_large` (or any other) refusal
+ *  carries the same `code`/`retryAfterSeconds` fields every other request's errors do; a thrown
+ *  fetch failure raises `GenerationClientError{kind:'network'}`, matching `clarifyPrompt`. */
+export async function sendReport(
+  opts: ClientOptions,
+  body: ReportRequest,
+  signal?: AbortSignal,
+): Promise<ReportResponse> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  let response: Response;
+  try {
+    response = await fetchImpl(`${opts.baseUrl}/v1/report`, {
+      method: 'POST',
+      headers: requestHeaders(opts),
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
+    logMappedError('/v1/report', opts.baseUrl, 'network', { message: messageOf(err) });
+    throw new GenerationClientError('network', { hint: messageOf(err) });
+  }
+
+  if (!response.ok) {
+    throw await httpErrorFrom(response, '/v1/report', opts.baseUrl);
+  }
+
+  const bodyJson: unknown = await response.json().catch(() => null);
+  if (!isReportResponse(bodyJson)) {
+    throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected report response shape' });
   }
   return bodyJson;
 }
@@ -549,7 +594,7 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  * and any partial character stays in the byte buffer until the block it belongs to is complete.
  */
 export async function* generateApp(
-  opts: ClientOptions,
+  opts: ConsentedClientOptions,
   request: GenerateRequest,
   signal?: AbortSignal,
 ): AsyncIterable<GenerationEvent> {
