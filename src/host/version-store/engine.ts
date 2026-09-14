@@ -19,7 +19,7 @@
  * and only ever materializes code artifacts into the working tree.
  */
 
-import './polyfills';
+import '../platform/hermes-polyfills';
 import * as git from 'isomorphic-git';
 import { MemoryFs } from './fs/memory-fs';
 import { VersionStoreConfig, resolveConfig } from './config';
