@@ -26,7 +26,7 @@
 
 ## 5. Offline UX surfaces
 
-- [ ] 5.1 `HomeScreen.tsx`: quiet connectivity indicator sourced from `LauncherRoot`'s `connectivity` state — visible only for `'offline'` (not `'unknown'`), does not obscure or gate the grid.
-- [ ] 5.2 Prompt-flow entry screen: "server unreachable" notice shown when `connectivity === 'offline'` and an address is configured, distinct from and not overriding the existing "unconfigured" message; notice does not gate submission.
-- [ ] 5.3 Copy additions in `copy.ts` for the indicator and the notice.
-- [ ] 5.4 Node suite coverage: indicator/notice visibility matrix across the four connectivity states × configured/unconfigured, unconfigured always shows neither offline surface.
+- [x] 5.1 `HomeScreen.tsx`: quiet connectivity indicator sourced from `LauncherRoot`'s `connectivity` state — visible only for `'offline'` (not `'unknown'`), does not obscure or gate the grid.
+- [x] 5.2 Prompt-flow entry screen: "server unreachable" notice shown when `connectivity === 'offline'` and an address is configured, distinct from and not overriding the existing "unconfigured" message; notice does not gate submission.
+- [x] 5.3 Copy additions in `copy.ts` for the indicator and the notice.
+- [x] 5.4 Node suite coverage: indicator/notice visibility matrix across the four connectivity states × configured/unconfigured, unconfigured always shows neither offline surface.
