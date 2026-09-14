@@ -19,9 +19,13 @@ const SERVER_URL_KEY = 'whim.server-url:v1';
  *
  * Trailing-slash stripping matters because `generation-client.ts` concatenates this address with
  * a leading-slash path (e.g. `/v1/clarify`); a stored trailing slash would double it to `//v1/...`,
- * which the server 404s (no non-exact-path matching).
+ * which the server 404s (no non-exact-path matching). Exported so `server-probe.ts`'s callers can
+ * apply the same normalization to a draft address before probing it (`handoff/server-probe.md`:
+ * "`baseUrl` is passed through unvalidated ... already sanitized by `server-address.ts`'s
+ * `loadServerUrl`/`saveServerUrl` before it reaches this module") — without it, a trailing slash
+ * in the draft would double up against `probeServer`'s leading-slash `/healthz` the same way.
  */
-function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
+export function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   let end = trimmed.length;
   while (end > 0 && trimmed[end - 1] === '/') {
