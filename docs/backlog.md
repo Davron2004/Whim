@@ -14,6 +14,14 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ## Open
 
+### [med] Choose the generation models for public cost, not just quality
+- [ ] open
+- **Where:** `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` (server env, read in `server/src/generation/model.ts`), and the pipeline's system prompts, which are tuned to the current pair.
+- **What:** the current rewrite and engineer models were chosen while the developer was the only one paying. Once the app is public, every generation runs on the operator's OpenRouter key, so this choice sets the cost per generation, the build success rate, and how long people wait.
+- **Why it matters:** a cheaper model that fails the synthetic run pays for extra repair rounds, so it can end up slower and more expensive than a stronger one. Free OpenRouter models are slow, and their rate limit is shared by every user of one account. Switching models may also mean rewriting prompts.
+- **Suggested approach:** run the app corpus (`docs/app-corpus.md`) through each candidate pair and record first-try build success, repair rounds, wall time and dollar cost per app (the server's OpenRouter reconciliation already fetches per-generation stats). Pick rewrite and engineer models separately. A user-pickable model list comes after this, not before.
+- **Source:** store-launch planning, 2026-09-14.
+
 ### [low] DevProbeScreen may double-apply the top safe-area inset
 - [ ] open
 - **Where:** `src/host/launcher/DevProbeScreen.tsx` (uses `react-native`'s `SafeAreaView`), now rendered under `App.tsx`'s `SafeAreaView edges={['top']}` (added by `fix-launcher-shell-bugs` B9).

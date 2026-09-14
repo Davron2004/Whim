@@ -1057,3 +1057,31 @@ face, so Whim falls into an established, already-approved category rather than a
 #38, #40, #41, #43b and their descendants) ran on the real Android System WebView, per #10's test
 order. Nothing about the containment model, the SDK, or the storage/version-store engines is
 Android-specific; running on iOS is a **standing open item**, not a known gap.
+
+### 64. Apple enforces 2.5.2 against in-app generated code; Whim argues guideline 4.7 `[DECIDED — corrects the Apple paragraph of #63]`
+
+**#63's "the Apple-rejection worry is resolved" no longer holds.** It rested on the Replit iOS app
+running AI-generated code on-device, and in 2026 Apple went after exactly that. On 2026-03-18 it
+blocked updates to Replit and Vibecode under guideline 2.5.2, which bars apps from downloading or
+executing code that changes their features. On 2026-03-26 it pulled the "Anything" app, even
+though Anything had already moved its previews out to an external browser. Replit got an update
+approved on 2026-05-15, and neither company has said what changed. Lovable's app passed review in
+April with a WebView pointed at previews hosted on Lovable's servers. We found no approved app
+that runs freshly generated code locally in an in-app WebView, which is what Whim does. Sources
+(researched 2026-09-14): MacRumors 2026-03-18, 9to5Mac 2026-03-30, TechCrunch 2026-04-14 and
+2026-04-28, AppleInsider 2026-05-15.
+
+**Whim keeps its architecture and argues guideline 4.7.** 4.7 allows "HTML5 and JavaScript mini
+apps" when the host meets 4.7.1 to 4.7.5: filtering and reporting of objectionable content, no
+native APIs exposed to the mini-apps without Apple's permission, no data or permissions passed to
+them without consent, an index of the mini-apps with a universal link to each, and age limits for
+content above the app's rating. Much of that is already true. Mini-apps have no network access,
+nothing they build leaves the device, and they reach native code only through the nine local
+bridge syscalls (#41). The first store submission adds the rest: prompt filtering, in-app
+reporting, a universal link per mini-app, and a 13+ rating. Moving execution to server-hosted
+previews would give up on-device user data and offline use, so it only comes back on the table if
+Apple rejects Whim itself.
+
+**Google Play is not where the risk is.** Its Device and Network Abuse policy exempts "JavaScript
+in a webview" from the ban on downloaded executable code. Its AI-Generated Content policy requires
+in-app reporting, which the same submission work covers.
