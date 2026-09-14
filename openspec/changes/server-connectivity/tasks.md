@@ -7,8 +7,8 @@
 
 ## 2. Client probe helper (Node-suite testable, no RN import)
 
-- [ ] 2.1 Create `src/host/launcher/server-probe.ts`: `probeServer(baseUrl, opts?) → Promise<'verified' | 'unverified' | 'unreachable'>` per design.md decisions 1-2 — `GET <baseUrl>/healthz`, `AbortController` + `setTimeout` timeout (default ~4000ms), classify per the healthz body shape.
-- [ ] 2.2 Node suite coverage in `launcher:test`: verified (JSON body with service identity), unverified (200 with other/unparseable body), unreachable (non-200, network error, timeout), timeout actually aborts the in-flight request.
+- [x] 2.1 Create `src/host/launcher/server-probe.ts`: `probeServer(baseUrl, opts?) → Promise<'verified' | 'unverified' | 'unreachable'>` per design.md decisions 1-2 — `GET <baseUrl>/healthz`, `AbortController` + `setTimeout` timeout (default ~4000ms), classify per the healthz body shape.
+- [x] 2.2 Node suite coverage in `launcher:test`: verified (JSON body with service identity), unverified (200 with other/unparseable body), unreachable (non-200, network error, timeout), timeout actually aborts the in-flight request.
 
 ## 3. Session connectivity state and retry loop (LauncherRoot)
 
