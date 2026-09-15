@@ -154,3 +154,9 @@
 - [x] 20.1 Preserve the reproduced 1062 ms old-sleep failure and separate its fixture from the existing hanging-child timeout test, following `readiness-test-fix.md`.
 - [x] 20.2 Use immediate IAP 4003 failures to prove the bounded helper stays below 4.5 seconds and the executed old `sleep 5` exceeds that threshold. Require actual mutation execution and distinct result/timing evidence.
 - [x] 20.3 Write `handoff/readiness-test.md`, pass the server suite and fast gate, then independently review, integrity-check, merge and regate. No production behavior changes.
+
+## 21. Load-test drive cleanup after function return
+
+- [ ] 21.1 Reproduce the live wrapper cleanup failure through the real drive command in the local deployment sandbox, including observable sampler PID and CSV ownership.
+- [ ] 21.2 Clean up while its state remains valid, preserve both zero and nonzero driver statuses, and prove sampler termination and CSV removal without an unbound-variable error. Follow `sampler-cleanup-fix.md`.
+- [ ] 21.3 Update the load-test contract and pass server checks, fast gate, independent review, integrity and merged full gate. Repeat live drive verification before closing task 15.4.

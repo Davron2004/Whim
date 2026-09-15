@@ -219,3 +219,13 @@
 - writes-contract: handoff/readiness-test.md (fixture boundaries, observed failure and behavioral proof)
 - after: chain-acceptance-fixes
 - rule: preserve the hanging-child test; no production or protected configuration edits. This chain is independent of replay-compose-env because their test files and contracts are disjoint.
+
+## chain-sampler-cleanup: retain cleanup state through drive exit
+
+- tasks: 21.1–21.3
+- rationale: live reports passed but the wrapper EXIT trap lost function-local cleanup state and returned an error.
+- files: `deploy/loadtest/run.sh`, `server/test/deploy-config.suite.ts`, `handoff/loadtest.md`
+- reads: sampler-cleanup-fix.md; handoff/loadtest.md; acceptance-fixes.md
+- writes-contract: handoff/loadtest.md (drive exit status and sampler cleanup)
+- after: chain-replay-compose-env, chain-readiness-test
+- rule: client wrapper/test/contract only; no server, driver, Compose, image, limits or protected configuration changes.
