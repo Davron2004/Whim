@@ -52,6 +52,6 @@
 
 ## 7. Store docs
 
-- [ ] 7.1 Write `docs/store/review-notes.md` sections 1 to 4 per design D18 (how to try Whim, the guideline 4.7 mapping with the nine syscalls named, 2.5.2 context, what leaves the phone), quoting the real `COPY` labels as landed. Apply the `unslop` skill.
-- [ ] 7.2 Add D18 sections 5 and 6 to `docs/store/review-notes.md`: Apple App Privacy and age-rating drafts, Google Play Data safety, the AI-generated content declaration, content rating, target audience, the webview JavaScript exemption (each marked as a draft to confirm in the console), and the pre-submission checklist including the D17 domain lockstep.
-- [ ] 7.3 Append one entry to `docs/decisions.md` (read the tail for the next number) recording design D1, D2, D3, D6, D7, D10 and D16, with one line of why each.
+- [x] 7.1 Write `docs/store/review-notes.md` sections 1 to 4 per design D18 (how to try Whim, the guideline 4.7 mapping with the nine syscalls named, 2.5.2 context, what leaves the phone), quoting the real `COPY` labels as landed. Apply the `unslop` skill.
+- [x] 7.2 Add D18 sections 5 and 6 to `docs/store/review-notes.md`: Apple App Privacy and age-rating drafts, Google Play Data safety, the AI-generated content declaration, content rating, target audience, the webview JavaScript exemption (each marked as a draft to confirm in the console), and the pre-submission checklist including the D17 domain lockstep.
+- [x] 7.3 Append one entry to `docs/decisions.md` (read the tail for the next number) recording design D1, D2, D3, D6, D7, D10 and D16, with one line of why each.
