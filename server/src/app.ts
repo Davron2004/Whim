@@ -23,8 +23,7 @@ import type { DevLogSinkPath } from '@whim/contract';
 import type { Pipeline } from './pipeline';
 import type { UsageStore } from './usage-store';
 import type { ModelClient, ModelRoster } from './generation/model';
-import type { GenerationStatsTransport, ReconcileBounds } from './generation/reconcile';
-import { makeGenerateRoute } from './routes/generate';
+import { InFlightGenerations, makeGenerateRoute } from './routes/generate';
 import { makeRewriteRoute } from './routes/rewrite';
 import { makeClarifyRoute } from './routes/clarify';
 import { makeReportRoute } from './routes/report';
@@ -41,15 +40,10 @@ import { StubContentPolicy, type ContentPolicy } from './policy/policy';
 import { InMemoryReportStore, type ReportStore } from './reports/store';
 import { ResolveTracker, type ResolveBounds, type UsageAndCostTransport } from './usage/resolve';
 
-/** A transport that never resolves a generation id — safe as the default: the stub pipeline
- *  never records a generation id on `RunTrace`, so `reconcileAbortedUsage` short-circuits before
- *  this is ever called (design D9: "a stream cancelled before any model call was made credits
- *  nothing"). Also the default for `/v1/clarify`/`/v1/rewrite`'s resolver transport, when a caller
- *  supplies none — cost simply never resolves for an unconfigured server. */
-const NO_OP_STATS_TRANSPORT: GenerationStatsTransport = {
-  fetchStats: async () => null,
-};
-
+/** A transport that never resolves a generation id — the resolver's default when a caller supplies
+ *  none. The stub pipeline records no generation id, so the resolver never calls it for a stub run
+ *  (design D9: "a stream cancelled before any model call was made credits nothing"); for an
+ *  unconfigured server's model calls, cost simply never resolves. */
 const NO_OP_RESOLVE_TRANSPORT: UsageAndCostTransport = {
   fetchStats: async () => null,
 };
@@ -66,9 +60,6 @@ export interface AppOptions {
    *  (`rewrite_not_configured`) rather than falling back to a canned rewrite. */
   model?: ModelClient;
   roster?: ModelRoster;
-  /** Post-abort usage reconciliation transport for `/v1/generate` (design D9, task 7.3).
-   *  Defaults to a no-op transport — safe with the stub pipeline (see `NO_OP_STATS_TRANSPORT`). */
-  reconcile?: { transport: GenerationStatsTransport; bounds?: Partial<ReconcileBounds> };
   /** The dev-only log sink (obs-v1). ABSENT unless `main.ts` sees its environment flag, and the
    *  route is mounted only when present — so a default server answers `404` there. Mounted
    *  OUTSIDE `/v1`, so the "every `/v1` route is gated by `x-whim-device`" invariant is untouched
@@ -103,17 +94,19 @@ export interface AppOptions {
   /** The report store `/v1/report` persists into (design D10). Defaults to a fresh
    *  `InMemoryReportStore`. */
   reportStore?: ReportStore;
-  /** Deps for `/v1/clarify` and `/v1/rewrite`'s post-response cost resolution (design D7's
-   *  resolver, `usage/resolve.ts`) — separate from `/v1/generate`'s `reconcile` above. `tracker`,
-   *  when supplied, is the SAME instance a later `drain` (chain-11) calls `.drain()` on; omitted,
-   *  `createApp` makes one unreachable from outside. `transport` defaults to one that never
-   *  resolves a stat — the real OpenRouter-backed transport is composition's to build
-   *  (`handoff/usage-ledger.md`: `openRouterGenerationStatsTransport` returns tokens only today). */
+  /** Deps for the post-request cost resolution and aborted-run token reconciliation of
+   *  `/v1/generate`, `/v1/clarify` and `/v1/rewrite` (design D7's resolver, `usage/resolve.ts`).
+   *  `tracker`, when supplied, is the SAME instance a later `drain` (chain-11) calls `.drain()` on;
+   *  omitted, `createApp` makes one unreachable from outside. `transport` defaults to one that
+   *  never resolves a stat — `main.ts` supplies the real OpenRouter-backed one. */
   resolver?: { transport?: UsageAndCostTransport; tracker?: ResolveTracker; bounds?: Partial<ResolveBounds> };
-  /** The operator-credit lookup transport `checkCredit` (design D6a) uses ahead of every unary
-   *  admission. Omitted entirely means the credit check is skipped (never refuses on budget) —
-   *  `main.ts` supplies `createOpenRouterCreditTransport(...)` in production. */
+  /** The operator-credit lookup transport `checkCredit` (design D6a) uses ahead of every generate,
+   *  clarify and rewrite admission. Omitted entirely means the credit check is skipped (never
+   *  refuses on budget) — `main.ts` supplies `createOpenRouterCreditTransport(...)` in production. */
   creditTransport?: CreditTransport;
+  /** The in-flight generation registry a drain aborts once its wait runs out. Omitted, `createApp`
+   *  makes one unreachable from outside. */
+  inFlight?: InFlightGenerations;
 }
 
 const PROBE_FRAME = ': whim-healthz-probe\n\n';
@@ -159,7 +152,6 @@ function buildProbeStream(onSettled: () => void): ReadableStream<Uint8Array> {
 
 export function createApp(options: AppOptions): Hono<AppEnv> {
   const { pipeline, usageStore, keepaliveMs, model, roster } = options;
-  const reconcile = options.reconcile ?? { transport: NO_OP_STATS_TRANSPORT };
 
   const deviceVerifier = options.deviceVerifier ?? shapeOnlyVerifier;
   const config = options.config ?? loadServerConfig({});
@@ -174,6 +166,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const resolveTransport = options.resolver?.transport ?? NO_OP_RESOLVE_TRANSPORT;
   const resolveBounds = options.resolver?.bounds;
   const { creditTransport } = options;
+  const inFlight = options.inFlight ?? new InFlightGenerations();
 
   const app = new Hono<AppEnv>();
 
@@ -240,7 +233,21 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   });
 
   // Mount routes under /v1
-  app.route('/v1/generate', makeGenerateRoute(pipeline, usageStore, { keepaliveMs, reconcile }));
+  app.route(
+    '/v1/generate',
+    makeGenerateRoute(pipeline, usageStore, {
+      keepaliveMs,
+      config,
+      clock,
+      slots,
+      policy,
+      creditTransport,
+      resolveTracker,
+      resolveTransport,
+      resolveBounds,
+      inFlight,
+    }),
+  );
   app.route(
     '/v1/rewrite',
     makeRewriteRoute(model, roster, usageStore, {
