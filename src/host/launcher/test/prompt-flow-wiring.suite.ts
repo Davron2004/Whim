@@ -423,6 +423,21 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!/setScreen\(\s*onlyOnStep/.test(openComposeFn), 'and no longer races a screen-state write against the user leaving compose');
   });
 
+  await h.test('sentFrom-wiring (review fix M3): openPlan is told which step\'s own Continue sent the rewrite', () => {
+    // A zero-question clarify exchange skips straight to plan from the LOADING clarify screen it
+    // built (`loading.kind` would read `'clarify'`), but it was compose's Continue that fired the
+    // request — misattributing that skip's refusal landing to a clarify step the user never saw.
+    const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
+    h.ok(
+      composeFn.includes("await openPlan(loading, 'compose');"),
+      'the compose-Continue skip passes the literal \'compose\', never loading.kind',
+    );
+    h.ok(
+      /onContinue=\{\(\) => openPlan\(from, 'clarify'\)\}/.test(rootSrc),
+      'the clarify step\'s own Continue passes the literal \'clarify\'',
+    );
+  });
+
   await h.test('cancel-wiring: every post-await screen write in the flow is guarded', () => {
     // The B1 fix: aborting alone cannot stop a promise that had already resolved when the user
     // navigated away, so each write after an `await` re-checks the step that started it. The ONE
@@ -846,8 +861,13 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
       rootSrc.includes('consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)'),
       'clientOptions is derived through the one consent gate',
     );
-    // `resolveClientOptions()` (review fix M1: `clientOptions ?? liveClientOptions(kv, deviceId)`) is
-    // what every forward step reads through now, so its own bail-out reads `if (!options) return;`.
+    // `resolveClientOptions()` (review fix M1, lifted into the pure `resolveOptions` in review fix
+    // N3: `resolveOptions(clientOptions, liveClientOptions(kv, deviceId))`) is what every forward
+    // step reads through now, so its own bail-out reads `if (!options) return;`.
+    h.ok(
+      rootSrc.includes('resolveOptions(clientOptions, liveClientOptions(kv, deviceId))'),
+      'resolveClientOptions falls back to a live read through the pure resolveOptions helper, never bare clientOptions',
+    );
     h.ok(rootSrc.includes('if (!options) return;'), 'each forward step bails out honestly when consent is not current');
     h.ok(rootSrc.includes('getDeviceId(kv)'), 'the persisted device id is read once');
     h.ok(settingsSrc.includes('COPY.serverAddressSectionTitle') && settingsSrc.includes('onServerUrlChange'), 'Settings still owns the address field');

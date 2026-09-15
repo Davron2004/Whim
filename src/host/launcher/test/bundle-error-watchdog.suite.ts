@@ -175,7 +175,7 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     // bind() start, the 'paint' case, exit(), clearLastError(), and the unmount effect all must
     // render the realm's watchdog inert -- checked per-site so a build that clears it in only
     // SOME of them still fails.
-    const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverByRecord'));
+    const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverBySource'));
     h.ok(/disarmTimer\(paintTimer\)/.test(bindBody), 'bind() must disarm paintTimer before rebinding');
 
     // The paint path delegates to the named `handlePaintFrame` helper (kept out of the switch for

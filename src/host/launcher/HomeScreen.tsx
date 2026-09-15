@@ -157,7 +157,7 @@ export default function HomeScreen({
           accessibilityLabel={COPY.settingsTitle}
           style={[styles.settingsBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
-          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙'}</Text>
+          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙︎'}</Text>
         </TouchableOpacity>
       </View>
 

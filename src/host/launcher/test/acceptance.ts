@@ -67,6 +67,8 @@ import { runConsentOptionsTests } from './consent-options.suite';
 import { runProbeGateTests } from './probe-gate.suite';
 import { runReportSendTests } from './report-send.suite';
 import { runScreenExitsTests } from './screen-exits.suite';
+import { runResolveOptionsTests } from './resolve-options.suite';
+import { runSchemeHostTests } from './scheme-host.suite';
 
 const h = new Harness();
 
@@ -131,6 +133,8 @@ await runConsentOptionsTests(h);
 await runProbeGateTests(h);
 await runReportSendTests(h);
 await runScreenExitsTests(h);
+await runResolveOptionsTests(h);
+await runSchemeHostTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

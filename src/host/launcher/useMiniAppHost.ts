@@ -151,10 +151,10 @@ export interface MiniAppHost {
   webRef: React.RefObject<WebView | null>;
   state: HostState;
   onMessage: (data: string) => void;
-  /** Product path: launch an installed app by host record + bundle SOURCE (#5 D3). */
+  /** Launch a host record by bundle SOURCE (#5 D3) — the product path, and (review fix F3) the
+   *  dev probe's fixture buttons too, both reading the same real bundle text rather than a
+   *  page-side deliver-by-name lookup. */
   deliverBySource: (record: AppRecord, source: string, engineAppId?: string, theme?: object) => void;
-  /** Dev/probe path: launch a baked fixture by its host record + display name. */
-  deliverByRecord: (record: AppRecord, bundleName: string) => void;
   /** The host→realm control surface (injectJavaScript into the OUTER page only). */
   control: (js: string) => void;
   /** Tap the floating affordance / explicit leave (bypasses the realm entirely). */
@@ -240,12 +240,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     },
     [],
   );
-
-  const deliverByRecord = useCallback((record: AppRecord, bundleName: string) => {
-    const realm = bind(record, bundleName, record.appId);
-    if (!realm) return;
-    control(`window.__whimControl.reinject({reset:true,bundle:${JSON.stringify(bundleName)},generation:${realm.generation}})`);
-  }, [bind, control]);
 
   const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
     const id = engineAppId ?? record.appId;
@@ -384,7 +378,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     state: s,
     onMessage,
     deliverBySource,
-    deliverByRecord,
     control,
     exit,
     clearLastError,
