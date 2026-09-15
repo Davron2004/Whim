@@ -747,7 +747,7 @@ const STUB_SCRIPT = [
   '  readiness_count_file="$STUB_DIR/readiness-count"',
   '  readiness_count=0; [ -f "$readiness_count_file" ] && readiness_count=$(cat "$readiness_count_file")',
   '  readiness_count=$((readiness_count + 1)); printf "%s" "$readiness_count" >"$readiness_count_file"',
-  '  if [ "$readiness_count" -le "${STUB_READINESS_FAILS:-0}" ]; then exit 1; fi',
+  '  if [ "$readiness_count" -le "${STUB_READINESS_FAILS:-0}" ]; then printf "ERROR: (gcloud.compute.ssh) Could not connect to port 22: IAP 4003\\n" >>"$STUB_DIR/gcloud.log"; printf "ERROR: (gcloud.compute.ssh) Could not connect to port 22: IAP 4003\\n" >&2; exit 1; fi',
   ';;',
   'esac',
   'case "$tool $*" in',
@@ -1142,6 +1142,7 @@ function resizeTests(): void {
     const run = runScript(sandbox, 'resize.sh', ['--profile', 'event'], { STUB_READINESS_FAILS: '1' });
     const calls = toolLog(sandbox, 'gcloud');
     eq('a transient IAP 4003 readiness failure is retried and then succeeds', run.status, 0);
+    check('  ... the transient fixture emits the IAP 4003 diagnostic', calls.some((line) => line.includes('IAP 4003')), calls.join(' / '));
     eq('  ... only the idempotent readiness probe repeats', calls.filter((line) => line.includes('--command :')).length, 2);
     eq('  ... deployment runs exactly once after readiness', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
   });
@@ -1185,7 +1186,24 @@ function resizeTests(): void {
         WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
       },
     });
-    check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && Date.now() - started < 8_000 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}`);
+    const elapsed = Date.now() - started;
+    check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && elapsed < 4_500 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}\nelapsed=${elapsed}ms`);
+
+    const oldLib = path.join(sandbox.dir, 'old-lib.sh');
+    const oldText = readRepoFile('deploy/lib.sh').replace('sleep "$sleep_for"', 'sleep 5');
+    fs.writeFileSync(oldLib, oldText);
+    const oldStarted = Date.now();
+    const oldResult = runFromPath('bash', ['-c', `source '${oldLib}'; whim_wait_for_ssh old 2 1`], {
+      cwd: sandbox.repo,
+      encoding: 'utf8',
+      timeout: 8_000,
+      env: {
+        PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_HANG: '1',
+        WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
+      },
+    });
+    check('red demonstration: old unconditional sleep overshoots the 2-second deadline', oldResult.status === 1 && Date.now() - oldStarted >= 4_500, `old elapsed=${Date.now() - oldStarted}ms`);
   });
 }
 
