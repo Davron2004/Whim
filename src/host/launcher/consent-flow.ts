@@ -13,8 +13,6 @@
 import type { InstalledApp } from './app-index';
 import type { PendingBuildRecord } from './pending-builds';
 import type { ConsentStatus } from './ai-consent';
-import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
-import type { COPY } from './copy';
 
 /**
  * What a gated action resumes once consent is current. The five entry points (the home composer
@@ -56,48 +54,4 @@ export interface ConsentReturnScreen {
  */
 export function declineTarget<S extends ConsentReturnScreen>(returnTo: S): S | { kind: 'home' } {
   return returnTo.kind === 'app' ? { kind: 'home' } : returnTo;
-}
-
-/** One consent-screen exit button (design D6): `action` is what a press does, `label` the `COPY`
- *  key it renders — a quoted literal below, which is how the exit table's "labelled" scan (spec
- *  launcher-screen-exits "A screen without a declared exit fails the fast gate") recognises a
- *  decision module that hands back label keys rather than rendering `COPY.<key>` itself. */
-export interface ConsentControl {
-  readonly action: 'agree' | 'close' | 'turn-off';
-  readonly label: keyof typeof COPY;
-}
-
-/** `consentScreenActions`' row action (design D5, `consent-screen-actions.ts`) to this module's
- *  `{ action, label }` pair (design D6) — the two vocabularies existed before this change and this
- *  is the one place they meet, so the table below is the whole translation, not a second copy of
- *  either. */
-const CONSENT_CONTROL_BY_ACTION: Readonly<Record<ConsentScreenAction, ConsentControl>> = {
-  agree: { action: 'agree', label: 'consentAgree' },
-  decline: { action: 'close', label: 'consentDecline' },
-  keepOn: { action: 'close', label: 'consentReviewKeepOn' },
-  turnOff: { action: 'turn-off', label: 'consentReviewTurnOff' },
-  turnOn: { action: 'agree', label: 'consentReviewTurnOn' },
-};
-
-/**
- * The consent screen's two buttons for a mode (design D6), built on `consent-screen-actions.ts`'s
- * `consentScreenActions` rather than a second mode → actions table:
- *
- * | mode          | primary                        | plain                                |
- * |---------------|---------------------------------|---------------------------------------|
- * | ask           | agree / consentAgree            | close / consentDecline                |
- * | review, on    | close / consentReviewKeepOn     | turn-off / consentReviewTurnOff       |
- * | review, off   | agree / consentReviewTurnOn     | close / consentDecline                |
- */
-export function consentControls(
-  mode: 'ask' | 'review',
-  consentOn: boolean,
-): { primary: ConsentControl; plain: ConsentControl } {
-  const rows = consentScreenActions(mode === 'ask' ? { kind: 'ask' } : { kind: 'review', consentOn });
-  const primary = rows.find((row) => row.kind === 'primary')!;
-  const plain = rows.find((row) => row.kind === 'plain')!;
-  return {
-    primary: CONSENT_CONTROL_BY_ACTION[primary.action],
-    plain: CONSENT_CONTROL_BY_ACTION[plain.action],
-  };
 }

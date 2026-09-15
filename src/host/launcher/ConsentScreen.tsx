@@ -71,13 +71,15 @@ export default function ConsentScreen({
   const p = SHELL_PALETTE;
   useSystemBack(onClose);
 
-  /** `agree`/`turnOn` grant; every other row (`decline`, `keepOn`, `turnOff`) leaves without
-   *  granting or revoking anything, same as hardware back — `turnOff` is the one row that also
-   *  deletes an existing grant. */
+  /** `agree`/`turnOn` grant and `turnOff` also deletes an existing grant — neither is `onClose`,
+   *  so the JSX below routes those three through this helper. `decline`/`keepOn` leave without
+   *  granting or revoking anything, same as hardware back: their `onPress` binds `onClose`
+   *  DIRECTLY, inline, rather than through this function (design D8 "bound" — the scanner requires
+   *  the identifier passed to `useSystemBack` to appear inside an `on[A-Z]…={…}` attribute in this
+   *  file itself, not through a same-file indirection). */
   function pressHandlerFor(action: ConsentScreenAction): () => void {
     if (action === 'agree' || action === 'turnOn') return onAgree;
-    if (action === 'turnOff') return onTurnOff ?? onClose;
-    return onClose;
+    return onTurnOff ?? onClose;
   }
 
   const actions = consentScreenActions(mode === 'ask' ? { kind: 'ask' } : { kind: 'review', consentOn });
@@ -118,7 +120,7 @@ export default function ConsentScreen({
         row.kind === 'primary' ? (
           <TouchableOpacity
             key={row.action}
-            onPress={pressHandlerFor(row.action)}
+            onPress={row.action === 'decline' || row.action === 'keepOn' ? onClose : pressHandlerFor(row.action)}
             accessibilityRole="button"
             // `keepOn` is review mode's safe choice (design D5) — it keeps the SAME behaviour as
             // hardware back, so its button reads visually distinct from the accent-coloured agree
@@ -130,7 +132,7 @@ export default function ConsentScreen({
         ) : (
           <TouchableOpacity
             key={row.action}
-            onPress={pressHandlerFor(row.action)}
+            onPress={row.action === 'decline' || row.action === 'keepOn' ? onClose : pressHandlerFor(row.action)}
             accessibilityRole="button"
             style={styles.plainAction}
           >

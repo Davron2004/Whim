@@ -53,6 +53,13 @@ Matches design D6's table exactly. **Chain-2 does not need to render from this**
 already renders correctly from `consentScreenActions`/`consentScreenActions`'s existing consumers;
 chain-2's task 2.5 only needs to add `useSystemBack(onClose)` there, not adopt `consentControls`.
 
+**Final reconciliation (`ios-back-fixes` fix chain):** `consentControls`/`ConsentControl`/
+`CONSENT_CONTROL_BY_ACTION` never gained a production consumer — the "thin adapter" above was
+speculative — and were deleted, along with their `test/consent-flow.suite.ts` cases. The consent
+row's "labelled" scan reads `ConsentScreen.tsx` directly (see `screen-exits.ts` below), and its
+"bound" scan is satisfied by `ConsentScreen.tsx` binding `onClose` DIRECTLY, inline, in its
+`decline`/`keepOn` `onPress` attributes, not through any decision-module adapter.
+
 ## `screen-exits.ts` (RN-free, `import type { COPY }` only)
 Exports `ScreenKind` (13 members, matching `LauncherRoot.tsx`'s `Screen['kind']`), `ExitControl`,
 `ScreenExit`, `SCREEN_EXITS`, `FALLBACK_EXIT`, `frameEdgesFor` — signatures verbatim from design D8.

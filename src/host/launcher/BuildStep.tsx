@@ -64,8 +64,9 @@ export interface BuildStepProps {
   editingName?: string;
   /** `Leave it running` AND system back both call this — the caller decides what it means (close
    *  the details sheet if it is open, otherwise leave the run running without cancelling it).
-   *  MUST be a stable identity (the caller's `useCallback`), so `useSystemBack` binds once per
-   *  mount rather than once per liveness tick — the exact bug this contract replaces. */
+   *  `useSystemBack` binds its listener once per mount regardless of this prop's identity (design
+   *  D9: it always reads the LATEST value through a ref) — the exact listener-churn bug this
+   *  contract replaces, without requiring a stable `useCallback` identity to fix it. */
   onBack: () => void;
   /** Activating the details affordance: the caller shows this attempt's run timeline, reading it
    *  once on open — never per render and never per tick. */

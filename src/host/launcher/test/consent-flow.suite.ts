@@ -7,8 +7,8 @@
  */
 
 import { Harness } from './harness';
-import { consentControls, declineTarget, entryDecision } from '../consent-flow';
-import type { ConsentContinuation, ConsentControl } from '../consent-flow';
+import { declineTarget, entryDecision } from '../consent-flow';
+import type { ConsentContinuation } from '../consent-flow';
 import type { ConsentStatus } from '../ai-consent';
 import type { InstalledApp } from '../app-index';
 import type { PendingBuildRecord } from '../pending-builds';
@@ -90,46 +90,5 @@ export async function runConsentFlowTests(h: Harness): Promise<void> {
     for (const screen of cases) {
       h.eq(declineTarget(screen), screen, `${screen.kind} is returned to as-is, with its own fields intact`);
     }
-  });
-
-  // consentControls (design D6): every one of the three consent-screen states offers exactly one
-  // `close` control (the non-granting exit an iOS reviewer needs when there is no hardware back),
-  // and it never grants or revokes.
-  const STATES: ReadonlyArray<{ name: string; mode: 'ask' | 'review'; consentOn: boolean }> = [
-    { name: 'ask', mode: 'ask', consentOn: false },
-    { name: 'review, on', mode: 'review', consentOn: true },
-    { name: 'review, off', mode: 'review', consentOn: false },
-  ];
-
-  for (const { name, mode, consentOn } of STATES) {
-    await h.test(`consentControls: ${name} has exactly one non-granting close control`, () => {
-      const { primary, plain } = consentControls(mode, consentOn);
-      const closes = [primary, plain].filter((c) => c.action === 'close');
-      h.eq(closes.length, 1, `${name} offers exactly one close control, so it is always leavable without a grant`);
-    });
-  }
-
-  await h.test('consentControls: review, on — the primary IS the close control (Keep AI features on)', () => {
-    const { primary, plain } = consentControls('review', true);
-    const expectedPrimary: ConsentControl = { action: 'close', label: 'consentReviewKeepOn' };
-    const expectedPlain: ConsentControl = { action: 'turn-off', label: 'consentReviewTurnOff' };
-    h.eq(primary, expectedPrimary, 'review-on’s safe, primary action is the same as leaving');
-    h.eq(plain, expectedPlain, 'review-on’s plain action turns AI features off');
-  });
-
-  await h.test('consentControls: review, off — the plain action is close, labelled consentDecline', () => {
-    const { primary, plain } = consentControls('review', false);
-    const expectedPrimary: ConsentControl = { action: 'agree', label: 'consentReviewTurnOn' };
-    const expectedPlain: ConsentControl = { action: 'close', label: 'consentDecline' };
-    h.eq(primary, expectedPrimary, 'review-off’s primary action turns AI features on');
-    h.eq(plain, expectedPlain, 'review-off’s plain action is a non-granting close, labelled consentDecline');
-  });
-
-  await h.test('consentControls: ask — labelled consentAgree and consentDecline', () => {
-    const { primary, plain } = consentControls('ask', false);
-    const expectedPrimary: ConsentControl = { action: 'agree', label: 'consentAgree' };
-    const expectedPlain: ConsentControl = { action: 'close', label: 'consentDecline' };
-    h.eq(primary, expectedPrimary, 'ask’s primary action agrees');
-    h.eq(plain, expectedPlain, 'ask’s plain action declines');
   });
 }
