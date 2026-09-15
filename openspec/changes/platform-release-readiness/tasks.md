@@ -1,8 +1,8 @@
 ## 1. package.json codegen and dev script (HUMAN-BOOTSTRAP)
 
-- [ ] 1.1 In `package.json` `codegenConfig`, add `"ios": {"modulesProvider": {"WhimTone": "WhimToneModule"}}` beside the existing `android` key, leaving `name`, `type`, `jsSrcsDir` and `android` unchanged (design D9).
-- [ ] 1.2 Change the `android:release` script to `react-native run-android --mode offline --active-arch-only` (design D4). This needs section 5 merged, since that section adds the `offline` build type.
-- [ ] 1.3 Run `./scripts/gate.sh` on the staging branch, then commit `package.json` alone as one human change.
+- [x] 1.1 In `package.json` `codegenConfig`, add `"ios": {"modulesProvider": {"WhimTone": "WhimToneModule"}}` beside the existing `android` key, leaving `name`, `type`, `jsSrcsDir` and `android` unchanged (design D9).
+- [x] 1.2 Change the `android:release` script to `react-native run-android --mode offline --active-arch-only` (design D4). This needs section 5 merged, since that section adds the `offline` build type.
+- [x] 1.3 Run `./scripts/gate.sh` on the staging branch, then commit `package.json` alone as one human change.
 
 ## 2. Native release file and release tooling foundation
 
