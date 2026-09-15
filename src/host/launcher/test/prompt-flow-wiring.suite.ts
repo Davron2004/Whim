@@ -846,7 +846,9 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
       rootSrc.includes('consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)'),
       'clientOptions is derived through the one consent gate',
     );
-    h.ok(rootSrc.includes('if (!clientOptions) return;'), 'each forward step bails out honestly when consent is not current');
+    // `resolveClientOptions()` (review fix M1: `clientOptions ?? liveClientOptions(kv, deviceId)`) is
+    // what every forward step reads through now, so its own bail-out reads `if (!options) return;`.
+    h.ok(rootSrc.includes('if (!options) return;'), 'each forward step bails out honestly when consent is not current');
     h.ok(rootSrc.includes('getDeviceId(kv)'), 'the persisted device id is read once');
     h.ok(settingsSrc.includes('COPY.serverAddressSectionTitle') && settingsSrc.includes('onServerUrlChange'), 'Settings still owns the address field');
   });

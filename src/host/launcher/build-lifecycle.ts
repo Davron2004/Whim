@@ -31,7 +31,7 @@ import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
 import type { BuildScreen, RunSignals } from './prompt-flow';
-import type { RunJournalStore } from './run-journal';
+import type { RunJournalStore, RunTerminalCounts } from './run-journal';
 import { accumulateRunAggregates, ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
@@ -312,6 +312,31 @@ export type RefusedGenerateOutcome = 'drop' | 'settle';
 
 export function refusedGenerateOutcome(isRetry: boolean, detached: boolean): RefusedGenerateOutcome {
   return !isRetry && !detached ? 'drop' : 'settle';
+}
+
+/**
+ * The refusal settlement itself, for the outcome `refusedGenerateOutcome` decided: `'drop'`
+ * deletes the record and its journal exactly as a cancel does (no generation took place); `'settle'`
+ * writes the journal's terminal entry and persists the record `failed` with the refusal's hint as
+ * its reason, the same shape `failPendingBuild` gives any other stream failure. Pure over
+ * `pending`/`journal` — the caller (`LauncherRoot.tsx#handleGenerateRefusal`) still owns releasing
+ * its own `liveRef` and refreshing the grid, neither of which this module can see.
+ */
+export function settleRefusedGenerate(
+  pending: PendingBuildStore,
+  journal: RunJournalStore,
+  id: string,
+  outcome: RefusedGenerateOutcome,
+  hint: string,
+  counts: RunTerminalCounts,
+): void {
+  if (outcome === 'drop') {
+    dropPendingBuild(pending, id);
+    journal.delete(id);
+    return;
+  }
+  journal.appendTerminal(id, { failure: { reason: hint, diagnostics: [] }, ...counts });
+  failPendingBuild(pending, id, hint, []);
 }
 
 /** The ONE deletion path a user can trigger: cancelling an in-flight attempt and dismissing a

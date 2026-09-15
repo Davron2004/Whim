@@ -151,7 +151,11 @@ export default function FailureScreen({
         <Text style={[TYPE_SCALE.stepTitle, { color: outcome }]}>
           {recovered ? COPY.failureRecoveredTitle : COPY.failureTitle}
         </Text>
-        <Text style={[TYPE_SCALE.body, styles.reason, { color: p.textMuted }]}>{reason}</Text>
+        {/* `notice` is set ONLY for a live refused-Retry moment, and its `hint` is always the
+            SAME text `reason` was just persisted with (`LauncherRoot.tsx#handleGenerateRefusal`) —
+            showing both would repeat the one sentence the user just read. The notice below already
+            says it, so the plain reason line is skipped for exactly this shape of screen. */}
+        {!notice && <Text style={[TYPE_SCALE.body, styles.reason, { color: p.textMuted }]}>{reason}</Text>}
 
         {attempts > 0 && (
           <View style={styles.attempts}>

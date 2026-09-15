@@ -25,6 +25,7 @@ import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
 import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
+import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
 import { COPY, reportCodeSizeLabel } from './copy';
@@ -126,21 +127,31 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
     try {
       await sendReport(options, request);
       log.debug(CHANNELS.gen, 'report sent', { ...reportLogFields(request, '202') });
-      setPhase('thanks');
+      const settled = settleSend<ReportNotice>({ kind: 'sent' });
+      setPhase(settled.phase);
+      setNotice(settled.notice);
     } catch (err) {
-      setPhase('draft');
       const refusal = serviceRefusalOf(err);
       if (refusal) {
         log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, refusal.code) });
-        setNotice(reportNoticeFrom(refusal));
+        const settled = settleSend<ReportNotice>({ kind: 'refused', notice: reportNoticeFrom(refusal) });
+        setPhase(settled.phase);
+        setNotice(settled.notice);
       } else {
-        log.warn(CHANNELS.gen, 'report failed', { ...reportLogFields(request, 'network') });
-        setNotice({ hint: COPY.reportSendFailedGeneric, tone: 'neutral' });
+        // The real HTTP status when the server answered with one (a 400/500 is not "network" —
+        // that word is reserved for a genuine transport-level failure, spec "Offline").
+        log.warn(CHANNELS.gen, 'report failed', { ...reportLogFields(request, sendFailureOutcome(err)) });
+        const settled = settleSend<ReportNotice>({
+          kind: 'failed',
+          notice: { hint: COPY.reportSendFailedGeneric, tone: 'neutral' },
+        });
+        setPhase(settled.phase);
+        setNotice(settled.notice);
       }
     }
   };
 
-  const sendDisabled = !request || phase === 'sending' || gated;
+  const sendDisabled = computeSendDisabled(request, phase, gated);
 
   return (
     <SheetModal visible={app != null} onClose={handleClose}>
@@ -211,7 +222,10 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
                 <PreviewRow
                   key={row.field}
                   label={PREVIEW_LABEL[row.field]}
-                  value={row.value}
+                  // The reason row previews the PILL's label ("Doesn't work", not "broken") — the
+                  // enum value itself is only what `reportPreview`/`buildReportRequest` transmit,
+                  // never what the user reads.
+                  value={row.field === 'reason' ? REASON_LABEL[row.value as ReportReason] : row.value}
                   mono={row.field === 'source'}
                   collapsedToSize={row.field === 'source'}
                   expanded={expandable?.expanded ?? false}
