@@ -279,6 +279,7 @@ Compose `stop_grace_period` is `11m`. For an urgent deploy, `WHIM_DRAIN_TIMEOUT_
   - `env_file: /etc/whim/server.env` (root 0600, written by deploy from Secret Manager) and `/etc/whim/limits.env` (non-secret overrides)
   - `init: true`, `user: "10001:10001"`, `read_only: true`, `tmpfs: /tmp:size=512m`
   - `shm_size: 1gb`, `pids_limit: 1024`, `mem_limit: 6g`, `cap_drop: [ALL]`
+  - `cap_add: [SYS_CHROOT]`, amended by chain-12 (measured): Docker's seccomp profile allows `chroot` only with CAP_SYS_CHROOT, and Chromium's namespace sandbox chroots inside its user namespace, so boot failed at `sys_chroot("/proc/self/fdinfo/")` without it. With it, CapEff=CapPrm=CapAmb=0, NoNewPrivs=1, Seccomp=2, and the self-test passes.
   - `security_opt: [no-new-privileges:true, seccomp=./seccomp/chromium-playwright-1.60.0.json]`
   - volume `/mnt/disks/whim-data/server:/data`, `WHIM_DATA_DIR=/data`
   - `restart: unless-stopped`, `stop_grace_period: 11m`

@@ -1,0 +1,61 @@
+# Front proxy for Whim (design D17, D21). Both hostnames come from the caddy service's environment,
+# which deploy/compose.yaml takes from /opt/whim/.env. Caddy redirects HTTP to HTTPS and keeps its
+# certificates under /data on the persistent disk. Neither site keeps an access log.
+
+# The API: stream-safe reverse proxy to the server, with no compression and no file serving.
+{$WHIM_API_HOST} {
+	request_body {
+		max_size 2MB
+	}
+	reverse_proxy whim-server:8787 {
+		flush_interval -1
+	}
+}
+
+# The pages host: the published static site and nothing else. Routes rewrite internally to flat
+# files, so no answer is a redirect (Apple and Android refuse an association file behind one).
+{$WHIM_WEB_HOST} {
+	root * /srv/site/current
+	header {
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'"
+		X-Content-Type-Options nosniff
+	}
+
+	handle /.well-known/apple-app-site-association {
+		header Content-Type application/json
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /.well-known/assetlinks.json {
+		header Content-Type application/json
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /privacy {
+		rewrite * /privacy.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /support {
+		rewrite * /support.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /a/* {
+		rewrite * /app-link.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle {
+		rewrite * /not-found.html
+		file_server {
+			status 404
+			disable_canonical_uris
+		}
+	}
+}
