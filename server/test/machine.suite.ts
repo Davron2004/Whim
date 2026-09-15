@@ -341,6 +341,39 @@ async function testThinkingEvents(): Promise<void> {
   check('thinking: every model request set reasoning: true', model.requests.every((r) => r.request.reasoning === true));
 }
 
+async function testGenerateReplyFencedIsUnwrappedNoRepair(): Promise<void> {
+  section('machine — a fenced generate reply is unwrapped before check: no repair is spent on the fence');
+
+  const fencedSource = '```typescript\nexport default {}; // v1\n```';
+  const expectedSource = 'export default {}; // v1';
+
+  const model = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    engineerTurn([fencedSource]),
+  ]);
+  const capturedSources: string[] = [];
+  const capturingCheck: CheckStage = {
+    check: (source) => {
+      capturedSources.push(source);
+      return { diagnostics: [], manifest: MANIFEST };
+    },
+  };
+  const deps = baseDeps({
+    model,
+    check: capturingCheck,
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+  });
+  const machine = new GenerationMachine(deps);
+  const events = await collect(machine.run(NEW_APP_REQUEST));
+  assertCompletedEnvelope('fenced generate reply', events);
+
+  eq('fenced generate reply: check received the unwrapped source, not the fence markers', capturedSources, [expectedSource]);
+  eq('fenced generate reply: no repair stage begins — the fence alone triggers no diagnostics', stageEvents(events, 'repair').length, 0);
+  const last = events[events.length - 1];
+  if (last.type === 'result') eq('fenced generate reply: still delivers the run stage record', last.app, WIRE_RECORD);
+}
+
 async function testRepairThenSuccess(): Promise<void> {
   section('machine — repair-then-success: one repair pair, then result');
 
@@ -1832,6 +1865,7 @@ export async function runMachineTests(): Promise<void> {
   testPlanValidation();
   await testHappyPath();
   await testThinkingEvents();
+  await testGenerateReplyFencedIsUnwrappedNoRepair();
   await testRepairThenSuccess();
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();

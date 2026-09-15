@@ -28,6 +28,45 @@ The server SHALL treat a `402` as authoritative and invalidate its operator-cred
 
 ## MODIFIED Requirements
 
+### Requirement: The pipeline is a bounded state machine
+
+The generation pipeline SHALL be a state machine over the stages `plan → generate → check → run`, with a
+`repair` loop that re-enters `generate`'s successor states. It SHALL enforce two independent bounds: at
+most **2 plan attempts** (an initial plan plus one re-ask after a validation failure) and at most **3
+repair attempts** (so at most 4 candidate sources are produced in one run). Both bounds SHALL be
+constructor-injectable parameters with those defaults, so tests can drive exhaustion cheaply. A run SHALL
+leave the machine in exactly one of three outcomes — delivered, failed, or aborted — and SHALL NOT be able
+to loop indefinitely for any model output, including a model that returns identical text every attempt.
+Both the initial generate turn's candidate source and each repair round's candidate source SHALL have an
+optional leading markdown fence unwrapped before entering the check stage, since some engineer models wrap
+a reply in a fence despite being told to reply with source only, and a fence left in place would otherwise
+fail the check and spend a repair round on the fence itself.
+
+#### Scenario: Repair cap is honoured
+
+- **WHEN** a scripted model returns a candidate that fails the check stage on every attempt
+- **THEN** the run emits exactly 3 `repair` stage pairs, produces 4 candidates in total, and ends with a
+  single `failure` terminal event whose `attempts` equals 4
+
+#### Scenario: Successful repair stops the loop
+
+- **WHEN** the first candidate fails the check stage and the first repair produces a clean candidate that
+  also passes the run stage
+- **THEN** exactly one `repair` stage pair is emitted, no further repair is attempted, and the run ends
+  with a `result` terminal event
+
+#### Scenario: Plan re-ask is bounded
+
+- **WHEN** the model returns a plan that fails validation twice in a row
+- **THEN** exactly two `plan` stage pairs are emitted, no `generate` stage begins, and the run ends with a
+  single `failure` terminal event
+
+#### Scenario: A fenced engineer reply costs no repair round
+
+- **WHEN** the generate turn's reply is wrapped in a ```typescript fence
+- **THEN** the source is unwrapped before the check stage runs, and the run delivers its result with no
+  `repair` stage ever beginning
+
 ### Requirement: Aborted runs reconcile their authoritative usage
 
 Because a cancelled generation may still have been billed upstream, the server SHALL record the provider's generation id for every model call a run makes and, on abort, SHALL reconcile authoritative post-abort token counts from the provider's generation-stats endpoint and credit them to the calling device.

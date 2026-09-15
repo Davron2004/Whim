@@ -3,6 +3,10 @@
 The run's wall-clock budget, its end-cause record, and the mid-run provider `402` ending, all in
 `server/src/generation/machine.ts`. The 402 detection surface is in `model.ts` and `openrouter.ts`.
 
+Unrelated to the budget, but nowhere else is documented: the generate and repair turns' candidate
+source both pass through `unwrapSourceFence` (`source-block.ts`) before the check stage, so an
+engineer reply wrapped in a leading ```typescript fence costs no repair round on the fence itself.
+
 ## `maxRunMs`
 
 ```ts
