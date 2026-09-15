@@ -27,6 +27,7 @@ import { isCreditExhaustedError, type ModelClient, type ModelMessage, type Model
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
+import { unwrapSourceFence } from './source-block';
 import type { Summariser } from './summarise';
 import { invalidateCreditCache } from '../admission/credit';
 import { log } from '../logger';
@@ -766,7 +767,7 @@ export class GenerationMachine {
     if (signal?.aborted) return undefined;
 
     state.candidatesProduced = 1;
-    return turn.text;
+    return unwrapSourceFence(turn.text);
   }
 
   /** One `REPAIR` round: prompts with the minimal-diff instructions plus the round's diagnostics
@@ -805,7 +806,7 @@ export class GenerationMachine {
     if (signal?.aborted) return undefined;
 
     state.candidatesProduced += 1;
-    return turn.text;
+    return unwrapSourceFence(turn.text);
   }
 
   /** `CHECK` → `(BUILD →) RUN`, with the `REPAIR` loop (design D4/D6/D7). Runs until the machine
