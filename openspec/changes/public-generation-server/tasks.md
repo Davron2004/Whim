@@ -148,3 +148,9 @@
 - [ ] 19.2 In `server/test/loadtest.suite.ts`, replace the weak “does not name server.env” assertion with a Docker-free structural tripwire for the explicit replacement directive and config path. Include a discriminating ordinary-list downgrade fixture that fails the tripwire; the Node test must not claim a Compose model proves the key is absent.
 - [ ] 19.3 Update `handoff/loadtest.md` with the merge contract and the two no-daemon synthetic Compose receipts. The receipts must use copied real base+override files with temporary env paths, assert an ordinary-list downgrade exposes a synthetic key, and assert the corrected model preserves a synthetic config sentinel while omitting that key, without printing either env map or any real secret. Run `npm run server:test` and `./scripts/gate.sh`; independent review and exact three-file integrity are required.
 - [ ] 19.4 Attended preflight and retry: on the repaired deployed tag, record both receipt outcomes, then run replay start through its `whim-server-loadtest` identity, the original task 15.4 15-device and 16-device drives, `run.sh stop` smoke, the OpenRouter no-activity check and standard resize. A local Compose receipt or fast gate never completes task 15.4.
+
+## 20. Readiness negative-control reliability
+
+- [ ] 20.1 Preserve the reproduced 1062 ms old-sleep failure and separate its fixture from the existing hanging-child timeout test, following `readiness-test-fix.md`.
+- [ ] 20.2 Use immediate IAP 4003 failures to prove the bounded helper stays below 4.5 seconds and the executed old `sleep 5` exceeds that threshold. Require actual mutation execution and distinct result/timing evidence.
+- [ ] 20.3 Write `handoff/readiness-test.md`, pass the server suite and fast gate, then independently review, integrity-check, merge and regate. No production behavior changes.

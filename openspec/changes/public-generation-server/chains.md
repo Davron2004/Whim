@@ -209,3 +209,13 @@
 - writes-contract: handoff/loadtest.md (the explicit `env_file` replacement rule and two no-daemon synthetic Compose receipts)
 - after: chain-acceptance-fixes
 - rule: use no real secret, do not add Docker to any gate/configuration, and retain `runLoadtestServer`'s production-key refusal. The Node suite guards source structure only; the two Compose receipts prove the merged model after merge.
+
+## chain-readiness-test: deterministic old-sleep negative control
+
+- tasks: 20.1–20.3
+- rationale: the server acceptance fixture sometimes exhausted its budget before executing its mutant. Correct the test before trusting a passing gate.
+- files: `server/test/deploy-config.suite.ts`, `handoff/readiness-test.md`
+- reads: readiness-test-fix.md; acceptance-fixes.md; handoff/deploy-surface.md
+- writes-contract: handoff/readiness-test.md (fixture boundaries, observed failure and behavioral proof)
+- after: chain-acceptance-fixes
+- rule: preserve the hanging-child test; no production or protected configuration edits. This chain is independent of replay-compose-env because their test files and contracts are disjoint.
