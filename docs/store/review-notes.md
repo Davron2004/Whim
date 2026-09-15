@@ -94,7 +94,7 @@ Two things leave the phone, both outside any mini app's own reach:
 
 - **A generation request** (clarify, rewrite, or generate), sent only after the user grants AI-data
   consent on the screen described in §1. It carries what the user typed, their answers to Whim's
-  questions, the approved plan, and — for a change to an existing app — that app's code, its
+  questions, the approved plan, and — for a change to an existing app — that app's name, its code, its
   current description, and the shape of its saved data (never the rows saved inside it). An
   anonymous per-install device ID rides along for daily-limit enforcement. Declining consent, or
   never granting it, keeps every one of these off the wire; the examples and any already-installed
