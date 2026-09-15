@@ -166,6 +166,6 @@
 
 ## 21. Malformed paint cannot silence the startup deadline
 
-- [ ] 21.1 Reproduce the trusted malformed-paint gap with fake-clock and integrated boot-surface tests, following `paint-deadline-fix.md`.
-- [ ] 21.2 Require finite nonnegative paint timing before canceling startup; retain valid zero and the existing single-field painted-state invariant.
-- [ ] 21.3 Update the startup handoff, pass launcher checks and fast gate, then independently review, integrity-check and regate the merged correction. Native UI acceptance remains separate.
+- [x] 21.1 Reproduce the trusted malformed-paint gap with fake-clock and integrated boot-surface tests, following `paint-deadline-fix.md`.
+- [x] 21.2 Require finite nonnegative paint timing before canceling startup; retain valid zero and the existing single-field painted-state invariant.
+- [x] 21.3 Update the startup handoff, pass launcher checks and fast gate, then independently review, integrity-check and regate the merged correction. Native UI acceptance remains separate.
