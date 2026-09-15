@@ -19,7 +19,7 @@ const DEVICE_ID = 'device-1';
 export async function runConsentOptionsTests(h: Harness): Promise<void> {
   await h.test('liveClientOptions: no grant yet reads null, same as the gated memo would', () => {
     const kv = new MapKVBackend();
-    h.eq(liveClientOptions(kv, DEVICE_ID), null);
+    h.eq(liveClientOptions(kv, DEVICE_ID), null, 'no grant yet means no options');
   });
 
   await h.test('liveClientOptions: a grant written the instant before is seen right away, with no re-render', () => {
@@ -27,7 +27,7 @@ export async function runConsentOptionsTests(h: Harness): Promise<void> {
     grantConsent(kv, '2026-09-14T00:00:00.000Z');
     const options = liveClientOptions(kv, DEVICE_ID);
     h.ok(options != null, 'a continuation invoked in the SAME call as the grant gets non-null options');
-    h.eq(options!.deviceId, DEVICE_ID);
+    h.eq(options!.deviceId, DEVICE_ID, 'the deviceId carries through to the live-read options');
   });
 
   await h.test('liveClientOptions: a revoke read fresh, too — null again the instant it is written', () => {

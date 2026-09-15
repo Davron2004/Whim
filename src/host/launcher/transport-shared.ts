@@ -70,26 +70,19 @@ const DELTA_SECONDS_PATTERN = /^\d+$/;
 /** The response's `Retry-After` header as a positive integer number of seconds, or `undefined`
  *  for a missing, malformed, zero, or negative value (spec "The streaming transport preserves
  *  the client error taxonomy" — a malformed header SHALL NOT change the error's `kind`, and
- *  SHALL simply leave this field absent). Accepts exactly the two forms HTTP's `Retry-After`
- *  grammar defines: delta-seconds (digits only) or an HTTP-date, converted to the whole seconds
- *  from `now` to that date. `response.headers` is optional-chained: every REAL `Response`
- *  (fetch's, and `xhr-transport.ts`'s fake-`Response` adapter) has one, but several existing test
- *  doubles across this codebase build a bare `{ status, json }` stand-in with no `headers` at
- *  all — that is simply another shape of "missing", not a reason to throw. */
-function retryAfterSecondsOf(response: Response, now: number = Date.now()): number | undefined {
+ *  SHALL simply leave this field absent). Accepts only HTTP's delta-seconds form (digits only);
+ *  the HTTP-date form is deliberately treated as absent rather than parsed — `Date.parse` is
+ *  lenient (Hermes parses differently from V8) and a server-controlled date far in the future
+ *  would disable a client action for years. `response.headers` is optional-chained: every REAL
+ *  `Response` (fetch's, and `xhr-transport.ts`'s fake-`Response` adapter) has one, but several
+ *  existing test doubles across this codebase build a bare `{ status, json }` stand-in with no
+ *  `headers` at all — that is simply another shape of "missing", not a reason to throw. */
+function retryAfterSecondsOf(response: Response): number | undefined {
   const raw = response.headers?.get('Retry-After') ?? null;
-  if (raw === null) {
+  if (raw === null || !DELTA_SECONDS_PATTERN.test(raw)) {
     return undefined;
   }
-  if (DELTA_SECONDS_PATTERN.test(raw)) {
-    const seconds = Number(raw);
-    return seconds > 0 ? seconds : undefined;
-  }
-  const parsedMs = Date.parse(raw);
-  if (Number.isNaN(parsedMs)) {
-    return undefined;
-  }
-  const seconds = Math.round((parsedMs - now) / 1000);
+  const seconds = Number(raw);
   return seconds > 0 ? seconds : undefined;
 }
 

@@ -43,9 +43,11 @@ export function sendDisabled(request: ReportRequest | null, phase: ReportPhase, 
  *  reaches device logs": "the outcome (status class or refusal code)"): the HTTP status the
  *  server actually answered with, when there is one — `'network'` is reserved for a genuine
  *  network-level failure (spec "Offline"), never a blanket label for a 400/500 the server DID
- *  answer with. */
+ *  answer with. A `device_id` error is also a real status the server answered with (the
+ *  device-identity middleware's 400), so it is logged the same way as `http`, not folded into
+ *  `'network'`. */
 export function sendFailureOutcome(err: unknown): string {
-  if (err instanceof GenerationClientError && err.kind === 'http' && err.status !== undefined) {
+  if (err instanceof GenerationClientError && (err.kind === 'http' || err.kind === 'device_id') && err.status !== undefined) {
     return String(err.status);
   }
   return 'network';

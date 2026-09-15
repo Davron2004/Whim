@@ -149,6 +149,29 @@ export async function runConnectivityTests(h: Harness): Promise<void> {
     h.eq(timers.pendingCount, 0, 'no retry loop was scheduled for an address that was never configured');
   });
 
+  await h.test('ConnectivityLoop: stop() clears a pending retry timer, not just future scheduling', async () => {
+    const timers = new FakeTimers();
+    let calls = 0;
+    const probe = async (): Promise<'unreachable'> => {
+      calls++;
+      return 'unreachable';
+    };
+    const states: Connectivity[] = [];
+    const loop = new ConnectivityLoop({ probe, publish: (s) => states.push(s), timers });
+
+    loop.start();
+    await loop.whenIdle();
+    h.eq(states, ['checking', 'offline'], 'still retrying: offline with a pending backoff timer');
+    h.eq(timers.pendingCount, 1, 'a retry is scheduled before stop()');
+    h.eq(calls, 1, 'probed exactly once so far');
+
+    loop.stop();
+
+    h.eq(timers.pendingCount, 0, 'stop() clears the already-pending retry timer, effect cleanup / unmount');
+    h.eq(calls, 1, 'the cleared retry never fires — probe is never called a second time');
+    h.eq(states, ['checking', 'offline'], 'stop() publishes nothing new');
+  });
+
   await h.test('ConnectivityLoop: once online, start() is a no-op and re-probes nothing', async () => {
     const timers = new FakeTimers();
     let calls = 0;

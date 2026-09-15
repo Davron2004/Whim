@@ -7,6 +7,7 @@
  * `ConnectivityLoop` and is exercised by `connectivity.suite.ts`/`connectivity-ux.suite.ts`. RN-
  * free: this must load under the launcher's Node acceptance suite.
  */
+import type { ConsentedClientOptions } from './transport-shared';
 
 export type ProbeGateDecision = { readonly kind: 'idle' } | { readonly kind: 'probe'; readonly baseUrl: string };
 
@@ -15,6 +16,6 @@ export type ProbeGateDecision = { readonly kind: 'idle' } | { readonly kind: 'pr
  *  be running against exactly that `baseUrl` — granting consent (which makes `options` non-null)
  *  starts one, revoking it (which makes `options` null again) idles it, through the SAME
  *  dependency-keyed effect either way. */
-export function probeGateFor(options: { baseUrl: string } | null): ProbeGateDecision {
+export function probeGateFor(options: ConsentedClientOptions | null): ProbeGateDecision {
   return options == null ? { kind: 'idle' } : { kind: 'probe', baseUrl: options.baseUrl };
 }
