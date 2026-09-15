@@ -92,3 +92,78 @@ export function loadFewShotExamples(cwd: string = process.cwd()): FewShotExample
 export function loadPromptInputs(cwd: string = process.cwd()): PromptInputs {
   return { sdkReference: loadSdkReference(cwd), fewShotExamples: loadFewShotExamples(cwd) };
 }
+
+// ─── Content policy document (spec content-policy "The 13+ content policy has one written
+// source") ────────────────────────────────────────────────────────────────────
+
+export interface ContentPolicyDocument {
+  /** `docs/content-policy.md`'s `## Rating rule` section body, appended verbatim to the rewrite
+   *  and generate system messages (`../prompts/index.ts`). */
+  ratingRule: string;
+  /** The same document's `## Categories` section body, appended verbatim into the content-policy
+   *  classifier's system message (`../../policy/policy.ts`). */
+  categories: string;
+}
+
+// Keyed by resolved absolute path rather than a single module-level value: `loadContentPolicyDocument`
+// is called from inside every rewrite/generate message build (unlike `loadPromptInputs`, which a
+// composition root calls once and threads through as a parameter — this loader can't take that
+// shape without changing those builders' signatures), so it needs real memoization to avoid a disk
+// read per turn, while still letting a test load a DIFFERENT (e.g. deliberately broken) document
+// from a different cwd without seeing a stale cache entry.
+const contentPolicyCache = new Map<string, ContentPolicyDocument>();
+
+function resolvedContentPolicyPath(cwd: string): string {
+  return path.join(cwd, 'docs', 'content-policy.md');
+}
+
+/** The heading's body text (from just after `## <heading>` to the next heading of the same or
+ *  higher level, or EOF), or `''` when the heading is absent — the caller decides whether an empty
+ *  section is an error. */
+function markdownSection(doc: string, heading: string): string {
+  const lines = doc.split('\n');
+  const headingRegex = new RegExp(`^#{1,6}\\s+${heading}\\s*$`, 'i');
+  const start = lines.findIndex((line) => headingRegex.test(line.trim()));
+  if (start === -1) return '';
+  const level = (/^#+/.exec(lines[start].trim()) ?? ['##'])[0].length;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const found = /^(#+)\s/.exec(lines[i]);
+    if (found && found[1].length <= level) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start + 1, end).join('\n').trim();
+}
+
+/** Load `docs/content-policy.md`, split into its rating-rule and categories sections. Resolved
+ *  from `cwd` (default `process.cwd()`), memoized per resolved path. Throws `PromptInputError`
+ *  naming the missing section when either is absent or empty — never returns a partial document. */
+export function loadContentPolicyDocument(cwd: string = process.cwd()): ContentPolicyDocument {
+  const docPath = resolvedContentPolicyPath(cwd);
+  const cached = contentPolicyCache.get(docPath);
+  if (cached) return cached;
+
+  let text: string;
+  try {
+    text = fs.readFileSync(docPath, 'utf8');
+  } catch (err) {
+    throw new PromptInputError(
+      `Could not read the content policy document at "${docPath}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const ratingRule = markdownSection(text, 'Rating rule');
+  if (ratingRule.length === 0) {
+    throw new PromptInputError(`The content policy document at "${docPath}" has no "Rating rule" section.`);
+  }
+  const categories = markdownSection(text, 'Categories');
+  if (categories.length === 0) {
+    throw new PromptInputError(`The content policy document at "${docPath}" has no "Categories" section.`);
+  }
+
+  const doc: ContentPolicyDocument = { ratingRule, categories };
+  contentPolicyCache.set(docPath, doc);
+  return doc;
+}
