@@ -42,11 +42,11 @@
 
 ## 6. iOS WhimTone
 
-- [ ] 6.1 Create `ios/Whim/WhimToneModule.mm` per design D9: `@interface WhimToneModule : NSObject <NativeWhimToneSpec>` importing `WhimAppSpecs/WhimAppSpecs.h`, `+moduleName` returning `@"WhimTone"`, `getTurboModule:` returning `NativeWhimToneSpecJSI`, a private serial method queue, and `play:`.
-- [ ] 6.2 In the same file, add the design D9 tone table and renderer (44.1 kHz, 16-bit mono, the gain formula, 3 ms linear ramps per burst), a minimal RIFF/WAV writer, lazy per-token files under `Caches/whim-tone-v1/`, cached `SystemSoundID`s played with `AudioServicesPlaySystemSound`, unknown tokens played as `tick`, and every error swallowed.
-- [ ] 6.3 Add `WhimToneModule.mm` to the `Whim` target's Sources with the `xcodeproj` gem, using the command recorded in `handoff/ios-project.md`.
-- [ ] 6.4 Update the header comments of `src/host/cue-backend.ts` and `src/native/NativeWhimTone.ts` to name both native implementations and the iOS system-sound behavior. No code change.
-- [ ] 6.5 If the iOS toolchain is available, run `pod install` and the simulator build from 4.7, and report whether codegen generated `NativeWhimToneSpec` and the target compiled. Otherwise report "not run". A missing generated header before the `ios` codegen key exists is a blocker to report, not to work around.
+- [x] 6.1 Create `ios/Whim/WhimToneModule.mm` per design D9: `@interface WhimToneModule : NSObject <NativeWhimToneSpec>` importing `WhimAppSpecs/WhimAppSpecs.h`, `+moduleName` returning `@"WhimTone"`, `getTurboModule:` returning `NativeWhimToneSpecJSI`, a private serial method queue, and `play:`.
+- [x] 6.2 In the same file, add the design D9 tone table and renderer (44.1 kHz, 16-bit mono, the gain formula, 3 ms linear ramps per burst), a minimal RIFF/WAV writer, lazy per-token files under `Caches/whim-tone-v1/`, cached `SystemSoundID`s played with `AudioServicesPlaySystemSound`, unknown tokens played as `tick`, and every error swallowed.
+- [x] 6.3 Add `WhimToneModule.mm` to the `Whim` target's Sources with the `xcodeproj` gem, using the command recorded in `handoff/ios-project.md`.
+- [x] 6.4 Update the header comments of `src/host/cue-backend.ts` and `src/native/NativeWhimTone.ts` to name both native implementations and the iOS system-sound behavior. No code change.
+- [x] 6.5 If the iOS toolchain is available, run `pod install` and the simulator build from 4.7, and report whether codegen generated `NativeWhimToneSpec` and the target compiled. Otherwise report "not run". A missing generated header before the `ios` codegen key exists is a blocker to report, not to work around.
 
 ## 7. Brand asset generator
 
