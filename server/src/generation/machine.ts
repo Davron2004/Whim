@@ -3,7 +3,8 @@
  * spec "The pipeline is a bounded state machine", "Stage events narrate the machine over the
  * existing contract", "Exactly one terminal event per completed run", "The plan is structured and
  * validated against the request", "Repair asks for a minimal diff with the diagnostics in context",
- * "Cancellation aborts the pipeline at every boundary"). Depends on nothing concrete: `CheckStage`,
+ * "Cancellation aborts the pipeline at every boundary", "A run is bounded in wall-clock time", "A run
+ * ends cleanly when the operator's provider credit is exhausted"). Depends on nothing concrete: `CheckStage`,
  * `BuildStage`, `RunStage`, and `Clock` are injected interfaces (design D2), so this file compiles
  * and is tested against fakes only — the two exceptions are pure, dependency-free library functions
  * (`scanStorageSurface`, `burnedIdFloor`), imported rather than injected precisely because the edit
@@ -22,11 +23,12 @@ import { scanStorageSurface } from '../../../checks/index';
 import type { StorageSurface } from '../../../checks/index';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
-import type { ModelClient, ModelMessage, ModelRoster } from './model';
+import { isCreditExhaustedError, type ModelClient, type ModelMessage, type ModelRoster } from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
 import type { Summariser } from './summarise';
+import { invalidateCreditCache } from '../admission/credit';
 import { log } from '../logger';
 
 /** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
@@ -40,10 +42,13 @@ const runLog = log.child({ scope: 'run' });
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
-/** Reserved for stage-duration instrumentation (design D2's deps object). The machine does not
- *  branch on it today — a fake in tests may return any value. */
+/** The clock a run's wall-clock deadline is measured on (design D2's deps object, D13). */
 export interface Clock {
   now(): number;
+  /** Arms a one-shot timer that calls `onFire` once `delayMs` has elapsed on this clock, and returns
+   *  its disarm function. Optional: a clock without it (the production `Date.now` clock) runs the
+   *  deadline on the host's timers. */
+  setTimer?(delayMs: number, onFire: () => void): () => void;
 }
 
 /** The extraction `WireAppRecord.name`/`.manifest`/`.schema` come from (design D12) — present
@@ -120,10 +125,18 @@ export interface RunStage {
   run(input: RunInput, signal?: AbortSignal): Promise<RunOutcome> | RunOutcome;
 }
 
+/** How a run ended (design D13). */
+export type RunTraceOutcome = 'delivered' | 'failed' | 'expired' | 'aborted';
+
 /** A deliberately dumb out-parameter (design D9): the machine appends each model call's provider
  *  generation id as it resolves. A stub that ignores it stays conforming. */
 export interface RunTrace {
   generationIds: string[];
+  /** Written once, by whichever ending happens first, and never changed after: `'expired'` the
+   *  moment the deadline elapses, `'aborted'` the moment the request signal fires (or when the
+   *  consumer stops the run without either), `'delivered'`/`'failed'` just before the `result`/
+   *  `failure` terminal is yielded. Absent while the run is still going. */
+  outcome?: RunTraceOutcome;
 }
 
 export interface PipelineBounds {
@@ -158,7 +171,12 @@ export interface GenerationPipelineDeps {
    *  fail the run nor delay a terminal event past its own timeout. */
   summariser?: Summariser;
   bounds?: Partial<PipelineBounds>;
+  /** The run's total wall-clock budget on `clock`, from the start of the run (`WHIM_GENERATION_MAX_MS`,
+   *  default `DEFAULT_MAX_RUN_MS`). A positive integer; anything else throws `RangeError`. */
+  maxRunMs?: number;
 }
+
+const DEFAULT_MAX_RUN_MS = 600_000;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -175,6 +193,11 @@ const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and was not
  *  rather than promising an automatic retry (design D3 declines to add one). */
 const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
 const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
+/** Design D13, verbatim. */
+const EXPIRED_REASON = 'This took too long to build. Please try again.';
+/** A provider `402` (design D6b). Same sentence as the `budget_exhausted` admission refusal hint, so
+ *  a device sees one wording whether the budget ran out before admission or mid-run. */
+const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now. Try again later.';
 
 function sumUsage(a: Usage, b: Usage): Usage {
   return {
@@ -342,11 +365,107 @@ function editContextFor(request: GenerateRequest): EditContext {
   };
 }
 
+function hostTimer(delayMs: number, onFire: () => void): () => void {
+  const timer = setTimeout(onFire, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+}
+
+/**
+ * One run's wall-clock budget and end-cause bookkeeping (design D13). `signal` is the run's own
+ * abort signal, linked to the request signal: every stage, model call, and synthetic run receives
+ * it, so the deadline tears down in-flight work exactly the way a client abort does.
+ *
+ * The deadline stays armed until the run begins its completion envelope (`beginCompletion`). From
+ * then on only a client abort can stop the run, so a deadline can never cut between the `usage`
+ * event and its terminal and cause a second envelope.
+ */
+class RunBudget {
+  private readonly controller = new AbortController();
+  private deadlineArmed = false;
+  private disarmTimer: (() => void) | undefined;
+  private outcome: RunTraceOutcome | undefined;
+
+  constructor(
+    clock: Clock,
+    maxRunMs: number,
+    private readonly requestSignal: AbortSignal | undefined,
+    private readonly trace: RunTrace | undefined,
+  ) {
+    if (requestSignal?.aborted) {
+      this.onRequestAbort();
+      return;
+    }
+    requestSignal?.addEventListener('abort', this.onRequestAbort, { once: true });
+    this.deadlineArmed = true;
+    this.disarmTimer = clock.setTimer ? clock.setTimer(maxRunMs, this.onDeadline) : hostTimer(maxRunMs, this.onDeadline);
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  /** The deadline elapsed first: the stages were stopped before any terminal was committed to. */
+  get expired(): boolean {
+    return this.outcome === 'expired';
+  }
+
+  /** Called as the completion envelope starts, after its abort check passed. */
+  beginCompletion(): void {
+    this.disarmDeadline();
+  }
+
+  /** Records `delivered`/`failed` just before the terminal is yielded. A no-op when the run already
+   *  has an outcome: the expiry failure keeps `expired`. */
+  recordTerminal(outcome: 'delivered' | 'failed'): void {
+    this.record(outcome);
+  }
+
+  /** The run's generator is finishing: disarm, unlink, and name a run that stopped without any
+   *  recorded ending (the consumer returned early) as aborted. */
+  dispose(): void {
+    this.disarmDeadline();
+    this.requestSignal?.removeEventListener('abort', this.onRequestAbort);
+    this.record('aborted');
+  }
+
+  private readonly onDeadline = (): void => {
+    if (!this.deadlineArmed) return;
+    this.deadlineArmed = false;
+    this.disarmTimer = undefined;
+    if (!this.record('expired')) return;
+    runLog.info('run expired');
+    this.controller.abort();
+  };
+
+  private readonly onRequestAbort = (): void => {
+    this.disarmDeadline();
+    this.record('aborted');
+    this.controller.abort();
+  };
+
+  private disarmDeadline(): void {
+    if (!this.deadlineArmed) return;
+    this.deadlineArmed = false;
+    this.disarmTimer?.();
+    this.disarmTimer = undefined;
+  }
+
+  /** First ending wins; returns whether this call was it. */
+  private record(outcome: RunTraceOutcome): boolean {
+    if (this.outcome !== undefined) return false;
+    this.outcome = outcome;
+    if (this.trace) this.trace.outcome = outcome;
+    return true;
+  }
+}
+
 /** Mutable per-run accumulator threaded through every phase. */
 interface RunState {
   usage: Usage;
   diagnostics: Diagnostic[];
   candidatesProduced: number;
+  budget: RunBudget;
 }
 
 interface RepairBudgetsSnapshot {
@@ -408,16 +527,21 @@ function failureTerminalFor(
 export class GenerationMachine {
   private readonly deps: GenerationPipelineDeps;
   private readonly bounds: PipelineBounds;
+  private readonly maxRunMs: number;
 
   constructor(deps: GenerationPipelineDeps) {
     this.deps = deps;
     this.bounds = { ...DEFAULT_BOUNDS, ...deps.bounds };
+    this.maxRunMs = deps.maxRunMs ?? DEFAULT_MAX_RUN_MS;
+    if (!Number.isSafeInteger(this.maxRunMs) || this.maxRunMs <= 0) {
+      throw new RangeError(`maxRunMs must be a positive integer, got ${String(deps.maxRunMs)}`);
+    }
   }
 
   /** `signal`, when provided, is honored at every state boundary (spec "Cancellation aborts the
    *  pipeline at every boundary"): on abort the returned generator stops without a terminal event.
    *  `trace`, when provided, receives every model call's provider generation id as it resolves
-   *  (design D9). */
+   *  (design D9) and the run's `outcome` once it ends (design D13). */
   run(request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace): AsyncIterable<GenerationEvent> {
     return this.runGenerator(request, signal, trace);
   }
@@ -427,50 +551,88 @@ export class GenerationMachine {
     signal?: AbortSignal,
     trace?: RunTrace,
   ): AsyncGenerator<GenerationEvent> {
-    if (signal?.aborted) return;
-    const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0 };
+    const budget = new RunBudget(this.deps.clock, this.maxRunMs, signal, trace);
+    try {
+      if (budget.signal.aborted) return;
+      const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0, budget };
+      yield* this.runStages(request, budget.signal, trace, state);
+      // The deadline stopped the stages, which emitted nothing further. Unlike a client abort, this
+      // still ends as a completed run. Its abort checks read the REQUEST signal, because the run
+      // signal was aborted by the expiry itself.
+      if (budget.expired) {
+        yield* this.emitCompletion(state, signal, {
+          type: 'failure',
+          reason: EXPIRED_REASON,
+          attempts: state.candidatesProduced,
+          diagnostics: state.diagnostics,
+        });
+      }
+    } finally {
+      budget.dispose();
+    }
+  }
 
+  private async *runStages(
+    request: GenerateRequest,
+    signal: AbortSignal,
+    trace: RunTrace | undefined,
+    state: RunState,
+  ): AsyncGenerator<GenerationEvent, void> {
     runLog.info('run start');
     try {
       const edit = editContextFor(request);
 
       const plan = yield* this.runPlanPhase(request, edit, signal, trace, state);
       if (!plan) return;
-      if (signal?.aborted) return;
+      if (signal.aborted) return;
 
       const source = yield* this.runGeneratePhase(request, plan, edit, signal, trace, state);
       if (source === undefined) return;
 
       yield* this.runRepairLoop(request, plan, edit, source, signal, trace, state);
     } catch (err) {
-      if (signal?.aborted) return;
-      runLog.error(
-        {
-          errorClass: err instanceof Error ? err.constructor.name : typeof err,
-          detail: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        },
-        'run failed',
-      );
-      yield* this.emitCompletion(state, signal, {
-        type: 'failure',
-        reason: GENERIC_INTERNAL_ERROR_REASON,
-        attempts: state.candidatesProduced,
-        diagnostics: state.diagnostics,
-      });
+      yield* this.endOnThrow(err, signal, state);
     }
   }
 
+  /** A stage or model call threw. Stops quietly when the run was already aborted or expired;
+   *  otherwise ends in one failure. A provider `402` gets its own reason and no repair, since a
+   *  repair spends more of a budget that is already gone (design D6b). */
+  private async *endOnThrow(err: unknown, signal: AbortSignal, state: RunState): AsyncGenerator<GenerationEvent, void> {
+    const creditExhausted = isCreditExhaustedError(err);
+    // Authoritative even when an abort or the deadline got there first: the next admission must
+    // re-query the credit rather than trust the cached value.
+    if (creditExhausted) invalidateCreditCache();
+    if (signal.aborted) return;
+    runLog.error(
+      {
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        detail: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      },
+      creditExhausted ? 'provider credit exhausted' : 'run failed',
+    );
+    yield* this.emitCompletion(state, signal, {
+      type: 'failure',
+      reason: creditExhausted ? CREDIT_EXHAUSTED_REASON : GENERIC_INTERNAL_ERROR_REASON,
+      attempts: state.candidatesProduced,
+      diagnostics: state.diagnostics,
+    });
+  }
+
   /** The one completion envelope: usage immediately before the terminal, with the abort check
-   *  between those two externally-observable events so cancellation can never leak a terminal. */
+   *  between those two externally-observable events so cancellation can never leak a terminal.
+   *  Passing the first check commits the run to this envelope, so the deadline is disarmed here. */
   private async *emitCompletion(
     state: RunState,
     signal: AbortSignal | undefined,
     terminal: TerminalEvent,
   ): AsyncGenerator<GenerationEvent, void> {
     if (signal?.aborted) return;
+    state.budget.beginCompletion();
     yield { type: 'usage', usage: state.usage };
     if (signal?.aborted) return;
+    state.budget.recordTerminal(terminal.type === 'result' ? 'delivered' : 'failed');
     if (terminal.type === 'failure') {
       runLog.info({ reason: terminal.reason }, 'terminal failure');
     } else {

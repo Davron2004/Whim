@@ -32,6 +32,17 @@ export class OpenRouterRateLimitError extends Error {
   }
 }
 
+/** The operator's provider credit is exhausted (HTTP 402). `status` is what provider-agnostic
+ *  callers read, through `isCreditExhaustedError` (`./generation/model.ts`). */
+export class OpenRouterCreditError extends Error {
+  readonly kind = 'credit' as const;
+  readonly status = 402 as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenRouterCreditError';
+  }
+}
+
 /** Network/transport failure (fetch threw, connection error, etc.). */
 export class OpenRouterNetworkError extends Error {
   readonly kind = 'network' as const;
@@ -111,8 +122,11 @@ function requestBody(options: OpenRouterOptions): string {
   });
 }
 
-function responseError(response: Response): OpenRouterAuthError | OpenRouterRateLimitError | OpenRouterNetworkError | null {
+function responseError(
+  response: Response,
+): OpenRouterAuthError | OpenRouterCreditError | OpenRouterRateLimitError | OpenRouterNetworkError | null {
   if (response.status === 401) return new OpenRouterAuthError('OpenRouter: unauthorized (401)');
+  if (response.status === 402) return new OpenRouterCreditError('OpenRouter: payment required (402)');
   if (response.status === 429) return new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)');
   if (!response.ok) return new OpenRouterNetworkError(`OpenRouter: HTTP ${response.status}`);
   if (!response.body) return new OpenRouterNetworkError('OpenRouter: response body is null');
@@ -196,6 +210,7 @@ export class OpenRouterClient {
    *
    * Throws:
    *   OpenRouterAuthError     on HTTP 401
+   *   OpenRouterCreditError   on HTTP 402
    *   OpenRouterRateLimitError on HTTP 429
    *   OpenRouterNetworkError  on fetch throw or other transport failures
    */
