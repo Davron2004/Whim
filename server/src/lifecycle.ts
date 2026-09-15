@@ -252,7 +252,7 @@ function createDrain(parts: DrainParts): Pick<ServerHandle, 'drain' | 'close'> {
     //    usage and cost resolution.
     const finalDeadline = Date.now() + FINAL_WINDOW_MS;
     const remaining = (): number => Math.max(0, finalDeadline - Date.now());
-    await waitUntil(() => slots.counts().generations === 0 && slots.counts().unary === 0, remaining());
+    await waitUntil(() => slots.counts().generations === 0 && slots.counts().unary === 0 && slots.counts().probes === 0, remaining());
     while (resolveTracker.pendingCount > 0 && remaining() > 0) await resolveTracker.drain(remaining());
 
     // 5. Close everything.

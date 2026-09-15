@@ -7,13 +7,14 @@ identity → body cap → validation → prompt cap → `checkCredit` → `acqui
 ## `server/src/admission/slots.ts`
 
 ```ts
-export type SlotKind = 'generate' | 'unary';
+export type SlotKind = 'generate' | 'unary' | 'probe';
+export const MAX_CONCURRENT_PROBES = 2; // /healthz/sse's own pool, never the unary pool
 export type SlotRefusalReason = 'draining' | 'device_busy' | 'at_capacity';
 export interface SlotHandle { readonly kind: SlotKind; readonly deviceId: string; release(): void }
 export type AcquireResult =
   | { ok: true; handle: SlotHandle }
   | { ok: false; reason: SlotRefusalReason };
-export interface SlotCounts { readonly generations: number; readonly unary: number; readonly draining: boolean }
+export interface SlotCounts { readonly generations: number; readonly unary: number; readonly probes: number; readonly draining: boolean }
 export interface SlotLimits { maxConcurrentGenerations: number; maxConcurrentUnary: number }
 export interface SlotController {
   acquire(kind: SlotKind, deviceId: string): AcquireResult;
@@ -25,12 +26,14 @@ export function createSlotController(limits: SlotLimits): SlotController; // Ran
 ```
 
 - One controller per process, built from `ServerConfig.maxConcurrentGenerations` / `maxConcurrentUnary`.
-- `acquire` order: `draining` (both kinds) → `device_busy` (generate only; unary has no per-device
-  exclusivity) → `at_capacity` (generation cap for generate, unary cap for unary). A refusal takes nothing.
+- `acquire` order: `draining` (all kinds) → `device_busy` (generate only; unary/probe have no
+  per-device exclusivity) → `at_capacity` (its own cap per kind, `MAX_CONCURRENT_PROBES` for probe).
 - `release()` is idempotent per handle: the first call frees the slot, every later call is a no-op —
   also after `startDraining()`, and a stale handle never frees the same device's newer generation.
   Safe to call from an abort listener AND a `finally` AND a post-acquire refusal.
 - `startDraining()` is one-way; the report route checks `isDraining()` without acquiring. All O(1).
+- `/healthz/sse` always `acquire('probe', 'healthz-probe')` — anonymous, own tiny fixed pool, never
+  the `unary` pool; `lifecycle.ts`'s drain wait includes `probes`.
 
 ## `server/src/admission/refusals.ts`
 
@@ -103,9 +106,8 @@ export function invalidateCreditCache(): void;
 
 Wire `clock: config.now`, `ttlMs: config.creditCacheTtlMs`, `floorUsd: config.minCreditUsd`.
 
-**Fail-open contract (spec, verbatim):** "When the credit lookup itself fails — a transport error,
-a non-2xx response, or a malformed body — the server SHALL admit the request and log a warning,
-deliberately failing open."
+**Fail-open contract (spec, verbatim):** "When the credit lookup itself fails — a transport error, a
+non-2xx response, or a malformed body — the server SHALL admit the request and log a warning, deliberately failing open."
 
 - Refuses ONLY when `data.limit_remaining` is a number `< floorUsd` (equal is not below). `null` never refuses.
 - Failure → `{ ok: true, lookupFailed }`; the caller MUST log a warning when `lookupFailed` is set.

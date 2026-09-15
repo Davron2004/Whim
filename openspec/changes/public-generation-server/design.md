@@ -102,6 +102,7 @@ The prices are placeholders in DeepSeek's historical range, since `deepseek-v4-p
 | Concurrent generations (global) | 3 | e2-standard-2 has 2 vCPU and 8 GB. Generations mostly wait on the model, and the CPU-bound part is the synthetic run. *(Demo-night values: the `event` profile, D25.)* |
 | Synthetic-run contexts | 2 | Two concurrent renders plus sweeps keep watchdog budgets honest on 2 vCPU. A third generation waits in the semaphore, not in a timed-out mount. |
 | Clarify / rewrite per device per day | 60 / 60 | Four times the generation limit to allow re-phrasing. Worst case ≈ $0.12/device/day. |
+| Global clarify+rewrite per UTC day (`WHIM_LIMIT_UNARY_PER_DAY`) | 2000 | ONE ceiling counted across both kinds — a UUID-rotating attacker cannot bound spend on either route alone. Worst case 2000 × $0.001 ≈ $2/day. |
 | Concurrent clarify+rewrite (global) | 16 | Network-bound calls. Bounds sockets and memory, not spend. |
 | Reports per device / global per day | 10 / 300 | Bounds disk under UUID rotation: 300 × ~0.3 MB ≈ 90 MB/day worst case, and retention caps the total. |
 | Body caps (unary / generate / report) | 64 KiB / 1 MiB / 512 KiB | Real prompts are under 5 KB and generated sources 5–30 KB. Edits re-send source, manifest and schemas. |

@@ -109,5 +109,6 @@ Detection point: the machine's single top-level catch around every stage and mod
    Log message: `provider credit exhausted` (error level) instead of `run failed`.
 
 The run makes no repair and no retry after a 402. `outcome` is `failed`. A 402 raised by the
-summariser is still swallowed by the summariser's own catch: the result is delivered and the cache
-is not invalidated.
+summariser is still swallowed by the summariser's own catch — the run still delivers with no
+summary — but now calls `invalidateCreditCache()` too: `summarise.ts`'s turn catch
+(`noteCreditExhaustion`) and `machine.ts`'s `summariseDelivery` catch both do.
