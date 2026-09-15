@@ -19,9 +19,13 @@ export interface DoneStepProps {
   onOpen: () => void;
   /** Returns to the home grid — no mini-app is launched. */
   onBackToApps: () => void;
+  /** Opens the report sheet for the delivered app (content-reporting "Reporting from the done
+   *  step") — a plain-text action below the two fixed destinations, which stay exactly as they
+   *  are. */
+  onReport: () => void;
 }
 
-export default function DoneStep({ app, onOpen, onBackToApps }: Readonly<DoneStepProps>) {
+export default function DoneStep({ app, onOpen, onBackToApps, onReport }: Readonly<DoneStepProps>) {
   const p = SHELL_PALETTE;
 
   return (
@@ -46,6 +50,10 @@ export default function DoneStep({ app, onOpen, onBackToApps }: Readonly<DoneSte
         style={[styles.secondary, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.doneBackToApps}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity onPress={onReport} accessibilityRole="button" style={styles.reportAction}>
+        <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.doneReportThisApp}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -74,4 +82,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  reportAction: { alignItems: 'center', justifyContent: 'center', paddingBottom: SPACING.md },
 });

@@ -20,11 +20,16 @@ export const UNHANDLED_PRESS_WINDOW_MS = 400;
 export type BackEvent =
   | { type: 'reset'; generation: number }
   | { type: 'navDepth'; depth: number; generation: number }
-  | { type: 'backPress' }
+  /** `overlayOpen` (mini-app-back-navigation delta "A host sheet takes back first"): true while a
+   *  host-layer sheet (the report sheet) covers the realm. It takes priority over everything
+   *  else — the press is neither forwarded nor counted toward the guaranteed-exit policy. */
+  | { type: 'backPress'; overlayOpen?: boolean }
   | { type: 'timeout' };
 
-/** What a back press resolves to. `ignore` = no realm bound (the launcher owns that press). */
-export type BackAction = 'exit' | 'forward' | 'ignore';
+/** What a back press resolves to. `ignore` = no realm bound (the launcher owns that press).
+ *  `close-overlay` = a host sheet was open; the host closes it and the realm never sees the
+ *  press. */
+export type BackAction = 'exit' | 'forward' | 'ignore' | 'close-overlay';
 
 export interface BackState {
   /** A realm is bound (false before the first reset; the launcher handles back at home). */
@@ -53,6 +58,26 @@ function clampDepth(d: number, fallback: number): number {
   return Number.isFinite(d) ? Math.max(0, Math.floor(d)) : fallback;
 }
 
+/** The `backPress` event's own resolution, split out of `step` to keep its cognitive complexity
+ *  under the ceiling. `overlayOpen` (a host sheet covering the realm) takes priority over
+ *  everything else — unconditionally, and independent of whether a realm is even bound
+ *  (mini-app-back-navigation delta "A host sheet takes back first"). */
+function resolveBackPress(state: BackState, overlayOpen: boolean | undefined): BackStep {
+  if (overlayOpen) return { state, action: 'close-overlay' };
+  if (!state.bound) return { state, action: 'ignore' };
+  // Depth 0 (or never reported): the user is at the app root → exit immediately.
+  if (state.depth <= 0) return { state, action: 'exit' };
+  // Depth > 0 but a prior pop went unacknowledged (escape armed by timeout) OR is still
+  // outstanding (the natural double-tap reflex): exit unconditionally. The claim bought the app
+  // at most one forwarded pop.
+  if (state.escapeArmed || state.awaitingPop) {
+    return { state: { ...state, awaitingPop: false, escapeArmed: false }, action: 'exit' };
+  }
+  // First press at a positive depth: forward one nav-back and await the pop (host arms the
+  // UNHANDLED_PRESS_WINDOW_MS timer).
+  return { state: { ...state, awaitingPop: true }, action: 'forward' };
+}
+
 /** The pure reducer. `(state, event) → { state, action }`. The single source of the policy. */
 export function step(state: BackState, event: BackEvent): BackStep {
   switch (event.type) {
@@ -76,20 +101,8 @@ export function step(state: BackState, event: BackEvent): BackStep {
       return { state: { ...state, depth }, action: null };
     }
 
-    case 'backPress': {
-      if (!state.bound) return { state, action: 'ignore' };
-      // Depth 0 (or never reported): the user is at the app root → exit immediately.
-      if (state.depth <= 0) return { state, action: 'exit' };
-      // Depth > 0 but a prior pop went unacknowledged (escape armed by timeout) OR is still
-      // outstanding (the natural double-tap reflex): exit unconditionally. The claim bought the
-      // app at most one forwarded pop.
-      if (state.escapeArmed || state.awaitingPop) {
-        return { state: { ...state, awaitingPop: false, escapeArmed: false }, action: 'exit' };
-      }
-      // First press at a positive depth: forward one nav-back and await the pop (host arms the
-      // UNHANDLED_PRESS_WINDOW_MS timer).
-      return { state: { ...state, awaitingPop: true }, action: 'forward' };
-    }
+    case 'backPress':
+      return resolveBackPress(state, event.overlayOpen);
 
     case 'timeout':
       // The window elapsed. If a pop is still outstanding, mark it unhandled so the next press
@@ -119,9 +132,11 @@ export class BackPolicy {
     this.s = step(this.s, { type: 'navDepth', depth, generation }).state;
   }
 
-  /** Resolve a system-back press. The host acts on the returned action (exit / forward / ignore). */
-  backPress(): BackAction {
-    const r = step(this.s, { type: 'backPress' });
+  /** Resolve a system-back press. `overlayOpen` (default false) reports whether a host sheet
+   *  currently covers the realm — the host acts on the returned action (exit / forward / ignore /
+   *  close-overlay). */
+  backPress(overlayOpen = false): BackAction {
+    const r = step(this.s, { type: 'backPress', overlayOpen });
     this.s = r.state;
     return r.action ?? 'ignore';
   }

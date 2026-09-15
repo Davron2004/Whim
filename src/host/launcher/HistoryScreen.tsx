@@ -70,6 +70,9 @@ export interface HistoryScreenProps {
    * chain supplies this callback, the button renders and is tappable but does nothing.
    */
   onChangeIt?: (app: InstalledApp) => void;
+  /** Opens the report sheet for the version the user is currently on (content-reporting
+   *  "Reporting from history") — a header action; no history row gains one. */
+  onReport: () => void;
 }
 
 type Filter = 'all' | FilterGroup;
@@ -122,7 +125,7 @@ const KIND_LABEL: Record<SummaryKind, string> = {
   Fixed: COPY.historyKindFixed,
 };
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt }: Readonly<HistoryScreenProps>) {
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport }: Readonly<HistoryScreenProps>) {
   const p = SHELL_PALETTE;
   const appHue = tileColor(app.name, app.record.manifest);
 
@@ -261,6 +264,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
             </Text>
           )}
         </View>
+        <TouchableOpacity
+          onPress={onReport}
+          hitSlop={10}
+          accessibilityRole="button"
+          style={[styles.headerReportBtn, { borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.historyReportAction}</Text>
+        </TouchableOpacity>
       </View>
 
       {!loading && (
@@ -607,6 +618,13 @@ const styles = StyleSheet.create({
   // Design :24's `min-width:0`: without it a long app name pushes the title past the now
   // fixed-width back button instead of wrapping inside the header.
   headerText: { flex: 1 },
+  headerReportBtn: {
+    borderRadius: RADIUS.chip,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    flexShrink: 0,
+  },
   subtitle: { marginTop: 2 },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },

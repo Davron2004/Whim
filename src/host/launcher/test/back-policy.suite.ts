@@ -114,4 +114,24 @@ export async function runBackPolicyTests(h: Harness): Promise<void> {
     const p = new BackPolicy();
     h.eq(p.backPress(), 'ignore', 'unbound back press is ignored');
   });
+
+  // §13 a host sheet takes back first (mini-app-back-navigation delta)
+  await h.test('back-policy §13 a host sheet takes back first: closes without forwarding or reaching the app', async () => {
+    const p = new BackPolicy();
+    p.reset(1);
+    p.navDepth(1, 1);
+    h.eq(p.backPress(true), 'close-overlay', 'the first press with the overlay open closes the sheet, not the app');
+    h.ok(!p.awaitingPop, 'the press was never forwarded — no pop is outstanding');
+    h.eq(p.backPress(), 'forward', 'once the overlay closes, the same depth-1 press forwards as a pop request');
+  });
+
+  await h.test('back-policy §13b overlayOpen never mutates state — the guaranteed exit is unchanged once it closes', async () => {
+    const p = new BackPolicy();
+    p.reset(1);
+    // depth 0 (never reported): a sheet press changes nothing; once it closes, depth-0 back still
+    // exits immediately, exactly as it would have with no sheet ever opened.
+    h.eq(p.backPress(true), 'close-overlay', 'overlay press #1 closes the sheet only');
+    h.eq(p.backPress(true), 'close-overlay', 'overlay press #2 closes the sheet only (idempotent — no press is ever counted)');
+    h.eq(p.backPress(), 'exit', 'the guaranteed exit at depth 0 is unaffected by the sheet having been open');
+  });
 }

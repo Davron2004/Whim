@@ -23,18 +23,21 @@ import type { KVBackend } from '../version-store/fs/kv-fs';
 import { SHELL_COLORS } from '../../sdk/theme';
 import { COPY } from './copy';
 
-export type OrbActionId = 'change' | 'home' | 'versions';
+export type OrbActionId = 'change' | 'home' | 'versions' | 'report';
 
 export interface OrbAction {
   id: OrbActionId;
   label: string;
 }
 
-/** The fixed, cheap-and-undoable action set. Nothing here fires a destructive operation. */
+/** The fixed, cheap-and-undoable action set. Nothing here fires a destructive operation.
+ *  `report` (design D13) fits the rule because opening the report sheet does nothing on its own
+ *  — sending is a deliberate second step on a surface you can read. */
 export const ORB_ACTIONS: readonly OrbAction[] = [
   { id: 'change', label: COPY.orbActionChangeIt },
   { id: 'home', label: COPY.orbActionHome },
   { id: 'versions', label: COPY.orbActionVersions },
+  { id: 'report', label: COPY.orbActionReport },
 ];
 
 // ── the per-row swatch (design `3a`/`3b`/`3c`, html:220-224) ─────────────────
@@ -49,6 +52,7 @@ export const ORB_ROW_TINT: Record<OrbActionId, string> = {
   change: '#e6e4f7',
   home: '#e5e2db',
   versions: '#e5e2db',
+  report: '#e5e2db',
 };
 
 /** Per-action swatch glyph. `⌂` (U+2302) is pending Android glyph-coverage verification on the
@@ -57,6 +61,7 @@ export const ORB_ROW_GLYPH: Record<OrbActionId, string> = {
   change: '✎',
   home: '⌂',
   versions: '↺',
+  report: '⚑',
 };
 
 /** Swatch glyph colour. The design's `m.glyphColor` (`i === 0 ? '#3f3d8f' : '#1c1917'`) is exactly
