@@ -21,3 +21,4 @@
 -->
 
 ## Ledger
+- 01:30 orchestrator pre-dispatch dispositions: F2 skipped (already fixed by platform chain-2); F7 skipped (contract-mirror.ts deleted in 075005e); F7's NUL-byte note is covered by fix-launcher-wiring (reviewer L2). F1, F3, F4, F5, F9 touch launcher files, so they wait for fix-launcher-wiring and fix-consent-retry; F6 and F8 are eligible now.
