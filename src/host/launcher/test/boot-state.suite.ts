@@ -261,6 +261,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
       { trusted: true },
       { trusted: true, payload: null },
       { trusted: true, payload: {} },
+      { trusted: true, payload: { mountToFirstPaintMs: null } },
       { trusted: true, payload: { mountToFirstPaintMs: '4' } },
       { trusted: true, payload: { mountToFirstPaintMs: Number.NaN } },
       { trusted: true, payload: { mountToFirstPaintMs: Number.POSITIVE_INFINITY } },
