@@ -28,6 +28,7 @@ import { storageError, type StorageEngine } from '../../src/host/storage-engine/
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
 import { createRunCandidate, denialDiagnostic } from '../report';
 import { testIsolation } from './isolation';
+import { testResilience } from './resilience';
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -127,6 +128,9 @@ async function main(): Promise<void> {
 
   // ── public-generation-server tasks 7.3–7.4: OS sandbox, no egress, builder file reads ───────
   await testIsolation({ test, ok });
+
+  // ── public-generation-server task 8.4: abort at every wait, crash replacement ───────────────
+  await testResilience({ test, ok });
 
   console.log('');
   if (failures.length === 0) {

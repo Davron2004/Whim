@@ -150,7 +150,9 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
     }
 
     try {
-      const mountDiag = await awaitMount(obs, budgets);
+      // `ctx.signal` is the caller's signal joined with the browser's connection: every wait below
+      // ends promptly on either (design D12/D14).
+      const mountDiag = await awaitMount(obs, budgets, ctx.signal);
 
       let sweepMs = 0;
       let declared: string[] = [];
@@ -164,6 +166,7 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         budgets,
         async () => {
           if (mountDiag) return; // a hung mount never reaches a swept-able page (spec: no reason to burn the budget)
+          if (ctx.signal.aborted) return; // an abandoned run is never swept
           const sweepStart = Date.now();
           const sweep = await sweepApp(ctx, obs, source, budgets);
           sweepMs = Date.now() - sweepStart;
@@ -173,8 +176,12 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
           perScreenMs = sweep.perScreenMs;
           diagnostics.push(...sweep.diagnostics);
         },
-        opts.signal,
+        ctx.signal,
       );
+
+      // A report read off a dead browser would blame the candidate for the crash.
+      const lost = ctx.browserLost();
+      if (lost) throw lost;
 
       // Close out the verdict BEFORE the copy below, so a run that never saw an authenticated
       // `probes` frame carries `containment_unobserved` and `contained: null` never travels
@@ -225,6 +232,9 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         screens: { declared, visited },
         budgets,
       };
+    } catch (err) {
+      // Any failure once the browser has gone (a Playwright call on a closed target) is the crash.
+      throw ctx.browserLost() ?? err;
     } finally {
       obs.detach();
       await dispose();

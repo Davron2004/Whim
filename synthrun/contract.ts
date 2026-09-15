@@ -90,9 +90,11 @@ export interface StageTimings {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Semaphore {
-  /** Resolves once a concurrency slot is free; call the returned function exactly once to
-   *  release it. */
-  acquire(): Promise<() => void>;
+  /** Resolves once a concurrency slot is free with the function that releases it. When `signal`
+   *  aborts first, the waiter MUST leave the queue without ever holding a slot, and the promise
+   *  rejects with an `AbortError`. Calling the release function again after the first call does
+   *  nothing. */
+  acquire(signal?: AbortSignal): Promise<() => void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,14 +143,20 @@ export interface RunOptions {
    *  compose by wrapping: `session.openRun(source,
    *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
   beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
-  /** Cancellation (chain 6, design D8, generation-loop spec "Cancellation aborts the pipeline at
-   *  every boundary"). Threaded into `observe.ts`'s `withTotalBudget` — the SAME cleanup path the
-   *  total-budget watchdog already uses: an abort races the in-flight work exactly like a budget
-   *  overrun, hard-kills the page, and the caller's existing `dispose()` (context close + semaphore
-   *  release) then runs from its own `finally` block, unchanged. Not raced against `runCandidate` as
-   *  a whole — an abort during build/boot/mount-wait is observed the next time control reaches
-   *  `withTotalBudget`, not before (D8: "threaded, not raced" — the rejected alternative leaks a
-   *  context/slot for up to `totalBudgetMs` per cancellation). */
+  /** Cancellation (generation-pipeline spec "Cancellation aborts the pipeline at every boundary",
+   *  synthetic-run spec "Abort is honoured at every wait in a run"). Raced at every wait
+   *  (public-generation-server design D12, which supersedes #56 D8's "threaded, not raced" for
+   *  the slot, navigation and mount waits). The page and context are closed within 5 s of the
+   *  abort, and the slot is released exactly once:
+   *  - while queued for a slot: the waiter leaves the queue, never holds the slot and never opens a
+   *    context; the call rejects with an `AbortError`;
+   *  - while a replacement browser launches, before the context is created, or during navigation:
+   *    `openRun` closes what it opened, releases the slot and rejects with an `AbortError`;
+   *  - while awaiting mount: the wait ends within one poll, the sweep is skipped, and the run
+   *    disposes;
+   *  - during the sweep: `withTotalBudget` hard-kills the page and returns `aborted: true`.
+   *  Once `openRun` has returned, `runCandidate` resolves with a report the caller must discard.
+   *  esbuild and the synchronous static check stay unraced; both are bounded by input caps. */
   signal?: AbortSignal;
 }
 
