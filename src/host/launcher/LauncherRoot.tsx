@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -63,6 +63,10 @@ import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
+import AppLinkMissingScreen from './AppLinkMissingScreen';
+import { parseAppLink } from './app-link';
+import { resolveAppLink, linkExitFor, PendingLinkHolder } from './link-routing';
+import type { LinkExit } from './link-routing';
 import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
 import DevLogOverlay from './DevLogOverlay';
@@ -119,6 +123,9 @@ type Screen =
   | { kind: 'dev' }
   | { kind: 'settings' }
   | { kind: 'history'; app: InstalledApp }
+  // An app link's id matched neither an installed app nor a pending build (design D15; spec
+  // app-links "A link to an app that isn't on this phone shows a friendly screen").
+  | { kind: 'link-missing' }
   // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `ask` opens in place of a
   // data-sending action taken with no current grant, carrying the continuation to resume on
   // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
@@ -225,6 +232,20 @@ function logGenError(stage: string, err: unknown): void {
  *  phrasing (design D11) reads through it. */
 function formatLocalTime(date: Date): string {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+/** What a rejected app link is recorded with (spec app-links "URLs that aren't app links are
+ *  ignored" — "the log record names only the scheme and host"): never the full URL, which may
+ *  carry a path or query the sender chose. An unparseable string reads as `'unknown'`/`'unknown'`
+ *  rather than throwing — a malformed URL is still just a rejection. */
+function schemeAndHostOf(url: string): { scheme: string; host: string } {
+  try {
+    const parsed = new URL(url);
+    return { scheme: parsed.protocol.replace(':', ''), host: parsed.hostname };
+  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable URL still needs a log record, so this falls back rather than throwing
+  } catch {
+    return { scheme: 'unknown', host: 'unknown' };
+  }
 }
 
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
@@ -418,6 +439,10 @@ function LauncherShell({
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
   const [ready, setReady] = useState(false);
+  // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
+  // resubscribing `Linking`'s event on every first-run tick.
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
   // The report sheet's target for the done-step and history-header entry points (design D13) —
@@ -531,6 +556,14 @@ function LauncherShell({
   const appOps = useRef(new AppBusy()).current;
   const [appBusy, setAppBusy] = useState<AppBusyMap>({});
 
+  // App links (design D15): the last link that arrived before first-run finished, and a stable
+  // handle onto the latest `openAppLink` closure — refreshed every render below, the same
+  // stable-identity idiom `onLeaveRunningRef`/`timelineRef` already keep, so the mount-once
+  // `Linking` subscription (registered once, further down) always reaches the CURRENT `screen`/
+  // `reportTarget` rather than the ones captured at mount.
+  const pendingLinkHolder = useRef(new PendingLinkHolder()).current;
+  const openAppLinkRef = useRef<(id: string) => void>(() => {});
+
   // The build screen of the attempt currently in flight, kept live even while the user is
   // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
   // never left this shell's closure when `onLeaveRunning` detached it, so reattaching is a screen
@@ -593,7 +626,40 @@ function LauncherShell({
       }
       refresh();
       setReady(true);
+      // A link that arrived while first-run was still running (spec app-links "A link that
+      // arrives before the launcher is ready waits") resolves now, exactly as it would on an
+      // already-ready launcher. `openAppLinkRef.current`, not `openAppLink` directly — see the
+      // ref's own doc comment.
+      const heldId = pendingLinkHolder.release();
+      if (heldId != null) openAppLinkRef.current(heldId);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The app-link listener (design D15; spec app-links): registered ONCE — `Linking.getInitialURL`
+  // for a cold start, `Linking`'s `url` event for one that arrives while the process runs. Both
+  // funnel through the SAME rejection/hold/open handling, so a cold-start link and a warm one
+  // behave identically. `openAppLink` (below, among the ghost-tile handlers) is referenced here
+  // only through `openAppLinkRef`, which every render keeps pointed at the CURRENT closure — the
+  // same "declared later, reached only through a ref/deferred closure" pattern `runContinuation`
+  // already relies on for `onRetryPending`.
+  useEffect(() => {
+    const handleIncomingUrl = (url: string | null) => {
+      if (!url) return;
+      const id = parseAppLink(url);
+      if (id == null) {
+        log.warn(CHANNELS.app, 'app link rejected', schemeAndHostOf(url));
+        return;
+      }
+      if (!readyRef.current) {
+        pendingLinkHolder.hold(id);
+        return;
+      }
+      openAppLinkRef.current(id);
+    };
+    Linking.getInitialURL().then(handleIncomingUrl);
+    const sub = Linking.addEventListener('url', (event) => handleIncomingUrl(event.url));
+    return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1381,6 +1447,48 @@ function LauncherShell({
     await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
   };
 
+  /** The side effect of an arriving link's safe exit (design D15; spec app-links "An arriving link
+   *  leaves the current screen through that screen's own safe exit") — no screen assignment; the
+   *  caller (`openAppLink`) sets the resolved target right after. Cancelling whatever compose/plan
+   *  request the CURRENT screen owns applies unconditionally (a no-op off those two steps), the
+   *  same way `goHome` always does it. `'leave-build'` additionally detaches the live attempt so it
+   *  keeps streaming (exactly `onLeaveRunning`, without ALSO navigating home first — the caller is
+   *  about to navigate somewhere more specific). `'close-overlay'` also clears the host-level
+   *  report sheet, mirroring `back-policy.ts`'s `overlayOpen` precedent: never forwarded, never
+   *  counted toward anything else. */
+  const leaveForLink = (exit: LinkExit) => {
+    leaveFlowStep(screen.kind);
+    aboutRef.current = null;
+    if (exit === 'leave-build') {
+      const ctl = genRef.current;
+      if (ctl) ctl.detached = true;
+    } else if (exit === 'close-overlay') {
+      setReportTarget(null);
+    }
+  };
+
+  /** The one entry point every arriving app link resolves through (design D15): a link to the
+   *  app already open is left exactly as it is (spec "A link to the app that is already open SHALL
+   *  leave it as it is"); otherwise the current screen takes its safe exit, and the link's target
+   *  opens through the SAME handlers a tile tap already uses (`onOpen`/`onOpenPending`) — so it
+   *  opens "exactly as a tap on its tile does" by construction, never a second code path that could
+   *  drift from the first. Reads `index`/`pending` directly rather than the `apps`/`pendingBuilds`
+   *  React state, which can still be mount-time-stale the ONE time this fires before first render
+   *  settles (the "waits" release, above). */
+  const openAppLink = (id: string) => {
+    if (screen.kind === 'app' && screen.app.id === id) return;
+    const resolution = resolveAppLink(id, index.list(), pending.list());
+    leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
+    if (resolution.kind === 'open') {
+      onOpen(resolution.app);
+    } else if (resolution.kind === 'missing') {
+      setScreen({ kind: 'link-missing' });
+    } else {
+      onOpenPending(resolution.record);
+    }
+  };
+  openAppLinkRef.current = openAppLink;
+
   /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
    *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
@@ -1434,6 +1542,190 @@ function LauncherShell({
   // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
   const statusBarStyle = 'dark-content';
 
+  /** The ready-gated screen switch, pulled out of `LauncherShell`'s own body (a nested
+   *  closure sonarjs's cognitive-complexity rule assesses separately) purely to keep the
+   *  count of `Screen` kinds this shell can render from ever competing with `LauncherShell`'s
+   *  own control flow for the same budget — adding a `Screen` member costs this function one
+   *  branch, never the other. */
+  const renderScreenContent = (): React.ReactNode => {
+    if (screen.kind === 'app') {
+      return (
+        <MiniAppView
+          key={screen.app.id}
+          record={screen.record}
+          bundleSource={screen.source}
+          engineAppId={screen.engineAppId}
+          theme={DEFAULT_THEME}
+          onExit={goHome}
+          onVersions={() => onHistory(screen.app)}
+          onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
+          installedApp={screen.app}
+          access={access}
+          reportOptions={reportClientOptions}
+        />
+      );
+    } else if (screen.kind === 'dev') {
+      return <DevProbeScreen onExit={goHome} />;
+    } else if (screen.kind === 'settings') {
+      return (
+        <SettingsScreen
+          onBack={goHome}
+          serverUrl={serverUrl}
+          onServerUrlChange={onServerUrlChange}
+          onUseDefaultServer={onUseDefaultServer}
+          highlighting={highlighting}
+          onHighlightingChange={onHighlightingChange}
+          consentStatus={consentStatus(kv)}
+          canProbe={clientOptions != null}
+          onOpenAIFeatures={onOpenAIFeaturesReview}
+        />
+      );
+    } else if (screen.kind === 'consent') {
+      return (
+        <ConsentScreenForShell
+          screen={screen}
+          onAskAgree={onConsentAskAgree}
+          onAskDecline={onConsentAskDecline}
+          onReviewTurnOn={onConsentReviewTurnOn}
+          onReviewTurnOff={onConsentReviewTurnOff}
+          onReviewClose={onConsentReviewClose}
+          consentOn={consentStatus(kv).kind === 'granted'}
+        />
+      );
+    } else if (screen.kind === 'history') {
+      return (
+        <>
+          <HistoryScreen
+            app={screen.app}
+            access={access}
+            onBack={goHome}
+            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
+            onReport={() => setReportTarget(screen.app)}
+          />
+          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+        </>
+      );
+    } else if (screen.kind === 'link-missing') {
+      return <AppLinkMissingScreen onBackToApps={goHome} />;
+    } else if (screen.kind === 'compose') {
+      const from = screen;
+      return (
+        <ComposeStep
+          text={from.text}
+          notice={from.notice}
+          serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onChangeText={(text) => setScreen(composeTextChanged(from, text))}
+          onContinue={() => onComposeContinue(from)}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'clarify') {
+      const from = screen;
+      return (
+        <ClarifyStep
+          prompt={from.text}
+          questions={from.questions}
+          answers={from.answers}
+          loading={from.loading}
+          startedAt={from.startedAt}
+          notice={from.notice}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
+          onContinue={() => openPlan(from)}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'plan') {
+      const from = screen;
+      return (
+        <PlanStep
+          rows={from.rows}
+          loading={from.loading}
+          startedAt={from.startedAt}
+          notice={from.notice}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
+          onBuild={() => onBuildIt(from)}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'build') {
+      const from = screen;
+      return (
+        <>
+          <BuildStep
+            stage={from.stage}
+            delivering={from.delivering}
+            signals={signalsRef.current}
+            now={Date.now()}
+            editing={from.editing != null}
+            editingName={from.editing?.name}
+            onLeaveRunning={onLeaveRunning}
+            onBack={onBuildBack}
+            onShowDetails={onShowDetails}
+          />
+          <RunDetailsSheet
+            open={timeline !== null}
+            entries={timeline}
+            devMode={timelineDevMode}
+            onClose={() => setTimeline(null)}
+          />
+        </>
+      );
+    } else if (screen.kind === 'done') {
+      const from = screen;
+      return (
+        <>
+          <DoneStep
+            app={from.app}
+            onOpen={() => onOpen(from.app)}
+            onBackToApps={goHome}
+            onReport={() => setReportTarget(from.app)}
+          />
+          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+        </>
+      );
+    } else if (screen.kind === 'failure') {
+      return (
+        <FailureScreen
+          reason={screen.reason}
+          diagnostics={screen.diagnostics}
+          observedRepairAttempts={screen.observedRepairAttempts}
+          hasWorkingVersion={screen.hasWorkingVersion}
+          notice={screen.notice}
+          journal={failureJournal}
+          attemptStarted={screen.journalId != null}
+          devMode={timelineDevMode}
+          {...failureActions(screen)}
+        />
+      );
+    } else {
+      return (
+        <HomeScreen
+          apps={apps}
+          pending={pendingBuilds}
+          onOpen={onOpen}
+          onFork={onFork}
+          onDelete={onDelete}
+          appBusy={appBusy}
+          onHistory={onHistory}
+          onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
+          onCreate={() => openWithConsent({ kind: 'compose' })}
+          onSettings={() => setScreen({ kind: 'settings' })}
+          onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
+          offline={showOfflineIndicator(connectivity)}
+          onOpenPending={onOpenPending}
+          onCancelPending={onCancelPending}
+          onDismissPending={onDismissPending}
+        />
+      );
+    }
+  };
+
   let content: React.ReactNode;
   if (!ready) {
     content = (
@@ -1446,179 +1738,8 @@ function LauncherShell({
         />
       </View>
     );
-  } else if (screen.kind === 'app') {
-    content = (
-      <MiniAppView
-        key={screen.app.id}
-        record={screen.record}
-        bundleSource={screen.source}
-        engineAppId={screen.engineAppId}
-        theme={DEFAULT_THEME}
-        onExit={goHome}
-        onVersions={() => onHistory(screen.app)}
-        onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
-        installedApp={screen.app}
-        access={access}
-        reportOptions={reportClientOptions}
-      />
-    );
-  } else if (screen.kind === 'dev') {
-    content = <DevProbeScreen onExit={goHome} />;
-  } else if (screen.kind === 'settings') {
-    content = (
-      <SettingsScreen
-        onBack={goHome}
-        serverUrl={serverUrl}
-        onServerUrlChange={onServerUrlChange}
-        onUseDefaultServer={onUseDefaultServer}
-        highlighting={highlighting}
-        onHighlightingChange={onHighlightingChange}
-        consentStatus={consentStatus(kv)}
-        canProbe={clientOptions != null}
-        onOpenAIFeatures={onOpenAIFeaturesReview}
-      />
-    );
-  } else if (screen.kind === 'consent') {
-    content = (
-      <ConsentScreenForShell
-        screen={screen}
-        onAskAgree={onConsentAskAgree}
-        onAskDecline={onConsentAskDecline}
-        onReviewTurnOn={onConsentReviewTurnOn}
-        onReviewTurnOff={onConsentReviewTurnOff}
-        onReviewClose={onConsentReviewClose}
-        consentOn={consentStatus(kv).kind === 'granted'}
-      />
-    );
-  } else if (screen.kind === 'history') {
-    content = (
-      <>
-        <HistoryScreen
-          app={screen.app}
-          access={access}
-          onBack={goHome}
-          onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
-          onReport={() => setReportTarget(screen.app)}
-        />
-        <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
-      </>
-    );
-  } else if (screen.kind === 'compose') {
-    const from = screen;
-    content = (
-      <ComposeStep
-        text={from.text}
-        notice={from.notice}
-        serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onChangeText={(text) => setScreen(composeTextChanged(from, text))}
-        onContinue={() => onComposeContinue(from)}
-        onBack={() => goBack(from)}
-      />
-    );
-  } else if (screen.kind === 'clarify') {
-    const from = screen;
-    content = (
-      <ClarifyStep
-        prompt={from.text}
-        questions={from.questions}
-        answers={from.answers}
-        loading={from.loading}
-        startedAt={from.startedAt}
-        notice={from.notice}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
-        onContinue={() => openPlan(from)}
-        onBack={() => goBack(from)}
-      />
-    );
-  } else if (screen.kind === 'plan') {
-    const from = screen;
-    content = (
-      <PlanStep
-        rows={from.rows}
-        loading={from.loading}
-        startedAt={from.startedAt}
-        notice={from.notice}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
-        onBuild={() => onBuildIt(from)}
-        onBack={() => goBack(from)}
-      />
-    );
-  } else if (screen.kind === 'build') {
-    const from = screen;
-    content = (
-      <>
-        <BuildStep
-          stage={from.stage}
-          delivering={from.delivering}
-          signals={signalsRef.current}
-          now={Date.now()}
-          editing={from.editing != null}
-          editingName={from.editing?.name}
-          onLeaveRunning={onLeaveRunning}
-          onBack={onBuildBack}
-          onShowDetails={onShowDetails}
-        />
-        <RunDetailsSheet
-          open={timeline !== null}
-          entries={timeline}
-          devMode={timelineDevMode}
-          onClose={() => setTimeline(null)}
-        />
-      </>
-    );
-  } else if (screen.kind === 'done') {
-    const from = screen;
-    content = (
-      <>
-        <DoneStep
-          app={from.app}
-          onOpen={() => onOpen(from.app)}
-          onBackToApps={goHome}
-          onReport={() => setReportTarget(from.app)}
-        />
-        <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
-      </>
-    );
-  } else if (screen.kind === 'failure') {
-    content = (
-      <FailureScreen
-        reason={screen.reason}
-        diagnostics={screen.diagnostics}
-        observedRepairAttempts={screen.observedRepairAttempts}
-        hasWorkingVersion={screen.hasWorkingVersion}
-        notice={screen.notice}
-        journal={failureJournal}
-        attemptStarted={screen.journalId != null}
-        devMode={timelineDevMode}
-        {...failureActions(screen)}
-      />
-    );
   } else {
-    content = (
-      <HomeScreen
-        apps={apps}
-        pending={pendingBuilds}
-        onOpen={onOpen}
-        onFork={onFork}
-        onDelete={onDelete}
-        appBusy={appBusy}
-        onHistory={onHistory}
-        onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-        onCreate={() => openWithConsent({ kind: 'compose' })}
-        onSettings={() => setScreen({ kind: 'settings' })}
-        onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
-        offline={showOfflineIndicator(connectivity)}
-        onOpenPending={onOpenPending}
-        onCancelPending={onCancelPending}
-        onDismissPending={onDismissPending}
-      />
-    );
+    content = renderScreenContent();
   }
 
   // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen
