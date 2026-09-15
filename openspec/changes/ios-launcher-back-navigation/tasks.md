@@ -8,12 +8,12 @@
 
 ## 2. Screens on the seam
 
-- [ ] 2.1 Replace the hardware-back `useEffect` in `ComposeStep.tsx`, `ClarifyStep.tsx`, `SettingsScreen.tsx`, `HistoryScreen.tsx`, `FailureScreen.tsx` and `AppLinkMissingScreen.tsx` with `useSystemBack(<the prop the effect called>)` and drop their `BackHandler` imports. Re-pin, never delete, the assertions that read those listeners: `test/failure-screen.suite.ts:98`, `test/app-link-ui.suite.ts:114` and `test/prompt-flow-screens.suite.ts:570`, each to the `useSystemBack(<prop>)` call.
-- [ ] 2.2 In `PlanStep.tsx` build one `handleBack` from `planBackAction(editingIndex != null)` that cancels the row edit or calls `onBack`, and pass it to both `useSystemBack` and `<FlowHeader step="plan" onBack={handleBack} />` (design D4).
-- [ ] 2.3 In `BuildStep.tsx` remove the `onLeaveRunning` prop: `Leave it running` and `useSystemBack` both take `onBack`. In `LauncherRoot.tsx` pass only `onBack={onBuildBack}`; `onLeaveRunning` itself stays for `onBuildBack` and the link exit. Re-pin `test/prompt-flow-screens.suite.ts:557` to `COPY.buildLeaveRunning` plus `onPress={onBack}`; `test/prompt-flow-wiring.suite.ts:458-479` must stay green untouched.
-- [ ] 2.4 In `DoneStep.tsx` call `useSystemBack(onBackToApps)` (design D4).
-- [ ] 2.5 In `ConsentScreen.tsx` render the primary and plain buttons from `consentControls(mode, consentOn)` through a local `ConsentAction` component that receives the control with `onAgree`, `onClose` and `onTurnOff` as JSX props (design D6), keep the existing button styles for primary and plain, and call `useSystemBack(onClose)`. `ConsentScreenForShell` in `LauncherRoot.tsx` needs no change: review mode's `onClose` is already `onConsentReviewClose`.
-- [ ] 2.6 In `flow-chrome.tsx` raise `FlowHeader`'s `Back` `hitSlop` from 10 to 16 (design D11). No style change.
+- [x] 2.1 Replace the hardware-back `useEffect` in `ComposeStep.tsx`, `ClarifyStep.tsx`, `SettingsScreen.tsx`, `HistoryScreen.tsx`, `FailureScreen.tsx` and `AppLinkMissingScreen.tsx` with `useSystemBack(<the prop the effect called>)` and drop their `BackHandler` imports. Re-pin, never delete, the assertions that read those listeners: `test/failure-screen.suite.ts:98`, `test/app-link-ui.suite.ts:114` and `test/prompt-flow-screens.suite.ts:570`, each to the `useSystemBack(<prop>)` call.
+- [x] 2.2 In `PlanStep.tsx` build one `handleBack` from `planBackAction(editingIndex != null)` that cancels the row edit or calls `onBack`, and pass it to both `useSystemBack` and `<FlowHeader step="plan" onBack={handleBack} />` (design D4).
+- [x] 2.3 In `BuildStep.tsx` remove the `onLeaveRunning` prop: `Leave it running` and `useSystemBack` both take `onBack`. In `LauncherRoot.tsx` pass only `onBack={onBuildBack}`; `onLeaveRunning` itself stays for `onBuildBack` and the link exit. Re-pin `test/prompt-flow-screens.suite.ts:557` to `COPY.buildLeaveRunning` plus `onPress={onBack}`; `test/prompt-flow-wiring.suite.ts:458-479` must stay green untouched.
+- [x] 2.4 In `DoneStep.tsx` call `useSystemBack(onBackToApps)` (design D4).
+- [x] 2.5 In `ConsentScreen.tsx` render the primary and plain buttons from `consentControls(mode, consentOn)` through a local `ConsentAction` component that receives the control with `onAgree`, `onClose` and `onTurnOff` as JSX props (design D6), keep the existing button styles for primary and plain, and call `useSystemBack(onClose)`. `ConsentScreenForShell` in `LauncherRoot.tsx` needs no change: review mode's `onClose` is already `onConsentReviewClose`.
+- [x] 2.6 In `flow-chrome.tsx` raise `FlowHeader`'s `Back` `hitSlop` from 10 to 16 (design D11). No style change.
 
 ## 3. Error-screen exit, bottom inset, and the exit check
 
