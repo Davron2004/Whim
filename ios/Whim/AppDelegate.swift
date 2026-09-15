@@ -29,6 +29,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
       launchOptions: launchOptions
     )
 
+    // Launch wiring (design D10): keep the root background on the launch paper color until
+    // the launcher draws its first frame, so there's no white flash after the storyboard hands
+    // off to React Native.
+    window?.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
+
     return true
   }
 
