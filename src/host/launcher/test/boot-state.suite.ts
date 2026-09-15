@@ -13,11 +13,48 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { hasPainted, miniAppSurface, paintAccepted } from '../boot-state';
+import {
+  createStartupDeadline,
+  hasPainted,
+  miniAppSurface,
+  paintAccepted,
+  type StartupDeadlineScheduler,
+} from '../boot-state';
 import { COPY } from '../copy';
 
 function readSource(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+}
+
+type ScheduledTask = {
+  callback: () => void;
+  dueAt: number;
+  cancelled: boolean;
+};
+
+class FakeClock implements StartupDeadlineScheduler {
+  now = 0;
+  readonly tasks: ScheduledTask[] = [];
+
+  set(callback: () => void, delayMs: number): unknown {
+    const task = { callback, dueAt: this.now + delayMs, cancelled: false };
+    this.tasks.push(task);
+    return task;
+  }
+
+  clear(handle: unknown): void {
+    (handle as ScheduledTask).cancelled = true;
+  }
+
+  advanceBy(ms: number): void {
+    this.now += ms;
+    for (const task of this.tasks) {
+      if (!task.cancelled && task.dueAt <= this.now) {
+        task.cancelled = true;
+        task.callback();
+      }
+    }
+  }
 }
 
 export async function runBootStateTests(h: Harness): Promise<void> {
@@ -162,7 +199,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     );
     const handler = hostSrc.slice(hostSrc.indexOf('function handlePaintFrame'), hostSrc.indexOf('/** An `error` frame'));
     h.ok(
-      handler.indexOf('if (!paintAccepted(frame)) return;') < handler.indexOf('disarmTimer'),
+      handler.includes('acceptPaint(frame)'),
       'and the host returns on a refused frame BEFORE disarming the paint watchdog',
     );
   });
@@ -170,16 +207,88 @@ export async function runBootStateTests(h: Harness): Promise<void> {
   await h.test('boot-state: the host runs the paint frame through the fence before touching paintMs', () => {
     const paintCase = hostSrc.slice(hostSrc.indexOf("case 'paint':"), hostSrc.indexOf("case 'probes'"));
     h.ok(
-      /handlePaintFrame\(m, paintTimer/.test(paintCase),
+      /handlePaintFrame\(m, startupDeadline\.current/.test(paintCase),
       'the paint branch must hand the whole frame to handlePaintFrame',
     );
     h.ok(!/genCounter/.test(paintCase), 'and must not fence it on the host generation counter, which paint never carries');
     const handler = hostSrc.slice(hostSrc.indexOf('function handlePaintFrame'), hostSrc.indexOf('/** An `error` frame'));
-    const guardIdx = handler.indexOf('paintAccepted(frame)');
-    h.ok(guardIdx > 0, 'and that handler must consult paintAccepted');
+    const guardIdx = handler.indexOf('acceptPaint(frame)');
+    h.ok(guardIdx > 0, 'and that handler must consult the deadline trust fence');
     h.ok(guardIdx < handler.indexOf('paintMs:'), 'refusing BEFORE publishing paintMs');
-    h.ok(guardIdx < handler.indexOf('disarmTimer'), 'and before disarming the paint watchdog');
     h.ok(!handler.includes('generation:'), 'the paint path must not write HostState.generation — the probes branch owns it');
+  });
+
+  await h.test('boot-state: an attempted delivery with no page frames expires after six seconds', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    clock.advanceBy(5_999);
+    h.eq(failures, 0, 'the full startup allowance remains available');
+    clock.advanceBy(1);
+    h.eq(failures, 1, 'a frame-free startup reaches the app error deadline');
+  });
+
+  await h.test('boot-state: accepted delivery restarts the paint allowance and trusted paint completes it', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    clock.advanceBy(5_000);
+    deadline.begin();
+    clock.advanceBy(5_000);
+    h.eq(failures, 0, 'accepted delivery starts a fresh six-second paint allowance');
+    h.eq(deadline.acceptPaint({ trusted: true, payload: { mountToFirstPaintMs: 25 } }), true, 'trusted paint completes startup');
+    clock.advanceBy(10_000);
+    h.eq(failures, 0, 'completed startup cannot fail later');
+  });
+
+  await h.test('boot-state: untrusted paint cannot cancel the attempted-delivery deadline', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    h.eq(deadline.acceptPaint({ trusted: false, payload: { mountToFirstPaintMs: 2 } }), false, 'forged paint is refused');
+    clock.advanceBy(6_000);
+    h.eq(failures, 1, 'the original deadline remains armed');
+  });
+
+  await h.test('boot-state: reset and retry invalidate stale callbacks from older attempts', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    const firstAttempt = clock.tasks[0];
+    deadline.cancel();
+    deadline.begin();
+    firstAttempt.callback();
+    h.eq(failures, 0, 'a cleared callback cannot poison the retry');
+    clock.advanceBy(6_000);
+    h.eq(failures, 1, 'the current retry still owns a live deadline');
+  });
+
+  await h.test('boot-state: exit, unmount, and a fatal error preserve terminal state', () => {
+    const clock = new FakeClock();
+    let error: string | null = null;
+    const deadline = createStartupDeadline(() => { error ??= 'app never became visible'; }, clock);
+
+    deadline.begin();
+    const fatalAttempt = clock.tasks[0];
+    error = 'bundle: immediate fatal failure';
+    deadline.cancel();
+    fatalAttempt.callback();
+    h.eq(error, 'bundle: immediate fatal failure', 'a stale timeout cannot replace the real fatal error');
+
+    error = null;
+    deadline.begin();
+    deadline.cancel();
+    deadline.cancel();
+    clock.advanceBy(10_000);
+    h.eq(error, null, 'exit and unmount cancellation are idempotent');
   });
 
   await h.test('boot-state: the boot copy speaks outcome, not mechanism', () => {
