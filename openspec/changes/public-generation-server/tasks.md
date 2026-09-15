@@ -5,9 +5,9 @@
 
 ## 1. Harness runtime dependencies (HUMAN-BOOTSTRAP)
 
-- [ ] 1.1 Read the lockfile-resolved root versions of `esbuild`, `playwright` and `typescript` from `package-lock.json`. Run `npm install --workspace server --save-exact esbuild@<v> playwright@<v> typescript@<v>`. Confirm `package-lock.json` holds exactly one copy of each package and that `npm run guard:metro` is unchanged (design.md D3).
-- [ ] 1.2 Update the dependency-budget section of `server/test/contract.suite.ts`. The allowed runtime set becomes `hono`, `@hono/node-server`, `pino`, `@whim/contract`, `esbuild`, `playwright`, `typescript`. Assert that each of the last three is pinned to exactly the lockfile-resolved root version. Keep the `pino-pretty` dev-only and React-adjacent checks (specs/generation-server "Server workspace and runtime").
-- [ ] 1.3 Run `./scripts/gate.sh` and `npm run guard:metro` on the staging branch, then commit the three files together as one human change.
+- [x] 1.1 Read the lockfile-resolved root versions of `esbuild`, `playwright` and `typescript` from `package-lock.json`. Run `npm install --workspace server --save-exact esbuild@<v> playwright@<v> typescript@<v>`. Confirm `package-lock.json` holds exactly one copy of each package and that `npm run guard:metro` is unchanged (design.md D3).
+- [x] 1.2 Update the dependency-budget section of `server/test/contract.suite.ts`. The allowed runtime set becomes `hono`, `@hono/node-server`, `pino`, `@whim/contract`, `esbuild`, `playwright`, `typescript`. Assert that each of the last three is pinned to exactly the lockfile-resolved root version. Keep the `pino-pretty` dev-only and React-adjacent checks (specs/generation-server "Server workspace and runtime").
+- [x] 1.3 Run `./scripts/gate.sh` and `npm run guard:metro` on the staging branch, then commit the three files together as one human change.
 
 ## 2. Wire shapes, typed config, suite scaffold
 
