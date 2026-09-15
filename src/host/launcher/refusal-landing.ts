@@ -2,11 +2,11 @@
  * refusal-landing — where a service refusal's notice lands in the five-step flow, and the retry
  * window's pure disabled/enabled arithmetic (design D9/D11; spec `service-refusals`).
  *
- * `ServiceRefusalCode` is imported TYPE-ONLY from `./contract-mirror` — the same discipline
+ * `ServiceRefusalCode` is imported TYPE-ONLY from `@whim/contract` — the same discipline
  * `service-refusal.ts` keeps — so no zod value reaches Metro through this module. No React Native
  * import: this must load under the launcher's Node acceptance suite.
  */
-import type { ServiceRefusalCode } from './contract-mirror';
+import type { ServiceRefusalCode } from '@whim/contract';
 import { REFUSAL_RULES } from './service-refusal';
 
 /** Which request a refusal answered. */

@@ -18,7 +18,7 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
-import type { ReportReason } from './contract-mirror';
+import type { ReportReason } from '@whim/contract';
 import { buildReportRequest, reportDraftFor, reportLogFields, reportPreview } from './report-payload';
 import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';

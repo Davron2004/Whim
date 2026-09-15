@@ -3,17 +3,16 @@
  * "content-reporting"). RN-free: `ReportSheet.tsx` (a later chain) is the only caller that
  * touches React Native.
  *
- * `ReportRequest`/`ReportReason` are imported TYPE-ONLY from `./contract-mirror` (a client-local
- * stand-in for `@whim/contract`'s not-yet-landed export — see that module's doc comment), so this
- * module pulls no zod into the Metro bundle graph.
+ * `ReportRequest`/`ReportReason` are imported TYPE-ONLY from `@whim/contract`, so this module
+ * pulls no zod into the Metro bundle graph.
  */
-import type { ReportReason, ReportRequest } from './contract-mirror';
+import type { ReportReason, ReportRequest } from '@whim/contract';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 
 /** The note's input cap (content-reporting §"The report sheet collects a reason and an optional
- *  note") and the app name's cap (same section) — kept in lockstep with `contract-mirror.ts`'s
- *  `ReportRequest` bounds, which the Node suite ties to the real (future) contract schema. */
+ *  note") and the app name's cap (same section) — kept in lockstep with `@whim/contract`'s
+ *  `ReportRequest` bounds, which the Node suite ties to the real contract schema. */
 const MAX_NOTE_LENGTH = 1000;
 const MAX_APP_NAME_LENGTH = 200;
 
