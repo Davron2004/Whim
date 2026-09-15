@@ -1,5 +1,5 @@
 # Unfilmed prep: delete ONE non-EXAMPLE tile named by env TILE (index IDX). Run repeatedly.
-appId: com.whim
+appId: com.anycognition.whim
 ---
 - longPressOn:
     text: ${TILE}

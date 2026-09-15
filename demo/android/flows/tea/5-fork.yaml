@@ -4,7 +4,7 @@
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/5-fork.yaml \
 #        --device emulator-5554 --out demo/raw/2026-09-11/shot-5 --name take-1 \
-#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.anycognition.whim --tighten
 #
 # PRECONDITION: grid holds exactly ONE tea-timer tile ("Tea Steeper") on v2, and no forks. Once the
 # fork exists both tiles carry the same a11y label, so tile taps are disambiguated by `index`
@@ -26,7 +26,7 @@
 # V1_RE / V2_RE are genuinely version-exclusive on this pair: the rewrite renamed the card's
 # readout label from "Saved steep time" (v1) to "Steep time" (v2), and only v2 renders "Strength".
 # Both are `optional` at the assert: this shot FILMS the divergence, the contact sheet judges it.
-appId: com.whim
+appId: com.anycognition.whim
 env:
   TILE: "Tea Steeper"
   V2_RE: ".*Strength.*"          # only v2 renders the strength selector
