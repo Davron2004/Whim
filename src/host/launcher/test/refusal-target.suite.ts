@@ -34,20 +34,28 @@ export async function runRefusalTargetTests(h: Harness): Promise<void> {
     const target = rewriteRefusalTarget('compose', PLAN, SENDER_REFUSAL, NOTICE);
     h.eq(target.kind, 'compose', 'compose fired this rewrite (the zero-question clarify-skip path)');
     h.eq(target.text, PLAN.text, 'carrying the plan’s own text');
-    h.eq(target.notice, NOTICE);
+    h.eq(target.notice, NOTICE, 'the sender-landing notice carries onto the compose target');
   });
 
   await h.test('rewriteRefusalTarget: a sender-landing refusal sent by clarify lands back on clarify', () => {
     const target = rewriteRefusalTarget('clarify', PLAN, SENDER_REFUSAL, NOTICE);
     h.eq(target.kind, 'clarify', 'clarify’s own Continue fired this rewrite');
     if (target.kind === 'clarify') {
-      h.eq(target.questions, PLAN.questions);
-      h.eq(target.answers, PLAN.answers);
+      h.eq(target.questions, PLAN.questions, 'the plan’s own questions carry onto the clarify target');
+      h.eq(target.answers, PLAN.answers, 'the plan’s own answers carry onto the clarify target');
     }
   });
 
   await h.test('rewriteRefusalTarget: a text-landing refusal always lands on compose, whichever step sent it', () => {
-    h.eq(rewriteRefusalTarget('compose', PLAN, TEXT_REFUSAL, NOTICE).kind, 'compose');
-    h.eq(rewriteRefusalTarget('clarify', PLAN, TEXT_REFUSAL, NOTICE).kind, 'compose');
+    h.eq(
+      rewriteRefusalTarget('compose', PLAN, TEXT_REFUSAL, NOTICE).kind,
+      'compose',
+      'a text-landing refusal from compose stays on compose',
+    );
+    h.eq(
+      rewriteRefusalTarget('clarify', PLAN, TEXT_REFUSAL, NOTICE).kind,
+      'compose',
+      'a text-landing refusal from clarify still lands on compose',
+    );
   });
 }

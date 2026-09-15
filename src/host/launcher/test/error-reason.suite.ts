@@ -13,35 +13,55 @@ import { EmptyBundleError } from '../build-lifecycle';
 export async function runErrorReasonTests(h: Harness): Promise<void> {
   await h.test('errorReason: an http error surfaces the server’s own hint', () => {
     const err = new GenerationClientError('http', { status: 429, hint: 'Whim is busy right now.' });
-    h.eq(errorReason(err), { reason: 'Whim is busy right now.', diagnostics: [] });
+    h.eq(errorReason(err), { reason: 'Whim is busy right now.', diagnostics: [] }, 'a real 4xx hint surfaces verbatim');
   });
 
   await h.test('errorReason: a device_id error surfaces its hint too', () => {
     const err = new GenerationClientError('device_id', { hint: 'This device could not be identified.' });
-    h.eq(errorReason(err), { reason: 'This device could not be identified.', diagnostics: [] });
+    h.eq(
+      errorReason(err),
+      { reason: 'This device could not be identified.', diagnostics: [] },
+      'a device_id hint always surfaces',
+    );
   });
 
   await h.test('errorReason: a network error never shows its transport hint', () => {
     const err = new GenerationClientError('network', { hint: 'fetch failed: ECONNRESET' });
-    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, 'network hints are always scrubbed');
   });
 
   await h.test('errorReason: a stream_parse error never shows its transport hint', () => {
     const err = new GenerationClientError('stream_parse', { hint: 'Response has no body' });
-    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, 'stream_parse hints are always scrubbed');
   });
 
   await h.test('errorReason: an http error with no hint still falls through to the generic reason', () => {
     const err = new GenerationClientError('http', { status: 500 });
-    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+    h.eq(errorReason(err), { reason: GENERIC_STREAM_ERROR, diagnostics: [] }, 'no hint means the generic reason');
   });
+
+  await h.test(
+    'errorReason: an http error on a 200 status (client-generated shape hint) scrubs to the generic reason',
+    () => {
+      const err = new GenerationClientError('http', { status: 200, hint: 'Unexpected rewrite response shape' });
+      h.eq(
+        errorReason(err),
+        { reason: GENERIC_STREAM_ERROR, diagnostics: [] },
+        'a client-generated hint on a 200 must never surface as the failure reason',
+      );
+    },
+  );
 
   await h.test('errorReason: an empty-bundle delivery reads with its own honest reason', () => {
     const err = new EmptyBundleError();
-    h.eq(errorReason(err), { reason: err.message, diagnostics: [] });
+    h.eq(errorReason(err), { reason: err.message, diagnostics: [] }, 'the bundle guard’s own message is honest, not generic');
   });
 
   await h.test('errorReason: anything else falls through to the generic reason', () => {
-    h.eq(errorReason(new Error('boom')), { reason: GENERIC_STREAM_ERROR, diagnostics: [] });
+    h.eq(
+      errorReason(new Error('boom')),
+      { reason: GENERIC_STREAM_ERROR, diagnostics: [] },
+      'an unrecognised error falls through to the generic reason',
+    );
   });
 }

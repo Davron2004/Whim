@@ -5,11 +5,15 @@
  * imports react-native and so cannot be exercised under the launcher's Node acceptance suite —
  * this decision needs to be watchable on its own.
  *
- * `GenerationClientError.hint` mixes two very different things. For `http`/`device_id` it is the
- * SERVER's own plain-English message (a 4xx/5xx body, or the device-id gate's own copy) — safe,
- * and meant to be read. For `network`/`stream_parse` it is a client-side transport string built
- * from `err.message`, a WebView network error code, or the fixed `'Response has no body'` —
- * mechanism, never a product sentence, so those two kinds are scrubbed to the generic reason
+ * `GenerationClientError.hint` mixes two very different things depending on `kind`/`status`. For
+ * `device_id`, and for `http` on an actual error status (>= 400), it is the SERVER's own
+ * plain-English message (a 4xx/5xx body, or the device-id gate's own copy) — safe, and meant to
+ * be read. But `http` is not exclusively server-authored: `generation-client.ts` also raises
+ * `kind: 'http'` with a CLIENT-generated hint ("Unexpected clarify/rewrite response shape") when a
+ * 200 response's body fails to structurally validate — that hint is a transport/shape complaint,
+ * never a product sentence. For `network`/`stream_parse` it is always a client-side transport
+ * string built from `err.message`, a WebView network error code, or the fixed `'Response has no
+ * body'` — mechanism, never a product sentence. All of these are scrubbed to the generic reason
  * instead, never shown verbatim.
  */
 import { GenerationClientError } from './transport-shared';
@@ -22,7 +26,11 @@ export const GENERIC_STREAM_ERROR = 'Something went wrong while building your ap
  *  honestly" requirement's hint-only discipline (diagnostics stay empty here; only a terminal
  *  `failure` event ever carries real per-diagnostic hints). */
 export function errorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
-  if (err instanceof GenerationClientError && err.hint && (err.kind === 'http' || err.kind === 'device_id')) {
+  if (
+    err instanceof GenerationClientError &&
+    err.hint &&
+    (err.kind === 'device_id' || (err.kind === 'http' && (err.status ?? 0) >= 400))
+  ) {
     return { reason: err.hint, diagnostics: [] };
   }
   // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
