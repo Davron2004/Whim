@@ -26,7 +26,10 @@ export function createStartupDeadline(
 
 `begin()` replaces any active timer and fences its callback with a new attempt token.
 `acceptPaint()` returns false without changing the timer unless `paintAccepted(frame)` passes.
-For trusted paint it cancels the timer and returns true. `cancel()` is idempotent and invalidates
+Paint passes only when it is trusted and `mountToFirstPaintMs` is a finite, nonnegative number;
+zero is valid. Accepted paint cancels the timer and returns true. Missing, null, string, `NaN`,
+infinite, or negative timing leaves the deadline armed, so malformed trusted data cannot strand
+the one-field `paintMs !== null` state on `Opening…`. `cancel()` is idempotent and invalidates
 callbacks that the platform had already queued before timer cancellation.
 
 ## Host wiring
@@ -46,8 +49,9 @@ unchanged.
 ## Verification contract
 
 The fake-clock launcher tests cover a frame-free timeout, delayed accepted delivery and paint,
-untrusted paint, reset/retry stale callbacks, cleanup, and fatal-error preservation. Source checks
-bind those behaviors to the delivery, message, and lifecycle paths in `useMiniAppHost.ts`.
+valid zero timing, malformed trusted timing through the existing app-error surface, untrusted
+paint, reset/retry stale callbacks, cleanup, and fatal-error preservation. Source checks bind
+those behaviors to the delivery, message, and lifecycle paths in `useMiniAppHost.ts`.
 
 After merge and regate, the primary Release simulator confirmation uses normal `LauncherRoot`
 with `RUN_NETDENY_PROBE=false`. Build the missing-rule control with native resource lookup set to
