@@ -16,33 +16,38 @@ export function appLinkFor(id: string): string {
 }
 
 /**
- * Parse an incoming URL, returning the decoded id or `null`. Accepts only: scheme `https`, host
- * equal to `RELEASE.webHost` case-insensitively, and a path that is `/a/` followed by exactly one
- * non-empty segment with at most one trailing slash. Query and fragment are ignored.
+ * Anchored regex only — this parser must never depend on any `URL` implementation. Node's WHATWG
+ * `URL` and React Native's regex-based polyfill (`Libraries/Blob/URL.js`, the only `URL` that
+ * exists on-device) disagree on hostile authorities (e.g. a `?`/`#`-smuggled host reads as part of
+ * the hostname under the polyfill but not under Node's `URL`), which would let the host check pass
+ * on one and fail on the other. Groups: 1 = scheme, 2 = the authority up to the first `/`, `?`, or
+ * `#` (a port, userinfo, or backslash there simply fails the exact host-equality check below —
+ * there is no interpretation step to exploit), 3 = the still-percent-encoded id segment.
+ */
+const APP_LINK_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^/?#]+)\/a\/([^/?#]+)\/?(?:[?#].*)?$/;
+
+/**
+ * Parse an incoming URL, returning the decoded id or `null`. Accepts only: scheme `https`
+ * (case-insensitive), host equal to `RELEASE.webHost` case-insensitively, and a path that is `/a/`
+ * followed by exactly one non-empty segment with at most one trailing slash. Query and fragment
+ * are ignored.
  */
 export function parseAppLink(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable URL is simply not an app link, so it returns null like every other rejection case
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'https:') return null;
-  if (parsed.hostname.toLowerCase() !== RELEASE.webHost.toLowerCase()) return null;
+  const match = APP_LINK_PATTERN.exec(url);
+  if (!match) return null;
+  const [, scheme, host, rawId] = match;
 
-  const prefix = '/a/';
-  if (!parsed.pathname.startsWith(prefix)) return null;
-  let segment = parsed.pathname.slice(prefix.length);
-  if (segment.endsWith('/')) {
-    segment = segment.slice(0, -1);
-  }
-  if (segment.length === 0 || segment.includes('/')) return null;
+  if (scheme.toLowerCase() !== 'https') return null;
+  if (host.toLowerCase() !== RELEASE.webHost.toLowerCase()) return null;
 
+  let id: string;
   try {
-    return decodeURIComponent(segment);
+    id = decodeURIComponent(rawId);
   // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed percent-encoding is simply not a valid app link, so it returns null like every other rejection case
   } catch {
     return null;
   }
+  if (id.length === 0 || id.includes('/')) return null;
+
+  return id;
 }
