@@ -77,6 +77,11 @@ export function browserLaunchOptions(): LaunchOptions {
     chromiumSandbox: true,
     proxy: { server: 'http://127.0.0.1:9', bypass: '<-loopback>' },
     args: ['--host-resolver-rules=MAP * ~NOTFOUND', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--dns-prefetch-disable'],
+    // The server's graceful drain owns process signals. Playwright's defaults would close Chromium on
+    // SIGTERM/SIGHUP and exit 130 on SIGINT, mid-drain.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
   };
 }
 
