@@ -97,3 +97,49 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - `run.sh stop` exited 0 with all production smoke checks (`/tmp/whim-loadtest-stop-envfix.log`); standard resize also exited 0 with smoke and `e2-standard-2` confirmed (`/tmp/whim-resize-standard-envfix.log`). OpenRouter totals at 21:28:32Z were unchanged from 21:17:44Z: 281 requests, $2.59, 1.72M tokens, 4.2% cache hits; after screenshot `openrouter-after-envfix-20260915T212832Z.png`; browser space 196 closed. Server behavior and no-spend evidence passed, but task 15.4 remains pending for clean wrapper exits.
 - Dispatched `chain-sampler-cleanup` at BASE `37ed341602f37bcb54167cf66e85f605010ba0e5`, branch `chain/server-sampler-cleanup`, worktree `.claude/worktrees/server-sampler-cleanup`. Its three-file client wrapper/test/contract scope is in `sampler-cleanup-fix.md`. Independent CLI audit confirms the next retry can use clean operational checkout `420be203` for start/stop (preserving its deployed-tag guard) and the corrected primary checkout for drive; server image, replay code, driver and Compose remain unchanged. No image rebuild or tag-guard bypass is needed for this client-only fix.
 - Sampler correction `0f4ed9f` merged as `de57566`. Regression tests reproduced the expired-local error and the surviving gcloud child. The fix keeps cleanup inside the function's lifetime, terminates the sampler's owned process group, preserves driver statuses 0 and 23, and stops the remote loop on collection/output failure. Tests prove a nonempty CSV existed before removal and catch a single-PID-kill mutant. Server checks: 2530 passed, 0 failed; fast gate passed; independent reviewer APPROVE; exact three-file integrity passed; merged full gate exited 0 (`/tmp/whim-gate-full-sampler-cleanup.log`, 41 OpenSpec items). Tasks 21.1–21.3 complete. The merged worktree and branch were removed. Final live retry started with event resize from pinned `420be203`; OpenRouter baseline at 21:49:40Z remains 281 requests/$2.59/1.72M tokens/4.2% cache, own space 197 open for the after snapshot.
+
+## Event profile load test — passed 2026-09-15
+
+Server and replay image tag: `420be203612d3eb65b91f4a204188dfb84dda205`.
+Start/stop/resize used that clean pinned operational checkout. Drive used clean
+primary `175bdd7`, containing wrapper merge `de57566`; the server, replay driver
+and Compose were unchanged. Event profile: e2-standard-8, eight vCPUs, 16g
+container memory limit, concurrency cap 15.
+
+| Measurement | 15 devices | 16 devices |
+|---|---:|---:|
+| First event p50 / p95, ms | 1187 / 1239 | 1119 / 1165 |
+| Total p50 / p95, ms | 35901 / 43148 | 34932 / 42563 |
+| Result / failure / missing terminal | 15 / 0 / 0 | 15 / 0 / 0 |
+| server_busy | 0 | 1 |
+| Leak probe | pass | pass |
+| Peak CPU, Docker % of one vCPU (out of 800) | 266.98 | 271.98 |
+| Peak CPU, % of eight-vCPU capacity | 33.3725 | 33.9975 |
+| Peak memory, % of 16g limit | 3.37 | 2.97 |
+| Wrapper / collector exit status | 0 / 0 | 0 / 0 |
+
+Independent review matched CSV peaks to both JSON reports. The 16 and 13 retained
+rows include local receipt timestamps. Each round has one three-row group above
+raw CPU 85, spanning 6.19 and 7.98 seconds respectively; no sample exceeds raw
+680 (85% of eight vCPUs). These are local receipt times, not continuous remote
+measurements. The collected samples show no minute-long threshold breach and
+no resource-retuning trigger. Both exact temporary CSV paths were removed;
+post-drive process checks found no sampler, and neither log has the prior
+unbound-variable error.
+
+Evidence lives in `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/`:
+`loadtest-cleanup-round15.json`, `loadtest-cleanup-round16.json`, their
+`-samples.csv` and `-samples.receipts.tsv` companions, and
+`loadtest-cleanup-command-receipts.json`. The latter records the observed
+wrapper/collector statuses and exact sampler source paths. Drive logs:
+`/tmp/whim-loadtest-cleanup-round15.log` and `...round16.log`.
+
+Event resize, replay start, production stop/restore and standard resize all
+exited 0. Production smoke passed after restoration and again on e2-standard-2;
+logs are `/tmp/whim-resize-event-cleanup.log`,
+`/tmp/whim-loadtest-start-cleanup.log`, `/tmp/whim-loadtest-stop-cleanup.log` and
+`/tmp/whim-resize-standard-cleanup.log`. OpenRouter activity was unchanged from
+21:49:40Z to 22:02:51Z: 281 requests, $2.59 spend, 1.72M tokens, 4.2% cache hits.
+Before/after screenshots are in the evidence directory; own browser space 197
+is closed. Tasks 15.4 and 19.4 are complete. Physical cellular generation and
+association publication remain pending.
