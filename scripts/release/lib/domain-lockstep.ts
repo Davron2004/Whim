@@ -4,7 +4,8 @@
  * hosts — and nothing forces them to agree except this check (design D1's lockstep paragraph;
  * specs/native-release-config/spec.md "The native release domain matches the launcher's release
  * domain"). `domainLockstepFinding` and `deployHostLockstepFindings` are pure; `loadDeployDefaults`
- * is the only impure half (a plain `fs` read, no shelling out), never called by the suite.
+ * is the only impure half (a plain `fs` read, no shelling out) — the suite calls it directly
+ * against the real repo and feeds the result to the pure finding functions.
  */
 
 import fs from 'node:fs';
