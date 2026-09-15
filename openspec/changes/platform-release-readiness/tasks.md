@@ -92,10 +92,10 @@
 
 ## 12. Post-compliance reconciliation (after store-launch-compliance)
 
-- [ ] 12.1 Fill `checks/test/release/domain-lockstep.suite.ts`: import `WHIM_DOMAIN` from `src/host/launcher/release-config.ts` and assert it equals the native release file's `WHIM_DOMAIN`. A fixture mismatch must show both values.
-- [ ] 12.2 Condense `docs/store/review-notes.md` §1–4 into `release/store/app-store/review_information/notes.txt` (plain text, at most 4000 characters, limit added to `store-listing.ts`) and have `fastlane ios metadata` send it. Replace review-notes §5's draft answers with pointers to `app-privacy.json`, `age-rating.json`, `data-safety.json` and `answers.md`, settling any disagreement in favor of compliance D5 and listing each change in the chain report. In §6's checklist, change "real domain in all three places" to the native release file plus `release-config.ts`.
-- [ ] 12.3 Append one entry to `docs/decisions.md` (read the tail for the next free number) recording design D1, D3, D4, D8 (including the #36 D2 / #39 recipe's new location), D9 and D12.
-- [ ] 12.4 Add `*.jks`, `*.p8` and `play-publisher*.json` to `.gitignore`.
+- [x] 12.1 Fill `checks/test/release/domain-lockstep.suite.ts`: import `WHIM_DOMAIN` from `src/host/launcher/release-config.ts` and assert it equals the native release file's `WHIM_DOMAIN`. A fixture mismatch must show both values.
+- [x] 12.2 Condense `docs/store/review-notes.md` §1–4 into `release/store/app-store/review_information/notes.txt` (plain text, at most 4000 characters, limit added to `store-listing.ts`) and have `fastlane ios metadata` send it. Replace review-notes §5's draft answers with pointers to `app-privacy.json`, `age-rating.json`, `data-safety.json` and `answers.md`, settling any disagreement in favor of compliance D5 and listing each change in the chain report. In §6's checklist, change "real domain in all three places" to the native release file plus `release-config.ts`.
+- [x] 12.3 Append one entry to `docs/decisions.md` (read the tail for the next free number) recording design D1, D3, D4, D8 (including the #36 D2 / #39 recipe's new location), D9 and D12.
+- [x] 12.4 Add `*.jks`, `*.p8` and `play-publisher*.json` to `.gitignore`.
 
 ## 13. Attended device acceptance (human-run, recorded PENDING at merge)
 
