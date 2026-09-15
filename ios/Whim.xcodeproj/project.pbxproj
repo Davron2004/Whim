@@ -9,10 +9,12 @@
 /* Begin PBXBuildFile section */
 		0C80B921A6F3F58F76C31292 /* libPods-Whim.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-Whim.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		239F45D2C45D6E52E6475397 /* WhimWebViewNetworkDeny.m in Sources */ = {isa = PBXBuildFile; fileRef = C90EC57E99BBCF399DD90CA8 /* WhimWebViewNetworkDeny.m */; };
 		6786D9FCC814E546CDFD61A9 /* WhimToneModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = B520B9143A89A39F30142582 /* WhimToneModule.mm */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		C6DB4F3B0998FAE27E772206 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		D67E223FF7FDBF935F8B1A72 /* WebViewNetworkDeny.json in Resources */ = {isa = PBXBuildFile; fileRef = 213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,6 +22,7 @@
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Whim/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Whim/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = Whim/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */ = {isa = PBXFileReference; includeInIndex = 1; name = WebViewNetworkDeny.json; path = Whim/WebViewNetworkDeny.json; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-Whim.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Whim.debug.xcconfig"; path = "Target Support Files/Pods-Whim/Pods-Whim.debug.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-Whim.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Whim.release.xcconfig"; path = "Target Support Files/Pods-Whim/Pods-Whim.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-Whim.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Whim.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -27,6 +30,7 @@
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Whim/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		B19C9A38C6DCA56B1D8189FF /* Whim.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; name = Whim.entitlements; path = Whim/Whim.entitlements; sourceTree = "<group>"; };
 		B520B9143A89A39F30142582 /* WhimToneModule.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = WhimToneModule.mm; path = Whim/WhimToneModule.mm; sourceTree = "<group>"; };
+		C90EC57E99BBCF399DD90CA8 /* WhimWebViewNetworkDeny.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = WhimWebViewNetworkDeny.m; path = Whim/WhimWebViewNetworkDeny.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		FE83FEE481697EC12F324EEE /* whim-release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "whim-release.xcconfig"; path = "../release/whim-release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -53,6 +57,8 @@
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 				B19C9A38C6DCA56B1D8189FF /* Whim.entitlements */,
 				B520B9143A89A39F30142582 /* WhimToneModule.mm */,
+				C90EC57E99BBCF399DD90CA8 /* WhimWebViewNetworkDeny.m */,
+				213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */,
 			);
 			name = Whim;
 			sourceTree = "<group>";
@@ -176,6 +182,7 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				C6DB4F3B0998FAE27E772206 /* PrivacyInfo.xcprivacy in Resources */,
+				D67E223FF7FDBF935F8B1A72 /* WebViewNetworkDeny.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,6 +270,7 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				6786D9FCC814E546CDFD61A9 /* WhimToneModule.mm in Sources */,
+				239F45D2C45D6E52E6475397 /* WhimWebViewNetworkDeny.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
