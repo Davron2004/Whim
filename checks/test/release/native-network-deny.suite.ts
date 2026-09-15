@@ -76,31 +76,70 @@ function endOfBlockComment(source: string, start: number): number {
   return index;
 }
 
+interface KotlinLiteralSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly text: string;
+}
+
+interface KotlinLexResult {
+  readonly code: string;
+  readonly strings: readonly KotlinLiteralSpan[];
+}
+
+interface KotlinMaskedSpan {
+  readonly end: number;
+  readonly isString: boolean;
+}
+
+function nonCodeSpanAt(source: string, index: number): KotlinMaskedSpan | undefined {
+  if (source.startsWith('//', index)) {
+    const newline = source.indexOf('\n', index + 2);
+    return { end: newline < 0 ? source.length : newline, isString: false };
+  }
+  if (source.startsWith('/*', index)) {
+    return { end: endOfBlockComment(source, index), isString: false };
+  }
+  if (source.startsWith('"""', index)) {
+    const close = source.indexOf('"""', index + 3);
+    return { end: close < 0 ? source.length : close + 3, isString: true };
+  }
+  if (source[index] === '"' || source[index] === "'") {
+    return {
+      end: endOfQuotedLiteral(source, index, source[index] as '"' | "'"),
+      isString: source[index] === '"',
+    };
+  }
+  return undefined;
+}
+
 /** Preserve Kotlin code positions while blanking comments and literal bodies. */
-function kotlinCodeOnly(source: string): string {
+function lexKotlin(source: string): KotlinLexResult {
   const chars = source.split('');
+  const strings: KotlinLiteralSpan[] = [];
   let index = 0;
   while (index < source.length) {
-    let end = index;
-    if (source.startsWith('//', index)) {
-      const newline = source.indexOf('\n', index + 2);
-      end = newline < 0 ? source.length : newline;
-    } else if (source.startsWith('/*', index)) {
-      end = endOfBlockComment(source, index);
-    } else if (source.startsWith('"""', index)) {
-      const close = source.indexOf('"""', index + 3);
-      end = close < 0 ? source.length : close + 3;
-    } else if (source[index] === '"' || source[index] === "'") {
-      end = endOfQuotedLiteral(source, index, source[index] as '"' | "'");
-    }
-    if (end > index) {
-      maskRange(chars, source, index, end);
-      index = end;
+    const span = nonCodeSpanAt(source, index);
+    if (span) {
+      if (span.isString) strings.push({ start: index, end: span.end, text: source.slice(index, span.end) });
+      maskRange(chars, source, index, span.end);
+      index = span.end;
     } else {
       index++;
     }
   }
-  return chars.join('');
+  return { code: chars.join(''), strings };
+}
+
+function closingBraceIndex(source: string, start: number): number | undefined {
+  if (start < 0) return undefined;
+  let depth = 0;
+  for (let index = start; index < source.length; index++) {
+    if (source[index] === '{') depth++;
+    if (source[index] === '}') depth--;
+    if (depth === 0) return index;
+  }
+  return undefined;
 }
 
 function methodBody(source: string, signature: RegExp): string | undefined {
@@ -108,35 +147,43 @@ function methodBody(source: string, signature: RegExp): string | undefined {
   if (!match) return undefined;
   const start = source.indexOf('{', match.index);
   if (start < 0) return undefined;
-  let depth = 0;
-  for (let index = start; index < source.length; index++) {
-    if (source[index] === '{') depth++;
-    if (source[index] === '}') depth--;
-    if (depth === 0) return source.slice(start + 1, index);
-  }
-  return undefined;
+  const end = closingBraceIndex(source, start);
+  return end === undefined ? undefined : source.slice(start + 1, end);
 }
 
 function addFinding(findings: NativeNetworkDenyFinding[], file: string, message: string): void {
   findings.push({ file, message });
 }
 
-function checkApplicationWiring(application: string, findings: NativeNetworkDenyFinding[]): void {
-  if (!/PackageList\(this\)\.packages\.apply\s*\{/.test(application)) {
+function exactOneCheckNamesAutolinking(application: KotlinLexResult): boolean {
+  const match = /check\s*\(replacedWebViewPackages\s*==\s*1\)\s*\{/.exec(application.code);
+  if (!match) return false;
+  const start = application.code.indexOf('{', match.index);
+  const end = closingBraceIndex(application.code, start);
+  if (end === undefined) return false;
+  const attachedStrings = application.strings.filter((span) => span.start > start && span.end <= end);
+  return application.code.slice(start + 1, end).trim() === ''
+    && attachedStrings.length === 1
+    && attachedStrings[0].text.includes('react-native-webview autolinking');
+}
+
+function checkApplicationWiring(application: KotlinLexResult, findings: NativeNetworkDenyFinding[]): void {
+  const { code } = application;
+  if (!/PackageList\(this\)\.packages\.apply\s*\{/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'the autolinked package list is not updated in place');
   }
-  if (!/if\s*\(this\[index]\s+is\s+RNCWebViewPackage\)/.test(application)
-      || !/this\[index]\s*=\s*NetworkDeniedWebViewPackage\(\)/.test(application)) {
+  if (!/if\s*\(this\[index]\s+is\s+RNCWebViewPackage\)/.test(code)
+      || !/this\[index]\s*=\s*NetworkDeniedWebViewPackage\(\)/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'RNCWebViewPackage is not replaced at its existing index');
   }
-  if ((application.match(/NetworkDeniedWebViewPackage\s*\(\s*\)/g) ?? []).length !== 1
-      || /\bRNCWebViewPackage\s*\(\s*\)/.test(application)) {
+  if ((code.match(/NetworkDeniedWebViewPackage\s*\(\s*\)/g) ?? []).length !== 1
+      || /\bRNCWebViewPackage\s*\(\s*\)/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'the package list must contain one denied manager package and no stock instance');
   }
-  if (!/check\s*\(replacedWebViewPackages\s*==\s*1\)/.test(application)) {
+  if (!exactOneCheckNamesAutolinking(application)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'startup must check exactly one react-native-webview autolinked package');
   }
-  if (!/add\([^\n]*WhimTonePackage\(\)\)/.test(application)) {
+  if (!/add\([^\n]*WhimTonePackage\(\)\)/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'WhimTonePackage must remain registered');
   }
 }
@@ -146,11 +193,11 @@ export function checkAndroidNativeNetworkDeny(root: string): NativeNetworkDenyFi
   const application = readRequired(root, ANDROID_MAIN_APPLICATION_PATH, findings);
   const manager = readRequired(root, ANDROID_NETWORK_DENY_MANAGER_PATH, findings);
   const pkg = readRequired(root, ANDROID_NETWORK_DENY_PACKAGE_PATH, findings);
-  const applicationCode = kotlinCodeOnly(application);
-  const managerCode = kotlinCodeOnly(manager);
-  const packageCode = kotlinCodeOnly(pkg);
+  const applicationLex = lexKotlin(application);
+  const managerCode = lexKotlin(manager).code;
+  const packageCode = lexKotlin(pkg).code;
 
-  checkApplicationWiring(applicationCode, findings);
+  checkApplicationWiring(applicationLex, findings);
 
   if (!/class\s+NetworkDeniedWebViewManager\s*:\s*RNCWebViewManager\(\)/.test(managerCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_MANAGER_PATH, 'manager must subclass RNCWebViewManager');
@@ -392,6 +439,26 @@ val packages = PackageList(this).packages.apply {
 }
 `,
       );
+      assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: the exact-one check must carry the autolinking message itself', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidFixture(root);
+      const wrongMessage = VALID_APPLICATION
+        .replace(
+          'val packages = PackageList(this).packages.apply {',
+          'val unrelated = "react-native-webview autolinking"\n// react-native-webview autolinking\nval packages = PackageList(this).packages.apply {',
+        )
+        .replace(
+          '"react-native-webview autolinking must provide exactly one package"',
+          '"expected one package"',
+        );
+      writeNativeNetworkDenyFixture(root, ANDROID_MAIN_APPLICATION_PATH, wrongMessage);
       assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

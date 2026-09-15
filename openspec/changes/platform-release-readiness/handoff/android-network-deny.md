@@ -72,7 +72,8 @@ and reproduce all five HTTP paths plus TLS. Restore this line and the probe flag
 
 ## Build evidence
 
-`npm run checks:test` passed 205/205. `./scripts/gate.sh` passed.
+`npm run checks:test` and `./scripts/gate.sh` passed; use the current implementation receipt for
+the suite count.
 
 Native compile and canary: **NOT RUN**. `./gradlew :app:compileOfflineKotlin` reached
 `:app:createBundleOfflineJsAndAssets` first, where Metro could not resolve
