@@ -13,7 +13,7 @@ import { buildSseStream } from '../src/sse';
 import { ScriptedModelClient } from './scripted-model';
 import type { ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
-import type { GenerationStatsTransport } from '../src/generation/reconcile';
+import type { UsageAndCostTransport } from '../src/usage/resolve';
 import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
@@ -544,10 +544,10 @@ const RACE_APP: WireAppRecord = {
 };
 
 /** A transport that resolves the fixed `usage` for exactly one generation id, `null` otherwise —
- *  matches `GenerationStatsTransport`'s "not yet resolved" contract for any other id. */
-function makeFixedTransport(generationId: string, usage: Usage): GenerationStatsTransport {
+ *  matches `UsageAndCostTransport`'s "not yet resolved" contract for any other id. */
+function makeFixedTransport(generationId: string, usage: Usage): UsageAndCostTransport {
   return {
-    fetchStats: async (id: string) => (id === generationId ? usage : null),
+    fetchStats: async (id: string) => (id === generationId ? { usage, totalCostUsd: 0 } : null),
   };
 }
 
@@ -572,10 +572,10 @@ async function readUntil(
 
 /**
  * server/src/routes/generate.ts — closing the completed-run double-credit race (reviewer finding:
- * `makeGenerateRoute` had zero direct coverage). A run that completes NORMALLY credits usage via
- * `interceptUsage`'s `usage` event before its terminal event is ever observed. If the client
+ * `makeGenerateRoute` had zero direct coverage). A run that completes NORMALLY credits usage from
+ * its `usage` event before its terminal event is ever observed. If the client
  * disconnects in the gap between those two events — a real disconnect window, not a contrived
- * one — the abort listener must not re-credit the same run from `reconcileAbortedUsage`.
+ * one — the resolver must not re-credit the same run's tokens.
  */
 async function testAbortDoubleCreditRace(): Promise<void> {
   section('Completed-run double-credit race on client disconnect (generate.ts)');
@@ -610,7 +610,7 @@ async function testAbortDoubleCreditRace(): Promise<void> {
     const app = createApp({
       pipeline,
       usageStore,
-      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+      resolver: { transport, bounds: FAST_RECONCILE_BOUNDS },
     });
 
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
@@ -662,7 +662,7 @@ async function testAbortDoubleCreditRace(): Promise<void> {
     const app = createApp({
       pipeline,
       usageStore,
-      reconcile: { transport, bounds: FAST_RECONCILE_BOUNDS },
+      resolver: { transport, bounds: FAST_RECONCILE_BOUNDS },
     });
 
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
