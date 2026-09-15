@@ -65,19 +65,19 @@ The classifier SHALL be instructed to answer with exactly one JSON object: `{"ve
 - **THEN** it carries an output-token cap and requests no reasoning stream
 
 ### Requirement: The 13+ content policy has one written source
-The policy SHALL be defined once, in `docs/content-policy.md`, which SHALL contain a rating-rule section and a categories section. The classifier's instructions SHALL read the categories section from that document at run time, and the rewrite and engineer system prompts SHALL read the rating-rule section verbatim at run time, so generated software is steered toward a 13+ rating as well as filtered.
+The policy SHALL be defined once, in `docs/content-policy.md`, which SHALL contain a rating-rule section and a categories section. The classifier's instructions SHALL read the categories section from that document at run time, and every system prompt that authors app source — the rewrite prompt and both engineer prompts, generate and repair — SHALL read the rating-rule section verbatim at run time, so generated software is steered toward a 13+ rating as well as filtered. The plan prompt is excluded: its JSON is never delivered.
 
 The refused categories SHALL cover at least: sexual content or nudity; graphic violence or gore; hate, harassment, or content targeting a real person; promotion of self-harm, suicide, or eating disorders; instructions for or promotion of illegal drugs, weapons, or dangerous activities; real-money or casino-style gambling; deception tools such as phishing, fake logins, or scams; covert tracking or surveillance of another person; and frequent or intense profanity or crude sexual humor.
 
-No copy of either section SHALL exist in source code. The prompt suite SHALL fail when either section is missing, when either prompt lacks the rating rule, or when the policy text is duplicated in the source tree.
+No copy of either section SHALL exist in source code. The prompt suite SHALL fail when either section is missing, when any of those three prompts lacks the rating rule, or when the policy text is duplicated in the source tree.
 
 #### Scenario: The document is the classifier's source
 - **WHEN** the classifier's system message is compared with `docs/content-policy.md`
 - **THEN** the categories text in the message is the document's own section text
 
 #### Scenario: Generation prompts carry the rating rule
-- **WHEN** the rewrite and engineer system messages are assembled
-- **THEN** both contain the document's rating-rule section verbatim
+- **WHEN** the rewrite, generate and repair system messages are assembled
+- **THEN** all three contain the document's rating-rule section verbatim, and the plan system message does not
 
 #### Scenario: A missing section fails the build
 - **WHEN** the rating-rule section is deleted from `docs/content-policy.md`

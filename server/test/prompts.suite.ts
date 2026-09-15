@@ -16,8 +16,9 @@
  *
  * chain-4 (public-generation-server) adds the content-policy rating-rule tripwires at the bottom
  * (spec content-policy "The 13+ content policy has one written source"): a missing document
- * section fails loudly, both the rewrite and generate system messages carry the rating rule
- * verbatim, and no copy of either document section exists elsewhere in source.
+ * section fails loudly, every system message that authors shipped source (rewrite, generate,
+ * repair) carries the rating rule verbatim while the plan turn does not, and no copy of either
+ * document section exists elsewhere in source.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -753,19 +754,43 @@ async function testContentPolicyMissingSectionFailsTheBuild(): Promise<void> {
   );
 }
 
-async function testBothPromptsCarryTheRatingRule(): Promise<void> {
-  section('Tripwire: the rewrite and generate system messages carry the rating rule verbatim');
+/** Every turn whose output is authored into shipped app source must carry the rating rule — repair
+ *  included, since `REPAIR_INSTRUCTIONS` asks for the FULL corrected source, so a repair is the
+ *  last author of what a device runs. The plan turn is deliberately excluded: its JSON is never
+ *  delivered, and the rule would only spend tokens there. */
+async function testEveryAuthoringPromptCarriesTheRatingRule(): Promise<void> {
+  section('Tripwire: the rewrite, generate and repair system messages carry the rating rule verbatim — the plan turn does not');
 
   const { ratingRule } = loadContentPolicyDocument(repoRoot);
   check('sanity: the real document has a non-empty rating rule', ratingRule.trim().length > 0);
 
-  const rewriteSystem = buildRewriteMessages({ request: { prompt: 'a timer' } }).find((m) => m.role === 'system')?.content ?? '';
-  check('rewrite system message carries the rating rule verbatim', rewriteSystem.includes(ratingRule));
-
   const inputs = loadPromptInputs(repoRoot);
-  const generateSystem = buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs)
-    .find((m) => m.role === 'system')?.content ?? '';
-  check('generate system message carries the rating rule verbatim', generateSystem.includes(ratingRule));
+  const systemOf = (messages: { role: string; content: string }[]): string =>
+    messages.find((m) => m.role === 'system')?.content ?? '';
+
+  const covered: { turn: string; system: string }[] = [
+    { turn: 'rewrite', system: systemOf(buildRewriteMessages({ request: { prompt: 'a timer' } })) },
+    { turn: 'generate', system: systemOf(buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs)) },
+    {
+      turn: 'repair',
+      system: systemOf(buildRepairMessages(
+        {
+          request: EDIT_REQUEST,
+          plan: PLAN,
+          currentSource: 'export default {};',
+          diagnostics: [{ kind: 'raw_timer', severity: 'error', message: 'raw setTimeout', hint: 'use delay/interval instead' }],
+          schemaContext: '',
+        },
+        inputs,
+      )),
+    },
+  ];
+  for (const { turn, system } of covered) {
+    check(`${turn} system message carries the rating rule verbatim`, system.includes(ratingRule));
+  }
+
+  const planSystem = systemOf(buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' }));
+  check('plan system message does NOT carry the rating rule (its JSON is never delivered)', !planSystem.includes(ratingRule));
 }
 
 async function testContentPolicyNotDuplicatedInSource(): Promise<void> {
@@ -822,7 +847,7 @@ export async function runPromptsTests(): Promise<void> {
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();
   await testContentPolicyMissingSectionFailsTheBuild();
-  await testBothPromptsCarryTheRatingRule();
+  await testEveryAuthoringPromptCarriesTheRatingRule();
   await testContentPolicyNotDuplicatedInSource();
   testJsonBlockParsing();
 }
