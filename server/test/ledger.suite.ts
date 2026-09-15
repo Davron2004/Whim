@@ -264,6 +264,9 @@ async function testNoContent(): Promise<void> {
         'completion_tokens',
         'cost_state',
         'cost_usd',
+        // Provider generation ids — opaque identifiers the cost sweep re-resolves against, not
+        // content: no prompt, source, bundle, manifest or schema column exists here either.
+        'generation_ids',
         'device_id',
         'ended_at',
         'id',
@@ -364,6 +367,209 @@ async function testSummary(): Promise<void> {
   store.close();
 }
 
+/** Reads one ledger row's cost columns straight out of SQLite, so an assertion is about the stored
+ *  row rather than about what the store chose to hand back. */
+function readCostRow(dbPath: string, requestId: string): { cost_state: string; cost_usd: number | null; generation_ids: string | null } {
+  const raw = new DatabaseSync(dbPath);
+  const row = raw.prepare('SELECT cost_state, cost_usd, generation_ids FROM requests WHERE id = ?').get(requestId) as {
+    cost_state: string;
+    cost_usd: number | null;
+    generation_ids: string | null;
+  };
+  raw.close();
+  return row;
+}
+
+/**
+ * The provider's stats endpoint often answers minutes after the in-request attempts gave up, so an
+ * `'unresolved'` cost is a "not yet", not a verdict: `recordCost` upgrades it to `'resolved'`. A
+ * `'resolved'` cost stays final, and no repeat can undo it.
+ */
+async function testUnresolvedCostIsUpgradable(): Promise<void> {
+  section('Usage ledger — an unresolved cost can still be resolved later (never terminal)');
+
+  const dbPath = tmpDbPath('upgrade');
+  try {
+    const sqlite = new NodeSqliteUsageStore(dbPath);
+    for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
+      const label = store === sqlite ? 'sqlite' : 'in-memory';
+      const late = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+      const final = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+      if (!late.ok || !final.ok) {
+        check(`${label}: admit succeeds`, false);
+        continue;
+      }
+
+      await store.recordCost(late.requestId, { state: 'unresolved', generationIds: ['gen-1'] });
+      await store.recordCost(late.requestId, { state: 'resolved', costUsd: 0.42 });
+
+      await store.recordCost(final.requestId, { state: 'resolved', costUsd: 0.07 });
+      // A late 'unresolved' can never undo a real cost, and a repeat resolve keeps the first value.
+      await store.recordCost(final.requestId, { state: 'unresolved', generationIds: ['gen-2'] });
+      await store.recordCost(final.requestId, { state: 'resolved', costUsd: 99 });
+
+      const summary = await store.summary({ days: 1, now: AT_22_00_UTC });
+      eq(`${label}: the upgraded row is no longer counted as unresolved`, summary.generationStats.unresolvedCount, 0);
+      check(
+        `${label}: the upgraded row carries the late cost, the final one is untouched`,
+        closeEnough(summary.days[0]!.costUsdByKind.generate ?? 0, 0.42 + 0.07),
+        JSON.stringify(summary.days[0]!.costUsdByKind),
+      );
+      if (label === 'sqlite') {
+        const upgraded = readCostRow(dbPath, late.requestId);
+        eq('sqlite: the upgraded row stores the resolved state', upgraded.cost_state, 'resolved');
+        check('sqlite: a resolved row keeps no generation ids', upgraded.generation_ids === null);
+        eq('sqlite: a resolved cost is never overwritten', readCostRow(dbPath, final.requestId).cost_usd, 0.07);
+      }
+    }
+    sqlite.close();
+  } finally {
+    fs.rmSync(dbPath, { force: true });
+  }
+}
+
+/**
+ * What the sweep is allowed to pick up: rows that still carry generation ids — `'unresolved'` ones,
+ * and `'pending'` ones whose request ENDED long enough ago that no resolver is coming. A generation
+ * still in flight (no `ended_at`) is never a candidate, however long it has been running, and a row
+ * with no ids can never be re-resolved so it is never offered.
+ */
+async function testSweepCandidates(): Promise<void> {
+  section('Usage ledger — the cost sweep sees only re-resolvable rows, oldest first');
+
+  const sqlite = new NodeSqliteUsageStore(':memory:');
+  for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
+    const label = store === sqlite ? 'sqlite' : 'in-memory';
+    const minute = 60_000;
+    const admitAt = async (deviceId: string, now: number): Promise<string> => {
+      const result = await store.admit({ deviceId, kind: 'generate', now, deviceLimit: 15 });
+      return result.ok ? result.requestId : '';
+    };
+
+    const oldest = await admitAt(DEVICE_A, AT_22_00_UTC);
+    const newer = await admitAt(DEVICE_B, AT_22_00_UTC + minute);
+    const stalePending = await admitAt(DEVICE_C, AT_22_00_UTC + 2 * minute);
+    const runningNow = await admitAt(DEVICE_A, AT_22_00_UTC + 3 * minute);
+    const noIds = await admitAt(DEVICE_B, AT_22_00_UTC + 4 * minute);
+
+    await store.recordCost(oldest, { state: 'unresolved', generationIds: ['gen-oldest'] });
+    await store.recordCost(newer, { state: 'unresolved', generationIds: ['gen-newer'] });
+    // Registered its ids and ended, then died before recording a verdict.
+    await store.recordCost(stalePending, { state: 'pending', generationIds: ['gen-stale'] });
+    await store.settle(stalePending, { outcome: 'delivered', now: AT_22_00_UTC + 3 * minute });
+    // Same, but the request is still open — its resolver has not run yet, and must not be raced.
+    await store.recordCost(runningNow, { state: 'pending', generationIds: ['gen-running'] });
+    await store.settle(noIds, { outcome: 'ok', now: AT_22_00_UTC });
+
+    const now = AT_22_00_UTC + 10 * minute;
+    const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 50 });
+    eq(
+      `${label}: unresolved rows and abandoned pending ones, oldest first`,
+      candidates.map((c) => c.requestId),
+      [oldest, newer, stalePending],
+    );
+    eq(`${label}: a candidate carries its device and ids`, candidates[0], {
+      requestId: oldest,
+      deviceId: DEVICE_A,
+      generationIds: ['gen-oldest'],
+    });
+    eq(
+      `${label}: the limit takes the oldest rows`,
+      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 1 })).map((c) => c.requestId),
+      [oldest],
+    );
+
+    await store.recordCost(oldest, { state: 'resolved', costUsd: 0.5 });
+    eq(
+      `${label}: a resolved row stops being a candidate`,
+      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 50 })).map((c) => c.requestId),
+      [newer, stalePending],
+    );
+  }
+  sqlite.close();
+}
+
+/**
+ * The `generation_ids` column arrived after the ledger did, so opening a database written by the
+ * previous version must migrate it in place rather than fail — and opening it twice must not try to
+ * add the column again (`ALTER TABLE ADD COLUMN` has no `IF NOT EXISTS`).
+ */
+async function testGenerationIdsColumnMigration(): Promise<void> {
+  section('Usage ledger — a pre-change database file gains generation_ids idempotently');
+
+  const dbPath = tmpDbPath('migration');
+  try {
+    // The requests table exactly as it was before this change, with one row already in it.
+    const seed = new DatabaseSync(dbPath);
+    seed.exec(`
+      CREATE TABLE requests (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        utc_day TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        outcome TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL,
+        cost_state TEXT NOT NULL CHECK(cost_state IN ('pending','resolved','unresolved')),
+        refunded INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    seed.prepare(`
+      INSERT INTO requests (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, refunded)
+      VALUES ('legacy-row', ?, 'generate', '2026-01-15', ?, ?, 'delivered', 1, 2, NULL, 'unresolved', 0)
+    `).run(DEVICE_A, AT_22_00_UTC, AT_22_00_UTC);
+    seed.close();
+
+    const store = new NodeSqliteUsageStore(dbPath);
+    const raw = new DatabaseSync(dbPath);
+    const columns = (raw.prepare('PRAGMA table_info(requests)').all() as { name: string }[]).map((c) => c.name);
+    raw.close();
+    check('the legacy file gains generation_ids on open', columns.includes('generation_ids'), columns.join(', '));
+
+    // The pre-change row survives, is not a sweep candidate (it has no ids to re-resolve), and its
+    // cost can still be upgraded — the migration loses nothing.
+    const candidates = await store.listUnresolvedCostRows({ now: AT_22_00_UTC + 600_000, stalePendingAfterMs: 120_000, limit: 50 });
+    eq('a legacy row with no ids is not a sweep candidate', candidates.length, 0);
+    await store.recordCost('legacy-row', { state: 'resolved', costUsd: 0.25 });
+    eq('a legacy unresolved row can still be resolved', readCostRow(dbPath, 'legacy-row').cost_usd, 0.25);
+    store.close();
+
+    // Re-opening the migrated file must not attempt the ALTER a second time.
+    const reopened = new NodeSqliteUsageStore(dbPath);
+    const summary = await reopened.summary({ days: 1, now: AT_22_00_UTC });
+    eq('re-opening a migrated file works and keeps the row', summary.generationStats.count, 1);
+    reopened.close();
+  } finally {
+    fs.rmSync(dbPath, { force: true });
+  }
+}
+
+/**
+ * `globalKinds: []` means "the admitted kind", exactly as omitting it does. Read literally it would
+ * render `kind IN ()` in SQLite — a syntax error — and in the in-memory store it would count across
+ * nothing, so the ceiling would never bind. Neither is a state a caller can usefully ask for.
+ */
+async function testEmptyGlobalKinds(): Promise<void> {
+  section('Usage ledger — an empty globalKinds counts the admitted kind');
+
+  const sqlite = new NodeSqliteUsageStore(':memory:');
+  for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
+    const label = store === sqlite ? 'sqlite' : 'in-memory';
+    const admit = (deviceId: string): Promise<AdmitResult> =>
+      store.admit({ deviceId, kind: 'clarify', now: AT_22_00_UTC, deviceLimit: 60, globalLimit: 2, globalKinds: [] });
+
+    check(`${label}: first admit under the ceiling`, (await admit(DEVICE_A)).ok === true);
+    check(`${label}: second admit under the ceiling`, (await admit(DEVICE_B)).ok === true);
+    const third = await admit(DEVICE_C);
+    check(`${label}: the ceiling still binds with an empty globalKinds`, third.ok === false);
+    if (!third.ok) eq(`${label}: refused as a global ceiling`, third.reason, 'global');
+  }
+  sqlite.close();
+}
+
 export async function runLedgerTests(): Promise<void> {
   await testDailyLimitAndRetryAfter();
   await testGlobalCeilings();
@@ -371,6 +577,10 @@ export async function runLedgerTests(): Promise<void> {
   await testDurabilityAcrossReopen();
   await testRefund();
   await testSettleAndRecordCostIdempotent();
+  await testUnresolvedCostIsUpgradable();
+  await testSweepCandidates();
+  await testGenerationIdsColumnMigration();
+  await testEmptyGlobalKinds();
   await testSettlesAgainstAdmissionDay();
   await testNoContent();
   await testRetentionPurge();

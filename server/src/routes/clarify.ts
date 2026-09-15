@@ -194,21 +194,63 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
 
   const acquired = slots.acquire('unary', deviceId);
   if (!acquired.ok) return { ok: false, refusal: slotRefusal(acquired.reason) };
-  // Everything past the acquire gives the slot back before its error propagates — a throwing
-  // usage store (or policy) must not leave the slot held for the life of the process. `release()`
+  // Everything past the acquire gives back BOTH resources it may have taken before its error
+  // propagates: the slot, and the ledger row — a throwing usage store (or policy) must not leave
+  // the slot held for the life of the process, nor an eternally `pending` row that keeps consuming
+  // the device's daily allowance and the global ceiling with nothing to show for it. `release()`
   // is idempotent, so a refusal below that already released is unaffected. Mirrors
   // `routes/generate.ts`'s `admitGeneration`.
+  let admittedRequestId: string | undefined;
   try {
-    return await admitUnaryWithSlot(acquired.handle, deps);
+    return await admitUnaryWithSlot(acquired.handle, deps, (requestId) => {
+      admittedRequestId = requestId;
+    });
   } catch (err) {
+    if (admittedRequestId !== undefined) {
+      await settleFailedAdmission(deps.usageStore, admittedRequestId, deps.clock, err);
+    }
     acquired.handle.release();
     throw err;
   }
 }
 
+/**
+ * Closes the ledger row of an admission that threw past the daily-unit insert. The unit is NOT
+ * refunded: the classifier call it paid for may well have happened, and a refund on every store
+ * blip is a free retry an abusive client can farm — the row is simply marked `error` so it stops
+ * being an open `pending` request nothing will ever settle. A `settle` that throws in turn (the
+ * same store is, after all, the usual reason we are here) is logged and swallowed: the caller is
+ * already unwinding with the original error, which is the one worth surfacing.
+ */
+async function settleFailedAdmission(
+  usageStore: UsageStore,
+  requestId: string,
+  clock: () => number,
+  cause: unknown,
+): Promise<void> {
+  try {
+    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+  } catch (settleErr) {
+    log.error(
+      {
+        requestId,
+        detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+      'could not settle the ledger row of a failed admission',
+    );
+  }
+}
+
 /** The daily unit (device limit, then the clarify+rewrite global ceiling), then the content
- *  policy — the half of `admitUnaryRequest` that runs holding a slot. */
-async function admitUnaryWithSlot(handle: SlotHandle, deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
+ *  policy — the half of `admitUnaryRequest` that runs holding a slot. `onAdmitted` reports the
+ *  ledger row the moment it exists, so the caller's `catch` can settle a row this function threw
+ *  past instead of leaving it open. */
+async function admitUnaryWithSlot(
+  handle: SlotHandle,
+  deps: UnaryAdmissionDeps,
+  onAdmitted: (requestId: string) => void,
+): Promise<UnaryAdmissionOutcome> {
   const {
     deviceId,
     kind,
@@ -241,6 +283,7 @@ async function admitUnaryWithSlot(handle: SlotHandle, deps: UnaryAdmissionDeps):
     };
   }
   const { requestId } = admitted;
+  onAdmitted(requestId);
 
   try {
     const result = await policy.check(policyInput, policyRoute, signal);

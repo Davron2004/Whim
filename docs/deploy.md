@@ -157,7 +157,9 @@ below matter, the app side must already point at this domain: `WHIM_DOMAIN` in
   client can mint a fresh device id per request: `WHIM_LIMIT_GENERATIONS_PER_DAY` (400) for
   `/v1/generate`, and `WHIM_LIMIT_UNARY_PER_DAY` (2000) for `/v1/clarify` and `/v1/rewrite`
   together — one ceiling counted across both, not one each. Past either, that route answers
-  `429 server_busy` with `Retry-After` set to the next UTC midnight.
+  `429 server_busy` with `Retry-After` set to the next UTC midnight. The anonymous stream probe has
+  its own tiny pool, `WHIM_LIMIT_PROBE_CONCURRENCY` (2), so probe traffic can never crowd the paid
+  routes; like the other limits it is a default in `server/src/config.ts`, not a profile setting.
 
 ## Capacity profiles, resizing, and the load test
 

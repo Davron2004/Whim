@@ -104,6 +104,7 @@ The prices are placeholders in DeepSeek's historical range, since `deepseek-v4-p
 | Clarify / rewrite per device per day | 60 / 60 | Four times the generation limit to allow re-phrasing. Worst case ≈ $0.12/device/day. |
 | Global clarify+rewrite per UTC day (`WHIM_LIMIT_UNARY_PER_DAY`) | 2000 | ONE ceiling counted across both kinds — a UUID-rotating attacker cannot bound spend on either route alone. Worst case 2000 × $0.001 ≈ $2/day. |
 | Concurrent clarify+rewrite (global) | 16 | Network-bound calls. Bounds sockets and memory, not spend. |
+| Concurrent `/healthz/sse` probes (`WHIM_LIMIT_PROBE_CONCURRENCY`) | 2 | The probe is anonymous and holds its slot for three seconds, so it gets its OWN pool — enough for a smoke check plus an uptime monitor, small enough that flooding it wedges nothing else. Env-read like its siblings, not a compile-time constant. |
 | Reports per device / global per day | 10 / 300 | Bounds disk under UUID rotation: 300 × ~0.3 MB ≈ 90 MB/day worst case, and retention caps the total. |
 | Body caps (unary / generate / report) | 64 KiB / 1 MiB / 512 KiB | Real prompts are under 5 KB and generated sources 5–30 KB. Edits re-send source, manifest and schemas. |
 | Prompt / report source caps | 16 KiB / 256 KiB | Plan-row prompts run 3–5 KB. |

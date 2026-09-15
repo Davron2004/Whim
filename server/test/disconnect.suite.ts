@@ -177,7 +177,7 @@ async function testGenerateDisconnect(): Promise<void> {
     eq('every resolution finished', tracker.pendingCount, 0);
     const requestId = usageStore.admitted[0];
     eq('the ledger row settled once, as aborted', usageStore.settlesFor(requestId).map((s) => s.outcome), ['aborted']);
-    const cost = usageStore.costs.find((c) => c.requestId === requestId);
+    const cost = usageStore.costFor(requestId);
     eq('the aborted run\'s cost was resolved', cost && { state: cost.state, costUsd: cost.costUsd }, { state: 'resolved', costUsd: STATS.totalCostUsd });
     eq('the reconciled tokens were credited once', await usageStore.read(DEVICE_ID), STATS.usage);
 
@@ -220,7 +220,7 @@ async function testClarifyDisconnect(): Promise<void> {
     await tracker.drain(DISCONNECT_BOUND_MS);
     const requestId = usageStore.admitted[0];
     eq('the ledger row settled once, as error', usageStore.settlesFor(requestId).map((s) => s.outcome), ['error']);
-    eq('the aborted call\'s cost was resolved', usageStore.costs.find((c) => c.requestId === requestId)?.state, 'resolved');
+    eq('the aborted call\'s cost was resolved', usageStore.costFor(requestId)?.state, 'resolved');
 
     const followUp = rawPost(port, '/v1/clarify', { prompt: 'a habit tracker, again' });
     check('the same device\'s next clarify is answered', await waitFor(() => followUp.text().includes('"questions":[]')), followUp.text().slice(0, 80));

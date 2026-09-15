@@ -12,10 +12,16 @@ import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
-import { InMemoryUsageStore, NodeSqliteUsageStore, type CostState, type UsageStore } from '../src/usage-store';
+import {
+  InMemoryUsageStore,
+  NodeSqliteUsageStore,
+  type CostState,
+  type RequestOutcome,
+  type UsageStore,
+} from '../src/usage-store';
 import { InMemoryReportStore } from '../src/reports/store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
-import { createSlotController, MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
+import { createSlotController, DEFAULT_MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
@@ -96,6 +102,9 @@ class RecordingUsageStore implements UsageStore {
     this.recordCostCalls.push({ requestId, ...p });
     return this.inner.recordCost(requestId, p);
   }
+  listUnresolvedCostRows(query: Parameters<UsageStore['listUnresolvedCostRows']>[0]) {
+    return this.inner.listUnresolvedCostRows(query);
+  }
   summary(params: Parameters<UsageStore['summary']>[0]) {
     return this.inner.summary(params);
   }
@@ -120,19 +129,50 @@ function freshDeviceHeader(): Record<string, string> {
 }
 
 /** A store that admits and settles normally but cannot `credit` — the shape of a store blip
- *  inside `admitUnaryRequest`, after the slot was taken and the daily unit consumed. */
-function creditThrowingStore(): UsageStore {
+ *  inside `admitUnaryRequest`, after the slot was taken and the daily unit consumed. `admitted` and
+ *  `settles` expose the ledger rows it opened and closed, so a test can tell "the row was settled"
+ *  from "the row was left open forever". */
+const STORE_BLIP_MESSAGE = 'usage store unavailable';
+
+interface CreditThrowingStore {
+  store: UsageStore;
+  admitted: string[];
+  settles: { requestId: string; outcome: RequestOutcome }[];
+}
+
+function creditThrowingStore(): CreditThrowingStore {
   const inner = new InMemoryUsageStore();
-  return {
-    credit: () => Promise.reject(new Error('usage store unavailable')),
+  const admitted: string[] = [];
+  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  const store: UsageStore = {
+    credit: () => Promise.reject(new Error(STORE_BLIP_MESSAGE)),
     read: (deviceId) => inner.read(deviceId),
-    admit: (params) => inner.admit(params),
+    admit: async (params) => {
+      const result = await inner.admit(params);
+      if (result.ok) admitted.push(result.requestId);
+      return result;
+    },
     refund: (requestId) => inner.refund(requestId),
-    settle: (requestId, params) => inner.settle(requestId, params),
+    settle: async (requestId, params) => {
+      settles.push({ requestId, outcome: params.outcome });
+      await inner.settle(requestId, params);
+    },
     recordCost: (requestId, params) => inner.recordCost(requestId, params),
+    listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
   };
+  return { store, admitted, settles };
+}
+
+/** JSON, or `undefined` when the body is not JSON at all — a plain-text 500, say. */
+function parseJsonOrUndefined(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: "not JSON" is the answer this helper exists to give
+  } catch {
+    return undefined;
+  }
 }
 
 async function post(
@@ -361,12 +401,15 @@ async function testUnaryGlobalCeiling(): Promise<void> {
 
 /**
  * specs/server-admission-control "A refused, failed, or policy-rejected admission SHALL release any
- * slot it took": every path out of `admitUnaryRequest` past the slot acquire gives the slot back —
- * including a THROW from the usage store, which no refusal path covers. Leak it and a single store
- * blip permanently shrinks the unary pool for the life of the process.
+ * slot it took": every path out of `admitUnaryRequest` past the slot acquire gives back BOTH
+ * resources it may have taken — including on a THROW from the usage store, which no refusal path
+ * covers. Leak the slot and a single store blip permanently shrinks the unary pool; leave the
+ * ledger row `pending` and that blip silently ate one of the device's daily units and one unit of
+ * the global ceiling, with nothing that will ever settle the row. The client meanwhile must still
+ * get this server's one error shape, not Hono's plain-text 500.
  */
 async function testThrowingStoreReleasesTheSlot(): Promise<void> {
-  section('A throwing usage store does not leak the unary slot');
+  section('A throwing usage store does not leak the unary slot or the ledger row');
 
   invalidateCreditCache();
   const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
@@ -375,23 +418,44 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
       return { verdict: 'allow', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } };
     },
   };
-  const { app } = testApp({ slots, usageStore: creditThrowingStore(), policy: meteredPolicy, stub: true });
+  const blipping = creditThrowingStore();
+  const { app } = testApp({ slots, usageStore: blipping.store, policy: meteredPolicy, stub: true });
 
-  // Hono turns a thrown handler into a 500; a runner that lets it escape instead is equally fine
-  // here — either way the request failed, and what this test is about is the slot afterwards.
+  const capture = captureLogs();
   let status = 0;
+  // Read the body as TEXT: without the app-level error handler it is Hono's plain-text 500, and
+  // this test must then fail as an assertion rather than as a JSON parse error mid-suite.
+  let raw = '';
   let thrown: unknown;
   try {
-    status = (await post(app, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER)).status;
+    const res = await post(app, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
+    status = res.status;
+    raw = await res.text();
   } catch (err) {
     thrown = err;
+  } finally {
+    capture.stop();
   }
-  check(
-    'the request does not answer 200 when the store throws',
-    status !== 200,
-    `status ${status}, thrown ${String(thrown)}`,
-  );
+
+  eq('the store blip answers 500, not 200', status, 500);
+  check(`nothing escaped the app (${String(thrown)})`, thrown === undefined);
+  const parsed = ApiError.safeParse(parseJsonOrUndefined(raw));
+  check('the body is this server\'s ApiError shape', parsed.success, raw.slice(0, 200));
+  eq('the error code is internal_error', parsed.success ? parsed.data.error : undefined, 'internal_error');
+  check('the internal message never reaches the client', !raw.includes(STORE_BLIP_MESSAGE), raw.slice(0, 200));
+
+  const logged = withMessage(capture, 'unhandled route error');
+  eq('exactly one unhandled-error record', logged.length, 1);
+  eq('the log carries the REAL error message', logged[0]?.detail, STORE_BLIP_MESSAGE);
+  eq('the log names the route that failed', logged[0]?.path, '/v1/clarify');
+
   eq('the slot count is back to zero', slots.counts().unary, 0);
+  eq('the daily unit was taken exactly once', blipping.admitted.length, 1);
+  eq(
+    'the ledger row it opened was settled, as an error',
+    blipping.settles.filter((s) => s.requestId === blipping.admitted[0]).map((s) => s.outcome),
+    ['error'],
+  );
 
   // The proof that matters: the pool still admits work afterwards.
   const { app: healthy } = testApp({ slots, stub: true });
@@ -896,7 +960,7 @@ async function testHealthzSse(): Promise<void> {
     const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
     const { app } = testApp({ slots, stub: true });
     const held: Response[] = [];
-    for (let i = 0; i < MAX_CONCURRENT_PROBES; i++) held.push(await app.request('/healthz/sse'));
+    for (let i = 0; i < DEFAULT_MAX_CONCURRENT_PROBES; i++) held.push(await app.request('/healthz/sse'));
     check('probes up to the probe cap are admitted', held.every((res) => res.status === 200));
 
     const over = await app.request('/healthz/sse');

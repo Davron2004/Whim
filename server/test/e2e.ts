@@ -906,6 +906,7 @@ async function testReconciliation(): Promise<void> {
       refund: async () => {},
       settle: async () => {},
       recordCost: async () => {},
+      listUnresolvedCostRows: async () => [],
       summary: async () => { throw new Error('not used in this test'); },
       purgeLedger: async () => 0,
     };
@@ -968,6 +969,63 @@ async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
   check('fetch is restored once the load-test server has closed', globalThis.fetch === savedFetch);
 }
 
+/** A `GET /healthz/sse` written straight onto a TCP socket, so the probe is genuinely in flight
+ *  across a process boundary (its three comment frames arrive a second apart). */
+function rawProbe(port: number): { socket: net.Socket; text: () => string; ended: () => boolean } {
+  const socket = net.connect({ port, host: '127.0.0.1' });
+  let received = '';
+  let ended = false;
+  socket.setEncoding('utf8');
+  socket.on('data', (chunk: string) => {
+    received += chunk;
+  });
+  socket.on('close', () => {
+    ended = true;
+  });
+  socket.on('error', () => undefined);
+  socket.write(['GET /healthz/sse HTTP/1.1', 'Host: 127.0.0.1', 'Accept: text/event-stream', 'Connection: close', '', ''].join('\r\n'));
+  return { socket, text: () => received, ended: () => ended };
+}
+
+/**
+ * specs/server-deployment "SIGTERM drains in-flight work before exit" for the anonymous probe pool:
+ * `/healthz/sse` holds a slot for seconds without a device header, so a drain that waits only on
+ * generations and unary calls can close the stores out from under one. The fast gate's bundler
+ * cannot import `lifecycle.ts` (playwright, esbuild), so this lives here.
+ */
+async function testDrainWaitsForProbes(): Promise<void> {
+  section('spec: SIGTERM drains an in-flight /healthz/sse probe before the process exits');
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-probe-drain-'));
+  const server = await spawnDrainServer(dataDir);
+  let probe: ReturnType<typeof rawProbe> | undefined;
+  try {
+    const booted = await waitUntil(() => server.reports().some((r) => typeof r.url === 'string') || server.exit() !== undefined, 90_000);
+    const ready = server.reports().find((r) => typeof r.url === 'string');
+    check('setup: the server process booted the real pipeline', booted && ready !== undefined, server.output().slice(-2000));
+    if (!ready) return;
+
+    probe = rawProbe(Number(new URL(String(ready.url)).port));
+    const started = await waitUntil(() => probe!.text().includes('whim-healthz-probe'), 10_000);
+    check('setup: the probe is in flight, holding its slot', started && !probe.ended(), probe.text().slice(-200));
+
+    server.signal('SIGTERM');
+    await within(server.exited, 30_000);
+    eq('the process exits 0', server.exit()?.code, 0);
+
+    const completed = server.records().filter((r) => r.msg === 'drain complete');
+    eq('the drain completed exactly once', completed.length, 1);
+    eq('and it reports no probe still holding a slot', completed[0]?.probes, 0);
+    const started_ = server.records().find((r) => r.msg === 'drain started');
+    check('the drain saw the probe when it began', started_?.probes === 1, JSON.stringify(started_));
+    check('the probe connection ended', probe.ended(), probe.text().slice(-200));
+  } finally {
+    probe?.socket.destroy();
+    await server.dispose();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -989,6 +1047,7 @@ async function main(): Promise<void> {
   await testCancellationDisposesAndReleasesSlot();
   await testComposedServerBootAndDisconnect();
   await testRealPipelineSigtermDrain();
+  await testDrainWaitsForProbes();
   await testLoadtestServerCapacityAndNoSpend();
 
   report();

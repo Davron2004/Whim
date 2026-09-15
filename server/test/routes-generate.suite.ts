@@ -31,6 +31,8 @@ import {
   type AdmitParams,
   type AdmitResult,
   type CostState,
+  type CostSweepCandidate,
+  type CostSweepQuery,
   type RequestOutcome,
   type SummaryParams,
   type UsageStore,
@@ -119,7 +121,12 @@ export class RecordingUsageStore implements UsageStore {
   readonly costs: CostRecord[] = [];
   private readonly inner = new InMemoryUsageStore();
 
+  /** Set by a test to make the next `credit` fail — a store blip inside admission, after the slot
+   *  was taken and the daily unit consumed. */
+  creditFailure: Error | undefined;
+
   credit(deviceId: string, usage: Usage): Promise<void> {
+    if (this.creditFailure) return Promise.reject(this.creditFailure);
     return this.inner.credit(deviceId, usage);
   }
 
@@ -147,6 +154,10 @@ export class RecordingUsageStore implements UsageStore {
     return this.inner.recordCost(requestId, params);
   }
 
+  listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    return this.inner.listUnresolvedCostRows(query);
+  }
+
   summary(params: SummaryParams): Promise<UsageSummary> {
     return this.inner.summary(params);
   }
@@ -159,6 +170,13 @@ export class RecordingUsageStore implements UsageStore {
   async generationUnits(now: number): Promise<number> {
     const summary = await this.inner.summary({ days: 1, now });
     return summary.days[0]?.countByKind.generate ?? 0;
+  }
+
+  /** The COST VERDICT recorded for a request — the resolver's first `recordCost` call registers
+   *  the generation ids while the row is still `pending` (so a sweep can retry after a crash), and
+   *  that registration is not a verdict. */
+  costFor(requestId: string | undefined): CostRecord | undefined {
+    return this.costs.filter((c) => c.requestId === requestId && c.state !== 'pending').at(-1);
   }
 
   settlesFor(requestId: string | undefined): SettleRecord[] {
@@ -936,7 +954,7 @@ async function testCostAndReconciliation(): Promise<void> {
     const h = harness({ pipeline, resolveTransport: stats.transport });
     await readEvents('delivered cost', await postGenerate(h.app, PROMPT, DEVICE_A));
     await drained('delivered cost', h.tracker);
-    const cost = h.usageStore.costs.find((c) => c.requestId === h.usageStore.admitted[0]);
+    const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
     eq('delivered cost: resolved', cost?.state, 'resolved');
     check('delivered cost: 0.012 + 0.030 + 0.004 = 0.046', Math.abs((cost?.costUsd ?? 0) - 0.046) < 1e-9, JSON.stringify(cost));
     eq('delivered cost: the device was credited exactly once, from the usage event', await h.usageStore.read(DEVICE_A), RUN_USAGE);
@@ -961,7 +979,7 @@ async function testCostAndReconciliation(): Promise<void> {
     await reader.cancel();
     await expectTornDown('cancelled cost', h, 'aborted');
     await drained('cancelled cost', h.tracker);
-    const cost = h.usageStore.costs.find((c) => c.requestId === h.usageStore.admitted[0]);
+    const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
     check('cancelled cost: the classifier and the run call are both costed', cost?.state === 'resolved' && Math.abs((cost.costUsd ?? 0) - 0.021) < 1e-9, JSON.stringify(cost));
     eq('cancelled cost: classifier tokens once + reconciled run tokens once', await h.usageStore.read(DEVICE_A), sumUsage(CLASSIFIER_USAGE, STATS_USAGE));
   }
@@ -1045,6 +1063,55 @@ async function testDataDirectoryHoldsOnlyTheTwoStores(): Promise<void> {
   }
 }
 
+/** JSON, or `undefined` when the body is not JSON at all — a plain-text 500, say. */
+function parseJsonOrUndefined(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: "not JSON" is the answer this helper exists to give
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The generate twin of `routes-unary.suite.ts`'s store-blip case. `admitGeneration` releases the
+ * slot when anything past the acquire throws — it must also settle the ledger row it had already
+ * inserted, or a store blip quietly burns one of the device's daily generations and one unit of the
+ * global ceiling on a row nothing will ever close. And the client gets this server's one error
+ * shape, not Hono's plain-text 500.
+ */
+async function testThrowingStoreSettlesTheLedgerRow(): Promise<void> {
+  section('Generate: a store blip during admission settles its ledger row and answers an ApiError');
+
+  invalidateCreditCache();
+  const meteredPolicy: ContentPolicy = {
+    async check() {
+      return { verdict: 'allow', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } };
+    },
+  };
+  const h = harness({ policy: meteredPolicy });
+  h.usageStore.creditFailure = new Error('usage store unavailable');
+
+  const res = await postGenerate(h.app, PROMPT, DEVICE_A);
+  eq('the store blip answers 500', res.status, 500);
+  // Read defensively: without the app-level handler this body is Hono's plain TEXT 500, and a
+  // red-check must fail as an assertion, not as a JSON parse error that aborts the suite.
+  const raw = await res.text();
+  const body = ApiError.safeParse(parseJsonOrUndefined(raw));
+  check('the body is the ApiError shape', body.success, raw.slice(0, 200));
+  eq('the error code is internal_error', body.success ? body.data.error : undefined, 'internal_error');
+  check('the internal message never reaches the client', !raw.includes('usage store unavailable'), raw.slice(0, 200));
+
+  eq('one daily unit was taken', h.usageStore.admitted.length, 1);
+  eq(
+    'and its row was settled as an error, not left pending',
+    h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.outcome),
+    ['error'],
+  );
+  eq('the generation slot was released', h.slots.controller.counts().generations, 0);
+  eq('the unit is NOT refunded — the classifier call it paid for already happened', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+}
+
 export async function runRoutesGenerateTests(): Promise<void> {
   section('Generate route');
   await testCreditComesFirst();
@@ -1058,5 +1125,6 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testErrorExpiryAndDrain();
   await testMidRunCreditExhaustion();
   await testCostAndReconciliation();
+  await testThrowingStoreSettlesTheLedgerRow();
   await testDataDirectoryHoldsOnlyTheTwoStores();
 }

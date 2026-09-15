@@ -19,7 +19,7 @@
  * outside the prefix and anonymous.
  */
 import { Hono } from 'hono';
-import type { DevLogSinkPath } from '@whim/contract';
+import type { ApiError, DevLogSinkPath } from '@whim/contract';
 import type { Pipeline } from './pipeline';
 import type { UsageStore } from './usage-store';
 import type { ModelClient, ModelRoster } from './generation/model';
@@ -159,6 +159,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const slots = options.slots ?? createSlotController({
     maxConcurrentGenerations: config.maxConcurrentGenerations,
     maxConcurrentUnary: config.maxConcurrentUnary,
+    maxConcurrentProbes: config.maxConcurrentProbes,
   });
   const policy = options.policy ?? cachedPolicy(new StubContentPolicy());
   const reportStore = options.reportStore ?? new InMemoryReportStore();
@@ -193,12 +194,32 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     }
   });
 
+  // The one handler for anything a route threw without answering (a store blip, a bug). Without it
+  // Hono answers its own plain-text 500, which is the single response shape on this server that is
+  // not an `ApiError` — a client parsing `{ error, hint }` gets a parse failure instead of a
+  // failure it can show. The real error goes to the log (with the method and path that produced
+  // it), never to the client: an internal message can carry a file path, a query, or a key.
+  app.onError((err, c) => {
+    log.error(
+      {
+        scope: 'request',
+        method: c.req.method,
+        path: c.req.path,
+        errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      'unhandled route error',
+    );
+    const body: ApiError = { error: 'internal_error', hint: 'Something went wrong on our side. Please try again.' };
+    return c.json(body, 500);
+  });
+
   // Health check — no auth
   app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server' }, 200));
 
   // The anonymous stream probe — outside /v1, no device header, and counted against its OWN small
-  // pool (`MAX_CONCURRENT_PROBES`), never the paid clarify/rewrite one: it is unauthenticated and
-  // holds its slot for seconds, so sharing the unary pool would let anonymous traffic starve every
+  // pool (`WHIM_LIMIT_PROBE_CONCURRENCY`), never the paid clarify/rewrite one: it is unauthenticated
+  // and holds its slot for seconds, so sharing the unary pool would let anonymous traffic starve every
   // paying device (specs/server-deployment "An anonymous stream probe verifies proxy flushing").
   app.get('/healthz/sse', (c) => {
     const acquired = slots.acquire('probe', 'healthz-probe');

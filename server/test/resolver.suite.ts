@@ -12,8 +12,10 @@ import type { Usage } from '@whim/contract';
 import { check, eq, section } from './harness';
 import { NodeSqliteUsageStore, InMemoryUsageStore, type UsageStore } from '../src/usage-store';
 import {
+  MAX_CONCURRENT_ID_RESOLUTIONS,
   resolveRequestUsage,
   ResolveTracker,
+  runCostResolutionSweep,
   type GenerationStats,
   type UsageAndCostTransport,
 } from '../src/usage/resolve';
@@ -53,6 +55,7 @@ function countingCreditStore(inner: UsageStore): { store: UsageStore; creditCall
     refund: (requestId) => inner.refund(requestId),
     settle: (requestId, params) => inner.settle(requestId, params),
     recordCost: (requestId, params) => inner.recordCost(requestId, params),
+    listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
     summary: (params) => inner.summary(params),
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
   };
@@ -315,6 +318,182 @@ async function testEmptyGenerationIds(): Promise<void> {
   store.close();
 }
 
+/** Bounds every sweep test's resolution so a pass is milliseconds, not the 5-second default. */
+const SWEEP_BOUNDS = { maxAttempts: 2, totalBudgetMs: 200, retryDelayMs: 1, perAttemptTimeoutMs: 50 };
+
+/** Admits a generate row, settles it, and runs the in-request resolver against `transport` — the
+ *  setup every sweep test starts from: a row the first pass could not cost. */
+async function admitAndResolve(
+  store: UsageStore,
+  generationIds: readonly string[],
+  transport: UsageAndCostTransport,
+  now: number,
+): Promise<string> {
+  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
+  if (!admitted.ok) throw new Error('setup: admit should succeed');
+  await store.settle(admitted.requestId, { outcome: 'delivered', now });
+  await resolveRequestUsage(admitted.requestId, DEVICE_A, generationIds, true, {
+    transport,
+    usageStore: store,
+    bounds: SWEEP_BOUNDS,
+  });
+  return admitted.requestId;
+}
+
+/**
+ * The point of the sweep: a cost the in-request attempts gave up on is picked up later, once the
+ * provider's stats endpoint has caught up. And a cost that still does not resolve stays honest —
+ * it is neither invented nor lost, and it is retried only as often as the sweep runs.
+ */
+async function testSweepResolvesWhatTheRequestCouldNot(): Promise<void> {
+  section('Resolver — the sweep re-resolves a cost the in-request attempts gave up on');
+
+  const store = new InMemoryUsageStore();
+  const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
+  const stats = new Map<string, GenerationStats | 'hang'>();
+
+  // Nothing resolves yet: the request's own attempts run out and stamp the row 'unresolved'.
+  const lateId = await admitAndResolve(store, ['gen-late'], scriptedTransport(stats), now);
+  const neverId = await admitAndResolve(store, ['gen-never'], scriptedTransport(stats), now + 1000);
+  const before = await store.summary({ days: 1, now });
+  eq('both rows start unresolved', before.generationStats.unresolvedCount, 2);
+
+  // The provider catches up on one of them.
+  stats.set('gen-late', { usage: usage(4, 6), totalCostUsd: 0.075 });
+  let calls = 0;
+  const counting: UsageAndCostTransport = {
+    fetchStats(id: string, signal: AbortSignal): Promise<GenerationStats | null> {
+      calls++;
+      return scriptedTransport(stats).fetchStats(id, signal);
+    },
+  };
+
+  const first = await runCostResolutionSweep({ usageStore: store, transport: counting, now: () => now, bounds: SWEEP_BOUNDS });
+  eq('the sweep examined both unfinished rows', first.examined, 2);
+  eq('one row resolved', first.resolved, 1);
+  eq('the other stays unresolved', first.unresolved, 1);
+
+  const after = await store.summary({ days: 1, now });
+  eq('only the still-unknown row is counted unresolved now', after.generationStats.unresolvedCount, 1);
+  check('the late cost landed on the ledger', closeEnough(after.days[0]!.costUsdByKind.generate ?? 0, 0.075), JSON.stringify(after.days[0]));
+
+  // The resolved row is never offered again, and the unresolved one is retried by the NEXT pass —
+  // never inside this one, so the provider sees the sweep's cadence and nothing tighter.
+  const callsAfterFirst = calls;
+  check('one pass costs at most maxAttempts per id', callsAfterFirst <= SWEEP_BOUNDS.maxAttempts * 2, `${callsAfterFirst} calls`);
+  const second = await runCostResolutionSweep({ usageStore: store, transport: counting, now: () => now, bounds: SWEEP_BOUNDS });
+  eq('the second pass sees only the row that never resolved', second.examined, 1);
+  eq('and it is still unresolved', second.unresolved, 1);
+  check('the retry happened on the pass, not in a loop', calls - callsAfterFirst <= SWEEP_BOUNDS.maxAttempts, `${calls - callsAfterFirst} calls`);
+
+  const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 120_000, limit: 50 });
+  eq('the row that resolved is gone from the candidate set', candidates.map((c) => c.requestId), [neverId]);
+  eq('the resolved row keeps its cost', (await store.summary({ days: 1, now })).generationStats.unresolvedCount, 1);
+  check('the resolved row is the one the provider answered for', lateId !== neverId);
+}
+
+/**
+ * The sweep is discretionary background work, and a drain has a bounded final window for the
+ * resolutions already in flight. Starting new ones inside it would compete with exactly that, so a
+ * draining process's sweep takes no work at all — it does not even look for candidates.
+ */
+async function testSweepStandsDownWhileDraining(): Promise<void> {
+  section('Resolver — the sweep takes no work while the process is draining');
+
+  const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
+  const store = new InMemoryUsageStore();
+  let transportCalls = 0;
+  const transport: UsageAndCostTransport = {
+    fetchStats(): Promise<GenerationStats | null> {
+      transportCalls++;
+      return Promise.resolve(null);
+    },
+  };
+  await admitAndResolve(store, ['gen-drain'], transport, now);
+  const callsBefore = transportCalls;
+
+  let listCalls = 0;
+  const watched: UsageStore = {
+    credit: (deviceId, u) => store.credit(deviceId, u),
+    read: (deviceId) => store.read(deviceId),
+    admit: (params) => store.admit(params),
+    refund: (requestId) => store.refund(requestId),
+    settle: (requestId, params) => store.settle(requestId, params),
+    recordCost: (requestId, params) => store.recordCost(requestId, params),
+    listUnresolvedCostRows: (query) => {
+      listCalls++;
+      return store.listUnresolvedCostRows(query);
+    },
+    summary: (params) => store.summary(params),
+    purgeLedger: (beforeUtcDay) => store.purgeLedger(beforeUtcDay),
+  };
+
+  const draining = await runCostResolutionSweep({
+    usageStore: watched,
+    transport,
+    now: () => now,
+    bounds: SWEEP_BOUNDS,
+    isDraining: () => true,
+  });
+  check('the pass reports itself skipped', draining.skipped);
+  eq('no rows were examined', draining.examined, 0);
+  eq('the ledger was never queried', listCalls, 0);
+  eq('the provider was never called', transportCalls, callsBefore);
+
+  // The same sweep, not draining, does the work — so the assertion above is about the drain guard
+  // and not about there being nothing to sweep.
+  const running = await runCostResolutionSweep({
+    usageStore: watched,
+    transport,
+    now: () => now,
+    bounds: SWEEP_BOUNDS,
+    isDraining: () => false,
+  });
+  check('the identical pass outside a drain does look', !running.skipped && running.examined === 1, JSON.stringify(running));
+}
+
+/**
+ * One request's ids share a deadline, so they overlap — but a pipeline run records many model
+ * calls, and one unbounded burst per finishing request is how a provider rate limit turns every id
+ * into an unresolved one. The fan-out is capped, and the cap still lets every id be attempted.
+ */
+async function testFanOutIsBounded(): Promise<void> {
+  section('Resolver — per-request id resolution is capped at MAX_CONCURRENT_ID_RESOLUTIONS');
+
+  const ids = Array.from({ length: 10 }, (_, i) => `gen-${i}`);
+  const attempted = new Set<string>();
+  let inFlight = 0;
+  let peak = 0;
+  const transport: UsageAndCostTransport = {
+    async fetchStats(id: string): Promise<GenerationStats | null> {
+      attempted.add(id);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // A real transport is a network call: it yields, so the pool refills from the queue.
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return { usage: usage(1, 1), totalCostUsd: 0.001 };
+    },
+  };
+
+  const store = new InMemoryUsageStore();
+  const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
+  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
+  if (!admitted.ok) throw new Error('setup: admit should succeed');
+  await resolveRequestUsage(admitted.requestId, DEVICE_A, ids, true, {
+    transport,
+    usageStore: store,
+    bounds: { maxAttempts: 1, totalBudgetMs: 4000, retryDelayMs: 0, perAttemptTimeoutMs: 2000 },
+  });
+
+  check(`at most ${MAX_CONCURRENT_ID_RESOLUTIONS} transport calls were ever in flight`, peak <= MAX_CONCURRENT_ID_RESOLUTIONS, `peak ${peak}`);
+  check('the cap was actually reached (the ids really did overlap)', peak === MAX_CONCURRENT_ID_RESOLUTIONS, `peak ${peak}`);
+  eq('every id was still attempted within the shared budget', attempted.size, ids.length);
+  const summary = await store.summary({ days: 1, now });
+  eq('so the whole request resolved', summary.generationStats.unresolvedCount, 0);
+  check('with the sum of every id', closeEnough(summary.days[0]!.costUsdByKind.generate ?? 0, 0.01), JSON.stringify(summary.days[0]));
+}
+
 export async function runResolverTests(): Promise<void> {
   await testSummedCostCreditOwned();
   await testCancelledRunCostAndSingleCredit();
@@ -324,4 +503,7 @@ export async function runResolverTests(): Promise<void> {
   await testNoDoubleCounting();
   await testResolveTracker();
   await testEmptyGenerationIds();
+  await testSweepResolvesWhatTheRequestCouldNot();
+  await testSweepStandsDownWhileDraining();
+  await testFanOutIsBounded();
 }
