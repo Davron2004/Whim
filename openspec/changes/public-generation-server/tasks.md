@@ -66,10 +66,10 @@
 
 ## 9. Generation wall-clock budget
 
-- [ ] 9.1 In `server/src/generation/machine.ts`, add a per-run deadline measured on the injected `Clock` (constructor option `maxRunMs`). On expiry, abort an internal controller linked to the request signal. Record the run's end cause on `RunTrace` as `outcome: 'delivered' | 'failed' | 'expired' | 'aborted'`.
-- [ ] 9.2 On expiry, emit exactly one `usage` event and one `failure` whose reason is "This took too long to build. Please try again." A client abort that arrives first emits nothing then or later.
-- [ ] 9.3 In the same top-level model-call catch in `machine.ts` (research.md: OpenRouterNetworkError swallowed there today), detect an HTTP `402` from the model client distinctly from an ordinary model failure, skip any repair attempt, call `invalidateCreditCache()` (chain-3, `server/src/admission/credit.ts`), and end the run with one `failure` event whose reason names the generation budget running out (design.md D6b, specs/generation-pipeline "A run ends cleanly when the operator's provider credit is exhausted").
-- [ ] 9.4 Thread `maxRunMs` through `server/src/generation/index.ts`'s pipeline construction, and add the specs/generation-pipeline "A run is bounded in wall-clock time" and "A run ends cleanly when the operator's provider credit is exhausted" scenarios plus trace-outcome assertions to `server/test/machine.suite.ts`.
+- [x] 9.1 In `server/src/generation/machine.ts`, add a per-run deadline measured on the injected `Clock` (constructor option `maxRunMs`). On expiry, abort an internal controller linked to the request signal. Record the run's end cause on `RunTrace` as `outcome: 'delivered' | 'failed' | 'expired' | 'aborted'`.
+- [x] 9.2 On expiry, emit exactly one `usage` event and one `failure` whose reason is "This took too long to build. Please try again." A client abort that arrives first emits nothing then or later.
+- [x] 9.3 In the same top-level model-call catch in `machine.ts` (research.md: OpenRouterNetworkError swallowed there today), detect an HTTP `402` from the model client distinctly from an ordinary model failure, skip any repair attempt, call `invalidateCreditCache()` (chain-3, `server/src/admission/credit.ts`), and end the run with one `failure` event whose reason names the generation budget running out (design.md D6b, specs/generation-pipeline "A run ends cleanly when the operator's provider credit is exhausted").
+- [x] 9.4 Thread `maxRunMs` through `server/src/generation/index.ts`'s pipeline construction, and add the specs/generation-pipeline "A run is bounded in wall-clock time" and "A run ends cleanly when the operator's provider credit is exhausted" scenarios plus trace-outcome assertions to `server/test/machine.suite.ts`.
 
 ## 10. App options, unary routes, report route, stream probe
 
