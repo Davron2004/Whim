@@ -14,13 +14,14 @@
  * short of agreeing (spec ai-data-consent "any other exit SHALL grant nothing"). All of them mean
  * the same thing: nothing changes, land wherever this instance's caller decided.
  */
-import React, { useEffect } from 'react';
-import { BackHandler, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
 import { RELEASE } from './release-config';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 /** `consentScreenActions`' row → this component's own label and press handler — the one place
  *  the table's abstract action ids meet real copy and callbacks. */
@@ -68,14 +69,7 @@ export default function ConsentScreen({
   onClose,
 }: Readonly<ConsentScreenProps>) {
   const p = SHELL_PALETTE;
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onClose();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onClose]);
+  useSystemBack(onClose);
 
   /** `agree`/`turnOn` grant; every other row (`decline`, `keepOn`, `turnOff`) leaves without
    *  granting or revoking anything, same as hardware back — `turnOff` is the one row that also

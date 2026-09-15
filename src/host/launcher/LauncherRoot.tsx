@@ -1664,7 +1664,6 @@ function LauncherShell({
             now={Date.now()}
             editing={from.editing != null}
             editingName={from.editing?.name}
-            onLeaveRunning={onLeaveRunning}
             onBack={onBuildBack}
             onShowDetails={onShowDetails}
           />
