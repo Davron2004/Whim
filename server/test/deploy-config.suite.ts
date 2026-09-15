@@ -742,6 +742,14 @@ const STUB_SCRIPT = [
   "newline=$'\\n'",
   'printf \'%s\\n\' "${all//$newline/ }" >>"$STUB_DIR/$tool.log"',
   'case "$tool $*" in',
+  '  gcloud*compute\\ ssh*--command\\ :*)',
+  '  readiness_count_file="$STUB_DIR/readiness-count"',
+  '  readiness_count=0; [ -f "$readiness_count_file" ] && readiness_count=$(cat "$readiness_count_file")',
+  '  readiness_count=$((readiness_count + 1)); printf "%s" "$readiness_count" >"$readiness_count_file"',
+  '  if [ "$readiness_count" -le "${STUB_READINESS_FAILS:-0}" ]; then exit 1; fi',
+  ';;',
+  'esac',
+  'case "$tool $*" in',
   '  "gcloud "*" compute ssh "*server.env*) cat >"$STUB_DIR/server-env-stdin" ;;',
   'esac',
   'out_file=""',
@@ -1127,12 +1135,82 @@ function resizeTests(): void {
   });
 
   withSandbox((sandbox) => {
+    resizeRules(sandbox, '24.0,2.0');
+    const run = runScript(sandbox, 'resize.sh', ['--profile', 'event'], { STUB_READINESS_FAILS: '1' });
+    const calls = toolLog(sandbox, 'gcloud');
+    eq('a transient IAP 4003 readiness failure is retried and then succeeds', run.status, 0);
+    eq('  ... only the idempotent readiness probe repeats', calls.filter((line) => line.includes('--command :')).length, 2);
+    eq('  ... deployment runs exactly once after readiness', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
+  });
+
+  withSandbox((sandbox) => {
     resizeRules(sandbox, '24.0,2.0', [['*compute instances set-machine-type*', 1, '']]);
     const run = runScript(sandbox, 'resize.sh', ['--profile', 'event']);
     const calls = toolLog(sandbox, 'gcloud');
     check('a failed set-machine-type exits non-zero naming the step', run.status === 1 && run.stderr.includes('step set-machine-type failed'), run.stderr);
     check('  ... after starting the VM again on its previous type', indexOfCall(calls, 'instances start') > indexOfCall(calls, 'set-machine-type') && stubFile(sandbox, 'machine-type') === 'e2-standard-2', calls.join(' / '));
     eq('  ... and redeploying the running tag, whose profile follows that type', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
+  });
+}
+
+function loadtestVmStubs(sandbox: Sandbox): void {
+  fs.writeFileSync(path.join(sandbox.bin, 'sudo'), `#!/usr/bin/env bash
+depth="\${STUB_SUDO_DEPTH:-0}"
+export STUB_SUDO_DEPTH=$((depth + 1))
+if [ "$depth" -gt 0 ]; then unset WHIM_LOADTEST_IMAGE; fi
+while [ "\${1:-}" = -H ]; do shift; done
+if [ "\${1:-}" = env ]; then shift; while [[ "\${1:-}" == *=* ]]; do export "$1"; shift; done; fi
+case "\${1:-}" in install|rm) exit 0;; esac
+exec "$@"
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(sandbox.bin, 'docker'), `#!/usr/bin/env bash
+printf '%s|%s\n' "$*" "\${WHIM_LOADTEST_IMAGE:-}" >>"$STUB_DIR/docker.log"
+case "$*" in
+  *'stop whim-server'*) exit 0;;
+  *'compose.loadtest.yaml'*'up '* ) [ -n "\${WHIM_LOADTEST_IMAGE:-}" ] || exit 1; exit 0;;
+  *'up '* ) exit 0;;
+  *'exec '* ) exit 0;;
+esac
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(sandbox.bin, 'gcloud'), `#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_DIR/gcloud.log"
+case "$*" in
+  *'artifacts docker images describe'*) exit 0;;
+  *'compute scp'*) exit 0;;
+  *'compute ssh'*)
+    command=""; previous=""
+    for arg in "$@"; do [ "$previous" = --command ] && command="$arg"; previous="$arg"; done
+    case "$command" in *"grep '^WHIM_IMAGE="*) printf 'WHIM_IMAGE=northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:%s\n' "$(git rev-parse HEAD)"; exit 0;; esac
+    bash -n -c "$command" || { printf '%s\n' "$command" >&2; exit 2; }
+    bash -c "$command"
+    exit "$?"
+    ;;
+esac
+exit 0
+`, { mode: 0o755 });
+}
+
+function loadtestStartTests(): void {
+  section('Deploy scripts: load-test start and recovery');
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    loadtestVmStubs(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start']);
+    check('the replay image survives one effective sudo transition', run.status === 0 && toolLog(sandbox, 'docker').some((line) => line.includes('server-loadtest:')), `${run.stdout}\n${run.stderr}\n${toolLog(sandbox, 'docker').join(' / ')}`);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    loadtestVmStubs(sandbox);
+    const script = path.join(sandbox.repo, 'deploy', 'loadtest', 'run.sh');
+    const old = fs.readFileSync(script, 'utf8');
+    fs.writeFileSync(script, old.replace("${WHIM_COMPOSE#sudo -H }", '$WHIM_COMPOSE'));
+    git(sandbox.repo, sandbox.home, ['add', '-A']);
+    git(sandbox.repo, sandbox.home, ['commit', '-q', '-m', 'red nested sudo']);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start']);
+    const docker = toolLog(sandbox, 'docker');
+    check('the old nested-sudo command fails with a missing replay image and restores production', run.status === 1 && run.stderr.includes('load-test compose start failed') && docker.some((line) => line.startsWith('compose --project-directory /opt/whim --file /opt/whim/compose.yaml up')), run.stderr);
   });
 }
 
@@ -1422,6 +1500,7 @@ export async function runDeployConfigTests(): Promise<void> {
   deployFullTests();
   smokeTests();
   resizeTests();
+  loadtestStartTests();
   provisionTests();
   await runLoadTestTests();
   runbookTests(files, serverSources);

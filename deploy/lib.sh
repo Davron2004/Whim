@@ -120,7 +120,18 @@ whim_gcloud() {
 # Runs one command on the VM as the operator, over IAP. Standard input is passed through.
 whim_vm_ssh() {
   whim_gcloud compute ssh "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" --tunnel-through-iap --quiet \
-    --ssh-flag=-oServerAliveInterval=30 --command "$1"
+    --ssh-flag=-oServerAliveInterval=30 --ssh-flag=-oConnectTimeout=5 --command "$1"
+}
+
+whim_wait_for_ssh() {
+  local step="$1" deadline=$((SECONDS + 180))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if whim_vm_ssh ':' >/dev/null 2>&1; then return 0; fi
+    sleep 5
+  done
+  printf '%s: step %s readiness failed: SSH did not become available within 180 seconds\n' \
+    "${WHIM_SCRIPT:-deploy}" "$step" >&2
+  return 1
 }
 
 whim_vm_machine_type() {

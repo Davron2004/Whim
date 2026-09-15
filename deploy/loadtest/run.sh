@@ -64,14 +64,30 @@ cmd_start() {
     "$WHIM_LOADTEST_DIR/compose.loadtest.yaml" "$WHIM_VM_NAME:/tmp/whim-loadtest-compose.yaml"
 
   echo "==> drain production, wipe the load-test data directory, start the load-test image"
-  whim_vm_ssh "set -eu
+  remote_output=""
+  if ! remote_output="$(whim_vm_ssh "set -eu
+restore() {
+  restore_error=0
+  if ! $WHIM_COMPOSE up -d --wait --wait-timeout 300 whim-server; then
+    echo 'run.sh: recovery failed while restoring the production service' >&2
+    restore_error=1
+  fi
+  return \$restore_error
+}
 sudo install -d -m 0755 -o root -g root '$WHIM_LOADTEST_VM_DIR'
 sudo install -m 0644 -o root -g root /tmp/whim-loadtest-compose.yaml '$WHIM_LOADTEST_VM_DIR/compose.loadtest.yaml'
 rm -f /tmp/whim-loadtest-compose.yaml
 $WHIM_COMPOSE stop whim-server
+stopped=1
 sudo rm -rf '$WHIM_LOADTEST_DATA_DIR'
 sudo install -d -m 0700 -o 10001 -g 10001 '$WHIM_LOADTEST_DATA_DIR'
-sudo -H env WHIM_LOADTEST_IMAGE='$image' $WHIM_COMPOSE -f '$WHIM_VM_APP_DIR/compose.yaml' -f '$WHIM_LOADTEST_VM_DIR/compose.loadtest.yaml' up -d --wait --wait-timeout 300 whim-server
+if ! sudo -H env WHIM_LOADTEST_IMAGE='$image' ${WHIM_COMPOSE#sudo -H } -f '$WHIM_VM_APP_DIR/compose.yaml' -f '$WHIM_LOADTEST_VM_DIR/compose.loadtest.yaml' up -d --wait --wait-timeout 300 whim-server; then
+  original_error='load-test compose start failed'
+  restore || recovery_error='production restoration failed'
+  [ -z \"\${recovery_error:-}\" ] || echo \"run.sh: \$recovery_error\" >&2
+  echo \"run.sh: \$original_error\" >&2
+  exit 1
+fi
 attempt=0
 while [ \"\$attempt\" -lt 60 ]; do
   if $WHIM_COMPOSE exec -T whim-server node -e \"fetch('http://127.0.0.1:8787/healthz').then((r)=>r.json()).then((j)=>process.exit(j.service==='whim-server-loadtest'?0:1),()=>process.exit(1))\"; then
@@ -80,8 +96,19 @@ while [ \"\$attempt\" -lt 60 ]; do
   attempt=\$((attempt + 1))
   sleep 2
 done
-echo 'run.sh: the load-test server never reported whim-server-loadtest on /healthz' >&2
-exit 1"
+original_error='load-test health check failed: the server never reported whim-server-loadtest on /healthz'
+restore || recovery_error='production restoration failed'
+[ -z \"\${recovery_error:-}\" ] || echo \"run.sh: \$recovery_error\" >&2
+echo \"run.sh: \$original_error\" >&2
+exit 1")"; then
+    echo "run.sh: load-test start failed; verifying restored production service" >&2
+    if ! bash "$WHIM_DEPLOY_DIR/smoke.sh"; then
+      echo 'run.sh: recovery failed while running production smoke' >&2
+    fi
+    [ -z "$remote_output" ] || printf '%s\n' "$remote_output"
+    exit 1
+  fi
+  [ -z "$remote_output" ] || printf '%s\n' "$remote_output"
   echo "run.sh: the load-test server is live behind https://${WHIM_API_HOST:-<WHIM_API_HOST unset>}"
 }
 

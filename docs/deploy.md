@@ -185,10 +185,12 @@ deploy/resize.sh --profile standard   # after
 ```
 
 `resize.sh` checks the region's vCPU quota first (changing nothing if it doesn't fit), then drains
-and stops the server, stops the VM, changes its machine type, starts it, confirms the type, and
-redeploys the running image tag (which writes the matching profile and runs smoke). A failed step
-after the drain starts the VM back up on whatever type it has, redeploys that type's profile, and
-exits non-zero naming the step — the service never sits on a half-applied resize.
+and stops the server, stops the VM, changes its machine type, starts it, waits up to 180 seconds
+for an IAP SSH availability probe, confirms the type, and redeploys the running image tag (which
+writes the matching profile and runs smoke). Only the harmless readiness probe repeats, every five
+seconds; deployment runs once after readiness. A failed step after the drain starts the VM back up
+on whatever type it has, waits for SSH again, redeploys that type's profile, and exits non-zero
+naming the step — the service never sits on a half-applied resize.
 
 **Load test** (`deploy/loadtest/run.sh`, no OpenRouter key reachable from its image — design.md D26):
 
@@ -198,6 +200,11 @@ deploy/loadtest/run.sh drive --devices 15 --cap 15         # at capacity
 deploy/loadtest/run.sh drive --devices 16 --cap 15         # one over, expect one refusal
 deploy/loadtest/run.sh stop                                # restores production and runs smoke
 ```
+
+`run.sh start` passes the replay image to the VM's compose command through one effective `sudo`
+transition. If startup or its health check fails after production is stopped, it restores the base
+compose service, runs production smoke, and returns the original failure. A restoration or smoke
+failure is reported alongside that original failure; the load-test service is never left running.
 
 `drive` prints a report: `timeToFirstEventMs`/`totalMs` as p50/p95; `terminals` (`result`/`failure`/
 `none` counts); `refusals` by `ApiError` code (`server_busy` is expected once `devices` exceeds
