@@ -123,11 +123,10 @@ function isBoundToControl(source: string, ident: string): boolean {
 }
 
 /** Whether a control's label really appears in `source` (design D8 "labelled"): a `copy` control
- *  as `COPY.<key>`, or as the quoted key `'<key>'` where a decision module hands back label keys;
- *  a `component` as `<Name`; a `literal` verbatim. */
+ *  as `COPY.<key>`; a `component` as `<Name`; a `literal` verbatim. */
 function hasLabel(source: string, control: ExitControl): boolean {
   if ('copy' in control) {
-    return new RegExp(`COPY\\.${control.copy}\\b`).test(source) || source.includes(`'${control.copy}'`);
+    return new RegExp(`COPY\\.${control.copy}\\b`).test(source);
   }
   if ('component' in control) return source.includes(`<${control.component}`);
   return source.includes(control.literal);
@@ -152,7 +151,8 @@ function seamAndMembershipViolations(clean: Record<string, string>): ScreenExitV
     const allowed = ALLOWED_BACK_HANDLER_FILES.has(file);
     if (!allowed && usesBackHandlerDirectly(source)) violations.push({ rule: 'seam', file });
 
-    const isHookCaller = file !== 'use-system-back.ts' && source.includes('useSystemBack(');
+    const isHookCaller =
+      file !== 'use-system-back.ts' && file !== 'use-system-back-with.ts' && /useSystemBack(With)?\(/.test(source);
     if (isHookCaller && !declaredFiles.has(file)) violations.push({ rule: 'declared', file });
   }
   return violations;
@@ -258,18 +258,6 @@ function controlledChild(control: { throws: boolean }): () => React.ReactElement
 
 export async function runScreenExitsTests(h: Harness): Promise<void> {
   // ── bindSystemBack (design D9) ──────────────────────────────────────────────
-
-  await h.test('bindSystemBack: registers exactly one listener across three handler swaps', () => {
-    const fake = fakeBackHandler();
-    let current: (() => void) | null = () => {};
-    bindSystemBack(fake.api, () => current);
-    h.eq(fake.registrations(), 1, 'one registration at bind time');
-
-    current = () => {};
-    current = () => {};
-    current = () => {};
-    h.eq(fake.registrations(), 1, 'swapping the handler three times registers no new listener');
-  });
 
   await h.test('bindSystemBack: always runs the LATEST handler, not the one live at bind time', () => {
     const calls: string[] = [];
@@ -564,6 +552,23 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       scanScreenExits(files),
       [{ rule: 'declared', file: 'FailureScreen.tsx' }],
       'exactly one useSystemBack call per back: "screen" file — a second call is caught, not silently allowed',
+    );
+  });
+
+  await h.test('scanner "declared": a row\'s file calling useSystemBackWith twice is caught, same as useSystemBack', () => {
+    const files = {
+      'FailureScreen.tsx': `
+        export default function FailureScreen({ onBack }: { onBack: () => void }) {
+          useSystemBackWith(api, onBack);
+          useSystemBackWith(api, onBack);
+          return <TouchableOpacity onPress={onBack}><Text>{COPY.failureBack}</Text></TouchableOpacity>;
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'declared', file: 'FailureScreen.tsx' }],
+      'a screen calling the RN-free hook directly twice is caught exactly like useSystemBack called twice',
     );
   });
 

@@ -7,6 +7,9 @@
  * imports `react-native` and cannot itself be imported there).
  *
  * No React Native import — this module must load under the Node acceptance suite.
+ *
+ * `api` is read once at mount by contract: `BackHandler` is a singleton, so a caller passing a
+ * fresh api object on every render is ignored on purpose — only `handler` is live-tracked.
  */
 import { useEffect, useRef } from 'react';
 import { bindSystemBack } from './system-back';

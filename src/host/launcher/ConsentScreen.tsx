@@ -79,6 +79,7 @@ export default function ConsentScreen({
    *  file itself, not through a same-file indirection). */
   function pressHandlerFor(action: ConsentScreenAction): () => void {
     if (action === 'agree' || action === 'turnOn') return onAgree;
+    if (action === 'decline' || action === 'keepOn') return onClose;
     return onTurnOff ?? onClose;
   }
 

@@ -77,7 +77,7 @@ The alternative was an orb `Back` row shown while the app reports depth above ze
 | review, on | `close` / `consentReviewKeepOn` | `turn-off` / `consentReviewTurnOff` |
 | review, off | `agree` / `consentReviewTurnOn` | `close` / `consentDecline` |
 
-`ConsentScreen` always renders both buttons through a local `ConsentAction` component that receives the control plus `onAgree`, `onClose` and `onTurnOff` as props and picks the handler by `action`, and the screen calls `useSystemBack(onClose)`. Passing `onClose={onClose}` as a JSX prop is what lets D8's "bound" rule see it. Review-off's `close` is `onConsentReviewClose` (`LauncherRoot.tsx:838`): back to Settings, consent unchanged, no request.
+As built, `ConsentScreen` binds `onClose` directly in JSX at its `decline`/`keepOn` press sites, and calls `useSystemBack(onClose)`; the decisions above live in `consent-screen-actions.ts`. Binding `onClose` inline is what lets D8's "bound" rule see it. Review-off's `close` is `onConsentReviewClose` (`LauncherRoot.tsx:838`): back to Settings, consent unchanged, no request.
 
 `Not now` reuses `COPY.consentDecline`. It reads right under `Turn on AI features`, and a new `consent…` string would trip chain-15's privacy-page parity check for a label that discloses nothing. A header chevron in review mode was the other option; in review-on it would sit beside `Keep AI features on` as a second exit with the same meaning.
 
@@ -134,7 +134,7 @@ A control's `file` is where its label is referenced, which isn't always the scre
 - **seam:** only `use-system-back.ts` and `useMiniAppHost.ts` import `BackHandler` from `react-native` or call `BackHandler.addEventListener`. (Comments that mention `BackHandler`, like `SheetModal.tsx:11-12`, don't count.)
 - **declared:** every file other than `use-system-back.ts` that contains `useSystemBack(` is a row's `file` or `FALLBACK_EXIT.file`, and every `back: 'screen'` row's file calls it exactly once.
 - **bound:** that call's argument is a bare identifier, and the same identifier appears inside an `on[A-Z]…={…}` JSX attribute in that file.
-- **labelled:** every control's label appears in its file (a `copy` control as `COPY.<key>`, or as the quoted key `'<key>'` where a decision module returns keys, as `consentControls` does; a `literal` verbatim; a `component` as `<FlowHeader`), and `flow-chrome.tsx` contains `COPY.backLabel`.
+- **labelled:** every control's label appears in its file (a `copy` control as `COPY.<key>`; a `literal` verbatim; a `component` as `<FlowHeader`), and `flow-chrome.tsx` contains `COPY.backLabel`.
 - **real kinds:** every table key appears as `kind: '<key>'` in `LauncherRoot.tsx` or `prompt-flow.ts`.
 
 The real tree must return no violations, and one inline fixture per rule must return exactly that violation. The fixture for "bound" is the plausible weaker refactor, not a deleted call: a plan step that passes `handleBack` to the hook but `onBack` to `FlowHeader`.
