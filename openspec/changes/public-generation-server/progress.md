@@ -8,3 +8,5 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - 22:54 chain-0 (HUMAN-BOOTSTRAP): owner ran the server workspace install (esbuild 0.25.12, playwright 1.60.0, typescript 5.9.3, one lockfile copy each); parked contract-suite patch re-applied · guard:metro OK · committed · FAST GATE PASS. Resumed in a fresh orchestrator session after the usage cutoff.
 - 22:55 dispatched chain-1 BASE 99ed045 worktree .claude/worktrees/public-generation-server-1
 - 22:55 dispatched chain-7 BASE 99ed045 worktree .claude/worktrees/public-generation-server-7
+- 23:08 chain-1 report: complete, GATE PASS (server 923), class-A x4 (loadServerConfig opts {now}; defaults for POLICY_TIMEOUT/REPORT+LEDGER_RETENTION from their specs; fail-fast on first invalid var; worktree node_modules needs per-entry links with @whim/* → own workspaces) · integrity OK · merged · regate-pass
+- 23:08 dispatched chain-2 BASE 652f4fe · dispatched chain-4 BASE 652f4fe (chain-3 held for a frontier slot: concurrency + credit fail-open)
