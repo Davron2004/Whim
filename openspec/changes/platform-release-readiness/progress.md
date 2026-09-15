@@ -100,3 +100,60 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - Final normal iOS Release simulator compile passed from `420be203612d3eb65b91f4a204188dfb84dda205` (the merge plus a progress-only commit). Pinned pod install and build exited 0; log `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-deny/normal-final-build.log`. Bundle `com.anycognition.whim`, version 1.0.0/build 1; executable SHA-256 `e41719b38c9cdcb3d8219320c866deff67e179080a73224f98e1dc69247e6be4`; main.jsbundle `96ddd1c89a45fbade20bb116ed1ff1f8312b3c521e07bc219971fa7b4dea0ba6`; rule resource matches source (`2e337da077df82e9be2e2724ac185942064792b7bd6c9dbbde9d21316db27c6f`). Root restored all four known lockfile checksum changes; source tree is clean. Copying the built app to a separate evidence folder was denied for worker and root as a harness/config write; no alternate copy method was attempted. The normal artifact remains at the primary build path, and the simulator still has the earlier missing-rule test app installed. No UI action ran.
 - Independent integration audit of `4fbc3bf..420be203` approved the combined replay, readiness-test and paint corrections. No false native or load-test completion claims; full gate remains in progress.
 - Combined full gate exited 0 and printed `FULL GATE PASSED`, including 41/41 OpenSpec validations (`/tmp/whim-gate-full-launch-corrections.log`). Tasks 21.1–21.3 complete; native task 20.4 remains pending. The source used by the final iOS compile is the same corrected source to be pinned for deployment at `420be203612d3eb65b91f4a204188dfb84dda205`; later primary commits only record results.
+
+## Root simulator verification — 2026-09-15, 23:24–23:35 UTC
+
+The owner applied the reviewed simulator-install hook patch and requested its
+commit/push. Both changed hook files matched the tested candidate byte for byte.
+Commit `18ebcab` is on draft PR #35 (`integration/store-launch` into `main`). All
+77 policy, 46 parser and 13 Codex adapter checks passed, followed by the full
+local gate (`/tmp/whim-gate-full-simulator-policy.log`, exit 0). Both GitHub test
+jobs passed. SonarCloud reported 296 issues across the launch branch, including
+two style findings in the new hook; closure remains pending. The report is
+`~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/pr35-sonar-findings.md`.
+
+Root operated Simulator directly through Computer Use, without subagents or
+Maestro/XCTest. Device: iPhone 17 Pro Max, iOS 26.5, UUID
+`1349ACC1-1768-4037-A901-3C1A5F3F93B8`. Installing the normal artifact with the
+fixed `/usr/bin/xcrun simctl install` form exited 0. Its executable and bundle
+hashes still match the final `420be203` compile receipt above.
+
+Observed normal behavior:
+
+- Tip Splitter, Water Counter and Style Gallery all opened and rendered.
+- Changing Tip Splitter's bill from 100 to 200 produced tip 40, total 240 and
+  per-person 60 with the original 20% and four-person settings.
+- Water Counter saved count 1/history 1 and loaded both after terminating and
+  relaunching the entire app. This test entry remains in the simulator.
+- The mini-app Home control, Settings back chevron and consent-review
+  "Keep AI features on" exit worked. Consent remained on.
+
+For task 20.4, the documented temporary resource-lookup control was compiled to
+the separate `ios/build/sim-missing-after` directory, keeping normal LauncherRoot
+and preserving the normal artifact. Pinned pod install and Release build exited
+0. The native source and four generated Podfile.lock checksums were then restored
+exactly; `git diff --exit-code` passed before installing the control.
+
+Native logs identify the missing resource at 19:32:16.111 local and rule-list
+unavailability on launch at 19:32:34.711 and retry at 19:33:38.680. A timed fresh
+Home-to-Tip-Splitter launch at 23:34:32.162Z showed the required error screen by
+23:34:40.700Z (8.538 seconds). Retry also showed the error by its 8.537-second
+observation. "Back to your apps" returned Home. These are observed upper bounds,
+not measurements of the exact transition time. Task 20.4 is complete.
+
+The 45-second canary recorded zero HTTP hits and zero TLS connections, but exited
+1 because this normal-launcher control fetched zero of the six probe bundles.
+That is its intended non-vacuous guard: this run is not a network-deny acceptance
+pass and does not close 13.7 or 18.5. The normal artifact was reinstalled, launched
+and verified opening Tip Splitter again. No new SpringBoard crash report appeared;
+the only matching report remained the earlier 16:08:15 report. This does not prove
+the underlying XCTest defect is fixed.
+
+Evidence directory:
+`~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-normal-20260915/`.
+It holds normal-app screenshots, `water-counter-after-restart.png`,
+`missing-rule-timed-opening.png`, `missing-rule-timed-error.png`,
+`missing-rule-launch-timing.json`, retry equivalents,
+`missing-rule-return-home.png`, `normal-restored-tip-splitter.png`, and the
+`whim-ios-missing-after-{build,native,canary}.log` receipts. The simulator is left
+on the healthy normal build, with no temporary source or lockfile changes.

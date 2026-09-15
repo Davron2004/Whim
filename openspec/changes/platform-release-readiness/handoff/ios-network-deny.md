@@ -60,7 +60,11 @@ URLForResource:@"WebViewNetworkDenyMissing"
 
 Open the seeded Tip Splitter mini-app. The required result is both the missing-resource and
 rule-list-unavailable log messages, no canary traffic, and a visible app-error surface instead of
-mini-app content. This result is still unverified. The current host handles WebView `onError` by
-logging, and its six-second paint watchdog starts only after a trusted delivery frame; with
-JavaScript disabled, the launch may remain on `Booting…`. Treat that outcome as a failed acceptance
-check that needs a separate host correction, never as proof of fail-closed UX.
+mini-app content. On 2026-09-15 the corrected host reached the app-error screen within an
+8.54-second observation window from a fresh launcher tap. Retry also reached the error screen,
+and "Back to your apps" returned Home. Both required native log messages were recorded.
+The host now arms its six-second deadline before page delivery, so missing page JavaScript no
+longer prevents the timeout from starting. See task 20.4 and the progress ledger for evidence.
+The normal-launcher test sends no probe bundles: the canary observed zero HTTP/TLS traffic but
+correctly rejected its acceptance verdict for missing bundles. This verifies error UX, not the
+separate full network-deny probe acceptance.
