@@ -452,7 +452,11 @@ async function testSweepCandidates(): Promise<void> {
     const runningNow = await admitAt(DEVICE_A, AT_22_00_UTC + 3 * minute);
     const noIds = await admitAt(DEVICE_B, AT_22_00_UTC + 4 * minute);
 
+    // Ended before its cost was marked unresolved — matches production order (resolveRequestUsage
+    // always runs after settle) and gives the row an `ended_at` to measure `maxAgeMs` from.
+    await store.settle(oldest, { outcome: 'delivered', now: AT_22_00_UTC });
     await store.recordCost(oldest, { state: 'unresolved', generationIds: ['gen-oldest'] });
+    await store.settle(newer, { outcome: 'delivered', now: AT_22_00_UTC + minute });
     await store.recordCost(newer, { state: 'unresolved', generationIds: ['gen-newer'] });
     // Registered its ids and ended, then died before recording a verdict.
     await store.recordCost(stalePending, { state: 'pending', generationIds: ['gen-stale'] });
@@ -462,31 +466,95 @@ async function testSweepCandidates(): Promise<void> {
     await store.settle(noIds, { outcome: 'ok', now: AT_22_00_UTC });
 
     const now = AT_22_00_UTC + 10 * minute;
-    const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 50 });
+    const day = 24 * 60 * 60 * 1000;
+    const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, maxAgeMs: day, limit: 50 });
     eq(
       `${label}: unresolved rows and abandoned pending ones, oldest first`,
       candidates.map((c) => c.requestId),
       [oldest, newer, stalePending],
     );
-    eq(`${label}: a candidate carries its device and ids`, candidates[0], {
+    eq(`${label}: a candidate carries its ids`, candidates[0], {
       requestId: oldest,
-      deviceId: DEVICE_A,
       generationIds: ['gen-oldest'],
     });
     eq(
       `${label}: the limit takes the oldest rows`,
-      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 1 })).map((c) => c.requestId),
+      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, maxAgeMs: day, limit: 1 })).map((c) => c.requestId),
       [oldest],
     );
 
     await store.recordCost(oldest, { state: 'resolved', costUsd: 0.5 });
     eq(
       `${label}: a resolved row stops being a candidate`,
-      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, limit: 50 })).map((c) => c.requestId),
+      (await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * minute, maxAgeMs: day, limit: 50 })).map((c) => c.requestId),
       [newer, stalePending],
     );
   }
   sqlite.close();
+}
+
+/**
+ * Without a give-up rule, a row whose provider generation id the provider will never index stays
+ * the oldest forever and is selected by every pass ahead of newer, genuinely resolvable rows.
+ * `maxAgeMs` excludes it once its request ended long enough ago, so it stops consuming candidate
+ * slots — left as `'unresolved'`, never retried again.
+ */
+async function testSweepMaxAge(): Promise<void> {
+  section('Usage ledger — a row past maxAgeMs stops being a sweep candidate (spec "An unresolved row SHALL NOT be terminal")');
+
+  const hour = 60 * 60 * 1000;
+  const sqlite = new NodeSqliteUsageStore(':memory:');
+  for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
+    const label = store === sqlite ? 'sqlite' : 'in-memory';
+    const now = AT_22_00_UTC;
+
+    const oldAdmit = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 25 * hour, deviceLimit: 15 });
+    const freshAdmit = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: now - 1 * hour, deviceLimit: 15 });
+    if (!oldAdmit.ok || !freshAdmit.ok) throw new Error('setup: admit should succeed');
+
+    await store.settle(oldAdmit.requestId, { outcome: 'delivered', now: now - 25 * hour });
+    await store.recordCost(oldAdmit.requestId, { state: 'unresolved', generationIds: ['gen-dead'] });
+    await store.settle(freshAdmit.requestId, { outcome: 'delivered', now: now - 1 * hour });
+    await store.recordCost(freshAdmit.requestId, { state: 'unresolved', generationIds: ['gen-fresh'] });
+
+    const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * 60_000, maxAgeMs: 24 * hour, limit: 50 });
+    eq(
+      `${label}: a 25h-old unresolved row is not listed, a 1h-old one is`,
+      candidates.map((c) => c.requestId),
+      [freshAdmit.requestId],
+    );
+  }
+  sqlite.close();
+}
+
+/**
+ * A hand-planted `generation_ids = '[]'` row (never written by `recordCost`, which stores NULL
+ * instead) must not consume a `LIMIT` slot ahead of a real candidate — the SQL predicate and the
+ * JS-side length filter must agree.
+ */
+async function testSweepIgnoresPersistedEmptyIdsArray(): Promise<void> {
+  section('Usage ledger — a persisted empty generation_ids array is never a sweep candidate');
+
+  const dbPath = tmpDbPath('empty-ids');
+  try {
+    const store = new NodeSqliteUsageStore(dbPath);
+    const now = AT_22_00_UTC;
+    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 60_000, deviceLimit: 15 });
+    if (!admitted.ok) throw new Error('setup: admit should succeed');
+    await store.settle(admitted.requestId, { outcome: 'delivered', now: now - 60_000 });
+
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare(
+      `UPDATE requests SET cost_state = 'unresolved', generation_ids = '[]' WHERE id = ?`,
+    ).run(admitted.requestId);
+    raw.close();
+
+    const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 2 * 60_000, maxAgeMs: 24 * 60 * 60 * 1000, limit: 1 });
+    eq('a planted empty-array row is never a candidate', candidates.length, 0);
+    store.close();
+  } finally {
+    fs.rmSync(dbPath, { force: true });
+  }
 }
 
 /**
@@ -531,7 +599,7 @@ async function testGenerationIdsColumnMigration(): Promise<void> {
 
     // The pre-change row survives, is not a sweep candidate (it has no ids to re-resolve), and its
     // cost can still be upgraded — the migration loses nothing.
-    const candidates = await store.listUnresolvedCostRows({ now: AT_22_00_UTC + 600_000, stalePendingAfterMs: 120_000, limit: 50 });
+    const candidates = await store.listUnresolvedCostRows({ now: AT_22_00_UTC + 600_000, stalePendingAfterMs: 120_000, maxAgeMs: 24 * 60 * 60 * 1000, limit: 50 });
     eq('a legacy row with no ids is not a sweep candidate', candidates.length, 0);
     await store.recordCost('legacy-row', { state: 'resolved', costUsd: 0.25 });
     eq('a legacy unresolved row can still be resolved', readCostRow(dbPath, 'legacy-row').cost_usd, 0.25);
@@ -579,6 +647,8 @@ export async function runLedgerTests(): Promise<void> {
   await testSettleAndRecordCostIdempotent();
   await testUnresolvedCostIsUpgradable();
   await testSweepCandidates();
+  await testSweepMaxAge();
+  await testSweepIgnoresPersistedEmptyIdsArray();
   await testGenerationIdsColumnMigration();
   await testEmptyGlobalKinds();
   await testSettlesAgainstAdmissionDay();

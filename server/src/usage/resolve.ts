@@ -145,8 +145,10 @@ async function resolveOneId(
  * single slow id spends the whole budget and every id behind it is never even attempted, so what
  * the sum contains depends on provider-response order rather than on what was resolvable. The
  * concurrency is capped at `MAX_CONCURRENT_ID_RESOLUTIONS` — with the shared deadline this still
- * gives every id an attempt, while a request with many model calls can no longer open one socket
- * per id at once.
+ * queues every id within the shared budget, while a request with many model calls can no longer
+ * open one socket per id at once. With more ids than the cap and a slow provider, the deadline can
+ * still expire before the ids queued last are ever attempted — which is exactly why the sweep
+ * below exists, to give them another pass later.
  *
  * Two flags, deliberately distinct:
  *  - `foundAny` — at least one id resolved. A best-effort partial sum, authoritative only for the
@@ -255,6 +257,12 @@ export const DEFAULT_SWEEP_LIMIT = 50;
 /** How long after a request ENDED a still-`'pending'` cost row is treated as abandoned by its
  *  resolver (a crash, or a drain that outran its final window) rather than as one in progress. */
 export const DEFAULT_STALE_PENDING_MS = 120_000;
+/** How long after a request ENDED its cost row stays a sweep candidate at all. Without a cut-off,
+ *  a row whose provider generation id the provider will never index (permanently unresolvable)
+ *  stays the oldest row forever, so it is selected by every pass ahead of every newer, genuinely
+ *  resolvable row — starving them and burning a provider stats call for nothing every pass. A row
+ *  older than this is left `'unresolved'` and is never re-attempted again. */
+export const DEFAULT_SWEEP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const sweepLog = log.child({ scope: 'cost-sweep' });
 
@@ -270,6 +278,8 @@ export interface CostSweepDeps {
   isDraining?: () => boolean;
   limit?: number;
   stalePendingAfterMs?: number;
+  /** Defaults to `DEFAULT_SWEEP_MAX_AGE_MS`. */
+  maxAgeMs?: number;
 }
 
 export interface CostSweepOutcome {
@@ -310,6 +320,7 @@ export async function runCostResolutionSweep(deps: CostSweepDeps): Promise<CostS
     const candidates = await deps.usageStore.listUnresolvedCostRows({
       now: deps.now(),
       stalePendingAfterMs: deps.stalePendingAfterMs ?? DEFAULT_STALE_PENDING_MS,
+      maxAgeMs: deps.maxAgeMs ?? DEFAULT_SWEEP_MAX_AGE_MS,
       limit: deps.limit ?? DEFAULT_SWEEP_LIMIT,
     });
     for (const candidate of candidates) {

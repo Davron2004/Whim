@@ -32,8 +32,8 @@ export interface UsageStore {
 }
 export interface RecordCostParams { state: CostState; costUsd?: number; generationIds?: readonly string[] }
 // ids are persisted while the cost is unknown and cleared once it resolves.
-export interface CostSweepQuery { now: number; stalePendingAfterMs: number; limit: number }
-export interface CostSweepCandidate { requestId: string; deviceId: string; generationIds: readonly string[] }
+export interface CostSweepQuery { now: number; stalePendingAfterMs: number; maxAgeMs: number; limit: number }
+export interface CostSweepCandidate { requestId: string; generationIds: readonly string[] }
 export interface SummaryParams { days: number; top?: number; now: number; }
 export interface UsageSummary {
   days: { utcDay: string; countByKind: Partial<Record<RequestKind, number>>; costUsdByKind: Partial<Record<RequestKind, number>> }[];
@@ -49,7 +49,9 @@ constructor ALTERs a pre-`generation_ids` file in place, idempotently. No prompt
 manifest/schema column exists — closed column set is a locked test (`ledger.suite.ts`).
 `listUnresolvedCostRows` returns rows that still carry ids: `'unresolved'` ones, plus `'pending'`
 ones whose `ended_at` is older than `stalePendingAfterMs` (a resolver that died mid-flight —
-staleness is measured from `ended_at`, never `started_at`, so a long run is never raced). Oldest
+staleness is measured from `ended_at`, never `started_at`, so a long run is never raced). A row
+whose `ended_at` is older than `maxAgeMs` is excluded regardless of state — left as-is and never
+retried again, so a permanently unresolvable id cannot starve newer rows forever. Oldest
 `started_at` first, at most `limit`.
 
 ## `server/src/usage/resolve.ts` — the post-request resolver
@@ -86,7 +88,8 @@ export function runCostResolutionSweep(deps: CostSweepDeps): Promise<CostSweepOu
 export interface CostSweepDeps {
   usageStore: UsageStore; transport: UsageAndCostTransport; now: () => number;
   bounds?: Partial<ResolveBounds>; isDraining?: () => boolean; limit?: number; stalePendingAfterMs?: number;
-}  // defaults: DEFAULT_SWEEP_LIMIT = 50, DEFAULT_STALE_PENDING_MS = 120_000
+  maxAgeMs?: number;
+}  // defaults: DEFAULT_SWEEP_LIMIT = 50, DEFAULT_STALE_PENDING_MS = 120_000, DEFAULT_SWEEP_MAX_AGE_MS = 24h
 export interface CostSweepOutcome { skipped: boolean; examined: number; resolved: number; unresolved: number }
 
 export class ResolveTracker {
