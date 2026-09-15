@@ -531,8 +531,10 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     // repo's established idiom for this file (`prompt-flow-wiring.suite.ts`).
     const src = fs.readFileSync(path.join(process.cwd(), 'src', 'host', 'launcher', 'LauncherRoot.tsx'), 'utf8');
     h.ok(
-      /<ScreenBoundary screen=\{screen\.kind\} FallbackComponent=\{ScreenErrorFallback\}>/.test(src),
-      'the boundary is keyed by the active screen and given the launcher fallback explicitly',
+      /<ScreenBoundary\s+screen=\{screen\.kind\}\s+FallbackComponent=\{ScreenErrorFallback\}\s+onLeave=\{[^}]*\}\s*>/.test(
+        src,
+      ),
+      'the boundary is keyed by the active screen and given the launcher fallback and a way home explicitly',
     );
     const frame = src.slice(src.indexOf('<SafeAreaView'), src.indexOf('</SafeAreaView>'));
     h.ok(frame.includes('<ScreenBoundary'), 'the boundary sits INSIDE the safe-area frame (design D1) — a screen failure keeps the shell');

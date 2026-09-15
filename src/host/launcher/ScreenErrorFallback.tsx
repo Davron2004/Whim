@@ -12,8 +12,23 @@ import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import type { ScreenFallbackProps } from './ScreenBoundary';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
-export default function ScreenErrorFallback({ resetErrorBoundary }: Readonly<ScreenFallbackProps>) {
+/** Rendered only when `onLeave` is given (design D7) — Home's fallback stays `Try again` alone.
+ *  A separate component keeps `useSystemBack`'s hook call unconditional on every mount where it
+ *  runs at all. */
+function LeaveAction({ onLeave }: Readonly<{ onLeave: () => void }>) {
+  const p = SHELL_PALETTE;
+  useSystemBack(onLeave);
+
+  return (
+    <TouchableOpacity onPress={onLeave} accessibilityRole="button" style={styles.leave}>
+      <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.screenErrorBack}</Text>
+    </TouchableOpacity>
+  );
+}
+
+export default function ScreenErrorFallback({ resetErrorBoundary, onLeave }: Readonly<ScreenFallbackProps>) {
   const p = SHELL_PALETTE;
 
   return (
@@ -27,6 +42,7 @@ export default function ScreenErrorFallback({ resetErrorBoundary }: Readonly<Scr
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.screenErrorRetry}</Text>
       </TouchableOpacity>
+      {onLeave != null && <LeaveAction onLeave={onLeave} />}
     </View>
   );
 }
@@ -39,6 +55,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: RADIUS.card,
     paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+  },
+  leave: {
+    marginTop: SPACING.md,
+    alignSelf: 'flex-start',
     paddingVertical: SPACING.sm,
   },
 });

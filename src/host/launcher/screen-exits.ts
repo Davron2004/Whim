@@ -75,16 +75,18 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, ScreenExit>> = {
     file: 'AppLinkMissingScreen.tsx',
     controls: [{ file: 'AppLinkMissingScreen.tsx', copy: 'appLinkMissingBack' }],
   },
-  // The two non-granting controls `consent-flow.ts#consentControls` can hand back (design D6):
-  // review-on's `close` is the primary `Keep AI features on`, and review-off's plain `Not now`
-  // reuses `consentDecline` rather than a new `consent…` string (public-generation-server chain-15
-  // fails an unquoted addition to the privacy page).
+  // The two non-granting controls a mode can show (design D6): review-on's `close` is the primary
+  // `Keep AI features on`, and review-off's plain `Not now` reuses `consentDecline` rather than a
+  // new `consent…` string (public-generation-server chain-15 fails an unquoted addition to the
+  // privacy page). `ConsentScreen.tsx` renders both through its own `actionLabel` switch
+  // (`COPY.consentDecline`, `COPY.consentReviewKeepOn`), not through `consent-flow.ts`'s
+  // `consentControls` adapter, so the row names the file that's really rendered.
   consent: {
     back: 'screen',
     file: 'ConsentScreen.tsx',
     controls: [
-      { file: 'consent-flow.ts', copy: 'consentDecline' },
-      { file: 'consent-flow.ts', copy: 'consentReviewKeepOn' },
+      { file: 'ConsentScreen.tsx', copy: 'consentDecline' },
+      { file: 'ConsentScreen.tsx', copy: 'consentReviewKeepOn' },
     ],
   },
   compose: { back: 'screen', file: 'ComposeStep.tsx', controls: [{ file: 'ComposeStep.tsx', component: 'FlowHeader' }] },
