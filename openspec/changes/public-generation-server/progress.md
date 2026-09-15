@@ -2,6 +2,18 @@
 
 Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 
+## Session 4 — 2026-09-15 acceptance (in progress)
+
+- Resumed clean staging tip `f08ad63de49eb8b8190d48087a88d518a5498ac8`. Full local gate passed; production `deploy/smoke.sh` exited 0 with all checks passing, including both intentionally absent association files.
+- Task 15.3 remains pending a physical phone on cellular. The available Android emulator and iOS simulator do not satisfy that condition. Owner's mail/Apple checklist remains untouched.
+- Task 15.4 started from a clean detached checkout at deployed image `2acb69cfe0b079d811199b4be1e8085d04b306ab`, `.claude/worktrees/store-launch-loadtest-20260915`. `resize.sh --profile event` passed quota, drain, stop, machine-type change and start, then exited 1: IAP could not connect to port 22 immediately after restart (4003). Its recovery also failed at that point. The documented same-tag `deploy.sh --tag 2acb69cfe0b079d811199b4be1e8085d04b306ab` retry exited 0 and restored healthy production on `e2-standard-8`; all smoke checks passed. This restart-readiness failure needs a finding.
+- Load-test image preparation started (Cloud Build `4731e19b-1e57-4a5c-b371-1fda0775b3cb`). No drive result yet. Mandatory cleanup is `deploy/loadtest/run.sh stop`, then `deploy/resize.sh --profile standard`, with production smoke verified afterwards.
+- Cloud Build succeeded. `run.sh start` then stopped production and exited 1 because nested sudo removed `WHIM_LOADTEST_IMAGE` before Compose interpolation. `run.sh stop` exited 0 and restored production with all smoke checks passing. Resize back to standard is in progress. No 15/16-device drive ran; OpenRouter's before/after counters were unchanged.
+- Dispatched `chain-acceptance-fixes`, pinned BASE `f08ad63de49eb8b8190d48087a88d518a5498ac8`, branch `chain/server-acceptance-fixes`, worktree `.claude/worktrees/server-acceptance-fixes`. Scope and required behavioral red/green tests are in `acceptance-fixes.md`; independent review is required before merge. Fixes cover SSH readiness after VM start, preserving the replay image through sudo, and restoring production after failed load-test start.
+- Standard-profile restoration completed: the return resize reproduced the same post-start IAP 4003 failure, then the documented same-tag deploy retry exited 0. Production is healthy on `e2-standard-2` at `2acb69c`, all smoke checks passing. No replay service remains active. Task 15.4 remains incomplete until the fixes are reviewed and the actual drives pass.
+
+## Earlier sessions
+
 - 17:07 dispatched chain-6 BASE 889bc2d worktree .claude/worktrees/public-generation-server-6
 - 17:29 chain-6 report: blocked, class B — serviceWorkers:block injects an init script into the sandboxed candidate iframe (SecurityError → 20 synthrun checks fail; harness code inside the untrusted realm). Adjudicated option 1: drop the Playwright option; SW blocked by the opaque-origin sandbox + abort-all route, with a non-vacuous suite case; implementer amends D5 / 7.2 / spec in-chain; scope += .devcontainer/run-loop.sh seccomp arg. SendMessage revision 1/2. Carry to chain-14: CI never runs synthrun/e2e, so the runner sysctl step is unverified.
 - 18:03 chain-6 report: complete, GATE PASS (synthrun 282, e2e 40), class-A x5 (aborted vs blockedbyclient; erased unused TS import; egress count as capped trace entry; browserProcessId + env.d.ts; CI userns step unverifiable) · integrity OK · merged · regate-pass. Carry: chain-7 single launch call site; chain-12 compose needs security_opt seccomp. RUNTIME FINDING: webkitRTCPeerConnection survives neutralize.js (on-device WebRTC UDP egress) → security fix dispatched.

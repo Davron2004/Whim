@@ -190,3 +190,12 @@
 - writes-contract: handoff/loadtest.md (`run.sh` subcommands and arguments, driver flags, the JSON report fields and the exit rule, the image name, the pacing variables and defaults, the load-test `/healthz` identity)
 - after: chain-12
 - rule: every new export has a consumer under `server/test/`, so knip passes without a `knip.json` edit.
+
+## chain-acceptance-fixes: deployment restart and load-test recovery
+
+- tasks: 18.1–18.4; acceptance-fixes.md carries the observed failures and required proof
+- rationale: the first attended load test reproduced post-restart SSH unavailability and nested sudo dropping the replay image variable; failed start also left production stopped. These repairs share the deployment fixture and runbook.
+- files: `deploy/lib.sh`, `deploy/resize.sh`, `deploy/loadtest/run.sh`, `server/test/deploy-config.suite.ts`, `docs/deploy.md`, `handoff/loadtest.md`
+- reads: acceptance-fixes.md; design.md D25/D26; specs/server-deployment/spec.md capacity-profile, deployment and load-test requirements; handoff/deploy-surface.md; handoff/loadtest.md
+- writes-contract: handoff/loadtest.md (failure recovery behavior only)
+- after: chain-12, chain-16
