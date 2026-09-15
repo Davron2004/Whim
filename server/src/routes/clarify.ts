@@ -206,10 +206,10 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
       admittedRequestId = requestId;
     });
   } catch (err) {
+    acquired.handle.release();
     if (admittedRequestId !== undefined) {
       await settleFailedAdmission(deps.usageStore, admittedRequestId, deps.clock, err);
     }
-    acquired.handle.release();
     throw err;
   }
 }

@@ -12,6 +12,8 @@ import type { Usage } from '@whim/contract';
 import { check, eq, section } from './harness';
 import { NodeSqliteUsageStore, InMemoryUsageStore, type UsageStore } from '../src/usage-store';
 import {
+  DEFAULT_SWEEP_LIMIT,
+  DEFAULT_SWEEP_MAX_AGE_MS,
   MAX_CONCURRENT_ID_RESOLUTIONS,
   resolveRequestUsage,
   ResolveTracker,
@@ -386,7 +388,7 @@ async function testSweepResolvesWhatTheRequestCouldNot(): Promise<void> {
   eq('and it is still unresolved', second.unresolved, 1);
   check('the retry happened on the pass, not in a loop', calls - callsAfterFirst <= SWEEP_BOUNDS.maxAttempts, `${calls - callsAfterFirst} calls`);
 
-  const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 120_000, limit: 50 });
+  const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 120_000, maxAgeMs: 24 * 60 * 60 * 1000, limit: 50 });
   eq('the row that resolved is gone from the candidate set', candidates.map((c) => c.requestId), [neverId]);
   eq('the resolved row keeps its cost', (await store.summary({ days: 1, now })).generationStats.unresolvedCount, 1);
   check('the resolved row is the one the provider answered for', lateId !== neverId);
@@ -453,6 +455,54 @@ async function testSweepStandsDownWhileDraining(): Promise<void> {
 }
 
 /**
+ * Without a give-up rule, `DEFAULT_SWEEP_LIMIT` permanently-dead rows (ids the provider will never
+ * index) are always the oldest and fill every pass's candidate set, so a newer row that genuinely
+ * could resolve is never even examined. `maxAgeMs` excludes the dead rows once they are old enough,
+ * so the newer row is picked up in the very next pass.
+ */
+async function testSweepMaxAgePreventsStarvation(): Promise<void> {
+  section('Resolver — dead rows past maxAgeMs do not starve a newer resolvable row (spec "An unresolved row SHALL NOT be terminal")');
+
+  const store = new InMemoryUsageStore();
+  const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
+
+  for (let i = 0; i < DEFAULT_SWEEP_LIMIT; i++) {
+    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 25 * 60 * 60 * 1000 - i, deviceLimit: 1000 });
+    if (!admitted.ok) throw new Error('setup: admit should succeed');
+    await store.settle(admitted.requestId, { outcome: 'delivered', now: now - 25 * 60 * 60 * 1000 - i });
+    await store.recordCost(admitted.requestId, { state: 'unresolved', generationIds: [`gen-dead-${i}`] });
+  }
+  const fresh = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 60 * 60 * 1000, deviceLimit: 1000 });
+  if (!fresh.ok) throw new Error('setup: admit should succeed');
+  await store.settle(fresh.requestId, { outcome: 'delivered', now: now - 60 * 60 * 1000 });
+  await store.recordCost(fresh.requestId, { state: 'unresolved', generationIds: ['gen-fresh'] });
+
+  const transport: UsageAndCostTransport = {
+    fetchStats(id: string): Promise<GenerationStats | null> {
+      if (id === 'gen-fresh') return Promise.resolve({ usage: usage(1, 1), totalCostUsd: 0.01 });
+      return Promise.resolve(null); // the dead ids: the provider will never index them
+    },
+  };
+
+  const outcome = await runCostResolutionSweep({
+    usageStore: store,
+    transport,
+    now: () => now,
+    bounds: SWEEP_BOUNDS,
+    maxAgeMs: DEFAULT_SWEEP_MAX_AGE_MS,
+  });
+  eq('only the fresh row was examined; the dead rows never crowded it out', outcome.examined, 1);
+  eq('and it resolved in this single pass', outcome.resolved, 1);
+
+  const stillUnresolved = await store.summary({ days: 2, now });
+  eq(
+    'every dead row is still unresolved (left as-is, not retried)',
+    stillUnresolved.generationStats.unresolvedCount,
+    DEFAULT_SWEEP_LIMIT,
+  );
+}
+
+/**
  * One request's ids share a deadline, so they overlap — but a pipeline run records many model
  * calls, and one unbounded burst per finishing request is how a provider rate limit turns every id
  * into an unresolved one. The fan-out is capped, and the cap still lets every id be attempted.
@@ -505,5 +555,6 @@ export async function runResolverTests(): Promise<void> {
   await testEmptyGenerationIds();
   await testSweepResolvesWhatTheRequestCouldNot();
   await testSweepStandsDownWhileDraining();
+  await testSweepMaxAgePreventsStarvation();
   await testFanOutIsBounded();
 }

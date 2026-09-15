@@ -216,11 +216,13 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
     // The ledger row goes back too, not just the slot: a row left `pending` by a throwing store
     // keeps consuming the device's daily allowance and the global ceiling with nothing to show for
     // it, and nothing ever settles it. The unit is deliberately NOT refunded — see
-    // `routes/clarify.ts`'s `settleFailedAdmission`, whose reasoning this mirrors.
+    // `routes/clarify.ts`'s `settleFailedAdmission`, whose reasoning this mirrors. The slot is
+    // released first: nothing in `settleFailedAdmission` needs it held, and gating slot release on
+    // the very store that just failed would hold the slot open for however long that settle takes.
+    acquired.handle.release();
     if (admittedRequestId !== undefined) {
       await settleFailedAdmission(deps.usageStore, admittedRequestId, clock, err);
     }
-    acquired.handle.release();
     throw err;
   }
 }

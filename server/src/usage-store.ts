@@ -52,8 +52,11 @@ export interface UsageStore {
   /** The cost-resolution sweep's candidates (`usage/resolve.ts`): rows that still carry provider
    *  generation ids to re-resolve — `'unresolved'` ones, plus `'pending'` ones whose request ended
    *  more than `stalePendingAfterMs` ago (the resolver registered its ids and then died before
-   *  recording a verdict). Oldest-started first, at most `limit` rows. A row with no ids can never
-   *  be re-resolved and is never returned. */
+   *  recording a verdict). A row whose request ended more than `maxAgeMs` ago is EXCLUDED
+   *  regardless of state: without a cut-off a permanently unresolvable row (an id the provider will
+   *  never index) is always the oldest and starves every newer, genuinely resolvable row — it is
+   *  left in its current state and never offered again. Oldest-started first, at most `limit` rows.
+   *  A row with no ids can never be re-resolved and is never returned. */
   listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]>;
   /** Reads back an operator-facing summary over the trailing `params.days` UTC days ending on
    *  `params.now`'s day (inclusive). */
@@ -111,18 +114,21 @@ export interface RecordCostParams {
 }
 
 export interface CostSweepQuery {
-  /** Injected clock reading (ms since epoch) — the `'pending'` staleness cut-off is measured from it. */
+  /** Injected clock reading (ms since epoch) — the `'pending'` staleness and `maxAgeMs` cut-offs
+   *  are both measured from it. */
   now: number;
   /** How long after a request ENDED a still-`'pending'` row counts as stale. Measured from
    *  `ended_at`, never from `started_at`: a generation legitimately runs for minutes, and a row
    *  whose request is still in flight has a resolver on the way. */
   stalePendingAfterMs: number;
+  /** How long after a request ENDED its row remains a candidate at all, measured from `ended_at`.
+   *  A row older than this is excluded regardless of state and never re-attempted again. */
+  maxAgeMs: number;
   limit: number;
 }
 
 export interface CostSweepCandidate {
   requestId: string;
-  deviceId: string;
   generationIds: readonly string[];
 }
 
@@ -388,15 +394,17 @@ export class InMemoryUsageStore implements UsageStore {
 
   async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
     const staleBefore = query.now - query.stalePendingAfterMs;
+    const maxAgeBefore = query.now - query.maxAgeMs;
     return [...this.ledger.values()]
       .filter((row) => {
         if (!row.generationIds || row.generationIds.length === 0) return false;
+        if (row.endedAt === null || row.endedAt <= maxAgeBefore) return false;
         if (row.costState === 'unresolved') return true;
-        return row.costState === 'pending' && row.endedAt !== null && row.endedAt <= staleBefore;
+        return row.costState === 'pending' && row.endedAt <= staleBefore;
       })
       .sort((a, b) => a.startedAt - b.startedAt)
       .slice(0, query.limit)
-      .map((row) => ({ requestId: row.id, deviceId: row.deviceId, generationIds: row.generationIds ?? [] }));
+      .map((row) => ({ requestId: row.id, generationIds: row.generationIds ?? [] }));
   }
 
   async summary(params: SummaryParams): Promise<UsageSummary> {
@@ -565,19 +573,24 @@ export class NodeSqliteUsageStore implements UsageStore {
   }
 
   async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    // `generation_ids != '[]'` keeps a planted-empty-array row from consuming a `LIMIT` slot ahead
+    // of the JS-side length filter below, which otherwise runs too late to help (defense in depth:
+    // normal writes never persist '[]', see recordCost's `ids` computation).
     const rows = this.db.prepare(`
-      SELECT id, device_id, generation_ids FROM requests
+      SELECT id, generation_ids FROM requests
       WHERE generation_ids IS NOT NULL
-        AND (cost_state = 'unresolved' OR (cost_state = 'pending' AND ended_at IS NOT NULL AND ended_at <= ?))
+        AND generation_ids != '[]'
+        AND ended_at IS NOT NULL
+        AND ended_at > ?
+        AND (cost_state = 'unresolved' OR (cost_state = 'pending' AND ended_at <= ?))
       ORDER BY started_at ASC
       LIMIT ?
-    `).all(query.now - query.stalePendingAfterMs, query.limit) as {
+    `).all(query.now - query.maxAgeMs, query.now - query.stalePendingAfterMs, query.limit) as {
       id: string;
-      device_id: string;
       generation_ids: string;
     }[];
     return rows
-      .map((row) => ({ requestId: row.id, deviceId: row.device_id, generationIds: parseGenerationIds(row.generation_ids) }))
+      .map((row) => ({ requestId: row.id, generationIds: parseGenerationIds(row.generation_ids) }))
       .filter((candidate) => candidate.generationIds.length > 0);
   }
 
