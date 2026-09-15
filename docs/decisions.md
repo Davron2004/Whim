@@ -1085,3 +1085,37 @@ Apple rejects Whim itself.
 **Google Play is not where the risk is.** Its Device and Network Abuse policy exempts "JavaScript
 in a webview" from the ban on downloaded executable code. Its AI-Generated Content policy requires
 in-app reporting, which the same submission work covers.
+
+### 65. Store-launch compliance: consent, refusals, and app links `[DECIDED — openspec: store-launch-compliance]`
+
+Seven decisions from `store-launch-compliance/design.md`, one line of why each:
+
+- **D1 — consent is asked at the first data-sending action, not at first launch.** A launch-time
+  wall would contradict "a fresh install is not empty" and the brief's requirement that declining
+  keep apps usable; asking exactly where the first request would go satisfies 5.1.2(i)'s "before"
+  with no wasted tap.
+- **D2 — nothing is requested before consent, enforced by a branded `ConsentedClientOptions` type.**
+  A call site that forgot the check would still compile under a plain boolean; the brand turns a
+  missed site into a type error, which is the only way "nothing leaves before you agree" is
+  actually true rather than merely intended.
+- **D3 — reports don't require AI consent.** A report is user-initiated and goes only to
+  AnyCognition, never through the model-adjacent content policy; gating it behind AI consent would
+  stop someone who declined AI features from reporting an example app they find objectionable,
+  which is the opposite of what Play's reporting requirement asks for.
+- **D6 — one domain constant, one `release-config.ts` module.** `WHIM_DOMAIN` derives every Whim
+  URL from one place, so a build shipped with the placeholder (IANA-reserved `example.com`) can
+  never reach someone else's server, and a source-scan suite can enforce that nothing else in the
+  launcher hardcodes the domain.
+- **D7 — Settings sections, with the server address under a collapsed Advanced.** The field still
+  needs to exist for TestFlight/closed-track testers and LAN demos pointing at a non-production
+  server, but a release build's ordinary users and App/Play reviewers shouldn't meet a field that
+  means nothing to them.
+- **D10 — a refused generate settles or discards its pending record depending on how it was
+  started.** The record has to exist before the request (prompt-flow and pending-builds both need
+  the id up front), so a refusal can't just vanish silently; it either deletes the untouched record
+  (fresh attempt) or settles it `failed` with the server's own hint (already detached, or a Retry),
+  so a ghost tile never appears unexplained.
+- **D16 — the app-link reveal uses selectable text, not a clipboard button.** RN core has shipped no
+  clipboard API since 0.60, and adding one is a new native dependency that belongs with the platform
+  change, not this one; `<Text selectable>` gets the system copy menu on both platforms for free and
+  still satisfies 4.7.4's "reveal the link" requirement.
