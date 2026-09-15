@@ -35,6 +35,7 @@ import {
   type SummariserInput,
 } from '../src/generation/summarise';
 import type { ModelDelta, ModelRoster } from '../src/generation/model';
+import type { DeviceVerifier } from '../src/device-identity';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   ClarifyResponse,
@@ -193,6 +194,59 @@ async function testWholeRouteTableIsGated(): Promise<void> {
     eq(`${route.path} error code`, body.error, 'missing_device_id');
     check(`${route.path} hint is non-empty`, typeof body.hint === 'string' && body.hint.length > 0);
   }
+}
+
+// ── §2b A substituted verifier gates every route with no route change (generation-server spec) ──
+
+const VERIFIER_REFUSED_UUID = '55555555-5555-4555-8555-555555555555';
+const VERIFIER_OTHER_UUID = '66666666-6666-4666-8666-666666666666';
+
+/** Refuses exactly one UUID with its own `403` `ApiError`, admits everything else with the header
+ *  value verbatim — design D15's "an App Attest or Play Integrity verifier can turn the shape
+ *  check into a verified identity without any route change" made concrete for the test. */
+function testVerifier(): DeviceVerifier {
+  return {
+    async verify(headers) {
+      const deviceHeader = headers.get('x-whim-device');
+      if (deviceHeader === VERIFIER_REFUSED_UUID) {
+        return { ok: false, status: 403, body: { error: 'device_blocked', hint: 'This device is blocked.' } };
+      }
+      return { ok: true, deviceId: deviceHeader ?? '' };
+    },
+  };
+}
+
+async function testSubstitutedVerifier(): Promise<void> {
+  section('Wire v2 — a substituted verifier gates every route with no route change (generation-server spec)');
+
+  const model = new ScriptedModelClient(ROSTER, []);
+  const app = createApp({
+    pipeline: createStubPipeline(0),
+    usageStore: new InMemoryUsageStore(),
+    model,
+    roster: ROSTER,
+    deviceVerifier: testVerifier(),
+  });
+
+  const mounted = app.routes.filter((r) => r.path.startsWith('/v1') && r.method !== 'ALL');
+  check('setup: the /v1 route table is non-trivial', mounted.length >= 4, `found ${mounted.length}`);
+
+  for (const route of mounted) {
+    const res = await app.request(route.path, {
+      method: route.method,
+      headers: { 'content-type': 'application/json', 'x-whim-device': VERIFIER_REFUSED_UUID },
+      ...(route.method === 'POST' ? { body: JSON.stringify({ prompt: 'hello' }) } : {}),
+    });
+    eq(`${route.method} ${route.path} with the refused UUID → 403`, res.status, 403);
+    const body = (await res.json()) as { error?: string; hint?: string };
+    eq(`${route.path} carries the verifier's own error code`, body.error, 'device_blocked');
+    check(`${route.path} carries the verifier's own hint`, typeof body.hint === 'string' && body.hint.length > 0);
+  }
+  eq('the substituted verifier made no model call', model.requests.length, 0);
+
+  // Every other UUID is served as before, with no route change.
+  const res = await app.request('/v1/usage', { headers: { 'x-whim-device': VERIFIER_OTHER_UUID } });
+  eq('a non-refused UUID is served as before', res.status, 200);
 }
 
 // ── §3 The clarify endpoint (C6) ─────────────────────────────────────────────
@@ -757,6 +811,7 @@ async function testSseFramesSummaryUnmodified(): Promise<void> {
 export async function runWireV2Tests(): Promise<void> {
   testContractShapes();
   await testWholeRouteTableIsGated();
+  await testSubstitutedVerifier();
   await testClarifyEndpoint();
   await testRewriteClarificationsAndPlan();
   await testRewriteRetry();
