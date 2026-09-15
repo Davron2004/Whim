@@ -1,0 +1,227 @@
+# fastlane/Fastfile
+#
+# Orchestrates Whim's attended store lanes (design D12; platform-release-readiness change,
+# specs/store-release-pipeline/spec.md "Releasing is one attended lane per platform"). Every
+# lane is human-run only — nothing in scripts/gate.sh, scripts/gate-full.sh or CI calls
+# fastlane. Checkable logic (the preflight, AAB verification, the privacy audit, tagging) lives
+# in scripts/release/ and is invoked here through `node scripts/release/run.mjs <command>`
+# (handoff/release-cli.md); fastlane itself only drives build_app, gradle, deliver, supply and
+# the store upload/version-lookup actions.
+#
+# Full runbook — one-time credential setup, the first manual Play upload, per-release commands
+# and troubleshooting — lives in docs/release/mobile.md. Read it before running any lane here.
+#
+# Working-directory gotcha (measured on fastlane 2.237.0, not just the documented default):
+# every action here — `sh` included — runs with its Ruby-level CWD at this `fastlane/` folder,
+# not the repo root, regardless of the "goes up one directory" behavior described for actions
+# triggered by name. Every path below is therefore anchored on `ROOT_DIR`, and every `sh`-run
+# shell command starts with an explicit `cd`, because the spawned process only inherits Ruby's
+# CWD (nothing here passes it a separate `chdir`).
+
+min_fastlane_version("2.237.0")
+
+require "json"
+require "shellwords"
+
+ROOT_DIR = File.expand_path("..", __dir__)
+CONFIG_HOME = File.expand_path("~/.config/whim")
+
+def root(*segments)
+  File.join(ROOT_DIR, *segments)
+end
+
+# ---------------------------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------------------------
+
+# Runs one command from the repo root, as one shell string, so `cd` always lands before it.
+def sh_at_root(*command)
+  sh("cd #{ROOT_DIR.shellescape} && #{command.map(&:to_s).map(&:shellescape).join(' ')}")
+end
+
+# Runs one scripts/release/ CLI command. `sh` raises on a non-zero exit
+# (handoff/release-cli.md: 1 = findings, 2 = usage error) — that IS "fails the lane on a
+# non-zero exit", no extra check needed.
+def release_cli(*args)
+  sh_at_root("node", "scripts/release/run.mjs", *args)
+end
+
+def native_config
+  JSON.parse(release_cli("native-config", "--json"))
+end
+
+def read_credential_json(filename)
+  JSON.parse(File.read(File.join(CONFIG_HOME, filename)))
+end
+
+# `build:<n>` wins when given; otherwise the CLI derives one time-derived number
+# (specs/store-release-pipeline/spec.md "Each lane uses one time-derived build number").
+def resolve_build_number(build_option)
+  return Integer(build_option) if build_option
+
+  Integer(release_cli("build-number").strip)
+end
+
+def asc_api_key_hash
+  key = read_credential_json("asc-api-key.json")
+  { key_id: key["key_id"], issuer_id: key["issuer_id"], key_filepath: key["key_filepath"] }
+end
+
+# The App Store Connect key flags build_app's archive AND export both need (design D12).
+def asc_auth_xcargs
+  key = asc_api_key_hash
+  "-allowProvisioningUpdates " \
+    "-authenticationKeyPath \"#{key[:key_filepath]}\" " \
+    "-authenticationKeyID \"#{key[:key_id]}\" " \
+    "-authenticationKeyIssuerID \"#{key[:issuer_id]}\""
+end
+
+# design D12 / task 11.1: the maximum google_play_track_version_codes over every closed/open
+# track, an empty or not-yet-created track counting as 0. The action itself already returns []
+# rather than raising when a track has no releases; the rescue is a second line of defense that
+# has not been exercised against the real Play API (no track exists yet on this machine).
+def android_store_latest_build_number(package_name, json_key)
+  %w[internal alpha beta production].map do |track|
+    codes = begin
+      google_play_track_version_codes(package_name: package_name, track: track, json_key: json_key)
+    rescue StandardError
+      []
+    end
+    codes.nil? || codes.empty? ? 0 : codes.max
+  end.max
+end
+
+# The preflight is the ONE place that reports a missing or misconfigured credential file, with
+# its fix (specs/store-release-pipeline/spec.md "The preflight names every reason it refuses").
+# The store-latest lookups need those same credentials, but run BEFORE the preflight call, so a
+# missing file here must never crash the lane with a raw Ruby backtrace — it falls back to 0 and
+# lets the preflight name the real problem next.
+def ios_store_latest_build_number(app_id)
+  latest_testflight_build_number(api_key: asc_api_key_hash, app_identifier: app_id) || 0
+rescue StandardError
+  0
+end
+
+platform :ios do
+  desc "Archive the Release configuration and upload it to TestFlight"
+  lane :testflight do |options|
+    config = native_config
+    build_number = resolve_build_number(options[:build])
+    store_latest = ios_store_latest_build_number(config["WHIM_APP_ID"])
+    release_cli("preflight", "--platform", "ios", "--build", build_number.to_s,
+                 "--store-latest", store_latest.to_s,
+                 *(options[:placeholder_domain] ? ["--allow-placeholder-domain"] : []))
+
+    sh_at_root("npm", "run", "build")
+    sh("cd #{root('ios').shellescape} && bundle exec pod install")
+
+    auth_xcargs = asc_auth_xcargs
+    build_app(
+      workspace: root("ios/Whim.xcworkspace"),
+      scheme: "Whim",
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: root("ios/build/release"),
+      xcargs: "WHIM_BUILD_NUMBER=#{build_number} #{auth_xcargs}",
+      export_xcargs: auth_xcargs
+    )
+
+    archive_path = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
+    release_cli("privacy-audit", File.join(archive_path, "Products/Applications/Whim.app"))
+
+    upload_to_testflight(
+      api_key: asc_api_key_hash,
+      app_identifier: config["WHIM_APP_ID"],
+      distribute_external: options[:external] ? true : false,
+      groups: options[:groups] ? options[:groups].to_s.split(",") : nil
+    )
+
+    release_cli("tag", "--build", build_number.to_s)
+    UI.success("ios testflight: uploaded #{config['WHIM_MARKETING_VERSION']} build #{build_number}")
+  end
+
+  desc "Push App Store listing metadata (no binary, no submission)"
+  lane :metadata do
+    config = native_config
+    deliver(
+      api_key: asc_api_key_hash,
+      app_identifier: config["WHIM_APP_ID"],
+      metadata_path: root("release/store/app-store"),
+      app_rating_config_path: root("release/store/app-store/age-rating.json"),
+      privacy_url: "https://whim.#{config['WHIM_DOMAIN']}/privacy",
+      support_url: "https://whim.#{config['WHIM_DOMAIN']}/support",
+      app_review_information: read_credential_json("review-contact.json"),
+      skip_binary_upload: true,
+      submit_for_review: false,
+      force: true
+    )
+  end
+
+  desc "Upload the App Privacy declaration (needs an interactive Apple ID session, attended)"
+  lane :privacy do
+    config = native_config
+    # No API-key auth exists for this endpoint (pilot/deliver's api_key isn't accepted here) —
+    # it always needs an interactive Apple ID session, matching design D12's own note.
+    upload_app_privacy_details_to_app_store(
+      app_identifier: config["WHIM_APP_ID"],
+      json_path: root("release/store/app-store/app-privacy.json")
+    )
+  end
+end
+
+platform :android do
+  desc "Build the store AAB and upload it to the closed testing track"
+  lane :closed do |options|
+    config = native_config
+    build_number = resolve_build_number(options[:build])
+    json_key = File.join(CONFIG_HOME, "play-publisher.json")
+    store_latest = android_store_latest_build_number(config["WHIM_APP_ID"], json_key)
+    release_cli("preflight", "--platform", "android", "--build", build_number.to_s,
+                 "--store-latest", store_latest.to_s,
+                 *(options[:placeholder_domain] ? ["--allow-placeholder-domain"] : []))
+
+    sh_at_root("npm", "run", "build")
+    gradle(
+      project_dir: root("android"),
+      task: "bundle",
+      build_type: "Release",
+      properties: {
+        "whimBuildNumber" => build_number,
+        "reactNativeArchitectures" => "armeabi-v7a,arm64-v8a,x86_64"
+      }
+    )
+
+    aab_path = root("android/app/build/outputs/bundle/release/app-release.aab")
+    release_cli("verify-aab", aab_path, "--build", build_number.to_s)
+
+    should_upload = options[:upload] != false
+    if should_upload
+      upload_to_play_store(
+        package_name: config["WHIM_APP_ID"],
+        json_key: json_key,
+        aab: aab_path,
+        track: "alpha",
+        release_status: options[:status] || "draft",
+        skip_upload_metadata: true,
+        skip_upload_images: true,
+        skip_upload_screenshots: true
+      )
+    end
+
+    release_cli("tag", "--build", build_number.to_s)
+    outcome = should_upload ? "uploaded to the alpha (closed testing) track" : "upload skipped — upload #{aab_path} by hand"
+    UI.success("android closed: build #{build_number}, #{outcome}")
+  end
+
+  desc "Push Play listing metadata (no binary)"
+  lane :metadata do
+    config = native_config
+    supply(
+      package_name: config["WHIM_APP_ID"],
+      json_key: File.join(CONFIG_HOME, "play-publisher.json"),
+      metadata_path: root("release/store/play"),
+      skip_upload_aab: true,
+      skip_upload_apk: true
+    )
+  end
+end

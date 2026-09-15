@@ -146,7 +146,9 @@ npm install
 npm run build              # runtime HTML, app bundles, artifacts
 npm run invariants         # containment suite against this exact build (headless Chromium)
 npm run launcher:test      # launcher acceptance (Node); vstore:test, storage:test, bridge:test, sdk:test, server:test likewise
-npm run android:release    # offline release build onto a device or emulator
+npm run android:release    # debug-signed offline build onto a device or emulator; the store AAB comes only from `fastlane android closed`
 ```
 
 Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline. Opening apps you already have does not.
+
+Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
