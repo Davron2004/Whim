@@ -102,9 +102,9 @@ Two things leave the phone, both outside any mini app's own reach:
 - **A report**, sent only when the user fills in the report sheet and taps `Send report`. It's not
   gated on AI-data consent (a user who declined AI features can still report something) — see
   `docs/decisions.md`'s entry for D3 below.
-- **A `GET /healthz` connectivity check**, sent only once AI-data consent is granted (or when
-  Settings' server field is saved), to show an online/offline status line. It carries no user
-  content and no request body.
+- **A `GET /healthz` connectivity check**, sent only once AI-data consent is granted (and, once
+  granted, when Settings' server field is saved), to show an online/offline status line. It carries
+  no user content and no request body.
 
 Nothing else: no analytics SDK, no crash reporter, no ads SDK, no background telemetry.
 

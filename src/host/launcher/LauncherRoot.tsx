@@ -65,6 +65,7 @@ import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
 import { parseAppLink } from './app-link';
+import { schemeAndHostOf } from './scheme-host';
 import { resolveAppLink, linkExitFor, PendingLinkHolder } from './link-routing';
 import type { LinkExit } from './link-routing';
 import ScreenBoundary from './ScreenBoundary';
@@ -121,6 +122,7 @@ import type { RefusalSentFrom } from './refusal-target';
 import { useNoticeWindowClear } from './ServiceNotice';
 import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
+import { resolveOptions } from './resolve-options';
 import { probeGateFor } from './probe-gate';
 
 type Screen =
@@ -213,20 +215,6 @@ function errorFields(err: unknown): Record<string, unknown> {
 /** Breadcrumb for a swallowed generation-path error, on the generation channel. */
 function logGenError(stage: string, err: unknown): void {
   log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
-}
-
-/** What a rejected app link is recorded with (spec app-links "URLs that aren't app links are
- *  ignored" — "the log record names only the scheme and host"): never the full URL, which may
- *  carry a path or query the sender chose. An unparseable string reads as `'unknown'`/`'unknown'`
- *  rather than throwing — a malformed URL is still just a rejection. */
-function schemeAndHostOf(url: string): { scheme: string; host: string } {
-  try {
-    const parsed = new URL(url);
-    return { scheme: parsed.protocol.replace(':', ''), host: parsed.hostname };
-  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable URL still needs a log record, so this falls back rather than throwing
-  } catch {
-    return { scheme: 'unknown', host: 'unknown' };
-  }
 }
 
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
@@ -453,7 +441,8 @@ function LauncherShell({
    *  `onConsentAskAgree` falls into, since `grantConsent`'s `consentTick` bump does not retire the
    *  memo until the render AFTER this call returns (spec ai-data-consent "After the user agrees,
    *  the action they started SHALL continue as if consent had already existed"). */
-  const resolveClientOptions = (): ConsentedClientOptions | null => clientOptions ?? liveClientOptions(kv, deviceId);
+  const resolveClientOptions = (): ConsentedClientOptions | null =>
+    resolveOptions(clientOptions, liveClientOptions(kv, deviceId));
 
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
   // ONE request that needs no AI-data consent, so this is never gated by `consentStatus`/
@@ -614,8 +603,8 @@ function LauncherShell({
       }
       refresh();
       setReady(true);
-      // `readyRef.current` set here too, not left to the next render's `readyRef.current = ready`
-      // assignment (line 418): the app-link listener effect reads the ref synchronously and could
+      // `readyRef.current` set here too, not left to the next render's own `readyRef.current =
+      // ready` mirroring assignment: the app-link listener effect reads the ref synchronously and could
       // otherwise re-hold a link that arrives in the same tick as `release()` below, right after
       // this effect already drained the holder — stuck forever with nothing left to release it.
       readyRef.current = true;
@@ -1716,7 +1705,7 @@ function LauncherShell({
           onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
           onCreate={() => openWithConsent({ kind: 'compose' })}
           onSettings={() => setScreen({ kind: 'settings' })}
-          onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
+          onOpenDevProbe={devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined}
           offline={showOfflineIndicator(connectivity)}
           onOpenPending={onOpenPending}
           onCancelPending={onCancelPending}
