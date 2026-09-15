@@ -7,3 +7,4 @@ Staging branch: integration/store-launch (shared launch run)
   - Every code chain waits for fix-launcher-wiring and fix-consent-retry to merge (both edit launcher files these chains touch, including LauncherRoot.tsx).
   - Owner questions answered with the planner defaults (orb Back row: no; nav.back() rule: separate change; edge swipe: only with a native stack; done-step Android back → Home: yes; bottom inset on Android: yes; F9 reuses SHOW_DEV_LOG_OVERLAY: yes).
   - Process note: the planner committed with core.hooksPath=/dev/null (skipped only graphify's no-op post-commit hook). Don't repeat.
+- 02:21 dispatched chain-1 BASE 8f28226. Both review fix chains merged. D6 adjudication: build on src/host/launcher/consent-screen-actions.ts (fix-consent-retry), do not add a second consent controls table.
