@@ -1233,7 +1233,7 @@ function loadtestStartTests(): void {
     git(sandbox.repo, sandbox.home, ['commit', '-q', '-m', 'red nested sudo']);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start']);
     const docker = toolLog(sandbox, 'docker');
-    check('the old nested-sudo command fails with a missing replay image and restores production', run.status === 1 && run.stderr.includes('load-test compose start failed') && docker.some((line) => line.startsWith('compose --project-directory /opt/whim --file /opt/whim/compose.yaml up')), run.stderr);
+    check('the old nested-sudo command fails with a missing replay image and restores production', run.status === 1 && run.stderr.includes('missing WHIM_LOADTEST_IMAGE') && run.stderr.includes('load-test compose start failed') && docker.some((line) => line.startsWith('compose --project-directory /opt/whim --file /opt/whim/compose.yaml up')), run.stderr);
   });
 
   const smokeReady = (sandbox: Sandbox): void => {
