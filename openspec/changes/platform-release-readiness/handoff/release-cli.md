@@ -29,20 +29,25 @@ export const ANDROID_UPLOAD_VALUE_NAMES = ['WHIM_UPLOAD_STORE_FILE', 'WHIM_UPLOA
 export const CREDENTIAL_FILES_BY_PLATFORM: Readonly<Record<ReleasePlatform, readonly string[]>> = {
   ios: ['asc-api-key.json', 'review-contact.json'],
   android: ['play-publisher.json'],
-}; // joined with os.homedir() + '.config/whim/'; whim-upload.jks is checked separately, as a WHIM_UPLOAD_STORE_FILE Gradle value, not a fixed name here
+}; // joined with os.homedir() + '.config/whim/'
+export interface NamedCredentialFile { label: string; file: {path, exists, mode: number|null} }
 export interface PreflightSnapshot { platform, gitStatusPorcelain, nodeMajorVersion, jdkMajorVersion /* android */, xcodebuildPresent /* ios */,
-  credentialFiles: readonly {path, exists, mode: number|null}[], androidUploadValues: readonly {name, present}[]|undefined,
+  credentialFiles: readonly {path, exists, mode: number|null}[], extraCredentialFiles: readonly NamedCredentialFile[],
+  androidUploadValues: readonly {name, present}[]|undefined,
   config: NativeReleaseConfig, buildNumber: number, storeLatestBuildNumber: number|undefined,
   nativeLiteralFindings, iosProjectFindings, androidProjectFindings, assetFindings, storeListingFindings }
 export function evaluatePreflight(snapshot, options: { allowPlaceholderDomain: boolean }): readonly { reason: string; fix: string }[];
 export function collectPreflightSnapshot(repoRoot, platform, args: { buildNumber, storeLatestBuildNumber }): PreflightSnapshot; // impure, never called by a suite
 ```
 
-Credential file mode check: not `exists` → finding + fix "see docs/release/mobile.md's one-time
-setup"; `mode & 0o077 !== 0` (readable by group/other) → finding naming the octal mode + fix
-`chmod 600 <path>`. Missing Android upload values → ONE finding `Android release build is
-missing: <names>` (comma-space-joined, in `ANDROID_UPLOAD_VALUE_NAMES` order, mirrors
-handoff/android-build.md's Gradle error text).
+Credential file mode check (both `credentialFiles` and `extraCredentialFiles`): not `exists` →
+finding + fix "see docs/release/mobile.md's one-time setup"; `mode & 0o077 !== 0` (readable by
+group/other) → finding naming the octal mode + fix `chmod 600 <path>`. `extraCredentialFiles`
+covers the iOS `.p8` named by `asc-api-key.json`'s `key_filepath`, the Android upload keystore
+resolved from `WHIM_UPLOAD_STORE_FILE`, and `~/.gradle/gradle.properties` itself when it holds
+any `WHIM_UPLOAD_*` value — each a separately labeled finding. Missing Android upload values →
+ONE finding `Android release build is missing: <names>` (comma-space-joined, in
+`ANDROID_UPLOAD_VALUE_NAMES` order, mirrors handoff/android-build.md's Gradle error text).
 
 ## `verify-aab.ts`
 
@@ -61,12 +66,10 @@ an APK's binary-XML container (design D12 hedged this as a fallback; it's actual
 that works). `getAabManifestFacts` therefore shells straight to
 `bundletool dump manifest --bundle=<aabPath>` (binary name from `WHIM_BUNDLETOOL` env var, else
 `bundletool` on PATH) and regex-parses its plain-XML output for `package=`, `android:versionCode=`,
-`android:debuggable=`. **Verification gap:** no runnable `bundletool` CLI was available on this
-machine (only non-executable dependency jars under Gradle's cache, missing a main-class
-manifest) — `keytool`'s signer read above IS verified against a real AAB; `bundletool`'s exact
-output shape is not. Install via `brew install bundletool` before the first real release; if its
-output ever differs from plain `<manifest ... package="..." android:versionCode="..." ...>` XML,
-adjust the three regexes in `getAabManifestFacts` only.
+`android:debuggable=`. **Verified end to end** against bundletool 1.18.3 (`brew install
+bundletool`): a real `bundleRelease` AAB's `dump manifest` output matched the three regexes
+exactly, and `verify-aab <aab> --build <n>` both passed a matching build number and refused a
+mismatched one with the expected finding.
 
 ## `privacy-audit.ts`
 

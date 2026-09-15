@@ -274,6 +274,45 @@ function isPbxDict(v: PbxValue | undefined): v is { [key: string]: PbxValue } {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+interface PbxConfigurationEntry {
+  readonly buildSettings: { [key: string]: PbxValue };
+  /** The resolved `path` of `baseConfigurationReference`'s `PBXFileReference`; `undefined` when
+   *  the configuration sets none, or it doesn't resolve to a file reference with a `path`. */
+  readonly baseConfigurationReferencePath: string | undefined;
+}
+
+function resolveFileReferencePath(objects: { [key: string]: PbxValue }, ref: PbxValue | undefined): string | undefined {
+  if (typeof ref !== 'string') return undefined;
+  const fileRef = objects[ref];
+  if (!isPbxDict(fileRef)) return undefined;
+  const filePath = fileRef.path;
+  return typeof filePath === 'string' ? filePath : undefined;
+}
+
+/** Every `XCBuildConfiguration` an `XCConfigurationList` (`configListId`) points at, by name. */
+function extractConfigurationsByName(objects: { [key: string]: PbxValue }, configListId: PbxValue | undefined): { [configName: string]: PbxConfigurationEntry } {
+  const configList = typeof configListId === 'string' ? objects[configListId] : undefined;
+  if (!configList || !isPbxDict(configList)) throw new Error('pbxproj: build configuration list not found');
+
+  const configIds = configList.buildConfigurations;
+  if (!Array.isArray(configIds)) throw new Error('pbxproj: "buildConfigurations" is not an array');
+
+  const result: { [configName: string]: PbxConfigurationEntry } = {};
+  for (const idValue of configIds) {
+    if (typeof idValue !== 'string') continue;
+    const config = objects[idValue];
+    if (!isPbxDict(config)) continue;
+    const name = config.name;
+    if (typeof name !== 'string') continue;
+    const settings = config.buildSettings;
+    result[name] = {
+      buildSettings: isPbxDict(settings) ? settings : {},
+      baseConfigurationReferencePath: resolveFileReferencePath(objects, config.baseConfigurationReference),
+    };
+  }
+  return result;
+}
+
 /** The `Whim` target's `buildSettings` dict for each build configuration ("Debug", "Release"), by configuration name. */
 export function extractWhimTargetBuildSettings(pbxprojText: string): { [configName: string]: { [key: string]: PbxValue } } {
   const root = parsePbxproj(pbxprojText);
@@ -283,22 +322,31 @@ export function extractWhimTargetBuildSettings(pbxprojText: string): { [configNa
   const target = Object.values(objects).find((o) => isPbxDict(o) && o.isa === 'PBXNativeTarget' && o.name === 'Whim');
   if (!target || !isPbxDict(target)) throw new Error('pbxproj: PBXNativeTarget "Whim" not found');
 
-  const configListId = target.buildConfigurationList;
-  const configList = typeof configListId === 'string' ? objects[configListId] : undefined;
-  if (!configList || !isPbxDict(configList)) throw new Error('pbxproj: build configuration list for target "Whim" not found');
-
-  const configIds = configList.buildConfigurations;
-  if (!Array.isArray(configIds)) throw new Error('pbxproj: "buildConfigurations" is not an array');
-
   const result: { [configName: string]: { [key: string]: PbxValue } } = {};
-  for (const idValue of configIds) {
-    if (typeof idValue !== 'string') continue;
-    const config = objects[idValue];
-    if (!isPbxDict(config)) continue;
-    const name = config.name;
-    const settings = config.buildSettings;
-    if (typeof name !== 'string') continue;
-    result[name] = isPbxDict(settings) ? settings : {};
+  for (const [name, entry] of Object.entries(extractConfigurationsByName(objects, target.buildConfigurationList))) {
+    result[name] = entry.buildSettings;
+  }
+  return result;
+}
+
+/**
+ * The project-level (`PBXProject`) build configurations' `baseConfigurationReference`, resolved
+ * to a path, by configuration name. This is where `release/whim-release.xcconfig` is wired in —
+ * the `$(WHIM_...)` macros the target-level settings reference come from here, cascading down
+ * regardless of the target's own `baseConfigurationReference` (the Pods xcconfig).
+ */
+export function extractWhimProjectBaseConfigPaths(pbxprojText: string): { [configName: string]: string | undefined } {
+  const root = parsePbxproj(pbxprojText);
+  const objects = root.objects;
+  if (!isPbxDict(objects)) throw new Error('malformed pbxproj: missing "objects" dict');
+
+  const rootObjectId = root.rootObject;
+  const project = typeof rootObjectId === 'string' ? objects[rootObjectId] : undefined;
+  if (!project || !isPbxDict(project) || project.isa !== 'PBXProject') throw new Error('pbxproj: root PBXProject not found');
+
+  const result: { [configName: string]: string | undefined } = {};
+  for (const [name, entry] of Object.entries(extractConfigurationsByName(objects, project.buildConfigurationList))) {
+    result[name] = entry.baseConfigurationReferencePath;
   }
   return result;
 }
@@ -316,14 +364,28 @@ const PBXPROJ_PATH = 'ios/Whim.xcodeproj/project.pbxproj';
 const INFO_PLIST_PATH = `${IOS_DIR}/Info.plist`;
 const ENTITLEMENTS_PATH = `${IOS_DIR}/Whim.entitlements`;
 const PRIVACY_MANIFEST_PATH = `${IOS_DIR}/PrivacyInfo.xcprivacy`;
+const CODE_SIGN_ENTITLEMENTS_VALUE = 'Whim/Whim.entitlements';
+const WHIM_RELEASE_XCCONFIG_SUFFIX = 'release/whim-release.xcconfig';
 
 function readRepoFile(repoRoot: string, relPath: string): string {
   return fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
 }
 
+/** One `key` finding, distinguishing "the literal value" from any other wrong value, same shape as the bundle-id check below. */
+function checkMacroSetting(findings: IosProjectFinding[], configName: string, settings: { [key: string]: PbxValue }, key: string, macro: string, literalValue: string): void {
+  const value = settings[key];
+  if (value === macro) return;
+  const literalNote = value === literalValue ? ' (the literal value, not the macro)' : '';
+  findings.push({
+    file: PBXPROJ_PATH,
+    message: `${configName} ${key} must be ${JSON.stringify(macro)}, got ${JSON.stringify(value)}${literalNote}`,
+  });
+}
+
 function checkPbxproj(repoRoot: string, config: NativeReleaseConfig): IosProjectFinding[] {
   const findings: IosProjectFinding[] = [];
-  const settingsByConfig = extractWhimTargetBuildSettings(readRepoFile(repoRoot, PBXPROJ_PATH));
+  const pbxprojText = readRepoFile(repoRoot, PBXPROJ_PATH);
+  const settingsByConfig = extractWhimTargetBuildSettings(pbxprojText);
   for (const [configName, settings] of Object.entries(settingsByConfig)) {
     const bundleId = settings.PRODUCT_BUNDLE_IDENTIFIER;
     if (bundleId !== '$(WHIM_APP_ID)') {
@@ -340,7 +402,29 @@ function checkPbxproj(repoRoot: string, config: NativeReleaseConfig): IosProject
         message: `${configName} TARGETED_DEVICE_FAMILY must be "1" (iPhone only), got ${JSON.stringify(deviceFamily)}`,
       });
     }
+    checkMacroSetting(findings, configName, settings, 'DEVELOPMENT_TEAM', '$(WHIM_APPLE_TEAM_ID)', config.WHIM_APPLE_TEAM_ID);
+    checkMacroSetting(findings, configName, settings, 'MARKETING_VERSION', '$(WHIM_MARKETING_VERSION)', config.WHIM_MARKETING_VERSION);
+    checkMacroSetting(findings, configName, settings, 'CURRENT_PROJECT_VERSION', '$(WHIM_BUILD_NUMBER)', config.WHIM_BUILD_NUMBER);
+    const entitlements = settings.CODE_SIGN_ENTITLEMENTS;
+    if (entitlements !== CODE_SIGN_ENTITLEMENTS_VALUE) {
+      findings.push({
+        file: PBXPROJ_PATH,
+        message: `${configName} CODE_SIGN_ENTITLEMENTS must be ${JSON.stringify(CODE_SIGN_ENTITLEMENTS_VALUE)}, got ${JSON.stringify(entitlements)}`,
+      });
+    }
   }
+
+  // The project-level Debug and Release configurations must both wire in whim-release.xcconfig
+  // — that's the ONE place the `$(WHIM_...)` macros above actually resolve from.
+  for (const [configName, basePath] of Object.entries(extractWhimProjectBaseConfigPaths(pbxprojText))) {
+    if (basePath === undefined || !basePath.endsWith(WHIM_RELEASE_XCCONFIG_SUFFIX)) {
+      findings.push({
+        file: PBXPROJ_PATH,
+        message: `${configName} project-level baseConfigurationReference must resolve to a path ending "${WHIM_RELEASE_XCCONFIG_SUFFIX}", got ${JSON.stringify(basePath)}`,
+      });
+    }
+  }
+
   return findings;
 }
 

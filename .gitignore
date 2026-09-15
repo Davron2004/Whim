@@ -44,6 +44,7 @@ yarn-error.log
 # https://docs.fastlane.tools/best-practices/source-control/
 
 **/fastlane/report.xml
+**/fastlane/README.md
 **/fastlane/Preview.html
 **/fastlane/screenshots
 **/fastlane/test_output

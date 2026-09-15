@@ -66,8 +66,9 @@ The Play app lives in a **personal** developer account. Two consequences:
 ### Android signing key
 
 ```sh
-keytool -genkeypair -v -keystore ~/.config/whim/whim-upload.jks -alias whim-upload \
-  -keyalg RSA -keysize 2048 -validity 10000
+keytool -genkeypair -v -storetype PKCS12 -keystore ~/.config/whim/whim-upload.jks \
+  -alias whim-upload -keyalg RSA -keysize 4096 -validity 10000 \
+  -dname "CN=AnyCognition Inc., O=AnyCognition Inc."
 chmod 600 ~/.config/whim/whim-upload.jks
 ```
 
@@ -81,11 +82,13 @@ WHIM_UPLOAD_KEY_PASSWORD=...
 ```
 
 Compute the upload key's fingerprint and commit it (this one file IS committed — it's a public
-fingerprint, not a secret):
+fingerprint, not a secret). `parseFingerprintFile` expects 32 colon-separated hex bytes with no
+label, which is what `-list -v` plus this `awk` gives — not the `sha256 Fingerprint=...`-prefixed
+line `openssl x509 -fingerprint` prints:
 
 ```sh
-keytool -exportcert -alias whim-upload -keystore ~/.config/whim/whim-upload.jks -rfc | \
-  openssl x509 -noout -fingerprint -sha256 > release/android-upload-cert.sha256
+keytool -list -v -keystore ~/.config/whim/whim-upload.jks -alias whim-upload | \
+  awk '/SHA256:/{print $2}' > release/android-upload-cert.sha256
 ```
 
 ### bundletool
@@ -138,6 +141,11 @@ fastlane ios privacy       # App Privacy upload — needs an interactive Apple I
 fastlane android metadata  # supply: no binary
 ```
 
+`fastlane ios metadata`'s summary table prints `review-contact.json`'s reviewer name, phone number
+and email address to the terminal (deliver masks only `demo_password`; there's no option to hide
+the rest — checked `deliver/lib/deliver/runner.rb` on the installed 2.237.0). Run it somewhere
+that log isn't shared.
+
 An internal smoke build that reaches no server yet:
 
 ```sh
@@ -159,13 +167,14 @@ change reproduces the same bytes).
 
 ## Changing the domain
 
-`WHIM_DOMAIN` lives in exactly two places, both of which must agree:
+`WHIM_DOMAIN` lives in three places, all of which must agree:
 
 - `release/whim-release.xcconfig` (native builds, the release CLI, the Fastfile's URL derivation)
 - `src/host/launcher/release-config.ts` (the app's own runtime constant)
+- `deploy/defaults.env` (`WHIM_API_HOST`/`WHIM_WEB_HOST`, derived from the same domain)
 
-The domain-lockstep suite (`checks/test/release/domain-lockstep.suite.ts`) fails the gate if they
-drift — edit both in the same commit.
+The domain-lockstep suite (`checks/test/release/domain-lockstep.suite.ts`) fails the gate if any
+of them drift — edit all three in the same commit.
 
 ## Association files (AASA / assetlinks)
 
@@ -191,7 +200,7 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   arm64-only store build by running the Gradle step yourself with the narrower architecture list,
   then resume from `verify-aab`:
   ```sh
-  bundle exec fastlane run gradle project_dir:"$(pwd)/android" task:"bundle" build_type:"Release" \
+  fastlane run gradle project_dir:"$(pwd)/android" task:"bundle" build_type:"Release" \
     properties:'{"whimBuildNumber":"<n>","reactNativeArchitectures":"arm64-v8a"}'
   node scripts/release/run.mjs verify-aab android/app/build/outputs/bundle/release/app-release.aab --build <n>
   ```

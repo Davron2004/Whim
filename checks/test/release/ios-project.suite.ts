@@ -28,6 +28,12 @@ interface PbxprojFixtureOpts {
   releaseBundleId?: string;
   debugFamily?: string;
   releaseFamily?: string;
+  developmentTeam?: string;
+  marketingVersion?: string;
+  currentProjectVersion?: string;
+  codeSignEntitlements?: string;
+  debugProjectXcconfigPath?: string;
+  releaseProjectXcconfigPath?: string;
 }
 
 function pbxprojFixture(opts: PbxprojFixtureOpts = {}): string {
@@ -35,6 +41,12 @@ function pbxprojFixture(opts: PbxprojFixtureOpts = {}): string {
   const releaseBundleId = opts.releaseBundleId ?? '$(WHIM_APP_ID)';
   const debugFamily = opts.debugFamily ?? '1';
   const releaseFamily = opts.releaseFamily ?? '1';
+  const developmentTeam = opts.developmentTeam ?? '$(WHIM_APPLE_TEAM_ID)';
+  const marketingVersion = opts.marketingVersion ?? '$(WHIM_MARKETING_VERSION)';
+  const currentProjectVersion = opts.currentProjectVersion ?? '$(WHIM_BUILD_NUMBER)';
+  const codeSignEntitlements = opts.codeSignEntitlements ?? 'Whim/Whim.entitlements';
+  const debugProjectXcconfigPath = opts.debugProjectXcconfigPath ?? '../release/whim-release.xcconfig';
+  const releaseProjectXcconfigPath = opts.releaseProjectXcconfigPath ?? '../release/whim-release.xcconfig';
   return `// !$*UTF8*$!
 {
 	archiveVersion = 1;
@@ -56,6 +68,10 @@ function pbxprojFixture(opts: PbxprojFixtureOpts = {}): string {
 			buildSettings = {
 				PRODUCT_BUNDLE_IDENTIFIER = "${debugBundleId}";
 				TARGETED_DEVICE_FAMILY = "${debugFamily}";
+				DEVELOPMENT_TEAM = "${developmentTeam}";
+				MARKETING_VERSION = "${marketingVersion}";
+				CURRENT_PROJECT_VERSION = "${currentProjectVersion}";
+				CODE_SIGN_ENTITLEMENTS = ${codeSignEntitlements};
 			};
 			name = Debug;
 		};
@@ -64,11 +80,42 @@ function pbxprojFixture(opts: PbxprojFixtureOpts = {}): string {
 			buildSettings = {
 				PRODUCT_BUNDLE_IDENTIFIER = "${releaseBundleId}";
 				TARGETED_DEVICE_FAMILY = "${releaseFamily}";
+				DEVELOPMENT_TEAM = "${developmentTeam}";
+				MARKETING_VERSION = "${marketingVersion}";
+				CURRENT_PROJECT_VERSION = "${currentProjectVersion}";
+				CODE_SIGN_ENTITLEMENTS = ${codeSignEntitlements};
 			};
 			name = Release;
 		};
+		EEEEEEEEEEEEEEEEEEEEEEEE /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = FFFFFFFFFFFFFFFFFFFFFFFF;
+		};
+		FFFFFFFFFFFFFFFFFFFFFFFF /* Build configuration list for PBXProject "Whim" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				GGGGGGGGGGGGGGGGGGGGGGGG,
+				HHHHHHHHHHHHHHHHHHHHHHHH,
+			);
+		};
+		GGGGGGGGGGGGGGGGGGGGGGGG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = IIIIIIIIIIIIIIIIIIIIIIII;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		HHHHHHHHHHHHHHHHHHHHHHHH /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = JJJJJJJJJJJJJJJJJJJJJJJJ;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		IIIIIIIIIIIIIIIIIIIIIIII /* whim-release.xcconfig */ = {isa = PBXFileReference; path = "${debugProjectXcconfigPath}"; };
+		JJJJJJJJJJJJJJJJJJJJJJJJ /* whim-release.xcconfig */ = {isa = PBXFileReference; path = "${releaseProjectXcconfigPath}"; };
 	};
-	rootObject = AAAAAAAAAAAAAAAAAAAAAAAA;
+	rootObject = EEEEEEEEEEEEEEEEEEEEEEEE;
 }
 `;
 }
@@ -202,6 +249,66 @@ export async function run(): Promise<void> {
       assert(
         messages.some((m) => m.includes('project.pbxproj') && m.includes('TARGETED_DEVICE_FAMILY')),
         `expected a TARGETED_DEVICE_FAMILY finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal DEVELOPMENT_TEAM fails, distinguished from the macro', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ developmentTeam: FIXTURE_CONFIG.WHIM_APPLE_TEAM_ID }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('DEVELOPMENT_TEAM') && m.includes('literal')),
+        `expected a literal-DEVELOPMENT_TEAM finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal MARKETING_VERSION fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ marketingVersion: FIXTURE_CONFIG.WHIM_MARKETING_VERSION }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('MARKETING_VERSION')),
+        `expected a MARKETING_VERSION finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal CURRENT_PROJECT_VERSION fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ currentProjectVersion: FIXTURE_CONFIG.WHIM_BUILD_NUMBER }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('CURRENT_PROJECT_VERSION')),
+        `expected a CURRENT_PROJECT_VERSION finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a wrong CODE_SIGN_ENTITLEMENTS path fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ codeSignEntitlements: 'Whim/Other.entitlements' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('CODE_SIGN_ENTITLEMENTS') && m.includes('Other.entitlements')),
+        `expected a CODE_SIGN_ENTITLEMENTS finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: the Debug project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ debugProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('Debug project-level baseConfigurationReference')),
+        `expected a Debug project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: the Release project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ releaseProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('Release project-level baseConfigurationReference')),
+        `expected a Release project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
       );
     });
   });

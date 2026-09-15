@@ -34,7 +34,10 @@ function checkEntryFirstImport(fileName: string, source: string): EntryCheckResu
     return { ok: false, reason: `${fileName}: the first statement is not an import (got ${ts.SyntaxKind[first.kind]})` };
   }
   if (first.importClause !== undefined) {
-    return { ok: false, reason: `${fileName}: the first import has a binding; it must be a bare side-effect import` };
+    return {
+      ok: false,
+      reason: `${fileName}: the first statement is ${first.getText(sourceFile)} — it must be a bare side-effect import of "${ENTRY_IMPORT_SPECIFIER}"`,
+    };
   }
   if (!ts.isStringLiteral(first.moduleSpecifier) || first.moduleSpecifier.text !== ENTRY_IMPORT_SPECIFIER) {
     return {
@@ -61,6 +64,10 @@ export async function run(): Promise<void> {
     const result = checkEntryFirstImport('index.js', source);
     assert(result.ok === false, 'an index.js that imports react-native before the installer must fail the check');
     assert(!!result.reason && result.reason.startsWith('index.js:'), `expected the failure to name index.js, got: ${String(result.reason)}`);
+    assert(
+      !!result.reason && result.reason.includes('react-native'),
+      `expected the failure to name the statement that comes first ("react-native"), got: ${String(result.reason)}`,
+    );
   });
 
   await test('hermes-entry: a bound import of the installer (not a bare side-effect import) still fails the check', () => {

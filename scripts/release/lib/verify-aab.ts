@@ -9,9 +9,9 @@
  * read a real Android App Bundle — measured against a production `.aab` on this machine, it
  * fails "could not identify format of APK" (aapt2 wants an APK's binary-XML container, not an
  * AAB's protobuf-XML module zip). `bundletool dump manifest --bundle=<aab>` prints the decoded
- * manifest as plain XML instead, so that's the tool this file shells to — see
- * handoff/release-cli.md for the verification-status caveat (no working `bundletool` CLI was
- * available to exercise this exact invocation end-to-end on this machine).
+ * manifest as plain XML instead, so that's the tool this file shells to — verified end to end
+ * against bundletool 1.18.3 (a real signed AAB, matching and mismatching `--build`), see
+ * handoff/release-cli.md.
  */
 
 import { execFileSync } from 'node:child_process';

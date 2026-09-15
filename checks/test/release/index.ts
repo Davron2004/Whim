@@ -8,8 +8,9 @@
  * chain-1 pre-creates every suite file below as a stub (its header names the owning chain)
  * except `native-config`, which chain-1 fills itself. See
  * `openspec/changes/platform-release-readiness/handoff/release-tooling.md` for the suite →
- * owning-chain map — no later chain may add or remove a line in this file or in
- * `checks/test/acceptance.ts`.
+ * owning-chain map. `checks/test/acceptance.ts` is edited once, by chain-1; this file gets one
+ * more import and call from chain-16 (its network-deny suite) — see chains.md's parallel-safety
+ * rules — and otherwise no later chain adds or removes a line here.
  */
 
 import { run as runNativeConfig } from './native-config.suite';

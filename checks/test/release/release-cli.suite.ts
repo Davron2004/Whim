@@ -36,7 +36,7 @@ const FIXTURE_CONFIG: NativeReleaseConfig = {
   WHIM_APPLE_TEAM_ID: '2B7K4YLS34',
   WHIM_MARKETING_VERSION: '1.0.0',
   WHIM_BUILD_NUMBER: '1',
-  WHIM_DOMAIN: 'whim.anycognition.ca',
+  WHIM_DOMAIN: 'anycognition.ca',
 };
 
 /** A fully clean snapshot — every scenario below overrides only the field(s) it's testing. */
@@ -48,6 +48,7 @@ function baseSnapshot(overrides: Partial<PreflightSnapshot> = {}): PreflightSnap
     jdkMajorVersion: 21,
     xcodebuildPresent: undefined,
     credentialFiles: [],
+    extraCredentialFiles: [],
     androidUploadValues: ANDROID_UPLOAD_VALUE_NAMES.map((name) => ({ name, present: true })),
     config: FIXTURE_CONFIG,
     buildNumber: 369360,
@@ -81,6 +82,39 @@ export async function run(): Promise<void> {
       `expected a credential-mode finding naming the file and a chmod fix, got ${JSON.stringify(findings)}`,
     );
     assert(findings.length === 2, `expected exactly these two findings, got ${JSON.stringify(findings)}`);
+  });
+
+  await test('preflight: a missing extra credential file (e.g. the .p8 or the upload keystore) names its label and path', () => {
+    const snapshot = baseSnapshot({
+      extraCredentialFiles: [{ label: 'App Store Connect API private key (asc-api-key.json\'s key_filepath)', file: { path: '/home/ops/.config/whim/AuthKey_ABC123.p8', exists: false, mode: null } }],
+    });
+    const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
+    assert(
+      findings.some((f) => f.reason.includes('App Store Connect API private key') && f.reason.includes('AuthKey_ABC123.p8')),
+      `expected a missing-.p8 finding naming its label and path, got ${JSON.stringify(findings)}`,
+    );
+  });
+
+  await test('preflight: a group-readable extra credential file (e.g. the Android keystore) fails with a chmod fix', () => {
+    const snapshot = baseSnapshot({
+      extraCredentialFiles: [{ label: 'Android upload keystore (WHIM_UPLOAD_STORE_FILE)', file: { path: '/home/ops/.config/whim/whim-upload.jks', exists: true, mode: 0o644 } }],
+    });
+    const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
+    assert(
+      findings.some((f) => f.reason.includes('Android upload keystore') && f.reason.includes('whim-upload.jks') && f.fix.includes('chmod 600')),
+      `expected a keystore-mode finding with a chmod fix, got ${JSON.stringify(findings)}`,
+    );
+  });
+
+  await test('preflight: gradle.properties holding WHIM_UPLOAD_* secrets in the clear fails with a chmod fix', () => {
+    const snapshot = baseSnapshot({
+      extraCredentialFiles: [{ label: '~/.gradle/gradle.properties (holds WHIM_UPLOAD_* secrets)', file: { path: '/home/ops/.gradle/gradle.properties', exists: true, mode: 0o644 } }],
+    });
+    const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
+    assert(
+      findings.some((f) => f.reason.includes('gradle.properties') && f.reason.includes('WHIM_UPLOAD_*') && f.fix.includes('chmod 600')),
+      `expected a gradle.properties-mode finding with a chmod fix, got ${JSON.stringify(findings)}`,
+    );
   });
 
   await test('preflight: the placeholder domain refuses, naming that no server is reachable', () => {
@@ -192,6 +226,14 @@ export async function run(): Promise<void> {
   await test('privacy-audit: categoriesFor does not classify "statfs" without the mach-o underscore as some other category (discriminating: it is still DiskSpace either way)', () => {
     const hits = categoriesFor(['statfs'], []);
     assert(hits.length === 1 && hits[0].category === 'DiskSpace', `expected exactly one DiskSpace hit, got ${JSON.stringify(hits)}`);
+  });
+
+  await test('privacy-audit: categoriesFor classifies the raw mach-o class symbol "_OBJC_CLASS_$_NSUserDefaults" as UserDefaults', () => {
+    const hits = categoriesFor(['_OBJC_CLASS_$_NSUserDefaults'], []);
+    assert(
+      hits.some((h) => h.category === 'UserDefaults' && h.referencingName === '_OBJC_CLASS_$_NSUserDefaults'),
+      `expected a UserDefaults hit naming the class symbol, got ${JSON.stringify(hits)}`,
+    );
   });
 
   await test('privacy-audit: declaredCategoriesFromManifest reads NSPrivacyAccessedAPICategoryDiskSpace as DiskSpace', () => {
