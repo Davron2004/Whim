@@ -9,8 +9,8 @@
  * rather than a paraphrase. This screen consumes and emits no `GenerationEvent`.
  */
 
-import React, { useEffect } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyHeadline } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
@@ -19,6 +19,7 @@ import { WorkingLine } from './flow-working';
 import type { FlowAnswers, FlowNotice, FlowQuestion } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface ClarifyStepProps {
   /** The user's submitted prompt, echoed verbatim as their own words. */
@@ -58,14 +59,7 @@ export default function ClarifyStep({
 }: Readonly<ClarifyStepProps>) {
   const p = SHELL_PALETTE;
   const gated = useRetryGate(notice?.retryAt);
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

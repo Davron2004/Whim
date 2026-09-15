@@ -5,11 +5,12 @@
  * iOS has no hardware back button, so the button is the only affordance and it stays on screen
  * unconditionally.
  */
-import React, { useEffect } from 'react';
-import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SPACING, RADIUS, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface AppLinkMissingScreenProps {
   /** The one action (`Back to your apps`) and system back both call this. */
@@ -18,14 +19,7 @@ export interface AppLinkMissingScreenProps {
 
 export default function AppLinkMissingScreen({ onBackToApps }: Readonly<AppLinkMissingScreenProps>) {
   const p = SHELL_PALETTE;
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBackToApps();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBackToApps]);
+  useSystemBack(onBackToApps);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

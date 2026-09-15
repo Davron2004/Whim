@@ -12,17 +12,18 @@
  * through the shared Whim Syntax renderer when not being edited.
  */
 
-import React, { useEffect, useState } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
-import type { FlowNotice, FlowPlanRow } from './prompt-flow';
+import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 /** Row geometry, exported so the loading skeleton imports it rather than restating any value
  *  (`sdk-design-system` "Loading skeletons derive their geometry from exported component
@@ -95,17 +96,16 @@ export default function PlanStep({
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (editingIndex != null) {
-        setEditingIndex(null);
-        return true;
-      }
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack, editingIndex]);
+  /** One decision (`planBackAction`, design D4) for both the header `Back` and system back: mid-edit
+   *  it cancels the open row instead of leaving the step. */
+  const handleBack = () => {
+    if (planBackAction(editingIndex != null) === 'cancel-edit') {
+      setEditingIndex(null);
+      return;
+    }
+    onBack();
+  };
+  useSystemBack(handleBack);
 
   const startEditing = (index: number, text: string) => {
     setEditingIndex(index);
@@ -124,7 +124,7 @@ export default function PlanStep({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="plan" onBack={onBack} />
+      <FlowHeader step="plan" onBack={handleBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {editing && editingName != null && <EditingEyebrow name={editingName} />}

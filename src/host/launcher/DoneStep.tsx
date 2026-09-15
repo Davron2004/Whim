@@ -12,6 +12,7 @@ import type { InstalledApp } from './app-index';
 import AppTile from './app-tile';
 import { COPY, readyTitle } from './copy';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface DoneStepProps {
   app: InstalledApp;
@@ -27,6 +28,7 @@ export interface DoneStepProps {
 
 export default function DoneStep({ app, onOpen, onBackToApps, onReport }: Readonly<DoneStepProps>) {
   const p = SHELL_PALETTE;
+  useSystemBack(onBackToApps);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>

@@ -13,7 +13,7 @@
 // review mode), Highlighting (unchanged), About (privacy policy + support), Advanced (the server
 // address override, collapsed unless one is saved).
 import React, { useEffect, useState } from 'react';
-import { BackHandler, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
@@ -25,6 +25,7 @@ import { advancedInitiallyOpen } from './settings-sections';
 import { DebouncedProbe } from './settings-probe';
 import type { SettingsProbeState } from './settings-probe';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface SettingsScreenProps {
   /** Returns to the home screen — supplied by `LauncherRoot`. */
@@ -87,13 +88,7 @@ export default function SettingsScreen({
     () => new DebouncedProbe({ probe: (url) => probeServer(url), publish: setProbeState }),
   );
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   // Cancels any pending debounce timer / in-flight probe on unmount — the screen's own lifetime
   // is the probe's scope (design.md decision 3: "SettingsScreen owns this local debounce/probe-

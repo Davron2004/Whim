@@ -110,8 +110,9 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
 
   // ── AppLinkMissingScreen: the friendly screen ─────────────────────────────────
 
-  await h.test('app-link missing screen: hardware back and the one action both go Home', () => {
-    h.ok(missingScreenSrc.includes("BackHandler.addEventListener('hardwareBackPress'"), 'must own a hardware-back listener');
+  await h.test('app-link missing screen: system back and the one action both go Home', () => {
+    h.ok(missingScreenSrc.includes('useSystemBack(onBackToApps);'), 'system back is bound to the same onBackToApps the visible control uses');
+    h.ok(!missingScreenSrc.includes('BackHandler'), 'the screen owns no hardware-back listener of its own any more');
     h.ok(
       /onPress=\{onBackToApps\}[\s\S]{0,220}COPY\.appLinkMissingBack/.test(missingScreenSrc),
       'the one action must be labelled from COPY.appLinkMissingBack and call onBackToApps',

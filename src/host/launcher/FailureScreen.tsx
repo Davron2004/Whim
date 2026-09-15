@@ -16,8 +16,8 @@
 // literal — the suite scans this file for all three. The design's tinted panel fills (html:999)
 // have no token of their own, so they are composed as a low-alpha wash of the outcome hue itself,
 // the idiom `HistoryScreen.tsx` already uses for its current-version dot ring.
-import React, { useEffect } from 'react';
-import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import {
   COPY,
@@ -32,6 +32,7 @@ import type { RunJournalEntry } from './run-journal';
 import type { FlowNotice } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface FailureScreenProps {
   /** The terminal `failure` event's `reason`, or a plain-English client/stream-error summary. */
@@ -132,14 +133,7 @@ export default function FailureScreen({
 }: Readonly<FailureScreenProps>) {
   const p = SHELL_PALETTE;
   const gated = useRetryGate(notice?.retryAt);
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   const outcome = recovered ? STATUS_COLORS.done : p.danger;
   const rows = failureChecklistRows({ diagnostics, hasWorkingVersion });

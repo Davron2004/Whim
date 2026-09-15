@@ -564,7 +564,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
 
   await h.test('build: arriving text is never faded in or typed in per character', () => {
     h.ok(!/Animated|Easing|typewriter|fadeIn/i.test(buildSrc), 'the build screen holds no animation at all');
-    h.ok(buildSrc.includes('COPY.buildLeaveRunning') && buildSrc.includes('onLeaveRunning'), 'it offers Leave it running');
+    h.ok(buildSrc.includes('COPY.buildLeaveRunning') && /onPress=\{onBack\}/.test(buildSrc), 'it offers Leave it running, wired to the same onBack system back uses');
   });
 
   // Regression: hardware back on the build screen used to cancel the whole run (BuildStep's
@@ -573,12 +573,12 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // sheet's own listener). The fix: this screen no longer decides anything about back at all, it
   // only forwards the press to one `onBack` prop with a STABLE dependency, and the caller
   // (`LauncherRoot.tsx`) is the one place that decides sheet-close vs leave-running.
-  await h.test('build: hardware back only forwards to onBack, registered with a stable dependency', () => {
+  await h.test('build: system back only forwards to onBack, bound once per mount', () => {
     h.ok(!/\bonCancel\b/.test(buildSrc), 'the old cancel-on-back prop is gone entirely');
+    h.ok(!/\bonLeaveRunning\b/.test(buildSrc), 'the old separate leave-running prop is gone — one onBack for both');
     h.ok(/onBack: \(\) => void/.test(buildSrc), 'onBack is declared as a plain callback prop');
-    const backEffect = buildSrc.slice(buildSrc.indexOf('useEffect(() => {\n    const sub'), buildSrc.indexOf('return () => sub.remove();') + 30);
-    h.ok(backEffect.includes("addEventListener('hardwareBackPress'") && /onBack\(\);/.test(backEffect), 'the listener calls onBack, nothing else');
-    h.ok(/\}, \[onBack\]\);/.test(buildSrc), 'the effect depends on onBack alone — stable in the caller, so this registers once per mount');
+    h.ok(/useSystemBack\(onBack\);/.test(buildSrc), 'the hook binds onBack — the caller’s stable identity keeps this a once-per-mount registration');
+    h.ok(!/BackHandler/.test(buildSrc), 'the screen owns no hardware-back listener of its own any more');
   });
 
   await h.test('done: Open it and Back to your apps are two distinct destinations', () => {

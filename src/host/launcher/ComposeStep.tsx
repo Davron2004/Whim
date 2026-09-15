@@ -9,14 +9,15 @@
  * request lives in `LauncherRoot`.
  */
 
-import React, { useEffect } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import type { FlowNotice } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 /** The three "Or start from" suggestions, verbatim from the copy table. */
 const CHIPS: readonly string[] = [COPY.composeChipTimer, COPY.composeChipTracker, COPY.composeChipDice];
@@ -55,14 +56,7 @@ export default function ComposeStep({
 }: Readonly<ComposeStepProps>) {
   const p = SHELL_PALETTE;
   const gated = useRetryGate(notice?.retryAt);
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   const trimmed = text.trim();
 

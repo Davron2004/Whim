@@ -15,7 +15,7 @@
 // summary) and render through the one shared `WhimProse` renderer; everything else on this
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import { InstalledApp } from './app-index';
@@ -55,6 +55,7 @@ import {
 import { BreathingView } from './flow-skeletons';
 import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
+import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
 
 export interface HistoryScreenProps {
@@ -155,13 +156,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app]);
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   useEffect(() => {
     return () => {
