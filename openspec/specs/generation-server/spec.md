@@ -1,12 +1,14 @@
 # generation-server Specification
 
 ## Purpose
-The harness server: a Node 22 Hono service exposing the SSE generation endpoint over the real
-generation pipeline, the rewrite endpoint over the real rewrite model, device-UUID identity
-middleware, durable per-device token metering (the only server state), usage readback, and the
-model-agnostic OpenRouter client wrapper mounted behind the model-client seam. The stub pipeline
-and canned rewrite remain reachable behind an explicit environment opt-in for LAN UI work. LAN
-dev only — no deployment or TLS yet.
+The generation server: a Node 22 Hono service exposing the SSE generation endpoint over the real
+generation pipeline, the rewrite endpoint over the real rewrite model, device-identity middleware
+behind an injectable verifier, admission control and content policy ahead of every model call, a
+durable usage ledger plus user-sent reports as the only server state, and the model-agnostic
+OpenRouter client wrapper mounted behind the model-client seam. The stub pipeline and canned
+rewrite remain reachable behind an explicit environment opt-in for LAN UI work. In production the
+service runs as the public server described by `server-deployment`, behind that deployment's TLS
+front proxy, which terminates TLS and never buffers the SSE stream.
 
 ## Requirements
 

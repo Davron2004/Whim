@@ -1265,6 +1265,77 @@ function scriptSyntaxTests(files: ReadonlyMap<string, string>): void {
   }
 }
 
+/** Every `deploy/*.sh` path the runbook names (specs/server-deployment "The runbook matches the scripts"). */
+function runbookScriptPaths(text: string): string[] {
+  return [...new Set(text.match(/deploy\/[A-Za-z0-9_./-]+\.sh/g) ?? [])];
+}
+
+/** Every `WHIM_*` name the runbook names, however it's formatted (backticked or in a code fence). */
+function runbookVariables(text: string): string[] {
+  return [...new Set(text.match(/WHIM_[A-Z0-9_]+/g) ?? [])];
+}
+
+/**
+ * Task 14.2's tripwire (specs/server-deployment "The runbook matches the scripts"): every script
+ * path `docs/deploy.md` references exists, and every `WHIM_*` variable it names is read somewhere
+ * real. `WHIM_DOMAIN` isn't a server env var — it's the platform-release-readiness domain constant
+ * the pages go-live order names as a precondition — so `release-config.ts` joins the read set
+ * alongside the four sources task 14.2 names.
+ */
+function runbookTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
+  section('Runbook: matches the scripts');
+  const text = readRepoFile('docs/deploy.md');
+
+  check(
+    'names the core operator scripts',
+    ['deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/loadtest/run.sh'].every((rel) =>
+      runbookScriptPaths(text).includes(rel),
+    ),
+    runbookScriptPaths(text).join(', '),
+  );
+  check('names --site-only', text.includes('--site-only'));
+  check('names --profile', text.includes('--profile'));
+  check(
+    'names run.sh start, drive and stop',
+    ['run.sh start', 'run.sh drive', 'run.sh stop'].every((needle) => text.includes(needle)),
+  );
+  check('has an "OpenRouter key" section', /^## OpenRouter key$/m.test(text));
+
+  const readSources = [
+    serverSources.get('server/src/config.ts') ?? '',
+    serverSources.get('server/src/site/build.ts') ?? '',
+    ...[...serverSources].filter(([rel]) => rel.startsWith('server/src/loadtest/')).map(([, content]) => content),
+    ...[...files].map(([, content]) => content),
+    readRepoFile('src/host/launcher/release-config.ts'),
+  ].join('\n');
+
+  checkClean(
+    'every referenced script path exists',
+    runbookScriptPaths(text)
+      .filter((rel) => !fs.existsSync(path.join(ROOT, rel)))
+      .map((rel) => `missing: ${rel}`),
+  );
+  checkClean(
+    'every referenced WHIM_* variable is read by the server, a deploy file or release-config.ts',
+    runbookVariables(text)
+      .filter((name) => !readSources.includes(name))
+      .map((name) => `unread: ${name}`),
+  );
+
+  // Discriminating red-check: a renamed script must be caught, not silently accepted.
+  const renamed = plant(text, 'deploy/smoke.sh', 'deploy/smoke-check.sh');
+  check(
+    'red: a renamed script in the runbook is caught',
+    runbookScriptPaths(renamed).some((rel) => !fs.existsSync(path.join(ROOT, rel))),
+  );
+  // Discriminating red-check: a variable nobody reads must be caught.
+  const withGhostVariable = `${text}\n\n\`WHIM_GHOST_VARIABLE_NOBODY_READS\`\n`;
+  check(
+    'red: a variable nobody reads is caught',
+    runbookVariables(withGhostVariable).some((name) => !readSources.includes(name)),
+  );
+}
+
 export async function runDeployConfigTests(): Promise<void> {
   await runWebSiteTests();
 
@@ -1298,4 +1369,5 @@ export async function runDeployConfigTests(): Promise<void> {
   resizeTests();
   provisionTests();
   await runLoadTestTests();
+  runbookTests(files, serverSources);
 }
