@@ -19,6 +19,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { RUNTIME_HTML } from '../runtime/generated/runtime-html';
 import { deliverBySourceJs } from './launcher/deliver';
@@ -218,7 +219,7 @@ export default function NetworkDenyProbeScreen() {
   const activeVariant = activeIndex === null ? null : ALL_VARIANTS[activeIndex];
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={styles.root}>
       <Text style={styles.title}>Whim · network-deny probe ({NETDENY_PROBE_MARKER})</Text>
       <Text style={styles.muted}>run={runId} http={httpBase} tls={tlsBase}</Text>
       <ScrollView style={styles.body}>
@@ -246,12 +247,12 @@ export default function NetworkDenyProbeScreen() {
           onError={handleError}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1020', paddingTop: 48, paddingHorizontal: 12 },
+  root: { flex: 1, backgroundColor: '#0b1020', paddingHorizontal: 12 },
   title: { color: '#cbd5e1', fontSize: 13, fontWeight: '600', marginBottom: 4 },
   muted: { color: '#64748b', fontSize: 11, marginBottom: 8 },
   body: { flex: 1 },
