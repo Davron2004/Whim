@@ -137,7 +137,7 @@ export default function ClarifyStep({
         )}
       </ScrollView>
 
-      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
 
       {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
           action mounts once the real questions have landed; `WorkingLine` is the only liveness

@@ -7,19 +7,21 @@
  * renderer never gets a chance to mark it up. Tokens only — `SHELL_PALETTE` and the SDK type
  * scale/spacing/radius — no hex literal, no numeric font-size or radius literal.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
-import { retryWindowState } from './refusal-landing';
+import { noticeExpiredAt, retryWindowState } from './refusal-landing';
+import { retryLine } from './service-refusal';
 import { SHELL_PALETTE } from './theme';
 
 export interface ServiceNoticeProps {
   /** The refusal's own `hint`, verbatim — never a status code, error identifier, `Retry-After`
    *  value, or transport message. */
   hint: string;
-  /** The copy-table retry-window line (`service-refusal.ts#retryLine`), precomputed by the
-   *  caller at the moment the notice was created. Absent renders no second line. */
-  retryLine?: string;
+  /** The re-enable moment (epoch ms), or absent when the refusal carried no `Retry-After`. The
+   *  retry-window line is derived from this FRESH on every render (`retryLine`, below) — never a
+   *  caption computed once and passed in, which would go stale the moment the window ends. */
+  retryAt?: number;
   /** `danger` for a refusal about the user's own text (content/size); `neutral` for an
    *  availability or limit refusal — `service-refusal.ts#REFUSAL_RULES` decides which. */
   tone: 'danger' | 'neutral';
@@ -30,9 +32,19 @@ export interface ServiceNoticeProps {
 const DANGER_FILL_ALPHA = '14';
 const DANGER_BORDER_ALPHA = '3d';
 
-export default function ServiceNotice({ hint, retryLine, tone }: Readonly<ServiceNoticeProps>) {
+/** The one place this component builds a local-time formatter — `retryLine`'s same-day/tomorrow
+ *  phrasing (design D11) reads through it. */
+function formatLocalTime(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+export default function ServiceNotice({ hint, retryAt, tone }: Readonly<ServiceNoticeProps>) {
   const p = SHELL_PALETTE;
   const danger = tone === 'danger';
+  // Read fresh at render time, never cached on the notice: the same render that `useRetryGate`'s
+  // one-shot re-render fires once the window ends picks this back up too, so "shortly" replaces a
+  // stale "in about N minutes" instead of the caption sitting there unchanged.
+  const line = retryAt !== undefined ? retryLine(retryAt, Date.now(), formatLocalTime) : undefined;
   return (
     <View
       style={[
@@ -43,9 +55,7 @@ export default function ServiceNotice({ hint, retryLine, tone }: Readonly<Servic
       ]}
     >
       <Text style={[TYPE_SCALE.body, { color: danger ? p.danger : p.text }]}>{hint}</Text>
-      {retryLine != null && (
-        <Text style={[TYPE_SCALE.caption, styles.retryLine, { color: p.textMuted }]}>{retryLine}</Text>
-      )}
+      {line != null && <Text style={[TYPE_SCALE.caption, styles.retryLine, { color: p.textMuted }]}>{line}</Text>}
     </View>
   );
 }
@@ -66,6 +76,39 @@ export function useRetryGate(retryAt: number | undefined): boolean {
     return () => clearTimeout(timer);
   }, [retryAt]);
   return retryAt !== undefined && retryWindowState(retryAt, Date.now()).disabled;
+}
+
+/**
+ * Clears a sender-landing (`neutral`-tone) notice the instant its retry window ends (design D12:
+ * "A sender refusal clears when its window ends"). A `danger`-tone (text-landing) notice never
+ * clears this way — that one clears only on the next edit to the refused text
+ * (`composeTextChanged`/`updatePlanRow`). The decision is the pure, tested `noticeExpiredAt`
+ * (`refusal-landing.ts`); this hook is only the live wiring around it, arming at most ONE timer —
+ * same discipline as `useRetryGate` — and re-arming only when `tone`/`retryAt` actually change, so
+ * an unrelated re-render never resets the countdown. `onExpire` is read through a ref that a
+ * plain (no-deps) effect keeps current, so the timer always calls the LATEST closure — the one
+ * that still knows which notice it was armed for — without that forcing the timer itself to
+ * restart on every render.
+ */
+export function useNoticeWindowClear(
+  notice: { readonly tone: 'danger' | 'neutral'; readonly retryAt?: number } | undefined,
+  onExpire: () => void,
+): void {
+  const latestExpire = useRef(onExpire);
+  useEffect(() => {
+    latestExpire.current = onExpire;
+  });
+  const tone = notice?.tone;
+  const retryAt = notice?.retryAt;
+  useEffect(() => {
+    if (tone !== 'neutral' || retryAt === undefined) return undefined;
+    if (noticeExpiredAt({ tone, retryAt }, Date.now())) {
+      latestExpire.current();
+      return undefined;
+    }
+    const timer = setTimeout(() => latestExpire.current(), retryWindowState(retryAt, Date.now()).msUntilEnable);
+    return () => clearTimeout(timer);
+  }, [tone, retryAt]);
 }
 
 const styles = StyleSheet.create({

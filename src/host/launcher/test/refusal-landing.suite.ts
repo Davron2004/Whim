@@ -1,7 +1,8 @@
 /**
- * refusal-landing Node suite (store-launch-compliance chain-4, task 4.2) — `refusalLanding`
- * against every `ServiceRefusalCode` across the four request/sender shapes the flow can actually
- * produce, and `retryWindowState`'s pure disabled/enabled arithmetic.
+ * refusal-landing Node suite (store-launch-compliance chain-4, task 4.2; fix-notice-window) —
+ * `refusalLanding` against every `ServiceRefusalCode` across the four request/sender shapes the
+ * flow can actually produce, `retryWindowState`'s pure disabled/enabled arithmetic, and
+ * `noticeExpiredAt`'s pure D12 clear-at-window-end predicate.
  *
  * Covers spec `service-refusals`:
  *   - "A refusal of what the user wrote lands where they can change it" — `content_policy`/
@@ -10,10 +11,14 @@
  *     other five codes return to `sentFrom`, except a generate request, always plan-started.
  *   - "Retry-After holds the retry action until the window passes" — the disabled/enabled split,
  *     not the copy-table line (covered in `service-refusal.suite.ts`).
+ *
+ * Covers design D12 ("A sender refusal clears when its window ends"): a `neutral`-tone notice
+ * expires the instant its `retryAt` passes; a `danger`-tone notice, or one with no window at all,
+ * never expires this way.
  */
 import { Harness } from './harness';
 import { REFUSAL_RULES } from '../service-refusal';
-import { refusalLanding, retryWindowState } from '../refusal-landing';
+import { noticeExpiredAt, refusalLanding, retryWindowState } from '../refusal-landing';
 import { ServiceRefusalCode } from '@whim/contract';
 
 const TEXT_LANDING_CODES = ServiceRefusalCode.options.filter((code) => REFUSAL_RULES[code].landing === 'text');
@@ -59,5 +64,22 @@ export async function runRefusalLandingTests(h: Harness): Promise<void> {
 
   await h.test('retryWindowState: enabled with nothing to wait for when the refusal carried no window', () => {
     h.eq(retryWindowState(undefined, 1_000_000), { disabled: false, msUntilEnable: 0 }, 'no Retry-After means no gate at all');
+  });
+
+  // `noticeExpiredAt` (design D12: "A sender refusal clears when its window ends") — `ServiceNotice.tsx`'s
+  // `useNoticeWindowClear` is a thin live-timer wrapper around this pure predicate.
+  await h.test('noticeExpiredAt: a sender (neutral-tone) notice expires once its window ends', () => {
+    h.eq(noticeExpiredAt({ tone: 'neutral', retryAt: 1_000_000 }, 999_999), false, 'still inside the window');
+    h.eq(noticeExpiredAt({ tone: 'neutral', retryAt: 1_000_000 }, 1_000_000), true, 'exactly at the boundary has ended');
+    h.eq(noticeExpiredAt({ tone: 'neutral', retryAt: 1_000_000 }, 1_000_001), true, 'already past the boundary has ended');
+  });
+
+  await h.test('noticeExpiredAt: a text (danger-tone) notice never expires by window, whatever the clock reads', () => {
+    h.eq(noticeExpiredAt({ tone: 'danger', retryAt: 1_000_000 }, 1_000_001), false, 'a text-landing notice only clears on edit');
+  });
+
+  await h.test('noticeExpiredAt: a notice with no window at all never expires, and neither does no notice', () => {
+    h.eq(noticeExpiredAt({ tone: 'neutral' }, 1_000_000), false, 'no retryAt means nothing to end');
+    h.eq(noticeExpiredAt(undefined, 1_000_000), false, 'no notice means nothing to end');
   });
 }

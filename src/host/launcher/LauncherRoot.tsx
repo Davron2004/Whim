@@ -113,10 +113,11 @@ import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
 import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
-import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
 import type { RefusalSentFrom } from './refusal-target';
+import { useNoticeWindowClear } from './ServiceNotice';
 import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { probeGateFor } from './probe-gate';
@@ -213,12 +214,6 @@ function logGenError(stage: string, err: unknown): void {
   log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
 }
 
-/** The one place this shell builds a local-time formatter — `retryLine`'s same-day/tomorrow
- *  phrasing (design D11) reads through it. */
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
-}
-
 /** What a rejected app link is recorded with (spec app-links "URLs that aren't app links are
  *  ignored" — "the log record names only the scheme and host"): never the full URL, which may
  *  carry a path or query the sender chose. An unparseable string reads as `'unknown'`/`'unknown'`
@@ -235,16 +230,14 @@ function schemeAndHostOf(url: string): { scheme: string; host: string } {
 
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
  *  the hint verbatim, the tone `REFUSAL_RULES` assigns its code, and — only when it carried a
- *  `Retry-After` — the re-enable moment plus the ONE copy-table line describing it, computed once
- *  here rather than re-derived on every render (the "about N" wording is an estimate, not a
- *  ticking countdown). */
+ *  `Retry-After` — the re-enable moment. `ServiceNotice` derives the copy-table retry line from
+ *  `retryAt` fresh on every render, so nothing here precomputes or caches that text. */
 function noticeFrom(refusal: ServiceRefusal): FlowNotice {
-  const now = Date.now();
-  const retryAt = retryAtOf(refusal, now);
+  const retryAt = retryAtOf(refusal, Date.now());
   return {
     hint: refusal.hint,
     tone: REFUSAL_RULES[refusal.code].tone,
-    ...(retryAt !== undefined ? { retryAt, retryLine: retryLine(retryAt, now, formatLocalTime) } : {}),
+    ...(retryAt !== undefined ? { retryAt } : {}),
   };
 }
 
@@ -409,6 +402,19 @@ function LauncherShell({
   const palette = SHELL_PALETTE;
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
+  // instant its retry window ends (design D12: "A sender refusal clears when its window ends").
+  // Leaving the step already clears it for free — the step's own constructor never carries a
+  // `notice` forward — so this only ever needs to fire while `screen` itself is unchanged; the
+  // reference check below is what keeps a stale timer from clearing a DIFFERENT refusal's notice
+  // that has since replaced this one on the same step.
+  const noticeOnScreen = 'notice' in screen ? screen.notice : undefined;
+  useNoticeWindowClear(noticeOnScreen, () => {
+    setScreen((prev) => {
+      if (!('notice' in prev) || prev.notice !== noticeOnScreen) return prev;
+      return { ...prev, notice: undefined };
+    });
+  });
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
   const [ready, setReady] = useState(false);

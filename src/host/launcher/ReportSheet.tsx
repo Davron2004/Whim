@@ -23,10 +23,10 @@ import { buildReportRequest, reportDraftFor, reportLogFields, reportPreview } fr
 import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
-import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
-import ServiceNotice, { useRetryGate } from './ServiceNotice';
+import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
 import { COPY, reportCodeSizeLabel } from './copy';
 import { RELEASE } from './release-config';
@@ -57,20 +57,14 @@ interface ReportNotice {
   readonly hint: string;
   readonly tone: 'danger' | 'neutral';
   readonly retryAt?: number;
-  readonly retryLine?: string;
-}
-
-function formatLocalTime(date: Date): string {
-  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
 }
 
 function reportNoticeFrom(refusal: ServiceRefusal): ReportNotice {
-  const now = Date.now();
-  const retryAt = retryAtOf(refusal, now);
+  const retryAt = retryAtOf(refusal, Date.now());
   return {
     hint: refusal.hint,
     tone: REFUSAL_RULES[refusal.code].tone,
-    ...(retryAt !== undefined ? { retryAt, retryLine: retryLine(retryAt, now, formatLocalTime) } : {}),
+    ...(retryAt !== undefined ? { retryAt } : {}),
   };
 }
 
@@ -93,6 +87,12 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [sourceExpanded, setSourceExpanded] = useState(false);
   const gated = useRetryGate(notice?.retryAt);
+  // A sender-landing (`neutral`-tone) notice clears the instant its retry window ends (design
+  // D12), the same rule `LauncherRoot.tsx`'s flow screens follow — closing the sheet already
+  // clears it for free via the effect below.
+  useNoticeWindowClear(notice ?? undefined, () => {
+    setNotice((prev) => (prev === notice ? null : prev));
+  });
 
   useEffect(() => {
     if (!app) {
@@ -240,7 +240,7 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>
 
-          {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
 
           <TouchableOpacity
             onPress={handleSend}
