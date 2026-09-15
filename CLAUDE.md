@@ -57,7 +57,7 @@ Regenerate after editing anything in `src/runtime/web/`, `src/sdk/`, `build/`, o
 
 - **Node 22 required** (`engines: >=22.11`). Watch out: Homebrew's node sits ahead of the nvm shim in PATH, so `nvm use 22` may not actually switch — verify with `node -v`.
 - Gradle is pinned to **JDK 21** via `org.gradle.java.home` in `android/gradle.properties` (JDK 24 breaks RN's C++ codegen). Builds are **arm64-v8a only** (`reactNativeArchitectures`).
-- The emulator's NAT route to Metro is dead on this machine — `npm run android:release` builds the **offline** type (debug-signed, dev cleartext hosts, no Metro dependency); the store AAB comes only from `fastlane android closed`, iOS builds from `docs/release/mobile.md`.
+- The emulator's NAT route to Metro is dead on this machine — use the **offline build**: `npm run android:release` (debug-signed, no Metro dependency). Store builds: `docs/release/mobile.md`.
 - RN 0.85 is bridgeless: JS `console` output goes to **logcat (`ReactNativeJS`)**, not Metro stdout, and logcat truncates at ~4 KB — the on-screen diagnostics render is the source of truth for full probe JSON.
 - `App.tsx` renders `LauncherRoot` by default (the product shell), not a probe screen. On-device acceptance probes are flag-gated, default `false`: `RUN_VSTORE_PROBE` (version store), `RUN_STORAGE_PROBE` (storage engine, decision #40), `RUN_BRIDGE_PROBE` (capability bridge, decision #41).
 - Desktop Chromium (the invariants suites) is the fast pre-check only; the authoritative containment verdict is the real Android System WebView on-device.
