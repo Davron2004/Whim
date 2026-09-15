@@ -36,7 +36,13 @@ import {
 } from '../admission/refusals';
 import { PolicyUnavailableError, type ContentPolicy, type PolicyRoute } from '../policy';
 import { buildClarifyPolicyInput } from '../policy/input';
-import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
+import {
+  resolveRequestUsage,
+  type ResolveBounds,
+  type ResolveDeps,
+  type UsageAndCostTransport,
+  type ResolveTracker,
+} from '../usage/resolve';
 import { buildClarifyMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
 import { log } from '../logger';
@@ -120,6 +126,36 @@ export interface UnaryAdmissionDeps {
 export type UnaryAdmissionOutcome =
   | { ok: true; requestId: string; release: () => void; policyGenerationId?: string }
   | { ok: false; refusal: ServiceRefusal };
+
+/**
+ * Resolves usage for a unary route's own post-model-call ending (`clarify.ts`'s and `rewrite.ts`'s
+ * `finish()`), mirroring `routes/generate.ts`'s `resolveGenerationUsage`: cost for every recorded id
+ * — the classifier call plus the route's own model call(s) — lands on the ledger row via ONE
+ * `creditOwned: true` call, so the classifier's tokens (already credited the moment `policy.check`
+ * returned) are never folded into a token-crediting call. Tokens are reconciled, in a SEPARATE call
+ * with no classifier id, only for the route's own ids whose usage was never credited in-stream
+ * (`!creditOwned`). With no classifier id at all, the caller's own ids/creditOwned pass straight
+ * through unsplit.
+ */
+export function resolveUnaryUsage(
+  requestId: string,
+  deviceId: string,
+  policyGenerationId: string | undefined,
+  generationIds: readonly string[],
+  creditOwned: boolean,
+  resolveTracker: ResolveTracker,
+  deps: ResolveDeps,
+): void {
+  if (policyGenerationId === undefined) {
+    resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, deps));
+    return;
+  }
+  resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...generationIds], true, deps));
+  if (!creditOwned && generationIds.length > 0) {
+    // requestId '' is the resolver's no-ledger sentinel: tokens only, the cost is recorded above.
+    resolveTracker.track(resolveRequestUsage('', deviceId, generationIds, false, deps));
+  }
+}
 
 /**
  * The fixed admission order shared by `/v1/clarify` and `/v1/rewrite`, AFTER the raw body cap,
@@ -286,16 +322,13 @@ export function makeClarifyRoute(
         generationIds: string[],
         creditOwned: boolean,
       ): Promise<void> => {
-        const ids = policyGenerationId ? [policyGenerationId, ...generationIds] : generationIds;
         await usageStore.settle(requestId, { outcome, usage });
         release();
-        resolveTracker.track(
-          resolveRequestUsage(requestId, deviceId, ids, creditOwned, {
-            transport: resolveTransport,
-            usageStore,
-            bounds: resolveBounds,
-          }),
-        );
+        resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
+          transport: resolveTransport,
+          usageStore,
+          bounds: resolveBounds,
+        });
       };
 
       return runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);

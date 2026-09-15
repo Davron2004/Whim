@@ -30,10 +30,10 @@ import { invalidateCreditCache } from '../admission/credit';
 import { budgetExhaustedRefusal, payloadTooLargeRefusal } from '../admission/refusals';
 import type { ContentPolicy } from '../policy';
 import { buildRewritePolicyInput } from '../policy/input';
-import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
+import type { ResolveBounds, UsageAndCostTransport, ResolveTracker } from '../usage/resolve';
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
-import { admitUnaryRequest } from './clarify';
+import { admitUnaryRequest, resolveUnaryUsage } from './clarify';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -266,16 +266,13 @@ export function makeRewriteRoute(
       const { requestId, release, policyGenerationId } = admission;
 
       const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean): Promise<void> => {
-        const ids = policyGenerationId ? [policyGenerationId, ...generationIds] : generationIds;
         await usageStore.settle(requestId, { outcome });
         release();
-        resolveTracker.track(
-          resolveRequestUsage(requestId, deviceId, ids, creditOwned, {
-            transport: resolveTransport,
-            usageStore,
-            bounds: resolveBounds,
-          }),
-        );
+        resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
+          transport: resolveTransport,
+          usageStore,
+          bounds: resolveBounds,
+        });
       };
 
       if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
