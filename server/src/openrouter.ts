@@ -96,11 +96,19 @@ export interface StreamResult {
 /** Injectable fetch type (matches the global `fetch` signature). */
 export type FetchFn = typeof globalThis.fetch;
 
+/** A provider failure delivered INSIDE the stream (`data: {"error":{"code":402,...}}`) rather than
+ *  as an HTTP status — how OpenRouter reports a mid-stream credit exhaustion or upstream fault. */
+interface SseErrorPayload {
+  status?: number;
+  message?: string;
+}
+
 interface ParsedSseFrame {
   id?: string;
   usage?: Usage;
   content?: string;
   reasoning?: string;
+  error?: SseErrorPayload;
 }
 
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -122,12 +130,35 @@ function requestBody(options: OpenRouterOptions): string {
   });
 }
 
-function responseError(
-  response: Response,
-): OpenRouterAuthError | OpenRouterCreditError | OpenRouterRateLimitError | OpenRouterNetworkError | null {
-  if (response.status === 401) return new OpenRouterAuthError('OpenRouter: unauthorized (401)');
-  if (response.status === 402) return new OpenRouterCreditError('OpenRouter: payment required (402)');
-  if (response.status === 429) return new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)');
+type TypedOpenRouterError =
+  | OpenRouterAuthError
+  | OpenRouterCreditError
+  | OpenRouterRateLimitError
+  | OpenRouterNetworkError;
+
+function isTypedOpenRouterError(err: unknown): err is TypedOpenRouterError {
+  return (
+    err instanceof OpenRouterAuthError ||
+    err instanceof OpenRouterCreditError ||
+    err instanceof OpenRouterRateLimitError ||
+    err instanceof OpenRouterNetworkError
+  );
+}
+
+/** The ONE status→error mapping. Shared by the pre-stream HTTP check and the mid-stream error
+ *  frame, so a provider `402` is the same `OpenRouterCreditError` (and so
+ *  `isCreditExhaustedError` fires) whichever way it arrives. */
+function statusError(status: number | undefined, message: string): TypedOpenRouterError {
+  if (status === 401) return new OpenRouterAuthError(message);
+  if (status === 402) return new OpenRouterCreditError(message);
+  if (status === 429) return new OpenRouterRateLimitError(message);
+  return new OpenRouterNetworkError(message);
+}
+
+function responseError(response: Response): TypedOpenRouterError | null {
+  if (response.status === 401) return statusError(401, 'OpenRouter: unauthorized (401)');
+  if (response.status === 402) return statusError(402, 'OpenRouter: payment required (402)');
+  if (response.status === 429) return statusError(429, 'OpenRouter: rate limit exceeded (429)');
   if (!response.ok) return new OpenRouterNetworkError(`OpenRouter: HTTP ${response.status}`);
   if (!response.body) return new OpenRouterNetworkError('OpenRouter: response body is null');
   return null;
@@ -168,6 +199,28 @@ function reasoningFrom(parsed: Record<string, unknown>): string | undefined {
   return typeof reasoning === 'string' && reasoning.length > 0 ? reasoning : undefined;
 }
 
+/** OpenRouter carries the HTTP-equivalent status of a mid-stream failure as `error.code`, which
+ *  arrives as a number or as its string form depending on the upstream provider. Anything else
+ *  (absent, non-numeric) leaves the status unknown, which `statusError` maps to the generic
+ *  transport error rather than guessing. */
+function errorFrom(parsed: Record<string, unknown>): SseErrorPayload | undefined {
+  const raw = parsed.error;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const e = raw as Record<string, unknown>;
+  const code = typeof e.code === 'string' ? Number(e.code) : e.code;
+  return {
+    status: typeof code === 'number' && Number.isFinite(code) ? code : undefined,
+    message: typeof e.message === 'string' ? e.message : undefined,
+  };
+}
+
+/** The typed error a mid-stream `error` frame stands for. */
+function streamFrameError(error: SseErrorPayload): TypedOpenRouterError {
+  const status = error.status === undefined ? 'no status' : String(error.status);
+  const detail = error.message === undefined ? '' : `: ${error.message}`;
+  return statusError(error.status, `OpenRouter: stream error (${status})${detail}`);
+}
+
 function parseSseLine(line: string): ParsedSseFrame | null {
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return null;
@@ -180,6 +233,7 @@ function parseSseLine(line: string): ParsedSseFrame | null {
       usage: usageFrom(parsed),
       content: contentFrom(parsed),
       reasoning: reasoningFrom(parsed),
+      error: errorFrom(parsed),
     };
   // eslint-disable-next-line no-restricted-syntax -- intentional: a malformed SSE data line is just not a usable frame — returns null
   } catch {
@@ -208,11 +262,13 @@ export class OpenRouterClient {
    * `options.signal`, when provided, is forwarded to the injected transport's
    * request-init so a caller can abort a live completion mid-stream.
    *
-   * Throws:
+   * Throws (from the delta iterator, always also rejecting `usage`):
    *   OpenRouterAuthError     on HTTP 401
    *   OpenRouterCreditError   on HTTP 402
    *   OpenRouterRateLimitError on HTTP 429
    *   OpenRouterNetworkError  on fetch throw or other transport failures
+   * A failure the provider delivers mid-stream (`data: {"error":{"code":...}}`) raises the SAME
+   * typed error its HTTP status would, so a credit exhaustion is never mistaken for a short reply.
    */
   stream(options: OpenRouterOptions): StreamResult {
     const { fetchFn } = this;
@@ -286,6 +342,10 @@ export class OpenRouterClient {
         const frame = parseSseLine(rawLine);
         if (frame) captureId(frame.id);
         if (frame?.usage) capturedUsage = frame.usage;
+        // A mid-stream failure frame ends the stream as a failure rather than as a short, complete
+        // reply: dropping it would hand the caller a truncated candidate and hide a `402` from
+        // `isCreditExhaustedError`. The catch below preserves this typed error as-is.
+        if (frame?.error) throw streamFrameError(frame.error);
         if (frame?.reasoning) yield { kind: 'reasoning', text: frame.reasoning };
         if (frame?.content) yield { kind: 'text', text: frame.content };
       }
@@ -305,10 +365,12 @@ export class OpenRouterClient {
         captureId(undefined);
         resolveUsage(capturedUsage ?? ZERO_USAGE);
       } catch (streamErr) {
-        const netErr = new OpenRouterNetworkError('stream read failed', streamErr);
+        // A typed error raised by `emitFrame` (a mid-stream failure frame) keeps its own class and
+        // status; anything else (a genuine read failure) is wrapped as a transport error.
+        const err = isTypedOpenRouterError(streamErr) ? streamErr : new OpenRouterNetworkError('stream read failed', streamErr);
         captureId(undefined);
-        rejectUsage(netErr);
-        throw netErr;
+        rejectUsage(err);
+        throw err;
       }
     }
 

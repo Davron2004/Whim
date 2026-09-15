@@ -14,8 +14,10 @@
  *
  * NEVER throws: a transport failure is indistinguishable from "not yet resolved" and is retried
  * (or, on budget exhaustion, recorded as `'unresolved'` — spec "Unresolvable cost is explicit":
- * "no cost is invented, and no client-visible error occurs"). Introduces no persistence beyond
- * the existing `UsageStore`.
+ * "no cost is invented, and no client-visible error occurs"). A request whose ids only PARTLY
+ * resolve is `'unresolved'` too: its cost is real but incomplete, and recording an incomplete sum
+ * as resolved understates what a generation costs. Introduces no persistence beyond the existing
+ * `UsageStore`.
  */
 import type { Usage } from '@whim/contract';
 import type { UsageStore } from '../usage-store';
@@ -125,29 +127,46 @@ async function resolveOneId(
   return null;
 }
 
-/** Sums resolved usage and cost across every id in `generationIds`, stopping once the shared
- *  `deadline` passes. `foundAny` distinguishes "resolved nothing at all" (the whole sum stays
- *  zero and untrusted) from "resolved some ids" (a best-effort partial sum, which is still
- *  authoritative for the ids that did resolve). */
+/**
+ * Sums resolved usage and cost across every id in `generationIds`, under one shared `deadline`.
+ *
+ * The ids are resolved CONCURRENTLY, because the deadline is shared: resolved one after another, a
+ * single slow id spends the whole budget and every id behind it is never even attempted, so what
+ * the sum contains depends on provider-response order rather than on what was resolvable.
+ *
+ * Two flags, deliberately distinct:
+ *  - `foundAny` — at least one id resolved. A best-effort partial sum, authoritative only for the
+ *    ids it covers.
+ *  - `resolvedAll` — EVERY id resolved, so the sum is the complete cost of the request. Only this
+ *    one may be recorded as a resolved ledger cost; a partial sum recorded as `resolved` would
+ *    quietly under-report what a generation costs.
+ */
 export async function sumGenerationStats(
   generationIds: readonly string[],
   deadline: number,
   bounds: ResolveBounds,
   transport: UsageAndCostTransport,
-): Promise<{ totalUsage: Usage; totalCostUsd: number; foundAny: boolean }> {
+): Promise<{ totalUsage: Usage; totalCostUsd: number; foundAny: boolean; resolvedAll: boolean }> {
+  // `resolveOneId` never rejects (it treats a transport failure as unresolved) and stops itself at
+  // the shared deadline, so `allSettled` is belt-and-braces: one unexpected rejection cannot
+  // discard every other id's result.
+  const settled = await Promise.allSettled(generationIds.map((id) => resolveOneId(id, deadline, bounds, transport)));
+
   let totalUsage = ZERO_USAGE;
   let totalCostUsd = 0;
   let foundAny = false;
-  for (const id of generationIds) {
-    if (Date.now() >= deadline) break;
-    const stats = await resolveOneId(id, deadline, bounds, transport);
-    if (stats) {
-      totalUsage = sumUsage(totalUsage, stats.usage);
-      totalCostUsd += stats.totalCostUsd;
-      foundAny = true;
+  let resolvedAll = true;
+  for (const outcome of settled) {
+    const stats = outcome.status === 'fulfilled' ? outcome.value : null;
+    if (!stats) {
+      resolvedAll = false;
+      continue;
     }
+    totalUsage = sumUsage(totalUsage, stats.usage);
+    totalCostUsd += stats.totalCostUsd;
+    foundAny = true;
   }
-  return { totalUsage, totalCostUsd, foundAny };
+  return { totalUsage, totalCostUsd, foundAny, resolvedAll };
 }
 
 /**
@@ -175,18 +194,26 @@ export async function resolveRequestUsage(
     }
     const bounds = { ...DEFAULT_RESOLVE_BOUNDS, ...deps.bounds };
     const deadline = Date.now() + bounds.totalBudgetMs;
-    const { totalUsage, totalCostUsd, foundAny } = await sumGenerationStats(
+    const { totalUsage, totalCostUsd, foundAny, resolvedAll } = await sumGenerationStats(
       generationIds,
       deadline,
       bounds,
       deps.transport,
     );
-    if (foundAny) {
-      if (requestId) await deps.usageStore.recordCost(requestId, { state: 'resolved', costUsd: totalCostUsd });
-      if (!creditOwned) await deps.usageStore.credit(deviceId, totalUsage);
-    } else if (requestId) {
-      await deps.usageStore.recordCost(requestId, { state: 'unresolved' });
+    // Cost and tokens are stamped by different rules, on purpose. COST is all-or-nothing: the row's
+    // `resolved` cost is what the operator reads as "what a generation costs" when sizing the
+    // credit limit, and a partial sum stamped `resolved` is a confidently wrong, low-biased number
+    // — worse than an honest `unresolved`, and `CostState` has no third value to hedge with. TOKENS
+    // are an accumulating best-effort meter that nothing treats as authoritative, so the ids that
+    // did resolve are still credited: those tokens were really spent, and crediting zero for them
+    // under-counts the device strictly harder.
+    if (requestId) {
+      await deps.usageStore.recordCost(
+        requestId,
+        resolvedAll ? { state: 'resolved', costUsd: totalCostUsd } : { state: 'unresolved' },
+      );
     }
+    if (foundAny && !creditOwned) await deps.usageStore.credit(deviceId, totalUsage);
   // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort per spec "gives up quietly" — must never surface a user-visible failure
   } catch {
     // best-effort — resolution must never fail anything user-visible

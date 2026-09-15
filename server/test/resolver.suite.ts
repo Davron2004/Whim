@@ -174,6 +174,63 @@ async function testUnresolvableCostIsExplicit(): Promise<void> {
   store.close();
 }
 
+/**
+ * A pipeline request records several generation ids and resolves them under ONE shared deadline.
+ * If one id stalls, the row must not be stamped `resolved` with whatever the others summed to: the
+ * operator reads that number as the cost of a generation. It must also not lose the fast ids to the
+ * stalled one — they are resolved concurrently, so a stall costs their result only if the WHOLE
+ * budget elapses.
+ */
+async function testPartialResolutionIsNotStampedResolved(): Promise<void> {
+  section('Resolver — a partial resolution is never stamped resolved with a partial cost');
+
+  const store = new NodeSqliteUsageStore(':memory:');
+  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
+  if (!admitted.ok) throw new Error('setup: admit should succeed');
+  await store.settle(admitted.requestId, { outcome: 'aborted' });
+
+  const attempted = new Set<string>();
+  const fast = new Map<string, GenerationStats>([
+    ['gen-2', { usage: usage(10, 5), totalCostUsd: 0.02 }],
+    ['gen-3', { usage: usage(10, 5), totalCostUsd: 0.02 }],
+    ['gen-4', { usage: usage(10, 5), totalCostUsd: 0.02 }],
+    ['gen-5', { usage: usage(10, 5), totalCostUsd: 0.02 }],
+  ]);
+  const transport: UsageAndCostTransport = {
+    fetchStats(generationId: string): Promise<GenerationStats | null> {
+      attempted.add(generationId);
+      // The provider has not yet published stats for the first id and never will inside the budget.
+      if (generationId === 'gen-slow') return new Promise(() => {});
+      return Promise.resolve(fast.get(generationId) ?? null);
+    },
+  };
+
+  const { store: counted, creditCalls } = countingCreditStore(store);
+  await withSafetyTimeout(
+    resolveRequestUsage(admitted.requestId, DEVICE_A, ['gen-slow', 'gen-2', 'gen-3', 'gen-4', 'gen-5'], false, {
+      transport,
+      usageStore: counted,
+      // The stalled id retries until the SHARED budget is gone: resolved sequentially it would
+      // leave nothing for the ids behind it, which is the starvation this asserts against.
+      bounds: { maxAttempts: 5, totalBudgetMs: 300, retryDelayMs: 10, perAttemptTimeoutMs: 100 },
+    }),
+    3000,
+    'resolveRequestUsage (partial)',
+  );
+
+  // Concurrency: a stalled first id must not starve the ids behind it.
+  eq('every id is attempted, not just the ones ahead of the stalled one', attempted.size, 5);
+
+  const summary = await store.summary({ days: 1, now: Date.now() });
+  eq('a partially-resolved row is counted as unresolved', summary.generationStats.unresolvedCount, 1);
+  eq('no partial cost is recorded on the row', summary.generationStats.maxCostUsd, 0);
+
+  // Tokens are a best-effort meter, not an authoritative stamp: what did resolve is still credited.
+  eq('the tokens that did resolve are still credited exactly once', creditCalls.length, 1);
+  eq('the credited total is the sum of the four resolved ids', (await store.read(DEVICE_A)).totalTokens, 60);
+  store.close();
+}
+
 async function testHangingAttemptCutOffByTimeout(): Promise<void> {
   section('Resolver — a hanging attempt is cut off by its per-attempt timeout, not left to hang forever');
 
@@ -262,6 +319,7 @@ export async function runResolverTests(): Promise<void> {
   await testSummedCostCreditOwned();
   await testCancelledRunCostAndSingleCredit();
   await testUnresolvableCostIsExplicit();
+  await testPartialResolutionIsNotStampedResolved();
   await testHangingAttemptCutOffByTimeout();
   await testNoDoubleCounting();
   await testResolveTracker();

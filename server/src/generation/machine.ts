@@ -890,7 +890,10 @@ export class GenerationMachine {
    * primitives (no record, no manifest object, no bundle), its token spend is folded into the run's
    * usage before the `usage` event, and ANY failure — a rejection, a timeout, unusable prose —
    * yields `undefined`, so the run still emits its `result` with the summary simply absent. No
-   * stage event narrates it: it is not a stage, and the enum is not widened.
+   * stage event narrates it: it is not a stage, and the enum is not widened. The one thing a
+   * summariser failure DOES change outside itself is the credit cache: a `402` here means the
+   * provider credit is gone, and `invalidateCreditCache()` runs for it exactly as it does for a
+   * `402` on any other model call.
    */
   private async summariseDelivery(
     request: GenerateRequest,
@@ -916,6 +919,10 @@ export class GenerationMachine {
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
       return result.summary;
     } catch (err) {
+      // The summariser's failure still cannot fail the run — but a `402` is authoritative about
+      // the operator's credit wherever it is raised, so the next admission must re-query rather
+      // than trust a cached value (the same invalidation `endOnThrow` performs).
+      if (isCreditExhaustedError(err)) invalidateCreditCache();
       runLog.error(
         {
           errorClass: err instanceof Error ? err.constructor.name : typeof err,

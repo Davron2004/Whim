@@ -7,10 +7,11 @@
  * that write code, the `PromptInputs` loaded once at composition-root time. Every builder returns
  * `ModelMessage[]`, the provider-agnostic shape `../model.ts` declares.
  *
- * One deliberate exception: `buildRewriteMessages` and `buildGenerateMessages` also read the
+ * One deliberate exception: every builder whose output is authored into shipped app source —
+ * `buildRewriteMessages`, `buildGenerateMessages` and `buildRepairMessages` — also reads the
  * content-policy document's rating-rule section (spec content-policy "Generation prompts carry the
  * rating rule") via `ratingRuleAppendix()` below. It cannot arrive as a `PromptInputs` field like
- * the SDK reference — `buildRewriteMessages` takes no such parameter, and neither builder's
+ * the SDK reference — `buildRewriteMessages` takes no such parameter, and no builder's
  * signature changes — so it goes through `loadContentPolicyDocument`'s own memoized loader instead,
  * called fresh on every turn (cheap after the first read; see that function's doc comment).
  */
@@ -127,9 +128,11 @@ function nonEmptySections(...sections: string[]): string {
   return sections.filter((s) => s.trim().length > 0).join('\n\n');
 }
 
-/** `docs/content-policy.md`'s rating-rule section, verbatim — appended to the rewrite and generate
- *  system messages so generated software is steered toward a 13+ rating, not only filtered at the
- *  door (spec content-policy "Generation prompts carry the rating rule"). */
+/** `docs/content-policy.md`'s rating-rule section, verbatim — appended to the rewrite, generate and
+ *  repair system messages so generated software is steered toward a 13+ rating, not only filtered
+ *  at the door (spec content-policy "Generation prompts carry the rating rule"). Repair is covered
+ *  because it asks for the FULL corrected source and is therefore the last author of what ships;
+ *  the plan turn is not, because its JSON is never delivered to a device. */
 function ratingRuleAppendix(): string {
   return loadContentPolicyDocument().ratingRule;
 }
@@ -385,7 +388,7 @@ const REPAIR_INSTRUCTIONS = [
 ].join(' ');
 
 export function buildRepairMessages(ctx: RepairTurnContext, inputs: PromptInputs): ModelMessage[] {
-  const system = nonEmptySections(REPAIR_INSTRUCTIONS, sdkReferenceSection(inputs), fewShotSection(inputs));
+  const system = nonEmptySections(REPAIR_INSTRUCTIONS, ratingRuleAppendix(), sdkReferenceSection(inputs), fewShotSection(inputs));
   const user = nonEmptySections(
     `Request: ${ctx.request.prompt}`,
     planSection(ctx.plan),

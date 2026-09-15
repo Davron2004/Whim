@@ -32,7 +32,8 @@ import {
 } from '../src/generation/machine';
 import { openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
-import { OpenRouterClient, OpenRouterCreditError } from '../src/openrouter';
+import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
+import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
 import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
 import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 
@@ -1600,6 +1601,133 @@ async function testTheProviderClientsHttp402IsRecognised(): Promise<void> {
   invalidateCreditCache();
 }
 
+/** One SSE `data:` line, terminated as the provider terminates it. */
+function sseFrame(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+function contentFrames(id: string, texts: readonly string[]): string[] {
+  return texts.map((text) => sseFrame({ id, choices: [{ index: 0, delta: { content: text } }] }));
+}
+
+/** A fake OpenRouter transport: the Nth `stream()` call replays `streams[N]` over a real SSE
+ *  response body (status 200 throughout — the failure being tested arrives INSIDE the stream). */
+function sseFetchSequence(streams: readonly (readonly string[])[]): FetchFn {
+  let call = 0;
+  return async () => {
+    const frames = streams[Math.min(call, streams.length - 1)] ?? [];
+    call += 1;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(encoder.encode(frame));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+}
+
+/**
+ * The provider can run out of credit AFTER the response headers are sent: OpenRouter answers
+ * `200 OK`, streams part of the candidate, then sends `data: {"error":{"code":402}}`. Dropped, that
+ * frame would end the stream "normally" with a truncated candidate — the run would check and repair
+ * half a file while the real cause (no credit) went unreported and uncached.
+ */
+async function testMidStreamCreditFrameEndsTheRun(): Promise<void> {
+  section('machine — a 402 delivered INSIDE the SSE stream ends the run as budget exhaustion, not as a truncated candidate');
+
+  invalidateCreditCache();
+  const credit = creditOptions([10, 0]);
+  eq('mid-stream 402: the primed check admits', await checkCredit(credit.options), { ok: true });
+
+  const model = openRouterModelClient(new OpenRouterClient(sseFetchSequence([
+    [...contentFrames('gen-plan', [VALID_PLAN_JSON]), 'data: [DONE]\n\n'],
+    [
+      ...contentFrames('gen-generate', ['export default ', 'defineApp({']),
+      sseFrame({ error: { code: 402, message: 'Insufficient credits' } }),
+    ],
+  ])));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST, undefined, trace));
+
+  assertCompletedEnvelope('mid-stream 402', events);
+  eq('mid-stream 402: the failure names the generation budget, not a generic error', lastFailure(events)?.reason, CREDIT_EXHAUSTED_COPY);
+  eq('mid-stream 402: the truncated candidate is never checked', stageEvents(events, 'check').length, 0);
+  eq('mid-stream 402: no repair is attempted on a budget that is already gone', stageEvents(events, 'repair').length, 0);
+  eq('mid-stream 402: the tokens streamed before the failure still reached the device', events.filter((e) => e.type === 'token').length, 2);
+  eq('mid-stream 402: RunTrace.outcome is failed', trace.outcome, 'failed');
+
+  const next = await checkCredit(credit.options);
+  eq('mid-stream 402: the next check re-queries inside the TTL', credit.lookups(), 2);
+  eq('mid-stream 402: the next request is refused as budget_exhausted', next, { ok: false, reason: 'budget_exhausted' });
+  invalidateCreditCache();
+}
+
+/** Deps for a run that delivers on its first candidate, with `summariser` as the only variable. */
+function deliveringDepsWithSummariser(model: ModelClient, summariser: Summariser): GenerationPipelineDeps {
+  return baseDeps({
+    model,
+    summariser,
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+  });
+}
+
+/**
+ * A 402 raised by the post-run summariser must not fail the run — the record is already built and
+ * the summary is a nicety — but it is still authoritative about the operator's credit. Both
+ * swallowing layers are covered: the model-backed summariser's own catch (the production path) and
+ * `machine.ts`'s defensive catch around a summariser that rejects outright.
+ */
+async function testSummariserCreditErrorStillInvalidatesTheCache(): Promise<void> {
+  section('machine — a 402 from the post-run summariser still delivers the run AND invalidates the credit cache');
+
+  const rejectingSummariser: Summariser = {
+    summarise: (): Promise<SummariseResult> => Promise.reject(new OpenRouterCreditError('OpenRouter: payment required (402)')),
+  };
+  const modelTurns = (): ScriptedTurn[] => [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])];
+
+  const cases: { label: string; summariser: (model: ScriptedModelClient) => Summariser; turns: ScriptedTurn[] }[] = [
+    {
+      label: 'the production model-backed summariser (its own catch swallows the throw)',
+      summariser: (model) => createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 }),
+      turns: [
+        ...modelTurns(),
+        { role: 'rewrite', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+      ],
+    },
+    {
+      label: 'a summariser that rejects outright (machine.ts\'s own catch)',
+      summariser: () => rejectingSummariser,
+      turns: modelTurns(),
+    },
+  ];
+
+  for (const c of cases) {
+    invalidateCreditCache();
+    const credit = creditOptions([10, 0]);
+    eq(`summariser 402 (${c.label}): the primed check admits`, await checkCredit(credit.options), { ok: true });
+
+    const model = new ScriptedModelClient(ROSTER, c.turns);
+    const events = await collect(new GenerationMachine(deliveringDepsWithSummariser(model, c.summariser(model))).run(NEW_APP_REQUEST));
+
+    assertCompletedEnvelope(`summariser 402 (${c.label})`, events);
+    const terminal = events.at(-1);
+    eq(`summariser 402 (${c.label}): the run still delivers its result`, terminal?.type, 'result');
+    if (terminal?.type === 'result') {
+      eq(`summariser 402 (${c.label}): the delivered record is unchanged`, terminal.app, WIRE_RECORD);
+      eq(`summariser 402 (${c.label}): no summary is attached`, terminal.summary, undefined);
+    }
+
+    const next = await checkCredit(credit.options);
+    eq(`summariser 402 (${c.label}): the next check re-queries inside the TTL`, credit.lookups(), 2);
+    eq(`summariser 402 (${c.label}): the next request is refused as budget_exhausted`, next, { ok: false, reason: 'budget_exhausted' });
+  }
+  invalidateCreditCache();
+}
+
 async function testA402InTheExpiryTurnStillInvalidates(): Promise<void> {
   section('machine — a 402 landing in the turn the budget elapses: expiry ends the run, the cache is still invalidated');
 
@@ -1737,5 +1865,7 @@ export async function runMachineTests(): Promise<void> {
   await testCreditExhaustedInvalidatesTheCreditCache();
   await testTheProviderClientsHttp402IsRecognised();
   await testA402InTheExpiryTurnStillInvalidates();
+  await testMidStreamCreditFrameEndsTheRun();
+  await testSummariserCreditErrorStillInvalidatesTheCache();
   await testRunTraceOutcomeAndBudgetDefaults();
 }
