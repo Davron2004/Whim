@@ -160,12 +160,12 @@ When either fingerprint file is missing, the site SHALL carry neither associatio
 ### Requirement: The privacy policy and support pages match what the app discloses
 The repository SHALL hold the privacy policy, support page, app-link fallback page and not-found page as static page sources.
 
-The site build SHALL substitute only these deploy-time values, each HTML-escaped: `WHIM_SUPPORT_EMAIL` (required, with no committed default), `WHIM_ENGINEER_MODEL` and `WHIM_REWRITE_MODEL` (required, the values the deployed server runs with), and `WHIM_APP_STORE_URL` and `WHIM_PLAY_STORE_URL` (optional). It SHALL fail and name the value when a required value is missing or malformed, when a page uses an unknown placeholder, or when a placeholder survives rendering.
+The site build SHALL substitute only these deploy-time values, each HTML-escaped: `WHIM_SUPPORT_EMAIL` (required, with no committed default), and `WHIM_APP_STORE_URL` and `WHIM_PLAY_STORE_URL` (optional). It SHALL fail and name the value when a required value is missing or malformed, when a page uses an unknown placeholder, or when a placeholder survives rendering.
 
 The privacy policy SHALL:
 - name AnyCognition Inc. as the operator and give the support email
 - quote verbatim every disclosure string of the app's AI-data consent screen
-- say that requests go to AnyCognition's server and then to third-party AI models through OpenRouter, and name the configured models
+- say that requests go to AnyCognition's server and then to third-party AI models through OpenRouter, and say that which models are used can change without notice, without naming specific model ids
 - describe reports as sent only by the user, list what a report holds including the anonymous device ID, and state how long reports are kept
 - describe the usage ledger, say it holds no request content, and state how long it's kept
 - state that Whim has no accounts, no ads, no analytics, crash-reporting or advertising SDKs, and no sharing between users

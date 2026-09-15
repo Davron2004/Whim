@@ -385,14 +385,13 @@ The page sources live in `deploy/site/`: `privacy.html`, `support.html`, `app-li
 | Placeholder | Source | Rule |
 |---|---|---|
 | `WHIM_SUPPORT_EMAIL` | deploy-time value (D24) | required, no committed default, must parse as an email address |
-| `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | the same values the deploy writes into the server's config (D24) | required |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | deploy-time values | optional `https` URLs on `apps.apple.com` and `play.google.com`; the fallback page leaves out its store-links paragraph when both are unset |
 
-The policy renders the model ids from the values the server actually runs with, so it can't name a model the server stopped using. That also keeps store-launch-compliance's open-question default that the hosted policy names the current providers.
+The policy names OpenRouter as the processor and says the models can change, rather than rendering the model ids the server runs with. `WHIM_ENGINEER_MODEL` and `WHIM_REWRITE_MODEL` stay required deploy-time values (D24) — the server runs with them, and `deploy.sh` writes them to `config.env` — but they're server config only, never page placeholders. That means a model switch never requires a policy republish, and it keeps store-launch-compliance's spec text ("third-party AI model providers through OpenRouter", never specific model ids) rather than the stricter default this design originally chose.
 
 **The privacy policy** is committed text with a "Last updated" date. It says:
 - AnyCognition Inc. runs Whim, reachable at the support email.
-- What leaves the phone, quoting the consent screen word for word: its lead, the "What gets sent" and "What never gets sent" lists, and the footnote. Requests go to AnyCognition's server, which sends them to third-party AI models through OpenRouter. The page names the configured model ids.
+- What leaves the phone, quoting the consent screen word for word: its lead, the "What gets sent" and "What never gets sent" lists, and the footnote. Requests go to AnyCognition's server, which sends them to third-party AI models through OpenRouter. The page names OpenRouter as the processor, not the model ids, and says which models Whim uses can change without notice.
 - Reports are sent only when the user taps Send. A report holds the reason, an optional note, and optionally the app's name, prompt and source, stored with the phone's anonymous ID and deleted after 90 days.
 - The usage ledger keeps one row per request (anonymous ID, request type, times, outcome, token counts, cost) and no request content, for 90 days.
 - Whim has no accounts, no ads, no analytics, crash-reporting or advertising SDKs, and no way for people to share apps or content with each other.
@@ -424,7 +423,7 @@ This supersedes D17's `/etc/whim/limits.env` and `/etc/whim/deploy.env`.
 - `/etc/whim/config.env` (root, 0600) is the server's non-secret environment: the active profile's server limits (D25) and the two model ids.
 - `/etc/whim/server.env` (root, 0600) holds `OPENROUTER_API_KEY` only, from Secret Manager, as in D17.
 
-**A missing key fails the deploy early and loudly.** The owner creates the production OpenRouter key and its credit limit later, and no script creates, rotates or sets either. `provision.sh` still creates only the empty secret. Before Cloud Build starts, `deploy.sh` reads the latest enabled version of that secret with the operator's credentials. If the secret doesn't exist, has no enabled version, or holds an empty value, it exits non-zero naming the secret and the runbook section, and it builds, uploads and restarts nothing. The same preflight names any missing required value from the operator file. `--site-only` skips the key check but still needs the support email and model ids, because the policy page renders them.
+**A missing key fails the deploy early and loudly.** The owner creates the production OpenRouter key and its credit limit later, and no script creates, rotates or sets either. `provision.sh` still creates only the empty secret. Before Cloud Build starts, `deploy.sh` reads the latest enabled version of that secret with the operator's credentials. If the secret doesn't exist, has no enabled version, or holds an empty value, it exits non-zero naming the secret and the runbook section, and it builds, uploads and restarts nothing. The same preflight names any missing required value from the operator file. `--site-only` skips the key check but still needs the support email, because the policy page renders it; the model ids are required deploy values regardless.
 
 The boot refusal in specs/server-deployment ("A missing key is named at boot") stays as the last line of defense. The deploy check just moves the failure to the operator's terminal instead of a restart loop on the VM.
 
@@ -539,7 +538,7 @@ Each open question has a default, so apply proceeds without waiting.
 - **Mirroring the egress canary into `invariants/`.** Default: left as an owner follow-up, since agents cannot edit `invariants/`.
 - **Device blocklist for abusive devices (Apple 4.7.1 "block abusive users").** Default not in this change: Whim has no user-to-user surface, and a blocklist without attestation is trivially evaded.
 - **Support contact email.** Not decided. Default: `WHIM_SUPPORT_EMAIL` is required at deploy time with no committed default, so the pages can't publish until the owner picks one (D23, D24).
-- **Production model pair.** Not decided (see the backlog item on choosing models for public cost). Default: `WHIM_ENGINEER_MODEL` and `WHIM_REWRITE_MODEL` are required deploy-time values with no committed default, and the policy page names whatever is deployed.
+- **Production model pair.** Not decided (see the backlog item on choosing models for public cost). Default: `WHIM_ENGINEER_MODEL` and `WHIM_REWRITE_MODEL` are required deploy-time values with no committed default; the policy page names OpenRouter, never the deployed models.
 - **AASA before the first Play upload.** Default: no. Both association files go live together once the Play signing fingerprint is committed, because the release command writes both or neither (D22). An AASA-only mode would be a platform-release-readiness change.
 - **Hostnames committed in `deploy/defaults.env`.** Default: yes, because they're public DNS names and the deploy is reproducible from the repo. If the owner wants no domain literal in the repo, both move to `~/.config/whim/deploy.env` and nothing else changes.
 - **VM zone.** Default `northamerica-northeast1-a`. The reserved IP is regional, so any zone in the region works.

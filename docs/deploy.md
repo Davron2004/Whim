@@ -77,7 +77,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | Variable | Required | Notes |
 |---|---|---|
 | `WHIM_SUPPORT_EMAIL` | yes | rendered on the privacy and support pages |
-| `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | yes | the model pair the server and the pages both use |
+| `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | yes | the model pair the server runs with (not rendered on the pages) |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).

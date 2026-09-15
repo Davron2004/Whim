@@ -6,8 +6,10 @@ Bundles `server/src/site/build.ts` like `server/dev.mjs`/`server/admin.mjs` bund
 runs it with a real `AssociationFilesRunner` (spawns
 `node scripts/release/run.mjs association-files --out <stage>`, cwd = repo root).
 
-Required env: `WHIM_SUPPORT_EMAIL`, `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL`. Optional:
-`WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL`. `--out` is relative to the caller's cwd.
+Required env: `WHIM_SUPPORT_EMAIL`. Optional: `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL`.
+`WHIM_ENGINEER_MODEL`/`WHIM_REWRITE_MODEL` are required deploy-time values too (D24 — the server
+runs with them), but they're not page placeholders and this build doesn't read them. `--out` is
+relative to the caller's cwd.
 
 - stdout on success: `association files: present` or
   `association files: absent (<missingPath>); app link verification stays PENDING`.
@@ -18,7 +20,7 @@ Required env: `WHIM_SUPPORT_EMAIL`, `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL`.
 
 ```ts
 export type PlaceholderName =
-  | 'WHIM_SUPPORT_EMAIL' | 'WHIM_ENGINEER_MODEL' | 'WHIM_REWRITE_MODEL'
+  | 'WHIM_SUPPORT_EMAIL'
   | 'WHIM_APP_STORE_URL' | 'WHIM_PLAY_STORE_URL';
 export type PlaceholderValues = { readonly [K in PlaceholderName]?: string };
 
@@ -48,7 +50,7 @@ export function buildSite(options: BuildSiteOptions): Promise<BuildSiteResult>;
 
 **`renderPage` rules (design D23):** substitutes `{{NAME}}` from the closed `PlaceholderName` set,
 HTML-escaping every value. An unknown `{{NAME}}`, a missing/malformed required value
-(`WHIM_SUPPORT_EMAIL`/`WHIM_ENGINEER_MODEL`/`WHIM_REWRITE_MODEL`), or a leftover `{{` after
+(`WHIM_SUPPORT_EMAIL`), or a leftover `{{` after
 substitution throws `RenderPageError` naming the offender. `WHIM_SUPPORT_EMAIL` must look like an
 email; `WHIM_APP_STORE_URL`/`WHIM_PLAY_STORE_URL`, if given, must be `https://apps.apple.com/…` /
 `https://play.google.com/…`. `<!--IF:NAME-->…<!--ENDIF-->` blocks are kept only when `values[NAME]`

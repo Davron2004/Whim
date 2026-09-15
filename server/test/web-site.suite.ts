@@ -32,8 +32,6 @@ function readPage(name: string): string {
 // also satisfy `buildSite`'s `env: NodeJS.ProcessEnv` parameter without a cast.
 const FIXTURE_VALUES: Record<string, string> = {
   WHIM_SUPPORT_EMAIL: 'support@anycognition.ca',
-  WHIM_ENGINEER_MODEL: 'anthropic/claude-sonnet',
-  WHIM_REWRITE_MODEL: 'anthropic/claude-haiku',
 };
 
 const FIXTURE_VALUES_WITH_STORES: Record<string, string> = {
@@ -114,6 +112,9 @@ export async function runWebSiteTests(): Promise<void> {
 
   const missing = missingConsentDisclosures(COPY, CONSENT_ALLOWLIST, normalizedPolicy);
   eq('privacy.html quotes every non-allowlisted consent key verbatim', missing, []);
+
+  check('privacy.html names OpenRouter as the processor, not a specific model', renderedPolicy.includes('through OpenRouter'));
+  check('privacy.html has no unresolved placeholder', !renderedPolicy.includes('{{'));
 
   const config = loadServerConfig({});
   eq(
@@ -211,8 +212,11 @@ export async function runWebSiteTests(): Promise<void> {
 
   eq(
     'renderPage HTML-escapes a value containing <',
-    renderPage('{{WHIM_ENGINEER_MODEL}}', { ...FIXTURE_VALUES, WHIM_ENGINEER_MODEL: '<script>alert(1)</script>' }),
-    '&lt;script&gt;alert(1)&lt;/script&gt;',
+    renderPage('{{WHIM_SUPPORT_EMAIL}}', {
+      ...FIXTURE_VALUES,
+      WHIM_SUPPORT_EMAIL: '<script>alert(1)</script>@evil.com',
+    }),
+    '&lt;script&gt;alert(1)&lt;/script&gt;@evil.com',
   );
 
   section('Web site: app-link store links');
