@@ -4,11 +4,29 @@
  * Each entry name → `{ summary, run(args) }` is chain-1's contract for every later chain that
  * adds a command (native-config --json, preflight, verify-aab, privacy-audit,
  * association-files, generate-assets, tag): add one `COMMANDS` entry, never a second table or
- * a second `runCli`.
+ * a second `runCli`. Every command exits 0 on success, 1 on findings (one line each — with the
+ * fix, where the underlying check carries one) and 2 on usage errors (handoff/release-cli.md).
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { buildNumberAt } from './lib/build-number';
 import { generateAssets } from './lib/assets';
+import { loadNativeReleaseConfig, scanNativeLiterals } from './lib/native-config';
+import { checkIosProject } from './lib/ios-project';
+import { checkAndroidProject } from './lib/android-project';
+import { checkAssets } from './lib/assets';
+import { checkStoreListing } from './lib/store-listing';
+import { collectPreflightSnapshot, evaluatePreflight, type ReleasePlatform } from './lib/preflight';
+import { parseFingerprintFile, getAabManifestFacts, getAabSignerFingerprint, aabFindings, type AabFacts } from './lib/verify-aab';
+import { auditApp } from './lib/privacy-audit';
+import { buildAssociationFiles, UPLOAD_FINGERPRINT_PATH } from './lib/association-files';
+import { ensureReleaseTag, realGitRunner } from './lib/release-tag';
+
+declare module 'node:fs' {
+  export function writeFileSync(path: string, data: string, encoding: 'utf8'): void;
+  export function mkdirSync(path: string, options: { recursive: true }): string | undefined;
+}
 
 export interface CliCommand {
   readonly summary: string;
@@ -19,6 +37,15 @@ function readFlag(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index === -1) return undefined;
   return args[index + 1];
+}
+
+function hasFlag(args: string[], flag: string): boolean {
+  return args.includes(flag);
+}
+
+function reportError(command: string, err: unknown): number {
+  process.stderr.write(`${command}: ${err instanceof Error ? err.message : String(err)}\n`);
+  return 1;
 }
 
 function runBuildNumber(args: string[]): number {
@@ -48,6 +75,151 @@ async function runGenerateAssets(): Promise<number> {
   }
 }
 
+function runCheck(): number {
+  const repoRoot = process.cwd();
+  const config = loadNativeReleaseConfig(repoRoot);
+  const lines: string[] = [
+    ...scanNativeLiterals(repoRoot, config).map((f) => `native literal — ${f.file}:${f.line}: ${f.key} ${JSON.stringify(f.literal)}`),
+    ...checkIosProject(repoRoot, config).map((f) => `iOS project — ${f.file}: ${f.message}`),
+    ...checkAndroidProject(repoRoot).map((f) => `Android project — ${f.file}: ${f.message}`),
+    ...checkAssets(repoRoot).map((f) => `assets — ${f.path}: ${f.message}`),
+    ...checkStoreListing(repoRoot, config).map((f) => `store listing — ${f.file}: ${f.message}`),
+  ];
+  if (lines.length === 0) {
+    process.stdout.write('check: every repo check passed\n');
+    return 0;
+  }
+  for (const line of lines) process.stdout.write(`check: ${line}\n`);
+  return 1;
+}
+
+function runNativeConfig(args: string[]): number {
+  if (!hasFlag(args, '--json')) {
+    process.stderr.write('native-config: usage: native-config --json\n');
+    return 2;
+  }
+  try {
+    process.stdout.write(`${JSON.stringify(loadNativeReleaseConfig(process.cwd()))}\n`);
+    return 0;
+  } catch (err) {
+    return reportError('native-config', err);
+  }
+}
+
+function isReleasePlatform(value: string | undefined): value is ReleasePlatform {
+  return value === 'ios' || value === 'android';
+}
+
+function parseIntegerFlag(args: string[], flag: string): number | undefined {
+  const raw = readFlag(args, flag);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) ? value : undefined;
+}
+
+function runPreflight(args: string[]): number {
+  const platform = readFlag(args, '--platform');
+  const buildNumber = parseIntegerFlag(args, '--build');
+  const storeLatestBuildNumber = parseIntegerFlag(args, '--store-latest');
+  if (!isReleasePlatform(platform) || buildNumber === undefined || storeLatestBuildNumber === undefined) {
+    process.stderr.write('preflight: usage: preflight --platform ios|android --build <n> --store-latest <n> [--allow-placeholder-domain]\n');
+    return 2;
+  }
+  try {
+    const snapshot = collectPreflightSnapshot(process.cwd(), platform, { buildNumber, storeLatestBuildNumber });
+    const findings = evaluatePreflight(snapshot, { allowPlaceholderDomain: hasFlag(args, '--allow-placeholder-domain') });
+    if (findings.length === 0) {
+      process.stdout.write(`preflight: passed for ${platform}, build ${buildNumber}\n`);
+      return 0;
+    }
+    for (const f of findings) process.stdout.write(`preflight: ${f.reason} — fix: ${f.fix}\n`);
+    return 1;
+  } catch (err) {
+    return reportError('preflight', err);
+  }
+}
+
+async function runVerifyAab(args: string[]): Promise<number> {
+  const aabPath = args.find((a) => !a.startsWith('--'));
+  const buildNumber = parseIntegerFlag(args, '--build');
+  if (aabPath === undefined || buildNumber === undefined) {
+    process.stderr.write('verify-aab: usage: verify-aab <path> --build <n>\n');
+    return 2;
+  }
+  try {
+    const repoRoot = process.cwd();
+    const config = loadNativeReleaseConfig(repoRoot);
+    const expectedFingerprint = parseFingerprintFile(fs.readFileSync(path.join(repoRoot, UPLOAD_FINGERPRINT_PATH), 'utf8'));
+    const facts: AabFacts = { manifest: getAabManifestFacts(aabPath), signerFingerprint: getAabSignerFingerprint(aabPath) };
+    const findings = aabFindings(facts, { packageName: config.WHIM_APP_ID, versionCode: buildNumber, signerFingerprint: expectedFingerprint });
+    if (findings.length === 0) {
+      process.stdout.write(`verify-aab: ${aabPath} passed\n`);
+      return 0;
+    }
+    for (const f of findings) process.stdout.write(`verify-aab: ${f.reason}\n`);
+    return 1;
+  } catch (err) {
+    return reportError('verify-aab', err);
+  }
+}
+
+function runPrivacyAudit(args: string[]): number {
+  const [appPath] = args;
+  if (appPath === undefined) {
+    process.stderr.write('privacy-audit: usage: privacy-audit <App.app>\n');
+    return 2;
+  }
+  try {
+    const findings = auditApp(appPath);
+    if (findings.length === 0) {
+      process.stdout.write(`privacy-audit: ${appPath} passed\n`);
+      return 0;
+    }
+    for (const f of findings) process.stdout.write(`privacy-audit: ${f.reason}\n`);
+    return 1;
+  } catch (err) {
+    return reportError('privacy-audit', err);
+  }
+}
+
+function runAssociationFiles(args: string[]): number {
+  const outDir = readFlag(args, '--out');
+  try {
+    const repoRoot = process.cwd();
+    const { aasa, assetLinks } = buildAssociationFiles(repoRoot, loadNativeReleaseConfig(repoRoot));
+    const aasaText = `${JSON.stringify(aasa, null, 2)}\n`;
+    const assetLinksText = `${JSON.stringify(assetLinks, null, 2)}\n`;
+    if (outDir !== undefined) {
+      fs.mkdirSync(outDir, { recursive: true });
+      fs.writeFileSync(path.join(outDir, 'apple-app-site-association'), aasaText, 'utf8');
+      fs.writeFileSync(path.join(outDir, 'assetlinks.json'), assetLinksText, 'utf8');
+      process.stdout.write(`association-files: wrote ${outDir}/apple-app-site-association and ${outDir}/assetlinks.json\n`);
+    } else {
+      process.stdout.write(`# apple-app-site-association\n${aasaText}\n# assetlinks.json\n${assetLinksText}`);
+    }
+    return 0;
+  } catch (err) {
+    return reportError('association-files', err);
+  }
+}
+
+function runTag(args: string[]): number {
+  const buildNumber = parseIntegerFlag(args, '--build');
+  if (buildNumber === undefined) {
+    process.stderr.write('tag: usage: tag --build <n>\n');
+    return 2;
+  }
+  try {
+    const repoRoot = process.cwd();
+    const config = loadNativeReleaseConfig(repoRoot);
+    const tagName = ensureReleaseTag(realGitRunner(repoRoot), config.WHIM_MARKETING_VERSION, buildNumber);
+    process.stdout.write(`tag: ${tagName}\n`);
+    return 0;
+  } catch (err) {
+    return reportError('tag', err);
+  }
+}
+
 export const COMMANDS: Record<string, CliCommand> = {
   'build-number': {
     summary: 'build-number [--at <iso>] — prints the release build number for an instant (default: now).',
@@ -56,6 +228,34 @@ export const COMMANDS: Record<string, CliCommand> = {
   'generate-assets': {
     summary: 'generate-assets — renders every icon and launch asset from release/assets/ and writes generated.json.',
     run: runGenerateAssets,
+  },
+  check: {
+    summary: 'check — runs every repo release check (native literals, iOS/Android project, assets, store listing).',
+    run: runCheck,
+  },
+  'native-config': {
+    summary: 'native-config --json — prints release/whim-release.xcconfig as JSON.',
+    run: runNativeConfig,
+  },
+  preflight: {
+    summary: 'preflight --platform ios|android --build <n> --store-latest <n> [--allow-placeholder-domain] — every reason a build would refuse.',
+    run: runPreflight,
+  },
+  'verify-aab': {
+    summary: 'verify-aab <path> --build <n> — verifies a store AAB before upload.',
+    run: runVerifyAab,
+  },
+  'privacy-audit': {
+    summary: 'privacy-audit <App.app> — audits required-reason API usage against the bundled privacy manifests.',
+    run: runPrivacyAudit,
+  },
+  'association-files': {
+    summary: 'association-files [--out <dir>] — prints (or writes) the AASA and assetlinks files ops must serve.',
+    run: runAssociationFiles,
+  },
+  tag: {
+    summary: 'tag --build <n> — tags a successful upload on HEAD, reusing an existing tag there.',
+    run: runTag,
   },
 };
 
