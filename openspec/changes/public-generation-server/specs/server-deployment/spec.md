@@ -198,9 +198,13 @@ Concurrent probes SHALL count against the global unary cap and be refused with `
 - **THEN** it receives three comment frames at roughly one-second intervals and the stream ends
 
 ### Requirement: The server container runs hardened on the VM
-The deployment's compose definition SHALL run the server container with these settings. The seccomp profile vendored from the lockfile's Playwright version SHALL be applied, and no other security weakening. `no-new-privileges` SHALL be set and all Linux capabilities dropped. The root filesystem SHALL be read-only, with a size-bounded `/tmp` tmpfs. The container SHALL have an init process, a shared-memory size sufficient for Chromium, a process-count limit, a memory limit, and an automatic restart policy. The stop grace period SHALL be at least the drain timeout plus 30 seconds. `WHIM_DATA_DIR` SHALL be bind-mounted from the persistent disk and owned by the container's uid.
+The deployment's compose definition SHALL run the server container with these settings. The seccomp profile vendored from the lockfile's Playwright version SHALL be applied, and no other security weakening. `no-new-privileges` SHALL be set, and the container SHALL drop all Linux capabilities (`cap_drop: [ALL]`) and add back exactly one, `SYS_CHROOT` (`cap_add: [SYS_CHROOT]`), because Docker's seccomp profile allows `chroot` only when that capability is held and Chromium's namespace sandbox calls `chroot` inside its own user namespace. The non-root server process still holds no effective, permitted or ambient capability. The root filesystem SHALL be read-only, with a size-bounded `/tmp` tmpfs. The container SHALL have an init process, a shared-memory size sufficient for Chromium, a process-count limit, a memory limit, and an automatic restart policy. The stop grace period SHALL be at least the drain timeout plus 30 seconds. `WHIM_DATA_DIR` SHALL be bind-mounted from the persistent disk and owned by the container's uid.
 
 The VM SHALL install a boot-persistent firewall rule set for traffic leaving the deployment's container network. It SHALL keep traffic between the deployment's own containers working. It SHALL drop traffic to the metadata server address and to private, carrier-grade-NAT, and link-local ranges. It SHALL allow egress to any other destination only on TCP 443 and DNS.
+
+#### Scenario: The capability set is pinned
+- **WHEN** the deploy-config tripwire reads the server service in the compose definition
+- **THEN** `cap_drop` is exactly `[ALL]`, `cap_add` is exactly `[SYS_CHROOT]`, and the tripwire fails on any other added capability or on a missing `no-new-privileges` or seccomp setting
 
 #### Scenario: A container cannot reach the metadata server
 - **WHEN** the post-deploy smoke check attempts a request from inside the server container to `169.254.169.254`
