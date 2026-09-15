@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parsePbxproj, type PbxValue } from '../../../scripts/release/lib/ios-project';
 import { assert, test } from '../harness';
 
 export const ANDROID_NETWORK_DENY_MANAGER_PATH =
@@ -13,6 +14,9 @@ export const ANDROID_NETWORK_DENY_MANAGER_PATH =
 export const ANDROID_NETWORK_DENY_PACKAGE_PATH =
   'android/app/src/main/java/com/whim/webview/NetworkDeniedWebViewPackage.kt';
 export const ANDROID_MAIN_APPLICATION_PATH = 'android/app/src/main/java/com/whim/MainApplication.kt';
+export const IOS_NETWORK_DENY_RULES_PATH = 'ios/Whim/WebViewNetworkDeny.json';
+export const IOS_NETWORK_DENY_IMPLEMENTATION_PATH = 'ios/Whim/WhimWebViewNetworkDeny.m';
+export const IOS_PROJECT_PATH = 'ios/Whim.xcodeproj/project.pbxproj';
 
 export interface NativeNetworkDenyFinding {
   readonly file: string;
@@ -242,6 +246,176 @@ export function checkAndroidNativeNetworkDeny(root: string): NativeNetworkDenyFi
   return findings;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sortedKeys(value: Record<string, unknown>): string {
+  return Object.keys(value).sort((left, right) => left.localeCompare(right)).join(',');
+}
+
+function ruleFilter(rule: unknown): string | undefined {
+  if (!isRecord(rule) || sortedKeys(rule) !== 'action,trigger') return undefined;
+  const { action, trigger } = rule;
+  if (!isRecord(action) || sortedKeys(action) !== 'type' || action.type !== 'block') return undefined;
+  if (!isRecord(trigger) || sortedKeys(trigger) !== 'url-filter') return undefined;
+  return typeof trigger['url-filter'] === 'string' ? trigger['url-filter'] : undefined;
+}
+
+function checkRuleFile(source: string, findings: NativeNetworkDenyFinding[]): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  // eslint-disable-next-line no-restricted-syntax -- invalid JSON becomes the named rule-file finding below
+  } catch {
+    addFinding(findings, IOS_NETWORK_DENY_RULES_PATH, 'rule file must be valid JSON');
+    return;
+  }
+  const filters = Array.isArray(parsed) ? parsed.map(ruleFilter) : [];
+  if (filters.length !== 2 || filters.some((filter) => filter === undefined)
+      || [...filters].sort((left, right) => (left ?? '').localeCompare(right ?? '')).join(',') !== '^https?:,^wss?:') {
+    addFinding(
+      findings,
+      IOS_NETWORK_DENY_RULES_PATH,
+      'rules must contain only blocking ^https?: and ^wss?: triggers with no trigger qualifiers',
+    );
+  }
+}
+
+function objectiveCCodeOnly(source: string): string {
+  // Objective-C comments, quoted strings and character literals are a subset of this lexer.
+  return lexKotlin(source).code;
+}
+
+function methodVariableForSelector(loadBody: string, selector: string): string | undefined {
+  const selectorPattern = selector.replaceAll(':', '\\s*:\\s*');
+  const assignment = new RegExp(
+    `\\bMethod\\s+(\\w+)\\s*=\\s*class_getInstanceMethod\\s*\\(\\s*WKWebView\\.class\\s*,`
+      + `\\s*@selector\\s*\\(\\s*${selectorPattern}\\s*\\)\\s*\\)\\s*;`,
+  ).exec(loadBody);
+  return assignment?.[1];
+}
+
+function exchangesMethods(loadBody: string, original: string, replacement: string): boolean {
+  const call = new RegExp(
+    `method_exchangeImplementations\\s*\\(\\s*${original}\\s*,\\s*${replacement}\\s*\\)`,
+  );
+  return call.test(loadBody);
+}
+
+function denyBranchBodies(body: string): { ready: string; unavailable: string } | undefined {
+  const readyStart = /if\s*\(\s*ruleList(?:\s*!=\s*nil)?\s*\)\s*\{/.exec(body);
+  if (!readyStart) return undefined;
+  const readyBrace = body.indexOf('{', readyStart.index);
+  const readyEnd = closingBraceIndex(body, readyBrace);
+  if (readyEnd === undefined) return undefined;
+  const elseStart = /^\s*else\s*\{/.exec(body.slice(readyEnd + 1));
+  if (!elseStart) return undefined;
+  const elseBrace = body.indexOf('{', readyEnd + 1 + elseStart.index);
+  const elseEnd = closingBraceIndex(body, elseBrace);
+  if (elseEnd === undefined) return undefined;
+  return {
+    ready: body.slice(readyBrace + 1, readyEnd),
+    unavailable: body.slice(elseBrace + 1, elseEnd),
+  };
+}
+
+function checkObjectiveCImplementation(source: string, findings: NativeNetworkDenyFinding[]): void {
+  const code = objectiveCCodeOnly(source);
+  const loadBody = methodBody(code, /\+\s*\(void\)\s*load\s*\{/);
+  const replacement = /-\s*\([^)]*\)\s*(init[A-Z]\w*)\s*:[^{;]+\bconfiguration\s*:[^{;]+\{/.exec(code);
+  const replacementSelector = replacement ? `${replacement[1]}:configuration:` : undefined;
+  const originalMethod = loadBody
+    ? methodVariableForSelector(loadBody, 'initWithFrame:configuration:')
+    : undefined;
+  const replacementMethod = loadBody && replacementSelector
+    ? methodVariableForSelector(loadBody, replacementSelector)
+    : undefined;
+  if (!loadBody || !/dispatch_once\s*\(/.test(loadBody)
+      || !originalMethod
+      || !replacementMethod
+      || !exchangesMethods(loadBody, originalMethod, replacementMethod)) {
+    addFinding(findings, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, '+load must swap the WKWebView initializer once');
+  }
+  if (!replacement || !replacementSelector) {
+    addFinding(findings, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, 'replacement selector must belong to the init family');
+    return;
+  }
+  const start = code.indexOf('{', replacement.index);
+  const end = closingBraceIndex(code, start);
+  const body = end === undefined ? '' : code.slice(start + 1, end);
+  const branches = denyBranchBodies(body);
+  if (!branches || !/addContentRuleList\s*:/.test(branches.ready)) {
+    addFinding(findings, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, 'replacement must attach the compiled content rule list');
+  }
+  if (!branches || !/allowsContentJavaScript\s*=\s*NO/.test(branches.unavailable)) {
+    addFinding(findings, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, 'replacement must fail closed while the rule list is unavailable');
+  }
+  if (!body.includes(`[self ${replacementSelector.replace(':configuration:', ':frame configuration:configuration')}]`)) {
+    addFinding(findings, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, 'replacement must call the swapped original initializer');
+  }
+}
+
+function isPbxDict(value: PbxValue | undefined): value is { [key: string]: PbxValue } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function pbxObject(objects: { [key: string]: PbxValue }, identifier: PbxValue): PbxValue | undefined {
+  return typeof identifier === 'string' ? objects[identifier] : undefined;
+}
+
+function phaseHasFile(
+  objects: { [key: string]: PbxValue },
+  phase: { [key: string]: PbxValue },
+  filePath: string,
+): boolean {
+  if (!Array.isArray(phase.files)) return false;
+  return phase.files.some((identifier) => {
+    const buildFile = pbxObject(objects, identifier);
+    const fileRef = isPbxDict(buildFile) ? pbxObject(objects, buildFile.fileRef) : undefined;
+    return isPbxDict(fileRef) && fileRef.path === filePath;
+  });
+}
+
+function targetPhaseHasFile(pbxproj: string, phaseType: string, filePath: string): boolean {
+  const root = parsePbxproj(pbxproj);
+  const objects = root.objects;
+  if (!isPbxDict(objects)) return false;
+  const target = Object.values(objects).find(
+    (value) => isPbxDict(value) && value.isa === 'PBXNativeTarget' && value.name === 'Whim',
+  );
+  if (!isPbxDict(target) || !Array.isArray(target.buildPhases)) return false;
+  return target.buildPhases.some((identifier) => {
+    const phase = pbxObject(objects, identifier);
+    return isPbxDict(phase) && phase.isa === phaseType && phaseHasFile(objects, phase, filePath);
+  });
+}
+
+function checkIosProjectWiring(pbxproj: string, findings: NativeNetworkDenyFinding[]): void {
+  try {
+    if (!targetPhaseHasFile(pbxproj, 'PBXSourcesBuildPhase', 'Whim/WhimWebViewNetworkDeny.m')) {
+      addFinding(findings, IOS_PROJECT_PATH, 'WhimWebViewNetworkDeny.m must be in the Whim Sources phase');
+    }
+    if (!targetPhaseHasFile(pbxproj, 'PBXResourcesBuildPhase', 'Whim/WebViewNetworkDeny.json')) {
+      addFinding(findings, IOS_PROJECT_PATH, 'WebViewNetworkDeny.json must be in the Whim Resources phase');
+    }
+  // eslint-disable-next-line no-restricted-syntax -- parse errors become the stable project-level finding below
+  } catch {
+    addFinding(findings, IOS_PROJECT_PATH, 'iOS project must parse and contain the network-deny target membership');
+  }
+}
+
+export function checkIosNativeNetworkDeny(root: string): NativeNetworkDenyFinding[] {
+  const findings: NativeNetworkDenyFinding[] = [];
+  const rules = readRequired(root, IOS_NETWORK_DENY_RULES_PATH, findings);
+  const implementation = readRequired(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, findings);
+  const pbxproj = readRequired(root, IOS_PROJECT_PATH, findings);
+  checkRuleFile(rules, findings);
+  checkObjectiveCImplementation(implementation, findings);
+  checkIosProjectWiring(pbxproj, findings);
+  return findings;
+}
+
 const VALID_APPLICATION = `
 package com.whim
 import com.reactnativecommunity.webview.RNCWebViewPackage
@@ -283,15 +457,72 @@ class NetworkDeniedWebViewPackage : RNCWebViewPackage() {
 }
 `;
 
+const VALID_IOS_RULES = `[
+  {"trigger":{"url-filter":"^https?:"},"action":{"type":"block"}},
+  {"trigger":{"url-filter":"^wss?:"},"action":{"type":"block"}}
+]`;
+
+const VALID_IOS_IMPLEMENTATION = `
+@implementation WhimWebViewNetworkDeny
++ (void)load {
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    Method original = class_getInstanceMethod(WKWebView.class, @selector(initWithFrame:configuration:));
+    Method replacement = class_getInstanceMethod(WKWebView.class, @selector(initWhimNetworkDeniedWithFrame:configuration:));
+    method_exchangeImplementations(original, replacement);
+  });
+}
+@end
+
+@implementation WKWebView (WhimNetworkDeny)
+- (instancetype)initWhimNetworkDeniedWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
+  NSString *brace = @"escaped quote \\" and brace }";
+  unichar openingBrace = '{';
+  if (ruleList) {
+    [configuration.userContentController addContentRuleList:ruleList];
+  } else {
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
+  }
+  return [self initWhimNetworkDeniedWithFrame:frame configuration:configuration];
+}
+@end
+`;
+
+const VALID_IOS_PROJECT = `
+{
+  objects = {
+    TARGET = { isa = PBXNativeTarget; name = Whim; buildPhases = ( SOURCES, RESOURCES, ); };
+    SOURCES = { isa = PBXSourcesBuildPhase; files = ( SOURCE_BUILD, ); };
+    RESOURCES = { isa = PBXResourcesBuildPhase; files = ( RULES_BUILD, ); };
+    SOURCE_BUILD = { isa = PBXBuildFile; fileRef = SOURCE_REF; };
+    RULES_BUILD = { isa = PBXBuildFile; fileRef = RULES_REF; };
+    SOURCE_REF = { isa = PBXFileReference; path = Whim/WhimWebViewNetworkDeny.m; };
+    RULES_REF = { isa = PBXFileReference; path = Whim/WebViewNetworkDeny.json; };
+  };
+  rootObject = PROJECT;
+}
+`;
+
 function writeValidFixture(root: string): void {
   writeNativeNetworkDenyFixture(root, ANDROID_MAIN_APPLICATION_PATH, VALID_APPLICATION);
   writeNativeNetworkDenyFixture(root, ANDROID_NETWORK_DENY_MANAGER_PATH, VALID_MANAGER);
   writeNativeNetworkDenyFixture(root, ANDROID_NETWORK_DENY_PACKAGE_PATH, VALID_PACKAGE);
 }
 
+function writeValidIosFixture(root: string): void {
+  writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_RULES_PATH, VALID_IOS_RULES);
+  writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, VALID_IOS_IMPLEMENTATION);
+  writeNativeNetworkDenyFixture(root, IOS_PROJECT_PATH, VALID_IOS_PROJECT);
+}
+
 function assertFindingNamesFile(root: string, file: string): void {
   const findings = checkAndroidNativeNetworkDeny(root);
   assert(findings.some((finding) => finding.file === file), `expected a finding naming ${file}, got ${JSON.stringify(findings)}`);
+}
+
+function assertIosFindingNamesFile(root: string, file: string): void {
+  const findings = checkIosNativeNetworkDeny(root);
+  assert(findings.some((finding) => finding.file === file), `expected an iOS finding naming ${file}, got ${JSON.stringify(findings)}`);
 }
 
 export async function run(): Promise<void> {
@@ -460,6 +691,169 @@ val packages = PackageList(this).packages.apply {
         );
       writeNativeNetworkDenyFixture(root, ANDROID_MAIN_APPLICATION_PATH, wrongMessage);
       assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: the real iOS wiring refuses HTTP and WebSocket loads', () => {
+    const findings = checkIosNativeNetworkDeny(process.cwd());
+    assert(findings.length === 0, `expected no iOS native network-deny findings, got ${JSON.stringify(findings)}`);
+  });
+
+  await test('native-network-deny: a complete iOS fixture passes', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      const findings = checkIosNativeNetworkDeny(root);
+      assert(findings.length === 0, `expected no iOS fixture findings, got ${JSON.stringify(findings)}`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: an iOS resource-type qualifier fails', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_NETWORK_DENY_RULES_PATH,
+        VALID_IOS_RULES.replace('"url-filter":"^https?:"', '"url-filter":"^https?:","resource-type":["document"]'),
+      );
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_RULES_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: dropping the iOS WebSocket rule fails', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      const rules = JSON.parse(VALID_IOS_RULES) as unknown[];
+      writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_RULES_PATH, JSON.stringify(rules.slice(0, 1)));
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_RULES_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: a referenced rule file missing from Resources fails', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_PROJECT_PATH,
+        VALID_IOS_PROJECT.replace('files = ( RULES_BUILD, );', 'files = ();'),
+      );
+      assertIosFindingNamesFile(root, IOS_PROJECT_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: a replacement selector outside the init family fails', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+        VALID_IOS_IMPLEMENTATION.replaceAll('initWhimNetworkDeniedWithFrame', 'whim_initWithFrame'),
+      );
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: the exchange must use the two resolved initializer methods', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+        VALID_IOS_IMPLEMENTATION.replace(
+          'method_exchangeImplementations(original, replacement);',
+          'Method wrong = class_getInstanceMethod(WKWebView.class, @selector(loadHTMLString:baseURL:));\n'
+            + '    method_exchangeImplementations(wrong, replacement);',
+        ),
+      );
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: removing the iOS fail-closed branch fails', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+        VALID_IOS_IMPLEMENTATION.replace(
+          '  } else {\n    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;\n',
+          '',
+        ),
+      );
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: fail-closed JavaScript disabling belongs in the unavailable branch', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      const misplacedFallback = VALID_IOS_IMPLEMENTATION.replace(
+        `  if (ruleList) {
+    [configuration.userContentController addContentRuleList:ruleList];
+  } else {
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
+  }`,
+        `  configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
+  if (ruleList) {
+    [configuration.userContentController addContentRuleList:ruleList];
+  } else {
+    (void)ruleList;
+  }`,
+      );
+      writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, misplacedFallback);
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: Objective-C comments and strings cannot impersonate the hook', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidIosFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+        `
+@implementation WhimWebViewNetworkDeny
++ (void)load {
+  NSString *decoy = @"@selector(initWithFrame:configuration:) method_exchangeImplementations";
+  /* dispatch_once(&onceToken, ^{ @selector(initWhimNetworkDeniedWithFrame:configuration:); }); */
+}
+@end
+@implementation WKWebView (WhimNetworkDeny)
+- (instancetype)initWhimNetworkDeniedWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
+  NSString *decoy = @"addContentRuleList: allowsContentJavaScript = NO";
+  /* [configuration.userContentController addContentRuleList:ruleList]; */
+  return [self initWhimNetworkDeniedWithFrame:frame configuration:configuration];
+}
+@end
+`,
+      );
+      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
