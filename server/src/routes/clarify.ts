@@ -8,13 +8,38 @@
  * Zero questions is a first-class success (`200` with an empty list), never an error and never a
  * degraded mode: most prompts need nothing clarified. What is NOT dressed up as zero questions is
  * a broken model call — that stays an honest `502`, mirroring `/v1/rewrite`.
+ *
+ * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
+ * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
+ * global unary concurrency cap, the device's daily clarify allowance, then the content policy
+ * check — all before any model call. `admitUnaryRequest` below is the ONE place that orders
+ * credit → slot → daily-unit → policy for both `/v1/clarify` and `/v1/rewrite`, so the two routes
+ * cannot drift apart on ordering; `routes/rewrite.ts` imports it from here rather than duplicating
+ * it (design D8 shares this exact ordering across every unary route).
  */
 import { Hono } from 'hono';
-import { ClarifyRequest, ClarifyResponse, type ApiError } from '@whim/contract';
+import { bodyLimit } from 'hono/body-limit';
+import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whim/contract';
 import type { ModelClient, ModelRoster } from '../generation/model';
-import type { UsageStore } from '../usage-store';
+import type { UsageStore, RequestKind, RequestOutcome } from '../usage-store';
+import type { ServerConfig } from '../config';
+import type { SlotController } from '../admission/slots';
+import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
+import {
+  budgetExhaustedRefusal,
+  contentPolicyRefusal,
+  dailyLimitRefusal,
+  payloadTooLargeRefusal,
+  policyUnavailableRefusal,
+  slotRefusal,
+  type ServiceRefusal,
+} from '../admission/refusals';
+import { PolicyUnavailableError, type ContentPolicy, type PolicyRoute } from '../policy';
+import { buildClarifyPolicyInput } from '../policy/input';
+import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
 import { buildClarifyMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
+import { log } from '../logger';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -69,10 +94,113 @@ function shapeClarify(text: string): ClarifyResponse | undefined {
   return result.success ? result.data : undefined;
 }
 
+/** `true` when `err` is the model provider's own `402` (operator credit exhausted mid-call).
+ *  Detected structurally (`status === 402`) rather than against a dedicated error subclass or a
+ *  message string: `../openrouter.ts`/`../generation/model.ts` are chain-8's files (out of this
+ *  chain's scope) and, as of this writing, don't yet expose one — see `handoff/app-options.md` for
+ *  the follow-up once they do. Every real transport error this chain constructs (and every test
+ *  double `routes-unary.suite.ts` scripts) carries `status: 402` for this case. */
+export function isProviderBudgetExhausted(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'status' in err && (err as { status: unknown }).status === 402;
+}
+
+/** Everything `admitUnaryRequest` needs to run the shared credit → slot → daily-unit → policy
+ *  order for one clarify or rewrite request. */
+export interface UnaryAdmissionDeps {
+  deviceId: string;
+  kind: Extract<RequestKind, 'clarify' | 'rewrite'>;
+  deviceLimit: number;
+  usageStore: UsageStore;
+  clock: () => number;
+  slots: SlotController;
+  creditTransport: CreditTransport | undefined;
+  creditTtlMs: number;
+  creditFloorUsd: number;
+  policy: ContentPolicy;
+  policyRoute: PolicyRoute;
+  policyInput: string;
+  signal?: AbortSignal;
+}
+
+export type UnaryAdmissionOutcome =
+  | { ok: true; requestId: string; release: () => void }
+  | { ok: false; refusal: ServiceRefusal };
+
+/**
+ * The fixed admission order shared by `/v1/clarify` and `/v1/rewrite`, AFTER the raw body cap,
+ * body validation and prompt byte cap the caller already ran (specs/server-admission-control
+ * "Admission checks run in a fixed order"): operator credit → drain/global-unary-cap (one slot
+ * acquire) → the device's daily allowance → content policy. Every refusal after a resource was
+ * taken (a slot, a daily unit) releases/refunds it before returning.
+ */
+export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
+  const {
+    deviceId,
+    kind,
+    deviceLimit,
+    usageStore,
+    clock,
+    slots,
+    creditTransport,
+    creditTtlMs,
+    creditFloorUsd,
+    policy,
+    policyRoute,
+    policyInput,
+    signal,
+  } = deps;
+
+  if (creditTransport) {
+    const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: creditTtlMs, floorUsd: creditFloorUsd });
+    if (!credit.ok) return { ok: false, refusal: budgetExhaustedRefusal() };
+    if (credit.lookupFailed) {
+      log.warn({ lookupFailed: credit.lookupFailed, route: policyRoute }, 'operator credit lookup failed open');
+    }
+  }
+
+  const acquired = slots.acquire('unary', deviceId);
+  if (!acquired.ok) return { ok: false, refusal: slotRefusal(acquired.reason) };
+  const { handle } = acquired;
+
+  const admitted = await usageStore.admit({ deviceId, kind, now: clock(), deviceLimit });
+  if (!admitted.ok) {
+    handle.release();
+    return { ok: false, refusal: dailyLimitRefusal(clock) };
+  }
+  const { requestId } = admitted;
+
+  try {
+    const verdict = await policy.check(policyInput, policyRoute, signal);
+    if (verdict !== 'allow') {
+      await usageStore.settle(requestId, { outcome: 'refused' });
+      handle.release();
+      return { ok: false, refusal: contentPolicyRefusal() };
+    }
+  } catch (err) {
+    if (err instanceof PolicyUnavailableError) {
+      await usageStore.settle(requestId, { outcome: 'unavailable' });
+      await usageStore.refund(requestId);
+      handle.release();
+      return { ok: false, refusal: policyUnavailableRefusal() };
+    }
+    throw err;
+  }
+
+  return { ok: true, requestId, release: () => handle.release() };
+}
+
 export interface ClarifyRouteOptions {
   /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): the route
    *  answers deterministically and makes no model call, exactly as the stub pipeline does. */
   stub?: boolean;
+  config: ServerConfig;
+  clock: () => number;
+  slots: SlotController;
+  policy: ContentPolicy;
+  creditTransport: CreditTransport | undefined;
+  resolveTracker: ResolveTracker;
+  resolveTransport: UsageAndCostTransport;
+  resolveBounds: Partial<ResolveBounds> | undefined;
 }
 
 /**
@@ -83,45 +211,150 @@ export function makeClarifyRoute(
   model: ModelClient | undefined,
   roster: ModelRoster | undefined,
   usageStore: UsageStore,
-  options: ClarifyRouteOptions = {},
+  options: ClarifyRouteOptions,
 ): Hono<Env> {
   const app = new Hono<Env>();
+  const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
 
-  app.post('/', async (c) => {
-    const deviceId = c.get('deviceId');
-    const body = await c.req.json().catch(() => null);
-    const parsed = ClarifyRequest.safeParse(body);
-    if (!parsed.success) {
-      return c.json(
-        { error: 'invalid_request', hint: parsed.error.issues[0]?.message ?? 'Invalid request body' } satisfies ApiError,
-        400,
-      );
-    }
+  app.post(
+    '/',
+    bodyLimit({
+      maxSize: config.maxBodyBytesUnary,
+      onError: (c) => {
+        const r = payloadTooLargeRefusal();
+        return c.json(r.body, r.status, r.headers);
+      },
+    }),
+    async (c) => {
+      const deviceId = c.get('deviceId');
+      const body = await c.req.json().catch(() => null);
+      const parsed = ClarifyRequest.safeParse(body);
+      if (!parsed.success) {
+        return c.json(
+          { error: 'invalid_request', hint: parsed.error.issues[0]?.message ?? 'Invalid request body' } satisfies ApiError,
+          400,
+        );
+      }
 
-    if (options.stub) {
-      const stubbed = parsed.data.prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
-      return c.json(stubbed satisfies ClarifyResponse, 200);
-    }
+      if (Buffer.byteLength(parsed.data.prompt, 'utf8') > config.maxPromptBytes) {
+        const r = payloadTooLargeRefusal();
+        return c.json(r.body, r.status, r.headers);
+      }
 
-    if (!model || !roster) return c.json(NOT_CONFIGURED, 502);
+      const admission = await admitUnaryRequest({
+        deviceId,
+        kind: 'clarify',
+        deviceLimit: config.limitClarifyPerDeviceDay,
+        usageStore,
+        clock,
+        slots,
+        creditTransport,
+        creditTtlMs: config.creditCacheTtlMs,
+        creditFloorUsd: config.minCreditUsd,
+        policy,
+        policyRoute: 'clarify',
+        policyInput: buildClarifyPolicyInput(parsed.data),
+        signal: c.req.raw.signal,
+      });
+      if (!admission.ok) {
+        const r = admission.refusal;
+        return c.json(r.body, r.status, r.headers);
+      }
+      const { requestId, release } = admission;
 
-    // The small/fast model — clarify asks two short questions, it does not write code.
-    const stream = model.stream({ model: roster.rewrite, messages: buildClarifyMessages({ request: parsed.data }) }, c.req.raw.signal);
+      const finish = async (
+        outcome: RequestOutcome,
+        usage: Usage | undefined,
+        generationIds: string[],
+        creditOwned: boolean,
+      ): Promise<void> => {
+        await usageStore.settle(requestId, { outcome, usage });
+        release();
+        resolveTracker.track(
+          resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, {
+            transport: resolveTransport,
+            usageStore,
+            bounds: resolveBounds,
+          }),
+        );
+      };
 
-    let raw = '';
-    try {
-      for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
-      const usage = await stream.usage;
-      await usageStore.credit(deviceId, usage);
-    // eslint-disable-next-line no-restricted-syntax -- intentional: stream/parse failure surfaces to the client as a 502, not silence
-    } catch {
-      return c.json(MODEL_FAILURE, 502);
-    }
-
-    const shaped = shapeClarify(raw);
-    if (!shaped) return c.json(MODEL_FAILURE, 502);
-    return c.json(shaped satisfies ClarifyResponse, 200);
-  });
+      return runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+    },
+  );
 
   return app;
+}
+
+type FinishFn = (
+  outcome: RequestOutcome,
+  usage: Usage | undefined,
+  generationIds: string[],
+  creditOwned: boolean,
+) => Promise<void>;
+
+/**
+ * The route's actual work, once admission has allowed it through: the stub short-circuit, the
+ * unconfigured-server refusal, or a real bounded model call — extracted so `makeClarifyRoute`'s
+ * handler only orchestrates admission, never the model-call branching too.
+ */
+async function runClarifyWork(
+  model: ModelClient | undefined,
+  roster: ModelRoster | undefined,
+  parsed: ClarifyRequest,
+  config: ServerConfig,
+  requestSignal: AbortSignal | undefined,
+  deviceId: string,
+  usageStore: UsageStore,
+  finish: FinishFn,
+  stub: boolean | undefined,
+): Promise<Response> {
+  if (stub) {
+    const stubbed = parsed.prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
+    await finish('ok', undefined, [], true);
+    return Response.json(stubbed satisfies ClarifyResponse, { status: 200 });
+  }
+
+  if (!model || !roster) {
+    await finish('error', undefined, [], true);
+    return Response.json(NOT_CONFIGURED, { status: 502 });
+  }
+
+  const timeoutSignal = AbortSignal.timeout(config.unaryModelTimeoutMs);
+  const combined = requestSignal ? AbortSignal.any([requestSignal, timeoutSignal]) : timeoutSignal;
+
+  // The small/fast model — clarify asks two short questions, it does not write code.
+  const stream = model.stream({ model: roster.rewrite, messages: buildClarifyMessages({ request: parsed }) }, combined);
+  // A throw from the `deltas` iterator (below) rejects `usage` too without anyone ever awaiting
+  // it — observed-but-discarded here so that never surfaces as an unhandled rejection, mirroring
+  // `ModelContentPolicy.check`'s identical guard (`../policy/policy.ts`).
+  stream.usage.catch(() => {});
+
+  try {
+    let raw = '';
+    for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
+    const usage = await stream.usage;
+    const generationId = await stream.id;
+    await usageStore.credit(deviceId, usage);
+    const ids = generationId ? [generationId] : [];
+
+    const shaped = shapeClarify(raw);
+    if (!shaped) {
+      await finish('error', usage, ids, true);
+      return Response.json(MODEL_FAILURE, { status: 502 });
+    }
+    await finish('ok', usage, ids, true);
+    return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
+  } catch (err) {
+    const generationId = await stream.id.catch(() => undefined);
+    const ids = generationId ? [generationId] : [];
+    if (isProviderBudgetExhausted(err)) {
+      invalidateCreditCache();
+      await finish('error', undefined, ids, false);
+      const r = budgetExhaustedRefusal();
+      return Response.json(r.body, { status: r.status, headers: r.headers });
+    }
+    await finish('error', undefined, ids, false);
+    return Response.json(MODEL_FAILURE, { status: 502 });
+  }
 }
