@@ -199,3 +199,13 @@
 - reads: acceptance-fixes.md; design.md D25/D26; specs/server-deployment/spec.md capacity-profile, deployment and load-test requirements; handoff/deploy-surface.md; handoff/loadtest.md
 - writes-contract: handoff/loadtest.md (failure recovery behavior only)
 - after: chain-12, chain-16
+
+## chain-replay-compose-env: replay env-file isolation
+
+- tasks: 19.1–19.3; task 19.4 is attended and remains under chain-14
+- rationale: the live replay image inherited production `server.env` through Compose list-merge semantics and correctly failed closed before a drive. The override, its fast structural tripwire, and the operator contract form one small boundary.
+- files: `deploy/loadtest/compose.loadtest.yaml`, `server/test/loadtest.suite.ts`, `handoff/loadtest.md`
+- reads: replay-compose-env-fix.md; specs/server-deployment/spec.md §A load test measures capacity without spending provider credit; design.md D26; handoff/loadtest.md
+- writes-contract: handoff/loadtest.md (the explicit `env_file` replacement rule and two no-daemon synthetic Compose receipts)
+- after: chain-acceptance-fixes
+- rule: use no real secret, do not add Docker to any gate/configuration, and retain `runLoadtestServer`'s production-key refusal. The Node suite guards source structure only; the two Compose receipts prove the merged model after merge.

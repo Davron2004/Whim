@@ -285,3 +285,52 @@ Paths below are relative to `/Users/davrondjabborov/Work/other/Whim/`. I read co
 1. Should per-device limits be a new counter table alongside `usage` in the same SQLite file, or a wholly separate store — and does adding it conflict with decision #33's "only a token counter persists" framing (a rate-limit counter is arguably still "just a counter" but the spec's wording is narrow)?
 2. Is a content-policy check meant to be a model call (needs a roster role) or static (regex/keyword), given the roster is currently closed to `rewrite`/`engineer`?
 3. Does the report endpoint accept device-submitted content (prompt, generated app) for review, and if so, does that create the first exception to "no content stored" (Model 1) that needs its own decision entry?
+
+---
+
+# Research digest: replay Compose env-file isolation after the attended load-test failure
+
+## Relevant files
+
+- `docs/capabilities.md` — maps no-spend replay deployment to `server-deployment`.
+- `openspec/specs/server-deployment/spec.md` — requires a capacity test without provider credit.
+- `openspec/changes/public-generation-server/design.md` D26 — governs replay and its key refusal.
+- `deploy/compose.yaml` — production `whim-server` reads `config.env` then `server.env`.
+- `deploy/loadtest/compose.loadtest.yaml` — replay override previously named only `config.env` as an ordinary list.
+- `server/src/loadtest/server.ts` — refuses a present `OPENROUTER_API_KEY` before listening.
+- `server/test/loadtest.suite.ts` — current fast-gate deploy-file tripwire.
+- `openspec/changes/public-generation-server/handoff/loadtest.md` — operator contract and attended sequence.
+
+## Current behavior
+
+The replay override is applied after `deploy/compose.yaml`. Under Compose sequence merge rules,
+its ordinary `env_file` list appends to the base list, leaving `/etc/whim/server.env` available.
+That file supplies the production provider key. The replay server then fails closed before it
+starts, so the inherited HTTP health check later reports the container unhealthy.
+
+The live run built and started the replay image, received Compose unhealthy, restored production,
+and passed smoke. No device drive ran. The recovery removed replay logs, so the exact container
+stderr was not retained; the configuration path explains the observed symptom.
+
+## Constraints and invariants
+
+- `server-deployment` “A load test measures capacity without spending provider credit” and D26
+  require no provider activity. The pre-start production-key refusal remains a required backstop.
+- `!reset` cannot be used because it removes the non-secret capacity values in `config.env`.
+- An empty `OPENROUTER_API_KEY` environment entry would mask a value but still exposes the real
+  key file; it does not satisfy file isolation.
+- Docker Compose is not a gate dependency. The Node suite can guard source structure, while an
+  attended no-daemon `docker compose config --format json` receipt proves the merged model.
+- No real key may be read, emitted, copied, or placed in a test fixture.
+
+## Integration points
+
+- Compose replacement tag: the replay service’s existing `env_file` field.
+- Fast test seam: `testDeployFilesExcludeLoadtest()` in `server/test/loadtest.suite.ts`.
+- Operator proof: `handoff/loadtest.md`, before replay start and task 15.4 drives.
+
+## Risks and unknowns
+
+- Local Docker Compose is `v5.4.0`; the VM reports `v5.5.1`. Local parsing of `!override` passed.
+  I did not run the sentinel receipt on the VM; it is the required attended preflight.
+- I did not inspect replay-container logs because cleanup had removed the container.

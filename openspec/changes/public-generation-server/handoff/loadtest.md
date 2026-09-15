@@ -14,13 +14,9 @@ export class LoadtestConfigError extends Error { readonly reason: 'config' }
 export interface RunLoadtestServerOptions {
   env: NodeJS.ProcessEnv;
   listen?: StartServerOptions['listen'];
-  /** Chain-11's real `startServer`, or a test double. REQUIRED — this module never value-imports
-   *  `lifecycle.ts` (only its types), so the fast Node suite never pulls `synthrun`/`playwright`
-   *  into its static bundle. The one production caller is `server/loadtest-server.entry.mjs`. */
   start: (options: StartServerOptions) => Promise<ServerHandle>;
 }
 export interface LoadtestServerHandle extends ServerHandle {
-  /** Fetch-trap call count. Must stay 0 for the server's whole life. */
   fetchCallCount(): number;
 }
 export async function runLoadtestServer(options: RunLoadtestServerOptions): Promise<LoadtestServerHandle>;
@@ -86,10 +82,28 @@ trap installs — never affected by a load-test server's own trap when driven in
 Image: `<region>-docker.pkg.dev/<project>/whim/server-loadtest:<full sha>`. `deploy/loadtest/Dockerfile`
 builds from `${SERVER_IMAGE}` (the already-built production image of the same commit) plus one bundle;
 its sibling `Dockerfile.dockerignore` overrides the root `.dockerignore`'s `deploy/` exclusion.
-`compose.loadtest.yaml` overrides only `whim-server`: the load-test image, `env_file` reset to
-`/etc/whim/config.env` alone (no `server.env`), the `WHIM_LOADTEST_*_TURN_MS` pacing vars, and
-`/mnt/disks/whim-data/loadtest:/data`. `cap_add`/`security_opt` are untouched (inherited from
-`compose.yaml`) — Chromium's sandbox needs both.
+`compose.loadtest.yaml` overrides only `whim-server`: the load-test image, an explicit `!override`
+`env_file` list containing `/etc/whim/config.env` alone (never `server.env`), pacing vars and
+`/mnt/disks/whim-data/loadtest:/data`. Inherited `cap_add`/`security_opt` stay unchanged.
+
+## Compose merge receipt (before replay start)
+
+Run this no-daemon proof from the repository root after the repaired override is merged. It uses
+only synthetic values and prints no environment map or key. The first receipt must fail; the second
+must pass. Record just both statuses and the two labels with task 15.4 evidence.
+
+```bash
+compose_tmp="$(mktemp -d "${TMPDIR:-/tmp}/whim-compose-env.XXXXXX")"; trap 'rm -rf "$compose_tmp"' EXIT
+printf '%s\n' 'WHIM_CONFIG_SENTINEL=kept' > "$compose_tmp/config.env"; printf '%s\n' 'OPENROUTER_API_KEY=synthetic-only' > "$compose_tmp/server.env"
+sed -e "s|/etc/whim/config.env|$compose_tmp/config.env|g" -e "s|/etc/whim/server.env|$compose_tmp/server.env|g" deploy/compose.yaml > "$compose_tmp/base.yaml"
+sed "s|/etc/whim/config.env|$compose_tmp/config.env|g" deploy/loadtest/compose.loadtest.yaml > "$compose_tmp/good.yaml"; sed 's/env_file: !override/env_file:/' "$compose_tmp/good.yaml" > "$compose_tmp/bad.yaml"
+verify() { WHIM_IMAGE=base WHIM_LOADTEST_IMAGE=replay WHIM_API_HOST=api.invalid WHIM_WEB_HOST=web.invalid WHIM_SERVER_MEM_LIMIT=1g WHIM_SERVER_SHM_SIZE=256m docker compose -f "$compose_tmp/base.yaml" -f "$1" config --format json > "$compose_tmp/model.json" || return 43
+node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const e=JSON.parse(s).services["whim-server"].environment||{};process.exit(e.WHIM_CONFIG_SENTINEL!=="kept"?43:Object.prototype.hasOwnProperty.call(e,"OPENROUTER_API_KEY")?42:0)})' < "$compose_tmp/model.json"; }
+if verify "$compose_tmp/bad.yaml"; then echo 'ordinary-list receipt unexpectedly passed'; exit 1; else ordinary_rc=$?; fi
+if [ "$ordinary_rc" -ne 42 ]; then echo 'ordinary-list receipt did not expose the synthetic key'; exit 1; fi
+echo 'ordinary-list receipt exposed the synthetic key'
+if verify "$compose_tmp/good.yaml"; then echo 'override receipt passed'; else echo 'override receipt failed'; exit 1; fi
+```
 
 ## Production exclusion (fast-gate tripwires, `server/test/loadtest.suite.ts`)
 
