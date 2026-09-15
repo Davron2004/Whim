@@ -3,10 +3,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The "minimal dependency is NONE" choice: a ~30-line Kotlin module wrapping
 // `android.media.ToneGenerator`, instead of dragging react-native-sound / expo-av into a bare
-// RN 0.85 (new-arch, bridgeless) app for three beeps. Codegen (gradle) reads this `Spec` to
-// emit the abstract `NativeWhimToneSpec`; `WhimToneModule.kt` implements it. The contract is a
-// single fire-and-forget `play(token)` — the host (Kotlin) owns the token→tone+duration table,
-// so the bundle never expresses a raw tone, duration, or asset (tokens-not-values, D4).
+// RN 0.85 (new-arch, bridgeless) app for three beeps. Codegen reads this `Spec` to emit the
+// abstract `NativeWhimToneSpec` on each platform; `WhimToneModule.kt` (Android) and
+// `WhimToneModule.mm` (iOS, Objective-C++, rendering the same tones as system sounds via
+// `AudioServicesPlaySystemSound`) each implement it. The contract is a single fire-and-forget
+// `play(token)` — each host owns its own token→tone+duration table, so the bundle never
+// expresses a raw tone, duration, or asset (tokens-not-values, D4).
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
