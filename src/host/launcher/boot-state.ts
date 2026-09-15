@@ -57,9 +57,12 @@ export interface PaintFrame {
 }
 
 /**
- * Whether a `paint` frame may move the boot state to `running`. ONE guard: the frame must be
+ * Whether a `paint` frame may move the boot state to `running`. The frame must be
  * nonce-authenticated (`trusted`, stamped by the outer page — the same check the `probes` branch
- * applies), so a bundle cannot post a `paint` for itself to skip its own boot state.
+ * applies), so a bundle cannot post a `paint` for itself to skip its own boot state. Its timing
+ * must also be a finite, nonnegative number: `paintMs !== null` is the host's only painted-state
+ * signal, so accepting a frame that cannot populate it would cancel the deadline while leaving
+ * the UI on `Opening…` forever.
  *
  * Deliberately NOT generation-fenced, unlike `nav-depth`. Two independent reasons:
  *
@@ -72,7 +75,11 @@ export interface PaintFrame {
  *    pre-incremented per bind, so the first launch is 2. Comparing them rejects every real paint.
  */
 export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
-  return !!frame && frame.trusted === true;
+  const paintMs = frame?.payload?.mountToFirstPaintMs;
+  return frame?.trusted === true
+    && typeof paintMs === 'number'
+    && Number.isFinite(paintMs)
+    && paintMs >= 0;
 }
 
 /** Six seconds from an attempted source delivery, or from its accepted-delivery acknowledgement. */
@@ -88,7 +95,7 @@ export interface StartupDeadlineScheduler {
 export interface StartupDeadline {
   /** Start, or restart, the allowance for the current attempt. */
   begin(): void;
-  /** Complete startup only for a nonce-authenticated paint frame. */
+  /** Complete startup only for authenticated paint carrying finite, nonnegative timing. */
   acceptPaint(frame: PaintFrame | null | undefined): boolean;
   /** Cancel the current attempt and invalidate a callback already queued by the platform. */
   cancel(): void;

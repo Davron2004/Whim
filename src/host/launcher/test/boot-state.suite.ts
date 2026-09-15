@@ -137,7 +137,7 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     h.eq(paintAccepted({ trusted: false, payload: { generation: 7 } }), false, 'an unauthenticated paint is refused');
     h.eq(paintAccepted({ payload: { generation: 7 } }), false, 'a frame with no trust stamp at all is refused');
     h.eq(paintAccepted({ trusted: 'yes' }), false, 'and a truthy-but-not-true stamp is refused');
-    h.eq(paintAccepted({ trusted: true }), true, 'a payload-less authentic paint still counts (paintMs falls back to null)');
+    h.eq(paintAccepted({ trusted: true }), false, 'a payload-less authentic frame cannot complete startup');
     h.eq(paintAccepted(null), false, 'and a missing frame is refused');
   });
 
@@ -254,6 +254,61 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     h.eq(deadline.acceptPaint({ trusted: false, payload: { mountToFirstPaintMs: 2 } }), false, 'forged paint is refused');
     clock.advanceBy(6_000);
     h.eq(failures, 1, 'the original deadline remains armed');
+  });
+
+  await h.test('boot-state: malformed trusted paint stays booting until the deadline reports app error', () => {
+    const malformed = [
+      { trusted: true },
+      { trusted: true, payload: null },
+      { trusted: true, payload: {} },
+      { trusted: true, payload: { mountToFirstPaintMs: '4' } },
+      { trusted: true, payload: { mountToFirstPaintMs: Number.NaN } },
+      { trusted: true, payload: { mountToFirstPaintMs: Number.POSITIVE_INFINITY } },
+      { trusted: true, payload: { mountToFirstPaintMs: -0.01 } },
+    ];
+
+    for (const frame of malformed) {
+      const clock = new FakeClock();
+      let failures = 0;
+      let lastError: string | null = null;
+      const deadline = createStartupDeadline(() => {
+        failures += 1;
+        lastError ??= 'app never became visible';
+      }, clock);
+
+      deadline.begin();
+      h.eq(deadline.acceptPaint(frame), false, 'malformed trusted paint is rejected');
+      h.eq(
+        miniAppSurface({ launchFailed: false, lastError, paintMs: null }),
+        'boot',
+        'malformed paint cannot dismiss Opening before the deadline',
+      );
+      clock.advanceBy(6_000);
+      h.eq(failures, 1, 'malformed paint leaves the deadline armed');
+      h.eq(
+        miniAppSurface({ launchFailed: false, lastError, paintMs: null }),
+        'app-error',
+        'the existing app-error surface replaces Opening at the deadline',
+      );
+      clock.advanceBy(6_000);
+      h.eq(failures, 1, 'the expired deadline reports the failure exactly once');
+    }
+  });
+
+  await h.test('boot-state: finite zero timing completes startup', () => {
+    const clock = new FakeClock();
+    let failures = 0;
+    const deadline = createStartupDeadline(() => { failures += 1; }, clock);
+
+    deadline.begin();
+    h.eq(deadline.acceptPaint({ trusted: true, payload: { mountToFirstPaintMs: 0 } }), true, 'zero is a valid measured paint time');
+    h.eq(
+      miniAppSurface({ launchFailed: false, lastError: null, paintMs: 0 }),
+      'running',
+      'zero timing still removes the boot surface',
+    );
+    clock.advanceBy(12_000);
+    h.eq(failures, 0, 'valid zero timing cancels the deadline');
   });
 
   await h.test('boot-state: reset and retry invalidate stale callbacks from older attempts', () => {
