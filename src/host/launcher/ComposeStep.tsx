@@ -14,6 +14,8 @@ import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity,
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import type { FlowNotice } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 
 /** The three "Or start from" suggestions, verbatim from the copy table. */
@@ -27,6 +29,9 @@ export interface ComposeStepProps {
    *  default), so there is no separate "no address configured" notice any more (prompt-flow "The
    *  compose entry point shows a server-unreachable notice without blocking generation"). */
   serverUnreachable?: boolean;
+  /** A service refusal that landed here (design D9/D12) — never rendered through `WhimProse`,
+   *  and clearing (or not) as the user retypes is the caller's own job (`prompt-flow.ts#composeTextChanged`). */
+  notice?: FlowNotice;
   /** Scopes the screen to a re-prompt (C1: "the edit flow reads as editing, on every step") —
    *  present together with `editingName`, the app's current display name for the eyebrow line. */
   editing: boolean;
@@ -41,6 +46,7 @@ export interface ComposeStepProps {
 export default function ComposeStep({
   text,
   serverUnreachable,
+  notice,
   editing,
   editingName,
   onChangeText,
@@ -48,6 +54,7 @@ export default function ComposeStep({
   onBack,
 }: Readonly<ComposeStepProps>) {
   const p = SHELL_PALETTE;
+  const gated = useRetryGate(notice?.retryAt);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -108,11 +115,13 @@ export default function ComposeStep({
         )}
       </ScrollView>
 
+      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+
       {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
           clarify step's own loading screen (C2), so this action is never anything but live. */}
       <PrimaryAction
         step="compose"
-        enabled={trimmed.length > 0}
+        enabled={trimmed.length > 0 && !gated}
         onPress={onContinue}
       />
     </View>

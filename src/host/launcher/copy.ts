@@ -544,3 +544,33 @@ export function attemptsUsedLabel(observed: number): string {
 export function restoredToast(version: string): string {
   return `You’re on ${version} now`;
 }
+
+// ── the refusal notice's retry-window line (service-refusals; design D11) ────
+// `service-refusal.ts#retryLine` owns the bucket ARITHMETIC (which of these five applies, and any
+// rounding); this module owns only the WORDING, the same split `timelineStageLine` already keeps
+// between `prompt-flow.ts`'s counts and its own phrasing.
+
+export function retryLineSeconds(n: number): string {
+  return `in about ${n} seconds`;
+}
+
+export function retryLineMinutes(n: number): string {
+  return `in about ${n} minutes`;
+}
+
+/** The `Intl`-missing fallback — an hours-only estimate when no formatter could exist to build a
+ *  local-time string at all. */
+export function retryLineHoursFallback(n: number): string {
+  return `in about ${n} hours`;
+}
+
+/** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
+ *  injected `Intl.DateTimeFormat`-backed formatter. */
+export function retryLineSameDay(time: string): string {
+  return `after ${time}`;
+}
+
+/** Beyond the same local day: "tomorrow after 9:00 AM". */
+export function retryLineTomorrow(time: string): string {
+  return `tomorrow after ${time}`;
+}

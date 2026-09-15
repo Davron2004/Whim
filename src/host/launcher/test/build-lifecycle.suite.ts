@@ -25,6 +25,7 @@ import {
   hydratedDiagnostics,
   journalStreamEvent,
   pendingFailure,
+  refusedGenerateOutcome,
   retryBuildScreen,
   startPendingBuild,
 } from '../build-lifecycle';
@@ -466,6 +467,54 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(store.list().length, 1, 'a failure keeps the record (the contrast this test rests on)');
     dropPendingBuild(store, id);
     h.eq(store.list(), [], 'a dismiss removes it');
+  });
+
+  // ── a refused generate (design D10; store-launch-compliance chain-4) ───────────────────────────
+
+  await h.test('refusedGenerateOutcome: a fresh attempt still on its build screen is dropped', () => {
+    h.eq(refusedGenerateOutcome(false, false), 'drop', 'not a Retry, not detached — the common `Build it` case');
+  });
+
+  await h.test('refusedGenerateOutcome: a detached attempt (Leave it running) settles failed', () => {
+    h.eq(refusedGenerateOutcome(false, true), 'settle', 'the user has already left — the ghost must explain itself');
+  });
+
+  await h.test('refusedGenerateOutcome: any Retry settles failed, detached or not', () => {
+    h.eq(refusedGenerateOutcome(true, false), 'settle', 'a Retry from the failure screen');
+    h.eq(refusedGenerateOutcome(true, true), 'settle', 'a Retry the user then also left');
+  });
+
+  await h.test('a refused fresh attempt leaves nothing behind (pending-builds "leaves nothing behind")', () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const journal = new RunJournalStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a dice roller' });
+    journal.create(id);
+    h.eq(refusedGenerateOutcome(false, false), 'drop', 'sanity: this is the drop case');
+    dropPendingBuild(store, id);
+    journal.delete(id);
+    h.eq(store.get(id), null, 'the attempt’s pending-build record is deleted');
+    h.eq(journal.get(id), null, 'and its run journal with it — no generation took place');
+  });
+
+  await h.test('a refused Retry keeps its record, failed, with the refusal’s hint as the reason', () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a tip splitter' });
+    failPendingBuild(store, id, 'it broke', []); // the original failure, before the retry
+    h.eq(refusedGenerateOutcome(true, false), 'settle', 'sanity: a Retry always settles');
+    failPendingBuild(store, id, 'Whim is busy right now.', []); // the refused retry's settlement
+    const rec = store.get(id)!;
+    h.eq(rec.state, 'failed', 'the record stays, failed');
+    h.eq(rec.failure!.reason, 'Whim is busy right now.', 'its persisted reason is the refusal’s hint');
+  });
+
+  await h.test('a detached refusal also leaves a failed record whose reason is the hint', () => {
+    const store = new PendingBuildStore(new MapKVBackend());
+    const id = startPendingBuild(store, { text: 'a brew timer' });
+    h.eq(refusedGenerateOutcome(false, true), 'settle', 'sanity: detached always settles');
+    failPendingBuild(store, id, 'Something is over its daily limit.', []);
+    const rec = store.get(id)!;
+    h.eq(rec.state, 'failed', 'the ghost tile can explain itself');
+    h.eq(rec.failure!.reason, 'Something is over its daily limit.', 'the reason is the refusal’s hint, not a generic one');
   });
 
   // ── retry ────────────────────────────────────────────────────────────────────────────────────

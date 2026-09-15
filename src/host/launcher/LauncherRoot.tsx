@@ -44,6 +44,7 @@ import {
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
+  refusedGenerateOutcome,
   retryBuildScreen,
   startPendingBuild,
 } from './build-lifecycle';
@@ -79,6 +80,7 @@ import {
   clarifyStep,
   clarificationsFrom,
   composeStep,
+  composeTextChanged,
   doneStep,
   isClarifySkip,
   planStep,
@@ -91,7 +93,7 @@ import {
   withQuestions,
   withStage,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from './server-address';
@@ -106,7 +108,9 @@ import type { ConsentedClientOptions } from './generation-client';
 import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
 import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
-import { serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from './service-refusal';
+import type { ServiceRefusal } from './service-refusal';
+import { refusalLanding } from './refusal-landing';
 
 type Screen =
   | { kind: 'home' }
@@ -149,6 +153,10 @@ type Screen =
        *  launcher id, or the record's own. The what-happened section is read from it ONCE, when
        *  the screen opens; a missing journal changes nothing else about the screen. */
       journalId?: string;
+      /** A refused Retry's notice (design D9/D10): set only for the moment a live refusal is
+       *  still showing on this exact screen — never resurrected from a hydrated ghost, since the
+       *  retry window is not persisted (design D11: "the server stays authoritative"). */
+      notice?: FlowNotice;
     };
 
 const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
@@ -210,6 +218,45 @@ function errorFields(err: unknown): Record<string, unknown> {
 /** Breadcrumb for a swallowed generation-path error, on the generation channel. */
 function logGenError(stage: string, err: unknown): void {
   log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
+}
+
+/** The one place this shell builds a local-time formatter — `retryLine`'s same-day/tomorrow
+ *  phrasing (design D11) reads through it. */
+function formatLocalTime(date: Date): string {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+/** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
+ *  the hint verbatim, the tone `REFUSAL_RULES` assigns its code, and — only when it carried a
+ *  `Retry-After` — the re-enable moment plus the ONE copy-table line describing it, computed once
+ *  here rather than re-derived on every render (the "about N" wording is an estimate, not a
+ *  ticking countdown). */
+function noticeFrom(refusal: ServiceRefusal): FlowNotice {
+  const now = Date.now();
+  const retryAt = retryAtOf(refusal, now);
+  return {
+    hint: refusal.hint,
+    tone: REFUSAL_RULES[refusal.code].tone,
+    ...(retryAt !== undefined ? { retryAt, retryLine: retryLine(retryAt, now, formatLocalTime) } : {}),
+  };
+}
+
+/** Every service refusal is recorded through the logging seam with its code, status and which
+ *  request it refused (`service-refusals` "The refusal is recoverable from the log"). */
+function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal: ServiceRefusal): void {
+  log.warn(CHANNELS.gen, 'service refusal', { request, code: refusal.code, status: refusal.status });
+}
+
+/** Where a refused rewrite lands (design D9): `refusalLanding` decides clarify or compose —
+ *  `prev.kind` is the step whose `Continue` actually sent the request, before `plan` replaced it
+ *  on screen — and this builds that screen fresh, carrying the plan's own text/answers/editing
+ *  scope rather than `prev`'s (a plan-started rewrite can itself follow either step). */
+function rewriteRefusalTarget(prev: ComposeScreen | ClarifyScreen, plan: PlanScreen, refusal: ServiceRefusal, notice: FlowNotice): Screen {
+  const editing = plan.editing ? { editing: plan.editing } : {};
+  if (refusalLanding('rewrite', prev.kind, refusal.code) === 'clarify') {
+    return { kind: 'clarify', ...editing, text: plan.text, questions: plan.questions, answers: plan.answers, loading: false, notice };
+  }
+  return { kind: 'compose', ...editing, text: plan.text, notice };
 }
 
 /** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
@@ -809,7 +856,17 @@ function LauncherShell({
       // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
       // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
       // connectivity").
-      if (serviceRefusalOf(e)) markOnline();
+      const refusal = serviceRefusalOf(e);
+      if (refusal) markOnline();
+      if (refusal) {
+        // Never the failure screen (service-refusals "never opens the failure screen"): the
+        // rewrite's landing is compose or clarify — whichever step's Continue sent it — for a
+        // sender refusal, and always compose for a refusal about the words themselves.
+        logServiceRefusal('rewrite', refusal);
+        const target = rewriteRefusalTarget(prev, plan, refusal, noticeFrom(refusal));
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => target));
+        return;
+      }
       logGenError('rewrite failed', e);
       const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
       setScreen(onlyOnStep<Screen, 'plan'>('plan', () => failed));
@@ -854,7 +911,17 @@ function LauncherShell({
       // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
       // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
       // reads as one (that path is 502-only).
-      if (serviceRefusalOf(e)) markOnline();
+      const refusal = serviceRefusalOf(e);
+      if (refusal) markOnline();
+      if (refusal) {
+        // Never the failure screen (service-refusals "never opens the failure screen"): a
+        // clarify request's only sender is compose, and a refusal about the words themselves
+        // lands there too, so the landing is always compose.
+        logServiceRefusal('clarify', refusal);
+        const notice = noticeFrom(refusal);
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => ({ ...from, notice })));
+        return;
+      }
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
         const failed = failure(from.editing, from.text, e, 'clarify failed');
@@ -966,14 +1033,53 @@ function LauncherShell({
   };
 
   /**
+   * A refused `generateApp` call (design D10; `refusedGenerateOutcome` decides drop vs settle):
+   * a fresh attempt still on its build screen is dropped exactly as a cancel drops it, and the
+   * flow returns to `fromPlan` (when given) with the notice. Everything else — a detached
+   * attempt, or any Retry — settles `failed` with the refusal's hint as the reason; a Retry
+   * additionally refreshes the failure screen it was launched from, with Retry gated by the
+   * notice's own `retryAt`.
+   */
+  const handleGenerateRefusal = (
+    attemptId: string,
+    refusal: ServiceRefusal,
+    isRetry: boolean,
+    detached: boolean,
+    fromPlan: PlanScreen | undefined,
+    counts: RunTerminalCounts,
+  ): void => {
+    logServiceRefusal('generate', refusal);
+    const notice = noticeFrom(refusal);
+    if (refusedGenerateOutcome(isRetry, detached) === 'drop') {
+      releaseLiveRef(attemptId);
+      dropAttempt(attemptId);
+      refresh();
+      if (fromPlan) {
+        setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...fromPlan, notice })));
+      }
+      return;
+    }
+    settleFailed(attemptId, refusal.hint, [], counts);
+    if (!isRetry) return;
+    const updated = pending.get(attemptId);
+    if (updated) {
+      setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...failureFromRecord(updated), notice })));
+    }
+  };
+
+  /**
    * ONE generation attempt, end to end: the launcher id and its `building` record are written
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
    * settlements follows — delivered (record deleted, after the store and index are both written),
    * failed (record persisted with its payload, never deleted), or cancelled (record deleted by the
    * cancel path itself). The plan's `Build it` and a ghost's Retry are its only two entries, so
    * this stays the shell's single `generateApp` call site.
+   *
+   * `fromPlan` is the plan screen `Build it` was tapped from — carried ONLY so a fresh attempt
+   * refused while still on the build screen can return to plan with every row exactly as it was
+   * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
-  const runAttempt = async (building: BuildScreen, reuseId?: string) => {
+  const runAttempt = async (building: BuildScreen, reuseId?: string, fromPlan?: PlanScreen) => {
     if (!clientOptions) return;
     setScreen(building);
 
@@ -1125,7 +1231,15 @@ function LauncherShell({
       // A structured service refusal proves the server answered (spec "A real generation or
       // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
       // as proof of connectivity").
-      if (serviceRefusalOf(e)) markOnline();
+      const refusal = serviceRefusalOf(e);
+      if (refusal) {
+        markOnline();
+        releaseGenRef(ctl);
+        // Never the failure screen (service-refusals "never opens the failure screen") — design
+        // D10's three-way split lives in `handleGenerateRefusal`.
+        handleGenerateRefusal(attemptId, refusal, reuseId !== undefined, ctl.detached, fromPlan, terminalCounts());
+        return;
+      }
       releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
@@ -1136,7 +1250,7 @@ function LauncherShell({
 
   /** The approval gate's action — the first moment a generation request is sent. */
   const onBuildIt = async (from: PlanScreen) => {
-    await runAttempt(buildStep(from));
+    await runAttempt(buildStep(from), undefined, from);
   };
 
   /** `Leave it running`: back to the shell WITHOUT cancelling — the run finishes and its result
@@ -1372,10 +1486,11 @@ function LauncherShell({
     content = (
       <ComposeStep
         text={from.text}
+        notice={from.notice}
         serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
         editing={from.editing != null}
         editingName={from.editing?.name}
-        onChangeText={(text) => setScreen({ ...from, text })}
+        onChangeText={(text) => setScreen(composeTextChanged(from, text))}
         onContinue={() => onComposeContinue(from)}
         onBack={() => goBack(from)}
       />
@@ -1389,6 +1504,7 @@ function LauncherShell({
         answers={from.answers}
         loading={from.loading}
         startedAt={from.startedAt}
+        notice={from.notice}
         editing={from.editing != null}
         editingName={from.editing?.name}
         onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
@@ -1403,6 +1519,7 @@ function LauncherShell({
         rows={from.rows}
         loading={from.loading}
         startedAt={from.startedAt}
+        notice={from.notice}
         editing={from.editing != null}
         editingName={from.editing?.name}
         onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
@@ -1445,6 +1562,7 @@ function LauncherShell({
         diagnostics={screen.diagnostics}
         observedRepairAttempts={screen.observedRepairAttempts}
         hasWorkingVersion={screen.hasWorkingVersion}
+        notice={screen.notice}
         journal={failureJournal}
         attemptStarted={screen.journalId != null}
         devMode={timelineDevMode}

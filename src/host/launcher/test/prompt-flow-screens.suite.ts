@@ -26,6 +26,7 @@ import {
   clarificationsFrom,
   clarifyStep,
   composeStep,
+  composeTextChanged,
   currentActionSentence,
   doneStep,
   isClarifySkip,
@@ -42,7 +43,7 @@ import {
   withStage,
   workingLineText,
 } from '../prompt-flow';
-import type { ClarifyScreen, ComposeScreen, PlanScreen } from '../prompt-flow';
+import type { ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
 
 function read(file: string): string {
@@ -76,6 +77,14 @@ function plannedFlow(rows?: { label: string; text: string }[]): PlanScreen {
   return withPlan(pending, { rewrittenPrompt: 'a brew timer', ...(rows ? { plan: rows } : {}) });
 }
 
+/** A text-landing (`danger`-tone) refusal notice, the shape `content_policy`/`payload_too_large`
+ *  produce — the case `composeTextChanged`/`updatePlanRow` clear on an edit. */
+const DANGER_NOTICE: FlowNotice = { hint: 'That wording isn’t allowed.', tone: 'danger' };
+
+/** A sender-landing (`neutral`-tone) refusal notice — unrelated to the words being retyped, so it
+ *  survives an edit (design D12: "clears when its window ends or the user leaves the step"). */
+const NEUTRAL_NOTICE: FlowNotice = { hint: 'Whim is busy right now.', tone: 'neutral' };
+
 export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // ── the five steps, in order ────────────────────────────────────────────────────────────────
 
@@ -85,6 +94,24 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(clarify.text, 'make me a dice roller', 'the submitted prompt is carried verbatim');
     h.eq(clarify.answers, {}, 'no question is answered for the user');
     h.eq(clarify.questions.length, 2, 'both questions reach the step');
+  });
+
+  await h.test('composeTextChanged: a danger-tone (text-landing) notice clears when the text changes', () => {
+    const withNotice: ComposeScreen = { ...composedFlow(), notice: DANGER_NOTICE };
+    const changed = composeTextChanged(withNotice, 'a gentler timer for my pour-over');
+    h.eq(changed.text, 'a gentler timer for my pour-over', 'the text always updates');
+    h.eq(changed.notice, undefined, 'the notice about the refused words is gone');
+  });
+
+  await h.test('composeTextChanged: a neutral-tone (sender-landing) notice survives a text change', () => {
+    const withNotice: ComposeScreen = { ...composedFlow(), notice: NEUTRAL_NOTICE };
+    const changed = composeTextChanged(withNotice, 'a gentler timer for my pour-over');
+    h.eq(changed.notice, NEUTRAL_NOTICE, 'an availability/limit refusal is unrelated to what is being retyped');
+  });
+
+  await h.test('composeTextChanged: no notice at all is a plain text update', () => {
+    const changed = composeTextChanged(composedFlow(), 'something else entirely');
+    h.eq(changed.notice, undefined, 'nothing is invented');
   });
 
   await h.test('flow: the clarify step opens loading, carrying compose’s text and editing scope', () => {
@@ -215,6 +242,18 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(edited.rows[0].text, 'Same words.', 'the untouched row keeps its text even though it once matched the edited one');
     h.eq(edited.rows[1].text, 'Now different.', 'the row addressed by position is the one that changes');
     h.eq(edited.rows[0].label, 'The screen', 'labels are untouched too');
+  });
+
+  await h.test('updatePlanRow: a danger-tone (text-landing) notice clears when a row is saved', () => {
+    const plan = { ...plannedFlow([{ label: '', text: 'a brew timer' }]), notice: DANGER_NOTICE };
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(edited.notice, undefined, 'saving a row edit clears the notice about the refused words');
+  });
+
+  await h.test('updatePlanRow: a neutral-tone (sender-landing) notice survives a row save', () => {
+    const plan = { ...plannedFlow([{ label: '', text: 'a brew timer' }]), notice: NEUTRAL_NOTICE };
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(edited.notice, NEUTRAL_NOTICE, 'an availability/limit refusal is unrelated to the plan’s own words');
   });
 
   await h.test('flow: promptForBuild trusts the rewrite response until a row is hand-edited', () => {
@@ -422,7 +461,9 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
     h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled editing=\{editing\} onPress/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
+    // store-launch-compliance chain-4: the only gate left is the refusal retry window
+    // (`enabled={!gated}`) — there is still no validation gate from the answers themselves.
+    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled=\{!gated\} editing=\{editing\} onPress/.test(clarifySrc), 'no answer-validation gate: the action is live with zero answers, once it is shown at all');
   });
 
   await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
@@ -446,8 +487,10 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(composeSrc.includes('composePlaceholder(editing)'), 'and its field placeholder');
     h.ok(planSrc.includes('planHeadline(editing)'), 'plan branches its headline');
     h.ok(planSrc.includes('workingPlanPhrase(editing)'), 'and its working-line phrase');
+    // store-launch-compliance chain-4: `enabled` is now `{!gated}` (the refusal retry window),
+    // not the bare literal — still unconditionally live otherwise.
     h.ok(
-      /\{!loading && <PrimaryAction step="plan" enabled editing=\{editing\}/.test(planSrc),
+      /\{!loading && <PrimaryAction step="plan" enabled=\{!gated\} editing=\{editing\}/.test(planSrc),
       'plan\'s primary action is told whether it is editing, so Build it can become Make the change',
     );
   });

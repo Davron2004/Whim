@@ -362,7 +362,10 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.eq((rootSrc.match(/generateApp\(/g) ?? []).length, 1, 'exactly one generateApp call site exists in the shell');
     h.ok(attemptFn.includes('generateApp('), 'and it is inside runAttempt');
     const buildFn = rootSrc.slice(rootSrc.indexOf('const onBuildIt'), rootSrc.indexOf('const onLeaveRunning'));
-    h.ok(buildFn.includes('runAttempt(buildStep(from))'), 'Build it reaches generation only through that one runner');
+    // store-launch-compliance chain-4: `from` (the plan screen) is now threaded through as a third
+    // argument, so a fresh refusal can return to it with every row exactly as it was (design D9/D10)
+    // — still the shell's one runner, just carrying its landing spot.
+    h.ok(buildFn.includes('runAttempt(buildStep(from), undefined, from)'), 'Build it reaches generation only through that one runner');
   });
 
   await h.test('cancel-wiring: the flow’s leave-handlers abort clarify and rewrite', () => {
@@ -725,10 +728,12 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
         attemptFn.includes('observedDiagnostics: counts.diagnostic'),
       'the flush is the loop’s own in-memory totals and its diagnostics tally, read where the stream ends',
     );
+    // store-launch-compliance chain-4 added a fifth ending: a service refusal settling `failed`
+    // (design D10) flushes the same counts, so a refused Retry's ghost carries an honest total too.
     h.eq(
       (attemptFn.match(/terminalCounts\(\)/g) ?? []).length,
-      4,
-      'and every one of the four endings — result, terminal failure, stream error, throw — carries it',
+      5,
+      'and every one of the five endings — result, terminal failure, stream error, throw, service refusal — carries it',
     );
     h.ok(
       !/observedDiagnostics: (?!counts\.diagnostic)/.test(attemptFn),

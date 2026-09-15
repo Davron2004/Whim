@@ -9,6 +9,13 @@
  */
 import type { ServiceRefusalCode } from './contract-mirror';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
+import {
+  retryLineHoursFallback,
+  retryLineMinutes,
+  retryLineSameDay,
+  retryLineSeconds,
+  retryLineTomorrow,
+} from './copy';
 
 /** Where a refusal's primary text lands (design D9) and what tone its notice takes. Deliberately
  *  NOT keyed by status or hint text — matching is by the contract identifier alone. */
@@ -81,13 +88,13 @@ const HOUR_MS = 60 * MINUTE_MS;
 export function retryLine(retryAt: number, now: number, formatTime: (date: Date) => string): string {
   const remainingMs = Math.max(0, retryAt - now);
   if (remainingMs < MINUTE_MS) {
-    return `in about ${Math.round(remainingMs / SECOND_MS)} seconds`;
+    return retryLineSeconds(Math.round(remainingMs / SECOND_MS));
   }
   if (remainingMs < HOUR_MS) {
-    return `in about ${Math.round(remainingMs / MINUTE_MS)} minutes`;
+    return retryLineMinutes(Math.round(remainingMs / MINUTE_MS));
   }
   if (typeof Intl === 'undefined') {
-    return `in about ${Math.round(remainingMs / HOUR_MS)} hours`;
+    return retryLineHoursFallback(Math.round(remainingMs / HOUR_MS));
   }
   const nowDate = new Date(now);
   const retryDate = new Date(retryAt);
@@ -95,5 +102,5 @@ export function retryLine(retryAt: number, now: number, formatTime: (date: Date)
     nowDate.getFullYear() === retryDate.getFullYear() &&
     nowDate.getMonth() === retryDate.getMonth() &&
     nowDate.getDate() === retryDate.getDate();
-  return sameLocalDay ? `after ${formatTime(retryDate)}` : `tomorrow after ${formatTime(retryDate)}`;
+  return sameLocalDay ? retryLineSameDay(formatTime(retryDate)) : retryLineTomorrow(formatTime(retryDate));
 }
