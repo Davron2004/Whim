@@ -44,11 +44,11 @@
 
 ## 6. App links
 
-- [ ] 6.1 Create RN-free `link-routing.ts` per design D15: `resolveAppLink(id, apps, pending)`, `linkExitFor(screen)` covering every `Screen` kind plus an open sheet, and a last-wins pending-link holder released on ready. Node suite covers app-links §§"opens the app", "pending build", "isn't on this phone", "leaves the current screen", and "waits".
-- [ ] 6.2 In `LauncherRoot.tsx`: read `Linking.getInitialURL()` once ready and subscribe to `Linking.addEventListener('url')`; parse with `parseAppLink`; log a rejected URL with its scheme and host only; apply `linkExitFor`, then `resolveAppLink`; make a link to the app already open a no-op; add the `link-missing` `Screen` kind.
-- [ ] 6.3 Create `AppLinkMissingScreen.tsx` (title, body and `Back to your apps` from design D15; its own `BackHandler` goes Home; tokens only) and add its copy.
-- [ ] 6.4 Add an `App link` row to the installed-tile long-press sheet in `HomeScreen.tsx` (never on ghost tiles), opening `AppLinkSheet.tsx` on `SheetModal` with the app name, the link as `<Text selectable>`, and the copy line from design D16.
-- [ ] 6.5 Write `handoff/app-link-platform.md` from design D17: the JS guarantees, the iOS entitlement and `AppDelegate` forwarding, the Android intent filter and `singleTask`, the AASA and assetlinks bodies, the fallback, privacy and support pages, and the three-place domain lockstep.
+- [x] 6.1 Create RN-free `link-routing.ts` per design D15: `resolveAppLink(id, apps, pending)`, `linkExitFor(screen)` covering every `Screen` kind plus an open sheet, and a last-wins pending-link holder released on ready. Node suite covers app-links §§"opens the app", "pending build", "isn't on this phone", "leaves the current screen", and "waits".
+- [x] 6.2 In `LauncherRoot.tsx`: read `Linking.getInitialURL()` once ready and subscribe to `Linking.addEventListener('url')`; parse with `parseAppLink`; log a rejected URL with its scheme and host only; apply `linkExitFor`, then `resolveAppLink`; make a link to the app already open a no-op; add the `link-missing` `Screen` kind.
+- [x] 6.3 Create `AppLinkMissingScreen.tsx` (title, body and `Back to your apps` from design D15; its own `BackHandler` goes Home; tokens only) and add its copy.
+- [x] 6.4 Add an `App link` row to the installed-tile long-press sheet in `HomeScreen.tsx` (never on ghost tiles), opening `AppLinkSheet.tsx` on `SheetModal` with the app name, the link as `<Text selectable>`, and the copy line from design D16.
+- [x] 6.5 Write `handoff/app-link-platform.md` from design D17: the JS guarantees, the iOS entitlement and `AppDelegate` forwarding, the Android intent filter and `singleTask`, the AASA and assetlinks bodies, the fallback, privacy and support pages, and the three-place domain lockstep.
 
 ## 7. Store docs
 
