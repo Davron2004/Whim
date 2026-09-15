@@ -101,6 +101,7 @@ function baselineFiles(): Record<string, string> {
     'release/store/play/en-US/changelogs/default.txt': 'First release.',
     'release/store/play/data-safety.json': DATA_SAFETY_JSON,
     'release/store/answers.md': '# Draft answers\n\nSee the release for details.',
+    'release/store/app-store/review_information/notes.txt': 'How to try Whim: describe an app, review the plan, build it.',
     'ios/Whim/PrivacyInfo.xcprivacy': privacyManifestXml(),
   };
 }
@@ -208,6 +209,16 @@ export async function run(): Promise<void> {
       assert(
         messages.some((m) => m.includes('phoneScreenshots/1.png') && m.includes('2.22')),
         `expected an aspect-ratio finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-listing: a 4001-character review notes.txt fails, naming the file, the 4000-character limit and the length 4001', () => {
+    withFixtureRepo({ text: { 'release/store/app-store/review_information/notes.txt': 'a'.repeat(4001) } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('notes.txt') && m.includes('4000-character') && m.includes('4001')),
+        `expected a notes.txt length finding, got ${JSON.stringify(messages)}`,
       );
     });
   });

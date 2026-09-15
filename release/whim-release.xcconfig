@@ -15,4 +15,4 @@ WHIM_APP_ID = com.anycognition.whim
 WHIM_APPLE_TEAM_ID = 2B7K4YLS34
 WHIM_MARKETING_VERSION = 1.0.0
 WHIM_BUILD_NUMBER = 1
-WHIM_DOMAIN = example.com
+WHIM_DOMAIN = anycognition.ca

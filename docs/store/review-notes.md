@@ -3,9 +3,11 @@
 Written for whoever fills in App Store Connect's "Notes for Review" and Google Play's reviewer
 guidance, and for whoever answers a reviewer's follow-up question. Everything here is checked
 against the shipped code (`src/host/launcher/copy.ts`'s landed strings, this change's specs) as of
-`store-launch-compliance` chain-7. `platform-release-readiness` chain-11 condenses §1-4 into the
-uploadable `review_information/notes.txt` and replaces §5's draft answers with pointers to the
-release files once those land — see that change if this file and the console disagree.
+`store-launch-compliance` chain-7. §1-4 below are condensed into the uploadable
+`release/store/app-store/review_information/notes.txt` (`platform-release-readiness` chain-11,
+wired into fastlane's `ios metadata` lane); §5 points at the release files that hold the real
+answers rather than restating them. If this file and either of those ever disagree, the committed
+files win — update this doc to match, don't edit the console note ad hoc.
 
 Reviewer contact: `<review contact: see ~/.config/whim/review-contact.json>`. This file is public;
 no email address, phone number or person's name goes in it.
@@ -48,16 +50,17 @@ native leg lands.
 
 - **4.7.1 (filtering, reporting, privacy).** The consent screen (`Before Whim makes apps for you`,
   copy.ts `consentTitle`) discloses what's sent and to whom before the first request goes out —
-  see §4. The server runs its content policy on every clarify, rewrite and generate request before
-  any model call; a request the policy rejects comes back as a `content_policy` refusal and the
-  model is never called (`service-refusals` spec, `REFUSAL_RULES` table) — filtering fails closed,
-  not open. In-app reporting is live from three places: the orb menu (`Report this app`), the done
+  see §4. The server checks a content-policy classifier — itself one small, bounded model call —
+  before running the clarify, rewrite or generate model on every request; a request the classifier
+  rejects comes back as a `content_policy` refusal, and the clarify/rewrite/generate model itself
+  is never called (`service-refusals` spec, `REFUSAL_RULES` table) — filtering fails closed, not
+  open. In-app reporting is live from three places: the orb menu (`Report this app`), the done
   step (`Report this app`), and each app's history header (`Report`). The response window on a
   filed report is `[BLANK — not yet decided; fill in before submission, do not publish a promise
   Whim can't keep]`. There's nothing to block, because there are no accounts, no sharing, and no
   way for one user to see another user's content.
 - **4.7.2 (no native APIs without permission).** A mini app reaches the device only through ten
-  local capability-bridge syscalls, all synchronous and all confined to this app's own data:
+  local capability-bridge syscalls, all asynchronous and all confined to this app's own data:
   `storage.kv.get`/`.set`/`.remove`, `storage.records.append`/`.list`/`.update`/`.remove`,
   `diag.echo` (a round-trip test pipe, no side effect), `cues.haptic`, `cues.sound`. None of them
   touches the camera, microphone, location, contacts, the filesystem, or the network.
@@ -99,6 +102,9 @@ Two things leave the phone, both outside any mini app's own reach:
 - **A report**, sent only when the user fills in the report sheet and taps `Send report`. It's not
   gated on AI-data consent (a user who declined AI features can still report something) — see
   `docs/decisions.md`'s entry for D3 below.
+- **A `GET /healthz` connectivity check**, sent only once AI-data consent is granted (or when
+  Settings' server field is saved), to show an online/offline status line. It carries no user
+  content and no request body.
 
 Nothing else: no analytics SDK, no crash reporter, no ads SDK, no background telemetry.
 
@@ -121,9 +127,11 @@ document, it doesn't restate the values.
 
 ## 6. Pre-submission checklist
 
-- [ ] `WHIM_DOMAIN` (`src/host/launcher/release-config.ts`), the iOS associated-domains
-      entitlement, and the Android intent filter's `host` all name the same real domain — they
-      change together or not at all (`handoff/app-link-platform.md`).
+- [ ] `WHIM_DOMAIN` in the native release file (`release/whim-release.xcconfig`) matches
+      `WHIM_DOMAIN` in `src/host/launcher/release-config.ts` — the domain-lockstep suite holds
+      them together in the gate. The iOS associated-domains entitlement and the Android intent
+      filter's `host` both derive from the native file automatically, so there's no third literal
+      to check by hand.
 - [ ] `/privacy` and `/support` are live at the real domain and the privacy page says what the
       consent screen says (§1, §4) plus report retention.
 - [ ] Production `/healthz` answers on the real domain.

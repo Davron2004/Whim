@@ -54,6 +54,16 @@ def read_credential_json(filename)
   JSON.parse(File.read(File.join(CONFIG_HOME, filename)))
 end
 
+# review-contact.json holds the reviewer's contact fields (not committed); the review notes
+# themselves are public and live at release/store/app-store/review_information/notes.txt
+# (platform-release-readiness task 12.2). deliver only reads a metadata-folder review_information
+# file when app_review_information is NOT passed explicitly, so this merges the two sources.
+def app_review_information
+  read_credential_json("review-contact.json").merge(
+    "notes" => File.read(root("release/store/app-store/review_information/notes.txt"))
+  )
+end
+
 # `build:<n>` wins when given; otherwise the CLI derives one time-derived number
 # (specs/store-release-pipeline/spec.md "Each lane uses one time-derived build number").
 def resolve_build_number(build_option)
@@ -150,7 +160,7 @@ platform :ios do
       app_rating_config_path: root("release/store/app-store/age-rating.json"),
       privacy_url: "https://whim.#{config['WHIM_DOMAIN']}/privacy",
       support_url: "https://whim.#{config['WHIM_DOMAIN']}/support",
-      app_review_information: read_credential_json("review-contact.json"),
+      app_review_information: app_review_information,
       skip_binary_upload: true,
       submit_for_review: false,
       force: true

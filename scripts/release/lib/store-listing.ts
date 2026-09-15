@@ -44,6 +44,8 @@ export const LISTING_LIMITS: readonly ListingFieldLimit[] = [
   { file: 'release/store/play/en-US/short_description.txt', limit: 80, unit: 'characters' },
   { file: 'release/store/play/en-US/full_description.txt', limit: 4000, unit: 'characters' },
   { file: 'release/store/play/en-US/changelogs/default.txt', limit: 500, unit: 'characters' },
+  // App Store Connect's "Notes for Review" field (platform-release-readiness task 12.2).
+  { file: 'release/store/app-store/review_information/notes.txt', limit: 4000, unit: 'characters' },
 ];
 
 /** Required files that carry no length limit of their own. */
