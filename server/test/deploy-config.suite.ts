@@ -771,6 +771,7 @@ const STUB_SCRIPT = [
   '  "gcloud "*" compute instances set-machine-type "*) printf \'%s\' "${@: -1}" >"$STUB_DIR/machine-type" ;;',
   '  "gcloud "*" compute instances describe "*) cat "$STUB_DIR/machine-type"; echo ;;',
   '  "node -p "*) echo "${STUB_NODE_VERSION:-22.11.0}" ;;',
+  '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
   '    mkdir -p "${@: -1}"',
   '    for page in privacy support app-link not-found; do echo "<!doctype html><title>$page</title>" >"${@: -1}/$page.html"; done',
@@ -848,6 +849,7 @@ function runScript(sandbox: Sandbox, script: string, args: readonly string[], en
       HOME: sandbox.home,
       TMPDIR: os.tmpdir(),
       STUB_DIR: sandbox.stubs,
+      STUB_REAL_NODE: process.execPath,
       WHIM_WEB_HOST: WEB_HOST,
       WHIM_API_HOST: API_HOST,
       WHIM_STATIC_IP: STATIC_IP,
@@ -1128,7 +1130,7 @@ function resizeTests(): void {
     const run = runScript(sandbox, 'resize.sh', ['--profile', 'event']);
     const calls = toolLog(sandbox, 'gcloud');
     const order = ['compute regions describe', 'stop whim-server', 'instances stop', 'set-machine-type', 'instances start'].map((needle) => indexOfCall(calls, needle));
-    eq('resize.sh --profile event succeeds', run.status, 0);
+    check('resize.sh --profile event succeeds', run.status === 0, `${run.stdout}\n${run.stderr}\n${calls.join(' / ')}`);
     check('  ... quota, drain, stop, set-machine-type, start, in that order', order.every((at, i) => at !== -1 && (i === 0 || at > order[i - 1]!)), calls.join(' / '));
     eq('  ... leaving the VM on e2-standard-8', stubFile(sandbox, 'machine-type'), 'e2-standard-8');
     eq('  ... then redeploying the running tag', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
@@ -1145,11 +1147,28 @@ function resizeTests(): void {
 
   withSandbox((sandbox) => {
     resizeRules(sandbox, '24.0,2.0', [['*compute instances set-machine-type*', 1, '']]);
-    const run = runScript(sandbox, 'resize.sh', ['--profile', 'event']);
+    const run = runScript(sandbox, 'resize.sh', ['--profile', 'event'], { STUB_READINESS_FAILS: '1' });
     const calls = toolLog(sandbox, 'gcloud');
     check('a failed set-machine-type exits non-zero naming the step', run.status === 1 && run.stderr.includes('step set-machine-type failed'), run.stderr);
     check('  ... after starting the VM again on its previous type', indexOfCall(calls, 'instances start') > indexOfCall(calls, 'set-machine-type') && stubFile(sandbox, 'machine-type') === 'e2-standard-2', calls.join(' / '));
     eq('  ... and redeploying the running tag, whose profile follows that type', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
+  });
+
+  withSandbox((sandbox) => {
+    const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh persistent 1 1'], {
+      cwd: sandbox.repo,
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: {
+        PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        STUB_DIR: sandbox.stubs,
+        STUB_REAL_NODE: process.execPath,
+        STUB_READINESS_FAILS: '999',
+        WHIM_SCRIPT: 'resize.sh',
+        WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
+      },
+    });
+    check('persistent readiness failure is bounded and names the failed step', result.status === 1 && result.stderr.includes('step persistent readiness failed'), `${result.stdout}\n${result.stderr}`);
   });
 }
 
@@ -1160,16 +1179,20 @@ export STUB_SUDO_DEPTH=$((depth + 1))
 if [ "$depth" -gt 0 ]; then unset WHIM_LOADTEST_IMAGE; fi
 while [ "\${1:-}" = -H ]; do shift; done
 if [ "\${1:-}" = env ]; then shift; while [[ "\${1:-}" == *=* ]]; do export "$1"; shift; done; fi
-case "\${1:-}" in install|rm) exit 0;; esac
+case "\${1:-}" in
+  install|rm)
+    if [ "\${STUB_FAIL_FILE_OP:-}" = "\${1:-}" ]; then exit "\${STUB_FILE_OP_RC:-7}"; fi
+    exit 0;;
+esac
 exec "$@"
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(sandbox.bin, 'docker'), `#!/usr/bin/env bash
 printf '%s|%s\n' "$*" "\${WHIM_LOADTEST_IMAGE:-}" >>"$STUB_DIR/docker.log"
 case "$*" in
-  *'stop whim-server'*) exit 0;;
-  *'compose.loadtest.yaml'*'up '* ) [ -n "\${WHIM_LOADTEST_IMAGE:-}" ] || exit 1; exit 0;;
-  *'up '* ) exit 0;;
-  *'exec '* ) exit 0;;
+  *'stop whim-server'*) printf 'replay-stop\n' >>"$STUB_DIR/events.log"; exit "\${STUB_REPLAY_STOP_RC:-0}";;
+  *'compose.loadtest.yaml'*'up '* ) [ -n "\${WHIM_LOADTEST_IMAGE:-}" ] || { echo 'missing WHIM_LOADTEST_IMAGE' >&2; exit 1; }; printf 'replay-start\n' >>"$STUB_DIR/events.log"; exit "\${STUB_REPLAY_START_RC:-0}";;
+  *'up '* ) printf 'production-restore\n' >>"$STUB_DIR/events.log"; exit "\${STUB_RESTORE_RC:-0}";;
+  *'exec '* ) exit "\${STUB_HEALTH_RC:-0}";;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -1211,6 +1234,46 @@ function loadtestStartTests(): void {
     const run = runScript(sandbox, 'loadtest/run.sh', ['start']);
     const docker = toolLog(sandbox, 'docker');
     check('the old nested-sudo command fails with a missing replay image and restores production', run.status === 1 && run.stderr.includes('load-test compose start failed') && docker.some((line) => line.startsWith('compose --project-directory /opt/whim --file /opt/whim/compose.yaml up')), run.stderr);
+  });
+
+  const smokeReady = (sandbox: Sandbox): void => {
+    writeRules(sandbox, 'gcloud', VM_ANSWERS);
+    writeRules(sandbox, 'dig', DNS_READY);
+    writeRules(sandbox, 'curl', [...API_UP, ...PAGES_UP]);
+  };
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_FAIL_FILE_OP: 'rm', STUB_FILE_OP_RC: '7' });
+    check('rm failure after production stop restores and runs smoke', run.status === 7 && run.stderr.includes('load-test start failed (exit 7)') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9' });
+    check('replay startup failure restores production and keeps its exit status', run.status === 9 && run.stderr.includes('load-test compose start failed') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const script = path.join(sandbox.repo, 'deploy', 'loadtest', 'run.sh');
+    fs.writeFileSync(script, fs.readFileSync(script, 'utf8').replace('-lt 60', '-lt 1'));
+    git(sandbox.repo, sandbox.home, ['add', '-A']); git(sandbox.repo, sandbox.home, ['commit', '-q', '-m', 'short health poll']);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_HEALTH_RC: '1' });
+    check('health identity failure restores production and runs smoke', run.status === 1 && run.stderr.includes('health check failed') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9', STUB_RESTORE_RC: '8' });
+    check('restore failure reports both the original and recovery causes', run.status === 9 && run.stderr.includes('load-test compose start failed') && run.stderr.includes('recovery failed while restoring'), `${run.stdout}\n${run.stderr}`);
+    check('restore failure still stops the replay service', stubFile(sandbox, 'events.log').startsWith('replay-stop'), stubFile(sandbox, 'events.log'));
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9' });
+    check('smoke failure is reported without claiming production was restored', run.status === 9 && run.stderr.includes('recovery failed while running production smoke') && !run.stderr.includes('production restored'), `${run.stdout}\n${run.stderr}`);
   });
 }
 

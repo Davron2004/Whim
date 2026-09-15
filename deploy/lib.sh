@@ -124,13 +124,19 @@ whim_vm_ssh() {
 }
 
 whim_wait_for_ssh() {
-  local step="$1" deadline=$((SECONDS + 180))
+  local step="$1" budget="${2:-180}" probe_timeout="${3:-10}" deadline probe_pid probe_rc
+  deadline=$((SECONDS + budget))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if whim_vm_ssh ':' >/dev/null 2>&1; then return 0; fi
+    if WHIM_SSH_PROBE_TIMEOUT_MS=$((probe_timeout * 1000)) node -e \
+      'const { spawnSync } = require("node:child_process"); const args = process.argv.slice(1); const command = args.pop(); const result = spawnSync(args.shift(), [...args, "--command", command], { stdio: "ignore", timeout: Number(process.env.WHIM_SSH_PROBE_TIMEOUT_MS) || 10000 }); process.exit(result.error?.code === "ETIMEDOUT" ? 124 : (result.status ?? 1));' \
+      gcloud --project "$WHIM_GCP_PROJECT" compute ssh "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" --tunnel-through-iap --quiet \
+      --ssh-flag=-oServerAliveInterval=30 --ssh-flag=-oConnectTimeout="$probe_timeout" ':'; then
+      return 0
+    fi
     sleep 5
   done
-  printf '%s: step %s readiness failed: SSH did not become available within 180 seconds\n' \
-    "${WHIM_SCRIPT:-deploy}" "$step" >&2
+  printf '%s: step %s readiness failed: SSH did not become available within %s seconds\n' \
+    "${WHIM_SCRIPT:-deploy}" "$step" "$budget" >&2
   return 1
 }
 
