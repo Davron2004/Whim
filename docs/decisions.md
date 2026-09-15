@@ -1183,3 +1183,56 @@ Eleven decisions from `ios-launcher-back-navigation/design.md`, one line of why 
   already applies itself.
 - **D11 — the flow header's `Back` meets the 44-point touch target.** Raising its `hitSlop` from 10
   to 16 gets there with no visual change.
+
+### 68. Public generation server: sandboxed egress, spend controls, and the pages host `[DECIDED — openspec: public-generation-server]`
+
+Whim's generation server moves from a LAN-only dev tool to a public service behind
+`api.whim.anycognition.ca`, with `whim.anycognition.ca` as a second, static pages host on the same
+Caddy. One line of why each load-bearing piece:
+
+- **Sandbox on, no egress, proven twice.** Chromium's OS sandbox is always on (never
+  `--no-sandbox`), and the candidate's browser context has every request aborted except its own page
+  served from memory — a browser-wide dead proxy and a WebRTC UDP policy back that up. The boot
+  self-test proves it on every start (`probeEgressBlocked`), and smoke proves it again on the
+  running container (a fetch to the metadata server must fail), so a regression fails closed at boot
+  rather than surfacing as a live leak.
+- **Dependency budget amended.** `esbuild`, `playwright` and `typescript` become declared
+  `@whim/server` runtime dependencies, pinned to the lockfile's exact root versions — the pipeline
+  already needed all three at run time, and pretending otherwise just hid them from the budget the
+  spec enforces.
+- **Node 22 base, not the Playwright image.** The vendored Playwright image ships Node 24; the
+  production image builds on `node:22-bookworm-slim` and pins Chromium itself, keeping the runtime
+  major the one the gate and the rest of the repo already target.
+- **Spend controls and their defaults.** A dedicated OpenRouter key with a provider credit limit is
+  the hard backstop; per-device daily limits and global admission caps are the controls that
+  actually shape day-to-day spend (design.md D6's table). Recommended starting credit limit: $50,
+  raised after a week of real `whim-admin usage` data replaces the placeholder cost model.
+- **Reports are the one deliberate exception to #33's "no content stored."** A device can send a
+  content report; it lands in its own SQLite file with secure deletion and a retention purge, never
+  in the usage ledger, so "the ledger holds no content" stays a file-level property a test can
+  assert.
+- **#56 D8's "threaded, not raced" is superseded for three synthrun waits.** Abort now races
+  concurrency acquisition, `openRun`'s navigation and `awaitMount` instead of only threading through
+  them, bringing real client-disconnect teardown within a bound. esbuild and the static check stay
+  unraced — both finish in milliseconds under the existing body and output caps.
+- **An injectable device verifier, not a hardcoded UUID check.** The `/v1` gate now runs through a
+  seam a future App Attest or Play Integrity verifier can fill without touching a route.
+- **Real hostnames, and the pages host rides the same Caddy.** `api.whim.anycognition.ca` and
+  `whim.anycognition.ca` replace the sslip.io stand-in as the defaults; the pages host is a second
+  Caddy site block serving flat files only (`/privacy`, `/support`, `/a/*`, the association files),
+  so the deploy stays one VM, one certificate store, one proxy to patch (design.md D20–D21).
+- **Association files come only from the release tooling, gated on the Play signing fingerprint.**
+  The site build never writes one itself; both files ship together only once the Play fingerprint is
+  committed, so no upload-key-only file — which verifies nothing anyone actually installs — ever
+  goes live (design.md D22).
+- **The privacy policy is checked against the consent screen, not hand-maintained.** A parity
+  tripwire fails the gate the moment a new `consent…` disclosure lands without the hosted policy
+  quoting it verbatim, denying by default rather than trusting a maintained key list (design.md D23).
+- **Capacity profiles tie machine type to concurrency limits as one named unit.** `standard` and
+  `event` change together, so raising demo-night concurrency without the bigger VM (or the reverse)
+  isn't a state the repo can express (design.md D25).
+- **The load test can't spend a cent, by construction, not by discipline.** It runs a separate image
+  with no OpenRouter key reachable, a replay model with no transport at all, and a `fetch` trap that
+  turns any missed override into a loud failure — three independent reasons it can't reach the
+  provider, plus a production-bundle metafile check that it can't reach production either
+  (design.md D26).

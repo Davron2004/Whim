@@ -152,3 +152,4 @@ npm run android:release    # debug-signed offline build onto a device or emulato
 Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline. Opening apps you already have does not.
 
 Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
+Deploying the server publicly is attended-only too — see `docs/deploy.md`.
