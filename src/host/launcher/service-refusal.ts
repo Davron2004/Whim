@@ -9,6 +9,7 @@
 import type { ServiceRefusalCode } from '@whim/contract';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
 import {
+  retryLineElapsed,
   retryLineHoursFallback,
   retryLineMinutes,
   retryLineSameDay,
@@ -83,9 +84,14 @@ const HOUR_MS = 60 * MINUTE_MS;
  *  injected local-time formatter (an `Intl.DateTimeFormat`-backed one in production, a fixed
  *  string in tests) so this function stays pure. When the global `Intl` is missing entirely (so
  *  no caller could have built a real `formatTime`), this falls back to `in about N hours` rather
- *  than call a formatter that cannot exist. */
+ *  than call a formatter that cannot exist. When `now` has already reached or passed `retryAt`,
+ *  the window has ended — naming a bucket would just restate a stale estimate, so this reads
+ *  "shortly" instead. */
 export function retryLine(retryAt: number, now: number, formatTime: (date: Date) => string): string {
-  const remainingMs = Math.max(0, retryAt - now);
+  const remainingMs = retryAt - now;
+  if (remainingMs <= 0) {
+    return retryLineElapsed();
+  }
   if (remainingMs < MINUTE_MS) {
     return retryLineSeconds(Math.round(remainingMs / SECOND_MS));
   }

@@ -7,16 +7,37 @@
  * grant; its own hardware back declines, same as `Not now`. Review mode opens from Settings' AI
  * features row and shows the IDENTICAL disclosure, with only its bottom actions keyed off whether
  * consent is currently on. `onClose` is the one "leave without an explicit grant/revoke" callback,
- * shared by hardware back, ask mode's `Not now`, and review mode's safe large `Keep AI features
- * on` button — all three mean the same thing: nothing changes, land wherever this instance's
- * caller decided.
+ * shared by hardware back, ask mode's `Not now`, review mode with consent on's safe large `Keep AI
+ * features on` button, and review mode with consent off's own plain-text `Not now` beneath its
+ * agree button — the last of these exists because hardware back declines only on Android, and
+ * without a visible non-granting exit an iOS reviewer who declines has no way off this screen
+ * short of agreeing (spec ai-data-consent "any other exit SHALL grant nothing"). All of them mean
+ * the same thing: nothing changes, land wherever this instance's caller decided.
  */
 import React, { useEffect } from 'react';
 import { BackHandler, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
+import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
 import { RELEASE } from './release-config';
 import { SHELL_PALETTE } from './theme';
+
+/** `consentScreenActions`' row → this component's own label and press handler — the one place
+ *  the table's abstract action ids meet real copy and callbacks. */
+function actionLabel(action: ConsentScreenAction): string {
+  switch (action) {
+    case 'agree':
+      return COPY.consentAgree;
+    case 'decline':
+      return COPY.consentDecline;
+    case 'keepOn':
+      return COPY.consentReviewKeepOn;
+    case 'turnOff':
+      return COPY.consentReviewTurnOff;
+    case 'turnOn':
+      return COPY.consentReviewTurnOn;
+  }
+}
 
 export interface ConsentScreenProps {
   mode: 'ask' | 'review';
@@ -33,7 +54,8 @@ export interface ConsentScreenProps {
    *  to Settings. */
   onTurnOff?: () => void;
   /** Leaves without granting or revoking anything: hardware back in both modes, ask mode's
-   *  `Not now`, and review mode's safe large `Keep AI features on` button. */
+   *  `Not now`, review mode with consent on's safe large `Keep AI features on` button, and review
+   *  mode with consent off's own plain-text `Not now`. */
   onClose: () => void;
 }
 
@@ -54,6 +76,17 @@ export default function ConsentScreen({
     });
     return () => sub.remove();
   }, [onClose]);
+
+  /** `agree`/`turnOn` grant; every other row (`decline`, `keepOn`, `turnOff`) leaves without
+   *  granting or revoking anything, same as hardware back — `turnOff` is the one row that also
+   *  deletes an existing grant. */
+  function pressHandlerFor(action: ConsentScreenAction): () => void {
+    if (action === 'agree' || action === 'turnOn') return onAgree;
+    if (action === 'turnOff') return onTurnOff ?? onClose;
+    return onClose;
+  }
+
+  const actions = consentScreenActions(mode === 'ask' ? { kind: 'ask' } : { kind: 'review', consentOn });
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -87,44 +120,29 @@ export default function ConsentScreen({
         </TouchableOpacity>
       </ScrollView>
 
-      {mode === 'ask' && (
-        <>
+      {actions.map((row) =>
+        row.kind === 'primary' ? (
           <TouchableOpacity
-            onPress={onAgree}
+            key={row.action}
+            onPress={pressHandlerFor(row.action)}
             accessibilityRole="button"
-            style={[styles.primary, { backgroundColor: p.accent }]}
+            // `keepOn` is review mode's safe choice (design D5) — it keeps the SAME behaviour as
+            // hardware back, so its button reads visually distinct from the accent-coloured agree
+            // actions, never the CTA colour a grant uses.
+            style={[styles.primary, { backgroundColor: row.action === 'keepOn' ? p.text : p.accent }]}
           >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.consentAgree}</Text>
+            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{actionLabel(row.action)}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={onClose} accessibilityRole="button" style={styles.plainAction}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.consentDecline}</Text>
-          </TouchableOpacity>
-        </>
-      )}
-
-      {mode === 'review' && consentOn && (
-        <>
+        ) : (
           <TouchableOpacity
-            onPress={onClose}
+            key={row.action}
+            onPress={pressHandlerFor(row.action)}
             accessibilityRole="button"
-            style={[styles.primary, { backgroundColor: p.text }]}
+            style={styles.plainAction}
           >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.consentReviewKeepOn}</Text>
+            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{actionLabel(row.action)}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={onTurnOff} accessibilityRole="button" style={styles.plainAction}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.consentReviewTurnOff}</Text>
-          </TouchableOpacity>
-        </>
-      )}
-
-      {mode === 'review' && !consentOn && (
-        <TouchableOpacity
-          onPress={onAgree}
-          accessibilityRole="button"
-          style={[styles.primary, styles.primaryLast, { backgroundColor: p.accent }]}
-        >
-          <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.consentReviewTurnOn}</Text>
-        </TouchableOpacity>
+        ),
       )}
     </View>
   );
@@ -147,7 +165,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primaryLast: { marginBottom: SPACING.lg },
   plainAction: {
     height: 46,
     marginBottom: SPACING.lg,

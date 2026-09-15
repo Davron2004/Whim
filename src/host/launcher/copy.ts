@@ -251,7 +251,7 @@ export const COPY = {
     'To make or change an app, Whim sends your request to AnyCognition’s server. The server uses AI models from other companies, reached through OpenRouter, to write the app.',
   consentWhatSentTitle: 'What gets sent',
   consentWhatSentRequest: 'What you ask for: your description, your answers to Whim’s questions, and the plan you approve',
-  consentWhatSentEdit: 'When you change an app: its code, its current description, and the layout of its saved data',
+  consentWhatSentEdit: 'When you change an app: its name, its code, its current description, and the layout of its saved data',
   consentWhatSentDevice: 'An anonymous ID for this phone, used for daily limits',
   consentWhatNeverSentTitle: 'What never gets sent',
   consentWhatNeverSent: 'Anything you save inside your apps',
@@ -601,17 +601,23 @@ export function reportCodeSizeLabel(chars: number): string {
 // between `prompt-flow.ts`'s counts and its own phrasing.
 
 export function retryLineSeconds(n: number): string {
-  return `in about ${n} seconds`;
+  return n === 1 ? 'in about 1 second' : `in about ${n} seconds`;
 }
 
 export function retryLineMinutes(n: number): string {
-  return `in about ${n} minutes`;
+  return n === 1 ? 'in about 1 minute' : `in about ${n} minutes`;
 }
 
 /** The `Intl`-missing fallback — an hours-only estimate when no formatter could exist to build a
  *  local-time string at all. */
 export function retryLineHoursFallback(n: number): string {
-  return `in about ${n} hours`;
+  return n === 1 ? 'in about 1 hour' : `in about ${n} hours`;
+}
+
+/** The window had already ended by the moment this line was read: naming a bucket ("in about 0
+ *  seconds") would just be a stale estimate restated, so this names no number at all. */
+export function retryLineElapsed(): string {
+  return 'shortly';
 }
 
 /** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
