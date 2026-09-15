@@ -21,7 +21,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { RewriteRequest, RewriteResponse, type ApiError, type PlanRow, type Usage } from '@whim/contract';
-import type { ModelClient, ModelMessage, ModelRoster } from '../generation/model';
+import { isCreditExhaustedError, type ModelClient, type ModelMessage, type ModelRoster } from '../generation/model';
 import type { UsageStore, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
@@ -33,7 +33,7 @@ import { buildRewritePolicyInput } from '../policy/input';
 import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
-import { admitUnaryRequest, isProviderBudgetExhausted } from './clarify';
+import { admitUnaryRequest } from './clarify';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -183,7 +183,7 @@ async function runRewriteAttempt(
     return { ok: true, shaped: shapeRewrite(raw), usage, generationId };
   } catch (err) {
     const generationId = await stream.id.catch(() => undefined);
-    return { ok: false, budgetExhausted: isProviderBudgetExhausted(err), generationId };
+    return { ok: false, budgetExhausted: isCreditExhaustedError(err), generationId };
   }
 }
 
@@ -254,19 +254,23 @@ export function makeRewriteRoute(
         policy,
         policyRoute: 'rewrite',
         policyInput: buildRewritePolicyInput(parsed.data),
+        resolveTransport,
+        resolveBounds,
+        resolveTracker,
         signal: c.req.raw.signal,
       });
       if (!admission.ok) {
         const r = admission.refusal;
         return c.json(r.body, r.status, r.headers);
       }
-      const { requestId, release } = admission;
+      const { requestId, release, policyGenerationId } = admission;
 
       const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean): Promise<void> => {
+        const ids = policyGenerationId ? [policyGenerationId, ...generationIds] : generationIds;
         await usageStore.settle(requestId, { outcome });
         release();
         resolveTracker.track(
-          resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, {
+          resolveRequestUsage(requestId, deviceId, ids, creditOwned, {
             transport: resolveTransport,
             usageStore,
             bounds: resolveBounds,

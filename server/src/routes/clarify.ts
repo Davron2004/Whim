@@ -20,7 +20,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whim/contract';
-import type { ModelClient, ModelRoster } from '../generation/model';
+import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
@@ -94,18 +94,10 @@ function shapeClarify(text: string): ClarifyResponse | undefined {
   return result.success ? result.data : undefined;
 }
 
-/** `true` when `err` is the model provider's own `402` (operator credit exhausted mid-call).
- *  Detected structurally (`status === 402`) rather than against a dedicated error subclass or a
- *  message string: `../openrouter.ts`/`../generation/model.ts` are chain-8's files (out of this
- *  chain's scope) and, as of this writing, don't yet expose one — see `handoff/app-options.md` for
- *  the follow-up once they do. Every real transport error this chain constructs (and every test
- *  double `routes-unary.suite.ts` scripts) carries `status: 402` for this case. */
-export function isProviderBudgetExhausted(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'status' in err && (err as { status: unknown }).status === 402;
-}
-
 /** Everything `admitUnaryRequest` needs to run the shared credit → slot → daily-unit → policy
- *  order for one clarify or rewrite request. */
+ *  order for one clarify or rewrite request. `resolveTransport`/`resolveBounds`/`resolveTracker`
+ *  are the same values the route's own post-response `finish()` uses — a policy refusal still
+ *  needs them to resolve the classifier call's cost onto the request's ledger row. */
 export interface UnaryAdmissionDeps {
   deviceId: string;
   kind: Extract<RequestKind, 'clarify' | 'rewrite'>;
@@ -119,11 +111,14 @@ export interface UnaryAdmissionDeps {
   policy: ContentPolicy;
   policyRoute: PolicyRoute;
   policyInput: string;
+  resolveTransport: UsageAndCostTransport;
+  resolveBounds: Partial<ResolveBounds> | undefined;
+  resolveTracker: ResolveTracker;
   signal?: AbortSignal;
 }
 
 export type UnaryAdmissionOutcome =
-  | { ok: true; requestId: string; release: () => void }
+  | { ok: true; requestId: string; release: () => void; policyGenerationId?: string }
   | { ok: false; refusal: ServiceRefusal };
 
 /**
@@ -132,6 +127,13 @@ export type UnaryAdmissionOutcome =
  * "Admission checks run in a fixed order"): operator credit → drain/global-unary-cap (one slot
  * acquire) → the device's daily allowance → content policy. Every refusal after a resource was
  * taken (a slot, a daily unit) releases/refunds it before returning.
+ *
+ * The classifier call's own usage is credited to the device the moment it comes back — allowed or
+ * refused, since the call still happened either way (spec "The policy check is metered and
+ * observable without content"). On `allow`, its generation id is returned as `policyGenerationId`
+ * so the caller folds it into the request's own generation ids before resolving cost. On a refusal
+ * (the request ends here, with no further model call), the row is settled with the classifier's
+ * usage and its cost is resolved immediately, the same way the route's own `finish()` would.
  */
 export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
   const {
@@ -147,6 +149,9 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
     policy,
     policyRoute,
     policyInput,
+    resolveTransport,
+    resolveBounds,
+    resolveTracker,
     signal,
   } = deps;
 
@@ -170,12 +175,24 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
   const { requestId } = admitted;
 
   try {
-    const verdict = await policy.check(policyInput, policyRoute, signal);
-    if (verdict !== 'allow') {
-      await usageStore.settle(requestId, { outcome: 'refused' });
+    const result = await policy.check(policyInput, policyRoute, signal);
+    if (result.usage) {
+      await usageStore.credit(deviceId, result.usage);
+    }
+    if (result.verdict !== 'allow') {
+      await usageStore.settle(requestId, { outcome: 'refused', usage: result.usage });
       handle.release();
+      const ids = result.generationId ? [result.generationId] : [];
+      resolveTracker.track(
+        resolveRequestUsage(requestId, deviceId, ids, true, {
+          transport: resolveTransport,
+          usageStore,
+          bounds: resolveBounds,
+        }),
+      );
       return { ok: false, refusal: contentPolicyRefusal() };
     }
+    return { ok: true, requestId, release: () => handle.release(), policyGenerationId: result.generationId };
   } catch (err) {
     if (err instanceof PolicyUnavailableError) {
       await usageStore.settle(requestId, { outcome: 'unavailable' });
@@ -185,8 +202,6 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
     }
     throw err;
   }
-
-  return { ok: true, requestId, release: () => handle.release() };
 }
 
 export interface ClarifyRouteOptions {
@@ -254,13 +269,16 @@ export function makeClarifyRoute(
         policy,
         policyRoute: 'clarify',
         policyInput: buildClarifyPolicyInput(parsed.data),
+        resolveTransport,
+        resolveBounds,
+        resolveTracker,
         signal: c.req.raw.signal,
       });
       if (!admission.ok) {
         const r = admission.refusal;
         return c.json(r.body, r.status, r.headers);
       }
-      const { requestId, release } = admission;
+      const { requestId, release, policyGenerationId } = admission;
 
       const finish = async (
         outcome: RequestOutcome,
@@ -268,10 +286,11 @@ export function makeClarifyRoute(
         generationIds: string[],
         creditOwned: boolean,
       ): Promise<void> => {
+        const ids = policyGenerationId ? [policyGenerationId, ...generationIds] : generationIds;
         await usageStore.settle(requestId, { outcome, usage });
         release();
         resolveTracker.track(
-          resolveRequestUsage(requestId, deviceId, generationIds, creditOwned, {
+          resolveRequestUsage(requestId, deviceId, ids, creditOwned, {
             transport: resolveTransport,
             usageStore,
             bounds: resolveBounds,
@@ -348,7 +367,7 @@ async function runClarifyWork(
   } catch (err) {
     const generationId = await stream.id.catch(() => undefined);
     const ids = generationId ? [generationId] : [];
-    if (isProviderBudgetExhausted(err)) {
+    if (isCreditExhaustedError(err)) {
       invalidateCreditCache();
       await finish('error', undefined, ids, false);
       const r = budgetExhaustedRefusal();

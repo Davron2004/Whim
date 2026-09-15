@@ -8,7 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { log } from '../logger';
-import type { ContentPolicy, PolicyRoute, PolicyVerdict } from './policy';
+import type { ContentPolicy, PolicyCheckResult, PolicyRoute, PolicyVerdict } from './policy';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -58,7 +58,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
   const entries = new Map<string, CacheEntry>();
 
   return {
-    async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyVerdict> {
+    async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult> {
       const startedAt = now();
       const digest = digestOf(input);
       const existing = entries.get(digest);
@@ -68,29 +68,30 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
           entries.set(digest, existing);
           const { kind, category } = describe(existing.verdict);
           logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', category, now() - startedAt);
-          return existing.verdict;
+          // A cache hit made no classifier call — no usage/generationId to carry.
+          return { verdict: existing.verdict };
         }
         entries.delete(digest);
       }
 
-      let verdict: PolicyVerdict;
+      let result: PolicyCheckResult;
       try {
-        verdict = await inner.check(input, route, signal);
+        result = await inner.check(input, route, signal);
       } catch (err) {
         logCheck(route, 'unavailable', undefined, now() - startedAt);
         throw err;
       }
 
-      entries.set(digest, { verdict, expiresAt: now() + ttlMs });
+      entries.set(digest, { verdict: result.verdict, expiresAt: now() + ttlMs });
       while (entries.size > maxEntries) {
         const oldestKey = entries.keys().next().value;
         if (oldestKey === undefined) break;
         entries.delete(oldestKey);
       }
 
-      const { kind, category } = describe(verdict);
+      const { kind, category } = describe(result.verdict);
       logCheck(route, kind, category, now() - startedAt);
-      return verdict;
+      return result;
     },
   };
 }

@@ -26,6 +26,7 @@ import {
   buildRewritePolicyInput,
   buildGeneratePolicyInput,
   type ContentPolicy,
+  type PolicyCheckResult,
   type PolicyVerdict,
 } from '../src/policy';
 
@@ -145,8 +146,8 @@ async function testFailClosed(): Promise<void> {
   {
     const client = fakeClient(() => textStream('{"verdict":"refuse","category":"not-a-listed-category"}'));
     const policy = policyOn(client);
-    const verdict = await policy.check('some text', 'generate');
-    eq('refuse with an off-list category: still a refusal', verdict, { refuse: 'not-a-listed-category' });
+    const result = await policy.check('some text', 'generate');
+    eq('refuse with an off-list category: still a refusal', result.verdict, { refuse: 'not-a-listed-category' });
   }
 
   // A model transport error is not an allow.
@@ -160,10 +161,10 @@ async function testFailClosed(): Promise<void> {
   // Every allow/refuse verdict still resolves normally.
   {
     const allowClient = fakeClient(() => textStream('{"verdict":"allow"}'));
-    eq('allow verdict resolves', await policyOn(allowClient).check('fine text', 'clarify'), 'allow');
+    eq('allow verdict resolves', (await policyOn(allowClient).check('fine text', 'clarify')).verdict, 'allow');
 
     const refuseClient = fakeClient(() => textStream(JSON.stringify({ verdict: 'refuse', category: 'graphic violence or gore' })));
-    eq('refuse verdict resolves with category', await policyOn(refuseClient).check('bad text', 'rewrite'), {
+    eq('refuse verdict resolves with category', (await policyOn(refuseClient).check('bad text', 'rewrite')).verdict, {
       refuse: 'graphic violence or gore',
     });
   }
@@ -171,7 +172,63 @@ async function testFailClosed(): Promise<void> {
   // A ```json fenced reply still parses (json-block.ts is reused, not re-implemented).
   {
     const client = fakeClient(() => textStream('```json\n{"verdict":"allow"}\n```'));
-    eq('fenced allow reply parses', await policyOn(client).check('fine text', 'generate'), 'allow');
+    eq('fenced allow reply parses', (await policyOn(client).check('fine text', 'generate')).verdict, 'allow');
+  }
+}
+
+// ── §The policy check is metered and observable without content (usage carriage) ──
+
+async function testCheckResultUsage(): Promise<void> {
+  section('ContentPolicy.check — the classifier call\'s own usage is carried on the result');
+
+  const CLASSIFIER_USAGE: Usage = { promptTokens: 11, completionTokens: 4, totalTokens: 15 };
+
+  // A fresh model call carries the classifier's own usage and generation id.
+  {
+    const client = fakeClient(() => ({
+      deltas: (async function* (): AsyncGenerator<ModelDelta> {
+        yield { kind: 'text', text: '{"verdict":"allow"}' };
+      })(),
+      usage: Promise.resolve(CLASSIFIER_USAGE),
+      id: Promise.resolve('gen-classifier-1'),
+    }));
+    const result = await policyOn(client).check('some text', 'generate');
+    eq('a model verdict carries the call\'s usage', result.usage, CLASSIFIER_USAGE);
+    eq('a model verdict carries the call\'s generation id', result.generationId, 'gen-classifier-1');
+  }
+
+  // A cache hit makes no classifier call: no usage, no generation id.
+  {
+    const client = fakeClient(() => ({
+      deltas: (async function* (): AsyncGenerator<ModelDelta> {
+        yield { kind: 'text', text: '{"verdict":"allow"}' };
+      })(),
+      usage: Promise.resolve(CLASSIFIER_USAGE),
+      id: Promise.resolve('gen-classifier-2'),
+    }));
+    const cached = cachedPolicy(policyOn(client));
+    const input = JSON.stringify({ prompt: 'cache-usage-check' });
+    const first = await cached.check(input, 'generate');
+    check('setup: the fresh call carried usage', first.usage !== undefined);
+    const second = await cached.check(input, 'generate');
+    eq('a cached verdict carries no usage', second.usage, undefined);
+    eq('a cached verdict carries no generation id', second.generationId, undefined);
+  }
+
+  // The stub makes no model call: no usage, no generation id, either verdict.
+  {
+    const stub = new StubContentPolicy();
+    const allowed = await stub.check('an ordinary habit tracker', 'generate');
+    eq('a stub allow carries no usage', allowed.usage, undefined);
+    const refused = await stub.check('please [[refuse]] this', 'generate');
+    eq('a stub refuse carries no usage', refused.usage, undefined);
+  }
+
+  // PolicyUnavailableError semantics are unchanged: still thrown, fail closed, never resolves.
+  {
+    const client = fakeClient(() => erroringStream(new Error('down')));
+    const err = await caught(async () => { await policyOn(client).check('some text', 'generate'); });
+    check('failure still throws PolicyUnavailableError, never resolves a verdict', err instanceof PolicyUnavailableError);
   }
 }
 
@@ -247,7 +304,7 @@ async function testInputCoverage(): Promise<void> {
     return textStream(sawMarker ? '{"verdict":"refuse","category":"graphic violence or gore"}' : '{"verdict":"allow"}');
   });
   const harmfulVerdict = await policyOn(refusingClient).check(harmfulInput, 'generate');
-  eq('a harmful clarification answer is caught', harmfulVerdict, { refuse: 'graphic violence or gore' });
+  eq('a harmful clarification answer is caught', harmfulVerdict.verdict, { refuse: 'graphic violence or gore' });
 
   // App names in a rewrite are checked.
   const harmfulRewriteInput = buildRewritePolicyInput({ prompt: 'rename it', app: { name: '[[MARKER-HARMFUL-NAME]]' } });
@@ -256,7 +313,7 @@ async function testInputCoverage(): Promise<void> {
     return textStream(sawMarker ? '{"verdict":"refuse","category":"hate, harassment, or content targeting a real person"}' : '{"verdict":"allow"}');
   });
   const harmfulRewriteVerdict = await policyOn(rewriteRefusingClient).check(harmfulRewriteInput, 'rewrite');
-  eq('app names in a rewrite are checked', harmfulRewriteVerdict, { refuse: 'hate, harassment, or content targeting a real person' });
+  eq('app names in a rewrite are checked', harmfulRewriteVerdict.verdict, { refuse: 'hate, harassment, or content targeting a real person' });
 }
 
 // ── §Verdicts are cached in memory only ───────────────────────────────────────
@@ -265,9 +322,9 @@ function countingPolicy(next: () => PolicyVerdict | Promise<PolicyVerdict>): { p
   let calls = 0;
   return {
     policy: {
-      async check(): Promise<PolicyVerdict> {
+      async check(): Promise<PolicyCheckResult> {
         calls += 1;
-        return next();
+        return { verdict: await next() };
       },
     },
     calls: () => calls,
@@ -278,7 +335,7 @@ function countingUnavailablePolicy(message: string): { policy: ContentPolicy; ca
   let calls = 0;
   return {
     policy: {
-      async check(): Promise<PolicyVerdict> {
+      async check(): Promise<PolicyCheckResult> {
         calls += 1;
         throw new PolicyUnavailableError(message);
       },
@@ -295,8 +352,8 @@ async function testCache(): Promise<void> {
     const { policy: inner, calls } = countingPolicy(() => 'allow');
     const cached = cachedPolicy(inner);
     const input = JSON.stringify({ prompt: 'same prompt text' });
-    eq('first check (clarify route): allow', await cached.check(input, 'clarify'), 'allow');
-    eq('second check, same input (rewrite route): allow, no new classifier call', await cached.check(input, 'rewrite'), 'allow');
+    eq('first check (clarify route): allow', (await cached.check(input, 'clarify')).verdict, 'allow');
+    eq('second check, same input (rewrite route): allow, no new classifier call', (await cached.check(input, 'rewrite')).verdict, 'allow');
     eq('exactly one classifier call across both requests', calls(), 1);
   }
 
@@ -444,8 +501,8 @@ async function testStubPolicy(): Promise<void> {
   section('StubContentPolicy — deterministic, no model call');
 
   const stub = new StubContentPolicy();
-  eq('plain input allows', await stub.check('an ordinary habit tracker', 'generate'), 'allow');
-  eq('[[refuse]] marker refuses', await stub.check('please [[refuse]] this', 'generate'), { refuse: 'stub' });
+  eq('plain input allows', (await stub.check('an ordinary habit tracker', 'generate')).verdict, 'allow');
+  eq('[[refuse]] marker refuses', (await stub.check('please [[refuse]] this', 'generate')).verdict, { refuse: 'stub' });
 
   const err = await caught(async () => { await stub.check('please [[policy-down]] this', 'generate'); });
   check('[[policy-down]] marker throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
@@ -456,6 +513,7 @@ async function testStubPolicy(): Promise<void> {
 export async function runPolicyTests(): Promise<void> {
   section('Content policy');
   await testFailClosed();
+  await testCheckResultUsage();
   await testClassifierBounds();
   await testInputCoverage();
   await testCache();

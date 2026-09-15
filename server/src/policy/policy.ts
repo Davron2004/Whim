@@ -8,6 +8,7 @@
  */
 import type { ModelClient, ModelRequest } from '../generation/model';
 import { parseJsonBlock } from '../generation/json-block';
+import type { Usage } from '@whim/contract';
 
 /** Which endpoint is running the check — carried through only for the log record. Never sent to
  *  the classifier and never part of the cache key: two routes checking identical canonical input
@@ -30,12 +31,23 @@ export class PolicyUnavailableError extends Error {
   }
 }
 
+/** `check`'s result (spec "The policy check is metered and observable without content"): the
+ *  verdict, plus the classifier call's own usage/generation id WHEN a call actually happened.
+ *  `usage`/`generationId` are both absent for a cache hit (`cache.ts`) and for `StubContentPolicy`
+ *  — neither makes a model call, so neither has anything to meter. `generationId` may be absent
+ *  even after a real call, mirroring `ModelStream.id`'s own optionality. */
+export interface PolicyCheckResult {
+  verdict: PolicyVerdict;
+  usage?: Usage;
+  generationId?: string;
+}
+
 export interface ContentPolicy {
-  /** Resolves to a verdict, or throws `PolicyUnavailableError` when no verdict could be produced
-   *  — NEVER resolves `'allow'` on failure. `signal` aborts the underlying call (e.g. a client
-   *  disconnect); `ModelContentPolicy` also enforces its own configured timeout independent of
-   *  `signal`. */
-  check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyVerdict>;
+  /** Resolves to a result carrying the verdict, or throws `PolicyUnavailableError` when no verdict
+   *  could be produced — NEVER resolves an `'allow'` verdict on failure. `signal` aborts the
+   *  underlying call (e.g. a client disconnect); `ModelContentPolicy` also enforces its own
+   *  configured timeout independent of `signal`. */
+  check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult>;
 }
 
 const MAX_TOKENS = 48;
@@ -91,7 +103,7 @@ export interface ModelContentPolicyOptions {
 export class ModelContentPolicy implements ContentPolicy {
   constructor(private readonly opts: ModelContentPolicyOptions) {}
 
-  async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyVerdict> {
+  async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult> {
     const timeoutSignal = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     const request: ModelRequest = {
@@ -105,15 +117,18 @@ export class ModelContentPolicy implements ContentPolicy {
     };
 
     let text = '';
+    let usage: Usage;
+    let generationId: string | undefined;
+    const stream = this.opts.modelClient.stream(request, combined);
+    // A stray rejection here (e.g. the deltas loop throwing before `usage` is awaited below) must
+    // never surface as an unhandled rejection.
+    stream.usage.catch(() => {});
     try {
-      const { deltas, usage } = this.opts.modelClient.stream(request, combined);
-      // Observed but discarded: `ContentPolicy.check` has no return channel for token usage (design
-      // D9's literal signature) — a stray rejection here must never surface as an unhandled
-      // rejection regardless of how the deltas loop below ends.
-      usage.catch(() => {});
-      for await (const delta of deltas) {
+      for await (const delta of stream.deltas) {
         if (delta.kind === 'text') text += delta.text;
       }
+      usage = await stream.usage;
+      generationId = await stream.id;
     } catch (err) {
       if (timeoutSignal.aborted) {
         throw new PolicyUnavailableError(
@@ -129,7 +144,7 @@ export class ModelContentPolicy implements ContentPolicy {
     if (verdict === undefined) {
       throw new PolicyUnavailableError(`content policy classifier for "${route}" returned no well-formed verdict`);
     }
-    return verdict;
+    return { verdict, usage, generationId };
   }
 }
 
@@ -144,13 +159,13 @@ const UNAVAILABLE_MARKER = '[[policy-down]]';
  * (`handoff/wire-and-config.md`), so this class can never reach production silently.
  */
 export class StubContentPolicy implements ContentPolicy {
-  async check(input: string, _route: PolicyRoute, _signal?: AbortSignal): Promise<PolicyVerdict> {
+  async check(input: string, _route: PolicyRoute, _signal?: AbortSignal): Promise<PolicyCheckResult> {
     if (input.includes(UNAVAILABLE_MARKER)) {
       throw new PolicyUnavailableError('stub content policy: input carries the policy-down marker');
     }
     if (input.includes(REFUSE_MARKER)) {
-      return { refuse: 'stub' };
+      return { verdict: { refuse: 'stub' } };
     }
-    return 'allow';
+    return { verdict: 'allow' };
   }
 }
