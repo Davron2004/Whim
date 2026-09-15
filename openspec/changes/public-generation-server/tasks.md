@@ -137,7 +137,7 @@
 
 ## 18. Repairs from the first attended deployment acceptance
 
-- [ ] 18.1 Add bounded, idempotent IAP readiness checks after normal and recovery VM starts in resize, before a single tag-deploy invocation. Reproduce transient and persistent readiness failures as specified in `acceptance-fixes.md`.
-- [ ] 18.2 Preserve the exact replay image through privilege elevation in load-test start. Execute the generated remote command with a sanitizing sudo fixture; prove the old command loses the required image and the repaired command preserves it.
-- [ ] 18.3 Restore production from base Compose and run smoke when load-test start fails after stopping production. Preserve the original failure and report recovery failure separately; test both recovery outcomes.
-- [ ] 18.4 Keep the fast gate green and update the deployment runbook and load-test contract to match. Independently review and regate the merged chain before retrying task 15.4; do not count local tests as its live acceptance.
+- [x] 18.1 Add bounded, idempotent IAP readiness checks after normal and recovery VM starts in resize, before a single tag-deploy invocation. Reproduce transient and persistent readiness failures as specified in `acceptance-fixes.md`.
+- [x] 18.2 Preserve the exact replay image through privilege elevation in load-test start. Execute the generated remote command with a sanitizing sudo fixture; prove the old command loses the required image and the repaired command preserves it.
+- [x] 18.3 Restore production from base Compose and run smoke when load-test start fails after stopping production. Preserve the original failure and report recovery failure separately; test both recovery outcomes.
+- [x] 18.4 Keep the fast gate green and update the deployment runbook and load-test contract to match. Independently review and regate the merged chain before retrying task 15.4; do not count local tests as its live acceptance.

@@ -159,7 +159,7 @@
 
 ## 20. Host startup failure with native rules unavailable
 
-- [ ] 20.1 Reproduce the missing-resource failure in the primary Release simulator using normal LauncherRoot and Tip Splitter; preserve logs and the UI after the required error deadline.
+- [x] 20.1 Reproduce the missing-resource failure in the primary Release simulator using normal LauncherRoot and Tip Splitter; preserve logs and the UI after the required error deadline.
 - [ ] 20.2 Add a bounded attempted-delivery deadline through the RN-free boot-state seam and wire it into the host lifecycle, following host-startup-fix.md. Preserve trusted paint, existing error copy and keyed realm recreation.
 - [ ] 20.3 Add discriminating fake-clock behavioral coverage for absent page frames, successful delayed startup, trust, stale attempts and every cleanup/error edge; retain lifecycle wiring checks and pass targeted checks plus fast gate.
 - [ ] 20.4 After independent review, integrity, merge and regate, repeat the missing-resource simulator test and observe the required app-error UI; restore local controls and confirm the normal launcher.
