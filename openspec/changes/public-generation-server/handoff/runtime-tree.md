@@ -61,8 +61,8 @@ export async function runBootSelfTest(session: SynthRunSession, cwd?: string /* 
 4. Final window **10 s** total: wait for generation+unary slots to reach 0, then `ResolveTracker.drain` (looped).
 5. `closeAllConnections()`, stop purges, `session.close()` (bounded **10 s**), close both stores; exit 0.
 
-Second signal during the wait → skips to step 3. Worst case after the signal: drain timeout + 20 s. Known gap: real-pipeline drain is defeated until `browserLaunchOptions()` sets `handleSIGINT/SIGTERM/SIGHUP: false`
-(Playwright closes Chromium on SIGTERM/SIGHUP and exits 130 on SIGINT) — pending a decision, see chain-11 report.
+Second signal during the wait → skips to step 3. Worst case after the signal: drain timeout + 20 s. The process
+alone owns signals: `browserLaunchOptions()` sets `handleSIGINT/SIGTERM/SIGHUP: false` (`handoff/synthrun-launch.md`).
 
 ## `startServer` (verbatim, `server/src/lifecycle.ts`)
 

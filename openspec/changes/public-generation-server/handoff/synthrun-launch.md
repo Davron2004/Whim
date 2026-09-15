@@ -11,9 +11,14 @@ export function browserLaunchOptions(): LaunchOptions {
     chromiumSandbox: true,
     proxy: { server: 'http://127.0.0.1:9', bypass: '<-loopback>' },
     args: ['--host-resolver-rules=MAP * ~NOTFOUND', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--dns-prefetch-disable'],
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
   };
 }
 ```
+
+The `handle*: false` flags (chain-11) exist because the server's graceful drain owns process signals: Playwright's defaults would close Chromium on SIGTERM/SIGHUP and `exit(130)` on SIGINT, mid-drain.
 
 Invariants, enforced by `synthrun/test/isolation.ts`:
 - Exactly one call site `chromium.launch(browserLaunchOptions())` exists across `synthrun/*.ts` and `server/src/**/*.ts`, in `session.ts`. A relaunch (chain-7) goes through that same call site. A second one fails the scan.

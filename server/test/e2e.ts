@@ -15,10 +15,13 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
+import { build } from 'esbuild';
 import { check, eq, report, section } from './harness';
 import { ScriptedModelClient } from './scripted-model';
+import { E2E_ROSTER, heldRunTurns, MOUNT_HANG } from './e2e-fixtures';
 import { BootError, runBootSelfTest, startServer, type ServerHandle } from '../src/lifecycle';
-import type { ModelRoster } from '../src/generation/model';
 import { createCheckStage } from '../src/generation/stages/check';
 import { createBuildStage } from '../src/generation/stages/build';
 import { createRunStage } from '../src/generation/stages/run';
@@ -442,28 +445,12 @@ async function testBootSelfTest(session: SynthRunSession): Promise<void> {
 // ── The composed server: boot gates listening, and a real TCP disconnect closes the browser
 //    context (spec "A real TCP disconnect closes the browser context") ──
 
-const E2E_ROSTER: ModelRoster = { rewrite: 'e2e/rewrite', engineer: 'e2e/engineer' };
 const DISCONNECT_BOUND_MS = 5000;
-
-/** Wedges the renderer before the first paint and never returns, so the run sits in its mount wait. */
-const MOUNT_HANG = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
-for (;;) { /* never paints */ }
-function Slow() { return <Screen><Stack><Heading size="title">Slow</Heading></Stack></Screen>; }
-export default defineApp({ name: 'Slow', initial: 'Slow', screens: { Slow }, capabilities: [] });
-`;
 
 const HARMLESS = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
 function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading></Stack></Screen>; }
 export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
-
-const SLOW_PLAN = JSON.stringify({
-  screens: [{ name: 'Slow', purpose: 'the only screen' }],
-  initial: 'Slow',
-  state: [],
-  capabilities: [],
-  storageKeys: [],
-});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -524,11 +511,7 @@ async function testComposedServerBootAndDisconnect(): Promise<void> {
   const savedRequest = Object.getOwnPropertyDescriptor(globalThis, 'Request');
   const savedResponse = Object.getOwnPropertyDescriptor(globalThis, 'Response');
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-server-'));
-  const model = new ScriptedModelClient(E2E_ROSTER, [
-    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
-    { role: 'engineer', deltas: [SLOW_PLAN] },
-    { role: 'engineer', deltas: [MOUNT_HANG] },
-  ]);
+  const model = new ScriptedModelClient(E2E_ROSTER, heldRunTurns());
   let handle: ServerHandle | undefined;
   try {
     const checked = await createCheckStage().check(MOUNT_HANG, {});
@@ -569,41 +552,22 @@ async function testComposedServerBootAndDisconnect(): Promise<void> {
       return;
     }
 
-    const payload = JSON.stringify({ prompt: 'a slow app' });
-    const socket = net.connect({ port, host: '127.0.0.1' });
-    let received = '';
-    socket.setEncoding('utf8');
-    socket.on('data', (chunk: string) => {
-      received += chunk;
-    });
-    socket.on('error', () => undefined);
-    socket.write(
-      [
-        'POST /v1/generate HTTP/1.1',
-        'Host: 127.0.0.1',
-        'Content-Type: application/json',
-        `Content-Length: ${Buffer.byteLength(payload)}`,
-        'x-whim-device: e2e0e2e0-e2e0-4e20-8e20-e2e0e2e0e2e0',
-        'Connection: close',
-        '',
-        payload,
-      ].join('\r\n'),
-    );
+    const client = rawGenerate(port, 'e2e0e2e0-e2e0-4e20-8e20-e2e0e2e0e2e0', 'a slow app');
 
-    check('the candidate reached the run stage and opened its browser context', await waitUntil(() => session.openContextCount() === 1, 60_000), received.slice(-800));
+    check('the candidate reached the run stage and opened its browser context', await waitUntil(() => session.openContextCount() === 1, 60_000), client.text().slice(-800));
     // The page loads in tens of milliseconds and the candidate never paints, so by now the run is
     // held in its mount wait.
     await sleep(500);
-    check('setup: the run is still held in the run stage', session.openContextCount() === 1 && !received.includes('event: failure'));
+    check('setup: the run is still held in the run stage', session.openContextCount() === 1 && !hasTerminalEvent(client.text()));
     const destroyedAt = Date.now();
-    socket.destroy();
+    client.socket.destroy();
 
     check(`within ${DISCONNECT_BOUND_MS} ms the session has no open browser context`, await waitUntil(() => session.openContextCount() === 0, DISCONNECT_BOUND_MS), `${Date.now() - destroyedAt} ms`);
     const remaining = Math.max(1, DISCONNECT_BOUND_MS - (Date.now() - destroyedAt));
     const next = await within(session.openRun(HARMLESS).then((run) => run.dispose()), remaining);
     check(`and within ${DISCONNECT_BOUND_MS} ms its only concurrency slot is free for another run`, next !== TIMED_OUT, `${Date.now() - destroyedAt} ms`);
     eq('no model call was made after the disconnect', model.requests.length, 3);
-    check('the stream never produced a terminal event', !received.includes('event: result') && !received.includes('event: failure'), received.slice(-800));
+    check('the stream never produced a terminal event', !hasTerminalEvent(client.text()), client.text().slice(-800));
 
     const closing = await within(handle.close(), 30_000);
     check('the server drains closed', closing !== TIMED_OUT);
@@ -613,6 +577,200 @@ async function testComposedServerBootAndDisconnect(): Promise<void> {
     if (handle) await within(handle.close(), 30_000);
     if (savedRequest) Object.defineProperty(globalThis, 'Request', savedRequest);
     if (savedResponse) Object.defineProperty(globalThis, 'Response', savedResponse);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+// ── A real server process under SIGTERM with a synthetic run in flight (spec "SIGTERM drains
+//    in-flight work before exit", "The deadline aborts the rest") ──
+
+const DRAIN_DEADLINE_MS = 4000;
+
+/** `process.kill(pid, 0)` probes a process without signalling it. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** `e2e-drain-server.ts` running as its own process, with its combined output. */
+interface DrainServer {
+  output(): string;
+  /** Every JSON line it printed: its logs and its `e2eServer` reports. */
+  records(): Record<string, unknown>[];
+  /** The `e2eServer` reports only. */
+  reports(): Record<string, unknown>[];
+  /** The last open-context count it reported. */
+  lastContexts(): unknown;
+  exit(): { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  exited: Promise<void>;
+  signal(signal: NodeJS.Signals): void;
+  /** Kills it if still running and removes its bundle. */
+  dispose(): Promise<void>;
+}
+
+async function spawnDrainServer(dataDir: string): Promise<DrainServer> {
+  const childFile = path.join(ROOT, `.server-e2e-drain.${process.pid}.tmp.mjs`);
+  await build({
+    entryPoints: [path.join(ROOT, 'server', 'test', 'e2e-drain-server.ts')],
+    outfile: childFile,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    external: ['esbuild', 'playwright', 'typescript', 'pino'],
+    logLevel: 'warning',
+  });
+
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: process.env.HOME ?? os.homedir(),
+    WHIM_LOG_JSON: '1',
+    WHIM_DATA_DIR: dataDir,
+    WHIM_SYNTHRUN_CONCURRENCY: '1',
+    WHIM_DRAIN_TIMEOUT_MS: String(DRAIN_DEADLINE_MS),
+  };
+  for (const name of ['TMPDIR', 'PLAYWRIGHT_BROWSERS_PATH']) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+  const child = spawn(process.execPath, [childFile], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+    output += chunk;
+  });
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+    output += chunk;
+  });
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  const exited = new Promise<void>((resolve) => {
+    child.once('exit', (code, signal) => {
+      exit = { code, signal };
+      resolve();
+    });
+  });
+  const records = (): Record<string, unknown>[] =>
+    output
+      .split('\n')
+      .filter((line) => line.startsWith('{'))
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch (err) {
+          return { unparsed: line, detail: String(err) };
+        }
+      });
+  const reports = (): Record<string, unknown>[] =>
+    records().flatMap((record) => (record.e2eServer && typeof record.e2eServer === 'object' ? [record.e2eServer as Record<string, unknown>] : []));
+  return {
+    output: () => output,
+    records,
+    reports,
+    lastContexts: () => reports().filter((r) => 'contexts' in r).at(-1)?.contexts,
+    exit: () => exit,
+    exited,
+    signal: (signal) => {
+      child.kill(signal);
+    },
+    dispose: async () => {
+      if (!exit) child.kill('SIGKILL');
+      await within(exited, 10_000);
+      fs.rmSync(childFile, { force: true });
+    },
+  };
+}
+
+/** A `POST /v1/generate` written straight onto a TCP socket, accumulating the raw response. */
+function rawGenerate(port: number, deviceId: string, prompt: string): { socket: net.Socket; text: () => string } {
+  const payload = JSON.stringify({ prompt });
+  const socket = net.connect({ port, host: '127.0.0.1' });
+  let received = '';
+  socket.setEncoding('utf8');
+  socket.on('data', (chunk: string) => {
+    received += chunk;
+  });
+  socket.on('error', () => undefined);
+  socket.write(
+    [
+      'POST /v1/generate HTTP/1.1',
+      'Host: 127.0.0.1',
+      'Content-Type: application/json',
+      `Content-Length: ${Buffer.byteLength(payload)}`,
+      `x-whim-device: ${deviceId}`,
+      'Connection: close',
+      '',
+      payload,
+    ].join('\r\n'),
+  );
+  return { socket, text: () => received };
+}
+
+function hasTerminalEvent(stream: string): boolean {
+  return stream.includes('event: result') || stream.includes('event: failure');
+}
+
+/** Watches the first `ms` after the signal. Returns what ended the run early, or `undefined` if the
+ *  browser stayed up, the run's context stayed open, no terminal event arrived and the server ran on. */
+async function earlyEnding(server: DrainServer, browserPid: number, stream: () => string, signalledAt: number, ms: number): Promise<string | undefined> {
+  while (Date.now() - signalledAt < ms) {
+    const at = `${Date.now() - signalledAt} ms after SIGTERM`;
+    if (!processAlive(browserPid)) return `the browser process exited ${at}`;
+    if (server.exit()) return `the server exited ${at} (${JSON.stringify(server.exit())})`;
+    if (hasTerminalEvent(stream())) return `the stream ended with a terminal event ${at}`;
+    if (server.lastContexts() !== 1) return `the run's browser context closed ${at}`;
+    await sleep(50);
+  }
+  return undefined;
+}
+
+function ledgerOutcomes(dataDir: string): string[] {
+  const db = new DatabaseSync(path.join(dataDir, 'usage.db'), { readOnly: true });
+  try {
+    return (db.prepare('SELECT outcome FROM requests').all() as { outcome: string }[]).map((row) => row.outcome);
+  } finally {
+    db.close();
+  }
+}
+
+async function testRealPipelineSigtermDrain(): Promise<void> {
+  section('spec: SIGTERM with a synthetic run in flight keeps the browser until the drain deadline aborts the run, then exits 0');
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-drain-'));
+  const server = await spawnDrainServer(dataDir);
+  try {
+    const booted = await waitUntil(() => server.reports().some((r) => typeof r.url === 'string') || server.exit() !== undefined, 90_000);
+    const ready = server.reports().find((r) => typeof r.url === 'string');
+    check('setup: the server process booted the real pipeline, self-test included', booted && ready !== undefined, server.output().slice(-2000));
+    if (!ready) return;
+    const browserPid = Number(ready.browserPid);
+    const client = rawGenerate(Number(new URL(String(ready.url)).port), 'd0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0', 'a slow app');
+    try {
+      check('setup: the generation reached the run stage and opened its browser context', await waitUntil(() => server.lastContexts() === 1, 60_000), server.output().slice(-2000));
+      await sleep(500);
+      check('setup: the run is held in its mount wait and the browser process is alive', server.lastContexts() === 1 && processAlive(browserPid) && !hasTerminalEvent(client.text()));
+
+      const signalledAt = Date.now();
+      server.signal('SIGTERM');
+      check('the drain started', await waitUntil(() => server.records().some((r) => r.msg === 'drain started') || server.exit() !== undefined, 5000), server.output().slice(-2000));
+      const early = await earlyEnding(server, browserPid, client.text, signalledAt, DRAIN_DEADLINE_MS - 1000);
+      check('during the drain wait the browser stays connected and the run stays in flight', early === undefined, early);
+
+      await within(server.exited, 30_000);
+      eq('then the process exits 0', server.exit()?.code, 0);
+      check('it exited only after the deadline', Date.now() - signalledAt >= DRAIN_DEADLINE_MS, `${Date.now() - signalledAt} ms`);
+      check("the deadline closed the run's browser context before the process exited", server.reports().some((r) => r.contexts === 0), JSON.stringify(server.reports()));
+      check('the drain completed', server.reports().some((r) => r.drained === true), server.output().slice(-2000));
+      check('the stream was aborted without a terminal event', !hasTerminalEvent(client.text()), client.text().slice(-500));
+      eq('the ledger settled the generation as aborted', ledgerOutcomes(dataDir), ['aborted']);
+      check('the browser process is gone once the server has exited', await waitUntil(() => !processAlive(browserPid), 10_000));
+    } finally {
+      client.socket.destroy();
+    }
+  } finally {
+    await server.dispose();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 }
@@ -756,6 +914,7 @@ async function main(): Promise<void> {
 
   await testCancellationDisposesAndReleasesSlot();
   await testComposedServerBootAndDisconnect();
+  await testRealPipelineSigtermDrain();
 
   report();
 }
