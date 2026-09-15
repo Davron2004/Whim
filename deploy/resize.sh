@@ -81,6 +81,8 @@ recover() {
   printf 'resize.sh: step %s failed; starting the VM on its current machine type and redeploying that profile\n' "$failed" >&2
   whim_gcloud compute instances start "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" \
     || whim_fail "step $failed failed, and starting the VM failed too; the VM may be stopped"
+  whim_wait_for_ssh "recovery start" \
+    || whim_fail "step $failed failed, and recovery start readiness failed; the VM may be unreachable"
   actual="$(whim_vm_machine_type)" || whim_fail "step $failed failed, and the VM's machine type is unreadable"
   bash "$WHIM_DEPLOY_DIR/deploy.sh" --tag "$running_tag" \
     || whim_fail "step $failed failed, and the recovery deploy on $actual failed too; rerun deploy/deploy.sh --tag $running_tag"
@@ -98,7 +100,11 @@ run_step drain whim_vm_ssh "$WHIM_COMPOSE stop whim-server"
 run_step stop whim_gcloud compute instances stop "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE"
 run_step set-machine-type whim_gcloud compute instances set-machine-type "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" \
   --machine-type "$target_type"
-run_step start whim_gcloud compute instances start "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE"
+start_vm() {
+  whim_gcloud compute instances start "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" \
+    && whim_wait_for_ssh start
+}
+run_step start start_vm
 echo "==> confirm"
 confirmed_type="$(whim_vm_machine_type)" || recover confirm
 [ "$confirmed_type" = "$target_type" ] || recover confirm

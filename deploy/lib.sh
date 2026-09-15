@@ -120,7 +120,31 @@ whim_gcloud() {
 # Runs one command on the VM as the operator, over IAP. Standard input is passed through.
 whim_vm_ssh() {
   whim_gcloud compute ssh "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" --tunnel-through-iap --quiet \
-    --ssh-flag=-oServerAliveInterval=30 --command "$1"
+    --ssh-flag=-oServerAliveInterval=30 --ssh-flag=-oConnectTimeout=5 --command "$1"
+}
+
+whim_wait_for_ssh() {
+  local step="$1" budget="${2:-180}" probe_timeout="${3:-10}" deadline remaining probe_budget sleep_for
+  deadline=$((SECONDS + budget))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    remaining=$((deadline - SECONDS))
+    probe_budget="$probe_timeout"
+    [ "$probe_budget" -lt "$remaining" ] || probe_budget="$remaining"
+    if WHIM_SSH_PROBE_TIMEOUT_MS=$((probe_budget * 1000)) node -e \
+      'const { spawnSync } = require("node:child_process"); const args = process.argv.slice(1); const command = args.pop(); const result = spawnSync(args.shift(), [...args, "--command", command], { stdio: "ignore", timeout: Number(process.env.WHIM_SSH_PROBE_TIMEOUT_MS) || 10000 }); process.exit(result.error?.code === "ETIMEDOUT" ? 124 : (result.status ?? 1));' \
+      gcloud --project "$WHIM_GCP_PROJECT" compute ssh "$WHIM_VM_NAME" --zone "$WHIM_GCP_ZONE" --tunnel-through-iap --quiet \
+      --ssh-flag=-oServerAliveInterval=30 --ssh-flag=-oConnectTimeout="$probe_budget" ':'; then
+      return 0
+    fi
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    sleep_for=5
+    [ "$sleep_for" -lt "$remaining" ] || sleep_for="$remaining"
+    sleep "$sleep_for"
+  done
+  printf '%s: step %s readiness failed: SSH did not become available within %s seconds\n' \
+    "${WHIM_SCRIPT:-deploy}" "$step" "$budget" >&2
+  return 1
 }
 
 whim_vm_machine_type() {
