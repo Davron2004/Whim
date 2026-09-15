@@ -2,7 +2,7 @@ Whim turns a spoken or typed description into a small app that lives on your pho
 
 Tell Whim what you want. It asks a question or two, shows you a plan, and builds the app once you approve it. Each app runs in a sandboxed browser view on your device, with no access to your camera, location, contacts, or files.
 
-To build or change an app, Whim sends your request, your answers, and the approved plan to AnyCognition's server, which uses AI models from other companies to write the code. When you change an existing app, its current code, description, and the layout of its saved data are sent too. Anything you have already saved inside an app never leaves your phone. An anonymous ID for this phone travels along too, used only for daily limits.
+To build or change an app, Whim sends your request, your answers, and the approved plan to AnyCognition's server, which uses AI models from other companies to write the code. When you change an existing app, its name, current code, description, and the layout of its saved data are sent too. Anything you have already saved inside an app never leaves your phone. An anonymous ID for this phone travels along too, used for daily limits and to prevent abuse.
 
 Whim has no accounts, no login, no ads, and no analytics. A few examples are included and work without an internet connection; building or changing an app needs one.
 

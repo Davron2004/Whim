@@ -45,8 +45,8 @@ store-content.md` for the schemas the sibling JSON files follow.
 ## Data safety / App Privacy (source: store-launch-compliance design D5, this change's design D11)
 
 - **What is collected:** user content (the request text, the user's answers to Whim's questions,
-  and the approved plan; for an edit of an existing app, also its code, current description and
-  data layout — never the rows the user has saved inside the app) and an anonymous per-install
+  and the approved plan; for an edit of an existing app, also its name, code, current description
+  and data layout — never the rows the user has saved inside the app) and an anonymous per-install
   device ID sent in `x-whim-device`.
 - **Why:** user content is sent to AnyCognition's server so it can call third-party AI models
   through OpenRouter and write or change the app (app functionality). The device ID is used for
