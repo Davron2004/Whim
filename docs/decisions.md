@@ -1119,3 +1119,31 @@ Seven decisions from `store-launch-compliance/design.md`, one line of why each:
   clipboard API since 0.60, and adding one is a new native dependency that belongs with the platform
   change, not this one; `<Text selectable>` gets the system copy menu on both platforms for free and
   still satisfies 4.7.4's "reveal the link" requirement.
+
+### 66. Platform release readiness: one native config file, minute-resolution builds, split Android build types, relocated Hermes prerequisites, iOS tones, fastlane orchestration `[DECIDED — openspec: platform-release-readiness]`
+
+Five decisions from `platform-release-readiness/design.md`, one line of why each:
+
+- **D1 — one native release file, in xcconfig syntax.** `release/whim-release.xcconfig` is the
+  single place identity, version and domain live; Xcode reads it natively, Gradle and
+  `scripts/release/lib/native-config.ts` parse the same five-key grammar, and a domain change is
+  the two one-line edits (this file, `release-config.ts`) the domain-lockstep suite holds together
+  in the gate, down from a checklist across three files.
+- **D3 — build numbers are minutes since 2026-01-01T00:00Z.** A monotonic, credential-free,
+  state-free number that fits both platforms' ceilings for millennia beats commit count (falls
+  when history is rewritten) or store-latest-plus-one (needs credentials before a build starts).
+- **D4 — Android's `release` build type is the store build; `offline` replaces the old `release`
+  dev loop.** Splitting the names stops a manual console upload from ever shipping the debug-signed
+  flavor that the emulator loop still needs while Metro's NAT route stays dead.
+- **D8 — the Hermes-prerequisites recipe (originally #36 D2 / #39) moves to `src/host/platform/`.**
+  `hermes-polyfills.ts` and the new RN-only `install-entry-polyfills.ts` drop the module-level
+  `installed` flag that could lock out a platform-less first call, and `index.js`'s first statement
+  now runs the installer before anything else loads.
+- **D9 — iOS `WhimTone` synthesizes the AOSP tones as system sounds.** `AVAudioEngine` and bundled
+  audio files both lose to three `AudioServicesPlaySystemSound` calls generated once and cached,
+  because a session lifecycle and a second copy of the tone table are too much for three beeps.
+- **D12 — fastlane (Homebrew, pinned `>= 2.237.0`) drives store calls; TypeScript owns everything
+  checkable.** `deliver`, `supply` and `pilot` already handle edit sessions, screenshot reservations
+  and processing waits that a hand-rolled client would have to re-implement; the preflight, AAB
+  verification, privacy audit and tagging stay pure functions in `scripts/release/lib/`, reachable
+  from both the gate and a real release.

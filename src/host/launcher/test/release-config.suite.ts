@@ -39,8 +39,9 @@ function everyLauncherSourceFile(dir: string): string[] {
 const DOMAIN_LITERAL_PATTERN = new RegExp(WHIM_DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
 export async function runReleaseConfigTests(h: Harness): Promise<void> {
-  await h.test('release-config: the domain constant is the reserved placeholder', () => {
-    h.eq(WHIM_DOMAIN, 'example.com', 'WHIM_DOMAIN holds the IANA-reserved placeholder until a real domain is chosen');
+  await h.test('release-config: the domain constant is no longer the reserved placeholder', () => {
+    h.ok(WHIM_DOMAIN !== 'example.com', 'WHIM_DOMAIN must be the chosen production domain, not the IANA-reserved placeholder (platform-release-readiness task 12.5)');
+    h.ok(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(WHIM_DOMAIN), `WHIM_DOMAIN must look like a real domain, got "${WHIM_DOMAIN}"`);
   });
 
   await h.test('release-config: RELEASE derives every URL from WHIM_DOMAIN', () => {
@@ -76,9 +77,9 @@ export async function runReleaseConfigTests(h: Harness): Promise<void> {
   // Non-vacuity: the scan pattern actually fires on the shapes it must catch, and does not fire
   // on the unrelated `whim.<name>:v1` KV-key convention.
   await h.test('release-config: the domain scan pattern fires on the shapes it must catch, and only those', () => {
-    h.ok(DOMAIN_LITERAL_PATTERN.test('const x = "example.com";'), 'domain literal scan matches its own value');
-    h.ok(DOMAIN_LITERAL_PATTERN.test('https://whim.example.com/a/x'), 'domain scan matches a hardcoded derived URL');
-    h.ok(DOMAIN_LITERAL_PATTERN.test('https://WHIM.EXAMPLE.COM/support'), 'domain scan is case-insensitive');
+    h.ok(DOMAIN_LITERAL_PATTERN.test(`const x = "${WHIM_DOMAIN}";`), 'domain literal scan matches its own value');
+    h.ok(DOMAIN_LITERAL_PATTERN.test(`https://whim.${WHIM_DOMAIN}/a/x`), 'domain scan matches a hardcoded derived URL');
+    h.ok(DOMAIN_LITERAL_PATTERN.test(`https://WHIM.${WHIM_DOMAIN.toUpperCase()}/support`), 'domain scan is case-insensitive');
     h.ok(!DOMAIN_LITERAL_PATTERN.test("const CONSENT_KEY = 'whim.ai-consent:v1';"), 'domain scan does not fire on the unrelated whim.<name>:v1 KV-key convention');
   });
 }

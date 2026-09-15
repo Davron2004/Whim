@@ -5,13 +5,15 @@
  * URL is derived from it. No other launcher source may hold a literal of the domain or of a
  * derived URL — `test/release-config.suite.ts` scans for and fails on that.
  *
- * `example.com` is IANA-reserved (RFC 2606): a build shipped with the placeholder can never
- * reach anyone's real server. Swapping in the real domain is a one-line edit of `WHIM_DOMAIN`.
+ * Before a domain was chosen this held `example.com`, IANA-reserved (RFC 2606), so an
+ * unconfigured build could never reach anyone's real server. `WHIM_DOMAIN` here must stay in
+ * lockstep with `WHIM_DOMAIN` in `release/whim-release.xcconfig` — the domain-lockstep suite
+ * fails the gate if they drift (platform-release-readiness task 12.5).
  *
  * No React Native import — this module must load under the Node acceptance suite.
  */
 
-export const WHIM_DOMAIN = 'example.com';
+export const WHIM_DOMAIN = 'anycognition.ca';
 
 const WEB_ORIGIN = `https://whim.${WHIM_DOMAIN}`;
 
