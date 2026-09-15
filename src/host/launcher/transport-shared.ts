@@ -62,20 +62,35 @@ function isApiErrorBody(value: unknown): value is { error: string; hint: string 
   return isRecord(value) && typeof value.error === 'string' && isNonEmptyString(value.hint);
 }
 
+/** A bare non-negative integer, digits only — `Number()` also accepts scientific notation
+ *  (`1e3`) and hex (`0x10`), neither of which is a delta-seconds value per HTTP's `Retry-After`
+ *  grammar, so parsing goes through this pattern first rather than through `Number()` alone. */
+const DELTA_SECONDS_PATTERN = /^\d+$/;
+
 /** The response's `Retry-After` header as a positive integer number of seconds, or `undefined`
- *  for a missing, non-integer, zero, or negative value (spec "The streaming transport preserves
+ *  for a missing, malformed, zero, or negative value (spec "The streaming transport preserves
  *  the client error taxonomy" — a malformed header SHALL NOT change the error's `kind`, and
- *  SHALL simply leave this field absent). `response.headers` is optional-chained: every REAL
- *  `Response` (fetch's, and `xhr-transport.ts`'s fake-`Response` adapter) has one, but several
- *  existing test doubles across this codebase build a bare `{ status, json }` stand-in with no
- *  `headers` at all — that is simply another shape of "missing", not a reason to throw. */
-function retryAfterSecondsOf(response: Response): number | undefined {
+ *  SHALL simply leave this field absent). Accepts exactly the two forms HTTP's `Retry-After`
+ *  grammar defines: delta-seconds (digits only) or an HTTP-date, converted to the whole seconds
+ *  from `now` to that date. `response.headers` is optional-chained: every REAL `Response`
+ *  (fetch's, and `xhr-transport.ts`'s fake-`Response` adapter) has one, but several existing test
+ *  doubles across this codebase build a bare `{ status, json }` stand-in with no `headers` at
+ *  all — that is simply another shape of "missing", not a reason to throw. */
+function retryAfterSecondsOf(response: Response, now: number = Date.now()): number | undefined {
   const raw = response.headers?.get('Retry-After') ?? null;
   if (raw === null) {
     return undefined;
   }
-  const seconds = Number(raw);
-  return Number.isInteger(seconds) && seconds > 0 ? seconds : undefined;
+  if (DELTA_SECONDS_PATTERN.test(raw)) {
+    const seconds = Number(raw);
+    return seconds > 0 ? seconds : undefined;
+  }
+  const parsedMs = Date.parse(raw);
+  if (Number.isNaN(parsedMs)) {
+    return undefined;
+  }
+  const seconds = Math.round((parsedMs - now) / 1000);
+  return seconds > 0 ? seconds : undefined;
 }
 
 /** The exact shape `openGenerateStream` resolves to (`generation-client.ts`). Any conforming

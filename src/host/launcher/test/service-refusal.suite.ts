@@ -109,6 +109,20 @@ export async function runServiceRefusalTests(h: Harness): Promise<void> {
     );
   });
 
+  await h.test('retryLine: singular seconds/minutes read grammatically, plural stays plural', () => {
+    const now = Date.parse('2026-09-14T10:00:00Z');
+    h.eq(retryLine(now + 1_000, now, fixedTime), 'in about 1 second', 'one second, not "1 seconds"');
+    h.eq(retryLine(now + 2_000, now, fixedTime), 'in about 2 seconds', 'plural seconds unaffected');
+    h.eq(retryLine(now + 60_000, now, fixedTime), 'in about 1 minute', 'one minute, not "1 minutes"');
+    h.eq(retryLine(now + 2 * 60_000, now, fixedTime), 'in about 2 minutes', 'plural minutes unaffected');
+  });
+
+  await h.test('retryLine: a window that has already ended reads "shortly", never a stale or negative bucket', () => {
+    const now = Date.parse('2026-09-14T10:00:00Z');
+    h.eq(retryLine(now, now, fixedTime), 'shortly', 'retryAt exactly now is elapsed');
+    h.eq(retryLine(now - 90_000, now, fixedTime), 'shortly', 'retryAt in the past is elapsed');
+  });
+
   await h.test('retryLine: falls back to hours when Intl is missing', () => {
     const now = Date.parse('2026-09-14T10:00:00Z');
     const globals = globalThis as unknown as { Intl?: unknown };
@@ -116,6 +130,7 @@ export async function runServiceRefusalTests(h: Harness): Promise<void> {
     globals.Intl = undefined;
     try {
       h.eq(retryLine(now + 90 * 60_000, now, fixedTime), 'in about 2 hours', 'no Intl means the hours fallback, not a formatted time');
+      h.eq(retryLine(now + 61 * 60_000, now, fixedTime), 'in about 1 hour', 'one hour, not "1 hours"');
     } finally {
       globals.Intl = realIntl;
     }
