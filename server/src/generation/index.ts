@@ -108,6 +108,8 @@ export interface CreatePipelineOptions {
   modelDeps?: ModelDeps;
   env?: NodeJS.ProcessEnv;
   bounds?: Partial<PipelineBounds>;
+  /** Each run's wall-clock budget (`ServerConfig.generationMaxMs`); the machine's default when absent. */
+  maxRunMs?: number;
 }
 
 /**
@@ -137,6 +139,7 @@ export function createGenerationPipeline(options: CreatePipelineOptions): Pipeli
     clock,
     summariser: createModelSummariser({ model, roster }),
     bounds: options.bounds,
+    maxRunMs: options.maxRunMs,
   });
 
   return {

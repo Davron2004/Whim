@@ -13,7 +13,7 @@
  * unsupported dynamic require). The real check PIPELINE still never runs here: `CheckStage` is a
  * fake, exactly as before.
  */
-import { check, eq, section } from './harness';
+import { caught, check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { parsePlan, validatePlan, type Plan } from '../src/generation/plan';
@@ -30,9 +30,11 @@ import {
   type RunStage,
   type RunTrace,
 } from '../src/generation/machine';
-import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
+import { openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
-import type { Diagnostic, GenerateRequest, GenerationEvent } from '@whim/contract';
+import { OpenRouterClient, OpenRouterCreditError } from '../src/openrouter';
+import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
+import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
@@ -718,7 +720,8 @@ async function testAbortDuringGenerateTokens(): Promise<void> {
   eq('abort during generate: exactly one token event before the abort was observed', events.filter((e) => e.type === 'token').length, 1);
   eq('abort during generate: no generate:done event', stageEvents(events, 'generate').filter((e) => e.status === 'done').length, 0);
   eq('abort during generate: no terminal event', terminals(events).length, 0);
-  check('abort during generate: the caller signal reached every model call', signals.every((signal) => signal === controller.signal));
+  // The model receives the run's own signal, linked to the caller's (design D13), not the caller's itself.
+  check('abort during generate: the caller abort reached every model call', signals.every((signal) => signal?.aborted === true));
   eq('abort during generate: RunTrace retains the aborted call id for reconciliation', trace.generationIds, [
     'gen-plan-before-abort',
     'gen-generate-aborted',
@@ -1051,6 +1054,649 @@ async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void
   check('build failure: terminal is a result once the rebuilt candidate builds', events[events.length - 1].type === 'result');
 }
 
+// ── §wall-clock budget and provider credit (design D6b, D13) ─────────────────
+
+/** Settled copy, verbatim — written out rather than imported, so a reword fails here. */
+const EXPIRED_COPY = 'This took too long to build. Please try again.';
+const CREDIT_EXHAUSTED_COPY = 'Whim has used up its generation budget for now. Try again later.';
+const GENERIC_FAILURE_COPY = 'Something went wrong while generating this app. Please try again.';
+const MAX_RUN_MS = 5_000;
+const ONE_TOKEN_USAGE: Usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
+
+/** A test clock: time moves only on `advance`, which fires every armed timer that has come due. */
+class ManualClock implements Clock {
+  private current = 0;
+  private readonly timers: { dueAt: number; delayMs: number; onFire: () => void; armed: boolean }[] = [];
+
+  now(): number {
+    return this.current;
+  }
+
+  setTimer(delayMs: number, onFire: () => void): () => void {
+    const timer = { dueAt: this.current + delayMs, delayMs, onFire, armed: true };
+    this.timers.push(timer);
+    return () => {
+      timer.armed = false;
+    };
+  }
+
+  advance(ms: number): void {
+    this.current += ms;
+    for (const timer of this.timers) {
+      if (timer.armed && timer.dueAt <= this.current) {
+        timer.armed = false;
+        timer.onFire();
+      }
+    }
+  }
+
+  /** The delay of every timer ever armed, in arming order. */
+  get armedDelays(): number[] {
+    return this.timers.map((timer) => timer.delayMs);
+  }
+
+  /** Timers still armed — a finished run must leave none. */
+  get pending(): number {
+    return this.timers.filter((timer) => timer.armed).length;
+  }
+}
+
+const TIMED_OUT = Symbol('timed out');
+
+/** Awaits `promise` against a ref'd timer, so a machine that never settles fails a named check
+ *  instead of hanging the whole suite. */
+async function settles<T>(label: string, promise: Promise<T>, ms = 2_000): Promise<{ ok: true; value: T } | { ok: false }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  try {
+    const outcome = await Promise.race([promise, timeout]);
+    check(`${label}: settles`, outcome !== TIMED_OUT);
+    return outcome === TIMED_OUT ? { ok: false } : { ok: true, value: outcome };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** What an aborted `fetch` and an aborted synthetic run reject with. */
+function abortError(): Error {
+  const err = new Error('This operation was aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+type StreamFactory = (signal: AbortSignal | undefined) => ModelStream;
+
+/** A `ModelClient` whose calls are the given stream factories, in order. */
+function sequencedModel(streams: readonly StreamFactory[]): ModelClient {
+  let call = 0;
+  return {
+    stream(_req, signal): ModelStream {
+      const next = streams[call];
+      call += 1;
+      if (!next) throw new Error(`sequencedModel: call ${call} was not scripted`);
+      return next(signal);
+    },
+  };
+}
+
+function textStream(text: string): StreamFactory {
+  return () => ({
+    deltas: (async function* (): AsyncGenerator<ModelDelta> {
+      yield { kind: 'text', text };
+    })(),
+    usage: Promise.resolve(ONE_TOKEN_USAGE),
+    id: Promise.resolve(undefined),
+  });
+}
+
+interface StallProbe {
+  /** Resolves once the stream has gone silent. */
+  reached: ReturnType<typeof deferred>;
+  signal?: AbortSignal;
+}
+
+/** One text delta, then silence until the signal aborts, then the throw an aborted `fetch` makes. */
+function stalledStream(probe: StallProbe): StreamFactory {
+  return (signal) => {
+    probe.signal = signal;
+    const untilAborted = new Promise<never>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+    });
+    return {
+      deltas: (async function* (): AsyncGenerator<ModelDelta> {
+        yield { kind: 'text', text: 'partial ' };
+        probe.reached.resolve();
+        await untilAborted;
+      })(),
+      usage: untilAborted,
+      id: Promise.resolve(undefined),
+    };
+  };
+}
+
+function newStallProbe(): StallProbe {
+  return { reached: deferred() };
+}
+
+/** Always returns `limits[n]` for the n-th lookup (the last one repeating), as a 2xx key body. */
+function creditOptions(limits: readonly number[]): { options: CreditCheckOptions; lookups: () => number } {
+  let lookups = 0;
+  return {
+    options: {
+      transport: {
+        lookupKey: () => {
+          const limit = limits[Math.min(lookups, limits.length - 1)];
+          lookups += 1;
+          return Promise.resolve({ status: 200, bodyText: JSON.stringify({ data: { limit_remaining: limit } }) });
+        },
+      },
+      clock: () => 0,
+      ttlMs: 60_000,
+      floorUsd: 0.5,
+    },
+    lookups: () => lookups,
+  };
+}
+
+function lastFailure(events: GenerationEvent[]): Extract<GenerationEvent, { type: 'failure' }> | undefined {
+  const last = events.at(-1);
+  return last?.type === 'failure' ? last : undefined;
+}
+
+async function testDeadlineEndsAStalledModelInOneFailure(): Promise<void> {
+  section('machine — wall-clock budget: a stalled model ends in one usage and one failure');
+
+  const clock = new ManualClock();
+  const probe = newStallProbe();
+  const request = new AbortController();
+  const trace: RunTrace = { generationIds: [] };
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), stalledStream(probe)]),
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const run = collect(machine.run(NEW_APP_REQUEST, request.signal, trace));
+  if (!(await settles('stalled model: the generate turn goes silent', probe.reached.promise)).ok) return;
+
+  clock.advance(MAX_RUN_MS - 1);
+  eq('stalled model: one ms short of the budget the run is still going', trace.outcome, undefined);
+  check('stalled model: one ms short of the budget the transport is not aborted', probe.signal?.aborted === false);
+  clock.advance(1);
+
+  const settled = await settles('stalled model: the run ends', run);
+  if (!settled.ok) return;
+  const events = settled.value;
+  check('stalled model: the transport observes the abort', probe.signal?.aborted === true);
+  check('stalled model: the caller\'s own signal is never aborted by the deadline', !request.signal.aborted);
+  assertCompletedEnvelope('stalled model', events);
+  const failure = lastFailure(events);
+  check('stalled model: the terminal is a failure', failure !== undefined);
+  eq('stalled model: the reason is the settled budget prose', failure?.reason, EXPIRED_COPY);
+  eq('stalled model: attempts counts no candidate', failure?.attempts, 0);
+  eq('stalled model: no generate:done is emitted', stageEvents(events, 'generate').map((e) => e.status), ['start']);
+  eq('stalled model: RunTrace.outcome is expired', trace.outcome, 'expired');
+  eq('stalled model: the deadline was armed once, for maxRunMs', clock.armedDelays, [MAX_RUN_MS]);
+  eq('stalled model: no timer is left armed', clock.pending, 0);
+}
+
+async function testClientAbortBeforeDeadlineEndsSilently(): Promise<void> {
+  section('machine — wall-clock budget: a client abort before the budget still ends silently');
+
+  const clock = new ManualClock();
+  const probe = newStallProbe();
+  const controller = new AbortController();
+  const trace: RunTrace = { generationIds: [] };
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), stalledStream(probe)]),
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const run = collect(machine.run(NEW_APP_REQUEST, controller.signal, trace));
+  if (!(await settles('abort first: the generate turn goes silent', probe.reached.promise)).ok) return;
+
+  controller.abort();
+  const settled = await settles('abort first: the run ends', run);
+  if (!settled.ok) return;
+  const events = settled.value;
+  check('abort first: the transport observes the abort', probe.signal?.aborted === true);
+  eq('abort first: no terminal event', terminals(events).length, 0);
+  eq('abort first: no usage event', events.filter((e) => e.type === 'usage').length, 0);
+  eq('abort first: RunTrace.outcome is aborted', trace.outcome, 'aborted');
+  eq('abort first: the abort disarmed the deadline', clock.pending, 0);
+
+  clock.advance(MAX_RUN_MS);
+  eq('abort first: the budget elapsing later changes no outcome', trace.outcome, 'aborted');
+
+  // A consumer that aborts and never pulls again (an SSE stream's cancel) never resumes the
+  // generator, so nothing but the abort itself can disarm the deadline or record the outcome.
+  const idleClock = new ManualClock();
+  const idleController = new AbortController();
+  const idleTrace: RunTrace = { generationIds: [] };
+  const iterator = new GenerationMachine(baseDeps({
+    model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]),
+    clock: idleClock,
+    maxRunMs: MAX_RUN_MS,
+  })).run(NEW_APP_REQUEST, idleController.signal, idleTrace)[Symbol.asyncIterator]();
+  if (!(await settles('abort without pulling: the first event arrives', iterator.next())).ok) return;
+  eq('abort without pulling: the deadline is armed while the run is going', idleClock.pending, 1);
+  idleController.abort();
+  eq('abort without pulling: RunTrace.outcome is aborted at once', idleTrace.outcome, 'aborted');
+  eq('abort without pulling: the abort alone disarms the deadline', idleClock.pending, 0);
+  if (iterator.return) await settles('abort without pulling: the run is released', iterator.return());
+}
+
+async function testDeadlineInTheTurnAModelCallResolves(): Promise<void> {
+  section('machine — wall-clock budget: the budget elapsing in the same turn a model call resolves');
+
+  const clock = new ManualClock();
+  const trace: RunTrace = { generationIds: [] };
+  const resolvesAsBudgetElapses: StreamFactory = () => {
+    let resolveUsage!: (usage: Usage) => void;
+    const usage = new Promise<Usage>((resolve) => {
+      resolveUsage = resolve;
+    });
+    return {
+      deltas: (async function* (): AsyncGenerator<ModelDelta> {
+        yield { kind: 'text', text: 'export default {};' };
+        clock.advance(MAX_RUN_MS);
+        resolveUsage(ONE_TOKEN_USAGE);
+      })(),
+      usage,
+      id: Promise.resolve(undefined),
+    };
+  };
+  // No check outcome is scripted: reaching the check stage would throw and end in the generic reason.
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), resolvesAsBudgetElapses]),
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const settled = await settles('same-turn resolve: the run ends', collect(machine.run(NEW_APP_REQUEST, new AbortController().signal, trace)));
+  if (!settled.ok) return;
+  const events = settled.value;
+  assertCompletedEnvelope('same-turn resolve', events);
+  eq('same-turn resolve: the budget wins over the finished turn', lastFailure(events)?.reason, EXPIRED_COPY);
+  eq('same-turn resolve: no result is delivered', events.filter((e) => e.type === 'result').length, 0);
+  eq('same-turn resolve: the check stage never begins', stageEvents(events, 'check').length, 0);
+  eq('same-turn resolve: RunTrace.outcome is expired', trace.outcome, 'expired');
+  eq('same-turn resolve: no timer is left armed', clock.pending, 0);
+}
+
+async function testDeadlineAfterTheCompletionEnvelopeStartsIsInert(): Promise<void> {
+  section('machine — wall-clock budget: elapsing between usage and the terminal changes nothing');
+
+  const cases: { label: string; deps: (clock: ManualClock) => GenerationPipelineDeps; terminal: 'result' | 'failure'; outcome: RunTrace['outcome'] }[] = [
+    {
+      label: 'delivering run',
+      deps: (clock) => baseDeps({
+        model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+        check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+        build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+        run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
+        clock,
+        maxRunMs: MAX_RUN_MS,
+      }),
+      terminal: 'result',
+      outcome: 'delivered',
+    },
+    {
+      label: 'failing run',
+      deps: (clock) => baseDeps({
+        model: new ScriptedModelClient(ROSTER, [engineerTurn([DANGLING_INITIAL_PLAN_JSON])]),
+        bounds: { planAttempts: 1 },
+        clock,
+        maxRunMs: MAX_RUN_MS,
+      }),
+      terminal: 'failure',
+      outcome: 'failed',
+    },
+  ];
+
+  for (const c of cases) {
+    const clock = new ManualClock();
+    const trace: RunTrace = { generationIds: [] };
+    const machine = new GenerationMachine(c.deps(clock));
+    const events: GenerationEvent[] = [];
+    const run = (async (): Promise<void> => {
+      for await (const event of machine.run(NEW_APP_REQUEST, undefined, trace)) {
+        events.push(event);
+        if (event.type === 'usage') clock.advance(MAX_RUN_MS);
+      }
+    })();
+    if (!(await settles(`after usage (${c.label}): the run ends`, run)).ok) continue;
+    assertCompletedEnvelope(`after usage (${c.label})`, events);
+    eq(`after usage (${c.label}): the committed terminal is delivered`, events.at(-1)?.type, c.terminal);
+    check(`after usage (${c.label}): no expiry failure`, events.every((e) => e.type !== 'failure' || e.reason !== EXPIRED_COPY));
+    eq(`after usage (${c.label}): RunTrace.outcome`, trace.outcome, c.outcome);
+    eq(`after usage (${c.label}): no timer is left armed`, clock.pending, 0);
+  }
+}
+
+async function testDeadlineDuringRepair(): Promise<void> {
+  section('machine — wall-clock budget: elapsing during a repair turn ends in one failure');
+
+  const clock = new ManualClock();
+  const probe = newStallProbe();
+  const trace: RunTrace = { generationIds: [] };
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), textStream('candidate-1'), stalledStream(probe)]),
+    check: scriptedCheck([{ diagnostics: [ERROR_DIAG], manifest: MANIFEST }]),
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const run = collect(machine.run(NEW_APP_REQUEST, new AbortController().signal, trace));
+  if (!(await settles('during repair: the repair turn goes silent', probe.reached.promise)).ok) return;
+  clock.advance(MAX_RUN_MS);
+
+  const settled = await settles('during repair: the run ends', run);
+  if (!settled.ok) return;
+  const events = settled.value;
+  check('during repair: the repair transport observes the abort', probe.signal?.aborted === true);
+  assertCompletedEnvelope('during repair', events);
+  const failure = lastFailure(events);
+  eq('during repair: the reason is the budget prose', failure?.reason, EXPIRED_COPY);
+  eq('during repair: attempts counts the one finished candidate', failure?.attempts, 1);
+  eq('during repair: diagnostics carry what was accumulated', failure?.diagnostics, [ERROR_DIAG]);
+  eq('during repair: the repair round opened and never closed', stageEvents(events, 'repair').map((e) => e.status), ['start']);
+  eq('during repair: RunTrace.outcome is expired', trace.outcome, 'expired');
+  eq('during repair: no timer is left armed', clock.pending, 0);
+}
+
+async function testDeadlineAbortsTheSyntheticRun(): Promise<void> {
+  section('machine — wall-clock budget: elapsing during the run stage aborts the synthetic run');
+
+  const clock = new ManualClock();
+  const entered = deferred();
+  let runSignal: AbortSignal | undefined;
+  const hangingRun: RunStage = {
+    run: (_input, signal) => {
+      runSignal = signal;
+      entered.resolve();
+      return new Promise<RunOutcome>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(abortError()), { once: true });
+      });
+    },
+  };
+  const trace: RunTrace = { generationIds: [] };
+  const machine = new GenerationMachine(baseDeps({
+    model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: hangingRun,
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const run = collect(machine.run(NEW_APP_REQUEST, new AbortController().signal, trace));
+  if (!(await settles('during run stage: the synthetic run is driving', entered.promise)).ok) return;
+  check('during run stage: the synthetic run is not aborted before the budget', runSignal?.aborted === false);
+  clock.advance(MAX_RUN_MS);
+
+  const settled = await settles('during run stage: the run ends', run);
+  if (!settled.ok) return;
+  const events = settled.value;
+  check('during run stage: the synthetic run observes the abort', runSignal?.aborted === true);
+  assertCompletedEnvelope('during run stage', events);
+  eq('during run stage: the reason is the budget prose', lastFailure(events)?.reason, EXPIRED_COPY);
+  eq('during run stage: no run:done is emitted', stageEvents(events, 'run').map((e) => e.status), ['start']);
+  eq('during run stage: RunTrace.outcome is expired', trace.outcome, 'expired');
+}
+
+async function testClientAbortRightAfterTheDeadline(): Promise<void> {
+  section('machine — wall-clock budget: a client abort landing just after the budget elapses');
+
+  {
+    const clock = new ManualClock();
+    const probe = newStallProbe();
+    const controller = new AbortController();
+    const trace: RunTrace = { generationIds: [] };
+    const machine = new GenerationMachine(baseDeps({
+      model: sequencedModel([textStream(VALID_PLAN_JSON), stalledStream(probe)]),
+      clock,
+      maxRunMs: MAX_RUN_MS,
+    }));
+    const run = collect(machine.run(NEW_APP_REQUEST, controller.signal, trace));
+    if ((await settles('abort in the expiry turn: the generate turn goes silent', probe.reached.promise)).ok) {
+      clock.advance(MAX_RUN_MS);
+      controller.abort();
+      const settled = await settles('abort in the expiry turn: the run ends', run);
+      if (settled.ok) {
+        eq('abort in the expiry turn: no usage event', settled.value.filter((e) => e.type === 'usage').length, 0);
+        eq('abort in the expiry turn: no terminal event', terminals(settled.value).length, 0);
+        eq('abort in the expiry turn: RunTrace.outcome stays expired', trace.outcome, 'expired');
+      }
+    }
+  }
+
+  {
+    const clock = new ManualClock();
+    const probe = newStallProbe();
+    const controller = new AbortController();
+    const trace: RunTrace = { generationIds: [] };
+    const machine = new GenerationMachine(baseDeps({
+      model: sequencedModel([textStream(VALID_PLAN_JSON), stalledStream(probe)]),
+      clock,
+      maxRunMs: MAX_RUN_MS,
+    }));
+    const events: GenerationEvent[] = [];
+    const run = (async (): Promise<void> => {
+      for await (const event of machine.run(NEW_APP_REQUEST, controller.signal, trace)) {
+        events.push(event);
+        if (event.type === 'usage') controller.abort();
+      }
+    })();
+    if ((await settles('abort after expiry usage: the generate turn goes silent', probe.reached.promise)).ok) {
+      clock.advance(MAX_RUN_MS);
+      if ((await settles('abort after expiry usage: the run ends', run)).ok) {
+        eq('abort after expiry usage: exactly one usage event', events.filter((e) => e.type === 'usage').length, 1);
+        eq('abort after expiry usage: the failure is suppressed', terminals(events).length, 0);
+        eq('abort after expiry usage: usage is the last event', events.at(-1)?.type, 'usage');
+        eq('abort after expiry usage: RunTrace.outcome stays expired', trace.outcome, 'expired');
+      }
+    }
+  }
+}
+
+async function testCreditExhaustedMidGenerate(): Promise<void> {
+  section('machine — provider credit: a mid-generate 402 ends in one failure with no repair');
+
+  invalidateCreditCache();
+  // Two turns only: a repair would ask for a third and throw, so "no repair" is structural too.
+  const model = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    { role: 'engineer', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+  ]);
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST, undefined, trace));
+
+  assertCompletedEnvelope('402 mid-generate', events);
+  const failure = lastFailure(events);
+  eq('402 mid-generate: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_COPY);
+  check('402 mid-generate: the reason is not the generic model-failure prose', failure?.reason !== GENERIC_FAILURE_COPY);
+  eq('402 mid-generate: no repair stage begins', stageEvents(events, 'repair').length, 0);
+  eq('402 mid-generate: the check stage never begins', stageEvents(events, 'check').length, 0);
+  eq('402 mid-generate: no model call follows the 402', model.requests.length, 2);
+  eq('402 mid-generate: RunTrace.outcome is failed', trace.outcome, 'failed');
+  invalidateCreditCache();
+}
+
+async function testCreditExhaustedDuringRepair(): Promise<void> {
+  section('machine — provider credit: a 402 on the repair call ends the run without another repair');
+
+  invalidateCreditCache();
+  const model = new ScriptedModelClient(ROSTER, [
+    engineerTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-1']),
+    { role: 'engineer', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+  ]);
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(new GenerationMachine(baseDeps({
+    model,
+    check: scriptedCheck([{ diagnostics: [ERROR_DIAG], manifest: MANIFEST }]),
+  })).run(NEW_APP_REQUEST, undefined, trace));
+
+  assertCompletedEnvelope('402 during repair', events);
+  const failure = lastFailure(events);
+  eq('402 during repair: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_COPY);
+  eq('402 during repair: attempts counts the one finished candidate', failure?.attempts, 1);
+  eq('402 during repair: the model is never called again', model.requests.length, 3);
+  eq('402 during repair: the repair round opened once and never closed', stageEvents(events, 'repair').map((e) => e.status), ['start']);
+  eq('402 during repair: RunTrace.outcome is failed', trace.outcome, 'failed');
+  invalidateCreditCache();
+}
+
+async function testCreditExhaustedInvalidatesTheCreditCache(): Promise<void> {
+  section('machine — provider credit: a 402 invalidates the cached credit check');
+
+  const cases = [
+    { label: 'after a 402', error: new OpenRouterCreditError('OpenRouter: payment required (402)'), refused: true },
+    { label: 'after an ordinary model failure', error: new Error('provider hiccup'), refused: false },
+  ];
+  for (const c of cases) {
+    invalidateCreditCache();
+    // The first lookup finds plenty of credit; any re-query finds none left.
+    const credit = creditOptions([10, 0]);
+    eq(`credit cache (${c.label}): the primed check admits`, await checkCredit(credit.options), { ok: true });
+
+    const model = new ScriptedModelClient(ROSTER, [{ role: 'engineer', deltas: [], error: c.error }]);
+    const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+    assertCompletedEnvelope(`credit cache (${c.label})`, events);
+
+    const next = await checkCredit(credit.options);
+    if (c.refused) {
+      eq(`credit cache (${c.label}): the next check inside the TTL re-queries`, credit.lookups(), 2);
+      eq(`credit cache (${c.label}): the next request is refused as budget_exhausted`, next, { ok: false, reason: 'budget_exhausted' });
+    } else {
+      eq(`credit cache (${c.label}): the next check is a cache hit`, credit.lookups(), 1);
+      eq(`credit cache (${c.label}): the next request is admitted`, next, { ok: true });
+    }
+  }
+  invalidateCreditCache();
+}
+
+async function testTheProviderClientsHttp402IsRecognised(): Promise<void> {
+  section('machine — provider credit: the OpenRouter client\'s HTTP 402 is told apart from other HTTP failures');
+
+  const cases = [
+    { status: 402, reason: CREDIT_EXHAUSTED_COPY },
+    { status: 500, reason: GENERIC_FAILURE_COPY },
+  ];
+  for (const c of cases) {
+    invalidateCreditCache();
+    const model = openRouterModelClient(new OpenRouterClient(() => Promise.resolve(new Response(null, { status: c.status }))));
+    const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
+    assertCompletedEnvelope(`HTTP ${c.status}`, events);
+    eq(`HTTP ${c.status}: the failure reason`, lastFailure(events)?.reason, c.reason);
+  }
+  invalidateCreditCache();
+}
+
+async function testA402InTheExpiryTurnStillInvalidates(): Promise<void> {
+  section('machine — a 402 landing in the turn the budget elapses: expiry ends the run, the cache is still invalidated');
+
+  invalidateCreditCache();
+  const credit = creditOptions([10, 0]);
+  eq('402 at expiry: the primed check admits', await checkCredit(credit.options), { ok: true });
+
+  const clock = new ManualClock();
+  const trace: RunTrace = { generationIds: [] };
+  const creditErrorAsBudgetElapses: StreamFactory = () => {
+    const error = new OpenRouterCreditError('OpenRouter: payment required (402)');
+    let rejectUsage!: (err: unknown) => void;
+    const usage = new Promise<Usage>((_resolve, reject) => {
+      rejectUsage = reject;
+    });
+    return {
+      deltas: (async function* (): AsyncGenerator<ModelDelta> {
+        yield { kind: 'text', text: 'partial ' };
+        clock.advance(MAX_RUN_MS);
+        rejectUsage(error);
+        throw error;
+      })(),
+      usage,
+      id: Promise.resolve(undefined),
+    };
+  };
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), creditErrorAsBudgetElapses]),
+    clock,
+    maxRunMs: MAX_RUN_MS,
+  }));
+  const settled = await settles('402 at expiry: the run ends', collect(machine.run(NEW_APP_REQUEST, undefined, trace)));
+  if (settled.ok) {
+    assertCompletedEnvelope('402 at expiry', settled.value);
+    eq('402 at expiry: the first ending (the budget) names the failure', lastFailure(settled.value)?.reason, EXPIRED_COPY);
+    eq('402 at expiry: RunTrace.outcome is expired', trace.outcome, 'expired');
+    eq('402 at expiry: the next request is still refused as budget_exhausted', await checkCredit(credit.options), { ok: false, reason: 'budget_exhausted' });
+  }
+  invalidateCreditCache();
+}
+
+async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
+  section('machine — RunTrace.outcome for every ending, and the budget\'s default and validation');
+
+  {
+    const clock = new ManualClock();
+    const controller = new AbortController();
+    controller.abort();
+    const trace: RunTrace = { generationIds: [] };
+    const events = await collect(new GenerationMachine(baseDeps({
+      model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]),
+      clock,
+    })).run(NEW_APP_REQUEST, controller.signal, trace));
+    eq('aborted before start: no events', events.length, 0);
+    eq('aborted before start: RunTrace.outcome is aborted', trace.outcome, 'aborted');
+    eq('aborted before start: no deadline is ever armed', clock.armedDelays, []);
+  }
+
+  {
+    const clock = new ManualClock();
+    const trace: RunTrace = { generationIds: [] };
+    const machine = new GenerationMachine(baseDeps({
+      model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+      clock,
+    }));
+    for await (const event of machine.run(NEW_APP_REQUEST, undefined, trace)) {
+      if (event.type === 'stage') break;
+    }
+    eq('consumer returns early: RunTrace.outcome is aborted', trace.outcome, 'aborted');
+    eq('consumer returns early: no timer is left armed', clock.pending, 0);
+    eq('default budget: the deadline is armed for 600000 ms', clock.armedDelays, [600_000]);
+  }
+
+  const machineWithBudget = (maxRunMs: number): GenerationMachine =>
+    new GenerationMachine(baseDeps({ model: new ScriptedModelClient(ROSTER, []), maxRunMs }));
+  for (const maxRunMs of [0, -1, 1.5, Number.NaN]) {
+    const threw = await caught(() => {
+      machineWithBudget(maxRunMs);
+    });
+    check(`maxRunMs ${maxRunMs}: the constructor throws RangeError`, threw instanceof RangeError);
+  }
+
+  // The production clock has no `setTimer`: the budget must still hold on the host's timers.
+  const probe = newStallProbe();
+  const trace: RunTrace = { generationIds: [] };
+  const machine = new GenerationMachine(baseDeps({
+    model: sequencedModel([textStream(VALID_PLAN_JSON), stalledStream(probe)]),
+    clock: { now: () => Date.now() },
+    maxRunMs: 1,
+  }));
+  const settled = await settles('host timers: the run ends', collect(machine.run(NEW_APP_REQUEST, undefined, trace)));
+  if (settled.ok) {
+    eq('host timers: the stalled run ends in the budget prose', lastFailure(settled.value)?.reason, EXPIRED_COPY);
+    eq('host timers: RunTrace.outcome is expired', trace.outcome, 'expired');
+  }
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runMachineTests(): Promise<void> {
@@ -1079,4 +1725,17 @@ export async function runMachineTests(): Promise<void> {
   await testRepairBudgetsAreConstructorInjectable();
   await testRunTraceCollectsGenerationIds();
   await testBuildFailureBecomesADiagnosticAndIsRepairable();
+  await testDeadlineEndsAStalledModelInOneFailure();
+  await testClientAbortBeforeDeadlineEndsSilently();
+  await testDeadlineInTheTurnAModelCallResolves();
+  await testDeadlineAfterTheCompletionEnvelopeStartsIsInert();
+  await testDeadlineDuringRepair();
+  await testDeadlineAbortsTheSyntheticRun();
+  await testClientAbortRightAfterTheDeadline();
+  await testCreditExhaustedMidGenerate();
+  await testCreditExhaustedDuringRepair();
+  await testCreditExhaustedInvalidatesTheCreditCache();
+  await testTheProviderClientsHttp402IsRecognised();
+  await testA402InTheExpiryTurnStillInvalidates();
+  await testRunTraceOutcomeAndBudgetDefaults();
 }
