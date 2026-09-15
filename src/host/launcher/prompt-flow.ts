@@ -45,15 +45,17 @@ export type FlowAnswers = Readonly<Record<string, string>>;
  * `service-refusals`). `tone` doubles as the text/sender-landing distinction ONLY the two codes
  * with `landing: 'text'` (`content_policy`/`payload_too_large`) ever carry `danger` — so "clears
  * when the text changes" can be decided from `tone` alone, with no second field to drift from
- * `REFUSAL_RULES`. `retryLine` is the copy-table line, precomputed once (by the caller, at the
- * moment the notice was created) rather than re-derived on every render — the "about N" wording
- * is an estimate, not a ticking countdown.
+ * `REFUSAL_RULES`. `retryAt` is the only clock-dependent field: `ServiceNotice` derives the
+ * copy-table retry line from it FRESH on every render (never a caption computed once and cached —
+ * a cached one goes stale the moment the window ends, still reading "in about 5 minutes" long
+ * after the action re-enabled), and `useNoticeWindowClear` (`ServiceNotice.tsx`) drops a `neutral`
+ * (sender-landing) notice's `retryAt` window the same way (design D12: "A sender refusal clears
+ * when its window ends").
  */
 export interface FlowNotice {
   readonly hint: string;
   readonly tone: 'danger' | 'neutral';
   readonly retryAt?: number;
-  readonly retryLine?: string;
 }
 
 /** One labelled plan row. `label` is empty for the single-row fallback, which renders unlabelled

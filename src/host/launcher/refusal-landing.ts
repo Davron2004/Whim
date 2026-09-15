@@ -47,3 +47,17 @@ export function retryWindowState(retryAt: number | undefined, now: number): Retr
   const remaining = retryAt - now;
   return remaining > 0 ? { disabled: true, msUntilEnable: remaining } : { disabled: false, msUntilEnable: 0 };
 }
+
+/** Whether a notice should clear because its own retry window just ended (design D12: "A sender
+ *  refusal clears when its window ends"). Only a `neutral`-tone (sender-landing) notice with an
+ *  active `retryAt` clears this way — a `danger`-tone (text-landing) notice never does; it clears
+ *  only when the refused text changes (`composeTextChanged`/`updatePlanRow`'s own rule), and a
+ *  notice with no `retryAt` at all has no window to end. Shares `retryWindowState` with
+ *  `useRetryGate`, so "the action re-enables" and "the notice clears" are the exact same moment. */
+export function noticeExpiredAt(
+  notice: { readonly tone: 'danger' | 'neutral'; readonly retryAt?: number } | undefined,
+  now: number,
+): boolean {
+  if (notice === undefined || notice.tone !== 'neutral' || notice.retryAt === undefined) return false;
+  return !retryWindowState(notice.retryAt, now).disabled;
+}

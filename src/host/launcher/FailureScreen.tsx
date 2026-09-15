@@ -208,7 +208,7 @@ export default function FailureScreen({
         )}
       </View>
 
-      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
 
       {/* Gated exactly like every other primary action (design D11): disabled with its label
           kept while a refused Retry's retry window is still open, never a request of its own. */}

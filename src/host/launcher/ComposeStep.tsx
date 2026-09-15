@@ -115,7 +115,7 @@ export default function ComposeStep({
         )}
       </ScrollView>
 
-      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
 
       {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
           clarify step's own loading screen (C2), so this action is never anything but live. */}

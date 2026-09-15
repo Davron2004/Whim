@@ -189,7 +189,7 @@ export default function PlanStep({
         <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
       </ScrollView>
 
-      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
 
       {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
           action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
