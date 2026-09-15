@@ -15,3 +15,4 @@ Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
 - 23:54 dispatched chain-6 BASE 8f05186
 - 00:21 chain-6 report: complete, GATE PASS, class-A x3 (linkExitFor takes Screen kind | "sheet"; LauncherRoot screen switch extracted to renderScreenContent for complexity, no behavior change; link open/building/failed reuse the tile-tap handlers, reading index.list()/pending.list() live) · integrity OK · merged · regate-pass. contract-mirror.ts still has importers outside this chain (ReportSheet, service-refusal, report-payload), so it goes to the fix list.
 - 00:21 dispatched chain-7 BASE 70fdfcb
+- 00:56 USAGE CUTOFF (session limit) killed every running agent; resumed at low priority by messaging the same agents (transcripts intact). Worktree state at resume: server-15 substantial uncommitted site work; platform-10 Fastfile only; server-9b and compliance-7 empty; iOS planner partial drafts.
