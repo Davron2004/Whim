@@ -299,10 +299,25 @@ export function runContractTests(): void {
   eq('server runtime deps are exactly the allowed set', serverDeps, [
     '@hono/node-server',
     '@whim/contract',
+    'esbuild',
     'hono',
     'pino',
+    'playwright',
+    'typescript',
   ]);
   check('server has no React-adjacent dep', !serverDeps.some(isReactAdjacent));
+
+  // The synthetic-run toolchain runs in production, so the server pins it to exactly the version the
+  // root lockfile resolves: one copy of each, and the server never drifts from what CI tested.
+  const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8')) as {
+    packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+  };
+  const serverLockDeps = lock.packages.server?.dependencies ?? {};
+  for (const dep of ['esbuild', 'playwright', 'typescript']) {
+    const resolved = lock.packages[`node_modules/${dep}`]?.version;
+    check(`${dep} is resolved at the lockfile root`, typeof resolved === 'string');
+    eq(`server pins ${dep} to the lockfile-resolved version exactly`, serverLockDeps[dep], resolved);
+  }
 
   // The pretty printer is a HUMAN convenience, not part of the service: the server must run with
   // structured JSON where it is absent (spec "The service runs without the pretty printer"), so it
