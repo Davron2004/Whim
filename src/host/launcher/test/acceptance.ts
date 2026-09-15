@@ -58,6 +58,8 @@ import { runRefusalLandingTests } from './refusal-landing.suite';
 import { runReportPayloadTests } from './report-payload.suite';
 import { runConsentFlowTests } from './consent-flow.suite';
 import { runSettingsSectionsTests } from './settings-sections.suite';
+import { runLinkRoutingTests } from './link-routing.suite';
+import { runAppLinkUiTests } from './app-link-ui.suite';
 
 const h = new Harness();
 
@@ -113,6 +115,8 @@ await runRefusalLandingTests(h);
 await runReportPayloadTests(h);
 await runConsentFlowTests(h);
 await runSettingsSectionsTests(h);
+await runLinkRoutingTests(h);
+await runAppLinkUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

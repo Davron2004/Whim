@@ -25,6 +25,7 @@ import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
+import AppLinkSheet from './AppLinkSheet';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
 import { composeGrid, InstalledTile } from './grid-composition';
 import { tilePillFor, TILE_PILL } from './tile-pill';
@@ -110,6 +111,9 @@ export default function HomeScreen({
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const [selectedGhost, setSelectedGhost] = useState<PendingBuildRecord | null>(null);
+  // The App link reveal sheet (spec app-links "Every installed app can reveal its link from the
+  // home grid") — installed-tile only, never offered for a ghost.
+  const [appLinkTarget, setAppLinkTarget] = useState<InstalledApp | null>(null);
   const p = SHELL_PALETTE;
   const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
@@ -219,6 +223,7 @@ export default function HomeScreen({
             <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
             <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
+            <SheetRow label={COPY.actionAppLink} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setAppLinkTarget(a); }} />
             <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
             {selectedRebuild && (
               <GhostActionRow
@@ -266,6 +271,8 @@ export default function HomeScreen({
           </Pressable>
         </Pressable>
       </Modal>
+
+      <AppLinkSheet app={appLinkTarget} onClose={() => setAppLinkTarget(null)} />
     </View>
   );
 }

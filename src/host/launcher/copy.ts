@@ -296,6 +296,14 @@ export const COPY = {
   // exists, per `release-config`).
   homeOfflineIndicator: 'Can’t reach the server',
   promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
+
+  // ── app links (app-links; design D15/D16) ───────────────────────────────────
+  actionAppLink: 'App link',
+  appLinkMissingTitle: 'This app lives on another phone',
+  appLinkMissingBody:
+    'Apps made with Whim stay on the phone that made them, so this link only opens there.',
+  appLinkMissingBack: 'Back to your apps',
+  appLinkSheetClose: 'Done',
 } as const;
 
 /** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
@@ -307,6 +315,12 @@ export function aiFeaturesStatusLine(kind: 'granted' | 'absent' | 'outdated', si
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
 export function forkedFromLabel(name: string): string {
   return `Forked from ${name}`;
+}
+
+/** The App link reveal sheet's one line of copy (design D16): "Opens Water Counter on this phone.
+ *  Press and hold the link to copy it." — the selectable `<Text>` itself carries the link. */
+export function appLinkSheetLine(name: string): string {
+  return `Opens ${name} on this phone. Press and hold the link to copy it.`;
 }
 
 /** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
