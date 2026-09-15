@@ -4,7 +4,9 @@
  * chain-12's alone to edit.
  */
 import { section } from './harness';
+import { runWebSiteTests } from './web-site.suite';
 
 export async function runDeployConfigTests(): Promise<void> {
+  await runWebSiteTests();
   section('Deploy artifacts');
 }
