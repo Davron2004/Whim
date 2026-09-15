@@ -372,6 +372,17 @@ export function buildBackAction(sheetOpen: boolean): 'close-sheet' | 'leave' {
   return sheetOpen ? 'close-sheet' : 'leave';
 }
 
+/**
+ * Header `Back` and system back on the plan step (design D4; spec launcher-screen-exits "System
+ * back and the visible control perform the same action" — "while a row is being edited, both the
+ * header `Back` and system back SHALL cancel the row edit and keep the step"). `PlanStep` builds
+ * one `handleBack` from this and passes it to both `useSystemBack` and `FlowHeader`, so a tap on
+ * `Back` mid-edit can no longer discard a draft the way the raw `onBack` prop used to.
+ */
+export function planBackAction(editingRow: boolean): 'cancel-edit' | 'leave' {
+  return editingRow ? 'cancel-edit' : 'leave';
+}
+
 /** The primary action's label: plain words always, and the SAME words whether or not the step is
  *  busy — a busy action only softens (`PrimaryAction`'s own opacity/disabled state), it never
  *  relabels to a "One moment" placeholder (`prompt-flow` "the clarify wait is a screen, not a
