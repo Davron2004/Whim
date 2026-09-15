@@ -6,6 +6,8 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+import com.reactnativecommunity.webview.RNCWebViewPackage
+import com.whim.webview.NetworkDeniedWebViewPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -14,6 +16,18 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
+          var replacedWebViewPackages = 0
+          for (index in indices) {
+            if (this[index] is RNCWebViewPackage) {
+              // Bridgeless registration silently takes the last manager with a duplicate name.
+              // Replace the autolinked package in place so exactly one RNCWebView manager exists.
+              this[index] = NetworkDeniedWebViewPackage()
+              replacedWebViewPackages++
+            }
+          }
+          check(replacedWebViewPackages == 1) {
+            "react-native-webview autolinking must provide exactly one RNCWebViewPackage; found $replacedWebViewPackages"
+          }
           // In-app TurboModule (not autolinked — it lives in this app, not node_modules):
           // the WhimTone audio-cue module (effects-and-cues D6).
           add(com.whim.tone.WhimTonePackage())
