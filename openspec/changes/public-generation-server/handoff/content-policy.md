@@ -11,12 +11,23 @@ export type PolicyVerdict = 'allow' | { refuse: string };
 
 export class PolicyUnavailableError extends Error {} // .name === 'PolicyUnavailableError'
 
+// `check`'s result (chain-9b, spec "The policy check is metered and observable without content"):
+// `usage`/`generationId` are present ONLY when this call actually invoked the classifier model —
+// absent for a cache hit (cache.ts never carries usage forward) and for StubContentPolicy (no
+// model call either way). A caller credits `usage` to the device and folds `generationId` into
+// whatever generation-id list it resolves cost against, exactly like any other model call.
+export interface PolicyCheckResult {
+  verdict: PolicyVerdict;
+  usage?: Usage;          // @whim/contract's Usage — same shape credit()/resolveRequestUsage use
+  generationId?: string;
+}
+
 export interface ContentPolicy {
-  // Resolves to a verdict, or THROWS PolicyUnavailableError — never resolves 'allow' on failure.
-  // `route` is carried through only for the log record (cache.ts); never sent to the classifier,
-  // never part of the cache key. `signal` aborts the call (e.g. client disconnect);
+  // Resolves to a result, or THROWS PolicyUnavailableError — never resolves an 'allow' verdict on
+  // failure. `route` is carried through only for the log record (cache.ts); never sent to the
+  // classifier, never part of the cache key. `signal` aborts the call (e.g. client disconnect);
   // ModelContentPolicy also enforces its own `timeoutMs` independent of `signal`.
-  check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyVerdict>;
+  check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult>;
 }
 
 export interface ModelContentPolicyOptions {
@@ -48,7 +59,9 @@ export interface CachedPolicyOptions {
 
 // Wraps `inner`. Keyed by SHA-256 of `input` ALONE (route is not part of the key — two routes
 // checking the identical canonical input within the TTL share one entry and one classifier call).
-// Never caches a thrown error (PolicyUnavailableError or otherwise) — every miss re-checks.
+// Never caches a thrown error (PolicyUnavailableError or otherwise) — every miss re-checks. Only
+// `verdict` is cached; a cache hit's `PolicyCheckResult` always carries `usage`/`generationId`
+// as `undefined` (no classifier call happened).
 //
 // THE ONE PLACE THAT LOGS: every call to the returned ContentPolicy's `check` emits exactly one
 // `log.info({...}, 'content policy check')` record (server/src/logger.ts's singleton `log`).
@@ -89,14 +102,16 @@ thread it anywhere); `buildRewriteMessages` and `buildGenerateMessages`'s system
 carry it verbatim. `buildRepairMessages`'s system message does NOT carry it (scope matches the
 "both-prompts-carry-it" tripwire: rewrite + generate only).
 
-## Wiring notes for chain-9/10
+## Wiring notes (chain-9/10, updated by chain-9b)
 
 - Construct once per process: `const policy = cachedPolicy(config.pipeline === 'stub' ? new StubContentPolicy() : new ModelContentPolicy({ modelClient, rewriteModelId: roster.rewrite, categories: loadContentPolicyDocument().categories, timeoutMs: config.policyTimeoutMs }));`
-- Per request: build input with the route's `buildXPolicyInput`, then `await policy.check(input, route, signal)`.
-- Catch `PolicyUnavailableError` → `503 policy_unavailable`, refund the daily unit. A `{ refuse }`
-  result → `422 content_policy` (never reveal `refuse.category` to the client). No route work
-  follows either outcome.
-- Token usage/generation-id crediting for the classifier call is NOT exposed by `ContentPolicy.check`
-  (design D9's literal signature has no return channel for it) — this interface does not solve that
-  half of "The policy check is metered and observable"; the ledger-row scenario is a route-level
-  concern chain-9/10 own directly against the classifier `ModelClient` if/when needed.
+- Per request: build input with the route's `buildXPolicyInput`, then `const result = await policy.check(input, route, signal)`.
+- If `result.usage` is set, credit it to the calling device immediately (`usageStore.credit(deviceId, result.usage)`) — allowed or refused, since the classifier call happened either way.
+- Catch `PolicyUnavailableError` → `503 policy_unavailable`, refund the daily unit. `result.verdict`
+  being a `{ refuse }` → `422 content_policy` (never reveal `refuse.category` to the client), after
+  settling the ledger row with `usage: result.usage` and resolving cost for `result.generationId`
+  (when present) exactly as a route resolves its own model calls. No route work follows either
+  outcome. On `allow`, fold `result.generationId` (when present) into the request's own generation-id
+  list before resolving cost, so the classifier's cost lands on the same ledger row.
+  `server/src/routes/clarify.ts`'s `admitUnaryRequest` does all of this already — both `/v1/clarify`
+  and `/v1/rewrite` get it for free.

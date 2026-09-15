@@ -19,7 +19,7 @@ import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport 
 import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
 import { ScriptedModelClient } from './scripted-model';
-import { ApiError, ServiceRefusalCode } from '@whim/contract';
+import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
 
 const DEVICE_ID = '99999999-9999-4999-8999-999999999999';
 const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
@@ -89,9 +89,8 @@ function countingCreditTransport(limitRemaining: number | null): { transport: Cr
   };
 }
 
-/** The structural shape `isProviderBudgetExhausted` (`../src/routes/clarify.ts`) detects — a
- *  `status: 402` error, matching chain-8's forthcoming `OpenRouterCreditError` (not yet mergeable
- *  into this worktree; see the chain-9 report's NOTES FOR DISPATCHER). */
+/** The structural shape `isCreditExhaustedError` (`../src/generation/model.ts`) detects — a
+ *  `status: 402` error, matching the real `OpenRouterCreditError` (`../src/openrouter.ts`). */
 class FakeProviderCreditError extends Error {
   readonly status = 402;
 }
@@ -306,6 +305,85 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   const body = (await res.json()) as ApiError;
   eq('refusal code is content_policy', body.error, 'content_policy');
   eq('exactly one model call recorded (the classifier)', model.requests.length, 1);
+}
+
+function sumUsage(a: Usage, b: Usage): Usage {
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+  };
+}
+
+async function testPolicyCallIsMetered(): Promise<void> {
+  section('specs/content-policy "The policy check is metered and observable without content"');
+
+  const CLASSIFIER_USAGE: Usage = { promptTokens: 7, completionTokens: 3, totalTokens: 10 };
+  const CLARIFY_USAGE: Usage = { promptTokens: 20, completionTokens: 15, totalTokens: 35 };
+  const REWRITE_CLASSIFIER_USAGE: Usage = { promptTokens: 8, completionTokens: 4, totalTokens: 12 };
+
+  // (a) An allowed clarify credits BOTH the classifier's own usage and the clarify call's usage.
+  {
+    invalidateCreditCache();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-clarify' },
+      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify' },
+    ]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app, usageStore } = testApp({ model, policy });
+    const res = await post(app, '/v1/clarify', { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    eq('the clarify request succeeds', res.status, 200);
+    const total = await usageStore.read(DEVICE_ID);
+    eq('the classifier + clarify usage both landed in the ledger', total, sumUsage(CLASSIFIER_USAGE, CLARIFY_USAGE));
+  }
+
+  // (b) A policy-refused rewrite still meters the classifier's own call, even though the rewrite
+  // model is never called.
+  {
+    invalidateCreditCache();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"refuse","category":"test"}'], usage: REWRITE_CLASSIFIER_USAGE, id: 'gen-policy-rewrite' },
+    ]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app, usageStore } = testApp({ model, policy });
+    const res = await post(app, '/v1/rewrite', { prompt: 'something bad' }, DEVICE_HEADER);
+    eq('the rewrite is refused', res.status, 422);
+    const total = await usageStore.read(DEVICE_ID);
+    eq('a refused request still meters the classifier', total, REWRITE_CLASSIFIER_USAGE);
+  }
+
+  // (c) A cached verdict makes no classifier call, so it adds no further usage to the ledger.
+  {
+    invalidateCreditCache();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-cache' },
+      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-1' },
+      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-2' },
+    ]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app, usageStore } = testApp({ model, policy });
+    const SAME_PROMPT = { prompt: 'the exact same prompt text' };
+    const first = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
+    eq('first clarify succeeds', first.status, 200);
+    const afterFirst = await usageStore.read(DEVICE_ID);
+    eq('first check: classifier + clarify usage', afterFirst, sumUsage(CLASSIFIER_USAGE, CLARIFY_USAGE));
+
+    const second = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
+    eq('second clarify (cached verdict) succeeds', second.status, 200);
+    const afterSecond = await usageStore.read(DEVICE_ID);
+    eq(
+      'the cache hit added no extra classifier usage — only the second clarify call\'s usage',
+      afterSecond,
+      sumUsage(afterFirst, CLARIFY_USAGE),
+    );
+    eq('exactly one classifier call was ever made', model.requests.filter((r) => r.request.maxTokens === 48).length, 1);
+  }
 }
 
 async function testBudgetExhaustedMidCall(): Promise<void> {
@@ -534,6 +612,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
+  await testPolicyCallIsMetered();
   await testBudgetExhaustedMidCall();
   await testReportRoute();
   await testHealthzSse();
