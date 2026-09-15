@@ -34,6 +34,10 @@ export interface ServerConfig {
   readonly synthrunConcurrency: number;
   readonly limitClarifyPerDeviceDay: number;
   readonly limitRewritePerDeviceDay: number;
+  /** ONE global daily ceiling shared by `/v1/clarify` and `/v1/rewrite` together — the per-device
+   *  limits above cannot bound spend on their own, because a client can mint a fresh device id per
+   *  request. Counted across both kinds, so the pair can never exceed this many admissions a day. */
+  readonly limitUnaryPerDay: number;
   readonly maxConcurrentUnary: number;
   readonly limitReportsPerDeviceDay: number;
   readonly limitReportsPerDay: number;
@@ -128,6 +132,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     synthrunConcurrency: readPositiveInt(env, 'WHIM_SYNTHRUN_CONCURRENCY', 2),
     limitClarifyPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_CLARIFY_PER_DEVICE_DAY', 60),
     limitRewritePerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REWRITE_PER_DEVICE_DAY', 60),
+    limitUnaryPerDay: readPositiveInt(env, 'WHIM_LIMIT_UNARY_PER_DAY', 2000),
     maxConcurrentUnary: readPositiveInt(env, 'WHIM_MAX_CONCURRENT_UNARY', 16),
     limitReportsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DEVICE_DAY', 10),
     limitReportsPerDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DAY', 300),

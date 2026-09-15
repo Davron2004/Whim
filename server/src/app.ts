@@ -196,10 +196,12 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // Health check — no auth
   app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server' }, 200));
 
-  // The anonymous stream probe — outside /v1, no device header, counts against the global unary
-  // cap (specs/server-deployment "An anonymous stream probe verifies proxy flushing").
+  // The anonymous stream probe — outside /v1, no device header, and counted against its OWN small
+  // pool (`MAX_CONCURRENT_PROBES`), never the paid clarify/rewrite one: it is unauthenticated and
+  // holds its slot for seconds, so sharing the unary pool would let anonymous traffic starve every
+  // paying device (specs/server-deployment "An anonymous stream probe verifies proxy flushing").
   app.get('/healthz/sse', (c) => {
-    const acquired = slots.acquire('unary', 'healthz-probe');
+    const acquired = slots.acquire('probe', 'healthz-probe');
     if (!acquired.ok) {
       const r = slotRefusal(acquired.reason);
       return c.json(r.body, r.status, r.headers);

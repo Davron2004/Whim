@@ -153,6 +153,11 @@ below matter, the app side must already point at this domain: `WHIM_DOMAIN` in
   a daily limit, a retention period or `NODE_ENV` by construction. Changing a daily/global limit
   (design.md D6's table) means editing its default in `server/src/config.ts` and deploying that
   commit — a code change, not a runtime flag, so it goes through the same review as anything else.
+  Two global daily ceilings, not the per-device limits, are what actually bound a day's spend — a
+  client can mint a fresh device id per request: `WHIM_LIMIT_GENERATIONS_PER_DAY` (400) for
+  `/v1/generate`, and `WHIM_LIMIT_UNARY_PER_DAY` (2000) for `/v1/clarify` and `/v1/rewrite`
+  together — one ceiling counted across both, not one each. Past either, that route answers
+  `429 server_busy` with `Retry-After` set to the next UTC midnight.
 
 ## Capacity profiles, resizing, and the load test
 

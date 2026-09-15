@@ -2,8 +2,9 @@
  * server/src/admission/slots.ts — the in-memory slot controller (design D8; specs/server-admission-control
  * "A device runs at most one generation at a time", "Global concurrency caps protect the server").
  *
- * One controller per server process. It owns four pieces of state: the set of devices holding a
- * generation, the running-generation count, the in-flight unary (clarify/rewrite) count, and the
+ * One controller per server process. It owns five pieces of state: the set of devices holding a
+ * generation, the running-generation count, the in-flight unary (clarify/rewrite) count, the
+ * in-flight `/healthz/sse` probe count (its own pool, see `MAX_CONCURRENT_PROBES`), and the
  * one-way `draining` flag. `acquire` applies the slice of the fixed admission order it owns —
  * drain state, then device generation exclusivity (generate only), then the global cap — and
  * either takes a slot or names why it did not. A refused acquire takes nothing.
@@ -14,7 +15,16 @@
  * of those paths fired. All operations are O(1), so the caps may be raised freely.
  */
 
-export type SlotKind = 'generate' | 'unary';
+export type SlotKind = 'generate' | 'unary' | 'probe';
+
+/**
+ * The anonymous `/healthz/sse` probe's own tiny pool. It is deliberately NOT the unary pool: the
+ * probe needs no device header and holds its slot for about three seconds, so counting it against
+ * the paid clarify/rewrite pool lets a handful of anonymous requests per second starve every paying
+ * device. Two is enough for an operator's smoke check plus an overlapping uptime monitor, and small
+ * enough that flooding the probe wedges nothing but the probe.
+ */
+export const MAX_CONCURRENT_PROBES = 2;
 
 /** Why an acquire took nothing. `draining` and `at_capacity` both surface as `429 server_busy`
  *  (no `Retry-After`); `device_busy` surfaces as `429 device_busy` (no `Retry-After`). */
@@ -34,6 +44,8 @@ export type AcquireResult =
 export interface SlotCounts {
   readonly generations: number;
   readonly unary: number;
+  /** In-flight `/healthz/sse` probes, capped by `MAX_CONCURRENT_PROBES` independently of `unary`. */
+  readonly probes: number;
   readonly draining: boolean;
 }
 
@@ -66,6 +78,7 @@ export function createSlotController(limits: SlotLimits): SlotController {
   const generatingDevices = new Set<string>();
   let generations = 0;
   let unary = 0;
+  let probes = 0;
   let draining = false;
 
   function makeHandle(kind: SlotKind, deviceId: string, free: () => void): SlotHandle {
@@ -98,6 +111,17 @@ export function createSlotController(limits: SlotLimits): SlotController {
       };
     }
 
+    if (kind === 'probe') {
+      if (probes >= MAX_CONCURRENT_PROBES) return { ok: false, reason: 'at_capacity' };
+      probes++;
+      return {
+        ok: true,
+        handle: makeHandle(kind, deviceId, () => {
+          probes--;
+        }),
+      };
+    }
+
     if (unary >= maxConcurrentUnary) return { ok: false, reason: 'at_capacity' };
     unary++;
     return {
@@ -114,6 +138,6 @@ export function createSlotController(limits: SlotLimits): SlotController {
       draining = true;
     },
     isDraining: () => draining,
-    counts: () => ({ generations, unary, draining }),
+    counts: () => ({ generations, unary, probes, draining }),
   };
 }

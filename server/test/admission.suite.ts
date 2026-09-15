@@ -12,7 +12,13 @@
  */
 import { ApiError, DeviceIdError, ServiceRefusalCode } from '@whim/contract';
 import { check, eq, section } from './harness';
-import { createSlotController, type SlotController, type SlotKind, type SlotRefusalReason } from '../src/admission/slots';
+import {
+  createSlotController,
+  MAX_CONCURRENT_PROBES,
+  type SlotController,
+  type SlotKind,
+  type SlotRefusalReason,
+} from '../src/admission/slots';
 import {
   budgetExhaustedRefusal,
   contentPolicyRefusal,
@@ -106,7 +112,7 @@ function runSlotBasics(): void {
 
   a?.release();
   eq('a finished generation frees the device', refusalOf(slots, 'generate', 'device-a'), 'admitted');
-  eq('all slots are free again', slots.counts(), { generations: 0, unary: 0, draining: false });
+  eq('all slots are free again', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: false });
 }
 
 function runGlobalCaps(): void {
@@ -135,6 +141,25 @@ function runGlobalCaps(): void {
   eq('the 16th device is refused at a cap of 15', refusalOf(wide, 'generate', 'wide-15'), 'at_capacity');
   fifteen.forEach((h) => h?.release());
   eq('all 15 slots free after release', wide.counts().generations, 0);
+
+  // The /healthz/sse probe has its OWN pool (specs/server-deployment "An anonymous stream probe
+  // verifies proxy flushing"): anonymous probe traffic must not be able to wedge the paid unary
+  // pool, and a full probe pool must not refuse a clarify call.
+  eq('the probe cap is a small fixed number, not the unary cap', MAX_CONCURRENT_PROBES, 2);
+  const probed = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+  const probeHandles = Array.from({ length: MAX_CONCURRENT_PROBES }, () => acquireOk(probed, 'probe', 'healthz-probe'));
+  check('the probe pool admits up to its own cap', probeHandles.every((h) => h !== undefined));
+  eq('probes do not consume unary slots', probed.counts().unary, 0);
+  eq('the probe pool is counted separately', probed.counts().probes, MAX_CONCURRENT_PROBES);
+  eq('one probe past the cap is refused at_capacity', refusalOf(probed, 'probe', 'healthz-probe'), 'at_capacity');
+  eq('a full probe pool still admits a unary call', refusalOf(probed, 'unary', 'device-p'), 'admitted');
+  const heldUnaryProbe = acquireOk(probed, 'unary', 'device-q');
+  check('setup: the one unary slot is held', heldUnaryProbe !== undefined);
+  eq('a full unary pool still admits nothing extra to the probe pool', refusalOf(probed, 'probe', 'healthz-probe'), 'at_capacity');
+  probeHandles[0]?.release();
+  eq('probe capacity returns when a probe ends', refusalOf(probed, 'probe', 'healthz-probe'), 'admitted');
+  probed.startDraining();
+  eq('a probe is refused while draining', refusalOf(probed, 'probe', 'healthz-probe'), 'draining');
 
   const invalidCaps = [0, -1, 2.5, Number.NaN];
   check(
@@ -190,7 +215,7 @@ function runDraining(): void {
   held?.release();
   held?.release();
   heldUnary?.release();
-  eq('held slots release safely, exactly once, after drain began', slots.counts(), { generations: 0, unary: 0, draining: true });
+  eq('held slots release safely, exactly once, after drain began', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: true });
   eq('draining is one-way: an emptied controller still refuses', refusalOf(slots, 'generate', 'device-a'), 'draining');
 }
 
@@ -259,7 +284,7 @@ async function runExitPaths(): Promise<void> {
   const refusedRun = holdGeneration(slots, 'device-refused', Promise.resolve(), { refuseAfterAcquire: true });
   eq('a refusal after the slot was taken returns the refusal', await settledValue('refusal path', refusedRun), 'refused');
   eq('a refusal after acquisition frees the device (e.g. a policy refusal)', refusalOf(slots, 'generate', 'device-refused'), 'admitted');
-  eq('every exit path leaves the controller empty', slots.counts(), { generations: 0, unary: 0, draining: false });
+  eq('every exit path leaves the controller empty', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: false });
 }
 
 // ---------------------------------------------------------------------------------------------

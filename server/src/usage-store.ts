@@ -22,9 +22,9 @@ export interface UsageStore {
 
   /**
    * Atomically counts today's non-refunded rows for `deviceId` (and, when `globalLimit` is given,
-   * for every device) and inserts a new `pending` ledger row when under both limits. The device
-   * limit is checked first, so a request that is over BOTH limits refuses as `'device'` (spec:
-   * "the device limit's daily_limit refusal SHALL win"). `now` drives the UTC-day bucket and the
+   * for every device across `globalKinds`) and inserts a new `pending` ledger row when under both
+   * limits. The device limit is checked first, so a request over BOTH limits refuses as `'device'`
+   * (spec: "the device limit's daily_limit refusal SHALL win"). `now` drives the UTC-day bucket and the
    * `retryAfterSec` computation — never `Date.now()` read internally — so callers control day
    * rollover in tests. Implementations MUST perform the count-then-insert with no `await` between
    * them, so two overlapping calls (`Promise.all`) can never both observe room for the last unit.
@@ -36,8 +36,10 @@ export interface UsageStore {
   /** Records how a request ended. Idempotent: a request already settled (an `ended_at` already
    *  set) is left untouched by a later call — the row keeps its FIRST outcome. Never changes the
    *  row's `utc_day`, so a request admitted before midnight settles against its admission day even
-   *  if `settle` runs after the rollover. */
-  settle(requestId: string, params: { outcome: RequestOutcome; usage?: Usage }): Promise<void>;
+   *  if `settle` runs after the rollover. `params.now` stamps `ended_at`; callers holding an
+   *  injected clock pass it, so a test's ledger timing is its own. It falls back to `Date.now()`
+   *  only for a caller with no clock to offer. */
+  settle(requestId: string, params: SettleParams): Promise<void>;
   /** Records the resolver's cost verdict for a request. Idempotent: a request whose cost state has
    *  already left `'pending'` is left untouched by a later call. */
   recordCost(requestId: string, params: { state: CostState; costUsd?: number }): Promise<void>;
@@ -74,8 +76,18 @@ export interface AdmitParams {
   /** Injected clock reading (ms since epoch) — drives the UTC-day bucket and `retryAfterSec`. */
   now: number;
   deviceLimit: number;
-  /** Omit for kinds with no global daily ceiling (clarify, rewrite). */
+  /** Omit for kinds with no global daily ceiling. */
   globalLimit?: number;
+  /** The kinds `globalLimit` is counted across; defaults to `[kind]`. `/v1/clarify` and
+   *  `/v1/rewrite` share ONE ceiling, so both pass `['clarify', 'rewrite']`. */
+  globalKinds?: readonly RequestKind[];
+}
+
+export interface SettleParams {
+  outcome: RequestOutcome;
+  usage?: Usage;
+  /** Injected clock reading (ms since epoch) for `ended_at`; defaults to `Date.now()`. */
+  now?: number;
 }
 
 export type AdmitResult =
@@ -249,13 +261,14 @@ export class InMemoryUsageStore implements UsageStore {
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
     const { deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const globalKinds = params.globalKinds ?? [kind];
     const utcDay = utcDayString(now);
     let deviceCount = 0;
     let globalCount = 0;
     for (const row of this.ledger.values()) {
-      if (row.kind !== kind || row.utcDay !== utcDay || row.refunded) continue;
-      globalCount++;
-      if (row.deviceId === deviceId) deviceCount++;
+      if (row.utcDay !== utcDay || row.refunded) continue;
+      if (globalKinds.includes(row.kind)) globalCount++;
+      if (row.kind === kind && row.deviceId === deviceId) deviceCount++;
     }
     if (deviceCount >= deviceLimit) {
       return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
@@ -286,10 +299,10 @@ export class InMemoryUsageStore implements UsageStore {
     if (row && !row.refunded) row.refunded = true;
   }
 
-  async settle(requestId: string, params: { outcome: RequestOutcome; usage?: Usage }): Promise<void> {
+  async settle(requestId: string, params: SettleParams): Promise<void> {
     const row = this.ledger.get(requestId);
     if (!row || row.endedAt !== null) return;
-    row.endedAt = Date.now();
+    row.endedAt = params.now ?? Date.now();
     row.outcome = params.outcome;
     row.promptTokens = params.usage?.promptTokens ?? 0;
     row.completionTokens = params.usage?.completionTokens ?? 0;
@@ -392,6 +405,7 @@ export class NodeSqliteUsageStore implements UsageStore {
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
     const { deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const globalKinds = params.globalKinds ?? [kind];
     const utcDay = utcDayString(now);
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -403,9 +417,10 @@ export class NodeSqliteUsageStore implements UsageStore {
         return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
       }
       if (globalLimit !== undefined) {
+        const placeholders = globalKinds.map(() => '?').join(', ');
         const globalRow = this.db.prepare(
-          'SELECT COUNT(*) as c FROM requests WHERE kind = ? AND utc_day = ? AND refunded = 0'
-        ).get(kind, utcDay) as { c: number };
+          `SELECT COUNT(*) as c FROM requests WHERE kind IN (${placeholders}) AND utc_day = ? AND refunded = 0`
+        ).get(...globalKinds, utcDay) as { c: number };
         if (globalRow.c >= globalLimit) {
           this.db.exec('COMMIT');
           return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
@@ -429,13 +444,13 @@ export class NodeSqliteUsageStore implements UsageStore {
     this.db.prepare('UPDATE requests SET refunded = 1 WHERE id = ? AND refunded = 0').run(requestId);
   }
 
-  async settle(requestId: string, params: { outcome: RequestOutcome; usage?: Usage }): Promise<void> {
+  async settle(requestId: string, params: SettleParams): Promise<void> {
     this.db.prepare(`
       UPDATE requests
       SET ended_at = ?, outcome = ?, prompt_tokens = ?, completion_tokens = ?
       WHERE id = ? AND ended_at IS NULL
     `).run(
-      Date.now(),
+      params.now ?? Date.now(),
       params.outcome,
       params.usage?.promptTokens ?? 0,
       params.usage?.completionTokens ?? 0,

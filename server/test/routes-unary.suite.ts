@@ -7,14 +7,15 @@
  * (specs/server-admission-control "Admission checks run in a fixed order", specs/content-policy,
  * specs/content-reports) and the anonymous `/healthz/sse` probe (specs/server-deployment).
  */
+import { randomUUID } from 'node:crypto';
 import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
-import { InMemoryUsageStore, type CostState, type UsageStore } from '../src/usage-store';
+import { InMemoryUsageStore, NodeSqliteUsageStore, type CostState, type UsageStore } from '../src/usage-store';
 import { InMemoryReportStore } from '../src/reports/store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
-import { createSlotController, type SlotController } from '../src/admission/slots';
+import { createSlotController, MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
@@ -27,6 +28,9 @@ const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
 const OTHER_DEVICE_HEADER = { 'x-whim-device': '88888888-8888-4888-8888-888888888888' };
 const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
 const FIXED_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
+/** Whole seconds from `FIXED_NOW` (noon UTC) to the next 00:00 UTC — every ceiling refusal's
+ *  `Retry-After`. */
+const SECONDS_TO_UTC_MIDNIGHT = 43_200;
 
 function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return { ...loadServerConfig({}), now: () => FIXED_NOW, ...overrides };
@@ -107,6 +111,27 @@ function statsTransport(byId: Record<string, GenerationStats>): UsageAndCostTran
     async fetchStats(id: string): Promise<GenerationStats | null> {
       return byId[id] ?? null;
     },
+  };
+}
+
+/** A device header nobody has used before — how a script defeats every per-device limit. */
+function freshDeviceHeader(): Record<string, string> {
+  return { 'x-whim-device': randomUUID() };
+}
+
+/** A store that admits and settles normally but cannot `credit` — the shape of a store blip
+ *  inside `admitUnaryRequest`, after the slot was taken and the daily unit consumed. */
+function creditThrowingStore(): UsageStore {
+  const inner = new InMemoryUsageStore();
+  return {
+    credit: () => Promise.reject(new Error('usage store unavailable')),
+    read: (deviceId) => inner.read(deviceId),
+    admit: (params) => inner.admit(params),
+    refund: (requestId) => inner.refund(requestId),
+    settle: (requestId, params) => inner.settle(requestId, params),
+    recordCost: (requestId, params) => inner.recordCost(requestId, params),
+    summary: (params) => inner.summary(params),
+    purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
   };
 }
 
@@ -283,6 +308,95 @@ async function testAdmissionOrder(): Promise<void> {
     eq('a budget_exhausted refusal makes no model call', res.status, 503);
     eq('zero model calls recorded', model.requests.length, 0);
   }
+}
+
+/**
+ * specs/server-admission-control "Clarify and rewrite share one global daily ceiling". The
+ * per-device clarify/rewrite limits bound nothing on their own: a script mints a fresh device UUID
+ * per request. Only the shared ceiling stops it, so this drives rotating device ids — against BOTH
+ * store implementations, because production runs the SQLite one and its ceiling is a different
+ * query from the in-memory one's loop.
+ */
+async function testUnaryGlobalCeiling(): Promise<void> {
+  section('specs/server-admission-control "Clarify and rewrite share one global daily ceiling"');
+
+  const stores: { label: string; store: UsageStore; close?: () => void }[] = [
+    { label: 'in-memory store', store: new InMemoryUsageStore() },
+  ];
+  const sqlite = new NodeSqliteUsageStore(':memory:');
+  stores.push({ label: 'sqlite store', store: sqlite, close: () => sqlite.close() });
+
+  for (const { label, store, close } of stores) {
+    invalidateCreditCache();
+    const { app } = testApp({ usageStore: store, stub: true, config: { limitUnaryPerDay: 3 } });
+
+    const first = await post(app, '/v1/clarify', { prompt: 'hi' }, freshDeviceHeader());
+    const second = await post(app, '/v1/rewrite', { prompt: '[[fail]] hi' }, freshDeviceHeader());
+    const third = await post(app, '/v1/clarify', { prompt: 'hi' }, freshDeviceHeader());
+    eq(
+      `${label}: three requests from three fresh devices are admitted under a ceiling of 3`,
+      [first.status, second.status, third.status],
+      [200, 200, 200],
+    );
+
+    const fourth = await post(app, '/v1/clarify', { prompt: 'hi' }, freshDeviceHeader());
+    eq(`${label}: a fourth fresh device is refused at the ceiling`, fourth.status, 429);
+    const body = (await fourth.json()) as ApiError;
+    eq(`${label}: the ceiling refusal code is server_busy`, body.error, 'server_busy');
+    check(`${label}: the refusal body validates as ApiError`, ApiError.safeParse(body).success);
+    check(`${label}: its code is a ServiceRefusalCode`, ServiceRefusalCode.safeParse(body.error).success);
+    eq(
+      `${label}: the ceiling refusal carries Retry-After to the next UTC midnight`,
+      fourth.headers.get('retry-after'),
+      String(SECONDS_TO_UTC_MIDNIGHT),
+    );
+
+    // One ceiling for the pair, not one each: rewrite is refused by units clarify consumed.
+    const rewriteOver = await post(app, '/v1/rewrite', { prompt: '[[fail]] hi' }, freshDeviceHeader());
+    eq(`${label}: the ceiling counts clarify and rewrite together`, rewriteOver.status, 429);
+
+    close?.();
+  }
+}
+
+/**
+ * specs/server-admission-control "A refused, failed, or policy-rejected admission SHALL release any
+ * slot it took": every path out of `admitUnaryRequest` past the slot acquire gives the slot back —
+ * including a THROW from the usage store, which no refusal path covers. Leak it and a single store
+ * blip permanently shrinks the unary pool for the life of the process.
+ */
+async function testThrowingStoreReleasesTheSlot(): Promise<void> {
+  section('A throwing usage store does not leak the unary slot');
+
+  invalidateCreditCache();
+  const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+  const meteredPolicy: ContentPolicy = {
+    async check() {
+      return { verdict: 'allow', usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 } };
+    },
+  };
+  const { app } = testApp({ slots, usageStore: creditThrowingStore(), policy: meteredPolicy, stub: true });
+
+  // Hono turns a thrown handler into a 500; a runner that lets it escape instead is equally fine
+  // here — either way the request failed, and what this test is about is the slot afterwards.
+  let status = 0;
+  let thrown: unknown;
+  try {
+    status = (await post(app, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER)).status;
+  } catch (err) {
+    thrown = err;
+  }
+  check(
+    'the request does not answer 200 when the store throws',
+    status !== 200,
+    `status ${status}, thrown ${String(thrown)}`,
+  );
+  eq('the slot count is back to zero', slots.counts().unary, 0);
+
+  // The proof that matters: the pool still admits work afterwards.
+  const { app: healthy } = testApp({ slots, stub: true });
+  const after = await post(healthy, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
+  eq('the unary pool still admits a later request', after.status, 200);
 }
 
 async function testChunkedBodyCap(): Promise<void> {
@@ -774,24 +888,35 @@ async function testHealthzSse(): Promise<void> {
     check('the frames were spaced roughly one second apart (~2s total)', elapsedMs >= 1800 && elapsedMs < 6000, `took ${elapsedMs}ms`);
   }
 
-  // Concurrent probes count against the global unary cap.
+  // Concurrent probes count against the probe's OWN cap, never the paid unary pool — the
+  // probe is anonymous and holds its slot for seconds, so sharing the unary pool would let a few
+  // anonymous requests per second wedge every device's clarify and rewrite calls.
   {
+    invalidateCreditCache();
     const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
-    const { app } = testApp({ slots });
-    const first = await app.request('/healthz/sse');
-    eq('the first probe is admitted', first.status, 200);
-    const second = await app.request('/healthz/sse');
-    eq('a second concurrent probe is refused at the unary cap', second.status, 429);
-    const body = (await second.json()) as ApiError;
+    const { app } = testApp({ slots, stub: true });
+    const held: Response[] = [];
+    for (let i = 0; i < MAX_CONCURRENT_PROBES; i++) held.push(await app.request('/healthz/sse'));
+    check('probes up to the probe cap are admitted', held.every((res) => res.status === 200));
+
+    const over = await app.request('/healthz/sse');
+    eq('one probe past the probe cap is refused', over.status, 429);
+    const body = (await over.json()) as ApiError;
     eq('refusal code is server_busy', body.error, 'server_busy');
 
-    await first.body!.cancel();
-    eq('cancelling the first probe frees its slot', slots.counts().unary, 0);
+    eq('probes consume no unary slot', slots.counts().unary, 0);
+    const clarify = await post(app, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
+    eq('a full probe pool still admits a paid clarify request', clarify.status, 200);
+
+    await Promise.all(held.map((res) => res.body!.cancel()));
+    eq('cancelling the probes frees their slots', slots.counts().probes, 0);
   }
 }
 
 export async function runRoutesUnaryTests(): Promise<void> {
   await testAdmissionOrder();
+  await testUnaryGlobalCeiling();
+  await testThrowingStoreReleasesTheSlot();
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();

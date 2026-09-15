@@ -191,11 +191,15 @@ A fast-gate tripwire SHALL fail when the rendered policy lacks, verbatim, the va
 ### Requirement: An anonymous stream probe verifies proxy flushing
 The server SHALL expose `GET /healthz/sse`, outside `/v1` and without a device header. It SHALL emit exactly three SSE comment frames one second apart and then close, with no model call, no browser use, and no stored state.
 
-Concurrent probes SHALL count against the global unary cap and be refused with `429 server_busy` beyond it.
+Concurrent probes SHALL be bounded by their own small dedicated cap, never by the global unary cap the paid clarify and rewrite routes share, and SHALL be refused with `429 server_busy` beyond it. The probe is unauthenticated and holds its slot for seconds, so counting it against the unary pool would let anonymous traffic starve every paying device.
 
 #### Scenario: The probe streams three spaced frames
 - **WHEN** a client reads `/healthz/sse` directly from the server
 - **THEN** it receives three comment frames at roughly one-second intervals and the stream ends
+
+#### Scenario: Flooding the probe cannot starve the paid routes
+- **WHEN** the probe cap is filled by concurrent probes and another probe arrives
+- **THEN** the extra probe is refused `429 server_busy` while a `/v1/clarify` request from a device is still admitted
 
 ### Requirement: The server container runs hardened on the VM
 The deployment's compose definition SHALL run the server container with these settings. The seccomp profile vendored from the lockfile's Playwright version SHALL be applied, and no other security weakening. `no-new-privileges` SHALL be set, and the container SHALL drop all Linux capabilities (`cap_drop: [ALL]`) and add back exactly one, `SYS_CHROOT` (`cap_add: [SYS_CHROOT]`), because Docker's seccomp profile allows `chroot` only when that capability is held and Chromium's namespace sandbox calls `chroot` inside its own user namespace. The non-root server process still holds no effective, permitted or ambient capability. The root filesystem SHALL be read-only, with a size-bounded `/tmp` tmpfs. The container SHALL have an init process, a shared-memory size sufficient for Chromium, a process-count limit, a memory limit, and an automatic restart policy. The stop grace period SHALL be at least the drain timeout plus 30 seconds. `WHIM_DATA_DIR` SHALL be bind-mounted from the persistent disk and owned by the container's uid.

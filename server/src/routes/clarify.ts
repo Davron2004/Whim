@@ -11,11 +11,12 @@
  *
  * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
  * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
- * global unary concurrency cap, the device's daily clarify allowance, then the content policy
- * check — all before any model call. `admitUnaryRequest` below is the ONE place that orders
- * credit → slot → daily-unit → policy for both `/v1/clarify` and `/v1/rewrite`, so the two routes
- * cannot drift apart on ordering; `routes/rewrite.ts` imports it from here rather than duplicating
- * it (design D8 shares this exact ordering across every unary route).
+ * global unary concurrency cap, the device's daily clarify allowance and the clarify+rewrite
+ * global daily ceiling, then the content policy check — all before any model call.
+ * `admitUnaryRequest` below is the ONE place that orders credit → slot → daily-unit → policy for
+ * both `/v1/clarify` and `/v1/rewrite`, so the two routes cannot drift apart on ordering;
+ * `routes/rewrite.ts` imports it from here rather than duplicating it (design D8 shares this exact
+ * ordering across every unary route).
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -23,7 +24,7 @@ import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whi
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
-import type { SlotController } from '../admission/slots';
+import type { SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
 import {
   budgetExhaustedRefusal,
@@ -31,6 +32,7 @@ import {
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
+  serverBusyCeilingRefusal,
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
@@ -48,6 +50,11 @@ import { parseJsonBlock } from '../generation/json-block';
 import { log } from '../logger';
 
 type Env = { Variables: { deviceId: string } };
+
+/** The kinds the ONE global unary daily ceiling (`ServerConfig.limitUnaryPerDay`) is counted
+ *  across. Clarify and rewrite share it rather than getting a ceiling each, so the pair's total
+ *  spend is bounded by one number an operator can reason about. */
+const UNARY_KINDS: readonly RequestKind[] = ['clarify', 'rewrite'];
 
 const NOT_CONFIGURED: ApiError = {
   error: 'clarify_not_configured',
@@ -108,6 +115,8 @@ export interface UnaryAdmissionDeps {
   deviceId: string;
   kind: Extract<RequestKind, 'clarify' | 'rewrite'>;
   deviceLimit: number;
+  /** `ServerConfig.limitUnaryPerDay` — ONE ceiling counted across clarify AND rewrite together. */
+  globalLimit: number;
   usageStore: UsageStore;
   clock: () => number;
   slots: SlotController;
@@ -161,8 +170,9 @@ export function resolveUnaryUsage(
  * The fixed admission order shared by `/v1/clarify` and `/v1/rewrite`, AFTER the raw body cap,
  * body validation and prompt byte cap the caller already ran (specs/server-admission-control
  * "Admission checks run in a fixed order"): operator credit → drain/global-unary-cap (one slot
- * acquire) → the device's daily allowance → content policy. Every refusal after a resource was
- * taken (a slot, a daily unit) releases/refunds it before returning.
+ * acquire) → the device's daily allowance and the clarify+rewrite global daily ceiling → content
+ * policy. Every refusal after a resource was taken (a slot, a daily unit) releases/refunds it
+ * before returning, and so does anything thrown past the acquire.
  *
  * The classifier call's own usage is credited to the device the moment it comes back — allowed or
  * refused, since the call still happened either way (spec "The policy check is metered and
@@ -172,24 +182,7 @@ export function resolveUnaryUsage(
  * usage and its cost is resolved immediately, the same way the route's own `finish()` would.
  */
 export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
-  const {
-    deviceId,
-    kind,
-    deviceLimit,
-    usageStore,
-    clock,
-    slots,
-    creditTransport,
-    creditTtlMs,
-    creditFloorUsd,
-    policy,
-    policyRoute,
-    policyInput,
-    resolveTransport,
-    resolveBounds,
-    resolveTracker,
-    signal,
-  } = deps;
+  const { deviceId, clock, slots, creditTransport, creditTtlMs, creditFloorUsd, policyRoute } = deps;
 
   if (creditTransport) {
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: creditTtlMs, floorUsd: creditFloorUsd });
@@ -201,12 +194,51 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
 
   const acquired = slots.acquire('unary', deviceId);
   if (!acquired.ok) return { ok: false, refusal: slotRefusal(acquired.reason) };
-  const { handle } = acquired;
+  // Everything past the acquire gives the slot back before its error propagates — a throwing
+  // usage store (or policy) must not leave the slot held for the life of the process. `release()`
+  // is idempotent, so a refusal below that already released is unaffected. Mirrors
+  // `routes/generate.ts`'s `admitGeneration`.
+  try {
+    return await admitUnaryWithSlot(acquired.handle, deps);
+  } catch (err) {
+    acquired.handle.release();
+    throw err;
+  }
+}
 
-  const admitted = await usageStore.admit({ deviceId, kind, now: clock(), deviceLimit });
+/** The daily unit (device limit, then the clarify+rewrite global ceiling), then the content
+ *  policy — the half of `admitUnaryRequest` that runs holding a slot. */
+async function admitUnaryWithSlot(handle: SlotHandle, deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
+  const {
+    deviceId,
+    kind,
+    deviceLimit,
+    globalLimit,
+    usageStore,
+    clock,
+    policy,
+    policyRoute,
+    policyInput,
+    resolveTransport,
+    resolveBounds,
+    resolveTracker,
+    signal,
+  } = deps;
+
+  const admitted = await usageStore.admit({
+    deviceId,
+    kind,
+    now: clock(),
+    deviceLimit,
+    globalLimit,
+    globalKinds: UNARY_KINDS,
+  });
   if (!admitted.ok) {
     handle.release();
-    return { ok: false, refusal: dailyLimitRefusal(clock) };
+    return {
+      ok: false,
+      refusal: admitted.reason === 'device' ? dailyLimitRefusal(clock) : serverBusyCeilingRefusal(clock),
+    };
   }
   const { requestId } = admitted;
 
@@ -216,7 +248,7 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
       await usageStore.credit(deviceId, result.usage);
     }
     if (result.verdict !== 'allow') {
-      await usageStore.settle(requestId, { outcome: 'refused', usage: result.usage });
+      await usageStore.settle(requestId, { outcome: 'refused', usage: result.usage, now: clock() });
       handle.release();
       const ids = result.generationId ? [result.generationId] : [];
       resolveTracker.track(
@@ -231,7 +263,7 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
     return { ok: true, requestId, release: () => handle.release(), policyGenerationId: result.generationId };
   } catch (err) {
     if (err instanceof PolicyUnavailableError) {
-      await usageStore.settle(requestId, { outcome: 'unavailable' });
+      await usageStore.settle(requestId, { outcome: 'unavailable', now: clock() });
       await usageStore.refund(requestId);
       handle.release();
       return { ok: false, refusal: policyUnavailableRefusal() };
@@ -296,6 +328,7 @@ export function makeClarifyRoute(
         deviceId,
         kind: 'clarify',
         deviceLimit: config.limitClarifyPerDeviceDay,
+        globalLimit: config.limitUnaryPerDay,
         usageStore,
         clock,
         slots,
@@ -322,7 +355,7 @@ export function makeClarifyRoute(
         generationIds: string[],
         creditOwned: boolean,
       ): Promise<void> => {
-        await usageStore.settle(requestId, { outcome, usage });
+        await usageStore.settle(requestId, { outcome, usage, now: clock() });
         release();
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
