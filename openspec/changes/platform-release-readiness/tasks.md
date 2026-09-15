@@ -58,11 +58,11 @@
 
 ## 8. Launch screen wiring
 
-- [ ] 8.1 Rewrite `ios/Whim/LaunchScreen.storyboard`: remove both template labels; set the root view background to the `LaunchBackground` named color; center a 160×160 `LaunchMark` image view with Auto Layout; declare both named resources.
-- [ ] 8.2 In `ios/Whim/AppDelegate.swift`, set the root view controller's view background to `UIColor(named: "LaunchBackground")` right after `startReactNative` (design D10).
-- [ ] 8.3 Android styles: `AppTheme` gains `android:windowBackground` `@color/launch_background`. Add `Theme.Whim.Launch` (parent `AppTheme`, `android:windowBackground` `@drawable/launch_screen`) to `res/values/styles.xml`. Create `res/values-v31/styles.xml` overriding `Theme.Whim.Launch` with `android:windowSplashScreenBackground` `@color/launch_background`, and `res/drawable/launch_screen.xml` as a layer list of `@color/launch_background` and a centered `@drawable/launch_mark`.
-- [ ] 8.4 Set `MainActivity`'s `android:theme` to `@style/Theme.Whim.Launch` in `AndroidManifest.xml`. In `MainActivity.kt`, override `onCreate` to call `setTheme(R.style.AppTheme)` before `super.onCreate`.
-- [ ] 8.5 If the toolchains are available, cold-start the simulator Release build and an `offline` build on an emulator. Capture the launch frame and the first launcher frame (`xcrun simctl io booted screenshot`, `adb exec-out screencap -p`) and attach both to the report. Otherwise report "not run".
+- [x] 8.1 Rewrite `ios/Whim/LaunchScreen.storyboard`: remove both template labels; set the root view background to the `LaunchBackground` named color; center a 160×160 `LaunchMark` image view with Auto Layout; declare both named resources.
+- [x] 8.2 In `ios/Whim/AppDelegate.swift`, set the root view controller's view background to `UIColor(named: "LaunchBackground")` right after `startReactNative` (design D10).
+- [x] 8.3 Android styles: `AppTheme` gains `android:windowBackground` `@color/launch_background`. Add `Theme.Whim.Launch` (parent `AppTheme`, `android:windowBackground` `@drawable/launch_screen`) to `res/values/styles.xml`. Create `res/values-v31/styles.xml` overriding `Theme.Whim.Launch` with `android:windowSplashScreenBackground` `@color/launch_background`, and `res/drawable/launch_screen.xml` as a layer list of `@color/launch_background` and a centered `@drawable/launch_mark`.
+- [x] 8.4 Set `MainActivity`'s `android:theme` to `@style/Theme.Whim.Launch` in `AndroidManifest.xml`. In `MainActivity.kt`, override `onCreate` to call `setTheme(R.style.AppTheme)` before `super.onCreate`.
+- [x] 8.5 If the toolchains are available, cold-start the simulator Release build and an `offline` build on an emulator. Capture the launch frame and the first launcher frame (`xcrun simctl io booted screenshot`, `adb exec-out screencap -p`) and attach both to the report. Otherwise report "not run".
 
 ## 9. Store listing content and privacy answers
 
