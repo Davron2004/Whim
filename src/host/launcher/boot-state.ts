@@ -74,3 +74,71 @@ export interface PaintFrame {
 export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
   return !!frame && frame.trusted === true;
 }
+
+/** Six seconds from an attempted source delivery, or from its accepted-delivery acknowledgement. */
+export const STARTUP_DEADLINE_MS = 6_000;
+
+/** Injected timer seam for deterministic Node tests; production uses the platform timers below. */
+export interface StartupDeadlineScheduler {
+  set(callback: () => void, delayMs: number): unknown;
+  clear(handle: unknown): void;
+}
+
+/** One currently bound realm's startup deadline. */
+export interface StartupDeadline {
+  /** Start, or restart, the allowance for the current attempt. */
+  begin(): void;
+  /** Complete startup only for a nonce-authenticated paint frame. */
+  acceptPaint(frame: PaintFrame | null | undefined): boolean;
+  /** Cancel the current attempt and invalidate a callback already queued by the platform. */
+  cancel(): void;
+}
+
+const platformScheduler: StartupDeadlineScheduler = {
+  set(callback, delayMs) {
+    return setTimeout(callback, delayMs);
+  },
+  clear(handle) {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
+
+/**
+ * Create a deadline whose callbacks are fenced by an attempt token. `clearTimeout` normally
+ * prevents a cancelled callback, but the token also covers a callback that was already queued
+ * when bind/reset, retry, exit, unmount, paint, or a fatal error cancelled its attempt.
+ */
+export function createStartupDeadline(
+  onTimeout: () => void,
+  scheduler: StartupDeadlineScheduler = platformScheduler,
+): StartupDeadline {
+  let handle: unknown | null = null;
+  let attempt = 0;
+
+  const cancel = (): void => {
+    attempt += 1;
+    if (handle !== null) {
+      scheduler.clear(handle);
+      handle = null;
+    }
+  };
+
+  return {
+    begin() {
+      cancel();
+      const ownedAttempt = attempt;
+      handle = scheduler.set(() => {
+        if (ownedAttempt !== attempt) return;
+        handle = null;
+        attempt += 1;
+        onTimeout();
+      }, STARTUP_DEADLINE_MS);
+    },
+    acceptPaint(frame) {
+      if (!paintAccepted(frame)) return false;
+      cancel();
+      return true;
+    },
+    cancel,
+  };
+}
