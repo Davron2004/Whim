@@ -59,16 +59,10 @@ order, AFTER the caller's own raw-body-cap/validation/prompt-cap: operator credi
 refusal after a resource was taken releases the slot and/or settles+refunds the ledger row first.
 `/v1/report` does NOT call this — no credit check and no policy check on reports (spec).
 
-## `isProviderBudgetExhausted(err)` — 402 detection (also `clarify.ts`, imported by `rewrite.ts`)
+## 402 detection
 
-**Deviation from the original plan, coordinated live with chain-8:** detects a mid-call provider
-`402` STRUCTURALLY — `typeof err === 'object' && err !== null && 'status' in err && err.status ===
-402` — NOT against `OpenRouterNetworkError`'s message text. Chain-8 is adding a proper
-`OpenRouterCreditError` (`status: 402`) to `../openrouter.ts` and `isCreditExhaustedError` to
-`../generation/model.ts`, but that work isn't merged into this chain's base yet. **Follow-up for
-whoever merges next:** replace this chain's `isProviderBudgetExhausted` with chain-8's
-`isCreditExhaustedError` once both are on the same tree (same `status === 402` structural shape,
-so the swap should be a one-line import change, not a behavior change).
+Both unary routes use `isCreditExhaustedError(err)` from `../generation/model.ts` (chain-8; pairs with
+`OpenRouterCreditError`, `status: 402`). Fix chain 9b removed the local `isProviderBudgetExhausted`.
 
 ## Ledger outcomes this chain writes for clarify/rewrite/report
 
@@ -79,18 +73,13 @@ from `admitUnaryRequest`'s own policy-check branch. Every unary/report request t
 `usageStore.admit(...)` is settled exactly once before the route responds — no row is left
 `endedAt: null`.
 
-## Known gap — NOT implemented (class B, flagged per chains.md's own carry-forward note)
+## Classifier metering (closed by fix chain 9b)
 
-specs/content-policy "The policy check is metered and observable without content" requires the
-classifier call's OWN token usage and generation id to reach the calling device's usage store and
-the gated request's ledger row. `ContentPolicy.check()` (chain-4, `server/src/policy/policy.ts`,
-out of this chain's file scope) has no return channel for either — chain-4's own contract note
-says exactly this ("if it can't be done inside your file scope, class-B stop with options rather
-than dropping it"). NOT implemented here. Options for whoever picks this up: (a) widen
-`ContentPolicy.check()`'s return type to carry `{ usage?, generationId? }` alongside the verdict
-(touches `policy.ts` + `cache.ts` + every existing call site); or (b) have the route call the
-classifier's own `ModelClient` directly, duplicating `policy.ts`'s system-message/verdict-parsing
-logic at the route level (rejected here as a real duplication, not attempted).
+`ContentPolicy.check()` returns `PolicyCheckResult { verdict; usage?; generationId? }` (see
+`handoff/content-policy.md`). `admitUnaryRequest` credits the classifier's usage the moment the check
+returns: on a refusal it settles the row and resolves its cost; on an allow it returns
+`policyGenerationId`, which clarify and rewrite fold into their own `generationIds`. A cache hit or the
+stub carries no usage. The generate route (chain-10) must do the same.
 
 ## Suite
 
