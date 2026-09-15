@@ -151,6 +151,6 @@
 
 ## 20. Readiness negative-control reliability
 
-- [ ] 20.1 Preserve the reproduced 1062 ms old-sleep failure and separate its fixture from the existing hanging-child timeout test, following `readiness-test-fix.md`.
-- [ ] 20.2 Use immediate IAP 4003 failures to prove the bounded helper stays below 4.5 seconds and the executed old `sleep 5` exceeds that threshold. Require actual mutation execution and distinct result/timing evidence.
-- [ ] 20.3 Write `handoff/readiness-test.md`, pass the server suite and fast gate, then independently review, integrity-check, merge and regate. No production behavior changes.
+- [x] 20.1 Preserve the reproduced 1062 ms old-sleep failure and separate its fixture from the existing hanging-child timeout test, following `readiness-test-fix.md`.
+- [x] 20.2 Use immediate IAP 4003 failures to prove the bounded helper stays below 4.5 seconds and the executed old `sleep 5` exceeds that threshold. Require actual mutation execution and distinct result/timing evidence.
+- [x] 20.3 Write `handoff/readiness-test.md`, pass the server suite and fast gate, then independently review, integrity-check, merge and regate. No production behavior changes.
