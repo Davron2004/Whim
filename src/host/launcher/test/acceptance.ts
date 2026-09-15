@@ -66,6 +66,7 @@ import { runRefusalTargetTests } from './refusal-target.suite';
 import { runConsentOptionsTests } from './consent-options.suite';
 import { runProbeGateTests } from './probe-gate.suite';
 import { runReportSendTests } from './report-send.suite';
+import { runScreenExitsTests } from './screen-exits.suite';
 
 const h = new Harness();
 
@@ -129,6 +130,7 @@ await runRefusalTargetTests(h);
 await runConsentOptionsTests(h);
 await runProbeGateTests(h);
 await runReportSendTests(h);
+await runScreenExitsTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

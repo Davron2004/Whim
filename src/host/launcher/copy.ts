@@ -237,6 +237,10 @@ export const COPY = {
   screenErrorTitle: 'This screen stopped working',
   screenErrorBody: 'Nothing you made was lost. Try again, and it should come back.',
   screenErrorRetry: 'Try again',
+  // Shown only when the failed screen is not Home (design D7; spec launcher-screen-exits "A screen
+  // without a declared exit fails the fast gate") — a screen that throws on every render would
+  // otherwise be a dead end with only `Try again` to press.
+  screenErrorBack: 'Back to your apps',
   // The `3b` failure checklist (obs-v1) — the two rows the screen writes itself. Every other row
   // is a diagnostic's own `hint`, so no mechanism vocabulary can reach the panel.
   failureRecoveredTitle: 'Fixed it',

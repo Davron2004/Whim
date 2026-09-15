@@ -30,6 +30,7 @@ import {
   currentActionSentence,
   doneStep,
   isClarifySkip,
+  planBackAction,
   planRowsFrom,
   planStep,
   primaryActionLabel,
@@ -362,6 +363,15 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   await h.test('build back: closes the sheet when open, otherwise leaves the run running — never cancels', () => {
     h.eq(buildBackAction(true), 'close-sheet', 'sheet open: back closes it');
     h.eq(buildBackAction(false), 'leave', 'sheet closed: back leaves the run running');
+  });
+
+  // Regression coverage for mismatch 2 (research.md A): the plan step's hardware-back listener
+  // used to cancel an open row edit before calling `onBack`, while `FlowHeader`'s `Back` got the
+  // raw `onBack` and discarded the draft. `planBackAction` is the one decision `PlanStep` now
+  // builds `handleBack` from for both the hook and the header.
+  await h.test('plan back: cancels an open row edit, otherwise leaves the step — same for header Back and system back', () => {
+    h.eq(planBackAction(true), 'cancel-edit', 'a row is being edited: back cancels it and stays');
+    h.eq(planBackAction(false), 'leave', 'no row is being edited: back moves one step back');
   });
 
   // ── the primary action ──────────────────────────────────────────────────────────────────────
