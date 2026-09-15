@@ -245,6 +245,7 @@ export function makeRewriteRoute(
         deviceId,
         kind: 'rewrite',
         deviceLimit: config.limitRewritePerDeviceDay,
+        globalLimit: config.limitUnaryPerDay,
         usageStore,
         clock,
         slots,
@@ -266,7 +267,7 @@ export function makeRewriteRoute(
       const { requestId, release, policyGenerationId } = admission;
 
       const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean): Promise<void> => {
-        await usageStore.settle(requestId, { outcome });
+        await usageStore.settle(requestId, { outcome, now: clock() });
         release();
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,

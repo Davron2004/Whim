@@ -30,6 +30,7 @@ export function runConfigTests(): void {
   check('defaults: synthrun concurrency', defaults.synthrunConcurrency === 2);
   check('defaults: clarify per device day', defaults.limitClarifyPerDeviceDay === 60);
   check('defaults: rewrite per device day', defaults.limitRewritePerDeviceDay === 60);
+  check('defaults: unary (clarify + rewrite) global per day', defaults.limitUnaryPerDay === 2000);
   check('defaults: max concurrent unary', defaults.maxConcurrentUnary === 16);
   check('defaults: reports per device day', defaults.limitReportsPerDeviceDay === 10);
   check('defaults: reports per day', defaults.limitReportsPerDay === 300);
@@ -57,6 +58,17 @@ export function runConfigTests(): void {
     throwsNaming(
       () => loadServerConfig(baseEnv({ WHIM_LIMIT_GENERATIONS_PER_DAY: 'lots' })),
       'WHIM_LIMIT_GENERATIONS_PER_DAY',
+    ),
+  );
+  check(
+    'WHIM_LIMIT_UNARY_PER_DAY is read from the environment',
+    loadServerConfig(baseEnv({ WHIM_LIMIT_UNARY_PER_DAY: '50' })).limitUnaryPerDay === 50,
+  );
+  check(
+    'a non-integer unary ceiling fails startup naming the variable',
+    throwsNaming(
+      () => loadServerConfig(baseEnv({ WHIM_LIMIT_UNARY_PER_DAY: 'plenty' })),
+      'WHIM_LIMIT_UNARY_PER_DAY',
     ),
   );
   check(

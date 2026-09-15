@@ -91,6 +91,19 @@ The global ceiling SHALL be checked in the same atomic admission step as the dev
 - **WHEN** a client sends generations under 500 freshly minted device UUIDs on one UTC day with the ceiling at 400
 - **THEN** no more than 400 generations are admitted that day
 
+### Requirement: Clarify and rewrite share one global daily ceiling
+The server SHALL refuse `/v1/clarify` and `/v1/rewrite` with HTTP `429`, `error: 'server_busy'`, and a `Retry-After` header set to the whole seconds until the next 00:00 UTC, once the configured global number of admitted unary requests for the current UTC day has been reached.
+
+There SHALL be ONE such ceiling for the two routes together, counted across both kinds, not a ceiling each. Without it the per-device clarify and rewrite limits bound nothing, because a client can mint a fresh device id per request and spend the operator's whole provider credit on unary calls. The ceiling SHALL be checked in the same atomic admission step as the device limit, and when both are exhausted the device limit's `daily_limit` refusal SHALL win.
+
+#### Scenario: Rotating device ids does not bypass the unary ceiling
+- **WHEN** a client sends clarify requests under freshly minted device UUIDs on one UTC day, more than the global unary ceiling
+- **THEN** admissions stop at the ceiling and the next request is `429` with `error: 'server_busy'` and a `Retry-After` equal to the seconds until 00:00 UTC
+
+#### Scenario: The ceiling counts clarify and rewrite together
+- **WHEN** admitted clarify and rewrite requests together reach the ceiling on one UTC day
+- **THEN** the next request of either kind is refused `server_busy`, whichever kind consumed the units
+
 ### Requirement: The server refuses admission when the operator's provider credit is exhausted
 The server SHALL check the operator's OpenRouter key credit before any model work on `/v1/clarify`, `/v1/rewrite`, and `/v1/generate`, placed immediately after the size and device-identity checks and before drain state, concurrency, and daily-unit accounting. It SHALL query `GET https://openrouter.ai/api/v1/key` and read `data.limit_remaining` (`null` meaning the key carries no limit), caching the result in memory for a configurable TTL (`WHIM_CREDIT_CACHE_TTL_MS`, default 60000) so the lookup is not made on every request.
 
@@ -159,6 +172,7 @@ Every admission limit SHALL be read once at startup from the environment through
 | `WHIM_SYNTHRUN_CONCURRENCY` | 2 |
 | `WHIM_LIMIT_CLARIFY_PER_DEVICE_DAY` | 60 |
 | `WHIM_LIMIT_REWRITE_PER_DEVICE_DAY` | 60 |
+| `WHIM_LIMIT_UNARY_PER_DAY` | 2000 |
 | `WHIM_MAX_CONCURRENT_UNARY` | 16 |
 | `WHIM_LIMIT_REPORTS_PER_DEVICE_DAY` | 10 |
 | `WHIM_LIMIT_REPORTS_PER_DAY` | 300 |

@@ -239,7 +239,7 @@ async function admitWithSlot(handle: SlotHandle, deps: AdmissionDeps): Promise<A
     () => undefined,
   );
   if (!checked) {
-    await usageStore.settle(requestId, { outcome: 'unavailable' });
+    await usageStore.settle(requestId, { outcome: 'unavailable', now: clock() });
     await usageStore.refund(requestId);
     handle.release();
     return { ok: false, refusal: policyUnavailableRefusal() };
@@ -249,7 +249,7 @@ async function admitWithSlot(handle: SlotHandle, deps: AdmissionDeps): Promise<A
   if (checked.usage) await usageStore.credit(deviceId, checked.usage);
 
   if (checked.verdict !== 'allow') {
-    await usageStore.settle(requestId, { outcome: 'refused', usage: checked.usage });
+    await usageStore.settle(requestId, { outcome: 'refused', usage: checked.usage, now: clock() });
     handle.release();
     const ids = checked.generationId ? [checked.generationId] : [];
     deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, true, resolveDeps(deps)));
@@ -297,7 +297,7 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
     untrack();
     admitted.handle.release();
     const outcome = ledgerOutcome(trace, ending, controller.signal.aborted);
-    await usageStore.settle(admitted.requestId, { outcome, usage: ending.usage });
+    await usageStore.settle(admitted.requestId, { outcome, usage: ending.usage, now: deps.clock() });
     resolveGenerationUsage(deps, trace.generationIds, ending.creditOwned);
   };
 
