@@ -61,6 +61,11 @@ import { runConsentScreenActionsTests } from './consent-screen-actions.suite';
 import { runSettingsSectionsTests } from './settings-sections.suite';
 import { runLinkRoutingTests } from './link-routing.suite';
 import { runAppLinkUiTests } from './app-link-ui.suite';
+import { runErrorReasonTests } from './error-reason.suite';
+import { runRefusalTargetTests } from './refusal-target.suite';
+import { runConsentOptionsTests } from './consent-options.suite';
+import { runProbeGateTests } from './probe-gate.suite';
+import { runReportSendTests } from './report-send.suite';
 
 const h = new Harness();
 
@@ -119,6 +124,11 @@ await runConsentScreenActionsTests(h);
 await runSettingsSectionsTests(h);
 await runLinkRoutingTests(h);
 await runAppLinkUiTests(h);
+await runErrorReasonTests(h);
+await runRefusalTargetTests(h);
+await runConsentOptionsTests(h);
+await runProbeGateTests(h);
+await runReportSendTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

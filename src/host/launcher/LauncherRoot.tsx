@@ -40,12 +40,12 @@ import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
-  EmptyBundleError,
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
   refusedGenerateOutcome,
   retryBuildScreen,
+  settleRefusedGenerate,
   startPendingBuild,
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
@@ -115,7 +115,11 @@ import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
 import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
-import { refusalLanding } from './refusal-landing';
+import { rewriteRefusalTarget } from './refusal-target';
+import type { RefusalSentFrom } from './refusal-target';
+import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
+import { liveClientOptions } from './consent-options';
+import { probeGateFor } from './probe-gate';
 
 type Screen =
   | { kind: 'home' }
@@ -167,8 +171,6 @@ type Screen =
       notice?: FlowNotice;
     };
 
-const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
-
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
 const DEV_LOG_LABEL = 'Logs';
@@ -192,23 +194,6 @@ function defaultSeeds(): SeedSpec[] {
   return seeds
     .filter(s => APP_RECORDS[s.id] && APP_BUNDLES[s.id])
     .map(s => ({ ...s, record: APP_RECORDS[s.id], bundleSource: APP_BUNDLES[s.id] }));
-}
-
-/** Maps a thrown error from the client calls down to the failure screen's honest
- *  `{reason, diagnostics}` shape — never the raw error kind/status, matching the "failure shown
- *  honestly" requirement's hint-only discipline (diagnostics stay empty here; only a terminal
- *  `failure` event ever carries real per-diagnostic hints). */
-function errorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
-  if (err instanceof GenerationClientError && err.hint) {
-    return { reason: err.hint, diagnostics: [] };
-  }
-  // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
-  // no app is a failed generation, not a crash, so it reads with its own honest reason rather than
-  // the generic one.
-  if (err instanceof EmptyBundleError) {
-    return { reason: err.message, diagnostics: [] };
-  }
-  return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
 }
 
 /** The taxonomy `errorReason()` intentionally scrubs off the screen, as named fields: constructor,
@@ -267,18 +252,6 @@ function noticeFrom(refusal: ServiceRefusal): FlowNotice {
  *  request it refused (`service-refusals` "The refusal is recoverable from the log"). */
 function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal: ServiceRefusal): void {
   log.warn(CHANNELS.gen, 'service refusal', { request, code: refusal.code, status: refusal.status });
-}
-
-/** Where a refused rewrite lands (design D9): `refusalLanding` decides clarify or compose —
- *  `prev.kind` is the step whose `Continue` actually sent the request, before `plan` replaced it
- *  on screen — and this builds that screen fresh, carrying the plan's own text/answers/editing
- *  scope rather than `prev`'s (a plan-started rewrite can itself follow either step). */
-function rewriteRefusalTarget(prev: ComposeScreen | ClarifyScreen, plan: PlanScreen, refusal: ServiceRefusal, notice: FlowNotice): Screen {
-  const editing = plan.editing ? { editing: plan.editing } : {};
-  if (refusalLanding('rewrite', prev.kind, refusal.code) === 'clarify') {
-    return { kind: 'clarify', ...editing, text: plan.text, questions: plan.questions, answers: plan.answers, loading: false, notice };
-  }
-  return { kind: 'compose', ...editing, text: plan.text, notice };
 }
 
 /** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
@@ -468,6 +441,13 @@ function LauncherShell({
     [consentTick, serverUrl, deviceId, kv],
   );
 
+  /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
+   *  the current grant, or a fresh live read (`consent-options.ts`) when it does not yet — the gap
+   *  `onConsentAskAgree` falls into, since `grantConsent`'s `consentTick` bump does not retire the
+   *  memo until the render AFTER this call returns (spec ai-data-consent "After the user agrees,
+   *  the action they started SHALL continue as if consent had already existed"). */
+  const resolveClientOptions = (): ConsentedClientOptions | null => clientOptions ?? liveClientOptions(kv, deviceId);
+
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
   // ONE request that needs no AI-data consent, so this is never gated by `consentStatus`/
   // `consentTick` the way `clientOptions` above is).
@@ -498,13 +478,14 @@ function LauncherShell({
   // fresh `ConnectivityLoop` here and revoking it tears the old one down through the SAME cleanup
   // that runs on an address change or unmount — one effect serves startup, grant and revoke alike.
   useEffect(() => {
-    if (clientOptions == null) {
+    const decision = probeGateFor(clientOptions);
+    if (decision.kind === 'idle') {
       connectivityLoopRef.current = null;
       setConnectivity('unknown');
       return undefined;
     }
     const loop = new ConnectivityLoop({
-      probe: () => probeServer(clientOptions.baseUrl),
+      probe: () => probeServer(decision.baseUrl),
       publish: setConnectivity,
     });
     connectivityLoopRef.current = loop;
@@ -626,6 +607,11 @@ function LauncherShell({
       }
       refresh();
       setReady(true);
+      // `readyRef.current` set here too, not left to the next render's `readyRef.current = ready`
+      // assignment (line 418): the app-link listener effect reads the ref synchronously and could
+      // otherwise re-hold a link that arrives in the same tick as `release()` below, right after
+      // this effect already drained the holder — stuck forever with nothing left to release it.
+      readyRef.current = true;
       // A link that arrived while first-run was still running (spec app-links "A link that
       // arrives before the launcher is ready waits") resolves now, exactly as it would on an
       // already-ready launcher. `openAppLinkRef.current`, not `openAppLink` directly — see the
@@ -909,9 +895,14 @@ function LauncherShell({
   };
 
   /** Fetch the plan and show it: the step opens immediately under its row skeleton, and its own
-   *  primary action stays busy until the rewrite response lands. */
-  const openPlan = async (prev: ComposeScreen | ClarifyScreen) => {
-    if (!clientOptions) return;
+   *  primary action stays busy until the rewrite response lands. `sentFrom` is the step whose OWN
+   *  `Continue` fired this request — `'clarify'` from the clarify step's own action, `'compose'`
+   *  when a zero-question exchange skips it and `onComposeContinue` opens plan directly from the
+   *  loading `clarify` screen it built (never `prev.kind`, which would misattribute that skip's
+   *  refusal landing to a clarify step the user never saw). */
+  const openPlan = async (prev: ComposeScreen | ClarifyScreen, sentFrom: RefusalSentFrom) => {
+    const options = resolveClientOptions();
+    if (!options) return;
     const plan = planStep(prev);
     // Guarded like every other post-navigation write: this runs straight after the clarify await
     // on the compose path, and a user who has already left must not be pulled onto a plan step.
@@ -919,7 +910,7 @@ function LauncherShell({
     const request = flowRequests.start('plan');
     try {
       const response = await rewritePrompt(
-        clientOptions,
+        options,
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
         // A re-prompt tells the rewrite which app it is changing, and what it currently is;
@@ -944,7 +935,7 @@ function LauncherShell({
         // rewrite's landing is compose or clarify — whichever step's Continue sent it — for a
         // sender refusal, and always compose for a refusal about the words themselves.
         logServiceRefusal('rewrite', refusal);
-        const target = rewriteRefusalTarget(prev, plan, refusal, noticeFrom(refusal));
+        const target = rewriteRefusalTarget(sentFrom, plan, refusal, noticeFrom(refusal));
         setScreen(onlyOnStep<Screen, 'plan'>('plan', () => target));
         return;
       }
@@ -961,7 +952,8 @@ function LauncherShell({
    *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
    *  "skip to the plan step", not a dead end (`isClarifySkip`). */
   const onComposeContinue = async (from: ComposeScreen) => {
-    if (!clientOptions) return;
+    const options = resolveClientOptions();
+    if (!options) return;
     const loading = clarifyStep(from);
     setScreen(loading);
     const request = flowRequests.start('compose');
@@ -970,7 +962,7 @@ function LauncherShell({
       questions = acceptClarifyQuestions(
         (
           await clarifyPrompt(
-            clientOptions,
+            options,
             from.text,
             // The same context a rewrite would carry (name, collections, description) — so the
             // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
@@ -1018,8 +1010,9 @@ function LauncherShell({
     } else {
       // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
       // step — its own skeleton replaces this one, so the wait reads as continuous, never as a
-      // clarify screen that flashed empty.
-      await openPlan(loading);
+      // clarify screen that flashed empty. `'compose'`, not `loading.kind` (`'clarify'`) — it was
+      // THIS Continue that sent the rewrite request (M3 review fix).
+      await openPlan(loading, 'compose');
     }
   };
 
@@ -1131,16 +1124,16 @@ function LauncherShell({
   ): void => {
     logServiceRefusal('generate', refusal);
     const notice = noticeFrom(refusal);
-    if (refusedGenerateOutcome(isRetry, detached) === 'drop') {
-      releaseLiveRef(attemptId);
-      dropAttempt(attemptId);
-      refresh();
+    const outcome = refusedGenerateOutcome(isRetry, detached);
+    releaseLiveRef(attemptId);
+    settleRefusedGenerate(pending, journal, attemptId, outcome, refusal.hint, counts);
+    refresh();
+    if (outcome === 'drop') {
       if (fromPlan) {
         setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...fromPlan, notice })));
       }
       return;
     }
-    settleFailed(attemptId, refusal.hint, [], counts);
     if (!isRetry) return;
     const updated = pending.get(attemptId);
     if (updated) {
@@ -1161,7 +1154,8 @@ function LauncherShell({
    * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
   const runAttempt = async (building: BuildScreen, reuseId?: string, fromPlan?: PlanScreen) => {
-    if (!clientOptions) return;
+    const options = resolveClientOptions();
+    if (!options) return;
     setScreen(building);
 
     const controller = new AbortController();
@@ -1219,7 +1213,7 @@ function LauncherShell({
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
-      for await (const event of generateApp({ ...clientOptions, onKeepalive }, request, controller.signal)) {
+      for await (const event of generateApp({ ...options, onKeepalive }, request, controller.signal)) {
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
@@ -1634,7 +1628,7 @@ function LauncherShell({
           editing={from.editing != null}
           editingName={from.editing?.name}
           onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
-          onContinue={() => openPlan(from)}
+          onContinue={() => openPlan(from, 'clarify')}
           onBack={() => goBack(from)}
         />
       );
