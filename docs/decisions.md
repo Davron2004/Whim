@@ -1147,3 +1147,39 @@ Five decisions from `platform-release-readiness/design.md`, one line of why each
   and processing waits that a hand-rolled client would have to re-implement; the preflight, AAB
   verification, privacy audit and tagging stay pure functions in `scripts/release/lib/`, reachable
   from both the gate and a real release.
+
+### 67. iOS launcher back navigation: one seam, a gate-enforced exit table `[DECIDED — openspec: ios-launcher-back-navigation]`
+
+Eleven decisions from `ios-launcher-back-navigation/design.md`, one line of why each:
+
+- **D1 — one shared seam (`useSystemBack`) and a declared exit table, not a shared header.** Nine
+  hand-written `BackHandler` listeners had already drifted from their visible control once (the
+  plan step); a shared header would also restyle screens whose exit reads as a destination, not a
+  chevron.
+- **D2 — the same controls on both platforms, no `Platform.OS` branch.** An iOS-only variant would
+  mean the Android emulator no longer covers what an iPhone user sees.
+- **D3 — no edge-swipe back in this change.** `WKWebView` eats the pan over a running mini-app, a
+  root `PanResponder` would fight scroll views and Android's own back gesture, and App Review only
+  asks for a visible way back, which this change already gives every screen.
+- **D4 — flow steps step back; they never cancel.** The plan step's header and system back now
+  share one `planBackAction`, so both cancel an open row edit before leaving; a flow-level abandon
+  would need a confirmation of its own for no user who is actually stuck.
+- **D5 — a running mini-app is left through the orb; no host pop on iOS.** Depth is an untrusted
+  hint a hostile app could fake, and no seeded app pushes a screen, so a degraded — never trapped —
+  sub-screen beats a new orb affordance for a case nothing exercises yet.
+- **D6 — consent review renders its two buttons from one pure function.** `consentScreenActions`
+  keeps the mode → label table in one place instead of a second copy inline in the screen's JSX.
+- **D7 — the error screen offers a way home.** `onLeave` passes through the boundary unchanged, so
+  a screen that throws on every render is never a dead end — except on Home, where `Try again` is
+  already the way out.
+- **D8 — the exit table is gate-enforced.** A `Screen` kind missing from `ScreenKind` fails to
+  typecheck, and a source scanner proves every screen is on the seam, declared, bound to a real
+  control, labelled, and a real kind — coverage a checklist would silently drift out of.
+- **D9 — the hook binds once and always runs the latest handler.** Reading `handler` through a ref
+  on every render is what stops compose, clarify and plan re-registering their listener on every
+  keystroke.
+- **D10 — the root frame applies the bottom inset everywhere except where a screen already owns
+  it.** Padding the frame under a running mini-app or `DevProbeScreen` would double an inset each
+  already applies itself.
+- **D11 — the flow header's `Back` meets the 44-point touch target.** Raising its `hitSlop` from 10
+  to 16 gets there with no visual change.

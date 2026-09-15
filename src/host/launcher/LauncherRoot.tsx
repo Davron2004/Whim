@@ -69,6 +69,7 @@ import { resolveAppLink, linkExitFor, PendingLinkHolder } from './link-routing';
 import type { LinkExit } from './link-routing';
 import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
+import { SCREEN_EXITS, frameEdgesFor } from './screen-exits';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import RunDetailsSheet from './RunDetailsSheet';
@@ -1746,11 +1747,16 @@ function LauncherShell({
   // blank-screen failure mode this exists to remove — still render. `screen.kind` is both the
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
+  const exit = SCREEN_EXITS[screen.kind];
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
+      <SafeAreaView edges={frameEdgesFor(screen.kind)} style={[styles.root, { backgroundColor: palette.bg }]}>
         <StatusBar barStyle={statusBarStyle} />
-        <ScreenBoundary screen={screen.kind} FallbackComponent={ScreenErrorFallback}>
+        <ScreenBoundary
+          screen={screen.kind}
+          FallbackComponent={ScreenErrorFallback}
+          onLeave={exit.back === 'root' ? undefined : goHome}
+        >
           {content}
         </ScreenBoundary>
         <DevLogTools />
