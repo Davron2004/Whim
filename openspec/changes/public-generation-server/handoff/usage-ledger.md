@@ -25,10 +25,15 @@ export interface UsageStore {
   admit(params: AdmitParams): Promise<AdmitResult>;
   refund(requestId: string): Promise<void>;                                   // idempotent no-op on repeat/unknown id
   settle(requestId: string, p: { outcome: RequestOutcome; usage?: Usage; now?: number }): Promise<void>; // idempotent: keeps FIRST outcome; never touches utc_day; now stamps ended_at, defaults Date.now()
-  recordCost(requestId: string, p: { state: CostState; costUsd?: number }): Promise<void>; // idempotent: only writes while state is 'pending'
+  recordCost(requestId: string, p: RecordCostParams): Promise<void>; // writable while 'pending'; 'unresolved' → 'resolved' is the ONE allowed upgrade; 'resolved' is final
+  listUnresolvedCostRows(q: CostSweepQuery): Promise<CostSweepCandidate[]>; // the sweep's candidates
   summary(params: SummaryParams): Promise<UsageSummary>;
   purgeLedger(beforeUtcDay: string): Promise<number>;  // 'YYYY-MM-DD', returns rows deleted
 }
+export interface RecordCostParams { state: CostState; costUsd?: number; generationIds?: readonly string[] }
+// ids are persisted while the cost is unknown and cleared once it resolves.
+export interface CostSweepQuery { now: number; stalePendingAfterMs: number; limit: number }
+export interface CostSweepCandidate { requestId: string; deviceId: string; generationIds: readonly string[] }
 export interface SummaryParams { days: number; top?: number; now: number; }
 export interface UsageSummary {
   days: { utcDay: string; countByKind: Partial<Record<RequestKind, number>>; costUsdByKind: Partial<Record<RequestKind, number>> }[];
@@ -37,10 +42,15 @@ export interface UsageSummary {
 }
 ```
 
-`requests` table (design D7 verbatim): `id, device_id, kind, utc_day, started_at, ended_at,
-outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, refunded`, indexed on
-`(utc_day, kind, device_id)`. WAL + `busy_timeout=5000` set at construction. No prompt/source/
-bundle/manifest/schema column exists — closed column set is a locked test (`ledger.suite.ts`).
+`requests` table (design D7 plus `generation_ids`): `id, device_id, kind, utc_day, started_at,
+ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids,
+refunded`, indexed on `(utc_day, kind, device_id)`. WAL + `busy_timeout=5000` at construction; the
+constructor ALTERs a pre-`generation_ids` file in place, idempotently. No prompt/source/bundle/
+manifest/schema column exists — closed column set is a locked test (`ledger.suite.ts`).
+`listUnresolvedCostRows` returns rows that still carry ids: `'unresolved'` ones, plus `'pending'`
+ones whose `ended_at` is older than `stalePendingAfterMs` (a resolver that died mid-flight —
+staleness is measured from `ended_at`, never `started_at`, so a long run is never raced). Oldest
+`started_at` first, at most `limit`.
 
 ## `server/src/usage/resolve.ts` — the post-request resolver
 
@@ -65,6 +75,19 @@ export function resolveRequestUsage(
 // sumGenerationStats also returns resolvedAll (every id resolved, not just foundAny). recordCost
 // is 'resolved' only when resolvedAll; else 'unresolved' and the partial cost is discarded — but
 // when creditOwned is false the partial tokens from the ids that DID resolve are still credited.
+// Before the attempts it registers the ids on the still-'pending' row, so a crash mid-resolution
+// leaves a row the sweep can finish. Per-request id fan-out is capped:
+export const MAX_CONCURRENT_ID_RESOLUTIONS = 4;
+
+/** One bounded re-resolution pass over rows whose cost is still unknown. Never throws; logs counts
+ *  at info. Cost only — it never credits tokens (the first pass already did). lifecycle.ts runs it
+ *  ~30 s after boot then every 5 min, non-overlapping, and never while draining. */
+export function runCostResolutionSweep(deps: CostSweepDeps): Promise<CostSweepOutcome>;
+export interface CostSweepDeps {
+  usageStore: UsageStore; transport: UsageAndCostTransport; now: () => number;
+  bounds?: Partial<ResolveBounds>; isDraining?: () => boolean; limit?: number; stalePendingAfterMs?: number;
+}  // defaults: DEFAULT_SWEEP_LIMIT = 50, DEFAULT_STALE_PENDING_MS = 120_000
+export interface CostSweepOutcome { skipped: boolean; examined: number; resolved: number; unresolved: number }
 
 export class ResolveTracker {
   track<T>(promise: Promise<T>): Promise<T>;   // register a detached resolveRequestUsage(...) call

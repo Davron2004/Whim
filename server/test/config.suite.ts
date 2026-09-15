@@ -32,6 +32,7 @@ export function runConfigTests(): void {
   check('defaults: rewrite per device day', defaults.limitRewritePerDeviceDay === 60);
   check('defaults: unary (clarify + rewrite) global per day', defaults.limitUnaryPerDay === 2000);
   check('defaults: max concurrent unary', defaults.maxConcurrentUnary === 16);
+  check('defaults: max concurrent healthz probes', defaults.maxConcurrentProbes === 2);
   check('defaults: reports per device day', defaults.limitReportsPerDeviceDay === 10);
   check('defaults: reports per day', defaults.limitReportsPerDay === 300);
   check('defaults: max body bytes unary', defaults.maxBodyBytesUnary === 65_536);
@@ -69,6 +70,17 @@ export function runConfigTests(): void {
     throwsNaming(
       () => loadServerConfig(baseEnv({ WHIM_LIMIT_UNARY_PER_DAY: 'plenty' })),
       'WHIM_LIMIT_UNARY_PER_DAY',
+    ),
+  );
+  check(
+    'WHIM_LIMIT_PROBE_CONCURRENCY is read from the environment like every sibling cap',
+    loadServerConfig(baseEnv({ WHIM_LIMIT_PROBE_CONCURRENCY: '5' })).maxConcurrentProbes === 5,
+  );
+  check(
+    'a non-integer probe concurrency fails startup naming the variable',
+    throwsNaming(
+      () => loadServerConfig(baseEnv({ WHIM_LIMIT_PROBE_CONCURRENCY: 'two' })),
+      'WHIM_LIMIT_PROBE_CONCURRENCY',
     ),
   );
   check(

@@ -5,7 +5,8 @@
  * Extended by chain-2 (design D7, specs/server-admission-control "The usage store keeps a
  * content-free request ledger with resolved cost") with the `requests` ledger table: one row per
  * admitted request, holding NO prompt/source/app content — only ids, a kind, a UTC day, timing,
- * an outcome, token counts and a resolved (or explicitly unresolved) USD cost. `admit` is the
+ * an outcome, token counts, a resolved (or explicitly unresolved) USD cost, and the provider
+ * generation ids that cost is summed from, kept until it resolves so a sweep can retry. `admit` is the
  * ONLY place a daily unit is consumed, and it counts + inserts in one immediate transaction so two
  * concurrent admits for the last unit can never both succeed. `credit`/`read` and the pre-existing
  * `usage` table are unchanged.
@@ -40,9 +41,20 @@ export interface UsageStore {
    *  injected clock pass it, so a test's ledger timing is its own. It falls back to `Date.now()`
    *  only for a caller with no clock to offer. */
   settle(requestId: string, params: SettleParams): Promise<void>;
-  /** Records the resolver's cost verdict for a request. Idempotent: a request whose cost state has
-   *  already left `'pending'` is left untouched by a later call. */
-  recordCost(requestId: string, params: { state: CostState; costUsd?: number }): Promise<void>;
+  /** Records the resolver's cost verdict for a request, and (when `params.generationIds` is given)
+   *  the provider generation ids a later sweep needs to re-resolve it. A `'resolved'` cost is
+   *  final: it is never overwritten. An `'unresolved'` one is NOT — it may be upgraded to
+   *  `'resolved'` by a later call, because the provider's stats endpoint often answers minutes
+   *  after the bounded in-request attempts gave up, and a terminal `'unresolved'` would throw that
+   *  cost away for good (it also biases the operator's per-generation stats low). Downgrades never
+   *  happen: `'resolved'` → anything and `'unresolved'` → `'unresolved'` leave the state alone. */
+  recordCost(requestId: string, params: RecordCostParams): Promise<void>;
+  /** The cost-resolution sweep's candidates (`usage/resolve.ts`): rows that still carry provider
+   *  generation ids to re-resolve — `'unresolved'` ones, plus `'pending'` ones whose request ended
+   *  more than `stalePendingAfterMs` ago (the resolver registered its ids and then died before
+   *  recording a verdict). Oldest-started first, at most `limit` rows. A row with no ids can never
+   *  be re-resolved and is never returned. */
+  listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]>;
   /** Reads back an operator-facing summary over the trailing `params.days` UTC days ending on
    *  `params.now`'s day (inclusive). */
   summary(params: SummaryParams): Promise<UsageSummary>;
@@ -90,6 +102,30 @@ export interface SettleParams {
   now?: number;
 }
 
+export interface RecordCostParams {
+  state: CostState;
+  costUsd?: number;
+  /** The provider generation ids this request's cost is summed from. Persisted so a later sweep
+   *  can re-resolve the row; cleared when the cost resolves, since nothing reads them again. */
+  generationIds?: readonly string[];
+}
+
+export interface CostSweepQuery {
+  /** Injected clock reading (ms since epoch) — the `'pending'` staleness cut-off is measured from it. */
+  now: number;
+  /** How long after a request ENDED a still-`'pending'` row counts as stale. Measured from
+   *  `ended_at`, never from `started_at`: a generation legitimately runs for minutes, and a row
+   *  whose request is still in flight has a resolver on the way. */
+  stalePendingAfterMs: number;
+  limit: number;
+}
+
+export interface CostSweepCandidate {
+  requestId: string;
+  deviceId: string;
+  generationIds: readonly string[];
+}
+
 export type AdmitResult =
   | { ok: true; requestId: string }
   | { ok: false; reason: 'device' | 'global'; retryAfterSec: number };
@@ -126,6 +162,22 @@ export interface UsageSummary {
   days: UsageSummaryDay[];
   topDevicesByCost: UsageSummaryDevice[];
   generationStats: UsageSummaryGenerationStats;
+}
+
+/** Reads back the JSON array `recordCost` persisted. A value that is not an array of strings (a
+ *  hand-edited row, a future format) yields no ids rather than throwing: the sweep then simply has
+ *  nothing to re-resolve for that row, which is the safe direction. */
+function parseGenerationIds(raw: string | null): readonly string[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable persisted value means "no ids to re-resolve", never a store-level failure
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((id): id is string => typeof id === 'string');
 }
 
 /** Returns the request's UTC calendar day as `'YYYY-MM-DD'`. */
@@ -216,6 +268,22 @@ function computeSummary(
   return { days, topDevicesByCost, generationStats };
 }
 
+/** Whether a `recordCost` write in state `next` may land on a row currently in `current` — the ONE
+ *  definition of the cost state machine, shared by both stores so they cannot drift (the SQLite
+ *  implementation mirrors it in a single `WHERE` clause). `'pending'` accepts anything (including
+ *  another `'pending'` write, which is how the resolver registers its generation ids before it has
+ *  a verdict); `'unresolved'` accepts only the upgrade to `'resolved'`; `'resolved'` is final. */
+function costWriteLands(current: CostState, next: CostState): boolean {
+  if (current === 'pending') return true;
+  return current === 'unresolved' && next === 'resolved';
+}
+
+/** `globalKinds` defaults to the admitted kind — and an EMPTY array means the same thing, never
+ *  "count across nothing" (which SQLite would render as `kind IN ()`, a syntax error). */
+function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKind[] | undefined): readonly RequestKind[] {
+  return globalKinds && globalKinds.length > 0 ? globalKinds : [kind];
+}
+
 interface LedgerRow {
   id: string;
   deviceId: string;
@@ -228,6 +296,7 @@ interface LedgerRow {
   completionTokens: number;
   costUsd: number | null;
   costState: CostState;
+  generationIds: readonly string[] | null;
   refunded: boolean;
 }
 
@@ -261,7 +330,7 @@ export class InMemoryUsageStore implements UsageStore {
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
     const { deviceId, kind, now, deviceLimit, globalLimit } = params;
-    const globalKinds = params.globalKinds ?? [kind];
+    const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     let deviceCount = 0;
     let globalCount = 0;
@@ -289,6 +358,7 @@ export class InMemoryUsageStore implements UsageStore {
       completionTokens: 0,
       costUsd: null,
       costState: 'pending',
+      generationIds: null,
       refunded: false,
     });
     return { ok: true, requestId };
@@ -308,11 +378,25 @@ export class InMemoryUsageStore implements UsageStore {
     row.completionTokens = params.usage?.completionTokens ?? 0;
   }
 
-  async recordCost(requestId: string, params: { state: CostState; costUsd?: number }): Promise<void> {
+  async recordCost(requestId: string, params: RecordCostParams): Promise<void> {
     const row = this.ledger.get(requestId);
-    if (!row || row.costState !== 'pending') return;
+    if (!row || !costWriteLands(row.costState, params.state)) return;
     row.costState = params.state;
     row.costUsd = params.costUsd ?? null;
+    row.generationIds = params.state === 'resolved' ? null : (params.generationIds ?? row.generationIds);
+  }
+
+  async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    const staleBefore = query.now - query.stalePendingAfterMs;
+    return [...this.ledger.values()]
+      .filter((row) => {
+        if (!row.generationIds || row.generationIds.length === 0) return false;
+        if (row.costState === 'unresolved') return true;
+        return row.costState === 'pending' && row.endedAt !== null && row.endedAt <= staleBefore;
+      })
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .slice(0, query.limit)
+      .map((row) => ({ requestId: row.id, deviceId: row.deviceId, generationIds: row.generationIds ?? [] }));
   }
 
   async summary(params: SummaryParams): Promise<UsageSummary> {
@@ -368,9 +452,17 @@ export class NodeSqliteUsageStore implements UsageStore {
         completion_tokens INTEGER NOT NULL DEFAULT 0,
         cost_usd REAL,
         cost_state TEXT NOT NULL CHECK(cost_state IN ('pending','resolved','unresolved')),
+        generation_ids TEXT,
         refunded INTEGER NOT NULL DEFAULT 0
       )
     `);
+    // Additive migration for a database written before `generation_ids` existed. `ALTER TABLE ADD
+    // COLUMN` has no `IF NOT EXISTS` in SQLite, so the column list decides — re-opening an
+    // already-migrated file adds nothing and re-opening a fresh one finds it in the CREATE above.
+    const columns = (this.db.prepare('PRAGMA table_info(requests)').all() as { name: string }[]).map((c) => c.name);
+    if (!columns.includes('generation_ids')) {
+      this.db.exec('ALTER TABLE requests ADD COLUMN generation_ids TEXT');
+    }
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_requests_day_kind_device
       ON requests (utc_day, kind, device_id)
@@ -405,7 +497,7 @@ export class NodeSqliteUsageStore implements UsageStore {
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
     const { deviceId, kind, now, deviceLimit, globalLimit } = params;
-    const globalKinds = params.globalKinds ?? [kind];
+    const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -429,8 +521,8 @@ export class NodeSqliteUsageStore implements UsageStore {
       const requestId = randomUUID();
       this.db.prepare(`
         INSERT INTO requests
-          (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, refunded)
-        VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, 'pending', 0)
+          (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids, refunded)
+        VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, 0, NULL, 'pending', NULL, 0)
       `).run(requestId, deviceId, kind, utcDay, now);
       this.db.exec('COMMIT');
       return { ok: true, requestId };
@@ -458,11 +550,35 @@ export class NodeSqliteUsageStore implements UsageStore {
     );
   }
 
-  async recordCost(requestId: string, params: { state: CostState; costUsd?: number }): Promise<void> {
+  async recordCost(requestId: string, params: RecordCostParams): Promise<void> {
+    // The `WHERE` is `costWriteLands` in SQL: writable while pending, and one upgrade out of
+    // 'unresolved' into 'resolved'. Narrow it back to `cost_state = 'pending'` and every row the
+    // in-request attempts gave up on becomes terminal, which is the bug this widening fixes.
+    const ids = params.generationIds && params.generationIds.length > 0 ? JSON.stringify(params.generationIds) : null;
     this.db.prepare(`
-      UPDATE requests SET cost_state = ?, cost_usd = ?
-      WHERE id = ? AND cost_state = 'pending'
-    `).run(params.state, params.costUsd ?? null, requestId);
+      UPDATE requests
+      SET cost_state = ?,
+          cost_usd = ?,
+          generation_ids = CASE WHEN ? = 'resolved' THEN NULL ELSE COALESCE(?, generation_ids) END
+      WHERE id = ? AND (cost_state = 'pending' OR (cost_state = 'unresolved' AND ? = 'resolved'))
+    `).run(params.state, params.costUsd ?? null, params.state, ids, requestId, params.state);
+  }
+
+  async listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
+    const rows = this.db.prepare(`
+      SELECT id, device_id, generation_ids FROM requests
+      WHERE generation_ids IS NOT NULL
+        AND (cost_state = 'unresolved' OR (cost_state = 'pending' AND ended_at IS NOT NULL AND ended_at <= ?))
+      ORDER BY started_at ASC
+      LIMIT ?
+    `).all(query.now - query.stalePendingAfterMs, query.limit) as {
+      id: string;
+      device_id: string;
+      generation_ids: string;
+    }[];
+    return rows
+      .map((row) => ({ requestId: row.id, deviceId: row.device_id, generationIds: parseGenerationIds(row.generation_ids) }))
+      .filter((candidate) => candidate.generationIds.length > 0);
   }
 
   async summary(params: SummaryParams): Promise<UsageSummary> {

@@ -14,7 +14,7 @@ import { ApiError, DeviceIdError, ServiceRefusalCode } from '@whim/contract';
 import { check, eq, section } from './harness';
 import {
   createSlotController,
-  MAX_CONCURRENT_PROBES,
+  DEFAULT_MAX_CONCURRENT_PROBES,
   type SlotController,
   type SlotKind,
   type SlotRefusalReason,
@@ -145,12 +145,22 @@ function runGlobalCaps(): void {
   // The /healthz/sse probe has its OWN pool (specs/server-deployment "An anonymous stream probe
   // verifies proxy flushing"): anonymous probe traffic must not be able to wedge the paid unary
   // pool, and a full probe pool must not refuse a clarify call.
-  eq('the probe cap is a small fixed number, not the unary cap', MAX_CONCURRENT_PROBES, 2);
+  eq('the probe cap defaults to a small fixed number, not the unary cap', DEFAULT_MAX_CONCURRENT_PROBES, 2);
+
+  // The cap is configuration (`WHIM_LIMIT_PROBE_CONCURRENCY`), like every sibling cap — a
+  // controller built with a different one honours it, and still keeps the pool separate.
+  const wideProbes = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1, maxConcurrentProbes: 4 });
+  const fourProbes = Array.from({ length: 4 }, () => acquireOk(wideProbes, 'probe', 'healthz-probe'));
+  check('a configured probe cap of 4 admits four probes', fourProbes.every((h) => h !== undefined));
+  eq('the fifth is refused at the configured cap', refusalOf(wideProbes, 'probe', 'healthz-probe'), 'at_capacity');
+  eq('a configured probe cap still consumes no unary slots', wideProbes.counts().unary, 0);
+  fourProbes.forEach((h) => h?.release());
+
   const probed = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
-  const probeHandles = Array.from({ length: MAX_CONCURRENT_PROBES }, () => acquireOk(probed, 'probe', 'healthz-probe'));
+  const probeHandles = Array.from({ length: DEFAULT_MAX_CONCURRENT_PROBES }, () => acquireOk(probed, 'probe', 'healthz-probe'));
   check('the probe pool admits up to its own cap', probeHandles.every((h) => h !== undefined));
   eq('probes do not consume unary slots', probed.counts().unary, 0);
-  eq('the probe pool is counted separately', probed.counts().probes, MAX_CONCURRENT_PROBES);
+  eq('the probe pool is counted separately', probed.counts().probes, DEFAULT_MAX_CONCURRENT_PROBES);
   eq('one probe past the cap is refused at_capacity', refusalOf(probed, 'probe', 'healthz-probe'), 'at_capacity');
   eq('a full probe pool still admits a unary call', refusalOf(probed, 'unary', 'device-p'), 'admitted');
   const heldUnaryProbe = acquireOk(probed, 'unary', 'device-q');
@@ -167,6 +177,17 @@ function runGlobalCaps(): void {
     invalidCaps.every((cap) => {
       try {
         createSlotController({ maxConcurrentGenerations: cap, maxConcurrentUnary: 2 });
+        return false;
+      } catch (err) {
+        return err instanceof RangeError;
+      }
+    }),
+  );
+  check(
+    'a non-positive-integer probe cap is refused too',
+    invalidCaps.every((cap) => {
+      try {
+        createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 2, maxConcurrentProbes: cap });
         return false;
       } catch (err) {
         return err instanceof RangeError;

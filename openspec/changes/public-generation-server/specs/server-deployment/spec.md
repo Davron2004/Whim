@@ -53,13 +53,17 @@ When the real pipeline is configured, the server SHALL do three things before li
 - **THEN** the self-test passes and the server begins listening
 
 ### Requirement: SIGTERM drains in-flight work before exit
-On the first `SIGTERM` or `SIGINT` the server SHALL do the following in order. It SHALL stop accepting new connections and refuse every new admission with `429 server_busy`. It SHALL let running generation streams and unary requests finish until `WHIM_DRAIN_TIMEOUT_MS` (default: `WHIM_GENERATION_MAX_MS` plus 30 seconds) elapses. It SHALL then abort whatever remains with the same semantics as a client disconnect. It SHALL give pending usage and cost resolution a bounded final window. Finally it SHALL close the browser and the stores and exit with status 0.
+On the first `SIGTERM` or `SIGINT` the server SHALL do the following in order. It SHALL stop accepting new connections and refuse every new admission with `429 server_busy`. It SHALL let running generation streams, unary requests and in-flight stream probes finish until `WHIM_DRAIN_TIMEOUT_MS` (default: `WHIM_GENERATION_MAX_MS` plus 30 seconds) elapses. It SHALL then abort whatever remains with the same semantics as a client disconnect. It SHALL give pending usage and cost resolution a bounded final window. Finally it SHALL close the browser and the stores and exit with status 0.
 
 A second signal during the drain SHALL skip the wait and go straight to the abort step. The drain SHALL NOT truncate a stream that finishes within the deadline.
 
 #### Scenario: A stream finishes during the drain
 - **WHEN** a generation is streaming, the server receives `SIGTERM`, and the generation completes before the drain deadline
 - **THEN** the client receives the full stream including its single terminal event, and the process then exits 0
+
+#### Scenario: An in-flight stream probe is drained too
+- **WHEN** a `/healthz/sse` probe is streaming and the server receives `SIGTERM`
+- **THEN** the drain waits for it, the completed drain reports no probe still holding a slot, the probe's connection ends, and the process exits 0
 
 #### Scenario: New work is refused while draining
 - **WHEN** a request arrives on an existing connection after `SIGTERM`
@@ -191,7 +195,7 @@ A fast-gate tripwire SHALL fail when the rendered policy lacks, verbatim, the va
 ### Requirement: An anonymous stream probe verifies proxy flushing
 The server SHALL expose `GET /healthz/sse`, outside `/v1` and without a device header. It SHALL emit exactly three SSE comment frames one second apart and then close, with no model call, no browser use, and no stored state.
 
-Concurrent probes SHALL be bounded by their own small dedicated cap, never by the global unary cap the paid clarify and rewrite routes share, and SHALL be refused with `429 server_busy` beyond it. The probe is unauthenticated and holds its slot for seconds, so counting it against the unary pool would let anonymous traffic starve every paying device.
+Concurrent probes SHALL be bounded by their own small dedicated cap — `WHIM_LIMIT_PROBE_CONCURRENCY`, default 2, read at startup like every other limit — never by the global unary cap the paid clarify and rewrite routes share, and SHALL be refused with `429 server_busy` beyond it. The probe is unauthenticated and holds its slot for seconds, so counting it against the unary pool would let anonymous traffic starve every paying device.
 
 #### Scenario: The probe streams three spaced frames
 - **WHEN** a client reads `/healthz/sse` directly from the server

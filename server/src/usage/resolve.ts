@@ -16,11 +16,13 @@
  * (or, on budget exhaustion, recorded as `'unresolved'` — spec "Unresolvable cost is explicit":
  * "no cost is invented, and no client-visible error occurs"). A request whose ids only PARTLY
  * resolve is `'unresolved'` too: its cost is real but incomplete, and recording an incomplete sum
- * as resolved understates what a generation costs. Introduces no persistence beyond the existing
- * `UsageStore`.
+ * as resolved understates what a generation costs. An `'unresolved'` verdict is not the end of the
+ * story: the row keeps the generation ids it was summed from, and `runCostResolutionSweep` below
+ * re-runs the same resolution on a timer until the provider does answer.
  */
 import type { Usage } from '@whim/contract';
 import type { UsageStore } from '../usage-store';
+import { log } from '../logger';
 
 /** One provider generation id's authoritative stats. `usage` feeds token reconciliation;
  *  `totalCostUsd` feeds the ledger row's resolved cost. */
@@ -57,6 +59,15 @@ export const DEFAULT_RESOLVE_BOUNDS: Readonly<ResolveBounds> = Object.freeze({
   retryDelayMs: 500,
   perAttemptTimeoutMs: 2000,
 });
+
+/**
+ * How many of one request's generation ids are resolved at the same time. The ids share one
+ * deadline, so they must overlap (see `sumGenerationStats`) — but a pipeline run can record a
+ * dozen model calls, and one unbounded burst per finishing request means the provider's stats
+ * endpoint sees requests × ids sockets at once, which is exactly how a rate limit turns every id
+ * into an unresolved one. Four keeps a typical run's ids overlapping while bounding the burst.
+ */
+export const MAX_CONCURRENT_ID_RESOLUTIONS = 4;
 
 export interface ResolveDeps {
   transport: UsageAndCostTransport;
@@ -132,7 +143,10 @@ async function resolveOneId(
  *
  * The ids are resolved CONCURRENTLY, because the deadline is shared: resolved one after another, a
  * single slow id spends the whole budget and every id behind it is never even attempted, so what
- * the sum contains depends on provider-response order rather than on what was resolvable.
+ * the sum contains depends on provider-response order rather than on what was resolvable. The
+ * concurrency is capped at `MAX_CONCURRENT_ID_RESOLUTIONS` — with the shared deadline this still
+ * gives every id an attempt, while a request with many model calls can no longer open one socket
+ * per id at once.
  *
  * Two flags, deliberately distinct:
  *  - `foundAny` — at least one id resolved. A best-effort partial sum, authoritative only for the
@@ -147,17 +161,28 @@ export async function sumGenerationStats(
   bounds: ResolveBounds,
   transport: UsageAndCostTransport,
 ): Promise<{ totalUsage: Usage; totalCostUsd: number; foundAny: boolean; resolvedAll: boolean }> {
-  // `resolveOneId` never rejects (it treats a transport failure as unresolved) and stops itself at
-  // the shared deadline, so `allSettled` is belt-and-braces: one unexpected rejection cannot
-  // discard every other id's result.
-  const settled = await Promise.allSettled(generationIds.map((id) => resolveOneId(id, deadline, bounds, transport)));
+  // A fixed pool of workers pulling from one cursor — the smallest semaphore there is, and no new
+  // dependency. `resolveOneId` never rejects (it treats a transport failure as unresolved) and
+  // stops itself at the shared deadline, so the per-id `catch` is belt-and-braces: one unexpected
+  // rejection cannot discard every other id's result, and cannot wedge a worker.
+  const resolved = new Array<GenerationStats | null>(generationIds.length).fill(null);
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= generationIds.length) return;
+      resolved[index] = await resolveOneId(generationIds[index], deadline, bounds, transport).catch(() => null);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENT_ID_RESOLUTIONS, generationIds.length) }, () => worker()),
+  );
 
   let totalUsage = ZERO_USAGE;
   let totalCostUsd = 0;
   let foundAny = false;
   let resolvedAll = true;
-  for (const outcome of settled) {
-    const stats = outcome.status === 'fulfilled' ? outcome.value : null;
+  for (const stats of resolved) {
     if (!stats) {
       resolvedAll = false;
       continue;
@@ -193,6 +218,10 @@ export async function resolveRequestUsage(
       return;
     }
     const bounds = { ...DEFAULT_RESOLVE_BOUNDS, ...deps.bounds };
+    // Register the ids BEFORE the attempts, while the row is still `pending`: it is what lets the
+    // sweep below pick the row up if this process dies mid-resolution (a drain that outran its
+    // final window, a crash), and it costs one write on a row nothing else touches.
+    if (requestId) await deps.usageStore.recordCost(requestId, { state: 'pending', generationIds });
     const deadline = Date.now() + bounds.totalBudgetMs;
     const { totalUsage, totalCostUsd, foundAny, resolvedAll } = await sumGenerationStats(
       generationIds,
@@ -210,7 +239,7 @@ export async function resolveRequestUsage(
     if (requestId) {
       await deps.usageStore.recordCost(
         requestId,
-        resolvedAll ? { state: 'resolved', costUsd: totalCostUsd } : { state: 'unresolved' },
+        resolvedAll ? { state: 'resolved', costUsd: totalCostUsd } : { state: 'unresolved', generationIds },
       );
     }
     if (foundAny && !creditOwned) await deps.usageStore.credit(deviceId, totalUsage);
@@ -218,6 +247,103 @@ export async function resolveRequestUsage(
   } catch {
     // best-effort — resolution must never fail anything user-visible
   }
+}
+
+/** At most this many ledger rows per sweep pass — a bound on both the provider traffic one pass
+ *  can generate and how long a pass can hold the process busy. */
+export const DEFAULT_SWEEP_LIMIT = 50;
+/** How long after a request ENDED a still-`'pending'` cost row is treated as abandoned by its
+ *  resolver (a crash, or a drain that outran its final window) rather than as one in progress. */
+export const DEFAULT_STALE_PENDING_MS = 120_000;
+
+const sweepLog = log.child({ scope: 'cost-sweep' });
+
+export interface CostSweepDeps {
+  usageStore: UsageStore;
+  transport: UsageAndCostTransport;
+  /** Injected clock; the `'pending'` staleness cut-off is measured from it. */
+  now: () => number;
+  bounds?: Partial<ResolveBounds>;
+  /** True while the process is draining. The sweep is discretionary background work: a drain has a
+   *  bounded window for the resolutions already in flight, and starting new ones inside it would
+   *  compete with exactly that. */
+  isDraining?: () => boolean;
+  limit?: number;
+  stalePendingAfterMs?: number;
+}
+
+export interface CostSweepOutcome {
+  /** The pass took no work because the process is draining. */
+  skipped: boolean;
+  examined: number;
+  /** Rows whose cost resolved on this pass (`'unresolved'`/`'pending'` upgraded to `'resolved'`). */
+  resolved: number;
+  /** Rows still unresolved after this pass — retried again at the next one. */
+  unresolved: number;
+}
+
+/**
+ * One bounded re-resolution pass over the ledger's unfinished cost rows.
+ *
+ * The in-request resolver gives up after a few seconds, but OpenRouter's stats endpoint routinely
+ * answers minutes later, and before this the row was terminal: the cost was lost for good and the
+ * operator's per-generation numbers read low. Each pass takes the oldest rows that still carry
+ * provider generation ids and re-runs the SAME shared-deadline resolution; a row that resolves is
+ * upgraded, a row that does not stays `'unresolved'` and is simply retried by the next pass — so
+ * retry pressure on the provider is the sweep's cadence, never a tight loop.
+ *
+ * It resolves COST only and never credits tokens: the first pass already credited the tokens of
+ * every id that resolved for it, and a device's token meter has no way to tell a re-credit from
+ * new spend, so crediting here would inflate it on every pass forever. Cost has no such hazard —
+ * it is written, not accumulated.
+ *
+ * Rows are handled one at a time (each one's own ids still overlap, capped as everywhere else), so
+ * a pass's provider traffic is bounded by `MAX_CONCURRENT_ID_RESOLUTIONS`, not by `limit`.
+ * Never throws: it is background work, called from a timer with no one to report to but the log.
+ */
+export async function runCostResolutionSweep(deps: CostSweepDeps): Promise<CostSweepOutcome> {
+  const outcome: CostSweepOutcome = { skipped: false, examined: 0, resolved: 0, unresolved: 0 };
+  if (deps.isDraining?.()) return { ...outcome, skipped: true };
+
+  const bounds = { ...DEFAULT_RESOLVE_BOUNDS, ...deps.bounds };
+  try {
+    const candidates = await deps.usageStore.listUnresolvedCostRows({
+      now: deps.now(),
+      stalePendingAfterMs: deps.stalePendingAfterMs ?? DEFAULT_STALE_PENDING_MS,
+      limit: deps.limit ?? DEFAULT_SWEEP_LIMIT,
+    });
+    for (const candidate of candidates) {
+      // A drain that begins mid-pass stops the pass where it is; the rows it did not reach are
+      // still `'unresolved'`, so the next process's first sweep finds them unchanged.
+      if (deps.isDraining?.()) break;
+      outcome.examined++;
+      const { totalCostUsd, resolvedAll } = await sumGenerationStats(
+        candidate.generationIds,
+        Date.now() + bounds.totalBudgetMs,
+        bounds,
+        deps.transport,
+      );
+      if (resolvedAll) {
+        await deps.usageStore.recordCost(candidate.requestId, { state: 'resolved', costUsd: totalCostUsd });
+        outcome.resolved++;
+      } else {
+        await deps.usageStore.recordCost(candidate.requestId, {
+          state: 'unresolved',
+          generationIds: candidate.generationIds,
+        });
+        outcome.unresolved++;
+      }
+    }
+    if (outcome.examined > 0) {
+      sweepLog.info(
+        { examined: outcome.examined, resolved: outcome.resolved, unresolved: outcome.unresolved },
+        'cost resolution sweep',
+      );
+    }
+  } catch (err) {
+    sweepLog.warn({ detail: err instanceof Error ? err.message : String(err), ...outcome }, 'cost resolution sweep failed');
+  }
+  return outcome;
 }
 
 /**

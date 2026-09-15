@@ -40,6 +40,10 @@ The generation slot SHALL be held from admission until the stream ends, and rele
 - **WHEN** a device's generation is refused by the content policy
 - **THEN** the device's next generation request is not refused as `device_busy`
 
+#### Scenario: A failing store during admission leaves nothing held
+- **WHEN** the usage store throws after the admission took a slot and inserted its ledger row
+- **THEN** the slot is released, the row is settled with an error outcome, and the client receives `500` with an `ApiError` body that does not carry the internal error message
+
 ### Requirement: Global concurrency caps protect the server
 The server SHALL refuse admission with HTTP `429` and `error: 'server_busy'` when the number of running generations has reached the configured global generation cap, or the number of in-flight clarify/rewrite requests has reached the configured global unary cap.
 
@@ -174,6 +178,7 @@ Every admission limit SHALL be read once at startup from the environment through
 | `WHIM_LIMIT_REWRITE_PER_DEVICE_DAY` | 60 |
 | `WHIM_LIMIT_UNARY_PER_DAY` | 2000 |
 | `WHIM_MAX_CONCURRENT_UNARY` | 16 |
+| `WHIM_LIMIT_PROBE_CONCURRENCY` | 2 |
 | `WHIM_LIMIT_REPORTS_PER_DEVICE_DAY` | 10 |
 | `WHIM_LIMIT_REPORTS_PER_DAY` | 300 |
 | `WHIM_MAX_BODY_BYTES_UNARY` | 65536 |
@@ -208,9 +213,11 @@ A timed-out call SHALL release its global unary slot, and its provider generatio
 ### Requirement: The usage store keeps a content-free request ledger with resolved cost
 The usage store SHALL record one ledger row per admitted request, holding only: a server-generated request id, the device id, the request kind, the UTC day, start and end timestamps, the outcome, prompt and completion token counts, the resolved cost in USD (or an explicit unresolved state), and a refunded flag.
 
-The ledger SHALL live in the same durable store as the per-device token counter. It SHALL be the only source daily limits are enforced from. It SHALL NOT hold prompt text, clarification text, source, bundles, manifests, schemas, or any other request or response content.
+The ledger SHALL live in the same durable store as the per-device token counter. It SHALL be the only source daily limits are enforced from. An admission that fails after its row was inserted SHALL settle that row with an error outcome rather than leaving it open, so a failure cannot hold a daily unit against a request nothing will ever close. It SHALL NOT hold prompt text, clarification text, source, bundles, manifests, schemas, or any other request or response content.
 
-Cost SHALL be resolved after the request ends, from the provider's generation-stats data for every provider generation id the request recorded. This includes the policy classification call, model calls of a cancelled or timed-out request, and every model call of a generation run. Resolution SHALL use a bounded number of attempts, a per-attempt timeout, and a total time budget. It SHALL mark the row unresolved on exhaustion rather than guessing. It SHALL never block or delay the response. Ledger rows older than `WHIM_LEDGER_RETENTION_DAYS` (default 90) SHALL be purged. The cumulative per-device token counter SHALL keep its existing semantics and its `/v1/usage` readback.
+Cost SHALL be resolved after the request ends, from the provider's generation-stats data for every provider generation id the request recorded. This includes the policy classification call, model calls of a cancelled or timed-out request, and every model call of a generation run. Resolution SHALL use a bounded number of attempts, a per-attempt timeout, and a total time budget. It SHALL mark the row unresolved on exhaustion rather than guessing. It SHALL never block or delay the response.
+
+An unresolved row SHALL NOT be terminal: the server SHALL re-run resolution for rows whose cost is still unknown on a bounded background sweep — shortly after boot and periodically thereafter — taking the oldest rows first, at most a fixed number per pass, never overlapping itself, and never while the server is draining. A row whose cost resolves on a sweep SHALL be upgraded from unresolved to resolved; a row that still does not resolve SHALL stay unresolved and be retried no more often than the sweep's period. The sweep SHALL resolve cost only and SHALL NOT credit tokens, which the in-request resolution already accounted for. Ledger rows older than `WHIM_LEDGER_RETENTION_DAYS` (default 90) SHALL be purged. The cumulative per-device token counter SHALL keep its existing semantics and its `/v1/usage` readback.
 
 #### Scenario: A generation's cost is recorded
 - **WHEN** a generation completes whose run made three model calls, and the injected stats transport returns `total_cost` 0.012, 0.030 and 0.004 for their ids
@@ -223,6 +230,14 @@ Cost SHALL be resolved after the request ends, from the provider's generation-st
 #### Scenario: Unresolvable cost is explicit
 - **WHEN** the stats transport never returns a record within the resolution budget
 - **THEN** the row is marked unresolved, no cost is invented, and no client-visible error occurs
+
+#### Scenario: A late provider answer still reaches the ledger
+- **WHEN** a row was marked unresolved and the stats transport later returns a record for its generation ids
+- **THEN** the next sweep upgrades that row to resolved with the provider's cost, and a row whose ids still do not resolve stays unresolved
+
+#### Scenario: The sweep stands down during a drain
+- **WHEN** a sweep pass would run while the server is draining
+- **THEN** it takes no work: no ledger row is read and no provider call is made
 
 #### Scenario: The ledger holds no content
 - **WHEN** the usage database is inspected after clarify, rewrite, generate and report requests carrying distinctive marker text

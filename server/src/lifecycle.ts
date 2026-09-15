@@ -35,7 +35,7 @@ import { loadContentPolicyDocument } from './generation/prompts/inputs';
 import { createSlotController, type SlotController } from './admission/slots';
 import { createOpenRouterCreditTransport, type CreditTransport } from './admission/credit';
 import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from './policy';
-import { ResolveTracker, type UsageAndCostTransport } from './usage/resolve';
+import { ResolveTracker, runCostResolutionSweep, type UsageAndCostTransport } from './usage/resolve';
 import { openRouterUsageAndCostTransport } from './usage/openrouter-stats';
 import { InFlightGenerations } from './routes/generate';
 import { probeEgressBlocked, SynthRunSession } from '../../synthrun/session';
@@ -109,6 +109,11 @@ const SESSION_CLOSE_MS = 10_000;
 const DRAIN_POLL_MS = 25;
 const PURGE_INTERVAL_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+/** The re-resolution sweep's cadence, and how long after boot the first pass runs — late enough
+ *  that it never competes with the boot self-test, soon enough that a restart picks up the rows
+ *  the previous process's drain could not finish. */
+const COST_SWEEP_INTERVAL_MS = 300_000;
+const COST_SWEEP_BOOT_DELAY_MS = 30_000;
 
 const bootLog = log.child({ scope: 'boot' });
 const drainLog = log.child({ scope: 'drain' });
@@ -163,6 +168,45 @@ function scheduleLedgerPurge(usageStore: NodeSqliteUsageStore, config: ServerCon
   const timer = setInterval(runOnce, PURGE_INTERVAL_MS);
   timer.unref();
   return { stop: () => clearInterval(timer) };
+}
+
+/**
+ * The ledger's cost re-resolution sweep (`usage/resolve.ts`): shortly after boot, then every five
+ * minutes, on unref'd timers. A pass never overlaps its predecessor — a slow pass skips a tick
+ * rather than doubling the provider traffic — and it takes no new work while draining, which is
+ * the drain's window for the resolutions already in flight.
+ */
+function scheduleCostSweep(
+  usageStore: NodeSqliteUsageStore,
+  config: ServerConfig,
+  slots: SlotController,
+  transport: UsageAndCostTransport,
+): PurgeSchedule {
+  let running = false;
+  const runOnce = (): void => {
+    if (running || slots.isDraining()) return;
+    running = true;
+    const done = (): void => {
+      running = false;
+    };
+    // `runCostResolutionSweep` never rejects (it logs its own failures), so both arms are `done`.
+    runCostResolutionSweep({
+      usageStore,
+      transport,
+      now: config.now,
+      isDraining: () => slots.isDraining(),
+    }).then(done, done);
+  };
+  const first = setTimeout(runOnce, COST_SWEEP_BOOT_DELAY_MS);
+  first.unref();
+  const timer = setInterval(runOnce, COST_SWEEP_INTERVAL_MS);
+  timer.unref();
+  return {
+    stop: () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    },
+  };
 }
 
 /** Everything boot opened, closed on a boot failure or at the end of a drain. */
@@ -352,7 +396,11 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     const slots = createSlotController({
       maxConcurrentGenerations: config.maxConcurrentGenerations,
       maxConcurrentUnary: config.maxConcurrentUnary,
+      maxConcurrentProbes: config.maxConcurrentProbes,
     });
+    const statsTransport = overrides.statsTransport ?? (apiKey ? openRouterUsageAndCostTransport(apiKey) : undefined);
+    // With no stats transport there is nothing to re-resolve against, so no sweep is scheduled.
+    if (statsTransport) opened.purges.push(scheduleCostSweep(usageStore, config, slots, statsTransport));
     const resolveTracker = new ResolveTracker();
     const inFlight = new InFlightGenerations();
     const app = createApp({
@@ -368,10 +416,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       slots,
       policy: cachedPolicy(basePolicy),
       reportStore,
-      resolver: {
-        transport: overrides.statsTransport ?? (apiKey ? openRouterUsageAndCostTransport(apiKey) : undefined),
-        tracker: resolveTracker,
-      },
+      resolver: { transport: statsTransport, tracker: resolveTracker },
       creditTransport: overrides.creditTransport ?? (apiKey ? createOpenRouterCreditTransport({ apiKey }) : undefined),
       inFlight,
     });

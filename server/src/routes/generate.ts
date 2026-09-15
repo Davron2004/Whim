@@ -207,16 +207,54 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
 
   const acquired = slots.acquire('generate', deviceId);
   if (!acquired.ok) return { ok: false, refusal: slotRefusal(acquired.reason) };
+  let admittedRequestId: string | undefined;
   try {
-    return await admitWithSlot(acquired.handle, deps);
+    return await admitWithSlot(acquired.handle, deps, (requestId) => {
+      admittedRequestId = requestId;
+    });
   } catch (err) {
+    // The ledger row goes back too, not just the slot: a row left `pending` by a throwing store
+    // keeps consuming the device's daily allowance and the global ceiling with nothing to show for
+    // it, and nothing ever settles it. The unit is deliberately NOT refunded — see
+    // `routes/clarify.ts`'s `settleFailedAdmission`, whose reasoning this mirrors.
+    if (admittedRequestId !== undefined) {
+      await settleFailedAdmission(deps.usageStore, admittedRequestId, clock, err);
+    }
     acquired.handle.release();
     throw err;
   }
 }
 
-/** The daily unit (device limit, then the global ceiling), then the content policy. */
-async function admitWithSlot(handle: SlotHandle, deps: AdmissionDeps): Promise<Admission> {
+/** Closes the ledger row of an admission that threw past the daily-unit insert (the twin of
+ *  `routes/clarify.ts`'s helper of the same name — same rule: no refund, and a `settle` that throws
+ *  in turn is logged, never raised over the original error). */
+async function settleFailedAdmission(
+  usageStore: UsageStore,
+  requestId: string,
+  clock: () => number,
+  cause: unknown,
+): Promise<void> {
+  try {
+    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+  } catch (settleErr) {
+    log.error(
+      {
+        requestId,
+        detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
+        cause: cause instanceof Error ? cause.message : String(cause),
+      },
+      'could not settle the ledger row of a failed admission',
+    );
+  }
+}
+
+/** The daily unit (device limit, then the global ceiling), then the content policy. `onAdmitted`
+ *  reports the ledger row the moment it exists, so a throw past it can still be settled. */
+async function admitWithSlot(
+  handle: SlotHandle,
+  deps: AdmissionDeps,
+  onAdmitted: (requestId: string) => void,
+): Promise<Admission> {
   const { usageStore, config, clock, deviceId, policy, request, signal } = deps;
 
   const unit = await usageStore.admit({
@@ -231,6 +269,7 @@ async function admitWithSlot(handle: SlotHandle, deps: AdmissionDeps): Promise<A
     return { ok: false, refusal: unit.reason === 'device' ? dailyLimitRefusal(clock) : serverBusyCeilingRefusal(clock) };
   }
   const { requestId } = unit;
+  onAdmitted(requestId);
 
   // Any failure to produce a verdict is `policy_unavailable` (specs/content-policy "The policy
   // check fails closed"); `cachedPolicy` has already logged it as `unavailable`.

@@ -39,6 +39,8 @@ export interface ServerConfig {
    *  request. Counted across both kinds, so the pair can never exceed this many admissions a day. */
   readonly limitUnaryPerDay: number;
   readonly maxConcurrentUnary: number;
+  /** The `/healthz/sse` probe pool — anonymous, tiny, and never the unary pool. */
+  readonly maxConcurrentProbes: number;
   readonly limitReportsPerDeviceDay: number;
   readonly limitReportsPerDay: number;
   readonly maxBodyBytesUnary: number;
@@ -134,6 +136,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     limitRewritePerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REWRITE_PER_DEVICE_DAY', 60),
     limitUnaryPerDay: readPositiveInt(env, 'WHIM_LIMIT_UNARY_PER_DAY', 2000),
     maxConcurrentUnary: readPositiveInt(env, 'WHIM_MAX_CONCURRENT_UNARY', 16),
+    maxConcurrentProbes: readPositiveInt(env, 'WHIM_LIMIT_PROBE_CONCURRENCY', 2),
     limitReportsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DEVICE_DAY', 10),
     limitReportsPerDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DAY', 300),
     maxBodyBytesUnary: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_UNARY', 65_536),
