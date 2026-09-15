@@ -283,6 +283,33 @@ async function testProductionExclusion(): Promise<void> {
 
 const PRODUCTION_DEPLOY_FILES = ['deploy/Dockerfile', 'deploy/cloudbuild.yaml', 'deploy/compose.yaml', 'deploy/deploy.sh', 'deploy/resize.sh'];
 
+/** Read only the direct `env_file` list on `services.whim-server`, without pretending to be a
+ * YAML or Compose model parser. The real merged-model proof stays an operator receipt. */
+function replayEnvFileOverride(source: string): string[] | null {
+  const lines = source.split('\n');
+  const servicesIndex = lines.findIndex((line) => line === 'services:');
+  if (servicesIndex === -1) return null;
+
+  const serviceIndex = lines.findIndex((line, index) => index > servicesIndex && line === '  whim-server:');
+  if (serviceIndex === -1) return null;
+
+  for (let index = serviceIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^ {2}\S/.test(line)) return null;
+    if (line !== '    env_file: !override') continue;
+
+    const entries: string[] = [];
+    for (let entryIndex = index + 1; entryIndex < lines.length; entryIndex += 1) {
+      const entry = lines[entryIndex];
+      const match = /^ {6}- (\S.*)$/.exec(entry);
+      if (!match) break;
+      entries.push(match[1]);
+    }
+    return entries;
+  }
+  return null;
+}
+
 function testDeployFilesExcludeLoadtest(): void {
   section('no production deploy file mentions "loadtest" (design D26)');
 
@@ -296,10 +323,15 @@ function testDeployFilesExcludeLoadtest(): void {
 
   const override = readRepoFile('deploy/loadtest/compose.loadtest.yaml');
   check('the override exists and touches only whim-server', override.includes('whim-server:'));
-  const envFileBlock = /env_file:\n((?:[ \t]*-.*\n)+)/.exec(override)?.[1] ?? '';
-  check('setup: the env_file block was found', envFileBlock.length > 0, override);
-  check('its env_file list does not name server.env', !envFileBlock.includes('server.env'), envFileBlock);
-  check('its env_file list keeps config.env', envFileBlock.includes('/etc/whim/config.env'), envFileBlock);
+  const envFiles = replayEnvFileOverride(override);
+  check('whim-server replaces the inherited env_file sequence with !override', envFiles !== null, override);
+  eq('the replacement list contains only config.env', envFiles, ['/etc/whim/config.env']);
+
+  const ordinaryList = override.replace('    env_file: !override', '    env_file:');
+  check('red-check: downgrading the service to an ordinary list fails isolation', replayEnvFileOverride(ordinaryList) === null);
+
+  const commentedDecoy = ordinaryList.replace('    env_file:', '    # env_file: !override\n    env_file:');
+  check('red-check: a commented !override directive cannot satisfy the service check', replayEnvFileOverride(commentedDecoy) === null);
 }
 
 // ── drive.ts pure pieces ───────────────────────────────────────────────────

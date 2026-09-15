@@ -5,15 +5,14 @@
 # repeats (`cap_add`, `security_opt`, `read_only`, `user`, …) all come from compose.yaml unchanged;
 # Chromium's sandbox needs `cap_add: [SYS_CHROOT]` and the seccomp profile exactly as they are there.
 #
-# `env_file` is reset to `/etc/whim/config.env` ALONE — no `server.env`, so the real OpenRouter key
-# never reaches this container. `runLoadtestServer` (server/src/loadtest/server.ts) refuses to boot
-# if it ever sees `OPENROUTER_API_KEY` regardless (design D26's own backstop: "if a compose merge
-# ever put it back, the server refuses to boot"), so this stays safe even if a merge quirk kept the
-# old env_file entry.
+# `!override` replaces the base service's whole `env_file` sequence. An ordinary YAML list appends
+# to the inherited config.env + server.env entries and would expose the production key. The replay
+# keeps config.env's non-secret capacity values alone. `runLoadtestServer` retains D26's backstop:
+# it refuses to boot if `OPENROUTER_API_KEY` is present.
 services:
   whim-server:
     image: ${WHIM_LOADTEST_IMAGE:?}
-    env_file:
+    env_file: !override
       - /etc/whim/config.env
     environment:
       WHIM_DATA_DIR: /data

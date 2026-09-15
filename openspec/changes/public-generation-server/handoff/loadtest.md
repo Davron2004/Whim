@@ -1,4 +1,4 @@
-# loadtest (chain-16) — for chain-13
+# loadtest (chain-16 + replay Compose correction) — for chain-13
 
 Design D26; specs/server-deployment "A load test measures capacity without spending provider credit".
 
@@ -83,14 +83,16 @@ Image: `<region>-docker.pkg.dev/<project>/whim/server-loadtest:<full sha>`. `dep
 builds from `${SERVER_IMAGE}` (the already-built production image of the same commit) plus one bundle;
 its sibling `Dockerfile.dockerignore` overrides the root `.dockerignore`'s `deploy/` exclusion.
 `compose.loadtest.yaml` overrides only `whim-server`: the load-test image, an explicit `!override`
-`env_file` list containing `/etc/whim/config.env` alone (never `server.env`), pacing vars and
-`/mnt/disks/whim-data/loadtest:/data`. Inherited `cap_add`/`security_opt` stay unchanged.
+`env_file` list containing `/etc/whim/config.env` alone, pacing vars and
+`/mnt/disks/whim-data/loadtest:/data`. `!override` is load-bearing: an ordinary list merges with
+the base list and retains `server.env`. Inherited `cap_add`/`security_opt` stay unchanged, and
+`runLoadtestServer` still refuses any environment that already contains `OPENROUTER_API_KEY`.
 
 ## Compose merge receipt (before replay start)
 
 Run this no-daemon proof from the repository root after the repaired override is merged. It uses
-only synthetic values and prints no environment map or key. The first receipt must fail; the second
-must pass. Record just both statuses and the two labels with task 15.4 evidence.
+only synthetic values and prints no environment map or key. The ordinary-list model must return 42;
+the corrected model must return 0. Record those statuses and the two labels with task 15.4 evidence.
 
 ```bash
 compose_tmp="$(mktemp -d "${TMPDIR:-/tmp}/whim-compose-env.XXXXXX")"; trap 'rm -rf "$compose_tmp"' EXIT
@@ -101,8 +103,8 @@ verify() { WHIM_IMAGE=base WHIM_LOADTEST_IMAGE=replay WHIM_API_HOST=api.invalid 
 node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const e=JSON.parse(s).services["whim-server"].environment||{};process.exit(e.WHIM_CONFIG_SENTINEL!=="kept"?43:Object.prototype.hasOwnProperty.call(e,"OPENROUTER_API_KEY")?42:0)})' < "$compose_tmp/model.json"; }
 if verify "$compose_tmp/bad.yaml"; then echo 'ordinary-list receipt unexpectedly passed'; exit 1; else ordinary_rc=$?; fi
 if [ "$ordinary_rc" -ne 42 ]; then echo 'ordinary-list receipt did not expose the synthetic key'; exit 1; fi
-echo 'ordinary-list receipt exposed the synthetic key'
-if verify "$compose_tmp/good.yaml"; then echo 'override receipt passed'; else echo 'override receipt failed'; exit 1; fi
+echo 'ordinary-list receipt exposed the synthetic key (status 42)'
+if verify "$compose_tmp/good.yaml"; then echo 'override receipt passed (status 0)'; else echo 'override receipt failed'; exit 1; fi
 ```
 
 ## Production exclusion (fast-gate tripwires, `server/test/loadtest.suite.ts`)
