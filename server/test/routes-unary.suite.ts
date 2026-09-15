@@ -11,13 +11,14 @@ import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
-import { InMemoryUsageStore } from '../src/usage-store';
+import { InMemoryUsageStore, type CostState, type UsageStore } from '../src/usage-store';
 import { InMemoryReportStore } from '../src/reports/store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createSlotController, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
+import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import { ScriptedModelClient } from './scripted-model';
 import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
 
@@ -39,10 +40,12 @@ interface TestAppOpts {
   slots?: SlotController;
   reportStore?: InMemoryReportStore;
   stub?: boolean;
+  usageStore?: UsageStore;
+  resolver?: { transport?: UsageAndCostTransport; tracker?: ResolveTracker };
 }
 
 function testApp(opts: TestAppOpts = {}) {
-  const usageStore = new InMemoryUsageStore();
+  const usageStore = opts.usageStore ?? new InMemoryUsageStore();
   const reportStore = opts.reportStore ?? new InMemoryReportStore();
   const config = makeConfig(opts.config);
   const app = createApp({
@@ -56,8 +59,55 @@ function testApp(opts: TestAppOpts = {}) {
     creditTransport: opts.creditTransport,
     reportStore,
     stub: opts.stub,
+    resolver: opts.resolver,
   });
   return { app, usageStore, reportStore, config };
+}
+
+/** Wraps a real `InMemoryUsageStore`, recording every `credit`/`recordCost` call so a test can
+ *  distinguish "credited/recorded once" from "credited/recorded twice with the same eventual sum"
+ *  — the exact shape of the classifier-double-credit bug (fix chain 9c). */
+class RecordingUsageStore implements UsageStore {
+  private readonly inner = new InMemoryUsageStore();
+  readonly creditCalls: Usage[] = [];
+  readonly recordCostCalls: { requestId: string; state: CostState; costUsd?: number }[] = [];
+
+  credit(deviceId: string, usage: Usage): Promise<void> {
+    this.creditCalls.push(usage);
+    return this.inner.credit(deviceId, usage);
+  }
+  read(deviceId: string) {
+    return this.inner.read(deviceId);
+  }
+  admit(params: Parameters<UsageStore['admit']>[0]) {
+    return this.inner.admit(params);
+  }
+  refund(requestId: string) {
+    return this.inner.refund(requestId);
+  }
+  settle(requestId: string, p: Parameters<UsageStore['settle']>[1]) {
+    return this.inner.settle(requestId, p);
+  }
+  recordCost(requestId: string, p: { state: CostState; costUsd?: number }): Promise<void> {
+    this.recordCostCalls.push({ requestId, ...p });
+    return this.inner.recordCost(requestId, p);
+  }
+  summary(params: Parameters<UsageStore['summary']>[0]) {
+    return this.inner.summary(params);
+  }
+  purgeLedger(beforeUtcDay: string) {
+    return this.inner.purgeLedger(beforeUtcDay);
+  }
+}
+
+/** A `UsageAndCostTransport` double keyed by generation id — resolves instantly, so the resolver's
+ *  retry loop never engages. */
+function statsTransport(byId: Record<string, GenerationStats>): UsageAndCostTransport {
+  return {
+    async fetchStats(id: string): Promise<GenerationStats | null> {
+      return byId[id] ?? null;
+    },
+  };
 }
 
 async function post(
@@ -386,6 +436,139 @@ async function testPolicyCallIsMetered(): Promise<void> {
   }
 }
 
+/**
+ * Fix chain 9c: `admitUnaryRequest` credits the classifier's usage the moment `policy.check`
+ * returns. On an allow, its generation id is folded into the route's own ids and resolved for cost
+ * (`resolveUnaryUsage`, `routes/clarify.ts`) — but NEVER for tokens a second time, on every ending a
+ * clarify/rewrite request can reach after that credit already happened: success, a generic model
+ * failure, a stalled call that times out, and a mid-call 402. The pre-fix code folded the
+ * classifier's id into a single `creditOwned: false` resolve call on every ending except success,
+ * so an uncached classifier call's tokens were credited twice (once in-stream, once at resolve).
+ */
+async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
+  section('fix chain 9c: an uncached classifier call is never credited twice on a unary ending');
+
+  const CLASSIFIER_USAGE: Usage = { promptTokens: 5, completionTokens: 2, totalTokens: 7 };
+  const CLASSIFIER_COST = 0.001;
+  const CLASSIFIER_ID = 'gen-policy-9c';
+  const MODEL_USAGE: Usage = { promptTokens: 11, completionTokens: 4, totalTokens: 15 };
+  const MODEL_COST = 0.002;
+  const MODEL_ID = 'gen-model-9c';
+  const FULL_TRANSPORT = statsTransport({
+    [CLASSIFIER_ID]: { usage: CLASSIFIER_USAGE, totalCostUsd: CLASSIFIER_COST },
+    [MODEL_ID]: { usage: MODEL_USAGE, totalCostUsd: MODEL_COST },
+  });
+  const CLASSIFIER_ONLY_TRANSPORT = statsTransport({
+    [CLASSIFIER_ID]: { usage: CLASSIFIER_USAGE, totalCostUsd: CLASSIFIER_COST },
+  });
+
+  /** Asserts the device ended up credited for `expected` tokens exactly once each, and that the
+   *  ledger row's one resolved cost record includes `expectedCostUsd`. */
+  async function assertResolvedOnce(
+    label: string,
+    usageStore: RecordingUsageStore,
+    tracker: ResolveTracker,
+    expected: Usage,
+    expectedCostUsd: number,
+  ): Promise<void> {
+    await tracker.drain(2000);
+    const total = await usageStore.read(DEVICE_ID);
+    eq(`${label}: tokens credited exactly once each`, total, expected);
+    const resolved = usageStore.recordCostCalls.filter((c) => c.state === 'resolved');
+    eq(`${label}: exactly one resolved cost record`, resolved.length, 1);
+    check(
+      `${label}: the resolved cost includes the classifier call`,
+      Math.abs((resolved[0]?.costUsd ?? 0) - expectedCostUsd) < 1e-9,
+    );
+  }
+
+  for (const route of ['clarify', 'rewrite'] as const) {
+    const okDelta = route === 'clarify' ? '{"questions":[]}' : JSON.stringify({ rewrittenPrompt: 'a plan', plan: [{ label: 'What', text: 'A plan.' }] });
+
+    // (a) success — both calls credit in-stream; the resolver only ever adds cost.
+    {
+      invalidateCreditCache();
+      const usageStore = new RecordingUsageStore();
+      const tracker = new ResolveTracker();
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
+        { role: 'rewrite', deltas: [okDelta], usage: MODEL_USAGE, id: MODEL_ID },
+      ]);
+      const policy = cachedPolicy(
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      );
+      const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
+      const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+      eq(`${route} success → 200`, res.status, 200);
+      await assertResolvedOnce(`${route} success`, usageStore, tracker, sumUsage(CLASSIFIER_USAGE, MODEL_USAGE), CLASSIFIER_COST + MODEL_COST);
+    }
+
+    // (b) a generic model failure after the model call started (its id is known, its usage never
+    // arrives).
+    {
+      invalidateCreditCache();
+      const usageStore = new RecordingUsageStore();
+      const tracker = new ResolveTracker();
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
+        { role: 'rewrite', deltas: [], error: new Error('model boom'), id: MODEL_ID },
+      ]);
+      const policy = cachedPolicy(
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      );
+      const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
+      const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+      eq(`${route} model failure → 502`, res.status, 502);
+      await assertResolvedOnce(`${route} model failure`, usageStore, tracker, sumUsage(CLASSIFIER_USAGE, MODEL_USAGE), CLASSIFIER_COST + MODEL_COST);
+    }
+
+    // (c) a stalled model call that times out — it never got far enough to have its own id, so
+    // only the classifier's own id is at risk of a second credit.
+    {
+      invalidateCreditCache();
+      const usageStore = new RecordingUsageStore();
+      const tracker = new ResolveTracker();
+      const classifierModel = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
+      ]);
+      const policy = cachedPolicy(
+        new ModelContentPolicy({ modelClient: classifierModel, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      );
+      const observed = { aborted: false };
+      const routeModel = stallingModelClient(observed);
+      const { app } = testApp({
+        model: routeModel,
+        policy,
+        usageStore,
+        resolver: { transport: CLASSIFIER_ONLY_TRANSPORT, tracker },
+        config: { unaryModelTimeoutMs: 40 },
+      });
+      const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+      eq(`${route} timeout → 502`, res.status, 502);
+      await assertResolvedOnce(`${route} timeout`, usageStore, tracker, CLASSIFIER_USAGE, CLASSIFIER_COST);
+    }
+
+    // (d) a mid-call 402 — the model's id is known (the provider had already started), its usage
+    // never arrives either.
+    {
+      invalidateCreditCache();
+      const usageStore = new RecordingUsageStore();
+      const tracker = new ResolveTracker();
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
+        { role: 'rewrite', deltas: [], error: new FakeProviderCreditError('insufficient credit'), id: MODEL_ID },
+      ]);
+      const policy = cachedPolicy(
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      );
+      const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
+      const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+      eq(`${route} mid-call 402 → 503`, res.status, 503);
+      await assertResolvedOnce(`${route} mid-call 402`, usageStore, tracker, sumUsage(CLASSIFIER_USAGE, MODEL_USAGE), CLASSIFIER_COST + MODEL_COST);
+    }
+  }
+}
+
 async function testBudgetExhaustedMidCall(): Promise<void> {
   section('design D6b "A 402 mid-flight ends the request and invalidates the cache"');
 
@@ -613,6 +796,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
   await testPolicyCallIsMetered();
+  await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();
   await testReportRoute();
   await testHealthzSse();
