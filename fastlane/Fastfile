@@ -20,6 +20,12 @@
 
 min_fastlane_version("2.237.0")
 
+# fastlane 2.237.0 rewrites fastlane/README.md after every lane, even a failed one — that would
+# make the SECOND lane of a pair (e.g. `fastlane ios testflight` then `fastlane android closed`)
+# refuse at its own preflight on a dirty working tree. `fastlane/README.md` is also gitignored
+# as a second line of defense.
+skip_docs
+
 require "json"
 require "shellwords"
 
@@ -88,13 +94,14 @@ end
 
 # design D12 / task 11.1: the maximum google_play_track_version_codes over every closed/open
 # track, an empty or not-yet-created track counting as 0. The action itself already returns []
-# rather than raising when a track has no releases; the rescue is a second line of defense that
-# has not been exercised against the real Play API (no track exists yet on this machine).
+# rather than raising when a track has no releases.
 def android_store_latest_build_number(package_name, json_key)
   %w[internal alpha beta production].map do |track|
     codes = begin
       google_play_track_version_codes(package_name: package_name, track: track, json_key: json_key)
-    rescue StandardError
+    rescue Errno::ENOENT
+      # Only a missing credential file falls back to 0 — the preflight names that next. Any
+      # other failure (a bad key, a network error, ...) fails the lane with its real cause.
       []
     end
     codes.nil? || codes.empty? ? 0 : codes.max
@@ -103,12 +110,13 @@ end
 
 # The preflight is the ONE place that reports a missing or misconfigured credential file, with
 # its fix (specs/store-release-pipeline/spec.md "The preflight names every reason it refuses").
-# The store-latest lookups need those same credentials, but run BEFORE the preflight call, so a
+# The store-latest lookup needs that same credential, but runs BEFORE the preflight call, so a
 # missing file here must never crash the lane with a raw Ruby backtrace — it falls back to 0 and
-# lets the preflight name the real problem next.
+# lets the preflight name the real problem next. Any OTHER failure (a bad key, an API error, ...)
+# fails the lane with its real cause instead of silently disabling the build-number check.
 def ios_store_latest_build_number(app_id)
   latest_testflight_build_number(api_key: asc_api_key_hash, app_identifier: app_id) || 0
-rescue StandardError
+rescue Errno::ENOENT
   0
 end
 
@@ -157,6 +165,7 @@ platform :ios do
       api_key: asc_api_key_hash,
       app_identifier: config["WHIM_APP_ID"],
       metadata_path: root("release/store/app-store"),
+      screenshots_path: root("release/store/app-store/screenshots"),
       app_rating_config_path: root("release/store/app-store/age-rating.json"),
       privacy_url: "https://whim.#{config['WHIM_DOMAIN']}/privacy",
       support_url: "https://whim.#{config['WHIM_DOMAIN']}/support",
@@ -216,9 +225,11 @@ platform :android do
         skip_upload_images: true,
         skip_upload_screenshots: true
       )
+      # A tag follows a successful upload (specs/store-release-pipeline/spec.md); upload:false
+      # never tags, so `git tag` never marks a build that wasn't actually shipped.
+      release_cli("tag", "--build", build_number.to_s)
     end
 
-    release_cli("tag", "--build", build_number.to_s)
     outcome = should_upload ? "uploaded to the alpha (closed testing) track" : "upload skipped — upload #{aab_path} by hand"
     UI.success("android closed: build #{build_number}, #{outcome}")
   end

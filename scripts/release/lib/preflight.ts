@@ -41,7 +41,9 @@ export const ANDROID_UPLOAD_VALUE_NAMES = [
 ] as const;
 export type AndroidUploadValueName = (typeof ANDROID_UPLOAD_VALUE_NAMES)[number];
 
-/** The credential files the preflight checks for each platform, under `~/.config/whim/`. */
+/** The credential files the preflight checks for each platform, under `~/.config/whim/` — plus
+ *  the derived-path files `NamedCredentialFile`/`extraCredentialFiles` cover (the iOS `.p8`, the
+ *  Android upload keystore, and `~/.gradle/gradle.properties` itself). */
 export const CREDENTIAL_FILES_BY_PLATFORM: Readonly<Record<ReleasePlatform, readonly string[]>> = {
   ios: ['asc-api-key.json', 'review-contact.json'],
   android: ['play-publisher.json'],
@@ -56,6 +58,15 @@ export interface CredentialFileStatus {
   readonly mode: number | null;
 }
 
+/** A credential file the preflight checks beyond `CREDENTIAL_FILES_BY_PLATFORM` — one whose
+ *  path is itself derived from another credential (the iOS `.p8` named by `asc-api-key.json`)
+ *  or from Gradle properties (the Android keystore, and `~/.gradle/gradle.properties` itself
+ *  when it holds any `WHIM_UPLOAD_*` value). `label` names it in the finding. */
+export interface NamedCredentialFile {
+  readonly label: string;
+  readonly file: CredentialFileStatus;
+}
+
 export interface AndroidUploadValueStatus {
   readonly name: AndroidUploadValueName;
   readonly present: boolean;
@@ -68,6 +79,8 @@ export interface PreflightSnapshot {
   readonly jdkMajorVersion: number | undefined;
   readonly xcodebuildPresent: boolean | undefined;
   readonly credentialFiles: readonly CredentialFileStatus[];
+  /** Beyond `credentialFiles` — see `NamedCredentialFile`. Always present (possibly empty). */
+  readonly extraCredentialFiles: readonly NamedCredentialFile[];
   readonly androidUploadValues: readonly AndroidUploadValueStatus[] | undefined;
   readonly config: NativeReleaseConfig;
   readonly buildNumber: number;
@@ -110,14 +123,21 @@ function toolchainFindings(snapshot: PreflightSnapshot): PreflightFinding[] {
   return findings;
 }
 
+function fileStatusFindings(findings: PreflightFinding[], label: string, file: CredentialFileStatus): void {
+  if (!file.exists) {
+    findings.push({ reason: `missing ${label} at ${file.path}`, fix: "see docs/release/mobile.md's one-time setup" });
+  } else if (file.mode !== null && (file.mode & 0o077) !== 0) { // eslint-disable-line no-bitwise -- checking the group/other permission bits of a file mode
+    findings.push({ reason: `${label} at ${file.path} is readable by group or others (mode ${file.mode.toString(8)})`, fix: `chmod 600 ${file.path}` });
+  }
+}
+
 function credentialFindings(snapshot: PreflightSnapshot): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
   for (const file of snapshot.credentialFiles) {
-    if (!file.exists) {
-      findings.push({ reason: `missing credential file ${file.path}`, fix: "see docs/release/mobile.md's one-time setup" });
-    } else if (file.mode !== null && (file.mode & 0o077) !== 0) { // eslint-disable-line no-bitwise -- checking the group/other permission bits of a file mode
-      findings.push({ reason: `${file.path} is readable by group or others (mode ${file.mode.toString(8)})`, fix: `chmod 600 ${file.path}` });
-    }
+    fileStatusFindings(findings, 'credential file', file);
+  }
+  for (const { label, file } of snapshot.extraCredentialFiles) {
+    fileStatusFindings(findings, label, file);
   }
   if (snapshot.androidUploadValues) {
     const missing = snapshot.androidUploadValues.filter((v) => !v.present).map((v) => v.name);
@@ -241,18 +261,54 @@ function xcodebuildPresent(): boolean {
   }
 }
 
-function credentialFileStatus(name: string): CredentialFileStatus {
-  const absPath = path.join(os.homedir(), '.config', 'whim', name);
+function fileStatusAt(absPath: string): CredentialFileStatus {
   if (!fs.existsSync(absPath)) return { path: absPath, exists: false, mode: null };
   return { path: absPath, exists: true, mode: fs.statSync(absPath).mode & 0o777 }; // eslint-disable-line no-bitwise -- reading only the permission bits of a file mode
 }
 
-function androidUploadValueStatus(): readonly AndroidUploadValueStatus[] {
-  const gradleProperties = readPropertiesFile(path.join(os.homedir(), '.gradle', 'gradle.properties'));
+function credentialFileStatus(name: string): CredentialFileStatus {
+  return fileStatusAt(path.join(os.homedir(), '.config', 'whim', name));
+}
+
+const GRADLE_PROPERTIES_PATH = path.join(os.homedir(), '.gradle', 'gradle.properties');
+
+function androidUploadValueStatus(gradleProperties: Map<string, string>): readonly AndroidUploadValueStatus[] {
   return ANDROID_UPLOAD_VALUE_NAMES.map((name) => ({
     name,
     present: (gradleProperties.get(name) ?? process.env[name] ?? '').length > 0,
   }));
+}
+
+/** The `.p8` `asc-api-key.json`'s `key_filepath` names, when that file exists and parses —
+ *  `undefined` when it doesn't (the base `credentialFiles` check already names that). */
+function iosApiKeyFile(): NamedCredentialFile | undefined {
+  const ascApiKeyPath = path.join(os.homedir(), '.config', 'whim', 'asc-api-key.json');
+  if (!fs.existsSync(ascApiKeyPath)) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(ascApiKeyPath, 'utf8'));
+    const keyFilepath = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).key_filepath : undefined;
+    if (typeof keyFilepath !== 'string' || keyFilepath.length === 0) return undefined;
+    return { label: 'App Store Connect API private key (asc-api-key.json\'s key_filepath)', file: fileStatusAt(keyFilepath) };
+    // eslint-disable-next-line no-restricted-syntax -- intentional: an unparseable asc-api-key.json is reported by the base credentialFiles mode check, not duplicated here
+  } catch {
+    return undefined;
+  }
+}
+
+/** The resolved Android upload keystore (`WHIM_UPLOAD_STORE_FILE`) and, when it holds any
+ *  `WHIM_UPLOAD_*` value, `~/.gradle/gradle.properties` itself — both named findings beyond the
+ *  four-value presence check `credentialFindings` already does. */
+function androidExtraCredentialFiles(gradleProperties: Map<string, string>): readonly NamedCredentialFile[] {
+  const files: NamedCredentialFile[] = [];
+  const keystorePath = gradleProperties.get('WHIM_UPLOAD_STORE_FILE') ?? process.env.WHIM_UPLOAD_STORE_FILE;
+  if (keystorePath) {
+    files.push({ label: 'Android upload keystore (WHIM_UPLOAD_STORE_FILE)', file: fileStatusAt(keystorePath) });
+  }
+  const holdsUploadSecret = ANDROID_UPLOAD_VALUE_NAMES.some((name) => gradleProperties.has(name));
+  if (holdsUploadSecret) {
+    files.push({ label: '~/.gradle/gradle.properties (holds WHIM_UPLOAD_* secrets)', file: fileStatusAt(GRADLE_PROPERTIES_PATH) });
+  }
+  return files;
 }
 
 export interface CollectPreflightSnapshotArgs {
@@ -263,6 +319,8 @@ export interface CollectPreflightSnapshotArgs {
 /** Gathers every fact `evaluatePreflight` needs, including the five repo checks task 10.1 names. */
 export function collectPreflightSnapshot(repoRoot: string, platform: ReleasePlatform, args: CollectPreflightSnapshotArgs): PreflightSnapshot {
   const config = loadNativeReleaseConfig(repoRoot);
+  const gradleProperties = platform === 'android' ? readPropertiesFile(GRADLE_PROPERTIES_PATH) : new Map<string, string>();
+  const extraCredentialFiles: readonly NamedCredentialFile[] = platform === 'ios' ? [iosApiKeyFile()].filter((f): f is NamedCredentialFile => f !== undefined) : androidExtraCredentialFiles(gradleProperties);
   return {
     platform,
     gitStatusPorcelain: gitStatusPorcelain(repoRoot),
@@ -270,7 +328,8 @@ export function collectPreflightSnapshot(repoRoot: string, platform: ReleasePlat
     jdkMajorVersion: platform === 'android' ? jdkMajorVersion(repoRoot) : undefined,
     xcodebuildPresent: platform === 'ios' ? xcodebuildPresent() : undefined,
     credentialFiles: CREDENTIAL_FILES_BY_PLATFORM[platform].map(credentialFileStatus),
-    androidUploadValues: platform === 'android' ? androidUploadValueStatus() : undefined,
+    extraCredentialFiles,
+    androidUploadValues: platform === 'android' ? androidUploadValueStatus(gradleProperties) : undefined,
     config,
     buildNumber: args.buildNumber,
     storeLatestBuildNumber: args.storeLatestBuildNumber,

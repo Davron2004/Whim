@@ -49,7 +49,10 @@ export const REQUIRED_REASON_TABLE: readonly RequiredReasonRule[] = [
     ],
   },
   { category: 'ActiveKeyboards', names: ['activeInputModes'] },
-  { category: 'UserDefaults', names: ['NSUserDefaults'] },
+  // `NSUserDefaults` is a class, not a C symbol: `nm -u -j` lists it as `_OBJC_CLASS_$_NSUserDefaults`,
+  // which stripMachOUnderscore's single-leading-underscore strip normalizes to
+  // `OBJC_CLASS_$_NSUserDefaults` below — matched alongside the bare name for a selector hit.
+  { category: 'UserDefaults', names: ['NSUserDefaults', 'OBJC_CLASS_$_NSUserDefaults'] },
 ];
 
 const ACCESSED_API_TYPE_PREFIX = 'NSPrivacyAccessedAPICategory';
