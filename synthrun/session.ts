@@ -29,10 +29,16 @@
  * chain 4 (the sweep) drives `ctx.
  * page`; chain 5 (task 5.2) composes all of the above plus `dispose()` into the full
  * `RunCandidate` entry point `contract.ts` declares.
+ *
+ * The session outlives its browser (public-generation-server design D12/D14). Every wait in
+ * `openRun` honours the run's signal, and a browser that disconnects fails the runs still on it
+ * with a named `browser_disconnected` error. The next run then launches a replacement through the
+ * same single launch call site, so a relaunch can never be weaker than the first launch.
  */
 import { chromium, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { abortError, linkAbort, raceAbort, type LinkedAbort } from './abort';
 import { buildCandidateSource } from './builder';
 import { createSemaphore } from './concurrency';
 import { BLOCKED_EGRESS_CAP, type RunOptions, type Semaphore, type StageTimings } from './contract';
@@ -141,6 +147,28 @@ export interface SessionOptions {
   semaphore?: Semaphore;
 }
 
+/** The names of the session's own failures. A run that ends in one was not the candidate's fault:
+ *  `browser_disconnected` when the browser it was on went away mid-run, `browser_launch_failed`
+ *  when the browser it needed could not be launched. */
+export type SessionErrorName = 'browser_disconnected' | 'browser_launch_failed';
+
+export class SessionError extends Error {
+  override name: SessionErrorName;
+  constructor(name: SessionErrorName, message: string) {
+    super(message);
+    this.name = name;
+  }
+}
+
+/** One launched browser and what the session knows about its connection. */
+interface LiveBrowser {
+  browser: Browser;
+  /** Aborts when this browser disconnects. */
+  lost: AbortSignal;
+  /** The `browser_disconnected` error, set when `lost` aborts. */
+  error: SessionError | null;
+}
+
 export interface RunContext {
   runId: string;
   /** The ephemeral storage-engine `appId` scope for this run (design D3) — `opts.appId` when
@@ -162,38 +190,103 @@ export interface RunContext {
   /** `buildMs`/`bootMs` as measured by `openRun`; later stages fill in the rest of
    *  `StageTimings` (mount→paint, sweep, per-screen) as they run. */
   timings: Pick<StageTimings, 'buildMs' | 'bootMs'>;
+  /** The one signal every wait in this run honours: it aborts when the caller's
+   *  `RunOptions.signal` does or when the browser the run is on disconnects. */
+  signal: AbortSignal;
+  /** The `browser_disconnected` error once the browser this run is on has disconnected, else
+   *  `null`. A run that sees one must end with it rather than report on a dead page. */
+  browserLost(): SessionError | null;
 }
 
 export interface OpenRunResult {
   ctx: RunContext;
   /** Closes the page + context and releases the concurrency slot. The caller MUST call this
-   *  exactly once, when the run's report is complete (design D4). */
+   *  when the run's report is complete (design D4). A second call returns the first call's
+   *  promise and cleans up nothing twice. */
   dispose(): Promise<void>;
 }
 
 export class SynthRunSession {
-  private constructor(
-    private readonly browser: Browser,
-    private readonly semaphore: Semaphore,
-  ) {}
+  private current: LiveBrowser | undefined;
+  private launching: Promise<LiveBrowser> | undefined;
+  private closed = false;
 
+  private constructor(private readonly semaphore: Semaphore) {}
+
+  /** Starts a session and its first browser. Rejects with `browser_launch_failed` when the browser
+   *  cannot start (for example, no usable OS sandbox); there is no retry with weaker options. */
   static async launch(opts: SessionOptions = {}): Promise<SynthRunSession> {
-    const browser = await chromium.launch(browserLaunchOptions());
-    const semaphore = opts.semaphore ?? createSemaphore(opts.concurrency ?? DEFAULT_CONCURRENCY);
-    return new SynthRunSession(browser, semaphore);
+    const session = new SynthRunSession(opts.semaphore ?? createSemaphore(opts.concurrency ?? DEFAULT_CONCURRENCY));
+    await session.liveBrowser();
+    return session;
+  }
+
+  /**
+   * The connected browser, launching one first when there is none: at session start, and after a
+   * disconnect. Concurrent callers share one launch (the mutex), and a failed launch is forgotten
+   * once it settles, so the next caller tries again.
+   */
+  private liveBrowser(): Promise<LiveBrowser> {
+    if (this.closed) return Promise.reject(new Error('synthrun session: the session is closed'));
+    if (this.current) return Promise.resolve(this.current);
+    this.launching ??= this.startBrowser().finally(() => {
+      this.launching = undefined;
+    });
+    return this.launching;
+  }
+
+  private async startBrowser(): Promise<LiveBrowser> {
+    let browser: Browser;
+    try {
+      // The only browser launch in the harness and the server (`test/isolation.ts` scans for it).
+      browser = await chromium.launch(browserLaunchOptions());
+    } catch (err) {
+      throw new SessionError('browser_launch_failed', `synthrun session: the browser failed to launch: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const lost = new AbortController();
+    const live: LiveBrowser = { browser, lost: lost.signal, error: null };
+    const onDisconnected = (): void => {
+      if (live.error) return;
+      if (this.current === live) this.current = undefined;
+      live.error = new SessionError('browser_disconnected', 'synthrun session: the browser disconnected during the run');
+      lost.abort();
+    };
+    browser.on('disconnected', onDisconnected);
+    if (!browser.isConnected()) onDisconnected();
+    if (this.closed) {
+      await browser.close();
+      throw new Error('synthrun session: the session closed while its browser was launching');
+    }
+    if (!live.error) this.current = live;
+    return live;
   }
 
   /**
    * Build one candidate, assemble it into the unmodified production runtime page, open a
    * fresh isolated browser context + page for it under the session's semaphore, and navigate to
    * the page delivered from memory.
+   *
+   * `opts.signal` is honoured at every wait here: while queued for a slot (the waiter leaves the
+   * queue and never holds one), while a replacement browser launches, before the context is
+   * created, and raced against navigation. An abort rejects with an `AbortError` after closing
+   * whatever this call opened and releasing its slot. A browser that disconnects before this
+   * returns rejects it with `browser_disconnected`.
    */
   async openRun(source: string, opts: RunOptions = {}): Promise<OpenRunResult> {
-    const release = await this.semaphore.acquire();
+    const release = await this.semaphore.acquire(opts.signal);
     const runId = `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
     const appId = opts.appId ?? runId;
+    let live: LiveBrowser | undefined;
+    let link: LinkedAbort | undefined;
     let context: BrowserContext | undefined;
     try {
+      live = await raceAbort(this.liveBrowser(), opts.signal);
+      const run = linkAbort([opts.signal, live.lost]);
+      link = run;
+      const checkpoint = (): void => {
+        if (run.signal.aborted) throw abortError();
+      };
+
       const buildStart = Date.now();
       const { js, map } = await buildCandidateSource(source, { filenameHint: runId });
       const buildMs = Date.now() - buildStart;
@@ -201,39 +294,72 @@ export class SynthRunSession {
       const bootStart = Date.now();
       const url = runPageUrl(runId);
       const html = await assembleCandidatePage(js, runId);
-      const isolated = await newIsolatedContext(this.browser, { url, html });
+      checkpoint();
+      const isolated = await newIsolatedContext(live.browser, { url, html });
       context = isolated.context;
       const page = await context.newPage();
       if (opts.beforeNavigate) await opts.beforeNavigate(page, context);
+      checkpoint();
       // `waitUntil:'load'` is settled, not inherited: measured against a candidate that hangs
       // synchronously and unboundedly, this `goto` still resolves in ~30ms rather than timing
       // out, because the outer page's `load` fires once the sandboxed iframe's own srcdoc has
       // loaded — the candidate bundle is only DELIVERED afterwards, over postMessage. So a
       // never-painting candidate still reaches the mount watchdog, and a weaker mode ('commit'/
       // 'domcontentloaded') would buy nothing while making `bootMs` mean less.
-      await page.goto(url, { waitUntil: 'load', timeout: 20000 });
+      await raceAbort(page.goto(url, { waitUntil: 'load', timeout: 20000 }), run.signal);
       const bootMs = Date.now() - bootStart;
 
-      const ctx: RunContext = { runId, appId, page, context, egress: isolated.egress, sourceMap: map, startedAt: bootStart, timings: { buildMs, bootMs } };
+      const onBrowser = live;
+      const ctx: RunContext = {
+        runId,
+        appId,
+        page,
+        context,
+        egress: isolated.egress,
+        sourceMap: map,
+        startedAt: bootStart,
+        timings: { buildMs, bootMs },
+        signal: run.signal,
+        browserLost: () => onBrowser.error,
+      };
       const openContext = context;
+      let disposal: Promise<void> | undefined;
       return {
         ctx,
-        dispose: async () => {
-          await openContext.close();
-          release();
+        dispose: () => {
+          disposal ??= openContext.close().finally(() => {
+            run.unlink();
+            release();
+          });
+          return disposal;
         },
       };
     } catch (err) {
-      if (context) await context.close();
-      release();
+      try {
+        await context?.close().catch(() => {
+          /* best-effort: the run is already failing with a more useful error than this one */
+        });
+      } finally {
+        link?.unlink();
+        release();
+      }
+      if (live?.error) throw live.error;
+      if (opts.signal?.aborted) throw abortError();
       throw err;
     }
   }
 
+  /** The number of browser contexts open on the session's browser (0 while it has none). */
+  openContextCount(): number {
+    return this.current?.browser.contexts().length ?? 0;
+  }
+
   /** The operating-system process id of this session's browser, as the browser itself reports
-   *  it — for inspecting what the process was really launched with. */
+   *  it — for inspecting what the process was really launched with. Launches a replacement first
+   *  if the last browser disconnected. */
   async browserProcessId(): Promise<number> {
-    const cdp = await this.browser.newBrowserCDPSession();
+    const { browser } = await this.liveBrowser();
+    const cdp = await browser.newBrowserCDPSession();
     try {
       const { processInfo } = await cdp.send('SystemInfo.getProcessInfo');
       const browserProcess = processInfo.find((p) => p.type === 'browser');
@@ -244,10 +370,18 @@ export class SynthRunSession {
     }
   }
 
-  /** Ends the session: closes the browser. Any run whose `dispose()` has not yet been called
-   *  should be disposed first — this does not do it implicitly. */
+  /** Ends the session: closes the browser, including one still launching, and refuses later runs.
+   *  Any run whose `dispose()` has not yet been called should be disposed first — this does not
+   *  do it implicitly, and such a run ends with `browser_disconnected`. */
   async close(): Promise<void> {
-    await this.browser.close();
+    this.closed = true;
+    const live = this.current;
+    const launching = this.launching;
+    this.current = undefined;
+    if (live) await live.browser.close();
+    await launching?.catch(() => {
+      /* startBrowser closes a browser that finishes launching after close(); nothing is left open */
+    });
   }
 }
 

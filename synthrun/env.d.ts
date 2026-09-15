@@ -68,11 +68,13 @@ declare module 'node:child_process' {
   export function execFileSync(file: string, args: string[], options: { encoding: 'utf8' }): string;
 }
 
-// `process.cwd()` (repo-root path resolution, `builder.ts`/`page.ts`) and `process.exit()`
-// (the Node acceptance suite's non-zero-exit-on-failure idiom, `test/acceptance.ts`).
+// `process.cwd()` (repo-root path resolution, `builder.ts`/`page.ts`), `process.exit()`
+// (the Node acceptance suite's non-zero-exit-on-failure idiom, `test/acceptance.ts`) and
+// `process.kill()` (the crash-recovery suite kills the session's browser, `test/resilience.ts`).
 interface WhimProcess {
   cwd(): string;
   exit(code?: number): never;
+  kill(pid: number, signal: string): boolean;
 }
 declare const process: WhimProcess;
 

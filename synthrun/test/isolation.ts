@@ -206,17 +206,17 @@ async function browserPid(browser: Browser): Promise<number> {
 
 /** The process's real argument vector: `/proc` where it exists (exact), else `ps` (split on
  *  whitespace, which is exact for every switch this suite looks for). */
-function processArgs(pid: number): string[] {
+export function processArgs(pid: number): string[] {
   const procFile = `/proc/${pid}/cmdline`;
   if (fs.existsSync(procFile)) return fs.readFileSync(procFile, 'utf8').split('\0').filter(Boolean);
   return execFileSync('/bin/ps', ['-ww', '-o', 'args=', '-p', String(pid)], { encoding: 'utf8' }).trim().split(/\s+/);
 }
 
-function hasSwitch(args: string[], name: string): boolean {
+export function hasSwitch(args: string[], name: string): boolean {
   return args.some((a) => a === name || a.startsWith(`${name}=`));
 }
 
-const SANDBOX_DISABLING_SWITCHES = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security', '--disable-site-isolation-trials'];
+export const SANDBOX_DISABLING_SWITCHES =['--no-sandbox', '--disable-setuid-sandbox', '--disable-web-security', '--disable-site-isolation-trials'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "No fallback exists": a syntax-level scan of the harness and server sources
