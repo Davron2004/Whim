@@ -151,10 +151,13 @@ cmd_drive() {
   [[ "$devices" =~ ^[0-9]+$ ]] || whim_usage_error "--devices must be a positive integer"
   [[ "$cap" =~ ^[0-9]+$ ]] || whim_usage_error "--cap must be a positive integer"
 
-  local stats sampler_pid=""
+  local stats sampler_pid="" monitor_was_set=0
   stats="$(mktemp)"
   cleanup() {
-    [ -z "$sampler_pid" ] || kill "$sampler_pid" >/dev/null 2>&1 || true
+    if [ -n "$sampler_pid" ]; then
+      kill -TERM -- "-$sampler_pid" >/dev/null 2>&1 || true
+      wait "$sampler_pid" >/dev/null 2>&1 || true
+    fi
     rm -f "$stats"
   }
   trap cleanup EXIT
@@ -162,16 +165,24 @@ cmd_drive() {
   echo "==> sampling docker stats on the VM every ${WHIM_LOADTEST_SAMPLE_INTERVAL_S}s" >&2
   # CPU% and MEM% only — both are `docker stats`-native percentages, so the sampler needs no
   # byte-unit conversion in bash. `server/src/loadtest/drive.ts#parseStatsCsv` reads this shape.
+  case "$-" in *m*) monitor_was_set=1 ;; esac
+  set -m
   whim_vm_ssh "container=\$($WHIM_COMPOSE ps -q whim-server)
 while sudo docker inspect -f '{{.State.Running}}' \"\$container\" >/dev/null 2>&1; do
-  sudo docker stats \"\$container\" --no-stream --format '{{.CPUPerc}},{{.MemPerc}}' | tr -d '%'
+  sample=\$(sudo docker stats \"\$container\" --no-stream --format '{{.CPUPerc}},{{.MemPerc}}') || exit
+  printf '%s\\n' \"\$sample\" | tr -d '%' || exit
   sleep $WHIM_LOADTEST_SAMPLE_INTERVAL_S
 done" >"$stats" 2>/dev/null &
   sampler_pid=$!
+  [ "$monitor_was_set" -eq 1 ] || set +m
 
   local -a args=(node "$WHIM_REPO_ROOT/server/loadtest.mjs" --target "https://$WHIM_API_HOST" --devices "$devices" --cap "$cap" --stats "$stats")
   [ -z "$json" ] || args+=(--json "$json")
-  "${args[@]}"
+  local driver_status=0
+  "${args[@]}" || driver_status=$?
+  cleanup
+  trap - EXIT
+  return "$driver_status"
 }
 
 cmd_stop() {
