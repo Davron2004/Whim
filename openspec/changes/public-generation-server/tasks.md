@@ -57,10 +57,10 @@
 
 ## 8. Synthetic run: abort at every wait, crash replacement
 
-- [ ] 8.1 Make semaphore acquisition in `synthrun/concurrency.ts` abortable. An aborted waiter leaves the queue without ever holding the slot.
-- [ ] 8.2 Honor the run signal in `openRun` (before context creation and raced against navigation) and in `awaitMount` (`synthrun/session.ts`, `synthrun/observe.ts`, `synthrun/report.ts`). Close the page and context and release the slot within 5 s, with no duplicate cleanup. Update the `RunOptions.signal` documentation in `synthrun/contract.ts`, which supersedes #56 D8 for these waits.
-- [ ] 8.3 Detect browser disconnect in `SynthRunSession`. Fail in-flight runs with a named `browser_disconnected` harness error, relaunch lazily with `browserLaunchOptions()` under a mutex before the next `openRun`, and retry on the next run when a relaunch fails.
-- [ ] 8.4 In `synthrun/test/`, cover abort-while-queued (no context opened), abort 250 ms into a hanging mount (context closed and slot free within 5 s), and recovery after killing the browser process mid-run.
+- [x] 8.1 Make semaphore acquisition in `synthrun/concurrency.ts` abortable. An aborted waiter leaves the queue without ever holding the slot.
+- [x] 8.2 Honor the run signal in `openRun` (before context creation and raced against navigation) and in `awaitMount` (`synthrun/session.ts`, `synthrun/observe.ts`, `synthrun/report.ts`). Close the page and context and release the slot within 5 s, with no duplicate cleanup. Update the `RunOptions.signal` documentation in `synthrun/contract.ts`, which supersedes #56 D8 for these waits.
+- [x] 8.3 Detect browser disconnect in `SynthRunSession`. Fail in-flight runs with a named `browser_disconnected` harness error, relaunch lazily with `browserLaunchOptions()` under a mutex before the next `openRun`, and retry on the next run when a relaunch fails.
+- [x] 8.4 In `synthrun/test/`, cover abort-while-queued (no context opened), abort 250 ms into a hanging mount (context closed and slot free within 5 s), and recovery after killing the browser process mid-run.
 
 ## 9. Generation wall-clock budget
 
