@@ -225,3 +225,13 @@
 - reads: host-startup-fix.md; specs/sandbox-isolation/spec.md; design.md D17; relevant standing realm-reset/trust decisions and spike2 findings; handoff/ios-network-deny.md; progress.md missing-resource reproduction evidence
 - writes-contract: handoff/host-startup-watchdog.md (deadline start/cancel behavior, tested helper interface, stale-callback fence, normal LauncherRoot missing-resource acceptance procedure)
 - after: chain-17
+
+## chain-paint-deadline: reject malformed startup completion
+
+- tasks: 21.1–21.3
+- rationale: the independent freeze investigation found that malformed trusted paint cancels the deadline without leaving the boot surface.
+- files: `src/host/launcher/boot-state.ts`, `src/host/launcher/test/boot-state.suite.ts`, `handoff/host-startup-watchdog.md`
+- reads: paint-deadline-fix.md; host-startup-fix.md; handoff/host-startup-watchdog.md; existing trust and realm-reset requirements
+- writes-contract: handoff/host-startup-watchdog.md (valid paint timing and malformed-message deadline behavior)
+- after: chain-host-startup-watchdog
+- rule: no native, loader, bridge, CSP, SDK, protected configuration or simulator changes.
