@@ -16,8 +16,6 @@ import path from 'node:path';
 /** The closed placeholder set (design D23's table). Nothing else may appear as `{{NAME}}`. */
 export type PlaceholderName =
   | 'WHIM_SUPPORT_EMAIL'
-  | 'WHIM_ENGINEER_MODEL'
-  | 'WHIM_REWRITE_MODEL'
   | 'WHIM_APP_STORE_URL'
   | 'WHIM_PLAY_STORE_URL';
 
@@ -25,13 +23,9 @@ export type PlaceholderValues = { readonly [K in PlaceholderName]?: string };
 
 const REQUIRED_PLACEHOLDERS: ReadonlySet<PlaceholderName> = new Set([
   'WHIM_SUPPORT_EMAIL',
-  'WHIM_ENGINEER_MODEL',
-  'WHIM_REWRITE_MODEL',
 ]);
 const ALL_PLACEHOLDERS: ReadonlySet<string> = new Set<PlaceholderName>([
   'WHIM_SUPPORT_EMAIL',
-  'WHIM_ENGINEER_MODEL',
-  'WHIM_REWRITE_MODEL',
   'WHIM_APP_STORE_URL',
   'WHIM_PLAY_STORE_URL',
 ]);
@@ -180,8 +174,6 @@ export async function buildSite(options: BuildSiteOptions): Promise<BuildSiteRes
   const { repoRoot, env, outDir, runAssociationFiles } = options;
   const values: PlaceholderValues = {
     WHIM_SUPPORT_EMAIL: env.WHIM_SUPPORT_EMAIL,
-    WHIM_ENGINEER_MODEL: env.WHIM_ENGINEER_MODEL,
-    WHIM_REWRITE_MODEL: env.WHIM_REWRITE_MODEL,
     WHIM_APP_STORE_URL: env.WHIM_APP_STORE_URL,
     WHIM_PLAY_STORE_URL: env.WHIM_PLAY_STORE_URL,
   };
