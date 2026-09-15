@@ -1,0 +1,35 @@
+# Overrides the root .dockerignore for `deploy/loadtest/Dockerfile` (the root file excludes
+# deploy/, which this Dockerfile's own build stage needs to read `deploy/loadtest/Dockerfile` and
+# its siblings off disk via `-f`, though never via the build CONTEXT — Docker still resolves the
+# dockerignore that pairs with a Dockerfile's path relative to the context root). Same excludes as
+# the root file otherwise: the image never receives an env file, a credential, VCS metadata, the
+# mobile projects or any installed node_modules.
+.git
+**/node_modules
+**/.env
+**/.env.*
+**/*.env
+*.jks
+*.p8
+play-publisher*.json
+**/.DS_Store
+.agents
+.bundle
+.claude
+.codex
+.devcontainer
+.github
+.vscode
+android
+ios
+fastlane
+demo
+openspec
+coverage
+graphify-out
+evals/.reports
+server/dist
+server/.data
+server/.logs
+src/runtime/generated
+build/generated

@@ -12,6 +12,7 @@
  * Node logic, no browser, kept in this file per chain-6's declared file scope.
  */
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,6 +34,8 @@ import { SynthRunSession } from '../../synthrun/session';
 import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunOptions, RunReport } from '../../synthrun/contract';
 import type { Page } from 'playwright';
+import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
+import { leakProbe, runDevice, runDevices } from '../src/loadtest/drive';
 
 const ROOT = process.cwd();
 
@@ -504,6 +507,29 @@ function accepts(port: number): Promise<boolean> {
   });
 }
 
+/** `GET <url>`, parsed as JSON, over `node:http` directly — never the global `fetch` the load-test
+ *  server's trap replaces for the whole process while it is up (`drive.ts`'s own module doc). */
+function getJson(url: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    http
+      .get(url, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
 async function testComposedServerBootAndDisconnect(): Promise<void> {
   section('spec: the composed server listens only after its self-test, and a real TCP disconnect closes the run\'s browser context');
 
@@ -894,6 +920,54 @@ async function testReconciliation(): Promise<void> {
   }
 }
 
+// ── The no-spend load-test server, driven for real: capacity, refusal, the leak probe, and the
+//    fetch trap (design D26; specs/server-deployment "A load test measures capacity without
+//    spending provider credit") ──
+
+async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
+  section('spec: the load-test server admits up to its cap, refuses past it, leaks no slot, and spends nothing');
+
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-loadtest-'));
+  const savedFetch = globalThis.fetch;
+  let handle: Awaited<ReturnType<typeof runLoadtestServer>> | undefined;
+  try {
+    handle = await runLoadtestServer({
+      env: {
+        WHIM_DATA_DIR: dataDir,
+        WHIM_MAX_CONCURRENT_GENERATIONS: '3',
+        WHIM_SYNTHRUN_CONCURRENCY: '2',
+        WHIM_LOADTEST_ENGINEER_TURN_MS: '300',
+        WHIM_LOADTEST_REWRITE_TURN_MS: '50',
+      },
+      listen: { host: '127.0.0.1', port: 0 },
+      start: startServer,
+    });
+
+    eq('healthz reports the load-test identity', await getJson(`${handle.url}/healthz`), { ok: true, service: LOADTEST_HEALTHZ_SERVICE });
+
+    const three = runDevices(handle.url, 3);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const fourth = await runDevice({ baseUrl: handle.url, prompt: 'whim e2e loadtest device: the fourth, over cap' });
+    check('a fourth generation started while three are in flight is refused with server_busy', fourth.refusal?.error === 'server_busy', JSON.stringify(fourth));
+
+    const threeResults = await three;
+    eq(
+      'all three concurrent generations end in result',
+      threeResults.map((r) => r.terminal),
+      ['result', 'result', 'result'],
+    );
+
+    const leak = await leakProbe(handle.url, 3);
+    check('the two-round leak probe passes: every slot the three runs held came back', leak.ok, JSON.stringify(leak));
+
+    eq('the fetch trap counted zero calls for the whole test', handle.fetchCallCount(), 0);
+  } finally {
+    if (handle) await within(handle.close(), 60_000);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+  check('fetch is restored once the load-test server has closed', globalThis.fetch === savedFetch);
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -915,6 +989,7 @@ async function main(): Promise<void> {
   await testCancellationDisposesAndReleasesSlot();
   await testComposedServerBootAndDisconnect();
   await testRealPipelineSigtermDrain();
+  await testLoadtestServerCapacityAndNoSpend();
 
   report();
 }

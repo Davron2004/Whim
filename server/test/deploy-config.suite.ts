@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
 import { check, eq, section } from './harness';
 import { runWebSiteTests } from './web-site.suite';
+import { runLoadTestTests } from './loadtest.suite';
 import { loadServerConfig } from '../src/config';
 
 const ROOT = process.cwd();
@@ -1296,4 +1297,5 @@ export async function runDeployConfigTests(): Promise<void> {
   smokeTests();
   resizeTests();
   provisionTests();
+  await runLoadTestTests();
 }
