@@ -157,6 +157,6 @@
 
 ## 21. Load-test drive cleanup after function return
 
-- [ ] 21.1 Reproduce the live wrapper cleanup failure through the real drive command in the local deployment sandbox, including observable sampler PID and CSV ownership.
-- [ ] 21.2 Clean up while its state remains valid, preserve both zero and nonzero driver statuses, and prove sampler termination and CSV removal without an unbound-variable error. Follow `sampler-cleanup-fix.md`.
-- [ ] 21.3 Update the load-test contract and pass server checks, fast gate, independent review, integrity and merged full gate. Repeat live drive verification before closing task 15.4.
+- [x] 21.1 Reproduce the live wrapper cleanup failure through the real drive command in the local deployment sandbox, including observable sampler PID and CSV ownership.
+- [x] 21.2 Clean up while its state remains valid, preserve both zero and nonzero driver statuses, and prove sampler termination and CSV removal without an unbound-variable error. Follow `sampler-cleanup-fix.md`.
+- [x] 21.3 Update the load-test contract and pass server checks, fast gate, independent review, integrity and merged full gate. Repeat live drive verification before closing task 15.4.
