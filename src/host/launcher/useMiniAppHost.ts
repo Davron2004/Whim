@@ -138,6 +138,12 @@ interface LiveRealm {
 export interface UseMiniAppHostOptions {
   /** Called when the guaranteed-exit policy (or the floating affordance) decides to leave. */
   onExit?: () => void;
+  /** True while a host-layer sheet (the report sheet) covers this realm — a back press then
+   *  resolves to `close-overlay` instead of forwarding into the realm or counting toward the
+   *  guaranteed-exit policy (mini-app-back-navigation delta, design D14). */
+  overlayOpen?: boolean;
+  /** Called when a back press resolves to `close-overlay` — the caller closes its own sheet. */
+  onCloseOverlay?: () => void;
 }
 
 export interface MiniAppHost {
@@ -172,6 +178,12 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const engineId = useRef<string | null>(null);
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
   onExitRef.current = opts.onExit;
+  // Read fresh on every render (never re-subscribes the BackHandler listener below) — the same
+  // ref idiom onExitRef uses.
+  const overlayOpenRef = useRef(opts.overlayOpen ?? false);
+  overlayOpenRef.current = opts.overlayOpen ?? false;
+  const onCloseOverlayRef = useRef<(() => void) | undefined>(opts.onCloseOverlay);
+  onCloseOverlayRef.current = opts.onCloseOverlay;
 
   // The host→page control surface (#41 seam + F4 negative control + sysret relay + nav-back).
   // injectJavaScript runs in the OUTER page only; it cannot reach into the cross-origin iframe.
@@ -342,7 +354,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // press window; `exit` leaves to the launcher; `ignore` (no realm) lets the OS handle back.
   useEffect(() => {
     const onBack = (): boolean => {
-      const action = policy.current.backPress();
+      const action = policy.current.backPress(overlayOpenRef.current);
+      if (action === 'close-overlay') { onCloseOverlayRef.current?.(); return true; }
       if (action === 'forward') {
         control('window.__whimControl.navBack()');
         if (popTimer.current) clearTimeout(popTimer.current);

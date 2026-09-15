@@ -168,9 +168,39 @@ export const COPY = {
   orbActionChangeIt: 'Change it',
   orbActionHome: 'Home',
   orbActionVersions: 'Versions',
+  orbActionReport: 'Report this app',
   orbMenuOpenLabel: 'Open the app menu',
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
+
+  // ── the report sheet (content-reporting; design D13/D14) ────────────────────
+  reportSheetTitle: 'Report this app',
+  /** The done step's plain-text entry point, below its two fixed destinations. */
+  doneReportThisApp: 'Report this app',
+  /** The history header's entry point — reports the version the user is currently on. */
+  historyReportAction: 'Report',
+  reportReasonEyebrow: 'What went wrong?',
+  reportReasonOffensive: 'Offensive',
+  reportReasonHarmful: 'Harmful',
+  reportReasonBroken: 'Doesn’t work',
+  reportReasonOther: 'Something else',
+  reportNotePlaceholder: 'Add a note (optional)',
+  reportPreviewTitle: 'What gets sent',
+  reportFieldReason: 'Reason',
+  reportFieldNote: 'Note',
+  reportFieldAppName: 'App',
+  reportFieldPrompt: 'The prompt',
+  reportFieldSource: 'The code',
+  reportIncludePrompt: 'Include the prompt',
+  reportIncludeSource: 'Include the code',
+  reportAnonIdLine: 'An anonymous ID for this phone travels with this report, which goes to AnyCognition.',
+  reportSend: 'Send report',
+  reportSendBusy: 'One moment',
+  reportShowMore: 'Show more',
+  reportShowLess: 'Show less',
+  reportThanksTitle: 'Thanks. The Whim team reads every report.',
+  reportThanksDone: 'Done',
+  reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
 
   // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
   //    first paint") ──────────────────────────────────────────────────────────
@@ -543,6 +573,12 @@ export function attemptsUsedLabel(observed: number): string {
 /** The toast after a restore: "You're on v4 now". */
 export function restoredToast(version: string): string {
   return `You’re on ${version} now`;
+}
+
+/** The report sheet's collapsed code row (content-reporting "the app's code (its size, with the
+ *  full text expandable)"): "482 characters" — never the code itself until expanded. */
+export function reportCodeSizeLabel(chars: number): string {
+  return chars === 1 ? '1 character' : `${chars} characters`;
 }
 
 // ── the refusal notice's retry-window line (service-refusals; design D11) ────

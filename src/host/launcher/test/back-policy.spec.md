@@ -12,13 +12,16 @@ events; the machine only reduces state and emits an action.
   - `reset(generation)` — a fresh realm was bound at `generation` (launch or relaunch).
   - `navDepth(depth, generation)` — an SDK nav-depth hint arrived. **Untrusted** (F4): the
     bundle shares the iframe scope and can forge or inflate it.
-  - `backPress()` — the user pressed Android system back.
+  - `backPress(overlayOpen?)` — the user pressed Android system back. `overlayOpen` (store-launch-
+    compliance chain-5, mini-app-back-navigation delta) reports whether a host-layer sheet (the
+    report sheet) currently covers the realm.
   - `timeout()` — the host's unhandled-press window (the 400 ms constant, host-side) elapsed
     with no depth decrease since the last forwarded pop.
-- **Action (output of `backPress`):** `exit` | `forward` | `ignore`.
+- **Action (output of `backPress`):** `exit` | `forward` | `ignore` | `close-overlay`.
   - `exit` → tear the realm down, return to the launcher.
   - `forward` → post a `nav-back` request into the realm (the SDK pops its stack).
   - `ignore` → do nothing (no realm bound).
+  - `close-overlay` → close the host sheet; neither forwarded nor counted (`overlayOpen` was set).
 - **State:** `{ generation, depth, awaitingPop, escapeArmed, bound }`.
 
 ## Behaviors to assert
@@ -61,6 +64,12 @@ events; the machine only reduces state and emits an action.
 ### No realm bound
 12. Before any `reset`, `backPress()` → `ignore` (the launcher's own back handling owns this
     case — the policy does not claim a press when no app is running).
+
+### A host sheet takes back first (store-launch-compliance chain-5)
+13. `backPress(overlayOpen: true)` → `close-overlay`, unconditionally — regardless of depth or
+    whether a realm is even bound — and mutates nothing (`awaitingPop`/`escapeArmed`/`depth` all
+    unchanged). Once the sheet closes (`overlayOpen` no longer set), the very same press the sheet
+    intercepted still resolves exactly as it would have with no sheet ever opened.
 
 ## Why pure / why these edges
 

@@ -104,7 +104,8 @@ import { showOfflineIndicator, showServerUnreachableNotice } from './connectivit
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
-import type { ConsentedClientOptions } from './generation-client';
+import type { ClientOptions, ConsentedClientOptions } from './generation-client';
+import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
 import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
@@ -419,6 +420,11 @@ function LauncherShell({
   const [ready, setReady] = useState(false);
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
+  // The report sheet's target for the done-step and history-header entry points (design D13) —
+  // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
+  // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
+  // policy input.
+  const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
   // The one gate `clarifyPrompt`/`rewritePrompt`/`generateApp`/the connectivity probe read their
@@ -435,6 +441,15 @@ function LauncherShell({
     // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [consentTick, serverUrl, deviceId, kv],
+  );
+
+  // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
+  // ONE request that needs no AI-data consent, so this is never gated by `consentStatus`/
+  // `consentTick` the way `clientOptions` above is).
+  const reportClientOptions = useMemo<ClientOptions>(
+    () => ({ baseUrl: effectiveServerUrl(kv), deviceId }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [serverUrl, deviceId, kv],
   );
 
   // Session connectivity (design decisions 4-6; `connectivity.ts` owns the state machine). A
@@ -1442,6 +1457,9 @@ function LauncherShell({
         onExit={goHome}
         onVersions={() => onHistory(screen.app)}
         onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
+        installedApp={screen.app}
+        access={access}
+        reportOptions={reportClientOptions}
       />
     );
   } else if (screen.kind === 'dev') {
@@ -1474,12 +1492,16 @@ function LauncherShell({
     );
   } else if (screen.kind === 'history') {
     content = (
-      <HistoryScreen
-        app={screen.app}
-        access={access}
-        onBack={goHome}
-        onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
-      />
+      <>
+        <HistoryScreen
+          app={screen.app}
+          access={access}
+          onBack={goHome}
+          onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
+          onReport={() => setReportTarget(screen.app)}
+        />
+        <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+      </>
     );
   } else if (screen.kind === 'compose') {
     const from = screen;
@@ -1553,7 +1575,15 @@ function LauncherShell({
   } else if (screen.kind === 'done') {
     const from = screen;
     content = (
-      <DoneStep app={from.app} onOpen={() => onOpen(from.app)} onBackToApps={goHome} />
+      <>
+        <DoneStep
+          app={from.app}
+          onOpen={() => onOpen(from.app)}
+          onBackToApps={goHome}
+          onReport={() => setReportTarget(from.app)}
+        />
+        <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+      </>
     );
   } else if (screen.kind === 'failure') {
     content = (
