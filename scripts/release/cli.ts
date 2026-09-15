@@ -8,6 +8,7 @@
  */
 
 import { buildNumberAt } from './lib/build-number';
+import { generateAssets } from './lib/assets';
 
 export interface CliCommand {
   readonly summary: string;
@@ -36,10 +37,25 @@ function runBuildNumber(args: string[]): number {
   }
 }
 
+async function runGenerateAssets(): Promise<number> {
+  try {
+    await generateAssets(process.cwd());
+    process.stdout.write('generate-assets: wrote every icon and launch asset from release/assets/icon-foreground.svg\n');
+    return 0;
+  } catch (err) {
+    process.stderr.write(`generate-assets: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+}
+
 export const COMMANDS: Record<string, CliCommand> = {
   'build-number': {
     summary: 'build-number [--at <iso>] — prints the release build number for an instant (default: now).',
     run: runBuildNumber,
+  },
+  'generate-assets': {
+    summary: 'generate-assets — renders every icon and launch asset from release/assets/ and writes generated.json.',
+    run: runGenerateAssets,
   },
 };
 

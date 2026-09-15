@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Placeholder brand mark (design D10): a plain lowercase "w" in the shell paper color,
+    built from a single stroked path (no fonts, no fills, no rendering dependency on
+    installed typefaces). It sits inside the adaptive icon's central 626px safe-zone circle
+    (radius 313 around the 1024x1024 canvas's center), leaving comfortable margin on every
+    side. Replacing this with real artwork is a one-file swap — nothing downstream reads
+    the path data itself.
+  -->
+  <path
+    d="M 362 390 L 437 650 L 512 490 L 587 650 L 662 390"
+    fill="none"
+    stroke="#fbfaf8"
+    stroke-width="52"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
