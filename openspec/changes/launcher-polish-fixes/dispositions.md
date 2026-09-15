@@ -22,3 +22,4 @@
 
 ## Ledger
 - 01:30 orchestrator pre-dispatch dispositions: F2 skipped (already fixed by platform chain-2); F7 skipped (contract-mirror.ts deleted in 075005e); F7's NUL-byte note is covered by fix-launcher-wiring (reviewer L2). F1, F3, F4, F5, F9 touch launcher files, so they wait for fix-launcher-wiring and fix-consent-retry; F6 and F8 are eligible now.
+- 01:35 F6 fixed (comment points at ../platform/hermes-polyfills) and F8 fixed (the four probe screens root in a default-edges SafeAreaView; device check pending on the attended iPhone run), structural-no-test per plan.md · commit f8e78b2 · integrity OK · merged · regate-pass.
