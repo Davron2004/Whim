@@ -1,0 +1,23 @@
+# Load-test override for `whim-server` alone (design D26; specs/server-deployment "A load test
+# measures capacity without spending provider credit"). `deploy/loadtest/run.sh start` applies this
+# ON TOP OF compose.yaml — `docker compose -f compose.yaml -f loadtest/compose.loadtest.yaml up -d
+# whim-server` — so the `caddy` service, the shared network and every hardening setting neither file
+# repeats (`cap_add`, `security_opt`, `read_only`, `user`, …) all come from compose.yaml unchanged;
+# Chromium's sandbox needs `cap_add: [SYS_CHROOT]` and the seccomp profile exactly as they are there.
+#
+# `env_file` is reset to `/etc/whim/config.env` ALONE — no `server.env`, so the real OpenRouter key
+# never reaches this container. `runLoadtestServer` (server/src/loadtest/server.ts) refuses to boot
+# if it ever sees `OPENROUTER_API_KEY` regardless (design D26's own backstop: "if a compose merge
+# ever put it back, the server refuses to boot"), so this stays safe even if a merge quirk kept the
+# old env_file entry.
+services:
+  whim-server:
+    image: ${WHIM_LOADTEST_IMAGE:?}
+    env_file:
+      - /etc/whim/config.env
+    environment:
+      WHIM_DATA_DIR: /data
+      WHIM_LOADTEST_ENGINEER_TURN_MS: ${WHIM_LOADTEST_ENGINEER_TURN_MS:-15000}
+      WHIM_LOADTEST_REWRITE_TURN_MS: ${WHIM_LOADTEST_REWRITE_TURN_MS:-1000}
+    volumes:
+      - /mnt/disks/whim-data/loadtest:/data
