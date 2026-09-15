@@ -42,10 +42,10 @@
 
 ## 6. Report store and operator command
 
-- [ ] 6.1 Create `server/src/reports/store.ts` with `ReportStore` and `NodeSqliteReportStore` on `WHIM_DATA_DIR/reports.db`: WAL, `secure_delete=ON`, the exact column set from specs/content-reports, `insert` returning `crypto.randomUUID()`, `list`, `get` and `purgeOlderThan`. Add an in-memory twin for tests.
-- [ ] 6.2 Fill `server/test/reports.suite.ts`: exact stored fields, retention default and override, and marker text present only in `reports.db` and absent from the usage database.
-- [ ] 6.3 Create `server/src/admin/cli.ts` with `reports list [--since N] [--limit N] [--json]` (no prompt or source text, sizes only), `reports show <id> [--json]`, `reports purge` and `usage [--days N] [--top N] [--json]` over `UsageStore.summary` (daily totals by kind, top devices by cost, per-generation count/mean/median/p95/max, unresolved count). It opens stores read-only except for purge.
-- [ ] 6.4 Add the dev runner `server/admin.mjs`, which bundles the CLI like `server/dev.mjs`. Fill `server/test/admin.suite.ts` with output-shape tests for every subcommand, plus a read-while-writing test in which a second connection lists while inserts proceed.
+- [x] 6.1 Create `server/src/reports/store.ts` with `ReportStore` and `NodeSqliteReportStore` on `WHIM_DATA_DIR/reports.db`: WAL, `secure_delete=ON`, the exact column set from specs/content-reports, `insert` returning `crypto.randomUUID()`, `list`, `get` and `purgeOlderThan`. Add an in-memory twin for tests.
+- [x] 6.2 Fill `server/test/reports.suite.ts`: exact stored fields, retention default and override, and marker text present only in `reports.db` and absent from the usage database.
+- [x] 6.3 Create `server/src/admin/cli.ts` with `reports list [--since N] [--limit N] [--json]` (no prompt or source text, sizes only), `reports show <id> [--json]`, `reports purge` and `usage [--days N] [--top N] [--json]` over `UsageStore.summary` (daily totals by kind, top devices by cost, per-generation count/mean/median/p95/max, unresolved count). It opens stores read-only except for purge.
+- [x] 6.4 Add the dev runner `server/admin.mjs`, which bundles the CLI like `server/dev.mjs`. Fill `server/test/admin.suite.ts` with output-shape tests for every subcommand, plus a read-while-writing test in which a second connection lists while inserts proceed.
 
 ## 7. Synthetic run: sandbox, egress, build isolation
 
