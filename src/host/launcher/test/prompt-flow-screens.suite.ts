@@ -577,7 +577,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(!/\bonCancel\b/.test(buildSrc), 'the old cancel-on-back prop is gone entirely');
     h.ok(!/\bonLeaveRunning\b/.test(buildSrc), 'the old separate leave-running prop is gone — one onBack for both');
     h.ok(/onBack: \(\) => void/.test(buildSrc), 'onBack is declared as a plain callback prop');
-    h.ok(/useSystemBack\(onBack\);/.test(buildSrc), 'the hook binds onBack — the caller’s stable identity keeps this a once-per-mount registration');
+    h.ok(/useSystemBack\(onBack\);/.test(buildSrc), 'the hook binds onBack — the hook registers once per mount through a ref regardless of handler identity');
     h.ok(!/BackHandler/.test(buildSrc), 'the screen owns no hardware-back listener of its own any more');
   });
 

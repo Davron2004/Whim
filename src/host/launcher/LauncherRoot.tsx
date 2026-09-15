@@ -1346,9 +1346,10 @@ function LauncherShell({
   /** Hardware back on the build screen (bug fix — see `BuildStep.tsx`'s header comment and
    *  `prompt-flow.ts#buildBackAction`): NEVER cancels. Closes the details sheet if it is open;
    *  otherwise defers to `onLeaveRunning`, the exact action the "Leave it running" button performs.
-   *  A stable identity (empty dependency array) so `BuildStep`'s listener is registered once per
-   *  mount, never once per tick. Cancellation stays reachable only from other explicit affordances
-   *  (a ghost tile's own Cancel, `onCancelPending` below). */
+   *  The hook binds once per mount through a ref regardless of handler identity; `useCallback` here
+   *  is kept for render stability only, not for the listener's registration count. Cancellation
+   *  stays reachable only from other explicit affordances (a ghost tile's own Cancel,
+   *  `onCancelPending` below). */
   const onBuildBack = useCallback(() => {
     if (buildBackAction(timelineRef.current !== null) === 'close-sheet') {
       setTimeline(null);

@@ -15,6 +15,7 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { bindSystemBack } from '../system-back';
 import type { BackHandlerLike } from '../system-back';
+import { useSystemBackWith } from '../use-system-back-with';
 import { FALLBACK_EXIT, SCREEN_EXITS, frameEdgesFor } from '../screen-exits';
 import type { ExitControl, ScreenKind } from '../screen-exits';
 import ScreenBoundary from '../ScreenBoundary';
@@ -85,64 +86,47 @@ function systemBackArg(source: string): string | null {
   return /^[A-Za-z_$][\w$]*$/.test(arg) ? arg : null;
 }
 
-/** One name → brace-matched body pass for `functionBodies` below, shared by the `function` and
- *  arrow forms so neither pattern grows complex enough to need the other. */
-function collectBodies(source: string, pattern: string, bodies: Map<string, string>): void {
-  const re = new RegExp(pattern, 'g');
-  let m: RegExpExecArray | null;
-  // Deliberately does NOT skip forward past a matched body: `pressHandlerFor` is declared INSIDE
-  // `ConsentScreen`'s own body, so the scan must keep looking within it, not resume after it.
-  while ((m = re.exec(source)) != null) {
-    let depth = 1;
-    let i = re.lastIndex;
-    while (i < source.length && depth > 0) {
-      if (source[i] === '{') depth++;
-      else if (source[i] === '}') depth--;
-      i++;
-    }
-    bodies.set(m[1], source.slice(re.lastIndex, i - 1));
-  }
-}
+/** `on[A-Z]…` prop names that fire on something other than a user tap, so a bare identifier
+ *  sitting inside one of these must not count as "bound" — a mutation that wires the hook's
+ *  handler only to `onLayout`/`onScroll`/etc. is exactly as unreachable to the user as no binding
+ *  at all. Narrow and static: extend it if a new non-press RN/webview event prop shows up. */
+const NON_PRESS_PROPS = new Set([
+  'onChange',
+  'onChangeText',
+  'onValueChange',
+  'onError',
+  'onLoadEnd',
+  'onMessage',
+  'onStartShouldSetResponder',
+  'onLayout',
+  'onScroll',
+  'onContentSizeChange',
+]);
 
-const FUNCTION_DECL = 'function\\s+(\\w+)\\s*\\([^)]*\\)[^{;]*\\{';
-const ARROW_DECL = 'const\\s+(\\w+)\\s*=\\s*\\([^)]*\\)[^{;]*=>\\s*\\{';
-
-/** Same-file function bodies keyed by name — `function name(...) {...}` and `const name = (...) =>
- *  {...}` — brace-matched so a body with its own nested blocks extracts correctly. Used only by
- *  `isBoundToControl`'s one sanctioned indirection below. */
-function functionBodies(source: string): Map<string, string> {
-  const bodies = new Map<string, string>();
-  collectBodies(source, FUNCTION_DECL, bodies);
-  collectBodies(source, ARROW_DECL, bodies);
-  return bodies;
-}
-
-/** Whether `ident` is bound to a pressable control in `source` (design D8 "bound"): directly, as
- *  the value inside some `on[A-Z]…={…}` JSX attribute, or — the one sanctioned indirection,
- *  mirroring "labelled"'s allowance for a decision function returning label keys — through a
- *  same-file function whose body names `ident` and which is itself an `on[A-Z]…={…}` attribute's
- *  value. `ConsentScreen.tsx`'s `pressHandlerFor` is exactly this shape: every non-granting row's
- *  `onPress={pressHandlerFor(row.action)}` resolves, for some rows, to `onClose` — the same
- *  identifier bound to `useSystemBack`. */
+/** Whether `ident` is bound to a pressable control in `source` (design D8 "bound"): the SAME
+ *  identifier appears as the value inside some `on[A-Z]…={…}` JSX attribute in this file, on a
+ *  prop that isn't a known non-press event. No same-file indirection is sanctioned — a function
+ *  that merely mentions `ident` in its body (`ConsentScreen.tsx`'s old `pressHandlerFor` shape)
+ *  does not count, because the plausible weaker mutation (the hook bound to one identifier, the
+ *  visible control reading a different one) still passes as long as some other function's body
+ *  happens to mention the hook's identifier — see the `PlanStep.tsx` fixture below. */
 function isBoundToControl(source: string, ident: string): boolean {
   const word = ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const directRe = new RegExp(`on[A-Z]\\w*\\s*=\\{[^{}]*\\b${word}\\b[^{}]*\\}`);
-  if (directRe.test(source)) return true;
-
-  for (const [name, body] of functionBodies(source)) {
-    if (!new RegExp(`\\b${word}\\b`).test(body)) continue;
-    const usedAsHandler = new RegExp(`on[A-Z]\\w*\\s*=\\{[^{}]*\\b${name}\\b[^{}]*\\}`);
-    if (usedAsHandler.test(source)) return true;
+  const attrRe = /(on[A-Z]\w*)\s*=\{([^{}]*)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = attrRe.exec(source)) != null) {
+    const [, propName, value] = m;
+    if (NON_PRESS_PROPS.has(propName)) continue;
+    if (new RegExp(`\\b${word}\\b`).test(value)) return true;
   }
   return false;
 }
 
 /** Whether a control's label really appears in `source` (design D8 "labelled"): a `copy` control
- *  as `COPY.<key>`, or as the quoted key `'<key>'` where a decision module hands back label keys
- *  (`consent-flow.ts#consentControls`'s shape); a `component` as `<Name`; a `literal` verbatim. */
+ *  as `COPY.<key>`; a `component` as `<Name`; a `literal` verbatim. */
 function hasLabel(source: string, control: ExitControl): boolean {
   if ('copy' in control) {
-    return new RegExp(`COPY\\.${control.copy}\\b`).test(source) || source.includes(`'${control.copy}'`);
+    return new RegExp(`COPY\\.${control.copy}\\b`).test(source);
   }
   if ('component' in control) return source.includes(`<${control.component}`);
   return source.includes(control.literal);
@@ -167,27 +151,36 @@ function seamAndMembershipViolations(clean: Record<string, string>): ScreenExitV
     const allowed = ALLOWED_BACK_HANDLER_FILES.has(file);
     if (!allowed && usesBackHandlerDirectly(source)) violations.push({ rule: 'seam', file });
 
-    const isHookCaller = file !== 'use-system-back.ts' && source.includes('useSystemBack(');
+    const isHookCaller =
+      file !== 'use-system-back.ts' && file !== 'use-system-back-with.ts' && /useSystemBack(With)?\(/.test(source);
     if (isHookCaller && !declaredFiles.has(file)) violations.push({ rule: 'declared', file });
   }
   return violations;
 }
 
-/** The call-count half of "declared" (a `back: 'screen'` row's file calls the hook exactly once)
- *  and "bound" (that one call's argument reaches a pressable control in the same file). */
+/** The call-count half of "declared" (a `back: 'screen'` row's file, or `FALLBACK_EXIT.file`,
+ *  calls the hook exactly once) and "bound" (that one call's argument reaches a pressable control
+ *  in the same file). Applies to `FALLBACK_EXIT.file` too — `ScreenErrorFallback.tsx`'s `onLeave`
+ *  needs the same guarantee as every declared screen's exit. */
 function boundViolations(clean: Record<string, string>): ScreenExitViolation[] {
+  const files = [
+    ...screenRows()
+      .filter(([, row]) => row.back === 'screen' && row.file != null)
+      .map(([, row]) => row.file as string),
+    FALLBACK_EXIT.file,
+  ];
+
   const violations: ScreenExitViolation[] = [];
-  for (const [, row] of screenRows()) {
-    if (row.back !== 'screen' || row.file == null) continue;
-    const source = clean[row.file];
-    if (source == null) continue; // nothing given for this row's file — nothing to check
+  for (const file of files) {
+    const source = clean[file];
+    if (source == null) continue; // nothing given for this file — nothing to check
 
     if (countOccurrences(source, 'useSystemBack(') !== 1) {
-      violations.push({ rule: 'declared', file: row.file });
+      violations.push({ rule: 'declared', file });
       continue; // "bound" needs exactly one call to read an argument from
     }
     const arg = systemBackArg(source);
-    if (arg == null || !isBoundToControl(source, arg)) violations.push({ rule: 'bound', file: row.file });
+    if (arg == null || !isBoundToControl(source, arg)) violations.push({ rule: 'bound', file });
   }
   return violations;
 }
@@ -266,18 +259,6 @@ function controlledChild(control: { throws: boolean }): () => React.ReactElement
 export async function runScreenExitsTests(h: Harness): Promise<void> {
   // ── bindSystemBack (design D9) ──────────────────────────────────────────────
 
-  await h.test('bindSystemBack: registers exactly one listener across three handler swaps', () => {
-    const fake = fakeBackHandler();
-    let current: (() => void) | null = () => {};
-    bindSystemBack(fake.api, () => current);
-    h.eq(fake.registrations(), 1, 'one registration at bind time');
-
-    current = () => {};
-    current = () => {};
-    current = () => {};
-    h.eq(fake.registrations(), 1, 'swapping the handler three times registers no new listener');
-  });
-
   await h.test('bindSystemBack: always runs the LATEST handler, not the one live at bind time', () => {
     const calls: string[] = [];
     let current: (() => void) | null = () => calls.push('first');
@@ -305,6 +286,32 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
     h.ok(!fake.removed(), 'not removed before unsubscribe is called');
     unsubscribe();
     h.ok(fake.removed(), 'unsubscribe removes the underlying listener');
+  });
+
+  // ── useSystemBackWith (design D9): the real once-per-mount / latest-handler contract, REALLY
+  // rendered — the `[]` deps of its `useEffect` are what `use-system-back.ts` relies on, and no
+  // fixed-count of a local variable reassignment can exercise a React re-render at all. ──────────
+
+  await h.test('useSystemBackWith: three re-renders with three different handlers register exactly once', () => {
+    const fake = fakeBackHandler();
+    const calls: string[] = [];
+    function Probe({ label }: Readonly<{ label: string }>) {
+      useSystemBackWith(fake.api, () => calls.push(label));
+      return React.createElement('probe');
+    }
+
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    TestRenderer.act(() => {
+      tree = TestRenderer.create(React.createElement(Probe, { label: 'first' }));
+    });
+    TestRenderer.act(() => tree!.update(React.createElement(Probe, { label: 'second' })));
+    TestRenderer.act(() => tree!.update(React.createElement(Probe, { label: 'third' })));
+
+    h.eq(fake.registrations(), 1, 'three re-renders with three different handler closures register only once');
+
+    fake.fire();
+    h.eq(calls, ['third'], 'system back runs the LATEST render’s handler, not the one live when the effect first ran');
+    TestRenderer.act(() => tree!.unmount());
   });
 
   // ── frameEdgesFor (design D10) ───────────────────────────────────────────────
@@ -482,6 +489,121 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       scanScreenExits(files),
       [{ rule: 'bound', file: 'PlanStep.tsx' }],
       'handleBack never reaches a pressable control in this file — only the stale onBack does',
+    );
+  });
+
+  await h.test('scanner "bound": a same-file function merely MENTIONING the hook\'s identifier does not count', () => {
+    // The counterexample a widened "bound" rule (accepting a same-file indirection) would miss:
+    // the hook is bound to `onBack`, but the header reads `handleBack` — a DIFFERENT identifier —
+    // whose body happens to call `onBack()`. A rule that treats "some function's body mentions the
+    // hook's identifier, and that function is itself used as a handler" as sufficient stays green
+    // here, silently accepting system back and the header taking two different paths (breaking D4
+    // parity: `handleBack` may cancel an open edit first, `onBack` alone never does).
+    const files = {
+      'PlanStep.tsx': `
+        export default function PlanStep({ onBack }: { onBack: () => void }) {
+          const handleBack = () => {
+            cancelEdit();
+            onBack();
+          };
+          useSystemBack(onBack);
+          return <FlowHeader step="plan" onBack={handleBack} />;
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'bound', file: 'PlanStep.tsx' }],
+      'onBack never appears inside an on[A-Z]…={…} attribute itself — handleBack merely mentioning it in its body must not count',
+    );
+  });
+
+  await h.test('scanner "bound": a non-press event prop like onLayout does not satisfy binding', () => {
+    const files = {
+      'FailureScreen.tsx': `
+        export default function FailureScreen({ onBack }: { onBack: () => void }) {
+          useSystemBack(onBack);
+          return (
+            <View onLayout={onBack}>
+              <Text>{COPY.failureBack}</Text>
+            </View>
+          );
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'bound', file: 'FailureScreen.tsx' }],
+      'onLayout fires on layout, not a user tap — binding the hook\'s handler to it only is not a visible exit',
+    );
+  });
+
+  await h.test('scanner "declared": a row\'s file calling the hook twice is caught', () => {
+    const files = {
+      'FailureScreen.tsx': `
+        export default function FailureScreen({ onBack }: { onBack: () => void }) {
+          useSystemBack(onBack);
+          useSystemBack(onBack);
+          return <TouchableOpacity onPress={onBack}><Text>{COPY.failureBack}</Text></TouchableOpacity>;
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'declared', file: 'FailureScreen.tsx' }],
+      'exactly one useSystemBack call per back: "screen" file — a second call is caught, not silently allowed',
+    );
+  });
+
+  await h.test('scanner "declared": a row\'s file calling useSystemBackWith twice is caught, same as useSystemBack', () => {
+    const files = {
+      'FailureScreen.tsx': `
+        export default function FailureScreen({ onBack }: { onBack: () => void }) {
+          useSystemBackWith(api, onBack);
+          useSystemBackWith(api, onBack);
+          return <TouchableOpacity onPress={onBack}><Text>{COPY.failureBack}</Text></TouchableOpacity>;
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'declared', file: 'FailureScreen.tsx' }],
+      'a screen calling the RN-free hook directly twice is caught exactly like useSystemBack called twice',
+    );
+  });
+
+  await h.test('scanner "bound": FALLBACK_EXIT\'s own file is held to the same rule as a declared screen', () => {
+    const files = {
+      'ScreenErrorFallback.tsx': `
+        function LeaveAction({ onLeave, onRetry }: { onLeave: () => void; onRetry: () => void }) {
+          useSystemBack(onLeave);
+          return <TouchableOpacity onPress={onRetry}><Text>{COPY.screenErrorBack}</Text></TouchableOpacity>;
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'bound', file: 'ScreenErrorFallback.tsx' }],
+      'onLeave is what the hook is bound to, but the visible control here presses onRetry instead',
+    );
+  });
+
+  await h.test('scanner "labelled": flow-chrome.tsx missing COPY.backLabel is caught', () => {
+    const files = {
+      'flow-chrome.tsx': `
+        export function FlowHeader({ onBack }: { onBack: () => void }) {
+          return (
+            <TouchableOpacity onPress={onBack}>
+              <Text>Back</Text>
+            </TouchableOpacity>
+          );
+        }
+      `,
+    };
+    h.eq(
+      scanScreenExits(files),
+      [{ rule: 'labelled', file: 'flow-chrome.tsx' }],
+      'COPY.backLabel is gone from flow-chrome.tsx — the literal "Back" string does not count',
     );
   });
 

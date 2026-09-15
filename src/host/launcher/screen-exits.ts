@@ -79,8 +79,8 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, ScreenExit>> = {
   // `Keep AI features on`, and review-off's plain `Not now` reuses `consentDecline` rather than a
   // new `consent…` string (public-generation-server chain-15 fails an unquoted addition to the
   // privacy page). `ConsentScreen.tsx` renders both through its own `actionLabel` switch
-  // (`COPY.consentDecline`, `COPY.consentReviewKeepOn`), not through `consent-flow.ts`'s
-  // `consentControls` adapter, so the row names the file that's really rendered.
+  // (`COPY.consentDecline`, `COPY.consentReviewKeepOn`) and binds `onClose` to them directly in
+  // its JSX, so the row names the file that's really rendered.
   consent: {
     back: 'screen',
     file: 'ConsentScreen.tsx',
