@@ -1,8 +1,11 @@
 # Owner checklist, 2026-09-15: mail switch and Apple console
 
-Two jobs only you can do. Neither needs an agent; both need logins the agents don't hold. Tick them off in this file as you go so the next session knows.
+The owner reported the Zoho mail work complete on 2026-09-15. Apple and the
+remaining release setup are still pending with the owner. The mail instructions
+below are retained for reference; this session did not independently repeat the
+DNS or mail-delivery checks.
 
-## 1. Move mail from Google Workspace to Zoho Mail
+## 1. Move mail from Google Workspace to Zoho Mail — owner reports complete
 
 Why now: `support@anycognition.ca` is printed on the live privacy and support pages, and the Google Workspace subscription is cancelled, so that address stops receiving mail when Google shuts the account.
 
@@ -38,10 +41,9 @@ Notes:
 
 From any machine: `dig +short MX anycognition.ca` should list only Zoho hosts. Send a mail from outside to `support@anycognition.ca` and confirm it arrives. Zoho's admin page shows SPF and DKIM as verified once DNS has propagated (TTL is 600 s, so about ten minutes).
 
-- [ ] Zoho domain verified
-- [ ] MX, SPF, DKIM switched at GoDaddy
-- [ ] `support@anycognition.ca` receives a test mail
-- [ ] Google records removed
+Original completion checks: Zoho domain verified; MX, SPF and DKIM switched;
+`support@anycognition.ca` receives a test mail; Google records removed. Overall
+completion is recorded from the owner's report, not a new agent verification.
 
 ## 2. Apple: agreement and console
 
