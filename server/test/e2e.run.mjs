@@ -7,8 +7,7 @@
  * `synthrun/test/run.mjs` already document: bundling any of the three throws "Dynamic require of
  * \"fs\" is not supported" at import time).
  *
- * Not yet wired to an `npm run` script (Class-2 — `openspec/changes/generation-loop/
- * pending-class2.md`):
+ * Run as `npm run server:e2e`, which `scripts/gate-full.sh` gates on:
  *
  *   node server/test/e2e.run.mjs
  */

@@ -2,18 +2,23 @@
  * server/test/e2e.ts — chain-6's BROWSER-BACKED suite (spec "Blocking server suite in CI":
  * "A second, browser-backed suite SHALL exercise the pipeline end to end against the real static
  * checker, the real bundle build, and the real synthetic run harness"). Needs Chromium — never
- * part of `npm run server:test` / the fast gate (`server/test/run.mjs`'s own esbuild call). Its
- * own `package.json` script and `gate-full.sh` line are Class-2 and unapplied
- * (`openspec/changes/generation-loop/pending-class2.md`) — run directly:
+ * part of `npm run server:test` / the fast gate (`server/test/run.mjs`'s own esbuild call). It runs
+ * in the full gate as `npm run server:e2e` (`scripts/gate-full.sh`):
  *
  *   node server/test/e2e.run.mjs
  *
- * Also covers `reconcile.ts` (task 6.3) — pure Node logic, no browser, kept in this file per this
- * chain's declared file scope rather than a second unregistered suite.
+ * Also covers the production boot self-test and the browser-context teardown on a real TCP
+ * disconnect through the composed server (`lifecycle.ts`), and `reconcile.ts` (task 6.3) — pure
+ * Node logic, no browser, kept in this file per chain-6's declared file scope.
  */
 import fs from 'node:fs';
+import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { check, eq, report, section } from './harness';
+import { ScriptedModelClient } from './scripted-model';
+import { BootError, runBootSelfTest, startServer, type ServerHandle } from '../src/lifecycle';
+import type { ModelRoster } from '../src/generation/model';
 import { createCheckStage } from '../src/generation/stages/check';
 import { createBuildStage } from '../src/generation/stages/build';
 import { createRunStage } from '../src/generation/stages/run';
@@ -369,8 +374,10 @@ async function testCancellationDisposesAndReleasesSlot(): Promise<void> {
       budgets: { mountBudgetMs: 5000, totalBudgetMs: 20000 },
       beforeNavigate: async (page) => {
         capturedPage = page;
-        // give mount time to finish so the abort lands mid-sweep, not mid-boot.
-        setTimeout(() => controller.abort(), 250);
+        // Counted from the page's load, not from here, so however long navigation takes the abort
+        // lands after it (mid-mount or mid-sweep, where the run resolves with a report) rather than
+        // during `goto` (where it rejects with an AbortError).
+        page.once('load', () => setTimeout(() => controller.abort(), 250));
       },
     });
     const elapsed = Date.now() - started;
@@ -387,6 +394,226 @@ async function testCancellationDisposesAndReleasesSlot(): Promise<void> {
     check('the second run did not queue behind a leaked slot', secondElapsed < 8000);
   } finally {
     await session.close();
+  }
+}
+
+// ── The production boot self-test (design D16, spec "Production boot proves the synthetic run
+//    works before serving") ──
+
+/** Throws while rendering, so its run reports an error diagnostic. */
+const THROWS_ON_MOUNT = `import { defineApp, Screen, Text } from 'vc-sdk';
+function Home() {
+  throw new Error('the self-test fixture failed to render');
+  return <Screen><Text>unreachable</Text></Screen>;
+}
+export default defineApp({ name: 'Broken', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+async function testBootSelfTest(session: SynthRunSession): Promise<void> {
+  section('spec: the boot self-test passes on a healthy session');
+
+  const outcome = await runBootSelfTest(session).then(
+    () => 'passed',
+    (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+  );
+  eq('the curated fixture runs contained with no error diagnostic, and egress from a run context is blocked', outcome, 'passed');
+
+  // red-check (non-vacuity): a run that reports an error diagnostic must fail boot, so the self-test
+  // is more than "the browser started".
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-self-test-'));
+  try {
+    fs.mkdirSync(path.join(cwd, 'fixtures'));
+    fs.writeFileSync(path.join(cwd, 'fixtures', 'tip-splitter.app.tsx'), THROWS_ON_MOUNT);
+    const failed = await runBootSelfTest(session, cwd).then(
+      () => undefined,
+      (err: unknown) => err,
+    );
+    check(
+      'red-check: a fixture that throws while rendering fails the self-test as a boot failure',
+      failed instanceof BootError && failed.reason === 'self_test',
+      String(failed),
+    );
+    check('and the failure names the fixture', failed instanceof Error && failed.message.includes('fixtures/tip-splitter.app.tsx'), String(failed));
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+// ── The composed server: boot gates listening, and a real TCP disconnect closes the browser
+//    context (spec "A real TCP disconnect closes the browser context") ──
+
+const E2E_ROSTER: ModelRoster = { rewrite: 'e2e/rewrite', engineer: 'e2e/engineer' };
+const DISCONNECT_BOUND_MS = 5000;
+
+/** Wedges the renderer before the first paint and never returns, so the run sits in its mount wait. */
+const MOUNT_HANG = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+for (;;) { /* never paints */ }
+function Slow() { return <Screen><Stack><Heading size="title">Slow</Heading></Stack></Screen>; }
+export default defineApp({ name: 'Slow', initial: 'Slow', screens: { Slow }, capabilities: [] });
+`;
+
+const HARMLESS = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading></Stack></Screen>; }
+export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+const SLOW_PLAN = JSON.stringify({
+  screens: [{ name: 'Slow', purpose: 'the only screen' }],
+  initial: 'Slow',
+  state: [],
+  capabilities: [],
+  storageKeys: [],
+});
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Polls `predicate` until it holds or `ms` elapses; returns whether it held. */
+async function waitUntil(predicate: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await sleep(20);
+  }
+  return true;
+}
+
+const TIMED_OUT = Symbol('timed out');
+
+/** `work`, or `TIMED_OUT` once `ms` pass on a ref'd timer. A late rejection of `work` is observed. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+  });
+  work.catch(() => undefined);
+  try {
+    return await Promise.race([work, expiry]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address() as net.AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+function accepts(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
+async function testComposedServerBootAndDisconnect(): Promise<void> {
+  section('spec: the composed server listens only after its self-test, and a real TCP disconnect closes the run\'s browser context');
+
+  // Serving installs @hono/node-server's Request/Response globals; they are put back afterwards.
+  const savedRequest = Object.getOwnPropertyDescriptor(globalThis, 'Request');
+  const savedResponse = Object.getOwnPropertyDescriptor(globalThis, 'Response');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-server-'));
+  const model = new ScriptedModelClient(E2E_ROSTER, [
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+    { role: 'engineer', deltas: [SLOW_PLAN] },
+    { role: 'engineer', deltas: [MOUNT_HANG] },
+  ]);
+  let handle: ServerHandle | undefined;
+  try {
+    const checked = await createCheckStage().check(MOUNT_HANG, {});
+    check('setup: the hanging candidate passes the static checks, so it reaches the run stage', !checked.diagnostics.some((d) => d.severity === 'error'), JSON.stringify(checked.diagnostics));
+
+    const port = await freePort();
+    let booted = false;
+    const starting = startServer({
+      env: { WHIM_DATA_DIR: dataDir, WHIM_SYNTHRUN_CONCURRENCY: '1' },
+      overrides: { model: { client: model, roster: E2E_ROSTER } },
+      listen: { host: '127.0.0.1', port },
+    }).finally(() => {
+      booted = true;
+    });
+    let probes = 0;
+    let acceptedBeforeBoot = false;
+    while (!booted) {
+      probes++;
+      if ((await accepts(port)) && !booted) acceptedBeforeBoot = true;
+      await sleep(25);
+    }
+    const started = await within(starting, 60_000).then(
+      (value) => value,
+      (err: unknown) => (err instanceof Error ? err : new Error(String(err))),
+    );
+    if (started === TIMED_OUT || started instanceof Error) {
+      check('the composed server booted', false, String(started));
+      return;
+    }
+    handle = started;
+    const session = handle.session;
+    check('nothing accepted a connection while the browser launched and the self-test ran', !acceptedBeforeBoot);
+    check('non-vacuity: the port was probed throughout boot', probes > 3, `${probes} probes`);
+    check('the server accepts connections once boot resolved', await accepts(port));
+    eq('it reports its bound URL', handle.url, `http://127.0.0.1:${port}`);
+    if (!session) {
+      check('the real pipeline has a synthetic-run session', false);
+      return;
+    }
+
+    const payload = JSON.stringify({ prompt: 'a slow app' });
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    let received = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk: string) => {
+      received += chunk;
+    });
+    socket.on('error', () => undefined);
+    socket.write(
+      [
+        'POST /v1/generate HTTP/1.1',
+        'Host: 127.0.0.1',
+        'Content-Type: application/json',
+        `Content-Length: ${Buffer.byteLength(payload)}`,
+        'x-whim-device: e2e0e2e0-e2e0-4e20-8e20-e2e0e2e0e2e0',
+        'Connection: close',
+        '',
+        payload,
+      ].join('\r\n'),
+    );
+
+    check('the candidate reached the run stage and opened its browser context', await waitUntil(() => session.openContextCount() === 1, 60_000), received.slice(-800));
+    // The page loads in tens of milliseconds and the candidate never paints, so by now the run is
+    // held in its mount wait.
+    await sleep(500);
+    check('setup: the run is still held in the run stage', session.openContextCount() === 1 && !received.includes('event: failure'));
+    const destroyedAt = Date.now();
+    socket.destroy();
+
+    check(`within ${DISCONNECT_BOUND_MS} ms the session has no open browser context`, await waitUntil(() => session.openContextCount() === 0, DISCONNECT_BOUND_MS), `${Date.now() - destroyedAt} ms`);
+    const remaining = Math.max(1, DISCONNECT_BOUND_MS - (Date.now() - destroyedAt));
+    const next = await within(session.openRun(HARMLESS).then((run) => run.dispose()), remaining);
+    check(`and within ${DISCONNECT_BOUND_MS} ms its only concurrency slot is free for another run`, next !== TIMED_OUT, `${Date.now() - destroyedAt} ms`);
+    eq('no model call was made after the disconnect', model.requests.length, 3);
+    check('the stream never produced a terminal event', !received.includes('event: result') && !received.includes('event: failure'), received.slice(-800));
+
+    const closing = await within(handle.close(), 30_000);
+    check('the server drains closed', closing !== TIMED_OUT);
+    handle = undefined;
+    check('and no longer accepts connections', !(await accepts(port)));
+  } finally {
+    if (handle) await within(handle.close(), 30_000);
+    if (savedRequest) Object.defineProperty(globalThis, 'Request', savedRequest);
+    if (savedResponse) Object.defineProperty(globalThis, 'Response', savedResponse);
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 }
 
@@ -522,11 +749,13 @@ async function main(): Promise<void> {
   try {
     await testHonestCandidateReachesResult(session);
     await testHostileCandidateStaysContained(session);
+    await testBootSelfTest(session);
   } finally {
     await session.close();
   }
 
   await testCancellationDisposesAndReleasesSlot();
+  await testComposedServerBootAndDisconnect();
 
   report();
 }

@@ -100,6 +100,8 @@ checks/test/.phase
 server/.data/
 # Dev-only device log sink (WHIM_DEV_LOG_SINK=1): `npm run whim:logs` tails it. Never committed.
 server/.logs/
+# Production runtime tree (`node server/build.mjs`): build output, never committed.
+server/dist/
 .env
 
 # Corpus-eval CLI: local run reports (the CLI's default --out; never a committed artifact —
