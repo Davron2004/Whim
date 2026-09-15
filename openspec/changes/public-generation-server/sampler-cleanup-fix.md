@@ -21,6 +21,13 @@ completed EXIT trap, and return that driver status. Retain cleanup for early
 failure paths. Do not hide the defect with empty defaults for expired variables.
 No extra server operation belongs in drive cleanup.
 
+The sampler is a background shell function with gcloud and SSH descendants.
+Give this launch its own process group by temporarily enabling Bash monitor
+mode, then restore the caller's previous monitor mode before running the driver.
+Send TERM to that owned group and wait for the wrapper. Bash 3.2 behavior was
+verified locally; this covers normal descendants, not children that ignore TERM.
+The remote loop must exit when sample collection or stdout delivery fails.
+
 ## Regression proof
 
 Execute the real `run.sh drive` path under its normal `set -u` behavior using
@@ -29,6 +36,8 @@ and CSV path. After a successful fake driver returns, assert outer exit 0,
 sampler termination, CSV removal and no unbound-variable error. Repeat with a
 distinct nonzero driver status and require that exact status after cleanup.
 Tests must release any test-owned process even when the red assertion fails.
+Assert the actual fake-gcloud child has exited. A single-PID-kill mutant must
+fail that assertion, with the fixture releasing its surviving child afterward.
 
 Run the tests before the fix to reproduce the post-function failure, then after
 the fix. Preserve existing start/recovery tests. Run the server suite and fast
