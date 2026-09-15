@@ -2,12 +2,11 @@
  * service-refusal — recognises a `GenerationClientError` as a service refusal, and the pure
  * retry-window arithmetic that goes with one (design D8/D11; spec "service-refusals").
  *
- * `ServiceRefusalCode` is imported TYPE-ONLY from `./contract-mirror` (a client-local stand-in
- * for `@whim/contract`'s not-yet-landed export — see that module's doc comment), so this module
- * pulls no zod into the Metro bundle graph, same discipline as every other `@whim/contract`
- * import in this directory.
+ * `ServiceRefusalCode` is imported TYPE-ONLY from `@whim/contract`, so this module pulls no zod
+ * into the Metro bundle graph, same discipline as every other `@whim/contract` import in this
+ * directory.
  */
-import type { ServiceRefusalCode } from './contract-mirror';
+import type { ServiceRefusalCode } from '@whim/contract';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
 import {
   retryLineHoursFallback,

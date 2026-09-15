@@ -5,14 +5,14 @@
  * Covers spec `service-refusals`:
  *   - "A refusal is recognised by the contract's closed refusal vocabulary" — all seven codes
  *     recognised, an out-of-vocabulary identifier and a hint-less body are not refusals, and the
- *     table's keys are checked against the real (mirrored) `ServiceRefusalCode.options`.
+ *     table's keys are checked against the real `ServiceRefusalCode.options`.
  *   - "Retry-After holds the retry action until the window passes" — the line-format thresholds
  *     only (seconds, minutes, same local day, tomorrow), per this chain's declared read scope.
  */
 import { Harness } from './harness';
 import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
 import { GenerationClientError } from '../transport-shared';
-import { ServiceRefusalCode } from '../contract-mirror';
+import { ServiceRefusalCode } from '@whim/contract';
 
 const HINT = 'Whim is busy right now. Try again in a bit.';
 

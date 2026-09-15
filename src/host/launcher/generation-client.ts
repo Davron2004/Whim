@@ -31,12 +31,13 @@ import type {
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  ReportRequest,
+  ReportResponse,
   RewriteRequest,
   RewriteResponse,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
-import type { ReportRequest, ReportResponse } from './contract-mirror';
 
 import { openXhrGenerateStream } from './xhr-transport';
 import {

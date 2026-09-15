@@ -14,7 +14,7 @@
 import { Harness } from './harness';
 import { REFUSAL_RULES } from '../service-refusal';
 import { refusalLanding, retryWindowState } from '../refusal-landing';
-import { ServiceRefusalCode } from '../contract-mirror';
+import { ServiceRefusalCode } from '@whim/contract';
 
 const TEXT_LANDING_CODES = ServiceRefusalCode.options.filter((code) => REFUSAL_RULES[code].landing === 'text');
 const SENDER_LANDING_CODES = ServiceRefusalCode.options.filter((code) => REFUSAL_RULES[code].landing === 'sender');
