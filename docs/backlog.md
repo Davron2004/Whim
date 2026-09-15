@@ -22,6 +22,14 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 - **Suggested approach:** run the app corpus (`docs/app-corpus.md`) through each candidate pair and record first-try build success, repair rounds, wall time and dollar cost per app (the server's OpenRouter reconciliation already fetches per-generation stats). Pick rewrite and engineer models separately. A user-pickable model list comes after this, not before.
 - **Source:** store-launch planning, 2026-09-14.
 
+### [idea — later] A cheaper way to verify generated candidates than a Chromium context per run
+- [ ] open
+- **Where:** `synthrun/session.ts` and `synthrun/report.ts` (a fresh browser context and page per candidate), `server/src/generation/stages/run.ts` (the run stage), and the VM sizing in `openspec/changes/public-generation-server/design.md` D6/D25 (synthetic-run concurrency is what drives vCPU and memory).
+- **What:** every candidate boots its own Chromium context on the server to run and observe it. The owner suspects there's a much cheaper design: one warm shared browser with per-candidate isolation, or verifying most candidates without a full browser render and saving the real render for the ones that need it.
+- **Why it matters:** the synthetic run is what limits how many generations a VM can run at once and so what the VM costs (D25 sizes the demo-night profile around it). Not now: there are zero users. Revisit when generation volume or VM cost makes it matter. This is an optimization to explore later, not a decision, and any cheaper path still has to keep the containment guarantees (sandbox on, no egress, trusted-vantage observation).
+- **Suggested approach:** measure first. Use the event-profile load test (public-generation-server task 15.4) for per-context CPU and memory and the run stage's share of a generation's wall time. Then compare candidate designs against that baseline and against the synthetic-run spec's isolation requirements before writing a proposal.
+- **Source:** owner, during the web-host and capacity plan amendment for public-generation-server, 2026-09-14.
+
 ### [low] DevProbeScreen may double-apply the top safe-area inset
 - [ ] open
 - **Where:** `src/host/launcher/DevProbeScreen.tsx` (uses `react-native`'s `SafeAreaView`), now rendered under `App.tsx`'s `SafeAreaView edges={['top']}` (added by `fix-launcher-shell-bugs` B9).

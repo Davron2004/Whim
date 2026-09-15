@@ -11,9 +11,13 @@
     wave 4: chain-9
     wave 5: chain-10
     wave 6: chain-11 (also needs chain-7)
-    wave 7: chain-12
-    wave 8: chain-13
+    wave 7: chain-12 (after chain-11 and chain-15)
+    wave 8: chain-16 (after chain-12)
+    wave 9: chain-13 (after chain-16)
     then:   chain-14 (attended, human-run)
+    pages site: chain-15 has no in-change dependency and is file-disjoint from every chain in
+      flight. Dispatch it once platform-release-readiness chain-9 has merged (external: its
+      handoff/release-cli.md fixes the association-files output), in any slot before chain-12.
 
   Parallel-safety rules every dispatched chain inherits:
   - A chain edits only the files its block names. server/test/acceptance.ts is edited once,
@@ -23,12 +27,28 @@
     server/test/scripted-model.ts). A helper a chain needs lives in its own suite file.
   - No chain edits scripts/gate*.sh, invariants/, build/, .claude/**, .codex/**, tsconfig*,
     eslint config, babel/metro config, or root package.json scripts (design.md D18).
-  - Worktree note (chains 11–12): node_modules resolves from the primary tree. Symlink it into
-    the worktree before self-gating, because the production-build suite spawns node from
-    server/dist/app. guard:metro runs only from the primary tree.
+  - Worktree note (chains 11, 12 and 16): node_modules resolves from the primary tree. Symlink it
+    into the worktree before self-gating, because the production-build suite spawns node from
+    server/dist/app and chain-16's browser case boots a server in-process. guard:metro runs only
+    from the primary tree.
   - Semantic-overlap watch: chain-4 appends the rating rule to the engineer and rewrite system
     messages. Any chain-8 or pre-existing assertion on exact system-message text surfaces at
     the post-merge regate. Fix the assertion to read the policy document; never drop the rule.
+  - Shared files edited in sequence (web-host and capacity amendment). acceptance.ts belongs to
+    merged chain-1, so the two new suites are sub-suites called from deploy-config.suite.ts,
+    which is edited in this order: chain-15 (adds the runWebSiteTests call, nothing else),
+    chain-12 (fills the module, keeps that call), chain-16 (adds the runLoadTestTests call,
+    nothing else), chain-13 (runbook check). server/test/e2e.ts goes chain-11, then chain-16.
+    chain-16 reads deploy/Dockerfile, cloudbuild.yaml, compose.yaml, deploy.sh and resize.sh
+    in its tripwire but never edits them.
+  - Semantic-overlap watch: chain-15's parity tripwire fails any later edit that adds or changes
+    a `consent…` string in src/host/launcher/copy.ts without deploy/site/privacy.html quoting it.
+    That includes store-launch-compliance's remaining chains. Fix the policy page; never widen
+    the non-disclosure allowlist to get a regate through.
+  - Halt rule (chain-16): if any code path in the load-test server's Node process can reach
+    `fetch` or an OpenRouter transport without hitting the trap, or the production bundle's
+    metafile lists a server/src/loadtest/ input, HALT and escalate. Never weaken the fetch trap
+    or the key refusal to make a case pass.
 -->
 
 ## chain-0: bootstrap-harness-dependencies — HUMAN-BOOTSTRAP
@@ -122,31 +142,51 @@
 ## chain-11: lifecycle-drain-production-build
 
 - tasks: 12.1–12.6
-- rationale: This covers how the process starts and stops: the asset list, preflight, lifecycle composition, boot self-test, drain, the production tree build, and their process-spawning and browser-backed tests. It is the only chain touching `server/build.mjs`, `lifecycle.ts`, `e2e.ts` and `.gitignore`.
-- reads: specs/server-deployment/spec.md §A production build produces a self-contained runtime tree, §Boot fails fast when the runtime is incomplete, §Production boot proves the synthetic run works before serving, §SIGTERM drains in-flight work before exit; specs/generation-server/spec.md §Client disconnect aborts the pipeline (browser-backed scenario), §Blocking server suite in CI; design.md D1, D16; handoff: handoff/composition.md, handoff/synthrun-launch.md, handoff/synthrun-resilience.md, handoff/usage-ledger.md
-- writes-contract: handoff/runtime-tree.md (the tree layout, entry and CLI paths inside it, the start command, the required env, the preflight exit contract, drain env and timings)
+- rationale: This covers how the process starts and stops: the asset list, preflight, lifecycle composition, boot self-test, drain, the production tree build, and their process-spawning and browser-backed tests. It is the only chain touching `server/build.mjs` and `lifecycle.ts`, and the first to touch `e2e.ts` and `.gitignore` (chain-16 appends one case to `e2e.ts` later). The web-host and capacity amendment adds two seams and no new task: `startServer`'s overrides and the exported `bundleServerEntry`. A no-spend load test (chain-16) needs a second start path over the same composition and drain, and designing the seam here costs one parameter rather than a later rework of `lifecycle.ts`. No config variable is added.
+- reads: specs/server-deployment/spec.md §A production build produces a self-contained runtime tree, §Boot fails fast when the runtime is incomplete, §Production boot proves the synthetic run works before serving, §SIGTERM drains in-flight work before exit, §A load test measures capacity without spending provider credit (first paragraph only, for the seam); specs/generation-server/spec.md §Client disconnect aborts the pipeline (browser-backed scenario), §Blocking server suite in CI; design.md D1, D16, D26 (the mechanism paragraph); handoff: handoff/composition.md, handoff/synthrun-launch.md, handoff/synthrun-resilience.md, handoff/usage-ledger.md
+- writes-contract: handoff/runtime-tree.md (the tree layout, entry and CLI paths inside it, the start command, the required env, the preflight exit contract, drain env and timings, `startServer({ env, overrides?, listen? })` verbatim with the override type and the returned handle, `bundleServerEntry` verbatim)
 - after: chain-7, chain-10
 
 ## chain-12: container-and-gcp-deploy-artifacts
 
-- tasks: 13.1–13.5
-- rationale: All the new `deploy/` files, the ignore files, and the tripwire suite that locks their invariants share one vocabulary (image, compose service, VM paths, env files) and no server source file.
-- reads: specs/server-deployment/spec.md §The container image is pinned, minimal, non-root, and secret-free, §A TLS front proxy serves the API without buffering streams, §The server container runs hardened on the VM, §Secrets are injected at deploy time and never built in, §Scripted build, deploy, and smoke checks; design.md D2, D17; handoff: handoff/runtime-tree.md, handoff/synthrun-launch.md
-- writes-contract: handoff/deploy-surface.md (script names and arguments, VM paths, env file names and their variables, the hostname rule, the smoke-check list)
-- after: chain-11
+- tasks: 13.1–13.6
+- rationale: All the new `deploy/` files, the ignore files, and the tripwire suite that locks their invariants share one vocabulary (image, compose service, VM paths, env files) and no server source file. The amendment keeps the infrastructure half of the pages host here (the Caddy site block, the site mount, `--site-only` publishing, the pages smoke checks) because it edits the same Caddyfile, compose file, deploy script and smoke script. It also adds the real hostnames, the missing-key preflight, and capacity profiles with the resize script, which are the same scripts and env files again. The page sources and site build are chain-15's, and the load-test image is chain-16's.
+- reads: specs/server-deployment/spec.md §The container image is pinned, minimal, non-root, and secret-free, §A TLS front proxy serves the API without buffering streams, §The front proxy also serves the Whim pages host, §Association files come only from the release tooling (the smoke checks only), §The server container runs hardened on the VM, §Secrets are injected at deploy time and never built in, §Scripted build, deploy, and smoke checks, §VM size and capacity limits change together as a named profile; design.md D2, D17, D20, D21, D22 (the smoke paragraph), D24, D25; handoff: handoff/runtime-tree.md, handoff/synthrun-launch.md, handoff/web-site.md
+- writes-contract: handoff/deploy-surface.md (script names and arguments including `--site-only`, `--pages-only` and `resize.sh --profile`; VM paths including `/opt/whim`, the site release layout and the loadtest data directory; env file names and their variables, including `deploy/defaults.env`, `~/.config/whim/deploy.env` and the compose `.env`; the profile file format and selection rule; the compose service and network names chain-16 overrides; the hostname rule; the smoke-check list and the exact production `/healthz` identity it requires)
+- after: chain-11, chain-15
 
 ## chain-13: runbook-and-records
 
 - tasks: 14.1–14.4
-- rationale: This is documentation and records that describe the finished system, plus the one tripwire tying the runbook to the scripts. It comes last because it documents what every earlier chain built.
-- reads: specs/server-deployment/spec.md §A short runbook covers operating the public server; design.md D6, D17, D19; proposal.md; handoff: handoff/deploy-surface.md, handoff/runtime-tree.md
+- rationale: This is documentation and records that describe the finished system, plus the one tripwire tying the runbook to the scripts. It comes last because it documents what every earlier chain built, including the pages host, the association-file order, capacity profiles and the load test.
+- reads: specs/server-deployment/spec.md §A short runbook covers operating the public server; design.md D6, D17, D19, D20–D26; proposal.md; handoff: handoff/deploy-surface.md, handoff/runtime-tree.md, handoff/web-site.md, handoff/loadtest.md
 - writes-contract: none
-- after: chain-12
+- after: chain-16 (the last editor of `deploy-config.suite.ts` before this chain, and the runbook documents `run.sh`)
 
 ## chain-14: attended-acceptance — separate-session (attended, human-run)
 
-- tasks: 15.1–15.3
-- rationale: These steps need a Linux Docker host, the GCP resources the orchestrator provisions, a real OpenRouter key and a physical device, none of which a dispatched implementer can use. They are recorded PENDING at merge and do not block the gate, following #56 task 7.6.
-- reads: docs/deploy.md; handoff/deploy-surface.md
+- tasks: 15.1–15.5
+- rationale: These steps need a Linux Docker host, the GCP resources the orchestrator provisions, a real OpenRouter key, the owner's deploy-time values, a physical device, a resized VM and, for 15.5, the Play signing fingerprint from platform-release-readiness task 14.3. A dispatched implementer can use none of these. They are recorded PENDING at merge and do not block the gate, following #56 task 7.6. 15.4 must run before demo night (2026-09-24).
+- reads: docs/deploy.md; handoff/deploy-surface.md, handoff/web-site.md, handoff/loadtest.md
 - writes-contract: none
 - after: chain-13
+
+## chain-15: web-host-site
+
+- tasks: 16.1–16.4
+- rationale: The page sources, the one build step that renders them and pulls in the release tooling's association files, and the tripwire that holds the policy to the consent screen all share one vocabulary (placeholders, the site layout, the association state) and no deploy script or server runtime file. Keeping them out of chain-12 lets the policy text land and be reviewed early, before the server chains finish, and keeps chain-12 at six tasks.
+- files: `deploy/site/{privacy,support,app-link,not-found}.html`, `server/src/site/build.ts`, `server/site.mjs`, `server/test/web-site.suite.ts`, and one import plus one awaited call in `server/test/deploy-config.suite.ts`
+- reads: specs/server-deployment/spec.md §Association files come only from the release tooling, §The privacy policy and support pages match what the app discloses, §The front proxy also serves the Whim pages host (route table only); design.md D21 (route table), D22, D23, D24 (the operator values); openspec/changes/store-launch-compliance/design.md D5, D15, D17; `src/host/launcher/copy.ts` (import only, never edited); `server/src/config.ts` (import only); handoff: none in this change; external: platform-release-readiness `handoff/release-cli.md` (the `association-files --out` file names and exit codes)
+- writes-contract: handoff/web-site.md (`node server/site.mjs build --out <dir>` with its env values, rules, stdout line and exit codes verbatim; the output layout, file by file; the page-to-route map the Caddyfile must implement; the association-state rule; the parity allowlist verbatim)
+- after: none in this change (external: platform-release-readiness chain-9 merged)
+- rule: every new export has a consumer under `server/test/`, so knip passes without a `knip.json` edit.
+
+## chain-16: load-test-harness
+
+- tasks: 17.1–17.5
+- rationale: The replay model, the load-test server over chain-11's seam, its separate image and compose override, the operator's `run.sh`, the driver, and the tripwires that keep all of it out of production form one context: "measure capacity with production code and no model". It follows chain-12 because the override and `run.sh` target chain-12's compose service, network and VM paths, and because both edit `deploy-config.suite.ts` in sequence.
+- files: `server/src/loadtest/{replay-model,server,drive}.ts`, `server/loadtest-server.entry.mjs`, `server/loadtest-build.mjs`, `server/loadtest.mjs`, `deploy/loadtest/{Dockerfile,cloudbuild.yaml,compose.loadtest.yaml,run.sh}`, `server/test/loadtest.suite.ts`, one import plus one awaited call in `server/test/deploy-config.suite.ts`, and one appended case in `server/test/e2e.ts`
+- reads: specs/server-deployment/spec.md §A load test measures capacity without spending provider credit, §Scripted build, deploy, and smoke checks (identity check only); specs/generation-pipeline/spec.md (live) §Cancellation aborts the pipeline at every boundary; design.md D9 (classifier latency), D12, D25, D26; handoff: handoff/runtime-tree.md, handoff/deploy-surface.md, handoff/composition.md, handoff/content-policy.md, handoff/pipeline-budget.md
+- writes-contract: handoff/loadtest.md (`run.sh` subcommands and arguments, driver flags, the JSON report fields and the exit rule, the image name, the pacing variables and defaults, the load-test `/healthz` identity)
+- after: chain-12
+- rule: every new export has a consumer under `server/test/`, so knip passes without a `knip.json` edit.
