@@ -37,6 +37,12 @@ if [ -n "$tag" ]; then
   [ "$site_only" -eq 0 ] || whim_usage_error "--site-only builds no image and takes no --tag"
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--tag must be a full 40-character git commit sha"
 fi
+# A --tag deploy is a rollback: it redeploys a PAST commit's image, so building and republishing
+# today's checkout's site alongside it would serve pages (e.g. privacy's model-id copy) the rolled-
+# back server no longer runs. It touches the server image only; deploy/deploy.sh --site-only moves
+# the site separately when that's also wanted (docs/deploy.md, "Rolling back and rotating the key").
+rollback=0
+[ -z "$tag" ] || rollback=1
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
@@ -221,19 +227,24 @@ rm -rf $remote"
 }
 
 deploy_full() {
-  local release remote
+  local release remote publish=""
   ensure_image
   stage_server_files
   release="$(date -u +%Y%m%dT%H%M%SZ)-${tag:0:12}"
   remote="$(upload_stage "$release")"
-  echo "==> install compose, seccomp, config and site $release"
+  if [ "$rollback" -eq 1 ]; then
+    echo "==> rollback: the site is untouched (deploy/deploy.sh --site-only republishes it separately if needed)"
+  else
+    publish="$(remote_publish_site "$remote" "$release")"
+  fi
+  echo "==> install compose, seccomp, config$([ "$rollback" -eq 1 ] || echo ' and site') $release"
   whim_vm_ssh "set -eu
 sudo install -d -m 0755 -o root -g root $WHIM_VM_APP_DIR $WHIM_VM_APP_DIR/seccomp
 sudo install -m 0644 -o root -g root $remote/compose.yaml $WHIM_VM_APP_DIR/compose.yaml
 sudo install -m 0644 -o root -g root $remote/seccomp/*.json $WHIM_VM_APP_DIR/seccomp/
 sudo install -m 0600 -o root -g root $remote/config.env $WHIM_VM_ETC_DIR/config.env
 sudo install -m 0600 -o root -g root $remote/compose.env $WHIM_VM_APP_DIR/.env
-$(remote_publish_site "$remote" "$release")
+$publish
 rm -rf $remote"
   echo "==> write $WHIM_VM_ETC_DIR/server.env"
   printf 'OPENROUTER_API_KEY=%s\n' "$openrouter_value" \
@@ -257,7 +268,7 @@ if [ "$site_only" -eq 1 ]; then
 else
   preflight_openrouter_key
   preflight_profile
-  build_site
+  [ "$rollback" -eq 1 ] || build_site
   deploy_full
 fi
 echo "deploy.sh: done"

@@ -98,9 +98,8 @@ Reads `docs/content-policy.md`'s `## Rating rule` and `## Categories` sections, 
 resolved path. Throws `PromptInputError` naming the missing section. The composition root calls
 this once and passes `.categories` into `ModelContentPolicyOptions.categories`. `.ratingRule` is
 consumed internally by `../generation/prompts/index.ts` (already wired — chain-9/10 do not need to
-thread it anywhere); `buildRewriteMessages` and `buildGenerateMessages`'s system messages already
-carry it verbatim. `buildRepairMessages`'s system message does NOT carry it (scope matches the
-"both-prompts-carry-it" tripwire: rewrite + generate only).
+thread it anywhere); `buildRewriteMessages`, `buildGenerateMessages` and `buildRepairMessages`'s
+system messages all carry it verbatim. `buildPlanMessages`'s does NOT.
 
 ## Wiring notes (chain-9/10, updated by chain-9b)
 

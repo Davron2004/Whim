@@ -209,6 +209,11 @@ any `failure` terminal, an unexpected refusal, or a failed leak probe.
 deploy/deploy.sh --tag <40-hex sha>   # redeploys a known-good image; never builds
 ```
 
+`--tag` touches the server image only — it builds and publishes no site, since republishing today's
+checkout's pages (privacy's model-id copy, for one) alongside a rolled-back server would serve pages
+that describe a server the rollback just replaced. Run `deploy/deploy.sh --site-only` separately if
+the site also needs to move.
+
 Rotating the OpenRouter key: add a new version to `whim-openrouter-api-key` in Secret Manager, then
 run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version and recreates
 `whim-server`. The old key can be disabled once the new one is confirmed live via smoke.

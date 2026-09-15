@@ -1039,9 +1039,31 @@ function deployFullTests(): void {
     fullDeployRules(sandbox, true);
     const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
     const calls = toolLog(sandbox, 'gcloud');
+    const ssh = calls.filter((line) => line.includes('compute ssh'));
     eq('a rollback to a pushed tag succeeds', run.status, 0);
     check('  ... without building', indexOfCall(calls, 'builds submit') === -1, calls.join(' / '));
     check('  ... deploying that tag with the standard profile', stubFile(sandbox, 'upload/compose.env').includes(`server:${TAG}\n`) && stubFile(sandbox, 'upload/compose.env').includes('WHIM_PROFILE=standard') && stubFile(sandbox, 'upload/config.env') === 'WHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\n');
+    check(
+      '  ... and never building or publishing the site: no local site build, no site publish call over ssh',
+      !fs.existsSync(path.join(sandbox.stubs, 'upload', 'site')) && ssh.every((line) => !/mv -T|releases\//.test(line)),
+      ssh.join(' / '),
+    );
+  });
+
+  // Discriminating red-check: a rollback that republished the site (as it did before this fix) must
+  // be caught by the assertion above, not pass silently.
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    fullDeployRules(sandbox, true);
+    const deployScript = path.join(sandbox.repo, 'deploy', 'deploy.sh');
+    const guarded = '  if [ "$rollback" -eq 1 ]; then\n    echo "==> rollback: the site is untouched (deploy/deploy.sh --site-only republishes it separately if needed)"\n  else\n    publish="$(remote_publish_site "$remote" "$release")"\n  fi';
+    fs.writeFileSync(deployScript, plant(fs.readFileSync(deployScript, 'utf8'), guarded, '  publish="$(remote_publish_site "$remote" "$release")"'));
+    git(sandbox.repo, sandbox.home, ['add', '-A']);
+    git(sandbox.repo, sandbox.home, ['commit', '-q', '-m', 'red: plant the unconditional site publish back onto rollback']);
+    git(sandbox.repo, sandbox.home, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+    const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
+    const ssh = toolLog(sandbox, 'gcloud').filter((line) => line.includes('compute ssh'));
+    check('red: a rollback that republishes the site is caught', run.status === 0 && ssh.some((line) => /mv -T|releases\//.test(line)), ssh.join(' / '));
   });
 }
 
@@ -1179,6 +1201,38 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   red('a hand-written association response fails', plant(caddyfile, '\troot * /srv/site/current\n', '\troot * /srv/site/current\n\trespond /.well-known/assetlinks.json "[]" 200\n'), 'the pages site uses respond');
   red('a file_server that can redirect fails', plant(caddyfile, '\t\t\tstatus 404\n\t\t\tdisable_canonical_uris\n', '\t\t\tstatus 404\n'), 'lacks disable_canonical_uris');
   red('a missing catch-all 404 fails', plant(caddyfile, '\t\t\tstatus 404\n', ''), 'does not answer 404');
+}
+
+/** Chain server-fixes-c: the `whim` bridge is IPv4-only today, so an ip6tables mirror chain and a
+ *  bootstrap-time guard exist purely as a defense against it silently gaining IPv6 later. */
+function egressIpv6Problems(egress: string, bootstrap: string): string[] {
+  const problems: string[] = [];
+  if (!/^readonly CHAIN6=/m.test(egress)) problems.push('whim-egress.sh has no CHAIN6 (the ip6tables mirror chain)');
+  if (!egress.includes('ip6tables')) problems.push('whim-egress.sh never calls ip6tables');
+  if (!egress.includes('DROPPED6=(fd00:ec2::254/128)')) problems.push('whim-egress.sh does not drop the IPv6 metadata address fd00:ec2::254/128');
+  if (!/ipt6 -I DOCKER-USER 1 /.test(egress)) problems.push('whim-egress.sh installs no ip6tables jump into DOCKER-USER');
+  if (!bootstrap.includes('EnableIPv6')) problems.push('bootstrap.sh does not check the whim bridge for EnableIPv6');
+  if (bootstrap.split('\n').filter((line) => line.trim() === 'assert_bridge_no_ipv6').length < 1) {
+    problems.push('bootstrap.sh defines assert_bridge_no_ipv6 but never calls it');
+  }
+  return problems;
+}
+
+function egressIpv6Tests(files: ReadonlyMap<string, string>): void {
+  section('Deploy artifacts: IPv6 egress parity');
+  const egress = files.get('deploy/vm/whim-egress.sh') ?? '';
+  const bootstrap = files.get('deploy/vm/bootstrap.sh') ?? '';
+  checkClean(
+    'whim-egress.sh mirrors the IPv4 chain in ip6tables (dropping the metadata address) and bootstrap.sh refuses a bridge with IPv6 enabled',
+    egressIpv6Problems(egress, bootstrap),
+  );
+  // eslint-disable-next-line sonarjs/no-hardcoded-ip -- this red-check exists to lock whim-egress.sh's IPv6 metadata-address drop
+  checkCaught('  red: dropping the ip6tables metadata-address drop fails', egressIpv6Problems(plant(egress, 'fd00:ec2::254/128', '::/0'), bootstrap), 'fd00:ec2::254');
+  checkCaught(
+    '  red: bootstrap.sh defining but never calling the IPv6 guard fails',
+    egressIpv6Problems(egress, plant(bootstrap, 'assert_user_namespaces\nassert_bridge_no_ipv6\ninstall_egress_firewall', 'assert_user_namespaces\ninstall_egress_firewall')),
+    'never calls it',
+  );
 }
 
 function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
@@ -1357,6 +1411,7 @@ export async function runDeployConfigTests(): Promise<void> {
   imageTests(files, playwrightVersion);
   composeTests(files, composeContext);
   caddyTests(files, maxBodyBytes, siteFiles);
+  egressIpv6Tests(files);
   scanTests(files, serverSources);
   valuesTests(files);
   profileTests(files);

@@ -12,7 +12,8 @@ export type CostState = 'pending' | 'resolved' | 'unresolved';
 
 export interface AdmitParams {
   deviceId: string; kind: RequestKind; now: number;   // injected clock, drives UTC-day + Retry-After
-  deviceLimit: number; globalLimit?: number;           // omit globalLimit for clarify/rewrite
+  deviceLimit: number; globalLimit?: number;
+  globalKinds?: readonly RequestKind[];  // counted-across set for globalLimit; defaults to [kind]
 }
 export type AdmitResult =
   | { ok: true; requestId: string }
@@ -23,7 +24,7 @@ export interface UsageStore {
   read(deviceId: string): Promise<Usage>;
   admit(params: AdmitParams): Promise<AdmitResult>;
   refund(requestId: string): Promise<void>;                                   // idempotent no-op on repeat/unknown id
-  settle(requestId: string, p: { outcome: RequestOutcome; usage?: Usage }): Promise<void>; // idempotent: keeps FIRST outcome; never touches utc_day
+  settle(requestId: string, p: { outcome: RequestOutcome; usage?: Usage; now?: number }): Promise<void>; // idempotent: keeps FIRST outcome; never touches utc_day; now stamps ended_at, defaults Date.now()
   recordCost(requestId: string, p: { state: CostState; costUsd?: number }): Promise<void>; // idempotent: only writes while state is 'pending'
   summary(params: SummaryParams): Promise<UsageSummary>;
   purgeLedger(beforeUtcDay: string): Promise<number>;  // 'YYYY-MM-DD', returns rows deleted
@@ -61,6 +62,9 @@ export function resolveRequestUsage(
   requestId: string, deviceId: string, generationIds: readonly string[],
   creditOwned: boolean, deps: ResolveDeps,
 ): Promise<void>;
+// sumGenerationStats also returns resolvedAll (every id resolved, not just foundAny). recordCost
+// is 'resolved' only when resolvedAll; else 'unresolved' and the partial cost is discarded — but
+// when creditOwned is false the partial tokens from the ids that DID resolve are still credited.
 
 export class ResolveTracker {
   track<T>(promise: Promise<T>): Promise<T>;   // register a detached resolveRequestUsage(...) call

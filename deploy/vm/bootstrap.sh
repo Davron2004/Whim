@@ -121,10 +121,23 @@ install_egress_firewall() {
   systemctl restart whim-egress.service
 }
 
+# The `whim` bridge (compose.yaml) declares no IPv6 subnet, so it stays IPv4-only unless something
+# enables IPv6 on it explicitly — which would bypass whim-egress.sh's IPv4-only drops for anything
+# a container reaches over v6, including the metadata server. Safe before the network exists (a
+# rerun after the first `docker compose up`, or bootstrap running again, is when this can catch it).
+assert_bridge_no_ipv6() {
+  command -v docker >/dev/null 2>&1 || return 0
+  docker network inspect whim >/dev/null 2>&1 || return 0
+  local enabled
+  enabled="$(docker network inspect whim --format '{{.EnableIPv6}}')"
+  [ "$enabled" != "true" ] || fail "the whim Docker bridge has IPv6 enabled; whim-egress.sh's drops are IPv4-only"
+}
+
 install_docker
 configure_registry
 mount_data_disk
 create_directories
 assert_user_namespaces
+assert_bridge_no_ipv6
 install_egress_firewall
 echo "bootstrap.sh: done"
