@@ -488,7 +488,16 @@ async function testReconciliation(): Promise<void> {
   // red-check: `usageStore.credit` throwing must not escape reconcileAbortedUsage either.
   {
     const transport = new FakeTransport(new Map([['gen-y', USAGE_A]]));
-    const throwingStore = { credit: async () => { throw new Error('store failure'); }, read: async () => USAGE_B };
+    const throwingStore = {
+      credit: async () => { throw new Error('store failure'); },
+      read: async () => USAGE_B,
+      admit: async () => { throw new Error('not used in this test'); },
+      refund: async () => {},
+      settle: async () => {},
+      recordCost: async () => {},
+      summary: async () => { throw new Error('not used in this test'); },
+      purgeLedger: async () => 0,
+    };
     let threw = false;
     try {
       await reconcileAbortedUsage('device-6', ['gen-y'], { transport, usageStore: throwingStore });
