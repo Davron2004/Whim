@@ -79,6 +79,11 @@ trap installs — never affected by a load-test server's own trap when driven in
 | `run.sh drive --devices <N> --cap <C> [--json <file>]` | Samples `docker stats` on the VM over IAP every 2s into a temp CSV while running `node server/loadtest.mjs --target https://$WHIM_API_HOST …` from the operator's machine, then stops the sampler. |
 | `run.sh stop` | `docker compose up -d --wait whim-server` from `compose.yaml` ALONE (recreates production), then `deploy/smoke.sh`. |
 
+The drive sampler runs in its own temporary process group. Cleanup terminates and waits for that group,
+removes its temporary CSV while function state is still live, and returns the driver's exact status.
+The EXIT trap retains the same cleanup for earlier failures. This contract assumes normal gcloud/SSH
+TERM handling; it does not promise recovery from a sampler that deliberately ignores TERM.
+
 Image: `<region>-docker.pkg.dev/<project>/whim/server-loadtest:<full sha>`. `deploy/loadtest/Dockerfile`
 builds from `${SERVER_IMAGE}` (the already-built production image of the same commit) plus one bundle;
 its sibling `Dockerfile.dockerignore` overrides the root `.dockerignore`'s `deploy/` exclusion.

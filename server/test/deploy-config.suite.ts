@@ -1362,6 +1362,136 @@ function loadtestStartTests(): void {
   });
 }
 
+function loadtestDriveTests(): void {
+  section('Deploy scripts: load-test drive cleanup');
+
+  const pause = (milliseconds: number): void => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  };
+  const processIsAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    }
+  };
+  const waitForProcessExit = (pid: number): boolean => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (!processIsAlive(pid)) return true;
+      pause(20);
+    }
+    return !processIsAlive(pid);
+  };
+  const stopTestProcess = (pid: number): void => {
+    if (!processIsAlive(pid)) return;
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+    if (waitForProcessExit(pid)) return;
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+    waitForProcessExit(pid);
+  };
+
+  const writeDriveStubs = (sandbox: Sandbox): void => {
+    fs.writeFileSync(path.join(sandbox.bin, 'gcloud'), `#!/usr/bin/env bash
+printf '%s' "$$" >"$STUB_DIR/sampler-pid"
+ps -o pgid= -p "$$" | tr -d ' ' >"$STUB_DIR/sampler-pgid"
+heartbeat=0
+trap 'printf "%s" "$$" >"$STUB_DIR/sampler-terminated"; exit 0' TERM
+while :; do
+  heartbeat=$((heartbeat + 1))
+  printf '%s' "$heartbeat" >"$STUB_DIR/sampler-heartbeat"
+  printf '1.5,2.5\\n'
+  sleep 0.1
+done
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(sandbox.bin, 'node'), `#!/usr/bin/env bash
+stats=''
+previous=''
+for arg in "$@"; do [ "$previous" = --stats ] && stats="$arg"; previous="$arg"; done
+printf '%s' "$stats" >"$STUB_DIR/driver-stats"
+attempt=0
+while [ ! -s "$STUB_DIR/sampler-pid" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
+attempt=0
+while [ ! -s "$stats" ] && [ "$attempt" -lt 100 ]; do attempt=$((attempt + 1)); sleep 0.01; done
+if [ -s "$stats" ]; then
+  printf '%s' "$stats" >"$STUB_DIR/driver-stats-receipt"
+  sed -n '1p' "$stats" >"$STUB_DIR/driver-stats-sample"
+fi
+exit "\${STUB_DRIVER_STATUS:-0}"
+`, { mode: 0o755 });
+  };
+
+  const driveCase = (name: string, driverStatus: number): void => {
+    withSandbox((sandbox) => {
+      writeDriveStubs(sandbox);
+
+      let samplerPid = 0;
+      try {
+        const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2'], {
+          STUB_DRIVER_STATUS: String(driverStatus),
+        });
+        samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
+        const stats = stubFile(sandbox, 'driver-stats');
+        const statsReceipt = stubFile(sandbox, 'driver-stats-receipt');
+        const heartbeat = stubFile(sandbox, 'sampler-heartbeat');
+        pause(200);
+        const samplerStopped = samplerPid > 0
+          && stubFile(sandbox, 'sampler-terminated') === String(samplerPid)
+          && waitForProcessExit(samplerPid)
+          && stubFile(sandbox, 'sampler-heartbeat') === heartbeat;
+        check(name, run.status === driverStatus
+          && !run.stderr.includes('unbound variable')
+          && samplerStopped
+          && stats !== ''
+          && statsReceipt === stats
+          && stubFile(sandbox, 'driver-stats-sample') === '1.5,2.5\n'
+          && !fs.existsSync(stats), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);
+      } finally {
+        if (samplerPid === 0) samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
+        if (samplerPid > 0) stopTestProcess(samplerPid);
+      }
+    });
+  };
+
+  driveCase('a successful driver exits 0 after terminating its sampler and removing its CSV', 0);
+  driveCase('a failed driver preserves its distinct status after sampler and CSV cleanup', 23);
+
+  withSandbox((sandbox) => {
+    writeDriveStubs(sandbox);
+    const script = path.join(sandbox.repo, 'deploy', 'loadtest', 'run.sh');
+    const text = fs.readFileSync(script, 'utf8');
+    eq('the single-PID cleanup mutant replaces exactly one process-group kill', text.match(/kill -TERM -- "-\$sampler_pid"/g)?.length ?? 0, 1);
+    fs.writeFileSync(script, text.replace('kill -TERM -- "-$sampler_pid"', 'kill "$sampler_pid"'));
+
+    let samplerPid = 0;
+    try {
+      const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2']);
+      samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
+      const stats = stubFile(sandbox, 'driver-stats');
+      const firstHeartbeat = Number(stubFile(sandbox, 'sampler-heartbeat'));
+      pause(250);
+      const laterHeartbeat = Number(stubFile(sandbox, 'sampler-heartbeat'));
+      check('red: killing only the wrapper leaves the real sampler running', run.status === 0
+        && samplerPid > 0
+        && processIsAlive(samplerPid)
+        && laterHeartbeat > firstHeartbeat
+        && stubFile(sandbox, 'driver-stats-receipt') === stats
+        && !fs.existsSync(stats), `${run.stdout}\n${run.stderr}\nsampler=${samplerPid} heartbeat=${firstHeartbeat}->${laterHeartbeat} stats=${stats}`);
+    } finally {
+      if (samplerPid === 0) samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
+      if (samplerPid > 0) stopTestProcess(samplerPid);
+    }
+  });
+}
+
 function provisionTests(): void {
   section('Deploy scripts: provision.sh');
   withSandbox((sandbox) => {
@@ -1649,6 +1779,7 @@ export async function runDeployConfigTests(): Promise<void> {
   smokeTests();
   resizeTests();
   loadtestStartTests();
+  loadtestDriveTests();
   provisionTests();
   await runLoadTestTests();
   runbookTests(files, serverSources);
