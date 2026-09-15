@@ -1188,22 +1188,51 @@ function resizeTests(): void {
     });
     const elapsed = Date.now() - started;
     check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && elapsed < 4_500 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}\nelapsed=${elapsed}ms`);
+  });
 
-    const oldLib = path.join(sandbox.dir, 'old-lib.sh');
-    const oldText = readRepoFile('deploy/lib.sh').replace('sleep "$sleep_for"', 'sleep 5');
-    fs.writeFileSync(oldLib, oldText);
-    const oldStarted = Date.now();
-    const oldResult = runFromPath('bash', ['-c', `source '${oldLib}'; whim_wait_for_ssh old 2 1`], {
+  withSandbox((sandbox) => {
+    const started = Date.now();
+    const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh bounded 2 1'], {
       cwd: sandbox.repo,
       encoding: 'utf8',
       timeout: 8_000,
       env: {
         PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
-        STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_HANG: '1',
+        STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_FAILS: '999',
         WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
       },
     });
-    check('red demonstration: old unconditional sleep overshoots the 2-second deadline', oldResult.status === 1 && Date.now() - oldStarted >= 4_500, `old elapsed=${Date.now() - oldStarted}ms`);
+    const elapsed = Date.now() - started;
+    const boundedCalls = toolLog(sandbox, 'gcloud');
+    check('immediate IAP failures exhaust the bounded helper before 4.5 seconds', result.status === 1
+      && elapsed < 4_500
+      && result.stderr.includes('step bounded readiness failed')
+      && boundedCalls.some((line) => line.includes('IAP 4003')), `${result.stdout}\n${result.stderr}\n${boundedCalls.join('\n')}\nelapsed=${elapsed}ms`);
+
+    const oldLib = path.join(sandbox.dir, 'old-lib.sh');
+    const libText = readRepoFile('deploy/lib.sh');
+    const sleepCalls = libText.match(/sleep "\$sleep_for"/g) ?? [];
+    eq('the old-sleep mutant replaces exactly one real sleep', sleepCalls.length, 1);
+    const oldText = libText.replace('sleep "$sleep_for"', 'sleep 5');
+    fs.writeFileSync(oldLib, oldText);
+    const oldStarted = Date.now();
+    const oldResult = runFromPath('bash', ['-x', '-c', `source '${oldLib}'; whim_wait_for_ssh old 2 1`], {
+      cwd: sandbox.repo,
+      encoding: 'utf8',
+      timeout: 8_000,
+      env: {
+        PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_FAILS: '999',
+        WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
+      },
+    });
+    const oldElapsed = Date.now() - oldStarted;
+    const oldCalls = toolLog(sandbox, 'gcloud').slice(boundedCalls.length);
+    check('the executed old sleep overshoots the same 2-second deadline', oldResult.status === 1
+      && oldElapsed >= 4_500
+      && oldResult.stderr.includes('step old readiness failed')
+      && oldCalls.some((line) => line.includes('IAP 4003'))
+      && oldResult.stderr.split('\n').includes('+ sleep 5'), `${oldResult.stdout}\n${oldResult.stderr}\n${oldCalls.join('\n')}\nelapsed=${oldElapsed}ms`);
   });
 }
 
