@@ -743,6 +743,7 @@ const STUB_SCRIPT = [
   'printf \'%s\\n\' "${all//$newline/ }" >>"$STUB_DIR/$tool.log"',
   'case "$tool $*" in',
   '  gcloud*compute\\ ssh*--command\\ :*)',
+  '  [ "${STUB_READINESS_HANG:-0}" = 1 ] && sleep 20',
   '  readiness_count_file="$STUB_DIR/readiness-count"',
   '  readiness_count=0; [ -f "$readiness_count_file" ] && readiness_count=$(cat "$readiness_count_file")',
   '  readiness_count=$((readiness_count + 1)); printf "%s" "$readiness_count" >"$readiness_count_file"',
@@ -1152,6 +1153,7 @@ function resizeTests(): void {
     check('a failed set-machine-type exits non-zero naming the step', run.status === 1 && run.stderr.includes('step set-machine-type failed'), run.stderr);
     check('  ... after starting the VM again on its previous type', indexOfCall(calls, 'instances start') > indexOfCall(calls, 'set-machine-type') && stubFile(sandbox, 'machine-type') === 'e2-standard-2', calls.join(' / '));
     eq('  ... and redeploying the running tag, whose profile follows that type', toolLog(sandbox, 'deploy'), [`--tag ${TAG}`]);
+    eq('  ... recovery waits for an additional readiness probe before redeploy', calls.filter((line) => line.includes('--command :')).length, 2);
   });
 
   withSandbox((sandbox) => {
@@ -1170,6 +1172,21 @@ function resizeTests(): void {
     });
     check('persistent readiness failure is bounded and names the failed step', result.status === 1 && result.stderr.includes('step persistent readiness failed'), `${result.stdout}\n${result.stderr}`);
   });
+
+  withSandbox((sandbox) => {
+    const started = Date.now();
+    const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; whim_wait_for_ssh hanging 2 1'], {
+      cwd: sandbox.repo,
+      encoding: 'utf8',
+      timeout: 8_000,
+      env: {
+        PATH: `${sandbox.bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        STUB_DIR: sandbox.stubs, STUB_REAL_NODE: process.execPath, STUB_READINESS_HANG: '1',
+        WHIM_SCRIPT: 'resize.sh', WHIM_GCP_PROJECT: 'project', WHIM_GCP_ZONE: 'zone', WHIM_VM_NAME: 'vm',
+      },
+    });
+    check('a hanging IAP child is killed by the per-probe timeout and overall budget', result.status === 1 && Date.now() - started < 8_000 && result.stderr.includes('step hanging readiness failed'), `${result.stdout}\n${result.stderr}`);
+  });
 }
 
 function loadtestVmStubs(sandbox: Sandbox): void {
@@ -1181,7 +1198,7 @@ while [ "\${1:-}" = -H ]; do shift; done
 if [ "\${1:-}" = env ]; then shift; while [[ "\${1:-}" == *=* ]]; do export "$1"; shift; done; fi
 case "\${1:-}" in
   install|rm)
-    if [ "\${STUB_FAIL_FILE_OP:-}" = "\${1:-}" ]; then exit "\${STUB_FILE_OP_RC:-7}"; fi
+    if [ "\${STUB_FAIL_FILE_OP:-}" = "\${1:-}" ] && { [ "\${1:-}" = rm ] || grep -q '^production-stop$' "$STUB_DIR/events.log" 2>/dev/null; }; then exit "\${STUB_FILE_OP_RC:-7}"; fi
     exit 0;;
 esac
 exec "$@"
@@ -1189,10 +1206,14 @@ exec "$@"
   fs.writeFileSync(path.join(sandbox.bin, 'docker'), `#!/usr/bin/env bash
 printf '%s|%s\n' "$*" "\${WHIM_LOADTEST_IMAGE:-}" >>"$STUB_DIR/docker.log"
 case "$*" in
-  *'stop whim-server'*) printf 'replay-stop\n' >>"$STUB_DIR/events.log"; exit "\${STUB_REPLAY_STOP_RC:-0}";;
+  *'stop whim-server'*)
+    if [ -f "$STUB_DIR/events.log" ] && grep -q '^replay-start$' "$STUB_DIR/events.log"; then printf 'replay-stop\n' >>"$STUB_DIR/events.log"; exit "\${STUB_REPLAY_STOP_RC:-0}";
+    else printf 'production-stop\n' >>"$STUB_DIR/events.log"; exit 0; fi;;
   *'compose.loadtest.yaml'*'up '* ) [ -n "\${WHIM_LOADTEST_IMAGE:-}" ] || { echo 'missing WHIM_LOADTEST_IMAGE' >&2; exit 1; }; printf 'replay-start\n' >>"$STUB_DIR/events.log"; exit "\${STUB_REPLAY_START_RC:-0}";;
   *'up '* ) printf 'production-restore\n' >>"$STUB_DIR/events.log"; exit "\${STUB_RESTORE_RC:-0}";;
-  *'exec '* ) exit "\${STUB_HEALTH_RC:-0}";;
+  *'exec '* )
+    case "$*" in *169.254.169.254*) echo blocked; exit 0;; *react-native*) echo absent; exit 0;; esac
+    exit "\${STUB_HEALTH_RC:-0}";;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -1241,17 +1262,24 @@ function loadtestStartTests(): void {
     writeRules(sandbox, 'dig', DNS_READY);
     writeRules(sandbox, 'curl', [...API_UP, ...PAGES_UP]);
   };
+  const smokeEvidence = (sandbox: Sandbox): boolean => toolLog(sandbox, 'curl').length > 0 && toolLog(sandbox, 'gcloud').length > 0;
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_FAIL_FILE_OP: 'rm', STUB_FILE_OP_RC: '7' });
-    check('rm failure after production stop restores and runs smoke', run.status === 7 && run.stderr.includes('load-test start failed (exit 7)') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+    check('rm failure after production stop restores and runs smoke', run.status === 7 && run.stderr.includes('load-test start failed (exit 7)') && stubFile(sandbox, 'events.log').includes('production-restore') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_FAIL_FILE_OP: 'install', STUB_FILE_OP_RC: '11' });
+    check('install failure after production stop restores and runs smoke', run.status === 11 && run.stderr.includes('load-test start failed (exit 11)') && stubFile(sandbox, 'events.log').includes('production-restore') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
   });
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9' });
-    check('replay startup failure restores production and keeps its exit status', run.status === 9 && run.stderr.includes('load-test compose start failed') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+    check('replay startup failure restores production and keeps its exit status', run.status === 9 && run.stderr.includes('load-test compose start failed') && stubFile(sandbox, 'events.log').includes('production-restore') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
   });
 
   withSandbox((sandbox) => {
@@ -1260,20 +1288,30 @@ function loadtestStartTests(): void {
     fs.writeFileSync(script, fs.readFileSync(script, 'utf8').replace('-lt 60', '-lt 1'));
     git(sandbox.repo, sandbox.home, ['add', '-A']); git(sandbox.repo, sandbox.home, ['commit', '-q', '-m', 'short health poll']);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_HEALTH_RC: '1' });
-    check('health identity failure restores production and runs smoke', run.status === 1 && run.stderr.includes('health check failed') && stubFile(sandbox, 'events.log').includes('production-restore'), `${run.stdout}\n${run.stderr}`);
+    const events = stubFile(sandbox, 'events.log').trim().split('\n');
+    check('health identity failure restores production and runs smoke', run.status === 1 && run.stderr.includes('health check failed') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
+    const replayStart = events.indexOf('replay-start');
+    const replayStop = events.indexOf('replay-stop', replayStart + 1);
+    check('health failure orders replay start, replay stop, then production restore', replayStart >= 0 && replayStop > replayStart && events.indexOf('production-restore') > replayStop, events.join(' / '));
   });
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9', STUB_RESTORE_RC: '8' });
-    check('restore failure reports both the original and recovery causes', run.status === 9 && run.stderr.includes('load-test compose start failed') && run.stderr.includes('recovery failed while restoring'), `${run.stdout}\n${run.stderr}`);
-    check('restore failure still stops the replay service', stubFile(sandbox, 'events.log').startsWith('replay-stop'), stubFile(sandbox, 'events.log'));
+    check('restore failure reports both the original and recovery causes', run.status === 9 && run.stderr.includes('load-test compose start failed') && run.stderr.includes('recovery failed while restoring') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
+    check('restore failure still stops the replay service', stubFile(sandbox, 'events.log').includes('production-stop\nreplay-start\nreplay-stop'), stubFile(sandbox, 'events.log'));
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox); loadtestVmStubs(sandbox); smokeReady(sandbox);
+    const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9', STUB_REPLAY_STOP_RC: '6' });
+    check('replay cleanup stop failure reports recovery error and keeps base restore', run.status === 9 && run.stderr.includes('recovery failed while stopping the replay service') && stubFile(sandbox, 'events.log').includes('production-restore') && smokeEvidence(sandbox), `${run.stdout}\n${run.stderr}`);
   });
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox); loadtestVmStubs(sandbox);
     const run = runScript(sandbox, 'loadtest/run.sh', ['start'], { STUB_REPLAY_START_RC: '9' });
-    check('smoke failure is reported without claiming production was restored', run.status === 9 && run.stderr.includes('recovery failed while running production smoke') && !run.stderr.includes('production restored'), `${run.stdout}\n${run.stderr}`);
+    check('smoke failure is reported without claiming production was restored', run.status === 9 && run.stderr.includes('recovery failed while running production smoke') && !run.stderr.includes('smoke.sh: all checks passed'), `${run.stdout}\n${run.stderr}`);
   });
 }
 
