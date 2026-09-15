@@ -29,6 +29,8 @@ import {
 } from './copy';
 import RunTimeline from './RunTimeline';
 import type { RunJournalEntry } from './run-journal';
+import type { FlowNotice } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 
 export interface FailureScreenProps {
@@ -71,6 +73,10 @@ export interface FailureScreenProps {
    * where the section stays and falls back to its empty note.
    */
   attemptStarted?: boolean;
+  /** A refused Retry's notice (design D9/D10/D12): set only for the moment a live refusal is
+   *  still showing on this exact screen — its own `retryAt` gates the primary action here, the
+   *  same rule every gated step applies. Absent for every other shape of failure screen. */
+  notice?: FlowNotice;
   /** The developer-diagnostics gate's verdict, decided by the caller (decision #60(c)). */
   devMode?: boolean;
   /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
@@ -118,12 +124,14 @@ export default function FailureScreen({
   retryable = false,
   journal = null,
   attemptStarted = false,
+  notice,
   devMode = false,
   onRephrase,
   onBack,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
   const p = SHELL_PALETTE;
+  const gated = useRetryGate(notice?.retryAt);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -196,12 +204,20 @@ export default function FailureScreen({
         )}
       </View>
 
+      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+
+      {/* Gated exactly like every other primary action (design D11): disabled with its label
+          kept while a refused Retry's retry window is still open, never a request of its own. */}
       <TouchableOpacity
         onPress={onRephrase}
+        disabled={gated}
         accessibilityRole="button"
-        style={[styles.action, { backgroundColor: p.text, borderColor: p.text }]}
+        style={[
+          styles.action,
+          gated ? { backgroundColor: p.card, borderColor: p.cardBorder } : { backgroundColor: p.text, borderColor: p.text },
+        ]}
       >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
+        <Text style={[TYPE_SCALE.bodyEmphatic, { color: gated ? p.textMuted : p.onAccent }]}>
           {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
         </Text>
       </TouchableOpacity>

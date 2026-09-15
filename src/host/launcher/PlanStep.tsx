@@ -20,7 +20,8 @@ import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
-import type { FlowPlanRow } from './prompt-flow';
+import type { FlowNotice, FlowPlanRow } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 
 /** Row geometry, exported so the loading skeleton imports it rather than restating any value
@@ -59,6 +60,10 @@ export interface PlanStepProps {
   /** When the in-flight rewrite request started, for `WorkingLine`'s clock. Only read while
    *  `loading`. */
   startedAt?: number;
+  /** A service refusal that landed here (design D9/D12) — text-landing (`content_policy`/
+   *  `payload_too_large`, `danger` tone) for a plan-started generate, or sender-landing (`neutral`
+   *  tone) for a device/daily/server-busy or unavailable refusal. */
+  notice?: FlowNotice;
   /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
   editing: boolean;
   editingName?: string;
@@ -74,6 +79,7 @@ export default function PlanStep({
   rows,
   loading,
   startedAt,
+  notice,
   editing,
   editingName,
   onChangeRow,
@@ -81,6 +87,7 @@ export default function PlanStep({
   onBack,
 }: Readonly<PlanStepProps>) {
   const p = SHELL_PALETTE;
+  const gated = useRetryGate(notice?.retryAt);
 
   // Only one row is ever editable at a time: `editingIndex` names it, `draft` is its in-progress
   // text. Indexed rather than keyed by `label:text` because two rows can carry identical text —
@@ -182,10 +189,13 @@ export default function PlanStep({
         <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
       </ScrollView>
 
+      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+
       {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
           action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
-          element while loading. */}
-      {!loading && <PrimaryAction step="plan" enabled editing={editing} onPress={onBuild} />}
+          element while loading. No validation gate of its own — the retry window is the only
+          thing that can disable it. */}
+      {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
     </View>
   );
 }

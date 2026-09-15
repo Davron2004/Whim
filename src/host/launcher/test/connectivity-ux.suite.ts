@@ -81,9 +81,12 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
     h.ok(!composeStepSrc.includes('promptServerUnconfigured'), 'and so is the "set an address in Settings" notice it gated');
   });
 
-  await h.test('wiring: the notice never gates submission — enabled is keyed on the prompt text alone', () => {
+  await h.test('wiring: the notice never gates submission — enabled has no serverUnreachable term', () => {
+    // store-launch-compliance chain-4 added a second, unrelated gate (the refusal retry window,
+    // `!gated`) to the same `enabled` expression — this assertion's actual claim, that
+    // `serverUnreachable` itself never appears in it, still holds and is what it now pins.
     h.ok(
-      /enabled=\{trimmed\.length > 0\}/.test(composeStepSrc),
+      /enabled=\{trimmed\.length > 0 && !gated\}/.test(composeStepSrc),
       'PrimaryAction enablement must be unaffected by serverUnreachable',
     );
   });

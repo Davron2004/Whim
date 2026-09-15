@@ -16,7 +16,8 @@ import { COPY, clarifyHeadline } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
-import type { FlowAnswers, FlowQuestion } from './prompt-flow';
+import type { FlowAnswers, FlowNotice, FlowQuestion } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 
 export interface ClarifyStepProps {
@@ -29,6 +30,9 @@ export interface ClarifyStepProps {
   loading: boolean;
   /** When the in-flight exchange started, for `WorkingLine`'s clock. Only read while `loading`. */
   startedAt?: number;
+  /** A service refusal that landed here (design D9/D12) — always a `sender`-landing refusal (an
+   *  availability/limit code), never about the answers themselves. */
+  notice?: FlowNotice;
   /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
   editing: boolean;
   editingName?: string;
@@ -45,6 +49,7 @@ export default function ClarifyStep({
   answers,
   loading,
   startedAt,
+  notice,
   editing,
   editingName,
   onAnswer,
@@ -52,6 +57,7 @@ export default function ClarifyStep({
   onBack,
 }: Readonly<ClarifyStepProps>) {
   const p = SHELL_PALETTE;
+  const gated = useRetryGate(notice?.retryAt);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -131,10 +137,13 @@ export default function ClarifyStep({
         )}
       </ScrollView>
 
+      {notice && <ServiceNotice hint={notice.hint} retryLine={notice.retryLine} tone={notice.tone} />}
+
       {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
           action mounts once the real questions have landed; `WorkingLine` is the only liveness
-          element while loading. */}
-      {!loading && <PrimaryAction step="clarify" enabled editing={editing} onPress={onContinue} />}
+          element while loading. No validation gate of its own — the retry window is the only
+          thing that can disable it. */}
+      {!loading && <PrimaryAction step="clarify" enabled={!gated} editing={editing} onPress={onContinue} />}
     </View>
   );
 }

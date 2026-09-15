@@ -299,6 +299,21 @@ export function failPendingBuild(
   pending.setFailed(id, pendingFailure(reason, diagnostics));
 }
 
+/**
+ * A refused `generateApp` call's three-way split (`pending-builds` "A pending-build record is
+ * deleted on delivery, cancel, or dismiss, or when the server refuses a fresh plan-started
+ * attempt"; design D10), decided by whether this was a Retry and whether the user has already
+ * left the build screen (`ctl.detached`): a fresh attempt refused while its own build screen is
+ * still showing is dropped — deleted exactly as a cancel deletes it, since no generation took
+ * place. A detached attempt, or ANY Retry, settles `failed` instead, so the ghost tile explains
+ * itself. Pure so the decision is watchable without `LauncherRoot.tsx`'s stream loop around it.
+ */
+export type RefusedGenerateOutcome = 'drop' | 'settle';
+
+export function refusedGenerateOutcome(isRetry: boolean, detached: boolean): RefusedGenerateOutcome {
+  return !isRetry && !detached ? 'drop' : 'settle';
+}
+
 /** The ONE deletion path a user can trigger: cancelling an in-flight attempt and dismissing a
  *  `failed`/`interrupted` record are the same transition — the attempt leaves no trace on the
  *  grid. Successful delivery deletes through `deliverAndSettle` instead, because only there does
