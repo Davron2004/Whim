@@ -164,7 +164,7 @@
 - rationale: these checks need the paired iPhone 16 Pro Max, Xcode signed into the AnyCognition team, a running Android emulator, a canary on the Mac with `sudo tcpdump`, and ears and eyes for tones and launch frames. No dispatched implementer has any of that. Results are recorded PENDING at merge and don't block the gate. They include the on-device proof of the TextDecoder fix, the WebKit containment probe on physical hardware, and the network deny's post-fix pass, negative control and fail-closed check on both platforms.
 - reads: docs/release/mobile.md; specs/hermes-runtime-prerequisites/spec.md; specs/mini-app-cues/spec.md (delta); specs/app-icon-and-launch/spec.md §"Launch shows the mark on the shell paper color with no flash"; specs/app-links/spec.md §"The iOS app delivers universal links to the launcher", §"The Android app verifies and delivers app links"; specs/sandbox-isolation/spec.md (delta, all three requirements); design.md D17 "Reproduce first, then prove"; progress.md "Network deny reproduction"; handoff: handoff/netdeny-probe.md, handoff/android-network-deny.md, handoff/ios-network-deny.md
 - writes-contract: none (results go to progress.md; failures become fix-loop findings)
-- after: chain-0, chain-2, chain-5, chain-7, chain-14, chain-16, chain-17
+- after: chain-0, chain-2, chain-5, chain-7, chain-14, chain-16, chain-17, chain-host-startup-watchdog
 
 ## chain-13: attended-accounts-and-uploads — separate-session (attended, human-run)
 
@@ -216,3 +216,12 @@
 - reads: design.md D17; specs/sandbox-isolation/spec.md (delta); progress.md "Network deny reproduction" and "Network deny acceptance"; the landed `docs/decisions.md` tail; docs/decisions.md #35, #37, #64; handoff: handoff/netdeny-probe.md, handoff/android-network-deny.md, handoff/ios-network-deny.md
 - writes-contract: none
 - after: chain-11, chain-12, chain-16, chain-17
+
+## chain-host-startup-watchdog: fail a delivery attempt that never receives page frames
+
+- tasks: 20.1–20.4
+- rationale: satisfy D17's existing app-error requirement when native rule loading disables page JavaScript. Dispatch only after the primary simulator reproduces the indefinite boot state.
+- files: `src/host/launcher/boot-state.ts`, `src/host/launcher/useMiniAppHost.ts`, `src/host/launcher/test/boot-state.suite.ts`, `src/host/launcher/test/bundle-error-watchdog.suite.ts`
+- reads: host-startup-fix.md; specs/sandbox-isolation/spec.md; design.md D17; relevant standing realm-reset/trust decisions and spike2 findings; handoff/ios-network-deny.md; progress.md missing-resource reproduction evidence
+- writes-contract: handoff/host-startup-watchdog.md (deadline start/cancel behavior, tested helper interface, stale-callback fence, normal LauncherRoot missing-resource acceptance procedure)
+- after: chain-17
