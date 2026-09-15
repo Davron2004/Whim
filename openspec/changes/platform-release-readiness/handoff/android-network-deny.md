@@ -25,7 +25,7 @@ It returns only `NetworkDeniedWebViewManager()`. It inherits the stock package's
 
 ## Application wiring
 
-`MainApplication.getPackages()` walks `PackageList(this).packages` and replaces the autolinked
+`MainApplication.reactHost` constructs `PackageList(this).packages` and replaces the autolinked
 `RNCWebViewPackage` at its current index. It never appends a second manager. This avoids bridgeless
 React Native's last-registered-wins behavior for duplicate manager names.
 

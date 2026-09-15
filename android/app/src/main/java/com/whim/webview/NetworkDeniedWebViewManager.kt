@@ -5,8 +5,8 @@ import com.reactnativecommunity.webview.RNCWebViewManager
 import com.reactnativecommunity.webview.RNCWebViewWrapper
 
 /**
- * Applies platform-release-readiness D17's native network refusal before React Native sets
- * properties. ViewManager creates the view before updating properties, so no source can load first.
+ * Applies D17's native refusal at the ViewManager.java ordering documented in research.md E:
+ * createViewInstance runs before React Native updates properties, so no source can load first.
  */
 class NetworkDeniedWebViewManager : RNCWebViewManager() {
   override fun createViewInstance(context: ThemedReactContext): RNCWebViewWrapper {

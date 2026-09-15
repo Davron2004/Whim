@@ -19,8 +19,8 @@ class MainApplication : Application(), ReactApplication {
           var replacedWebViewPackages = 0
           for (index in indices) {
             if (this[index] is RNCWebViewPackage) {
-              // Bridgeless registration silently takes the last manager with a duplicate name.
-              // Replace the autolinked package in place so exactly one RNCWebView manager exists.
+              // D17 replaces the autolinked package in place because bridgeless registration
+              // silently takes the last manager with a duplicate name; exactly one must exist.
               this[index] = NetworkDeniedWebViewPackage()
               replacedWebViewPackages++
             }

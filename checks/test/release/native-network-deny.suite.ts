@@ -39,6 +39,70 @@ function readRequired(root: string, relPath: string, findings: NativeNetworkDeny
   }
 }
 
+function maskRange(chars: string[], source: string, start: number, end: number): void {
+  for (let index = start; index < end; index++) {
+    if (source[index] !== '\n' && source[index] !== '\r') chars[index] = ' ';
+  }
+}
+
+function endOfQuotedLiteral(source: string, start: number, quote: '"' | "'"): number {
+  let index = start + 1;
+  while (index < source.length) {
+    if (source[index] === '\\') {
+      index += 2;
+    } else if (source[index] === quote) {
+      return index + 1;
+    } else {
+      index++;
+    }
+  }
+  return source.length;
+}
+
+function endOfBlockComment(source: string, start: number): number {
+  let depth = 1;
+  let index = start + 2;
+  while (index < source.length && depth > 0) {
+    if (source.startsWith('/*', index)) {
+      depth++;
+      index += 2;
+    } else if (source.startsWith('*/', index)) {
+      depth--;
+      index += 2;
+    } else {
+      index++;
+    }
+  }
+  return index;
+}
+
+/** Preserve Kotlin code positions while blanking comments and literal bodies. */
+function kotlinCodeOnly(source: string): string {
+  const chars = source.split('');
+  let index = 0;
+  while (index < source.length) {
+    let end = index;
+    if (source.startsWith('//', index)) {
+      const newline = source.indexOf('\n', index + 2);
+      end = newline < 0 ? source.length : newline;
+    } else if (source.startsWith('/*', index)) {
+      end = endOfBlockComment(source, index);
+    } else if (source.startsWith('"""', index)) {
+      const close = source.indexOf('"""', index + 3);
+      end = close < 0 ? source.length : close + 3;
+    } else if (source[index] === '"' || source[index] === "'") {
+      end = endOfQuotedLiteral(source, index, source[index] as '"' | "'");
+    }
+    if (end > index) {
+      maskRange(chars, source, index, end);
+      index = end;
+    } else {
+      index++;
+    }
+  }
+  return chars.join('');
+}
+
 function methodBody(source: string, signature: RegExp): string | undefined {
   const match = signature.exec(source);
   if (!match) return undefined;
@@ -69,8 +133,7 @@ function checkApplicationWiring(application: string, findings: NativeNetworkDeny
       || /\bRNCWebViewPackage\s*\(\s*\)/.test(application)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'the package list must contain one denied manager package and no stock instance');
   }
-  if (!/check\s*\(replacedWebViewPackages\s*==\s*1\)/.test(application)
-      || !/react-native-webview autolinking/.test(application)) {
+  if (!/check\s*\(replacedWebViewPackages\s*==\s*1\)/.test(application)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'startup must check exactly one react-native-webview autolinked package');
   }
   if (!/add\([^\n]*WhimTonePackage\(\)\)/.test(application)) {
@@ -83,14 +146,17 @@ export function checkAndroidNativeNetworkDeny(root: string): NativeNetworkDenyFi
   const application = readRequired(root, ANDROID_MAIN_APPLICATION_PATH, findings);
   const manager = readRequired(root, ANDROID_NETWORK_DENY_MANAGER_PATH, findings);
   const pkg = readRequired(root, ANDROID_NETWORK_DENY_PACKAGE_PATH, findings);
+  const applicationCode = kotlinCodeOnly(application);
+  const managerCode = kotlinCodeOnly(manager);
+  const packageCode = kotlinCodeOnly(pkg);
 
-  checkApplicationWiring(application, findings);
+  checkApplicationWiring(applicationCode, findings);
 
-  if (!/class\s+NetworkDeniedWebViewManager\s*:\s*RNCWebViewManager\(\)/.test(manager)) {
+  if (!/class\s+NetworkDeniedWebViewManager\s*:\s*RNCWebViewManager\(\)/.test(managerCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_MANAGER_PATH, 'manager must subclass RNCWebViewManager');
   }
   const createBody = methodBody(
-    manager,
+    managerCode,
     /override\s+fun\s+createViewInstance\s*\([^)]*ThemedReactContext[^)]*\)\s*:\s*RNCWebViewWrapper\s*\{/,
   );
   if (!createBody) {
@@ -107,22 +173,22 @@ export function checkAndroidNativeNetworkDeny(root: string): NativeNetworkDenyFi
       );
     }
   }
-  if (/blockNetworkLoads\s*=\s*false/.test(manager)) {
+  if (/blockNetworkLoads\s*=\s*false/.test(managerCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_MANAGER_PATH, 'blockNetworkLoads must never be set to false');
   }
 
-  if (!/class\s+NetworkDeniedWebViewPackage\s*:\s*RNCWebViewPackage\(\)/.test(pkg)) {
+  if (!/class\s+NetworkDeniedWebViewPackage\s*:\s*RNCWebViewPackage\(\)/.test(packageCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_PACKAGE_PATH, 'package must subclass RNCWebViewPackage');
   }
-  const packageBody = methodBody(pkg, /override\s+fun\s+createViewManagers\s*\([^)]*\)\s*:\s*List<ViewManager<\*,\s*\*>>\s*\{/);
+  const packageBody = methodBody(packageCode, /override\s+fun\s+createViewManagers\s*\([^)]*\)\s*:\s*List<ViewManager<\*,\s*\*>>\s*\{/);
   const compactPackageBody = packageBody?.replace(/\s+/g, ' ').trim();
   if (compactPackageBody !== 'return listOf(NetworkDeniedWebViewManager())') {
     addFinding(findings, ANDROID_NETWORK_DENY_PACKAGE_PATH, 'createViewManagers must return only NetworkDeniedWebViewManager');
   }
-  if (/\bRNCWebViewManager\s*\(\s*\)/.test(pkg)) {
+  if (/\bRNCWebViewManager\s*\(\s*\)/.test(packageCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_PACKAGE_PATH, 'the denied package must not return the stock RNCWebViewManager');
   }
-  if (/override\s+fun\s+(getModule|getReactModuleInfoProvider)\b/.test(pkg)) {
+  if (/override\s+fun\s+(getModule|getReactModuleInfoProvider)\b/.test(packageCode)) {
     addFinding(findings, ANDROID_NETWORK_DENY_PACKAGE_PATH, 'module providers must be inherited unchanged');
   }
 
@@ -151,6 +217,10 @@ package com.whim.webview
 class NetworkDeniedWebViewManager : RNCWebViewManager() {
   override fun createViewInstance(context: ThemedReactContext): RNCWebViewWrapper {
     val wrapper = super.createViewInstance(context)
+    val normal = "escaped quote: \\" and brace }"
+    val raw = """braces { } and // text"""
+    val brace = '{'
+    /* nested braces { /* still a comment } */ } */
     wrapper.webView.settings.blockNetworkLoads = true
     return wrapper
   }
@@ -255,6 +325,74 @@ export async function run(): Promise<void> {
         VALID_PACKAGE.replace('NetworkDeniedWebViewManager()', 'RNCWebViewManager()'),
       );
       assertFindingNamesFile(root, ANDROID_NETWORK_DENY_PACKAGE_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: a manager comment cannot impersonate the deny statement', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        ANDROID_NETWORK_DENY_MANAGER_PATH,
+        VALID_MANAGER.replace(
+          '    wrapper.webView.settings.blockNetworkLoads = true',
+          '    /* wrapper.webView.settings.blockNetworkLoads = true */',
+        ),
+      );
+      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_MANAGER_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: a package raw string cannot impersonate createViewManagers', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        ANDROID_NETWORK_DENY_PACKAGE_PATH,
+        `
+package com.whim.webview
+class NetworkDeniedWebViewPackage : RNCWebViewPackage() {
+  val decoy = """
+    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+      return listOf(NetworkDeniedWebViewManager())
+    }
+  """
+}
+`,
+      );
+      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_PACKAGE_PATH);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  await test('native-network-deny: an application comment cannot impersonate package replacement', () => {
+    const root = makeNativeNetworkDenyFixture();
+    try {
+      writeValidFixture(root);
+      writeNativeNetworkDenyFixture(
+        root,
+        ANDROID_MAIN_APPLICATION_PATH,
+        `
+package com.whim
+val packages = PackageList(this).packages.apply {
+  /*
+  if (this[index] is RNCWebViewPackage) {
+    this[index] = NetworkDeniedWebViewPackage()
+  }
+  */
+  check(replacedWebViewPackages == 1) { "react-native-webview autolinking" }
+  add(com.whim.tone.WhimTonePackage())
+}
+`,
+      );
+      assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
