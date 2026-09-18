@@ -4,8 +4,7 @@
  * source", "The checks detect stale, missing or mis-sized assets", "Store-facing icons meet
  * each store's format rules", "The Android icon is adaptive with a legacy fallback", "Launch
  * shows the mark on the shell paper color with no flash"; task 7.5. Never imports Playwright
- * (chains.md: suites shell out to nothing but `git ls-files`) — `checkAssets`/`readPngInfo`
- * never touch it either.
+ * — generation injects a renderer here; scripts/release/test-assets.mjs tests real Chromium.
  */
 
 import fs from 'node:fs';
@@ -14,7 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { test, assert } from '../harness';
-import { checkAssets, ASSET_TABLE, GENERATED_JSON_PATH, BRAND_JSON_PATH, ICON_FOREGROUND_SVG_PATH } from '../../../scripts/release/lib/assets';
+import { checkAssets, generateAssets, ASSET_TABLE, GENERATED_JSON_PATH, BRAND_JSON_PATH, ICON_FOREGROUND_SVG_PATH, ICON_FOREGROUND_PNG_PATH } from '../../../scripts/release/lib/assets';
 import { readPngInfo, decodeRgba8, encodeRgb8, encodeRgba8 } from '../../../scripts/release/lib/png';
 
 const REPO_ROOT = process.cwd();
@@ -94,6 +93,32 @@ function makeRgbaFixture(width: number, height: number): Buffer {
 }
 
 export async function run(): Promise<void> {
+  await test('generateAssets selects PNG bytes for rendering and records that input', async () => {
+    const dir = makeTempRepo();
+    try {
+      const png = fs.readFileSync(path.join(dir, 'release/store/play/en-US/images/icon.png'));
+      fs.writeFileSync(path.join(dir, ICON_FOREGROUND_PNG_PATH), png);
+      fs.rmSync(path.join(dir, ICON_FOREGROUND_SVG_PATH));
+      let renders = 0;
+      await generateAssets(dir, async (html, width, height) => {
+        renders++;
+        assert(html.includes(`data:image/png;base64,${png.toString('base64')}`), 'renderer must receive selected PNG bytes with PNG MIME');
+        return makeRgbaFixture(width, height);
+      });
+      assert(renders > 0, 'generator must render outputs');
+      const source = readGenerated(dir).source;
+      assert(source.path === ICON_FOREGROUND_PNG_PATH && source.sha256 === sha256(dir, ICON_FOREGROUND_PNG_PATH), 'manifest must identify the input actually rendered');
+      assert(checkAssets(dir).length === 0, 'generated outputs must pass validation');
+      source.path = ICON_FOREGROUND_SVG_PATH;
+      const stale = readGenerated(dir);
+      stale.source = source;
+      writeGenerated(dir, stale);
+      assert(findingsFor(checkAssets(dir), ICON_FOREGROUND_PNG_PATH).length > 0, 'wrong manifest source must fail even with the correct hash');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await test('checkAssets: the repo passes with no findings', () => {
     const findings = checkAssets(REPO_ROOT);
     assert(findings.length === 0, `expected no findings against the real repo, got ${JSON.stringify(findings)}`);
@@ -186,9 +211,25 @@ export async function run(): Promise<void> {
     }
   });
 
-  await test('checkAssets: ASSET_TABLE covers every output design D10 lists (spot check on count)', () => {
-    // 1 AppIcon + 3 LaunchMark + (10 legacy + 10 adaptive + 5 launch_mark) + 2 store images
-    assert(ASSET_TABLE.length === 31, `expected 31 image outputs, got ${ASSET_TABLE.length}`);
+  await test('native image references resolve to unique generated outputs', () => {
+    const outputs = new Set(ASSET_TABLE.map((spec) => spec.path));
+    assert(outputs.size === ASSET_TABLE.length, 'generated image paths must be unique');
+    for (const assetSet of ['AppIcon.appiconset', 'LaunchMark.imageset']) {
+      const base = `ios/Whim/Images.xcassets/${assetSet}`;
+      const contents = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, base, 'Contents.json'), 'utf8'));
+      assert(contents.images.length > 0, `${assetSet} must reference images`);
+      for (const image of contents.images) {
+        assert(outputs.has(`${base}/${image.filename}`), `undeclared native image ${image.filename}`);
+      }
+    }
+    for (const icon of ['ic_launcher', 'ic_launcher_round']) {
+      const xml = fs.readFileSync(path.join(REPO_ROOT, `android/app/src/main/res/mipmap-anydpi-v26/${icon}.xml`), 'utf8');
+      const names = [...xml.matchAll(/@mipmap\/([a-z_]+)/g)].map((match) => match[1]);
+      assert(names.length > 0, `${icon} must reference image layers`);
+      for (const density of ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']) {
+        for (const name of names) assert(outputs.has(`android/app/src/main/res/mipmap-${density}/${name}.png`), `missing ${density} layer ${name}`);
+      }
+    }
   });
 
   await test('png: an RGB8 encode reads back as color type 2 with the same pixels', () => {

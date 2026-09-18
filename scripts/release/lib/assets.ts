@@ -1,6 +1,6 @@
 /**
  * The brand-asset generator (design D10; task 7.3). `generateAssets(repoRoot)` renders every
- * icon and launch asset from `release/assets/icon-foreground.svg` + `release/assets/brand.json`
+ * icon and launch asset from one SVG or PNG foreground + `release/assets/brand.json`
  * through Playwright's Chromium, composites the two outputs whose format forbids alpha over
  * `iconBackground`, and writes `release/assets/generated.json`. `checkAssets(repoRoot)` re-hashes
  * everything and reads PNG headers — it never touches Playwright (chains.md: suites never shell
@@ -174,7 +174,7 @@ function backgroundFor(spec: AssetSpec, iconBackground: string): { readonly colo
 }
 
 function markHtml(
-  svgDataUri: string,
+  sourceDataUri: string,
   canvasWidth: number,
   canvasHeight: number,
   background: { readonly color: string; readonly shape: 'square' | 'circle' } | null,
@@ -187,7 +187,7 @@ function markHtml(
     const borderRadius = background.shape === 'circle' ? 'border-radius:50%;' : '';
     bgDiv = `<div style="position:absolute;left:0;top:0;width:${canvasWidth}px;height:${canvasHeight}px;background:${background.color};${borderRadius}"></div>`;
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:${canvasWidth}px;height:${canvasHeight}px;overflow:hidden;}</style></head><body>${bgDiv}<img src="${svgDataUri}" width="${markSize}" height="${markSize}" style="position:absolute;left:${markLeft}px;top:${markTop}px;display:block;"></body></html>`;
+  return `<!doctype html><html><head><style>html,body{margin:0;padding:0;background:transparent;width:${canvasWidth}px;height:${canvasHeight}px;overflow:hidden;}</style></head><body>${bgDiv}<img src="${sourceDataUri}" width="${markSize}" height="${markSize}" style="position:absolute;left:${markLeft}px;top:${markTop}px;display:block;"></body></html>`;
 }
 
 // Kept out of a static `import` so `checks/test/run.mjs`'s esbuild bundle (unlike
@@ -285,17 +285,20 @@ const ADAPTIVE_ICON_XML = `<?xml version="1.0" encoding="utf-8"?>\n<adaptive-ico
  * `release/assets/generated.json` (design D10 "The command"; specs/app-icon-and-launch/spec.md
  * "One command derives every icon and launch asset from one source").
  */
-export async function generateAssets(repoRoot: string): Promise<void> {
+export async function generateAssets(repoRoot: string, render: typeof renderPng = renderPng): Promise<void> {
   const brandPath = path.join(repoRoot, BRAND_JSON_PATH);
   const brand = JSON.parse(fs.readFileSync(brandPath, 'utf8')) as Brand;
-  const svgPath = path.join(repoRoot, ICON_FOREGROUND_SVG_PATH);
-  const svgText = fs.readFileSync(svgPath, 'utf8');
-  const svgDataUri = `data:image/svg+xml;base64,${Buffer.from(svgText, 'utf8').toString('base64')}`;
+  const sourceFindings: AssetFinding[] = [];
+  const sourcePath = checkSourceCount(repoRoot, sourceFindings);
+  if (sourceFindings.length > 0) throw new Error(sourceFindings.map((finding) => finding.message).join('; '));
+  const sourceBytes = fs.readFileSync(path.join(repoRoot, sourcePath));
+  const mime = sourcePath === ICON_FOREGROUND_SVG_PATH ? 'image/svg+xml' : 'image/png';
+  const sourceDataUri = `data:${mime};base64,${sourceBytes.toString('base64')}`;
 
   for (const spec of ASSET_TABLE) {
     const markSize = Math.min(spec.width, spec.height);
-    const html = markHtml(svgDataUri, spec.width, spec.height, backgroundFor(spec, brand.iconBackground), markSize);
-    const rendered = await renderPng(html, spec.width, spec.height);
+    const html = markHtml(sourceDataUri, spec.width, spec.height, backgroundFor(spec, brand.iconBackground), markSize);
+    const rendered = await render(html, spec.width, spec.height);
     const info = readPngInfo(rendered);
     if (info.width !== spec.width || info.height !== spec.height) {
       throw new Error(`generateAssets: rendered ${spec.path} at ${info.width}x${info.height}, expected ${spec.width}x${spec.height}`);
@@ -326,7 +329,7 @@ export async function generateAssets(repoRoot: string): Promise<void> {
   ];
   const generated: GeneratedAssetsFile = {
     version: 1,
-    source: { path: ICON_FOREGROUND_SVG_PATH, sha256: sha256File(svgPath) },
+    source: { path: sourcePath, sha256: crypto.createHash('sha256').update(sourceBytes).digest('hex') },
     brand: { path: BRAND_JSON_PATH, sha256: sha256File(brandPath) },
     outputs,
   };
@@ -366,6 +369,9 @@ function checkSourceCount(repoRoot: string, findings: AssetFinding[]): string {
 }
 
 function checkSourceAndBrandHashes(repoRoot: string, findings: AssetFinding[], sourcePath: string, generated: GeneratedAssetsFile): void {
+  if (generated.source.path !== sourcePath) {
+    findings.push({ path: sourcePath, message: `${GENERATED_JSON_PATH} records a different foreground source; run "${GENERATE_ASSETS_COMMAND}"` });
+  }
   if (fs.existsSync(path.join(repoRoot, sourcePath)) && sha256File(path.join(repoRoot, sourcePath)) !== generated.source.sha256) {
     findings.push({ path: sourcePath, message: `${sourcePath} does not match ${GENERATED_JSON_PATH}'s recorded source hash; run "${GENERATE_ASSETS_COMMAND}"` });
   }

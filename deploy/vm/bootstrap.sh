@@ -49,7 +49,7 @@ install_docker() {
   apt-get update
   apt-get install -y ca-certificates curl gnupg
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  curl -fsSL --proto '=https' --proto-redir '=https' https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
   local fingerprint
   fingerprint="$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')"
   [ "$fingerprint" = "$DOCKER_KEY_FINGERPRINT" ] || fail "Docker's apt key has fingerprint '$fingerprint', expected $DOCKER_KEY_FINGERPRINT"
@@ -122,15 +122,15 @@ install_egress_firewall() {
 }
 
 # The `whim` bridge (compose.yaml) declares no IPv6 subnet, so it stays IPv4-only unless something
-# enables IPv6 on it explicitly — which would bypass whim-egress.sh's IPv4-only drops for anything
-# a container reaches over v6, including the metadata server. Safe before the network exists (a
+# enables IPv6 on it explicitly. The firewall mirrors its restrictions for IPv6, but the deployed
+# bridge must still match compose's IPv4-only configuration. Safe before the network exists (a
 # rerun after the first `docker compose up`, or bootstrap running again, is when this can catch it).
 assert_bridge_no_ipv6() {
   command -v docker >/dev/null 2>&1 || return 0
   docker network inspect whim >/dev/null 2>&1 || return 0
   local enabled
   enabled="$(docker network inspect whim --format '{{.EnableIPv6}}')"
-  [ "$enabled" != "true" ] || fail "the whim Docker bridge has IPv6 enabled; whim-egress.sh's drops are IPv4-only"
+  [ "$enabled" != "true" ] || fail "the whim Docker bridge has IPv6 enabled; compose requires an IPv4-only bridge"
 }
 
 install_docker
