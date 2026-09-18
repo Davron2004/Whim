@@ -235,3 +235,13 @@
 - writes-contract: handoff/host-startup-watchdog.md (valid paint timing and malformed-message deadline behavior)
 - after: chain-host-startup-watchdog
 - rule: no native, loader, bridge, CSP, SDK, protected configuration or simulator changes.
+
+## chain-ios-scene: iOS 27 scene lifecycle startup
+
+- tasks: 22.1–22.4 (22.1 already reproduced; 22.4 primary-task simulator acceptance)
+- rationale: UIKit terminates the current normal Release artifact before React Native starts.
+- files: `ios/Whim/AppDelegate.swift`, `ios/Whim/SceneDelegate.swift`, `ios/Whim/Info.plist`, `ios/Whim.xcodeproj/project.pbxproj`, `scripts/release/lib/ios-project.ts`, `checks/test/release/ios-project.suite.ts`
+- reads: ios-scene-fix.md; ios27-startup-issue.md; specs/app-links/spec.md (iOS delivery requirement); design.md D8 and D10; handoff/ios-project.md
+- writes-contract: none
+- after: chain-3, chain-7, chain-17 (already merged on integration/store-launch)
+- rule: no protected files, dependencies, WebView policy, Android or launcher changes; root owns native builds and simulator interaction.
