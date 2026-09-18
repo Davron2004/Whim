@@ -467,39 +467,86 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
   eq('the unary pool still admits a later request', after.status, 200);
 }
 
+async function testUnaryFailureRecovery(
+  kind: 'clarify' | 'rewrite',
+  failure: 'settle' | 'persistent-settle' | 'credit' | 'model',
+  stub = false,
+): Promise<void> {
+  invalidateCreditCache();
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-unary-recovery-'));
+  const dbPath = nodePath.join(dir, 'usage.sqlite');
+  const usageStore = new NodeSqliteUsageStore(dbPath);
+  const reader = new DatabaseSync(dbPath);
+  const tracker = new ResolveTracker();
+  const capture = captureLogs();
+  try {
+    const settle = usageStore.settle.bind(usageStore);
+    let settleCalls = 0;
+    usageStore.settle = async (id, params) => {
+      settleCalls++;
+      if (failure === 'persistent-settle' || (failure === 'settle' && settleCalls === 1)) {
+        throw new Error(settleCalls === 1 ? STORE_BLIP_MESSAGE : 'secondary settlement failure');
+      }
+      await settle(id, params);
+    };
+    const credit = usageStore.credit.bind(usageStore);
+    if (failure === 'credit') usageStore.credit = () => Promise.reject(new Error(STORE_BLIP_MESSAGE));
+    const reply = kind === 'clarify' ? { questions: [] } : {
+      rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }],
+    };
+    const usage = { promptTokens: 1, completionTokens: 2, totalTokens: 3 };
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
+      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
+    ]);
+    const stream = model.stream.bind(model);
+    if (failure === 'model') model.stream = () => { throw new Error(STORE_BLIP_MESSAGE); };
+    const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+    const { app } = testApp({ usageStore, slots, model, stub, resolver: { tracker } });
+    const label = `${kind} (${failure}${stub ? ', stub' : ''})`;
+    const body = { prompt: stub ? '[[fail]] counter' : 'counter' };
+    const first = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+    eq(`${label}: unexpected errors remain server errors`, first.status, 500);
+    eq(`${label}: capacity is released after the error`, slots.counts().unary, 0);
+    eq(`${label}: original error is preserved in the app log`, withMessage(capture, 'unhandled route error').map((r) => r.detail), [STORE_BLIP_MESSAGE]);
+    const secondary = withMessage(capture, 'could not settle the ledger row of a failed unary request');
+    eq(`${label}: only a failed cleanup is logged separately`, secondary.map((r) => [r.cause, r.detail]),
+      failure === 'persistent-settle' ? [[STORE_BLIP_MESSAGE, 'secondary settlement failure']] : []);
+    eq(`${label}: cleanup tries settlement exactly once`, settleCalls, failure.includes('settle') ? 2 : 1);
+    const row = reader.prepare('SELECT ended_at, outcome, refunded FROM requests').get();
+    eq(`${label}: recovered store closes the original row without refunding it`, { ...row }, {
+      ended_at: failure === 'persistent-settle' ? null : FIXED_NOW,
+      outcome: failure === 'persistent-settle' ? null : 'error',
+      refunded: 0,
+    });
+    usageStore.settle = settle;
+    usageStore.credit = credit;
+    model.stream = stream;
+    const second = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+    eq(`${label}: a healthy request is admitted after recovery`, second.status, 200);
+    eq(`${label}: no capacity remains held`, slots.counts().unary, 0);
+    const completed = failure.includes('settle') ? 2 : 1;
+    eq(`${label}: error cleanup never credits tokens again`, await usageStore.read(DEVICE_ID), {
+      promptTokens: stub ? 0 : completed,
+      completionTokens: stub ? 0 : completed * 2,
+      totalTokens: stub ? 0 : completed * 3,
+    });
+  } finally {
+    capture.stop();
+    await tracker.drain(2000);
+    reader.close();
+    usageStore.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testSettlementFailureReleasesCapacity(): Promise<void> {
-  section('A failed unary settlement returns 500 and leaves capacity for the next request');
+  section('Unary failures preserve the error, close recoverable ledger rows and free capacity');
   for (const kind of ['clarify', 'rewrite'] as const) {
-    for (const stub of [false, true]) {
-      invalidateCreditCache();
-      const usageStore = new InMemoryUsageStore();
-      const settle = usageStore.settle.bind(usageStore);
-      let failed = false;
-      usageStore.settle = async (id, params) => {
-        if (!failed) {
-          failed = true;
-          throw new Error(STORE_BLIP_MESSAGE);
-        }
-        await settle(id, params);
-      };
-      const reply = kind === 'clarify' ? { questions: [] } : {
-        rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }],
-      };
-      const model = new ScriptedModelClient(ROSTER, [
-        { role: 'rewrite', deltas: [JSON.stringify(reply)] },
-        { role: 'rewrite', deltas: [JSON.stringify(reply)] },
-      ]);
-      const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
-      const { app } = testApp({ usageStore, slots, model, stub });
-      const label = `${kind} (${stub ? 'stub' : 'model'})`;
-      const body = { prompt: stub ? '[[fail]] counter' : 'counter' };
-      const first = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
-      eq(`${label}: settlement errors remain server errors`, first.status, 500);
-      eq(`${label}: capacity is released after the error`, slots.counts().unary, 0);
-      const second = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
-      eq(`${label}: a healthy request is admitted after the write recovers`, second.status, 200);
-      eq(`${label}: no capacity remains held`, slots.counts().unary, 0);
+    for (const failure of ['settle', 'persistent-settle', 'credit', 'model'] as const) {
+      await testUnaryFailureRecovery(kind, failure);
     }
+    await testUnaryFailureRecovery(kind, 'settle', true);
   }
 }
 

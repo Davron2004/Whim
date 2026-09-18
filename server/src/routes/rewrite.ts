@@ -33,7 +33,7 @@ import { buildRewritePolicyInput } from '../policy/input';
 import type { ResolveBounds, UsageAndCostTransport, ResolveTracker } from '../usage/resolve';
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
-import { admitUnaryRequest, resolveUnaryUsage } from './clarify';
+import { admitUnaryRequest, resolveUnaryUsage, settleFailedUnaryRequest } from './clarify';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -320,6 +320,9 @@ export function makeRewriteRoute(
 
         await finish('ok', result.generationIds, result.creditedAny, result.usage);
         return c.json(result.response, 200);
+      } catch (err) {
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err);
+        throw err;
       } finally {
         release();
       }

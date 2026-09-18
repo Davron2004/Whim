@@ -208,21 +208,21 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
   } catch (err) {
     acquired.handle.release();
     if (admittedRequestId !== undefined) {
-      await settleFailedAdmission(deps.usageStore, admittedRequestId, deps.clock, err);
+      await settleFailedUnaryRequest(deps.usageStore, admittedRequestId, deps.clock, err);
     }
     throw err;
   }
 }
 
 /**
- * Closes the ledger row of an admission that threw past the daily-unit insert. The unit is NOT
+ * Best-effort closure of a unary request that threw after the daily-unit insert. The unit is NOT
  * refunded: the classifier call it paid for may well have happened, and a refund on every store
  * blip is a free retry an abusive client can farm — the row is simply marked `error` so it stops
  * being an open `pending` request nothing will ever settle. A `settle` that throws in turn (the
  * same store is, after all, the usual reason we are here) is logged and swallowed: the caller is
  * already unwinding with the original error, which is the one worth surfacing.
  */
-async function settleFailedAdmission(
+export async function settleFailedUnaryRequest(
   usageStore: UsageStore,
   requestId: string,
   clock: () => number,
@@ -237,7 +237,7 @@ async function settleFailedAdmission(
         detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
         cause: cause instanceof Error ? cause.message : String(cause),
       },
-      'could not settle the ledger row of a failed admission',
+      'could not settle the ledger row of a failed unary request',
     );
   }
 }
@@ -408,6 +408,9 @@ export function makeClarifyRoute(
 
       try {
         return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+      } catch (err) {
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err);
+        throw err;
       } finally {
         release();
       }
