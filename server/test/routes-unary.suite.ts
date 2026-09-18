@@ -264,6 +264,21 @@ function stallingModelClient(observed: { aborted: boolean }): ModelClient {
   };
 }
 
+/** In-process requests and the stalled model have no socket to keep Node alive while
+ *  AbortSignal.timeout's unreferenced timer runs. This independent, referenced deadline
+ *  keeps the test alive and fails it if the route never enforces its own timeout. */
+async function withRequestDeadline<T>(request: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('Stalled unary request exceeded the 2s test deadline')), 2000);
+  });
+  try {
+    return await Promise.race([request, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function testAdmissionOrder(): Promise<void> {
   section('Admission order (specs/server-admission-control "Admission checks run in a fixed order")');
 
@@ -644,7 +659,7 @@ async function testStalledRewriteTimesOut(): Promise<void> {
   const { app } = testApp({ model, slots, config: { unaryModelTimeoutMs: 40 } });
 
   const started = Date.now();
-  const res = await post(app, '/v1/rewrite', { prompt: 'hi' }, DEVICE_HEADER);
+  const res = await withRequestDeadline(post(app, '/v1/rewrite', { prompt: 'hi' }, DEVICE_HEADER));
   const elapsedMs = Date.now() - started;
   eq('a stalled rewrite times out honestly → 502', res.status, 502);
   const body = (await res.json()) as ApiError;
@@ -858,7 +873,7 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
         resolver: { transport: CLASSIFIER_ONLY_TRANSPORT, tracker },
         config: { unaryModelTimeoutMs: 40 },
       });
-      const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+      const res = await withRequestDeadline(post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER));
       eq(`${route} timeout → 502`, res.status, 502);
       await assertResolvedOnce(`${route} timeout`, usageStore, tracker, CLASSIFIER_USAGE, CLASSIFIER_COST);
     }

@@ -61,6 +61,14 @@ The prior fix batch replaced launcher source scans with rendered interactions an
 added failure-path regressions. Additional cleanup should be justified by a test's
 failure-detection value, rather than its line count or use of a custom runner.
 
+GitHub then exposed a separate timeout-test flake: the deliberately stalled fake
+model and in-process request have no socket, and `AbortSignal.timeout` does not
+keep Node alive. An isolated child reproduced exit 13 before the deadline fired.
+The three stalled requests now have a scoped, cleared two-second test watchdog.
+Disabling the production deadline still fails explicitly; it cannot silently pass.
+The isolated tests passed 37 checks, and the full server suite passed 2,658 checks
+with TypeScript/lint passing. This test-only repair was independently reviewed.
+
 ## Sonar triage
 
 At the reviewed product commit, Sonar's gate was `OK`, with zero vulnerabilities
