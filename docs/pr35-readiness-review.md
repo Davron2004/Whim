@@ -106,7 +106,7 @@ were independently reviewed; no checker or assertion suppression was added.
 
 ## Findings that affect merge readiness
 
-1. **Confirmed: iOS 27 startup failure with the installed SDK.** Both the fresh
+1. **Confirmed: [iOS 27 startup failure](../openspec/changes/platform-release-readiness/ios27-startup-issue.md) with the installed SDK.** Both the fresh
    probe build and a restored normal Release build stop in UIKit before React
    Native starts. The native log says `UIScene life cycle is required for apps
    built with this SDK`. `ios/Whim/AppDelegate.swift` creates the window through

@@ -157,3 +157,12 @@ It holds normal-app screenshots, `water-counter-after-restart.png`,
 `missing-rule-return-home.png`, `normal-restored-tip-splitter.png`, and the
 `whim-ios-missing-after-{build,native,canary}.log` receipts. The simulator is left
 on the healthy normal build, with no temporary source or lockfile changes.
+
+## iOS 27 startup blocker — 2026-09-18
+
+Fresh Release builds from `865f7af` compiled under Xcode 27 but crashed on iOS 27
+before React Native started. The normal build reproduced the probe build's UIKit
+scene-lifecycle failure. [Issue and closure criteria](ios27-startup-issue.md) record
+the environment, crash evidence and required migration. This remains open; it does
+not invalidate the older iOS 26.5 results above. Temporary edits were restored,
+the normal artifact reinstalled, and the simulator shut down.
