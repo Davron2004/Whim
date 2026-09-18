@@ -166,3 +166,14 @@ scene-lifecycle failure. [Issue and closure criteria](ios27-startup-issue.md) re
 the environment, crash evidence and required migration. This remains open; it does
 not invalidate the older iOS 26.5 results above. Temporary edits were restored,
 the normal artifact reinstalled, and the simulator shut down.
+
+## iOS scene lifecycle correction — 2026-09-18
+
+- Resumed the existing `integration/store-launch` run for the owner's iOS crash
+  investigation. Primary simulator process 96195 reproduced the documented
+  no-scene-lifecycle crash before React Native started. Current source still has
+  the legacy startup; the Hermes entry polyfill is already installed.
+- Dispatched `chain-ios-scene` from pinned BASE
+  `0632494137c0d7821f710f542b63100f177bfffe` on `codex/ios-scene-lifecycle`, worktree
+  `.claude/worktrees/ios-scene-lifecycle`. Scope and acceptance are in
+  `ios-scene-fix.md`; primary task owns native builds and simulator interaction.

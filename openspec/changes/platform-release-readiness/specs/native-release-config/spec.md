@@ -94,3 +94,18 @@ It SHALL declare as collected exactly the data types the App Privacy answers lis
 #### Scenario: Manifest and App Privacy answers agree
 - **WHEN** the App Privacy answers list other user content and device ID as collected
 - **THEN** the manifest's collected data types are exactly other user content and device ID, and the release checks pass
+
+### Requirement: iOS startup uses the scene lifecycle
+The iOS app SHALL declare a single-window scene configuration and create its
+window from the connected `UIWindowScene`. It SHALL retain the React Native
+factory and delegate, preserve the launch background, and avoid starting a
+second React Native runtime when the scene reconnects. Scene-based startup
+SHALL preserve cold and warm app-link delivery.
+
+#### Scenario: Launch with the iOS 27 SDK
+- **WHEN** a normal Release build produced with the iOS 27 SDK starts on iOS 27
+- **THEN** the launcher renders without the missing-scene-lifecycle termination
+
+#### Scenario: Scene configuration is absent
+- **WHEN** the scene manifest or the scene delegate's target source membership is removed
+- **THEN** the portable release checks fail and identify the missing declaration

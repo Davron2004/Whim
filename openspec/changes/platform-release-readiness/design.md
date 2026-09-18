@@ -31,6 +31,11 @@ Five outside inputs shape the design:
 
 ## Decisions
 
+The iOS 27 startup correction is specified in [ios-scene-fix.md](ios-scene-fix.md).
+It follows the reproduced UIKit failure in [ios27-startup-issue.md](ios27-startup-issue.md)
+and moves window creation into a scene connection while retaining RN ownership
+and the existing cold/warm link contract. It does not change D8's Hermes recipe.
+
 ### D1. One native release file in xcconfig syntax
 `release/whim-release.xcconfig` holds five keys:
 
