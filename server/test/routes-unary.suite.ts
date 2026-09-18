@@ -513,11 +513,15 @@ async function testUnaryFailureRecovery(
     eq(`${label}: only a failed cleanup is logged separately`, secondary.map((r) => [r.cause, r.detail]),
       failure === 'persistent-settle' ? [[STORE_BLIP_MESSAGE, 'secondary settlement failure']] : []);
     eq(`${label}: cleanup tries settlement exactly once`, settleCalls, failure.includes('settle') ? 2 : 1);
-    const row = reader.prepare('SELECT ended_at, outcome, refunded FROM requests').get();
+    const row = reader.prepare('SELECT ended_at, outcome, refunded, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens AS total_tokens FROM requests').get();
+    const recordedTokens = failure === 'settle' && !stub ? usage : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     eq(`${label}: recovered store closes the original row without refunding it`, { ...row }, {
       ended_at: failure === 'persistent-settle' ? null : FIXED_NOW,
       outcome: failure === 'persistent-settle' ? null : 'error',
       refunded: 0,
+      prompt_tokens: recordedTokens.promptTokens,
+      completion_tokens: recordedTokens.completionTokens,
+      total_tokens: recordedTokens.totalTokens,
     });
     usageStore.settle = settle;
     usageStore.credit = credit;

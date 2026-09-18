@@ -227,9 +227,10 @@ export async function settleFailedUnaryRequest(
   requestId: string,
   clock: () => number,
   cause: unknown,
+  usage?: Usage,
 ): Promise<void> {
   try {
-    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+    await usageStore.settle(requestId, { outcome: 'error', usage, now: clock() });
   } catch (settleErr) {
     log.error(
       {
@@ -392,12 +393,14 @@ export function makeClarifyRoute(
       }
       const { requestId, release, policyGenerationId } = admission;
 
+      let settlementUsage: Usage | undefined;
       const finish = async (
         outcome: RequestOutcome,
         usage: Usage | undefined,
         generationIds: string[],
         creditOwned: boolean,
       ): Promise<void> => {
+        settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, usage, now: clock() });
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
@@ -409,7 +412,7 @@ export function makeClarifyRoute(
       try {
         return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
       } catch (err) {
-        await settleFailedUnaryRequest(usageStore, requestId, clock, err);
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);
         throw err;
       } finally {
         release();

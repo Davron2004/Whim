@@ -276,7 +276,9 @@ export function makeRewriteRoute(
       }
       const { requestId, release, policyGenerationId } = admission;
 
+      let settlementUsage: Usage | undefined;
       const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean, usage?: Usage): Promise<void> => {
+        settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, usage, now: clock() });
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
@@ -321,7 +323,7 @@ export function makeRewriteRoute(
         await finish('ok', result.generationIds, result.creditedAny, result.usage);
         return c.json(result.response, 200);
       } catch (err) {
-        await settleFailedUnaryRequest(usageStore, requestId, clock, err);
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);
         throw err;
       } finally {
         release();
