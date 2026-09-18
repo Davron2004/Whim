@@ -19,6 +19,7 @@ import { check, eq, section } from './harness';
 import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
 import { loadServerConfig } from '../src/config';
+import * as releaseConfig from '../../src/host/launcher/release-config';
 
 const ROOT = process.cwd();
 
@@ -695,6 +696,17 @@ function profileProblems(name: string, text: string, readKeys: ReadonlySet<strin
     return [...problems, `profile ${name}'s server keys don't load: ${(error as Error).message}`];
   }
   const machineType = Object.fromEntries(entries).WHIM_PROFILE_MACHINE_TYPE ?? '';
+  // The named profiles are a product contract in server-deployment, not operator defaults.
+  if (name === 'standard') {
+    if (machineType !== 'e2-standard-2') problems.push('standard must use e2-standard-2');
+    if (entries.some(([key]) => readKeys.has(key))) problems.push('standard must not override server limits');
+  }
+  if (name === 'event') {
+    if (machineType !== 'e2-standard-8') problems.push('event must use e2-standard-8');
+    if (config.maxConcurrentGenerations !== 15 || config.synthrunConcurrency !== 6 || config.maxConcurrentUnary !== 32) {
+      problems.push('event must provide generation/synthrun/unary capacity 15/6/32');
+    }
+  }
   const vcpus = Number(/-(\d+)$/.exec(machineType)?.[1] ?? Number.NaN);
   if (Number.isNaN(vcpus) || config.synthrunConcurrency > vcpus) {
     problems.push(`profile ${name}: WHIM_SYNTHRUN_CONCURRENCY ${config.synthrunConcurrency} exceeds ${machineType}'s vCPU count`);
@@ -1559,36 +1571,96 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   red('a missing catch-all 404 fails', plant(caddyfile, '\t\t\tstatus 404\n', ''), 'does not answer 404');
 }
 
-/** Chain server-fixes-c: the `whim` bridge is IPv4-only today, so an ip6tables mirror chain and a
- *  bootstrap-time guard exist purely as a defense against it silently gaining IPv6 later. */
-function egressIpv6Problems(egress: string, bootstrap: string): string[] {
+/** Only stub binaries run: curl stops bootstrap before disk or service operations. */
+function runVmFixture(script: string, args: string[] = []): { status: number | null; calls: string[][] } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-vm-commands-'));
+  try {
+    const log = path.join(dir, 'calls.jsonl');
+    const stub = `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const tool = path.basename(process.argv[1]);
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify([tool, ...args]) + '\\n');
+if (tool === 'id') console.log('0');
+if (tool === 'curl') process.exit(71);
+if (tool === 'docker' || args.includes('-L') || args.includes('-D')) process.exit(1);
+`;
+    for (const tool of ['modprobe', 'iptables', 'ip6tables', 'id', 'docker', 'apt-get', 'install', 'curl']) {
+      fs.writeFileSync(path.join(dir, tool), stub, { mode: 0o755 });
+    }
+    const file = path.join(dir, 'script.sh');
+    fs.writeFileSync(file, script);
+    const run = runFromPath('bash', [file, ...args], { encoding: 'utf8', timeout: 10_000, env: { PATH: `${dir}:/usr/bin:/bin`, COMMAND_LOG: log } });
+    if (run.error) throw run.error;
+    const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]) : [];
+    return { status: run.status, calls };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function firewallProblems(calls: string[][]): string[] {
   const problems: string[] = [];
-  if (!/^readonly CHAIN6=/m.test(egress)) problems.push('whim-egress.sh has no CHAIN6 (the ip6tables mirror chain)');
-  if (!egress.includes('ip6tables')) problems.push('whim-egress.sh never calls ip6tables');
-  if (!egress.includes('DROPPED6=(fd00:ec2::254/128)')) problems.push('whim-egress.sh does not drop the IPv6 metadata address fd00:ec2::254/128');
-  if (!/ipt6 -I DOCKER-USER 1 /.test(egress)) problems.push('whim-egress.sh installs no ip6tables jump into DOCKER-USER');
-  if (!bootstrap.includes('EnableIPv6')) problems.push('bootstrap.sh does not check the whim bridge for EnableIPv6');
-  if (bootstrap.split('\n').filter((line) => line.trim() === 'assert_bridge_no_ipv6').length < 1) {
-    problems.push('bootstrap.sh defines assert_bridge_no_ipv6 but never calls it');
+  // eslint-disable-next-line sonarjs/no-hardcoded-ip -- security-policy destinations
+  const dropped = ['169.254.169.254/32', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '100.64.0.0/10', '169.254.0.0/16'];
+  for (const [tool, chain, destinations] of [
+    ['iptables', 'WHIM-EGRESS', dropped],
+    // eslint-disable-next-line sonarjs/no-hardcoded-ip -- metadata service security-policy address
+    ['ip6tables', 'WHIM-EGRESS6', ['fd00:ec2::254/128']],
+  ] as const) {
+    const commands = calls.filter((call) => call[0] === tool).map((call) => call.slice(2));
+    const position = (...args: string[]): number => commands.findIndex((command) => JSON.stringify(command) === JSON.stringify(args));
+    const flush = position('-F', chain);
+    if (position('-N', chain) < 0 || flush < 0) problems.push(`${tool}: chain must be created and flushed`);
+    const rules = commands.filter((command) => command[0] === '-A' && command[1] === chain);
+    const subnet = calls.find((call) => call[0] === 'iptables' && call[2] === '-D')?.[5];
+    const expectedRules = [
+      ['-A', chain, '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'RETURN'],
+      ...(tool === 'iptables' ? [['-A', chain, '-d', subnet, '-j', 'RETURN']] : []),
+      ...destinations.map((destination) => ['-A', chain, '-d', destination, '-j', 'DROP']),
+      ...[['tcp', '443'], ['udp', '53'], ['tcp', '53']].map(([protocol, port]) => ['-A', chain, '-p', protocol, '--dport', port, '-j', 'RETURN']),
+      ['-A', chain, '-j', 'DROP'],
+    ];
+    if (JSON.stringify(rules) !== JSON.stringify(expectedRules)) problems.push(`${tool}: rules allow unintended traffic or omit a required exception`);
+    const flushes = commands.filter((command) => command[0] === '-F' && command[1] === chain);
+    if (flushes.length !== 1 || commands.findIndex((command) => command[0] === '-A') <= flush) problems.push(`${tool}: rules must be installed after a single flush`);
+    const jumps = commands.filter((command) => command[0] === '-I' && command[1] === 'DOCKER-USER');
+    const expected = tool === 'iptables' ? ['-I', 'DOCKER-USER', '1', '-s', subnet, '-j', chain] : ['-I', 'DOCKER-USER', '1', '-i', 'br-+', '-j', chain];
+    if (JSON.stringify(jumps) !== JSON.stringify([expected])) problems.push(`${tool}: missing or duplicate bridge jump`);
   }
   return problems;
 }
 
 function egressIpv6Tests(files: ReadonlyMap<string, string>): void {
-  section('Deploy artifacts: IPv6 egress parity');
+  section('Deploy scripts: executed firewall rules');
   const egress = files.get('deploy/vm/whim-egress.sh') ?? '';
-  const bootstrap = files.get('deploy/vm/bootstrap.sh') ?? '';
-  checkClean(
-    'whim-egress.sh mirrors the IPv4 chain in ip6tables (dropping the metadata address) and bootstrap.sh refuses a bridge with IPv6 enabled',
-    egressIpv6Problems(egress, bootstrap),
-  );
-  // eslint-disable-next-line sonarjs/no-hardcoded-ip -- this red-check exists to lock whim-egress.sh's IPv6 metadata-address drop
-  checkCaught('  red: dropping the ip6tables metadata-address drop fails', egressIpv6Problems(plant(egress, 'fd00:ec2::254/128', '::/0'), bootstrap), 'fd00:ec2::254');
-  checkCaught(
-    '  red: bootstrap.sh defining but never calling the IPv6 guard fails',
-    egressIpv6Problems(egress, plant(bootstrap, 'assert_user_namespaces\nassert_bridge_no_ipv6\ninstall_egress_firewall', 'assert_user_namespaces\ninstall_egress_firewall')),
-    'never calls it',
-  );
+  const run = runVmFixture(egress);
+  eq('firewall script succeeds against stubbed host commands', run.status, 0);
+  checkClean('both families install ordered destination drops, HTTPS/DNS exceptions and a terminal drop', firewallProblems(run.calls));
+  const mutants = [
+    plant(egress, 'ipt6 -A "$CHAIN6" -d "$destination" -j DROP', 'ipt6 -A "$CHAIN6" -d "$destination" -j RETURN'),
+    plant(egress, 'ipt6 -A "$CHAIN6" -d "$destination" -j DROP', ':'),
+    plant(egress, 'ipt6 -A "$CHAIN6" -j DROP', 'ipt6 -A "$CHAIN6" -j RETURN'),
+    plant(egress, 'ipt6 -F "$CHAIN6"', 'ipt6 -F "$CHAIN6"\nipt6 -A "$CHAIN6" -j RETURN'),
+  ];
+  for (const [index, mutant] of mutants.entries()) {
+    const weakened = runVmFixture(mutant);
+    eq(`mutant ${index} runs successfully`, weakened.status, 0);
+    check(`red: weakened IPv6 rules ${index} are rejected`, firewallProblems(weakened.calls).length > 0);
+  }
+}
+
+function bootstrapDownloadTests(files: ReadonlyMap<string, string>): void {
+  section('Deploy scripts: Docker signing-key download');
+  const run = runVmFixture(files.get('deploy/vm/bootstrap.sh') ?? '', ['--region', 'test-region']);
+  eq('bootstrap stops at the stubbed download before privileged writes', run.status, 71);
+  const curl = run.calls.find((call) => call[0] === 'curl') ?? [];
+  check('Docker signing key starts at HTTPS', curl.includes('https://download.docker.com/linux/debian/gpg'));
+  for (const option of ['--proto', '--proto-redir']) {
+    const index = curl.indexOf(option);
+    check(`Docker signing key constrains ${option} to HTTPS`, index >= 0 && curl[index + 1] === '=https', JSON.stringify(curl));
+  }
 }
 
 function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
@@ -1613,14 +1685,15 @@ function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMa
 function valuesTests(files: ReadonlyMap<string, string>): void {
   section('Deploy artifacts: deploy-time values');
   const defaults = Object.fromEntries(envEntries(files.get('deploy/defaults.env') ?? ''));
-  eq('deploy/defaults.env holds exactly the D20 values', defaults, {
-    WHIM_GCP_PROJECT: 'anycognition-whim',
-    WHIM_GCP_REGION: 'northamerica-northeast1',
-    WHIM_GCP_ZONE: 'northamerica-northeast1-a',
-    // eslint-disable-next-line sonarjs/no-hardcoded-ip -- this assertion exists to lock the owner's reserved static IP (design D20)
-    WHIM_STATIC_IP: '34.118.191.193',
-    WHIM_API_HOST: 'api.whim.anycognition.ca',
-    WHIM_WEB_HOST: 'whim.anycognition.ca',
+  const accepted = deployValueKeys();
+  check('default keys are accepted deployment inputs', Object.keys(defaults).every((key) => accepted.has(key)));
+  withSandbox((sandbox) => {
+    const result = runFromPath('bash', ['-c', 'source "$1"; whim_load_values; whim_require_host_values; for key in $WHIM_VALUE_KEYS; do printf "%s=%s\\n" "$key" "${!key}"; done', 'values-test', path.join(sandbox.repo, 'deploy/lib.sh')], {
+      encoding: 'utf8', env: { PATH: process.env.PATH, HOME: sandbox.home },
+    });
+    eq('defaults load and meet host requirements', result.status, 0);
+    const loaded = Object.fromEntries(envEntries(result.stdout));
+    for (const [key, value] of Object.entries(defaults)) eq(`default ${key} propagates through the loader`, loaded[key], value);
   });
   eq('deploy/defaults.env WHIM_API_HOST is "api." + WHIM_WEB_HOST', defaults.WHIM_API_HOST, `api.${defaults.WHIM_WEB_HOST}`);
   eq('deploy/operator.env.example lists the operator value names only', envEntries(files.get('deploy/operator.env.example') ?? ''), [
@@ -1644,22 +1717,19 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   }
   const machineTypes = [...profiles.values()].map((text) => Object.fromEntries(envEntries(text)).WHIM_PROFILE_MACHINE_TYPE);
   eq('profile machine types are unique', new Set(machineTypes).size, machineTypes.length);
-  const standard = envEntries(profiles.get('standard') ?? '');
-  eq('standard is e2-standard-2 with a 6g memory limit and 1gb shm, and sets no server key', standard, [
-    ['WHIM_PROFILE_MACHINE_TYPE', 'e2-standard-2'],
-    ['WHIM_SERVER_MEM_LIMIT', '6g'],
-    ['WHIM_SERVER_SHM_SIZE', '1gb'],
-  ]);
-  const event = Object.fromEntries(envEntries(profiles.get('event') ?? ''));
-  const eventConfig = loadServerConfig(event);
-  eq('event is the D25 row: e2-standard-8, 16g, 3gb, 15 generations, 6 synthetic runs, 32 unary', [
-    event.WHIM_PROFILE_MACHINE_TYPE, event.WHIM_SERVER_MEM_LIMIT, event.WHIM_SERVER_SHM_SIZE,
-    eventConfig.maxConcurrentGenerations, eventConfig.synthrunConcurrency, eventConfig.maxConcurrentUnary,
-  ], ['e2-standard-8', '16g', '3gb', 15, 6, 32]);
   const eventText = profiles.get('event') ?? '';
+  const standardText = profiles.get('standard') ?? '';
+  checkCaught('red: standard cannot override a server limit', profileProblems('standard', `${standardText}WHIM_MAX_CONCURRENT_GENERATIONS=3\n`, readKeys), 'standard must not override');
+  for (const [name, text, machine] of [['standard', standardText, 'e2-standard-2'], ['event', eventText, 'e2-standard-8']]) {
+    checkCaught(`red: ${name} cannot change its contracted machine type`, profileProblems(name!, plant(text!, machine!, 'e2-standard-16'), readKeys), `${name} must use`);
+  }
+  for (const key of ['WHIM_MAX_CONCURRENT_GENERATIONS', 'WHIM_SYNTHRUN_CONCURRENCY', 'WHIM_MAX_CONCURRENT_UNARY']) {
+    const wrongCapacity = eventText.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=1`);
+    checkCaught(`red: event cannot change contracted ${key}`, profileProblems('event', wrongCapacity, readKeys), 'capacity 15/6/32');
+  }
   checkCaught('  red: an event.env setting WHIM_LIMIT_GENERATIONS_PER_DAY fails', profileProblems('event', `${eventText}WHIM_LIMIT_GENERATIONS_PER_DAY=500\n`, readKeys), 'WHIM_LIMIT_GENERATIONS_PER_DAY, which no profile may set');
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
-  checkCaught('  red: more synthetic runs than vCPUs fails', profileProblems('event', plant(eventText, 'WHIM_SYNTHRUN_CONCURRENCY=6', 'WHIM_SYNTHRUN_CONCURRENCY=9').replace('WHIM_MAX_CONCURRENT_GENERATIONS=15', 'WHIM_MAX_CONCURRENT_GENERATIONS=20'), readKeys), 'vCPU count');
+  checkCaught('  red: more synthetic runs than vCPUs fails', profileProblems('event', eventText.replace(/^WHIM_SYNTHRUN_CONCURRENCY=.*$/m, 'WHIM_SYNTHRUN_CONCURRENCY=999').replace(/^WHIM_MAX_CONCURRENT_GENERATIONS=.*$/m, 'WHIM_MAX_CONCURRENT_GENERATIONS=1000'), readKeys), 'vCPU count');
   checkCaught('  red: an unknown key fails', profileProblems('event', `${eventText}WHIM_TURBO=1\n`, readKeys), 'WHIM_TURBO, neither');
   check('deploy.sh has no --profile option', !(files.get('deploy/deploy.sh') ?? '').includes('--profile'));
 }
@@ -1685,65 +1755,33 @@ function runbookVariables(text: string): string[] {
   return [...new Set(text.match(/WHIM_[A-Z0-9_]+/g) ?? [])];
 }
 
-/**
- * Task 14.2's tripwire (specs/server-deployment "The runbook matches the scripts"): every script
- * path `docs/deploy.md` references exists, and every `WHIM_*` variable it names is read somewhere
- * real. `WHIM_DOMAIN` isn't a server env var — it's the platform-release-readiness domain constant
- * the pages go-live order names as a precondition — so `release-config.ts` joins the read set
- * alongside the four sources task 14.2 names.
- */
-function runbookTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
-  section('Runbook: matches the scripts');
+function deployValueKeys(): Set<string> {
+  const result = runFromPath('bash', ['-c', 'source deploy/lib.sh; printf "%s" "$WHIM_VALUE_KEYS"'], { cwd: ROOT, encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return new Set(result.stdout.trim().split(/\s+/));
+}
+
+function runbookTests(): void {
+  section('Runbook: accepted configuration and executable paths');
   const text = readRepoFile('docs/deploy.md');
-
-  check(
-    'names the core operator scripts',
-    ['deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/loadtest/run.sh'].every((rel) =>
-      runbookScriptPaths(text).includes(rel),
-    ),
-    runbookScriptPaths(text).join(', '),
-  );
-  check('names --site-only', text.includes('--site-only'));
-  check('names --profile', text.includes('--profile'));
-  check(
-    'names run.sh start, drive and stop',
-    ['run.sh start', 'run.sh drive', 'run.sh stop'].every((needle) => text.includes(needle)),
-  );
-  check('has an "OpenRouter key" section', /^## OpenRouter key$/m.test(text));
-
-  const readSources = [
-    serverSources.get('server/src/config.ts') ?? '',
-    serverSources.get('server/src/site/build.ts') ?? '',
-    ...[...serverSources].filter(([rel]) => rel.startsWith('server/src/loadtest/')).map(([, content]) => content),
-    ...[...files].map(([, content]) => content),
-    readRepoFile('src/host/launcher/release-config.ts'),
-  ].join('\n');
-
-  checkClean(
-    'every referenced script path exists',
-    runbookScriptPaths(text)
-      .filter((rel) => !fs.existsSync(path.join(ROOT, rel)))
-      .map((rel) => `missing: ${rel}`),
-  );
-  checkClean(
-    'every referenced WHIM_* variable is read by the server, a deploy file or release-config.ts',
-    runbookVariables(text)
-      .filter((name) => !readSources.includes(name))
-      .map((name) => `unread: ${name}`),
-  );
-
-  // Discriminating red-check: a renamed script must be caught, not silently accepted.
-  const renamed = plant(text, 'deploy/smoke.sh', 'deploy/smoke-check.sh');
-  check(
-    'red: a renamed script in the runbook is caught',
-    runbookScriptPaths(renamed).some((rel) => !fs.existsSync(path.join(ROOT, rel))),
-  );
-  // Discriminating red-check: a variable nobody reads must be caught.
-  const withGhostVariable = `${text}\n\n\`WHIM_GHOST_VARIABLE_NOBODY_READS\`\n`;
-  check(
-    'red: a variable nobody reads is caught',
-    runbookVariables(withGhostVariable).some((name) => !readSources.includes(name)),
-  );
+  const accepted = new Set([...deployValueKeys(), ...keysReadByLoadServerConfig(), ...Object.keys(releaseConfig)]);
+  const requiredGuidance = [
+    'deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/loadtest/run.sh',
+    '--site-only', '--profile', 'run.sh start', 'run.sh drive', 'run.sh stop', '## OpenRouter key',
+  ];
+  const problems = (content: string): string[] => [
+    ...requiredGuidance.filter((guidance) => !content.includes(guidance)).map((guidance) => `missing guidance: ${guidance}`),
+    ...runbookVariables(content).filter((name) => !accepted.has(name)).map((name) => `unaccepted: ${name}`),
+    ...runbookScriptPaths(content).filter((rel) => {
+      const result = runFromPath('bash', ['-n', path.join(ROOT, rel)], { encoding: 'utf8' });
+      return result.status !== 0;
+    }).map((rel) => `invalid script: ${rel}`),
+  ];
+  checkClean('documented variables belong to accepted contracts and scripts pass bash -n', problems(text));
+  checkCaught('red: an empty runbook fails minimum operating coverage', problems(''), 'missing guidance:');
+  checkCaught('red: omitting the verification stage fails', problems(text.replaceAll('deploy/smoke.sh', '')), 'missing guidance: deploy/smoke.sh');
+  checkCaught('red: a nonexistent runbook script fails', problems(`${text}\n deploy/missing-script.sh`), 'invalid script:');
+  checkCaught('red: a comment-only variable is not an accepted input', problems(`${text}\n WHIM_GHOST_VARIABLE_NOBODY_READS`), 'unaccepted:');
 }
 
 export async function runDeployConfigTests(): Promise<void> {
@@ -1768,6 +1806,7 @@ export async function runDeployConfigTests(): Promise<void> {
   composeTests(files, composeContext);
   caddyTests(files, maxBodyBytes, siteFiles);
   egressIpv6Tests(files);
+  bootstrapDownloadTests(files);
   scanTests(files, serverSources);
   valuesTests(files);
   profileTests(files);
@@ -1782,5 +1821,5 @@ export async function runDeployConfigTests(): Promise<void> {
   loadtestDriveTests();
   provisionTests();
   await runLoadTestTests();
-  runbookTests(files, serverSources);
+  runbookTests();
 }
