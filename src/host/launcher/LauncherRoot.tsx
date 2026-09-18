@@ -453,19 +453,26 @@ function LauncherShell({
     [serverUrl, deviceId, kv],
   );
 
-  // Session connectivity (design decisions 4-6; `connectivity.ts` owns the state machine). A
-  // ref, not state, holds the loop itself — `markOnline()` below needs a stable identity that
-  // always reaches the CURRENT loop, the same reason `genRef`/`liveRef` are refs.
   const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
   const connectivityLoopRef = useRef<ConnectivityLoop | null>(null);
+  const connectivityEpoch = useRef(0);
 
-  /** The shared success hook (design decision 6, spec "A real generation or rewrite call
-   *  succeeding..."): cancels any pending scheduled retry and marks the session online. Wired
-   *  into the `clarifyPrompt`/`generateApp` call sites below. Idempotent — a no-op once already
-   *  online, and a no-op if no loop is running (`clientOptions == null`). */
-  const markOnline = useCallback((): void => {
-    connectivityLoopRef.current?.markOnline();
-  }, []);
+  // Capture at request start. A response belongs to the address and consent session that sent
+  // it, even if a detached generation outlives a Settings edit or a revoke/regrant cycle.
+  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+    const epoch = connectivityEpoch.current;
+    return () => {
+      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
+        connectivityLoopRef.current?.markOnline();
+      }
+    };
+  };
+
+  const invalidateConnectivity = () => {
+    connectivityEpoch.current += 1;
+    connectivityLoopRef.current?.stop();
+    connectivityLoopRef.current = null;
+  };
 
   // `clientOptions == null` leaves `connectivity` at its `'unknown'` default — no current AI-data
   // consent grant, so there is nothing to probe (spec ai-data-consent "Nothing is sent to the
@@ -713,7 +720,9 @@ function LauncherShell({
   };
 
   const onServerUrlChange = (url: string) => {
+    const previous = effectiveServerUrl(kv);
     saveServerUrl(kv, url);
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
     setServerUrl(loadServerUrl(kv));
   };
 
@@ -723,13 +732,18 @@ function LauncherShell({
   };
 
   const onUseDefaultServer = () => {
+    const previous = effectiveServerUrl(kv);
     clearServerUrl(kv);
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
     setServerUrl(loadServerUrl(kv));
   };
 
   /** Forces `clientOptions` (and every other `consentStatus(kv)` read this render produces) to
    *  reflect a grant/revoke that just happened — see the `clientOptions` memo's own doc comment. */
-  const bumpConsent = () => setConsentTick((t) => t + 1);
+  const bumpConsent = () => {
+    invalidateConnectivity();
+    setConsentTick((t) => t + 1);
+  };
 
   const onGrantConsent = () => {
     grantConsent(kv, new Date().toISOString());
@@ -899,6 +913,7 @@ function LauncherShell({
   const openPlan = async (prev: ComposeScreen | ClarifyScreen, sentFrom: RefusalSentFrom) => {
     const options = resolveClientOptions();
     if (!options) return;
+    const markOnline = onlineForRequest(options);
     const plan = planStep(prev);
     // Guarded like every other post-navigation write: this runs straight after the clarify await
     // on the compose path, and a user who has already left must not be pulled onto a plan step.
@@ -915,6 +930,7 @@ function LauncherShell({
         buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
         request.controller.signal,
       );
+      markOnline();
       if (request.cancelled) return;
       setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withPlan(s, response)));
     } catch (e) {
@@ -950,6 +966,7 @@ function LauncherShell({
   const onComposeContinue = async (from: ComposeScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
+    const markOnline = onlineForRequest(options);
     const loading = clarifyStep(from);
     setScreen(loading);
     const request = flowRequests.start('compose');
@@ -1152,6 +1169,7 @@ function LauncherShell({
   const runAttempt = async (building: BuildScreen, reuseId?: string, fromPlan?: PlanScreen) => {
     const options = resolveClientOptions();
     if (!options) return;
+    const markOnline = onlineForRequest(options);
     setScreen(building);
 
     const controller = new AbortController();

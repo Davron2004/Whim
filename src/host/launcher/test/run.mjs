@@ -23,8 +23,18 @@ await build({
   format: 'esm',
   target: 'node20',
   // Keep the runtime deps external — they resolve from node_modules at run time (store-access
-  // exercises the real VersionStore over MemoryFs, which pulls isomorphic-git).
-  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill'],
+  // exercises the real VersionStore over MemoryFs, which pulls isomorphic-git). React's Node
+  // build must keep its native require('timers'): async act otherwise falls back to MessageChannel
+  // in the ESM bundle and leaves ports open after the suite completes.
+  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill', 'react', 'react-test-renderer', 'react-error-boundary'],
+  alias: {
+    'react-native': path.join(here, 'native-host.tsx'),
+    'react-native-safe-area-context': path.join(here, 'native-host.tsx'),
+    'react-native-webview': path.join(here, 'native-host.tsx'),
+    'react-native-mmkv': path.join(here, 'native-storage.ts'),
+    '@op-engineering/op-sqlite': path.join(here, 'native-storage.ts'),
+  },
+  define: { __DEV__: 'false' },
   logLevel: 'warning',
 });
 
