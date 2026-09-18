@@ -208,28 +208,29 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
   } catch (err) {
     acquired.handle.release();
     if (admittedRequestId !== undefined) {
-      await settleFailedAdmission(deps.usageStore, admittedRequestId, deps.clock, err);
+      await settleFailedUnaryRequest(deps.usageStore, admittedRequestId, deps.clock, err);
     }
     throw err;
   }
 }
 
 /**
- * Closes the ledger row of an admission that threw past the daily-unit insert. The unit is NOT
+ * Best-effort closure of a unary request that threw after the daily-unit insert. The unit is NOT
  * refunded: the classifier call it paid for may well have happened, and a refund on every store
  * blip is a free retry an abusive client can farm — the row is simply marked `error` so it stops
  * being an open `pending` request nothing will ever settle. A `settle` that throws in turn (the
  * same store is, after all, the usual reason we are here) is logged and swallowed: the caller is
  * already unwinding with the original error, which is the one worth surfacing.
  */
-async function settleFailedAdmission(
+export async function settleFailedUnaryRequest(
   usageStore: UsageStore,
   requestId: string,
   clock: () => number,
   cause: unknown,
+  usage?: Usage,
 ): Promise<void> {
   try {
-    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+    await usageStore.settle(requestId, { outcome: 'error', usage, now: clock() });
   } catch (settleErr) {
     log.error(
       {
@@ -237,7 +238,7 @@ async function settleFailedAdmission(
         detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
         cause: cause instanceof Error ? cause.message : String(cause),
       },
-      'could not settle the ledger row of a failed admission',
+      'could not settle the ledger row of a failed unary request',
     );
   }
 }
@@ -392,14 +393,15 @@ export function makeClarifyRoute(
       }
       const { requestId, release, policyGenerationId } = admission;
 
+      let settlementUsage: Usage | undefined;
       const finish = async (
         outcome: RequestOutcome,
         usage: Usage | undefined,
         generationIds: string[],
         creditOwned: boolean,
       ): Promise<void> => {
+        settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, usage, now: clock() });
-        release();
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
           usageStore,
@@ -407,7 +409,14 @@ export function makeClarifyRoute(
         });
       };
 
-      return runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+      try {
+        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+      } catch (err) {
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);
+        throw err;
+      } finally {
+        release();
+      }
     },
   );
 
@@ -458,21 +467,13 @@ async function runClarifyWork(
   // `ModelContentPolicy.check`'s identical guard (`../policy/policy.ts`).
   stream.usage.catch(() => {});
 
+  let raw = '';
+  let usage: Usage;
+  let completedGenerationId: string | undefined;
   try {
-    let raw = '';
     for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
-    const usage = await stream.usage;
-    const generationId = await stream.id;
-    await usageStore.credit(deviceId, usage);
-    const ids = generationId ? [generationId] : [];
-
-    const shaped = shapeClarify(raw);
-    if (!shaped) {
-      await finish('error', usage, ids, true);
-      return Response.json(MODEL_FAILURE, { status: 502 });
-    }
-    await finish('ok', usage, ids, true);
-    return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
+    usage = await stream.usage;
+    completedGenerationId = await stream.id;
   } catch (err) {
     const generationId = await stream.id.catch(() => undefined);
     const ids = generationId ? [generationId] : [];
@@ -485,4 +486,15 @@ async function runClarifyWork(
     await finish('error', undefined, ids, false);
     return Response.json(MODEL_FAILURE, { status: 502 });
   }
+
+  // Store failures must reach the app's 500 handler, not be retried as model failures.
+  await usageStore.credit(deviceId, usage);
+  const ids = completedGenerationId ? [completedGenerationId] : [];
+  const shaped = shapeClarify(raw);
+  if (!shaped) {
+    await finish('error', usage, ids, true);
+    return Response.json(MODEL_FAILURE, { status: 502 });
+  }
+  await finish('ok', usage, ids, true);
+  return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
 }

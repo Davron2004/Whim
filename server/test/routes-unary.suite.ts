@@ -8,6 +8,10 @@
  * specs/content-reports) and the anonymous `/healthz/sse` probe (specs/server-deployment).
  */
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
@@ -461,6 +465,139 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
   const { app: healthy } = testApp({ slots, stub: true });
   const after = await post(healthy, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
   eq('the unary pool still admits a later request', after.status, 200);
+}
+
+async function testUnaryFailureRecovery(
+  kind: 'clarify' | 'rewrite',
+  failure: 'settle' | 'persistent-settle' | 'credit' | 'model',
+  stub = false,
+): Promise<void> {
+  invalidateCreditCache();
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-unary-recovery-'));
+  const dbPath = nodePath.join(dir, 'usage.sqlite');
+  const usageStore = new NodeSqliteUsageStore(dbPath);
+  const reader = new DatabaseSync(dbPath);
+  const tracker = new ResolveTracker();
+  const capture = captureLogs();
+  try {
+    const settle = usageStore.settle.bind(usageStore);
+    let settleCalls = 0;
+    usageStore.settle = async (id, params) => {
+      settleCalls++;
+      if (failure === 'persistent-settle' || (failure === 'settle' && settleCalls === 1)) {
+        throw new Error(settleCalls === 1 ? STORE_BLIP_MESSAGE : 'secondary settlement failure');
+      }
+      await settle(id, params);
+    };
+    const credit = usageStore.credit.bind(usageStore);
+    if (failure === 'credit') usageStore.credit = () => Promise.reject(new Error(STORE_BLIP_MESSAGE));
+    const reply = kind === 'clarify' ? { questions: [] } : {
+      rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }],
+    };
+    const usage = { promptTokens: 1, completionTokens: 2, totalTokens: 3 };
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
+      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
+    ]);
+    const stream = model.stream.bind(model);
+    if (failure === 'model') model.stream = () => { throw new Error(STORE_BLIP_MESSAGE); };
+    const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+    const { app } = testApp({ usageStore, slots, model, stub, resolver: { tracker } });
+    const label = `${kind} (${failure}${stub ? ', stub' : ''})`;
+    const body = { prompt: stub ? '[[fail]] counter' : 'counter' };
+    const first = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+    eq(`${label}: unexpected errors remain server errors`, first.status, 500);
+    eq(`${label}: capacity is released after the error`, slots.counts().unary, 0);
+    eq(`${label}: original error is preserved in the app log`, withMessage(capture, 'unhandled route error').map((r) => r.detail), [STORE_BLIP_MESSAGE]);
+    const secondary = withMessage(capture, 'could not settle the ledger row of a failed unary request');
+    eq(`${label}: only a failed cleanup is logged separately`, secondary.map((r) => [r.cause, r.detail]),
+      failure === 'persistent-settle' ? [[STORE_BLIP_MESSAGE, 'secondary settlement failure']] : []);
+    eq(`${label}: cleanup tries settlement exactly once`, settleCalls, failure.includes('settle') ? 2 : 1);
+    const row = reader.prepare('SELECT ended_at, outcome, refunded, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens AS total_tokens FROM requests').get();
+    const recordedTokens = failure === 'settle' && !stub ? usage : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    eq(`${label}: recovered store closes the original row without refunding it`, { ...row }, {
+      ended_at: failure === 'persistent-settle' ? null : FIXED_NOW,
+      outcome: failure === 'persistent-settle' ? null : 'error',
+      refunded: 0,
+      prompt_tokens: recordedTokens.promptTokens,
+      completion_tokens: recordedTokens.completionTokens,
+      total_tokens: recordedTokens.totalTokens,
+    });
+    usageStore.settle = settle;
+    usageStore.credit = credit;
+    model.stream = stream;
+    const second = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+    eq(`${label}: a healthy request is admitted after recovery`, second.status, 200);
+    eq(`${label}: no capacity remains held`, slots.counts().unary, 0);
+    const completed = failure.includes('settle') ? 2 : 1;
+    eq(`${label}: error cleanup never credits tokens again`, await usageStore.read(DEVICE_ID), {
+      promptTokens: stub ? 0 : completed,
+      completionTokens: stub ? 0 : completed * 2,
+      totalTokens: stub ? 0 : completed * 3,
+    });
+  } finally {
+    capture.stop();
+    await tracker.drain(2000);
+    reader.close();
+    usageStore.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function testSettlementFailureReleasesCapacity(): Promise<void> {
+  section('Unary failures preserve the error, close recoverable ledger rows and free capacity');
+  for (const kind of ['clarify', 'rewrite'] as const) {
+    for (const failure of ['settle', 'persistent-settle', 'credit', 'model'] as const) {
+      await testUnaryFailureRecovery(kind, failure);
+    }
+    await testUnaryFailureRecovery(kind, 'settle', true);
+  }
+}
+
+async function testRewriteLedgerUsage(): Promise<void> {
+  section('Rewrite ledger persists actual tokens from each completed model attempt');
+  const firstUsage = { promptTokens: 11, completionTokens: 7, totalTokens: 18 };
+  const retryUsage = { promptTokens: 13, completionTokens: 5, totalTokens: 18 };
+  const plan = JSON.stringify({ rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }] });
+  for (const ending of ['single', 'retry', 'failed-retry'] as const) {
+    invalidateCreditCache();
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-rewrite-ledger-'));
+    const dbPath = nodePath.join(dir, 'usage.sqlite');
+    const store = new NodeSqliteUsageStore(dbPath);
+    const tracker = new ResolveTracker();
+    try {
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: [ending === 'single' ? plan : 'A counter'], usage: firstUsage },
+        ...(ending === 'single' ? [] : [{
+          role: 'rewrite' as const, deltas: [plan], usage: retryUsage,
+          error: ending === 'failed-retry' ? new Error('provider failed') : undefined,
+        }]),
+      ]);
+      const { app } = testApp({ usageStore: store, model, resolver: { tracker } });
+      const response = await post(app, '/v1/rewrite', { prompt: 'counter' }, DEVICE_HEADER);
+      eq(`${ending}: expected route status`, response.status, ending === 'failed-retry' ? 502 : 200);
+      await tracker.drain(2000);
+      const expected = ending === 'retry'
+        ? { promptTokens: 24, completionTokens: 12, totalTokens: 36 }
+        : firstUsage;
+      eq(`${ending}: aggregate credit remains exactly once per completed attempt`, await store.read(DEVICE_ID), expected);
+      const reader = new DatabaseSync(dbPath);
+      try {
+        const rows = reader.prepare('SELECT prompt_tokens, completion_tokens, outcome FROM requests WHERE kind = ?').all('rewrite');
+        eq(`${ending}: persisted request tokens include every completed attempt`, rows.map((row) => ({ ...row })), [{
+          prompt_tokens: expected.promptTokens,
+          completion_tokens: expected.completionTokens,
+          outcome: ending === 'failed-retry' ? 'error' : 'ok',
+        }]);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      await tracker.drain(2000);
+      store.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
 }
 
 async function testChunkedBodyCap(): Promise<void> {
@@ -981,6 +1118,8 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testAdmissionOrder();
   await testUnaryGlobalCeiling();
   await testThrowingStoreReleasesTheSlot();
+  await testSettlementFailureReleasesCapacity();
+  await testRewriteLedgerUsage();
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
