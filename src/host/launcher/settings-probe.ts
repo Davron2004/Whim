@@ -1,16 +1,5 @@
-/**
- * settings-probe — Settings screen's debounced save-time verification (design.md decision 3;
- * spec "Saving a server address in Settings immediately probes it and shows the result inline").
- *
- * `SettingsScreen.tsx` imports react-native and cannot be imported under the launcher's Node
- * suite, so the debounce/cancellation state machine lives here rather than inline in the
- * component's `onChangeText` handler — mirrors this repo's pure-logic-in-non-RN-siblings
- * convention (`connectivity.ts`, `server-probe.ts`).
- *
- * The save itself (`onServerUrlChange`, unconditional and immediate) is untouched by this module
- * — `SettingsScreen` calls it directly, in parallel with `schedule()` here. This module owns only
- * the informational probe result; it never gates or delays the save.
- */
+/** Settings verification is debounced independently of the immediate address save.
+ * Each edit invalidates any older result; cancel() fences pending work on unmount. */
 
 import type { ProbeResult } from './server-probe';
 import type { TimerLike } from './connectivity';
@@ -53,11 +42,6 @@ export class DebouncedProbe {
   private pendingTimer: unknown = null;
   private readonly timers: TimerLike;
   private readonly debounceMs: number;
-  /** The most recently started probe's settlement — exposed via `whenIdle()` so a suite driving
-   *  a fake clock can await one full cycle (debounce + probe) deterministically, the same seam
-   *  `connectivity.ts`'s `ConnectivityLoop` uses. Real callers (the screen) never need this. */
-  private inFlight: Promise<void> = Promise.resolve();
-
   constructor(private readonly opts: DebouncedProbeOptions) {
     this.timers = opts.timers ?? REAL_TIMERS;
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -69,19 +53,12 @@ export class DebouncedProbe {
     const gen = this.generation;
     if (url.trim().length === 0) {
       this.setState('idle');
-      this.inFlight = Promise.resolve();
       return;
     }
     this.pendingTimer = this.timers.setTimeout(() => {
       this.pendingTimer = null;
-      this.inFlight = this.runProbe(url, gen);
+      this.runProbe(url, gen);
     }, this.debounceMs);
-  }
-
-  /** Resolves once this instance's most recently scheduled probe — debounce timer included — has
-   *  settled. */
-  async whenIdle(): Promise<void> {
-    await this.inFlight;
   }
 
   /** Unmount cleanup: cancels any pending debounce timer and fences off any in-flight probe. */

@@ -1,3 +1,4 @@
+import { runLauncherInteractionTests } from './launcher-interactions.suite';
 /**
  * launcher Node acceptance (task 5.4) — the fast, device-free checkpoint for the launcher's
  * deterministic core: the back-policy state machine (2.2), the installed-apps index (5.1), and
@@ -133,6 +134,7 @@ await runConsentOptionsTests(h);
 await runProbeGateTests(h);
 await runReportSendTests(h);
 await runScreenExitsTests(h);
+await runLauncherInteractionTests(h);
 await runResolveOptionsTests(h);
 await runSchemeHostTests(h);
 
