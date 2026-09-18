@@ -696,6 +696,17 @@ function profileProblems(name: string, text: string, readKeys: ReadonlySet<strin
     return [...problems, `profile ${name}'s server keys don't load: ${(error as Error).message}`];
   }
   const machineType = Object.fromEntries(entries).WHIM_PROFILE_MACHINE_TYPE ?? '';
+  // The named profiles are a product contract in server-deployment, not operator defaults.
+  if (name === 'standard') {
+    if (machineType !== 'e2-standard-2') problems.push('standard must use e2-standard-2');
+    if (entries.some(([key]) => readKeys.has(key))) problems.push('standard must not override server limits');
+  }
+  if (name === 'event') {
+    if (machineType !== 'e2-standard-8') problems.push('event must use e2-standard-8');
+    if (config.maxConcurrentGenerations !== 15 || config.synthrunConcurrency !== 6 || config.maxConcurrentUnary !== 32) {
+      problems.push('event must provide generation/synthrun/unary capacity 15/6/32');
+    }
+  }
   const vcpus = Number(/-(\d+)$/.exec(machineType)?.[1] ?? Number.NaN);
   if (Number.isNaN(vcpus) || config.synthrunConcurrency > vcpus) {
     problems.push(`profile ${name}: WHIM_SYNTHRUN_CONCURRENCY ${config.synthrunConcurrency} exceeds ${machineType}'s vCPU count`);
@@ -1707,6 +1718,15 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   const machineTypes = [...profiles.values()].map((text) => Object.fromEntries(envEntries(text)).WHIM_PROFILE_MACHINE_TYPE);
   eq('profile machine types are unique', new Set(machineTypes).size, machineTypes.length);
   const eventText = profiles.get('event') ?? '';
+  const standardText = profiles.get('standard') ?? '';
+  checkCaught('red: standard cannot override a server limit', profileProblems('standard', `${standardText}WHIM_MAX_CONCURRENT_GENERATIONS=3\n`, readKeys), 'standard must not override');
+  for (const [name, text, machine] of [['standard', standardText, 'e2-standard-2'], ['event', eventText, 'e2-standard-8']]) {
+    checkCaught(`red: ${name} cannot change its contracted machine type`, profileProblems(name!, plant(text!, machine!, 'e2-standard-16'), readKeys), `${name} must use`);
+  }
+  for (const key of ['WHIM_MAX_CONCURRENT_GENERATIONS', 'WHIM_SYNTHRUN_CONCURRENCY', 'WHIM_MAX_CONCURRENT_UNARY']) {
+    const wrongCapacity = eventText.replace(new RegExp(`^${key}=.*$`, 'm'), `${key}=1`);
+    checkCaught(`red: event cannot change contracted ${key}`, profileProblems('event', wrongCapacity, readKeys), 'capacity 15/6/32');
+  }
   checkCaught('  red: an event.env setting WHIM_LIMIT_GENERATIONS_PER_DAY fails', profileProblems('event', `${eventText}WHIM_LIMIT_GENERATIONS_PER_DAY=500\n`, readKeys), 'WHIM_LIMIT_GENERATIONS_PER_DAY, which no profile may set');
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
   checkCaught('  red: more synthetic runs than vCPUs fails', profileProblems('event', eventText.replace(/^WHIM_SYNTHRUN_CONCURRENCY=.*$/m, 'WHIM_SYNTHRUN_CONCURRENCY=999').replace(/^WHIM_MAX_CONCURRENT_GENERATIONS=.*$/m, 'WHIM_MAX_CONCURRENT_GENERATIONS=1000'), readKeys), 'vCPU count');
@@ -1745,7 +1765,12 @@ function runbookTests(): void {
   section('Runbook: accepted configuration and executable paths');
   const text = readRepoFile('docs/deploy.md');
   const accepted = new Set([...deployValueKeys(), ...keysReadByLoadServerConfig(), ...Object.keys(releaseConfig)]);
+  const requiredGuidance = [
+    'deploy/provision.sh', 'deploy/deploy.sh', 'deploy/smoke.sh', 'deploy/resize.sh', 'deploy/loadtest/run.sh',
+    '--site-only', '--profile', 'run.sh start', 'run.sh drive', 'run.sh stop', '## OpenRouter key',
+  ];
   const problems = (content: string): string[] => [
+    ...requiredGuidance.filter((guidance) => !content.includes(guidance)).map((guidance) => `missing guidance: ${guidance}`),
     ...runbookVariables(content).filter((name) => !accepted.has(name)).map((name) => `unaccepted: ${name}`),
     ...runbookScriptPaths(content).filter((rel) => {
       const result = runFromPath('bash', ['-n', path.join(ROOT, rel)], { encoding: 'utf8' });
@@ -1753,6 +1778,8 @@ function runbookTests(): void {
     }).map((rel) => `invalid script: ${rel}`),
   ];
   checkClean('documented variables belong to accepted contracts and scripts pass bash -n', problems(text));
+  checkCaught('red: an empty runbook fails minimum operating coverage', problems(''), 'missing guidance:');
+  checkCaught('red: omitting the verification stage fails', problems(text.replaceAll('deploy/smoke.sh', '')), 'missing guidance: deploy/smoke.sh');
   checkCaught('red: a nonexistent runbook script fails', problems(`${text}\n deploy/missing-script.sh`), 'invalid script:');
   checkCaught('red: a comment-only variable is not an accepted input', problems(`${text}\n WHIM_GHOST_VARIABLE_NOBODY_READS`), 'unaccepted:');
 }
