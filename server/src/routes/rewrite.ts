@@ -74,10 +74,15 @@ function shapeRewrite(text: string): RewriteResponse {
   return rows.length > 0 ? { rewrittenPrompt, plan: rows } : { rewrittenPrompt };
 }
 
-type RewriteAttemptOutcome =
-  | { outcome: 'ok'; response: RewriteResponse; generationIds: string[]; creditedAny: boolean }
-  | { outcome: 'budget_exhausted'; generationIds: string[]; creditedAny: boolean }
-  | { outcome: 'failed'; generationIds: string[]; creditedAny: boolean };
+type RewriteAttemptOutcome = {
+  generationIds: string[];
+  creditedAny: boolean;
+  usage: Usage;
+} & (
+  | { outcome: 'ok'; response: RewriteResponse }
+  | { outcome: 'budget_exhausted' }
+  | { outcome: 'failed' }
+);
 
 /**
  * Runs the rewrite turn, re-asking once when the reply shapes to no plan. The plan step cannot
@@ -106,13 +111,14 @@ async function rewriteWithRetry(
   let best: RewriteResponse | undefined;
   const generationIds: string[] = [];
   let creditedAny = false;
+  const usage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal?.aborted) return { outcome: 'failed', generationIds, creditedAny };
+    if (signal?.aborted) return { outcome: 'failed', generationIds, creditedAny, usage };
 
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedAny);
+    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedAny, usage);
     if (step.outcome) return step.outcome;
     best = step.best;
     creditedAny = true;
@@ -120,7 +126,7 @@ async function rewriteWithRetry(
   }
   // `best` is always set: attempt 0 always runs (the loop bound is fixed at 2, not data-dependent)
   // and the first shaped reply always satisfies `!best`.
-  return { outcome: 'ok', response: best!, generationIds, creditedAny };
+  return { outcome: 'ok', response: best!, generationIds, creditedAny, usage };
 }
 
 type RewriteAttempt =
@@ -134,8 +140,8 @@ type RewriteAttemptStep =
 /**
  * Runs one attempt and folds it into the retry loop's running state: a failure/budget-exhaustion
  * is a terminal `outcome`; a success reports the new `best` reply and whether the loop should
- * `stop` (a usable plan came back). Mutates `generationIds` in place (arrays are reference types)
- * so the caller's accumulator needs no separate merge step. Extracted so `rewriteWithRetry`'s loop
+ * `stop` (a usable plan came back). Accumulates generation ids and usage in place
+ * so every completed attempt reaches request settlement, even if a later retry fails. Extracted so `rewriteWithRetry`'s loop
  * body carries none of this branching itself.
  */
 async function applyRewriteAttempt(
@@ -148,15 +154,19 @@ async function applyRewriteAttempt(
   generationIds: string[],
   best: RewriteResponse | undefined,
   creditedAny: boolean,
+  usage: Usage,
 ): Promise<RewriteAttemptStep> {
   const result = await runRewriteAttempt(model, roster, messages, combined);
   if (result.generationId) generationIds.push(result.generationId);
 
   if (!result.ok) {
-    return { outcome: { outcome: result.budgetExhausted ? 'budget_exhausted' : 'failed', generationIds, creditedAny } };
+    return { outcome: { outcome: result.budgetExhausted ? 'budget_exhausted' : 'failed', generationIds, creditedAny, usage } };
   }
 
   await usageStore.credit(deviceId, result.usage);
+  usage.promptTokens += result.usage.promptTokens;
+  usage.completionTokens += result.usage.completionTokens;
+  usage.totalTokens += result.usage.totalTokens;
   const { shaped } = result;
   const nextBest = !best || shaped.rewrittenPrompt.length > 0 ? shaped : best;
   return { stop: shaped.rewrittenPrompt.length > 0 && Boolean(shaped.plan), best: nextBest };
@@ -266,9 +276,8 @@ export function makeRewriteRoute(
       }
       const { requestId, release, policyGenerationId } = admission;
 
-      const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean): Promise<void> => {
-        await usageStore.settle(requestId, { outcome, now: clock() });
-        release();
+      const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean, usage?: Usage): Promise<void> => {
+        await usageStore.settle(requestId, { outcome, usage, now: clock() });
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
           usageStore,
@@ -276,40 +285,44 @@ export function makeRewriteRoute(
         });
       };
 
-      if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
-        await finish('ok', [], true);
-        return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
-      }
+      try {
+        if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
+          await finish('ok', [], true);
+          return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
+        }
 
-      if (!model || !roster) {
-        await finish('error', [], true);
-        return c.json(NOT_CONFIGURED, 502);
-      }
+        if (!model || !roster) {
+          await finish('error', [], true);
+          return c.json(NOT_CONFIGURED, 502);
+        }
 
-      const messages = buildRewriteMessages({ request: parsed.data });
-      const result = await rewriteWithRetry(
-        model,
-        roster,
-        messages,
-        c.req.raw.signal,
-        usageStore,
-        deviceId,
-        config.unaryModelTimeoutMs,
-      );
+        const messages = buildRewriteMessages({ request: parsed.data });
+        const result = await rewriteWithRetry(
+          model,
+          roster,
+          messages,
+          c.req.raw.signal,
+          usageStore,
+          deviceId,
+          config.unaryModelTimeoutMs,
+        );
 
-      if (result.outcome === 'budget_exhausted') {
-        invalidateCreditCache();
-        await finish('error', result.generationIds, result.creditedAny);
-        const r = budgetExhaustedRefusal();
-        return c.json(r.body, r.status, r.headers);
-      }
-      if (result.outcome === 'failed') {
-        await finish('error', result.generationIds, result.creditedAny);
-        return c.json(MODEL_FAILURE, 502);
-      }
+        if (result.outcome === 'budget_exhausted') {
+          invalidateCreditCache();
+          await finish('error', result.generationIds, result.creditedAny, result.usage);
+          const r = budgetExhaustedRefusal();
+          return c.json(r.body, r.status, r.headers);
+        }
+        if (result.outcome === 'failed') {
+          await finish('error', result.generationIds, result.creditedAny, result.usage);
+          return c.json(MODEL_FAILURE, 502);
+        }
 
-      await finish('ok', result.generationIds, result.creditedAny);
-      return c.json(result.response, 200);
+        await finish('ok', result.generationIds, result.creditedAny, result.usage);
+        return c.json(result.response, 200);
+      } finally {
+        release();
+      }
     },
   );
 

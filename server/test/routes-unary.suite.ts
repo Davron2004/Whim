@@ -8,6 +8,10 @@
  * specs/content-reports) and the anonymous `/healthz/sse` probe (specs/server-deployment).
  */
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { createApp } from '../src/app';
@@ -461,6 +465,88 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
   const { app: healthy } = testApp({ slots, stub: true });
   const after = await post(healthy, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
   eq('the unary pool still admits a later request', after.status, 200);
+}
+
+async function testSettlementFailureReleasesCapacity(): Promise<void> {
+  section('A failed unary settlement returns 500 and leaves capacity for the next request');
+  for (const kind of ['clarify', 'rewrite'] as const) {
+    for (const stub of [false, true]) {
+      invalidateCreditCache();
+      const usageStore = new InMemoryUsageStore();
+      const settle = usageStore.settle.bind(usageStore);
+      let failed = false;
+      usageStore.settle = async (id, params) => {
+        if (!failed) {
+          failed = true;
+          throw new Error(STORE_BLIP_MESSAGE);
+        }
+        await settle(id, params);
+      };
+      const reply = kind === 'clarify' ? { questions: [] } : {
+        rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }],
+      };
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: [JSON.stringify(reply)] },
+        { role: 'rewrite', deltas: [JSON.stringify(reply)] },
+      ]);
+      const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+      const { app } = testApp({ usageStore, slots, model, stub });
+      const label = `${kind} (${stub ? 'stub' : 'model'})`;
+      const body = { prompt: stub ? '[[fail]] counter' : 'counter' };
+      const first = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+      eq(`${label}: settlement errors remain server errors`, first.status, 500);
+      eq(`${label}: capacity is released after the error`, slots.counts().unary, 0);
+      const second = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
+      eq(`${label}: a healthy request is admitted after the write recovers`, second.status, 200);
+      eq(`${label}: no capacity remains held`, slots.counts().unary, 0);
+    }
+  }
+}
+
+async function testRewriteLedgerUsage(): Promise<void> {
+  section('Rewrite ledger persists actual tokens from each completed model attempt');
+  const firstUsage = { promptTokens: 11, completionTokens: 7, totalTokens: 18 };
+  const retryUsage = { promptTokens: 13, completionTokens: 5, totalTokens: 18 };
+  const plan = JSON.stringify({ rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }] });
+  for (const ending of ['single', 'retry', 'failed-retry'] as const) {
+    invalidateCreditCache();
+    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-rewrite-ledger-'));
+    const dbPath = nodePath.join(dir, 'usage.sqlite');
+    const store = new NodeSqliteUsageStore(dbPath);
+    const tracker = new ResolveTracker();
+    try {
+      const model = new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: [ending === 'single' ? plan : 'A counter'], usage: firstUsage },
+        ...(ending === 'single' ? [] : [{
+          role: 'rewrite' as const, deltas: [plan], usage: retryUsage,
+          error: ending === 'failed-retry' ? new Error('provider failed') : undefined,
+        }]),
+      ]);
+      const { app } = testApp({ usageStore: store, model, resolver: { tracker } });
+      const response = await post(app, '/v1/rewrite', { prompt: 'counter' }, DEVICE_HEADER);
+      eq(`${ending}: expected route status`, response.status, ending === 'failed-retry' ? 502 : 200);
+      await tracker.drain(2000);
+      const expected = ending === 'retry'
+        ? { promptTokens: 24, completionTokens: 12, totalTokens: 36 }
+        : firstUsage;
+      eq(`${ending}: aggregate credit remains exactly once per completed attempt`, await store.read(DEVICE_ID), expected);
+      const reader = new DatabaseSync(dbPath);
+      try {
+        const rows = reader.prepare('SELECT prompt_tokens, completion_tokens, outcome FROM requests WHERE kind = ?').all('rewrite');
+        eq(`${ending}: persisted request tokens include every completed attempt`, rows.map((row) => ({ ...row })), [{
+          prompt_tokens: expected.promptTokens,
+          completion_tokens: expected.completionTokens,
+          outcome: ending === 'failed-retry' ? 'error' : 'ok',
+        }]);
+      } finally {
+        reader.close();
+      }
+    } finally {
+      await tracker.drain(2000);
+      store.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
 }
 
 async function testChunkedBodyCap(): Promise<void> {
@@ -981,6 +1067,8 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testAdmissionOrder();
   await testUnaryGlobalCeiling();
   await testThrowingStoreReleasesTheSlot();
+  await testSettlementFailureReleasesCapacity();
+  await testRewriteLedgerUsage();
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();

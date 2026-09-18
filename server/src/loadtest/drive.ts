@@ -325,8 +325,7 @@ export interface Verdict {
   reason?: string;
 }
 
-/** Spec "exits non-zero on a `failure` terminal, on any refusal when the device count doesn't
- *  exceed the cap, or on a failed probe." */
+/** Every admitted device must finish successfully; only excess devices may be refused busy. */
 export function verdict(report: LoadTestReport): Verdict {
   if (report.terminals.failure > 0) {
     return { ok: false, reason: `${report.terminals.failure} run(s) ended in a failure terminal` };
@@ -334,6 +333,16 @@ export function verdict(report: LoadTestReport): Verdict {
   const refused = Object.values(report.refusals).reduce((a, b) => a + b, 0);
   if (refused > 0 && report.devices <= report.cap) {
     return { ok: false, reason: `${refused} refusal(s) at ${report.devices} device(s) <= cap ${report.cap}: ${JSON.stringify(report.refusals)}` };
+  }
+  if (report.terminals.none > 0) {
+    return { ok: false, reason: `${report.terminals.none} run(s) ended without a terminal event` };
+  }
+  if (report.terminals.result + report.terminals.failure + report.terminals.none + refused !== report.devices) {
+    return { ok: false, reason: 'the report does not account for exactly the requested number of devices' };
+  }
+  const expectedRefusals = Math.max(0, report.devices - report.cap);
+  if (refused !== expectedRefusals || (report.refusals.server_busy ?? 0) !== expectedRefusals) {
+    return { ok: false, reason: `expected ${expectedRefusals} server_busy refusal(s), got ${JSON.stringify(report.refusals)}` };
   }
   if (!report.leakProbe.ok) {
     return { ok: false, reason: report.leakProbe.detail ?? 'the leak probe failed' };

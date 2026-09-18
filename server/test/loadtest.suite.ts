@@ -401,6 +401,23 @@ function testReportAndVerdict(): void {
     verdict(buildReport(3, 1, refusedOverCap, OK_LEAK)).ok === true,
   );
 
+  check('a clean run below capacity passes', verdict(buildReport(2, 3, clean.slice(0, 2), OK_LEAK)).ok);
+  const capPlusOne = [...clean, REFUSED_OUTCOME('d', 'server_busy')];
+  check('cap + 1 passes with exactly one server_busy refusal', verdict(buildReport(4, 3, capPlusOne, OK_LEAK)).ok);
+  const invalidRuns: [string, number, number, DeviceOutcome[]][] = [
+    ['missing terminal', 2, 2, [clean[0], { deviceId: 'b', totalMs: 5 }]],
+    ['missing outcome', 3, 3, clean.slice(0, 2)],
+    ['extra outcome', 2, 3, clean],
+    ['wrong refusal type', 2, 1, [clean[0], REFUSED_OUTCOME('b', 'policy_unavailable')]],
+    ['too many refusals', 3, 2, [clean[0], REFUSED_OUTCOME('b', 'server_busy'), REFUSED_OUTCOME('c', 'server_busy')]],
+    ['too few refusals', 3, 1, [clean[0], clean[1], REFUSED_OUTCOME('c', 'server_busy')]],
+    ['no refusal above capacity', 3, 2, clean],
+    ['missing terminal above capacity', 2, 1, [{ deviceId: 'a', totalMs: 5 }, REFUSED_OUTCOME('b', 'server_busy')]],
+  ];
+  for (const [label, devices, cap, outcomes] of invalidRuns) {
+    check(`${label} fails the capacity verdict`, !verdict(buildReport(devices, cap, outcomes, OK_LEAK)).ok);
+  }
+
   const leaked: LeakProbeOutcome = { ok: false, rounds: [[REFUSED_OUTCOME('probe-1', 'server_busy')], []], detail: 'leaked' };
   check('a failed leak probe fails the verdict even with a clean run', verdict(buildReport(2, 2, clean.slice(0, 2), leaked)).ok === false);
 }

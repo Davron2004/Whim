@@ -399,7 +399,6 @@ export function makeClarifyRoute(
         creditOwned: boolean,
       ): Promise<void> => {
         await usageStore.settle(requestId, { outcome, usage, now: clock() });
-        release();
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
           usageStore,
@@ -407,7 +406,11 @@ export function makeClarifyRoute(
         });
       };
 
-      return runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+      try {
+        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+      } finally {
+        release();
+      }
     },
   );
 
@@ -458,21 +461,13 @@ async function runClarifyWork(
   // `ModelContentPolicy.check`'s identical guard (`../policy/policy.ts`).
   stream.usage.catch(() => {});
 
+  let raw = '';
+  let usage: Usage;
+  let completedGenerationId: string | undefined;
   try {
-    let raw = '';
     for await (const delta of stream.deltas) if (delta.kind === 'text') raw += delta.text;
-    const usage = await stream.usage;
-    const generationId = await stream.id;
-    await usageStore.credit(deviceId, usage);
-    const ids = generationId ? [generationId] : [];
-
-    const shaped = shapeClarify(raw);
-    if (!shaped) {
-      await finish('error', usage, ids, true);
-      return Response.json(MODEL_FAILURE, { status: 502 });
-    }
-    await finish('ok', usage, ids, true);
-    return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
+    usage = await stream.usage;
+    completedGenerationId = await stream.id;
   } catch (err) {
     const generationId = await stream.id.catch(() => undefined);
     const ids = generationId ? [generationId] : [];
@@ -485,4 +480,15 @@ async function runClarifyWork(
     await finish('error', undefined, ids, false);
     return Response.json(MODEL_FAILURE, { status: 502 });
   }
+
+  // Store failures must reach the app's 500 handler, not be retried as model failures.
+  await usageStore.credit(deviceId, usage);
+  const ids = completedGenerationId ? [completedGenerationId] : [];
+  const shaped = shapeClarify(raw);
+  if (!shaped) {
+    await finish('error', usage, ids, true);
+    return Response.json(MODEL_FAILURE, { status: 502 });
+  }
+  await finish('ok', usage, ids, true);
+  return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
 }
