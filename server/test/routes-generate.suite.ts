@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { check, caught, eq, section } from './harness';
 import { ScriptedModelClient } from './scripted-model';
 import { readSseResponse } from './sse-reader';
@@ -119,7 +120,7 @@ export class RecordingUsageStore implements UsageStore {
   readonly admitted: string[] = [];
   readonly settles: SettleRecord[] = [];
   readonly costs: CostRecord[] = [];
-  private readonly inner = new InMemoryUsageStore();
+  constructor(private readonly inner: UsageStore = new InMemoryUsageStore()) {}
 
   /** Set by a test to make the next `credit` fail — a store blip inside admission, after the slot
    *  was taken and the daily unit consumed. */
@@ -426,6 +427,7 @@ interface HarnessOpts {
   policy?: ContentPolicy;
   creditTransport?: CreditTransport;
   resolveTransport?: UsageAndCostTransport;
+  usageStore?: RecordingUsageStore;
 }
 
 interface Harness {
@@ -438,7 +440,7 @@ interface Harness {
 
 function harness(opts: HarnessOpts = {}): Harness {
   const config: ServerConfig = { ...loadServerConfig({}), now: () => AT_2200_UTC, ...opts.config };
-  const usageStore = new RecordingUsageStore();
+  const usageStore = opts.usageStore ?? new RecordingUsageStore();
   const slots = new SlotSpy(
     opts.slots ??
       createSlotController({ maxConcurrentGenerations: config.maxConcurrentGenerations, maxConcurrentUnary: config.maxConcurrentUnary }),
@@ -848,6 +850,59 @@ async function testAbortSuppressesEvents(): Promise<void> {
   }
 }
 
+async function testTerminalSettlementRecovery(persistent: boolean): Promise<void> {
+  const label = persistent ? 'persistent settlement failure' : 'transient settlement failure';
+  section(`Generate teardown: ${label}`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-generate-settle-'));
+  const dbPath = path.join(dir, 'usage.sqlite');
+  const sqlite = new NodeSqliteUsageStore(dbPath);
+  const usageStore = new RecordingUsageStore(sqlite);
+  const settle = usageStore.settle.bind(usageStore);
+  let settleCalls = 0;
+  usageStore.settle = async (requestId, params) => {
+    settleCalls++;
+    if (persistent || settleCalls === 1) throw new Error('injected settlement failure');
+    await settle(requestId, params);
+  };
+  const stats = statsTransport({ 'gen-settlement': { usage: RUN_USAGE, totalCostUsd: 0.125 } });
+  const pipeline: Pipeline = {
+    async *run(_request: GenerateRequest, _signal?: AbortSignal, trace?: RunTrace): AsyncIterable<GenerationEvent> {
+      trace?.generationIds.push('gen-settlement');
+      yield { type: 'usage', usage: RUN_USAGE };
+      yield { type: 'result', app: RESULT_APP };
+    },
+  };
+  const h = harness({ pipeline, usageStore, resolveTransport: stats.transport });
+  try {
+    const events = await readEvents(label, await postGenerate(h.app, PROMPT, DEVICE_A));
+    eq(`${label}: the delivered result remains readable without an extra terminal`, events.map((e) => e.type), ['usage', 'result']);
+    eq(`${label}: settlement stops after one retry`, settleCalls, 2);
+    eq(`${label}: capacity is released once`, h.slots.releaseCalls, [1]);
+    eq(`${label}: no generation remains active`, [h.slots.generations, h.inFlight.size], [0, 0]);
+    await drained(label, h.tracker);
+    eq(`${label}: provider reconciliation still runs once`, stats.fetches(), 1);
+    eq(`${label}: tokens are credited once`, await sqlite.read(DEVICE_A), RUN_USAGE);
+    const reader = new DatabaseSync(dbPath);
+    try {
+      const row = reader.prepare('SELECT ended_at, outcome, prompt_tokens, completion_tokens, cost_state, cost_usd FROM requests').get();
+      eq(`${label}: cost resolves and recoverable settlement preserves its original outcome`, { ...row }, {
+        ended_at: persistent ? null : AT_2200_UTC,
+        outcome: persistent ? null : 'delivered',
+        prompt_tokens: persistent ? 0 : RUN_USAGE.promptTokens,
+        completion_tokens: persistent ? 0 : RUN_USAGE.completionTokens,
+        cost_state: 'resolved',
+        cost_usd: 0.125,
+      });
+    } finally {
+      reader.close();
+    }
+  } finally {
+    await h.tracker.drain(WAIT_MS);
+    sqlite.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testErrorExpiryAndDrain(): Promise<void> {
   section('Generate teardown: pipeline error, wall-clock expiry, drain abort');
 
@@ -1122,6 +1177,8 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testPolicyOutcomes();
   await testTerminalAndCancel();
   await testAbortSuppressesEvents();
+  await testTerminalSettlementRecovery(false);
+  await testTerminalSettlementRecovery(true);
   await testErrorExpiryAndDrain();
   await testMidRunCreditExhaustion();
   await testCostAndReconciliation();
