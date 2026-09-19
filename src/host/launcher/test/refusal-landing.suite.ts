@@ -17,12 +17,12 @@
  * never expires this way.
  */
 import { Harness } from './harness';
-import { REFUSAL_RULES } from '../service-refusal';
 import { noticeExpiredAt, refusalLanding, retryWindowState } from '../refusal-landing';
 import { ServiceRefusalCode } from '@whim/contract';
 
-const TEXT_LANDING_CODES = ServiceRefusalCode.options.filter((code) => REFUSAL_RULES[code].landing === 'text');
-const SENDER_LANDING_CODES = ServiceRefusalCode.options.filter((code) => REFUSAL_RULES[code].landing === 'sender');
+// Expectations come from the service-refusals spec, independently of the production table.
+const TEXT_LANDING_CODES = ['content_policy', 'payload_too_large'] as const;
+const SENDER_LANDING_CODES = ['policy_unavailable', 'budget_exhausted', 'daily_limit', 'device_busy', 'server_busy'] as const;
 
 export async function runRefusalLandingTests(h: Harness): Promise<void> {
   await h.test('refusalLanding: a text-landing code always returns to compose for clarify or rewrite', () => {
@@ -47,10 +47,12 @@ export async function runRefusalLandingTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('refusalLanding: the table has both landings represented, so this suite is not vacuous', () => {
-    h.ok(TEXT_LANDING_CODES.length > 0, 'at least one text-landing code exists');
-    h.ok(SENDER_LANDING_CODES.length > 0, 'at least one sender-landing code exists');
-    h.eq(TEXT_LANDING_CODES.length + SENDER_LANDING_CODES.length, ServiceRefusalCode.options.length, 'every code is exactly one or the other');
+  await h.test('refusalLanding: expected landings cover every contract code exactly once', () => {
+    h.eq(
+      [...TEXT_LANDING_CODES, ...SENDER_LANDING_CODES].sort((left, right) => left.localeCompare(right)),
+      [...ServiceRefusalCode.options].sort((left, right) => left.localeCompare(right)),
+      'the independent expected groups contain every code, with no duplicates or extras',
+    );
   });
 
   await h.test('retryWindowState: disabled with the remaining milliseconds, while retryAt is still ahead', () => {
