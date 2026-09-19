@@ -30,10 +30,10 @@ import { invalidateCreditCache } from '../admission/credit';
 import { budgetExhaustedRefusal, payloadTooLargeRefusal } from '../admission/refusals';
 import type { ContentPolicy } from '../policy';
 import { buildRewritePolicyInput } from '../policy/input';
-import type { ResolveBounds, UsageAndCostTransport, ResolveTracker } from '../usage/resolve';
+import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
-import { admitUnaryRequest, resolveUnaryUsage, settleFailedUnaryRequest } from './clarify';
+import { admitUnaryRequest, settleFailedUnaryRequest } from './clarify';
 
 type Env = { Variables: { deviceId: string } };
 
@@ -76,7 +76,7 @@ function shapeRewrite(text: string): RewriteResponse {
 
 type RewriteAttemptOutcome = {
   generationIds: string[];
-  creditedAny: boolean;
+  creditedGenerationIds: Set<string>;
   usage: Usage;
 } & (
   | { outcome: 'ok'; response: RewriteResponse }
@@ -95,9 +95,8 @@ type RewriteAttemptOutcome = {
  * Each attempt is individually bounded by `timeoutMs` (spec "Unary model calls have a bounded
  * lifetime"). A `402` from the provider on either attempt ends the retry immediately — a repair
  * spends more of an already-exhausted budget (design D6b) — rather than trying the second attempt.
- * `creditedAny` tells the caller whether ANY attempt already credited tokens in-stream, so the
- * post-response resolver is told `creditOwned` correctly even when an earlier attempt succeeded
- * (and credited) before a later attempt failed.
+ * `creditedGenerationIds` records which attempts credited tokens in-stream, so a failed retry
+ * can still recover its own usage without crediting an earlier successful attempt twice.
  */
 async function rewriteWithRetry(
   model: ModelClient,
@@ -110,23 +109,22 @@ async function rewriteWithRetry(
 ): Promise<RewriteAttemptOutcome> {
   let best: RewriteResponse | undefined;
   const generationIds: string[] = [];
-  let creditedAny = false;
+  const creditedGenerationIds = new Set<string>();
   const usage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal?.aborted) return { outcome: 'failed', generationIds, creditedAny, usage };
+    if (signal?.aborted) return { outcome: 'failed', generationIds, creditedGenerationIds, usage };
 
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedAny, usage);
+    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedGenerationIds, usage);
     if (step.outcome) return step.outcome;
     best = step.best;
-    creditedAny = true;
     if (step.stop) break;
   }
   // `best` is always set: attempt 0 always runs (the loop bound is fixed at 2, not data-dependent)
   // and the first shaped reply always satisfies `!best`.
-  return { outcome: 'ok', response: best!, generationIds, creditedAny, usage };
+  return { outcome: 'ok', response: best!, generationIds, creditedGenerationIds, usage };
 }
 
 type RewriteAttempt =
@@ -153,17 +151,18 @@ async function applyRewriteAttempt(
   deviceId: string,
   generationIds: string[],
   best: RewriteResponse | undefined,
-  creditedAny: boolean,
+  creditedGenerationIds: Set<string>,
   usage: Usage,
 ): Promise<RewriteAttemptStep> {
   const result = await runRewriteAttempt(model, roster, messages, combined);
   if (result.generationId) generationIds.push(result.generationId);
 
   if (!result.ok) {
-    return { outcome: { outcome: result.budgetExhausted ? 'budget_exhausted' : 'failed', generationIds, creditedAny, usage } };
+    return { outcome: { outcome: result.budgetExhausted ? 'budget_exhausted' : 'failed', generationIds, creditedGenerationIds, usage } };
   }
 
   await usageStore.credit(deviceId, result.usage);
+  if (result.generationId) creditedGenerationIds.add(result.generationId);
   usage.promptTokens += result.usage.promptTokens;
   usage.completionTokens += result.usage.completionTokens;
   usage.totalTokens += result.usage.totalTokens;
@@ -277,24 +276,28 @@ export function makeRewriteRoute(
       const { requestId, release, policyGenerationId } = admission;
 
       let settlementUsage: Usage | undefined;
-      const finish = async (outcome: RequestOutcome, generationIds: string[], creditOwned: boolean, usage?: Usage): Promise<void> => {
+      const finish = async (outcome: RequestOutcome, generationIds: string[], creditedGenerationIds: Set<string>, usage?: Usage): Promise<void> => {
         settlementUsage = usage;
         await usageStore.settle(requestId, { outcome, usage, now: clock() });
-        resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
+        if (policyGenerationId !== undefined) {
+          generationIds = [policyGenerationId, ...generationIds];
+          creditedGenerationIds.add(policyGenerationId);
+        }
+        resolveTracker.track(resolveRequestUsage(requestId, deviceId, generationIds, creditedGenerationIds, {
           transport: resolveTransport,
           usageStore,
           bounds: resolveBounds,
-        });
+        }));
       };
 
       try {
         if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
-          await finish('ok', [], true);
+          await finish('ok', [], new Set());
           return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
         }
 
         if (!model || !roster) {
-          await finish('error', [], true);
+          await finish('error', [], new Set());
           return c.json(NOT_CONFIGURED, 502);
         }
 
@@ -311,16 +314,16 @@ export function makeRewriteRoute(
 
         if (result.outcome === 'budget_exhausted') {
           invalidateCreditCache();
-          await finish('error', result.generationIds, result.creditedAny, result.usage);
+          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage);
           const r = budgetExhaustedRefusal();
           return c.json(r.body, r.status, r.headers);
         }
         if (result.outcome === 'failed') {
-          await finish('error', result.generationIds, result.creditedAny, result.usage);
+          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage);
           return c.json(MODEL_FAILURE, 502);
         }
 
-        await finish('ok', result.generationIds, result.creditedAny, result.usage);
+        await finish('ok', result.generationIds, result.creditedGenerationIds, result.usage);
         return c.json(result.response, 200);
       } catch (err) {
         await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);

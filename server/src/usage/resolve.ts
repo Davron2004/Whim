@@ -7,8 +7,8 @@
  * Runs AFTER a request has already ended (delivered, failed, expired or aborted): it fetches the
  * provider's authoritative generation-stats data for every recorded generation id (the policy
  * call, the unary call, or every pipeline call), sums the cost onto the request's ledger row via
- * `UsageStore.recordCost`, and — only when the in-stream `usage` event was never credited
- * (`creditOwned === false`) — credits the reconciled tokens through `UsageStore.credit`. It is
+ * `UsageStore.recordCost`, and credits tokens only for calls whose in-stream usage was not
+ * already credited. Ownership can cover the whole request or individual provider ids. It is
  * meant to be called detached from the response (never awaited by a route), so callers track it
  * through `ResolveTracker` and drain gives it one final window before shutdown.
  *
@@ -140,6 +140,8 @@ async function resolveOneId(
 
 /**
  * Sums resolved usage and cost across every id in `generationIds`, under one shared `deadline`.
+ * `uncreditedUsage` excludes the supplied credited ids and stays absent when none of the
+ * uncredited ids resolve. Cost and `totalUsage` still include every resolved id.
  *
  * The ids are resolved CONCURRENTLY, because the deadline is shared: resolved one after another, a
  * single slow id spends the whole budget and every id behind it is never even attempted, so what
@@ -162,7 +164,8 @@ export async function sumGenerationStats(
   deadline: number,
   bounds: ResolveBounds,
   transport: UsageAndCostTransport,
-): Promise<{ totalUsage: Usage; totalCostUsd: number; foundAny: boolean; resolvedAll: boolean }> {
+  creditedGenerationIds?: ReadonlySet<string>,
+): Promise<{ totalUsage: Usage; uncreditedUsage?: Usage; totalCostUsd: number; foundAny: boolean; resolvedAll: boolean }> {
   // A fixed pool of workers pulling from one cursor — the smallest semaphore there is, and no new
   // dependency. `resolveOneId` never rejects (it treats a transport failure as unresolved) and
   // stops itself at the shared deadline, so the per-id `catch` is belt-and-braces: one unexpected
@@ -181,19 +184,23 @@ export async function sumGenerationStats(
   );
 
   let totalUsage = ZERO_USAGE;
+  let uncreditedUsage: Usage | undefined;
   let totalCostUsd = 0;
   let foundAny = false;
   let resolvedAll = true;
-  for (const stats of resolved) {
+  for (const [index, stats] of resolved.entries()) {
     if (!stats) {
       resolvedAll = false;
       continue;
     }
     totalUsage = sumUsage(totalUsage, stats.usage);
+    if (!creditedGenerationIds?.has(generationIds[index])) {
+      uncreditedUsage = sumUsage(uncreditedUsage ?? ZERO_USAGE, stats.usage);
+    }
     totalCostUsd += stats.totalCostUsd;
     foundAny = true;
   }
-  return { totalUsage, totalCostUsd, foundAny, resolvedAll };
+  return { totalUsage, uncreditedUsage, totalCostUsd, foundAny, resolvedAll };
 }
 
 /**
@@ -203,6 +210,8 @@ export async function sumGenerationStats(
  * error. `creditOwned` is `true` when the run already credited its tokens in-stream (a normal
  * `usage` event), so only cost is recorded here — spec "Cost resolution SHALL NOT credit tokens
  * for a run whose `usage` event was already credited, so no run's tokens are ever counted twice."
+ * A set instead identifies the individually credited provider calls, for a request whose retry
+ * failed after an earlier attempt credited usage. All ids still contribute to the request cost.
  *
  * Never throws or rejects — this runs detached from any response and must never surface a
  * client-visible failure.
@@ -211,7 +220,7 @@ export async function resolveRequestUsage(
   requestId: string,
   deviceId: string,
   generationIds: readonly string[],
-  creditOwned: boolean,
+  creditOwned: boolean | ReadonlySet<string>,
   deps: ResolveDeps,
 ): Promise<void> {
   try {
@@ -225,11 +234,12 @@ export async function resolveRequestUsage(
     // final window, a crash), and it costs one write on a row nothing else touches.
     if (requestId) await deps.usageStore.recordCost(requestId, { state: 'pending', generationIds });
     const deadline = Date.now() + bounds.totalBudgetMs;
-    const { totalUsage, totalCostUsd, foundAny, resolvedAll } = await sumGenerationStats(
+    const { uncreditedUsage, totalCostUsd, resolvedAll } = await sumGenerationStats(
       generationIds,
       deadline,
       bounds,
       deps.transport,
+      typeof creditOwned === 'boolean' ? undefined : creditOwned,
     );
     // Cost and tokens are stamped by different rules, on purpose. COST is all-or-nothing: the row's
     // `resolved` cost is what the operator reads as "what a generation costs" when sizing the
@@ -244,7 +254,7 @@ export async function resolveRequestUsage(
         resolvedAll ? { state: 'resolved', costUsd: totalCostUsd } : { state: 'unresolved', generationIds },
       );
     }
-    if (foundAny && !creditOwned) await deps.usageStore.credit(deviceId, totalUsage);
+    if (uncreditedUsage && creditOwned !== true) await deps.usageStore.credit(deviceId, uncreditedUsage);
   // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort per spec "gives up quietly" — must never surface a user-visible failure
   } catch {
     // best-effort — resolution must never fail anything user-visible
