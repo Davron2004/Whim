@@ -5,8 +5,6 @@ import ReactAppDependencyProvider
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
-  var window: UIWindow?
-
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
@@ -14,14 +12,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
-    let delegate = ReactNativeDelegate()
-    let factory = RCTReactNativeFactory(delegate: delegate)
-    delegate.dependencyProvider = RCTAppDependencyProvider()
+    true
+  }
 
-    reactNativeDelegate = delegate
-    reactNativeFactory = factory
-
-    window = UIWindow(frame: UIScreen.main.bounds)
+  /// UIKit creates the window through SceneDelegate. The application delegate retains both
+  /// objects because RCTReactNativeFactory holds its delegate weakly.
+  func startReactNative(
+    in window: UIWindow,
+    launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) {
+    let factory: RCTReactNativeFactory
+    if let existingFactory = reactNativeFactory {
+      // RCTRootViewFactory keeps its bridgeless ReactHost and its JS runtime after the first
+      // start. Reattaching a scene creates a fresh surface without creating another runtime.
+      factory = existingFactory
+    } else {
+      let delegate = ReactNativeDelegate()
+      let newFactory = RCTReactNativeFactory(delegate: delegate)
+      delegate.dependencyProvider = RCTAppDependencyProvider()
+      reactNativeDelegate = delegate
+      reactNativeFactory = newFactory
+      factory = newFactory
+    }
 
     factory.startReactNative(
       withModuleName: "Whim",
@@ -32,9 +44,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // Launch wiring (design D10): keep the root background on the launch paper color until
     // the launcher draws its first frame, so there's no white flash after the storyboard hands
     // off to React Native.
-    window?.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
-
-    return true
+    window.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
   }
 
   // Universal-link cold start / foreground handoff (specs/app-links "The iOS app delivers
