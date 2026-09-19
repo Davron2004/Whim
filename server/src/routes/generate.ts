@@ -338,7 +338,22 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
     untrack();
     admitted.handle.release();
     const outcome = ledgerOutcome(trace, ending, controller.signal.aborted);
-    await usageStore.settle(admitted.requestId, { outcome, usage: ending.usage, now: deps.clock() });
+    const settlement = { outcome, usage: ending.usage, now: deps.clock() };
+    // Retry a transient write once. Ledger cleanup must neither replace a pipeline error nor
+    // break a terminal event already delivered to the client, and reconciliation still runs.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await usageStore.settle(admitted.requestId, settlement);
+        break;
+      } catch (err) {
+        requestLog.warn({
+          requestId: admitted.requestId,
+          outcome,
+          attempt,
+          detail: err instanceof Error ? err.message : String(err),
+        }, 'generation ledger settlement failed');
+      }
+    }
     resolveGenerationUsage(deps, trace.generationIds, ending.creditOwned);
   };
 
