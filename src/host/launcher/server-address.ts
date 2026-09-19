@@ -10,6 +10,7 @@
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
+import { RELEASE } from './release-config';
 
 const SERVER_URL_KEY = 'whim.server-url:v1';
 
@@ -19,9 +20,13 @@ const SERVER_URL_KEY = 'whim.server-url:v1';
  *
  * Trailing-slash stripping matters because `generation-client.ts` concatenates this address with
  * a leading-slash path (e.g. `/v1/clarify`); a stored trailing slash would double it to `//v1/...`,
- * which the server 404s (no non-exact-path matching).
+ * which the server 404s (no non-exact-path matching). Exported so `server-probe.ts`'s callers can
+ * apply the same normalization to a draft address before probing it (`handoff/server-probe.md`:
+ * "`baseUrl` is passed through unvalidated ... already sanitized by `server-address.ts`'s
+ * `loadServerUrl`/`saveServerUrl` before it reaches this module") — without it, a trailing slash
+ * in the draft would double up against `probeServer`'s leading-slash `/healthz` the same way.
  */
-function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
+export function sanitizeServerUrl(raw: string | null | undefined): string | undefined {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   let end = trimmed.length;
   while (end > 0 && trimmed[end - 1] === '/') {
@@ -44,4 +49,22 @@ export function saveServerUrl(kv: KVBackend, raw: string): void {
   } else {
     kv.set(SERVER_URL_KEY, sanitized);
   }
+}
+
+/**
+ * The server every request actually goes to (release-config "The compiled-in server is used
+ * unless the user sets an override"): the saved override when one is set — a blank or
+ * whitespace-only saved value already reads as "no override" via `loadServerUrl` — else the
+ * compiled-in production server.
+ */
+export function effectiveServerUrl(kv: KVBackend): string {
+  return loadServerUrl(kv) ?? RELEASE.serverUrl;
+}
+
+/**
+ * Remove the saved override so the next request goes to the compiled-in server, with no restart
+ * needed (same spec, "Clearing the override restores the default").
+ */
+export function clearServerUrl(kv: KVBackend): void {
+  kv.delete(SERVER_URL_KEY);
 }

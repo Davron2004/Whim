@@ -21,8 +21,8 @@ const MAX_DEPTH = 4;
 
 /**
  * Field names whose VALUE is never loggable. Compared lower-cased, so `deviceId`, `deviceid` and
- * `DeviceID` all match. Four families, from the spec: prompt text, generated source, the device
- * id, and provider credentials.
+ * `DeviceID` all match. Five families, from the spec: prompt text, generated source, report note
+ * text, the device id, and provider credentials.
  */
 export const SENSITIVE_FIELD_NAMES: readonly string[] = [
   // prompt text
@@ -39,6 +39,11 @@ export const SENSITIVE_FIELD_NAMES: readonly string[] = [
   'appsource',
   'bundlesource',
   'code',
+  // report note text (content-reporting §"Report content never reaches device logs")
+  'note',
+  'reportnote',
+  'report_note',
+  'notetext',
   // the x-whim-device value
   'deviceid',
   'device_id',

@@ -44,6 +44,7 @@ yarn-error.log
 # https://docs.fastlane.tools/best-practices/source-control/
 
 **/fastlane/report.xml
+**/fastlane/README.md
 **/fastlane/Preview.html
 **/fastlane/screenshots
 **/fastlane/test_output
@@ -55,8 +56,17 @@ yarn-error.log
 **/Pods/
 /vendor/bundle/
 
+# iOS bring-up evidence (simulator screenshots); local only
+/.ios-bringup/
+
 # Temporary files created by Metro to check the health of the file watcher
 .metro-health-check*
+
+# Release signing keys and store publisher credentials (~/.config/whim/, docs/release/mobile.md
+# — never committed here)
+*.jks
+*.p8
+play-publisher*.json
 
 # testing
 /coverage
@@ -91,6 +101,8 @@ checks/test/.phase
 server/.data/
 # Dev-only device log sink (WHIM_DEV_LOG_SINK=1): `npm run whim:logs` tails it. Never committed.
 server/.logs/
+# Production runtime tree (`node server/build.mjs`): build output, never committed.
+server/dist/
 .env
 
 # Corpus-eval CLI: local run reports (the CLI's default --out; never a committed artifact —

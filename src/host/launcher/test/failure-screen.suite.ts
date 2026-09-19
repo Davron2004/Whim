@@ -91,14 +91,13 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(/color: p\.danger \}\]\}>\{COPY\.failureDismiss\}/.test(src), 'the discard label carries the danger hue');
   });
 
-  await h.test('exits: the hardware back gesture leaves the attempt alone', () => {
+  await h.test('exits: system back leaves the attempt alone', () => {
     // `prompt-flow`: "The hardware back gesture on the failure screen SHALL perform the
     // non-destructive Back, never Discard."
     const src = readSource('src/host/launcher/FailureScreen.tsx');
-    const effect = src.slice(src.indexOf("addEventListener('hardwareBackPress'"), src.indexOf('const outcome ='));
-    h.ok(effect.includes('onBack();'), 'the hardware gesture performs the non-destructive Back');
-    h.ok(!effect.includes('onDismiss'), 'and never the deleting one');
-    h.ok(!/onDismiss\(\)/.test(src), 'nothing else in the screen invokes the deletion imperatively either');
+    h.ok(/useSystemBack\(onBack\);/.test(src), 'system back is bound to the same non-destructive onBack the visible control uses');
+    h.ok(!/BackHandler/.test(src), 'the screen owns no hardware-back listener of its own any more');
+    h.ok(!/onDismiss\(\)/.test(src), 'nothing in the screen invokes the deletion imperatively either');
     // Non-vacuity: the imperative-call scan does fire on the shape it is meant to catch.
     h.ok(/onDismiss\(\)/.test('onDismiss();'), 'the scan matches an imperative call');
   });

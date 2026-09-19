@@ -1,0 +1,11 @@
+<resources>
+
+    <!-- Launch wiring (design D10): on Android 12+ the system splash screen API owns the first
+         frame and reads windowSplashScreenBackground instead of windowBackground's layer list.
+         The icon itself is left to the adaptive launcher icon, which the system draws in the
+         same circle. -->
+    <style name="Theme.Whim.Launch" parent="AppTheme">
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+    </style>
+
+</resources>

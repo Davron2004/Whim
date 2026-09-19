@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>This app lives on another phone — Whim</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 48px 20px 64px; line-height: 1.55; color: #1a1a1a; font-size: 17px; text-align: center; }
+  h1 { font-size: 1.4rem; }
+  p { margin: 0.8em 0; }
+  a { color: #2a5db0; }
+  .stores { margin-top: 2em; }
+  .stores a { display: inline-block; margin: 0.4em; }
+</style>
+</head>
+<body>
+<h1>This app lives on another phone</h1>
+<p>Apps made with Whim stay on the phone that made them, so this link only opens there.</p>
+
+<!--IF:WHIM_APP_STORE_URL-->
+<div class="stores">
+  <a href="{{WHIM_APP_STORE_URL}}">Get Whim on the App Store</a>
+</div>
+<!--ENDIF-->
+<!--IF:WHIM_PLAY_STORE_URL-->
+<div class="stores">
+  <a href="{{WHIM_PLAY_STORE_URL}}">Get Whim on Google Play</a>
+</div>
+<!--ENDIF-->
+
+<p><a href="/support">Support</a></p>
+</body>
+</html>

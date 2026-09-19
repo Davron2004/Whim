@@ -1,0 +1,23 @@
+{
+  "encryptedInTransit": true,
+  "deletionRequestMechanism": "There is no account to delete data from. The server keeps a content-free usage ledger and any submitted report for 90 days, then removes them automatically.",
+  "types": [
+    {
+      "id": "other_user_generated_content",
+      "collected": true,
+      "shared": true,
+      "sharedWith": "AI model providers through OpenRouter",
+      "optional": true,
+      "ephemeral": false,
+      "purposes": ["app_functionality"]
+    },
+    {
+      "id": "device_or_other_ids",
+      "collected": true,
+      "shared": false,
+      "optional": true,
+      "ephemeral": false,
+      "purposes": ["app_functionality", "fraud_prevention_security_compliance"]
+    }
+  ]
+}

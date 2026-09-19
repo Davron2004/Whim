@@ -12,16 +12,18 @@
  * through the shared Whim Syntax renderer when not being edited.
  */
 
-import React, { useEffect, useState } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
-import type { FlowPlanRow } from './prompt-flow';
+import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 /** Row geometry, exported so the loading skeleton imports it rather than restating any value
  *  (`sdk-design-system` "Loading skeletons derive their geometry from exported component
@@ -59,6 +61,10 @@ export interface PlanStepProps {
   /** When the in-flight rewrite request started, for `WorkingLine`'s clock. Only read while
    *  `loading`. */
   startedAt?: number;
+  /** A service refusal that landed here (design D9/D12) — text-landing (`content_policy`/
+   *  `payload_too_large`, `danger` tone) for a plan-started generate, or sender-landing (`neutral`
+   *  tone) for a device/daily/server-busy or unavailable refusal. */
+  notice?: FlowNotice;
   /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
   editing: boolean;
   editingName?: string;
@@ -74,6 +80,7 @@ export default function PlanStep({
   rows,
   loading,
   startedAt,
+  notice,
   editing,
   editingName,
   onChangeRow,
@@ -81,6 +88,7 @@ export default function PlanStep({
   onBack,
 }: Readonly<PlanStepProps>) {
   const p = SHELL_PALETTE;
+  const gated = useRetryGate(notice?.retryAt);
 
   // Only one row is ever editable at a time: `editingIndex` names it, `draft` is its in-progress
   // text. Indexed rather than keyed by `label:text` because two rows can carry identical text —
@@ -88,17 +96,16 @@ export default function PlanStep({
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (editingIndex != null) {
-        setEditingIndex(null);
-        return true;
-      }
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack, editingIndex]);
+  /** One decision (`planBackAction`, design D4) for both the header `Back` and system back: mid-edit
+   *  it cancels the open row instead of leaving the step. */
+  const handleBack = () => {
+    if (planBackAction(editingIndex != null) === 'cancel-edit') {
+      setEditingIndex(null);
+      return;
+    }
+    onBack();
+  };
+  useSystemBack(handleBack);
 
   const startEditing = (index: number, text: string) => {
     setEditingIndex(index);
@@ -117,7 +124,7 @@ export default function PlanStep({
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="plan" onBack={onBack} />
+      <FlowHeader step="plan" onBack={handleBack} />
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {editing && editingName != null && <EditingEyebrow name={editingName} />}
@@ -182,10 +189,13 @@ export default function PlanStep({
         <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
       </ScrollView>
 
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+
       {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
           action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
-          element while loading. */}
-      {!loading && <PrimaryAction step="plan" enabled editing={editing} onPress={onBuild} />}
+          element while loading. No validation gate of its own — the retry window is the only
+          thing that can disable it. */}
+      {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
     </View>
   );
 }

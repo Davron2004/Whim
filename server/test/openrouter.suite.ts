@@ -9,10 +9,12 @@ import { Usage } from '@whim/contract';
 import {
   OpenRouterClient,
   OpenRouterAuthError,
+  OpenRouterCreditError,
   OpenRouterRateLimitError,
   OpenRouterNetworkError,
   Usage as OpenRouterUsage,
 } from '../src/openrouter';
+import { isCreditExhaustedError } from '../src/generation/model';
 import type { FetchFn } from '../src/openrouter';
 
 // ─── Fake fetch helpers ───────────────────────────────────────────────────────
@@ -433,5 +435,91 @@ export async function runOpenRouterTests(): Promise<void> {
 
     check('content-only frames: every delta is text-kind', collected.every((d) => d.kind === 'text'));
     eq('content-only frames: unchanged delta count', collected.length, 3);
+  }
+
+  await testMidStreamErrorFrames();
+}
+
+/**
+ * §7.8 — a provider failure delivered INSIDE the stream. OpenRouter answers `200 OK`, streams some
+ * content, then sends `data: {"error":{"code":402,...}}` when the operator's credit runs out
+ * mid-generation. Such a frame must end the stream as a typed failure: dropped, it would look like
+ * a short, complete reply, the caller would ship a truncated candidate, and `isCreditExhaustedError`
+ * would never fire on a 402 that really happened.
+ */
+async function testMidStreamErrorFrames(): Promise<void> {
+  section('OpenRouter wrapper §7.8 — a mid-stream error frame is a typed failure, not an empty frame');
+
+  const midStreamFrames = (errorFrame: string): string[] => [
+    'data: {"id":"chatcmpl-e1","choices":[{"index":0,"delta":{"role":"assistant","content":"export default "}}]}\n\n',
+    'data: {"id":"chatcmpl-e1","choices":[{"index":0,"delta":{"content":"defineApp({"}}]}\n\n',
+    errorFrame,
+  ];
+
+  const CREDIT_FRAME = 'data: {"error":{"code":402,"message":"Insufficient credits"}}\n\n';
+
+  // A 402 arriving mid-stream is the same typed error the pre-stream HTTP 402 raises.
+  {
+    const client = new OpenRouterClient(makeSseFetch(midStreamFrames(CREDIT_FRAME)));
+    const { deltas, usage: usagePromise, id: idPromise } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    usagePromise.catch(() => undefined);
+
+    const collected: string[] = [];
+    const err = await caught(async () => {
+      for await (const delta of deltas) collected.push(delta.text);
+    });
+
+    eq('mid-stream 402: the deltas before the error frame are still delivered', collected, ['export default ', 'defineApp({']);
+    check('mid-stream 402: the iterator throws OpenRouterCreditError', err instanceof OpenRouterCreditError);
+    check('mid-stream 402: the error is not swallowed as a completed stream', err !== undefined);
+    check('mid-stream 402: provider-agnostic credit detection fires', isCreditExhaustedError(err));
+    check('mid-stream 402: not misreported as a transport failure', !(err instanceof OpenRouterNetworkError));
+
+    // The usage promise must settle (by rejecting) on every error path, never hang.
+    const TIMEOUT = Symbol('timeout');
+    let timer!: ReturnType<typeof setTimeout>;
+    const timeoutP = new Promise<typeof TIMEOUT>((r) => { timer = setTimeout(() => r(TIMEOUT), 200); });
+    const outcome = await Promise.race([
+      usagePromise.then(() => 'resolved' as const, () => 'rejected' as const),
+      timeoutP,
+    ]);
+    clearTimeout(timer);
+    check('mid-stream 402: the usage promise rejects rather than resolving zero usage', outcome === 'rejected');
+    eq('mid-stream 402: the generation id captured before the failure is kept', await idPromise, 'chatcmpl-e1');
+  }
+
+  // A non-credit mid-stream failure maps exactly as its HTTP status would.
+  {
+    const cases: { label: string; frame: string; is: (err: unknown) => boolean }[] = [
+      { label: '429', frame: 'data: {"error":{"code":429,"message":"rate limited"}}\n\n', is: (e) => e instanceof OpenRouterRateLimitError },
+      { label: '401', frame: 'data: {"error":{"code":401,"message":"bad key"}}\n\n', is: (e) => e instanceof OpenRouterAuthError },
+      // A string code (some upstream providers) is read the same way as a numeric one.
+      { label: '"402" as a string', frame: 'data: {"error":{"code":"402","message":"Insufficient credits"}}\n\n', is: (e) => e instanceof OpenRouterCreditError },
+      // No usable code at all: a failure, but an unclassified one — never a silent success.
+      { label: 'no code', frame: 'data: {"error":{"message":"upstream exploded"}}\n\n', is: (e) => e instanceof OpenRouterNetworkError },
+    ];
+    for (const c of cases) {
+      const client = new OpenRouterClient(makeSseFetch(midStreamFrames(c.frame)));
+      const { deltas, usage: usagePromise } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+      usagePromise.catch(() => undefined);
+      const err = await caught(async () => { await drain(deltas); });
+      check(`mid-stream error ${c.label}: mapped to the same typed error as the HTTP status`, c.is(err), String(err));
+      check(`mid-stream error ${c.label}: credit detection fires only for a 402`, isCreditExhaustedError(err) === (err instanceof OpenRouterCreditError));
+    }
+  }
+
+  // A frame that merely MENTIONS an error-shaped field in the delta text is not an error frame —
+  // only a top-level `error` object ends the stream.
+  {
+    const frames = [
+      'data: {"id":"chatcmpl-ok","choices":[{"index":0,"delta":{"content":"{\\"error\\":{\\"code\\":402}}"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const client = new OpenRouterClient(makeSseFetch(frames));
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    const collected: string[] = [];
+    const err = await caught(async () => { for await (const delta of deltas) collected.push(delta.text); });
+    check('error-shaped TEXT is ordinary content, not a stream failure', err === undefined);
+    eq('error-shaped text reaches the caller verbatim', collected, ['{"error":{"code":402}}']);
   }
 }

@@ -1,3 +1,4 @@
+import { runLauncherInteractionTests } from './launcher-interactions.suite';
 /**
  * launcher Node acceptance (task 5.4) — the fast, device-free checkpoint for the launcher's
  * deterministic core: the back-policy state machine (2.2), the installed-apps index (5.1), and
@@ -25,6 +26,10 @@ import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
 import { runBundleErrorWatchdogTests } from './bundle-error-watchdog.suite';
 import { runPromptFlowScreensTests } from './prompt-flow-screens.suite';
 import { runGenerationClientTests } from './generation-client.suite';
+import { runServerProbeTests } from './server-probe.suite';
+import { runConnectivityTests } from './connectivity.suite';
+import { runConnectivityUxTests } from './connectivity-ux.suite';
+import { runSettingsProbeTests } from './settings-probe.suite';
 import { runPromptFlowWiringTests } from './prompt-flow-wiring.suite';
 import { runGenerationRequestTests } from './generation-request.suite';
 import { runXhrTransportTests } from './xhr-transport.suite';
@@ -45,6 +50,26 @@ import { runAppBusyTests } from './app-busy.suite';
 import { runBootStateTests } from './boot-state.suite';
 import { runRealmDeliveryTests } from './realm-delivery.suite';
 import { runHistoryWaitTests } from './history-wait.suite';
+import { runReleaseConfigTests } from './release-config.suite';
+import { runAiConsentTests } from './ai-consent.suite';
+import { runAppLinkTests } from './app-link.suite';
+import { runTransportSharedTests } from './transport-shared.suite';
+import { runServiceRefusalTests } from './service-refusal.suite';
+import { runRefusalLandingTests } from './refusal-landing.suite';
+import { runReportPayloadTests } from './report-payload.suite';
+import { runConsentFlowTests } from './consent-flow.suite';
+import { runConsentScreenActionsTests } from './consent-screen-actions.suite';
+import { runSettingsSectionsTests } from './settings-sections.suite';
+import { runLinkRoutingTests } from './link-routing.suite';
+import { runAppLinkUiTests } from './app-link-ui.suite';
+import { runErrorReasonTests } from './error-reason.suite';
+import { runRefusalTargetTests } from './refusal-target.suite';
+import { runConsentOptionsTests } from './consent-options.suite';
+import { runProbeGateTests } from './probe-gate.suite';
+import { runReportSendTests } from './report-send.suite';
+import { runScreenExitsTests } from './screen-exits.suite';
+import { runResolveOptionsTests } from './resolve-options.suite';
+import { runSchemeHostTests } from './scheme-host.suite';
 
 const h = new Harness();
 
@@ -67,6 +92,10 @@ await runLaunchFailureUiTests(h);
 await runBundleErrorWatchdogTests(h);
 await runPromptFlowScreensTests(h);
 await runGenerationClientTests(h);
+await runServerProbeTests(h);
+await runConnectivityTests(h);
+await runConnectivityUxTests(h);
+await runSettingsProbeTests(h);
 await runPromptFlowWiringTests(h);
 await runGenerationRequestTests(h);
 await runXhrTransportTests(h);
@@ -87,6 +116,27 @@ await runAppBusyTests(h);
 await runBootStateTests(h);
 await runRealmDeliveryTests(h);
 await runHistoryWaitTests(h);
+await runReleaseConfigTests(h);
+await runAiConsentTests(h);
+await runAppLinkTests(h);
+await runTransportSharedTests(h);
+await runServiceRefusalTests(h);
+await runRefusalLandingTests(h);
+await runReportPayloadTests(h);
+await runConsentFlowTests(h);
+await runConsentScreenActionsTests(h);
+await runSettingsSectionsTests(h);
+await runLinkRoutingTests(h);
+await runAppLinkUiTests(h);
+await runErrorReasonTests(h);
+await runRefusalTargetTests(h);
+await runConsentOptionsTests(h);
+await runProbeGateTests(h);
+await runReportSendTests(h);
+await runScreenExitsTests(h);
+await runLauncherInteractionTests(h);
+await runResolveOptionsTests(h);
+await runSchemeHostTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

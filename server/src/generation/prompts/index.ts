@@ -6,11 +6,20 @@
  * `../model.ts`'s job) — each builder takes an explicit context object plus, for the two turns
  * that write code, the `PromptInputs` loaded once at composition-root time. Every builder returns
  * `ModelMessage[]`, the provider-agnostic shape `../model.ts` declares.
+ *
+ * One deliberate exception: every builder whose output is authored into shipped app source —
+ * `buildRewriteMessages`, `buildGenerateMessages` and `buildRepairMessages` — also reads the
+ * content-policy document's rating-rule section (spec content-policy "Generation prompts carry the
+ * rating rule") via `ratingRuleAppendix()` below. It cannot arrive as a `PromptInputs` field like
+ * the SDK reference — `buildRewriteMessages` takes no such parameter, and no builder's
+ * signature changes — so it goes through `loadContentPolicyDocument`'s own memoized loader instead,
+ * called fresh on every turn (cheap after the first read; see that function's doc comment).
  */
 import type { AppContext, Clarification, ClarifyRequest, GenerateRequest, RewriteRequest, Diagnostic } from '@whim/contract';
 import type { ModelMessage } from '../model';
 import type { SummariserInput } from '../summarise';
 import type { PromptInputs } from './inputs';
+import { loadContentPolicyDocument } from './inputs';
 
 // ─── The plan shape prompts render (design D11's `Plan`, mirrored structurally — chain-4's
 // server/src/generation/plan.ts owns the canonical validated type; this module only renders one) ──
@@ -119,6 +128,15 @@ function nonEmptySections(...sections: string[]): string {
   return sections.filter((s) => s.trim().length > 0).join('\n\n');
 }
 
+/** `docs/content-policy.md`'s rating-rule section, verbatim — appended to the rewrite, generate and
+ *  repair system messages so generated software is steered toward a 13+ rating, not only filtered
+ *  at the door (spec content-policy "Generation prompts carry the rating rule"). Repair is covered
+ *  because it asks for the FULL corrected source and is therefore the last author of what ships;
+ *  the plan turn is not, because its JSON is never delivered to a device. */
+function ratingRuleAppendix(): string {
+  return loadContentPolicyDocument().ratingRule;
+}
+
 /** The clarify exchange's answers, rendered for any turn that should reflect them. Empty (and
  *  absent) mean the same thing — the user answered nothing — and render as no section at all. */
 function clarificationsSection(clarifications: Clarification[] | undefined): string {
@@ -179,7 +197,7 @@ const REWRITE_SYSTEM = [
 
 export function buildRewriteMessages(ctx: RewriteTurnContext): ModelMessage[] {
   return [
-    { role: 'system', content: REWRITE_SYSTEM },
+    { role: 'system', content: nonEmptySections(REWRITE_SYSTEM, ratingRuleAppendix()) },
     {
       role: 'user',
       content: nonEmptySections(
@@ -329,7 +347,7 @@ const GENERATE_INSTRUCTIONS = [
 ].join(' ');
 
 export function buildGenerateMessages(ctx: GenerateTurnContext, inputs: PromptInputs): ModelMessage[] {
-  const system = nonEmptySections(GENERATE_INSTRUCTIONS, sdkReferenceSection(inputs), fewShotSection(inputs));
+  const system = nonEmptySections(GENERATE_INSTRUCTIONS, ratingRuleAppendix(), sdkReferenceSection(inputs), fewShotSection(inputs));
   // Already pre-flighted by the composition root, so "present" here means "real, parseable source
   // that declares a default-exported defineApp" — the only kind worth showing the model.
   const currentSource = ctx.request.app?.source;
@@ -370,7 +388,7 @@ const REPAIR_INSTRUCTIONS = [
 ].join(' ');
 
 export function buildRepairMessages(ctx: RepairTurnContext, inputs: PromptInputs): ModelMessage[] {
-  const system = nonEmptySections(REPAIR_INSTRUCTIONS, sdkReferenceSection(inputs), fewShotSection(inputs));
+  const system = nonEmptySections(REPAIR_INSTRUCTIONS, ratingRuleAppendix(), sdkReferenceSection(inputs), fewShotSection(inputs));
   const user = nonEmptySections(
     `Request: ${ctx.request.prompt}`,
     planSection(ctx.plan),

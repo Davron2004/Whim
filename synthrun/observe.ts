@@ -618,15 +618,20 @@ export function mergeBudgets(overrides?: Partial<RunBudgets>): RunBudgets {
  * prevented). Returns the `mount_timeout` diagnostic when the budget fires with no paint and no
  * prior diagnostic — appended to `obs.state.diagnostics` before returning (never silent) — or
  * `null` when mount succeeded (or already failed) within budget.
+ *
+ * `signal` (public-generation-server design D12) ends the wait within one poll of aborting and
+ * returns `null` with no diagnostic: an abandoned run has no mount outcome, and the caller's own
+ * abort path ends it.
  */
-export async function awaitMount(obs: AttachedObservers, budgets: RunBudgets): Promise<ObservedDiagnostic | null> {
+export async function awaitMount(obs: AttachedObservers, budgets: RunBudgets, signal?: AbortSignal): Promise<ObservedDiagnostic | null> {
   const deadline = Date.now() + budgets.mountBudgetMs;
   const POLL_MS = 15;
+  const settled = (): boolean => signal?.aborted === true || obs.state.paintAtMs !== null || obs.state.diagnostics.length > 0;
   while (Date.now() < deadline) {
-    if (obs.state.paintAtMs !== null || obs.state.diagnostics.length > 0) return null;
+    if (settled()) return null;
     await sleep(POLL_MS);
   }
-  if (obs.state.paintAtMs !== null || obs.state.diagnostics.length > 0) return null;
+  if (settled()) return null;
   const diagnostic: ObservedDiagnostic = {
     kind: 'mount_timeout',
     severity: 'error',

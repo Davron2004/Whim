@@ -1,0 +1,32 @@
+# Build context for deploy/Dockerfile (design D2). The image never receives an env file, a
+# credential, VCS metadata, the mobile projects or any installed node_modules.
+.git
+**/node_modules
+**/.env
+**/.env.*
+**/*.env
+*.jks
+*.p8
+play-publisher*.json
+**/.DS_Store
+.agents
+.bundle
+.claude
+.codex
+.devcontainer
+.github
+.vscode
+android
+ios
+fastlane
+demo
+openspec
+deploy
+coverage
+graphify-out
+evals/.reports
+server/dist
+server/.data
+server/.logs
+src/runtime/generated
+build/generated

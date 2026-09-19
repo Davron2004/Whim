@@ -10,18 +10,10 @@
 import React, { useMemo } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { APP_RECORDS } from '../../runtime/generated/app-records';
-import type { AppRecord } from '../bridge';
 import { log } from '../logging';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
-
-// The baked fixtures the host can deliver by name on-device (records extracted at build time).
-const DELIVERABLE = ['tip-splitter', 'water-counter', 'latency-probe', 'pour-over-timer', 'sql-injector', 'cap-intruder', 'evil'] as const;
-
-function recordFor(name: string): AppRecord {
-  return APP_RECORDS[name] ?? { appId: name, name, manifest: { capabilities: [] } };
-}
+import { DEV_PROBE_FIXTURES, devProbeFixture } from './dev-probe-fixtures';
 
 export interface DevProbeScreenProps {
   onExit: () => void;
@@ -33,7 +25,7 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
 
   const verdictColor = verdictValue(s.contained, '#94a3b8', '#16a34a', '#dc2626');
   const verdictText = verdictValue(s.contained, 'running…', 'CONTAINED ✓', 'LEAK ✗');
-  const buttons = useMemo(() => DELIVERABLE, []);
+  const buttons = useMemo(() => DEV_PROBE_FIXTURES, []);
 
   return (
     <SafeAreaView style={styles.root}>
@@ -57,11 +49,14 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
           {s.lastError ? ` · err: ${s.lastError}` : ''}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>
-          {buttons.map((name) => (
-            <TouchableOpacity key={name} style={styles.btn} onPress={() => host.deliverByRecord(recordFor(name), name)}>
-              <Text style={styles.btnText}>{name}</Text>
-            </TouchableOpacity>
-          ))}
+          {buttons.map((name) => {
+            const fixture = devProbeFixture(name);
+            return (
+              <TouchableOpacity key={name} style={styles.btn} onPress={() => host.deliverBySource(fixture.record, fixture.source)}>
+                <Text style={styles.btnText}>{name}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
       <WebView

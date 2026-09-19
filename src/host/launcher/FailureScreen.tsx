@@ -16,8 +16,8 @@
 // literal — the suite scans this file for all three. The design's tinted panel fills (html:999)
 // have no token of their own, so they are composed as a low-alpha wash of the outcome hue itself,
 // the idiom `HistoryScreen.tsx` already uses for its current-version dot ring.
-import React, { useEffect } from 'react';
-import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import {
   COPY,
@@ -29,7 +29,10 @@ import {
 } from './copy';
 import RunTimeline from './RunTimeline';
 import type { RunJournalEntry } from './run-journal';
+import type { FlowNotice } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface FailureScreenProps {
   /** The terminal `failure` event's `reason`, or a plain-English client/stream-error summary. */
@@ -71,6 +74,10 @@ export interface FailureScreenProps {
    * where the section stays and falls back to its empty note.
    */
   attemptStarted?: boolean;
+  /** A refused Retry's notice (design D9/D10/D12): set only for the moment a live refusal is
+   *  still showing on this exact screen — its own `retryAt` gates the primary action here, the
+   *  same rule every gated step applies. Absent for every other shape of failure screen. */
+  notice?: FlowNotice;
   /** The developer-diagnostics gate's verdict, decided by the caller (decision #60(c)). */
   devMode?: boolean;
   /** The primary action: re-run the stored prompt when `retryable`, otherwise return to the
@@ -118,20 +125,15 @@ export default function FailureScreen({
   retryable = false,
   journal = null,
   attemptStarted = false,
+  notice,
   devMode = false,
   onRephrase,
   onBack,
   onDismiss,
 }: Readonly<FailureScreenProps>) {
   const p = SHELL_PALETTE;
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  const gated = useRetryGate(notice?.retryAt);
+  useSystemBack(onBack);
 
   const outcome = recovered ? STATUS_COLORS.done : p.danger;
   const rows = failureChecklistRows({ diagnostics, hasWorkingVersion });
@@ -143,7 +145,11 @@ export default function FailureScreen({
         <Text style={[TYPE_SCALE.stepTitle, { color: outcome }]}>
           {recovered ? COPY.failureRecoveredTitle : COPY.failureTitle}
         </Text>
-        <Text style={[TYPE_SCALE.body, styles.reason, { color: p.textMuted }]}>{reason}</Text>
+        {/* `notice` is set ONLY for a live refused-Retry moment, and its `hint` is always the
+            SAME text `reason` was just persisted with (`LauncherRoot.tsx#handleGenerateRefusal`) —
+            showing both would repeat the one sentence the user just read. The notice below already
+            says it, so the plain reason line is skipped for exactly this shape of screen. */}
+        {!notice && <Text style={[TYPE_SCALE.body, styles.reason, { color: p.textMuted }]}>{reason}</Text>}
 
         {attempts > 0 && (
           <View style={styles.attempts}>
@@ -196,12 +202,20 @@ export default function FailureScreen({
         )}
       </View>
 
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+
+      {/* Gated exactly like every other primary action (design D11): disabled with its label
+          kept while a refused Retry's retry window is still open, never a request of its own. */}
       <TouchableOpacity
         onPress={onRephrase}
+        disabled={gated}
         accessibilityRole="button"
-        style={[styles.action, { backgroundColor: p.text, borderColor: p.text }]}
+        style={[
+          styles.action,
+          gated ? { backgroundColor: p.card, borderColor: p.cardBorder } : { backgroundColor: p.text, borderColor: p.text },
+        ]}
       >
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
+        <Text style={[TYPE_SCALE.bodyEmphatic, { color: gated ? p.textMuted : p.onAccent }]}>
           {retryable ? COPY.screenErrorRetry : COPY.failureRephrase}
         </Text>
       </TouchableOpacity>

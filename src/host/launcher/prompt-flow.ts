@@ -40,6 +40,24 @@ export interface FlowQuestion {
 /** Answers by question id. A question the user skipped simply has no entry. */
 export type FlowAnswers = Readonly<Record<string, string>>;
 
+/**
+ * A service refusal's notice, carried on the step it landed on (design D9/D12; spec
+ * `service-refusals`). `tone` doubles as the text/sender-landing distinction ONLY the two codes
+ * with `landing: 'text'` (`content_policy`/`payload_too_large`) ever carry `danger` — so "clears
+ * when the text changes" can be decided from `tone` alone, with no second field to drift from
+ * `REFUSAL_RULES`. `retryAt` is the only clock-dependent field: `ServiceNotice` derives the
+ * copy-table retry line from it FRESH on every render (never a caption computed once and cached —
+ * a cached one goes stale the moment the window ends, still reading "in about 5 minutes" long
+ * after the action re-enabled), and `useNoticeWindowClear` (`ServiceNotice.tsx`) drops a `neutral`
+ * (sender-landing) notice's `retryAt` window the same way (design D12: "A sender refusal clears
+ * when its window ends").
+ */
+export interface FlowNotice {
+  readonly hint: string;
+  readonly tone: 'danger' | 'neutral';
+  readonly retryAt?: number;
+}
+
 /** One labelled plan row. `label` is empty for the single-row fallback, which renders unlabelled
  *  (the wire carried a rewritten string and no structured breakdown). */
 export interface FlowPlanRow {
@@ -52,6 +70,8 @@ export interface ComposeScreen {
   editing?: InstalledApp;
   /** The user's own words, verbatim — never live-lexed while it is being typed. */
   text: string;
+  /** A service refusal that landed here (`refusal-landing.ts#refusalLanding`), or none. */
+  notice?: FlowNotice;
 }
 
 export interface ClarifyScreen {
@@ -69,6 +89,9 @@ export interface ClarifyScreen {
    *  meaningless (and never read) once `loading` is false, so `backFrom`'s reconstruction of an
    *  already-answered clarify step omits it. */
   startedAt?: number;
+  /** A service refusal that landed here — always `sender`-tone: a `text`-landing refusal never
+   *  lands on clarify (it always returns to compose, where the refused words are edited). */
+  notice?: FlowNotice;
 }
 
 export interface PlanScreen {
@@ -96,6 +119,8 @@ export interface PlanScreen {
    *  been hand-edited only the rows still reflect what the user approved
    *  (`prompt-flow` spec "Editing a plan piece"). */
   edited: boolean;
+  /** A service refusal that landed here (a plan-started `generate`, always). */
+  notice?: FlowNotice;
 }
 
 export interface BuildScreen {
@@ -124,6 +149,17 @@ export type FlowScreen = ComposeScreen | ClarifyScreen | PlanScreen | BuildScree
 /** The compose step, optionally scoped to an app being re-prompted and optionally prefilled. */
 export function composeStep(editing?: InstalledApp, text = ''): ComposeScreen {
   return { kind: 'compose', ...(editing ? { editing } : {}), text };
+}
+
+/**
+ * Compose's `onChangeText`: the text always updates. A `text`-landing refusal notice (`danger`
+ * tone — the refusal was about the words themselves) clears with it (`service-refusals` "Changing
+ * the text ... SHALL clear the notice"). A `sender`-landing notice (`neutral` — an availability or
+ * limit refusal, unrelated to what is being retyped) survives a text edit; it clears only when its
+ * window ends or the user leaves the step.
+ */
+export function composeTextChanged(screen: ComposeScreen, text: string): ComposeScreen {
+  return { ...screen, text, notice: screen.notice?.tone === 'danger' ? undefined : screen.notice };
 }
 
 /**
@@ -247,7 +283,9 @@ export function withPlan(
  *  `label:text` string the UI otherwise keys off of would collide. */
 export function updatePlanRow(screen: PlanScreen, index: number, text: string): PlanScreen {
   const rows = screen.rows.map((row, i) => (i === index ? { ...row, text } : row));
-  return { ...screen, rows, edited: true };
+  // Saving a row edit clears a `text`-landing (`danger`-tone) notice, the same rule `composeTextChanged`
+  // applies — a `sender`-landing notice survives it, unrelated to the plan's own words.
+  return { ...screen, rows, edited: true, notice: screen.notice?.tone === 'danger' ? undefined : screen.notice };
 }
 
 /**
@@ -334,6 +372,17 @@ export function backFrom(screen: FlowScreen): FlowScreen | 'home' | null {
  */
 export function buildBackAction(sheetOpen: boolean): 'close-sheet' | 'leave' {
   return sheetOpen ? 'close-sheet' : 'leave';
+}
+
+/**
+ * Header `Back` and system back on the plan step (design D4; spec launcher-screen-exits "System
+ * back and the visible control perform the same action" — "while a row is being edited, both the
+ * header `Back` and system back SHALL cancel the row edit and keep the step"). `PlanStep` builds
+ * one `handleBack` from this and passes it to both `useSystemBack` and `FlowHeader`, so a tap on
+ * `Back` mid-edit can no longer discard a draft the way the raw `onBack` prop used to.
+ */
+export function planBackAction(editingRow: boolean): 'cancel-edit' | 'leave' {
+  return editingRow ? 'cancel-edit' : 'leave';
 }
 
 /** The primary action's label: plain words always, and the SAME words whether or not the step is

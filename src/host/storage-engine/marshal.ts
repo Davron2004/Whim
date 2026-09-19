@@ -12,10 +12,12 @@
  *                        encoded (numbers validated numeric; strings quote-escaped) so an
  *                        adversarial default in an artifact cannot inject DDL.
  *
- * No `Buffer` here — `byteLen` uses TextEncoder so it runs unchanged on Hermes (which
- * ships TextEncoder; the version-store polyfills note it lacks only TextDecoder).
+ * No `Buffer` here — `byteLen` uses TextEncoder, which Hermes ships natively; `dec` below
+ * uses TextDecoder, which Hermes does not, so this file imports the Hermes polyfills for
+ * its own guarantee (design D8) rather than depending on some other module loading first.
  */
 
+import '../platform/hermes-polyfills';
 import { FieldType, JsonValue, storageError } from './contract';
 
 /** node:sqlite / op-sqlite both accept these as bind parameters. */

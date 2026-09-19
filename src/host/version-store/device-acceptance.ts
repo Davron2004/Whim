@@ -16,7 +16,7 @@
  * logcat (`ReactNativeJS`, truncates ~4 KB) and rendered on-screen in full.
  */
 
-import './polyfills';
+import '../platform/hermes-polyfills';
 import * as git from 'isomorphic-git';
 import { VersionStore } from './engine';
 import { MemoryFs } from './fs/memory-fs';

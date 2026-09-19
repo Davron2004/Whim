@@ -27,7 +27,7 @@ import { createStorageEngine } from '../storage-engine';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { BackPolicy, UNHANDLED_PRESS_WINDOW_MS } from './back-policy';
-import { paintAccepted } from './boot-state';
+import { createStartupDeadline, type StartupDeadline } from './boot-state';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
@@ -37,27 +37,6 @@ import { tearDownLiveRealm } from './teardown';
 // place RN cue APIs meet the bridge; the rows themselves stay RN-free (effects-and-cues D5).
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
-// A delivered bundle that never paints (dropped `paint` frame, a realm gone dark pre-render)
-// otherwise leaves a blank screen with no recovery path -- arm a watchdog at delivery and
-// disarm it the moment a `paint` frame actually lands.
-const PAINT_WATCHDOG_MS = 6000;
-
-type TimerRef = { current: ReturnType<typeof setTimeout> | null };
-
-/** Clear a possibly-armed timer ref in place (idempotent — safe when already null). */
-function disarmTimer(ref: TimerRef): void {
-  if (ref.current) { clearTimeout(ref.current); ref.current = null; }
-}
-
-/** Arm the paint watchdog: on expiry it self-clears then reports the app as never painted. */
-function armPaintWatchdog(ref: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
-  disarmTimer(ref);
-  ref.current = setTimeout(() => {
-    ref.current = null;
-    setS((p) => ({ ...p, lastError: 'app never became visible' }));
-  }, PAINT_WATCHDOG_MS);
-}
-
 // The `error` frame's `where` values a bundle can never recover a paint from (loader.js: no
 // AppSpec export, a render throw, or the delivery wrapper itself throwing before any script even
 // runs) -- distinct from post-paint diagnostics (e.g. `where: 'probes'`), which stay
@@ -66,11 +45,10 @@ function isFatalErrorWhere(where: unknown): boolean {
   return where === 'bundle' || where === 'mount' || where === 'deliver';
 }
 
-/** A `delivery` frame only arms the paint watchdog when the bundle was actually ACCEPTED
- *  (loader.js: `{accepted: true/false, ...}`) -- a refused delivery never mounts, so a countdown
- *  to a takeover would be redundant with the `error` frame the refusal path also posts. */
-function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (payload?.accepted === true) armPaintWatchdog(paintTimer, setS);
+/** An accepted delivery restarts the deadline so a normally delayed loader still receives the
+ *  established full six-second paint allowance. A refused delivery has its fatal `error` frame. */
+function handleDeliveryFrame(payload: any, startupDeadline: StartupDeadline): void {
+  if (payload?.accepted === true) startupDeadline.begin();
 }
 
 /** A `paint` frame ends the container's boot state (`boot-state.ts`) and disarms the watchdog --
@@ -79,16 +57,15 @@ function handleDeliveryFrame(payload: any, paintTimer: TimerRef, setS: (fn: (p: 
  *  verbatim, so its `payload.generation` is the iframe-local counter and means nothing here
  *  (`boot-state.ts` carries the full reasoning). `generation` on HostState is owned by the
  *  `probes` branch alone. */
-function handlePaintFrame(frame: any, paintTimer: TimerRef, setS: (fn: (p: HostState) => HostState) => void): void {
-  if (!paintAccepted(frame)) return;
-  disarmTimer(paintTimer);
+function handlePaintFrame(frame: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
+  if (!startupDeadline.acceptPaint(frame)) return;
   setS((p) => ({ ...p, paintMs: frame.payload?.mountToFirstPaintMs ?? null }));
 }
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
  *  non-fatal diagnostic (e.g. a post-paint probes failure) never triggers a full-screen takeover
  *  on an otherwise-healthy running app. */
-function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) => void): void {
+function handleErrorFrame(payload: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
   if (!isFatalErrorWhere(payload?.where)) {
     // Record-don't-swallow (the same convention this file uses elsewhere): a non-fatal frame
     // never escalates to the product surface, but it must not vanish either -- DevProbeScreen's
@@ -97,6 +74,7 @@ function handleErrorFrame(payload: any, setS: (fn: (p: HostState) => HostState) 
     log.debug(CHANNELS.page, 'non-fatal error frame from the realm', { where: payload?.where, detail: payload?.message ?? payload?.name });
     return;
   }
+  startupDeadline.cancel();
   setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error' }));
 }
 
@@ -138,6 +116,12 @@ interface LiveRealm {
 export interface UseMiniAppHostOptions {
   /** Called when the guaranteed-exit policy (or the floating affordance) decides to leave. */
   onExit?: () => void;
+  /** True while a host-layer sheet (the report sheet) covers this realm — a back press then
+   *  resolves to `close-overlay` instead of forwarding into the realm or counting toward the
+   *  guaranteed-exit policy (mini-app-back-navigation delta, design D14). */
+  overlayOpen?: boolean;
+  /** Called when a back press resolves to `close-overlay` — the caller closes its own sheet. */
+  onCloseOverlay?: () => void;
 }
 
 export interface MiniAppHost {
@@ -145,10 +129,10 @@ export interface MiniAppHost {
   webRef: React.RefObject<WebView | null>;
   state: HostState;
   onMessage: (data: string) => void;
-  /** Product path: launch an installed app by host record + bundle SOURCE (#5 D3). */
+  /** Launch a host record by bundle SOURCE (#5 D3) — the product path, and (review fix F3) the
+   *  dev probe's fixture buttons too, both reading the same real bundle text rather than a
+   *  page-side deliver-by-name lookup. */
   deliverBySource: (record: AppRecord, source: string, engineAppId?: string, theme?: object) => void;
-  /** Dev/probe path: launch a baked fixture by its host record + display name. */
-  deliverByRecord: (record: AppRecord, bundleName: string) => void;
   /** The host→realm control surface (injectJavaScript into the OUTER page only). */
   control: (js: string) => void;
   /** Tap the floating affordance / explicit leave (bypasses the realm entirely). */
@@ -167,11 +151,23 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const genCounter = useRef(1);
   const policy = useRef(new BackPolicy());
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const paintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupDeadline = useRef(createStartupDeadline(() => {
+    setS((p) => (
+      p.lastError || p.paintMs !== null
+        ? p
+        : { ...p, lastError: 'app never became visible' }
+    ));
+  }));
   // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
   const engineId = useRef<string | null>(null);
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
   onExitRef.current = opts.onExit;
+  // Read fresh on every render (never re-subscribes the BackHandler listener below) — the same
+  // ref idiom onExitRef uses.
+  const overlayOpenRef = useRef(opts.overlayOpen ?? false);
+  overlayOpenRef.current = opts.overlayOpen ?? false;
+  const onCloseOverlayRef = useRef<(() => void) | undefined>(opts.onCloseOverlay);
+  onCloseOverlayRef.current = opts.onCloseOverlay;
 
   // The host→page control surface (#41 seam + F4 negative control + sysret relay + nav-back).
   // injectJavaScript runs in the OUTER page only; it cannot reach into the cross-origin iframe.
@@ -200,7 +196,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       }
       live.current = null;
       if (popTimer.current) { clearTimeout(popTimer.current); popTimer.current = null; }
-      disarmTimer(paintTimer);
+      startupDeadline.current.cancel();
       const generation = ++genCounter.current;
       engineId.current = engineAppId;
       // paintMs is reset with the rest: it is the "has painted" signal the container's boot state
@@ -229,12 +225,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     [],
   );
 
-  const deliverByRecord = useCallback((record: AppRecord, bundleName: string) => {
-    const realm = bind(record, bundleName, record.appId);
-    if (!realm) return;
-    control(`window.__whimControl.reinject({reset:true,bundle:${JSON.stringify(bundleName)},generation:${realm.generation}})`);
-  }, [bind, control]);
-
   const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
     const id = engineAppId ?? record.appId;
     const realm = bind(record, record.name, id);
@@ -246,6 +236,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       setS((p) => ({ ...p, lastError: `deliver ${record.name}: ${(e as Error).message}` }));
       return;
     }
+    // Start before page control: native loader/rule-list failure can suppress every page frame.
+    startupDeadline.current.begin();
     control(js);
   }, [bind, control]);
 
@@ -294,7 +286,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, lastTap: `${m.payload?.type ?? '?'} "${m.payload?.label ?? ''}"` }));
         return;
       case 'paint':
-        handlePaintFrame(m, paintTimer, setS);
+        handlePaintFrame(m, startupDeadline.current, setS);
         return;
       case 'probes': {
         const r = m.payload || {};
@@ -312,10 +304,10 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         setS((p) => ({ ...p, rejectedForgeries: p.rejectedForgeries + 1 }));
         return;
       case 'delivery':
-        handleDeliveryFrame(m.payload, paintTimer, setS);
+        handleDeliveryFrame(m.payload, startupDeadline.current);
         return;
       case 'error':
-        handleErrorFrame(m.payload, setS);
+        handleErrorFrame(m.payload, startupDeadline.current, setS);
         return;
       default:
         return; // unknown kind → ignore (never act on a frame by its tag)
@@ -323,7 +315,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   }, [control]);
 
   const exit = useCallback(() => {
-    disarmTimer(paintTimer);
+    startupDeadline.current.cancel();
     tearDownLiveRealm(live, popTimer);
     onExitRef.current?.();
   }, []);
@@ -333,7 +325,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     // ticking (fatal error landed before paint) can fire AFTER Retry clears lastError but before
     // the new WebView's onLoadEnd re-delivers into a fresh realm, re-setting lastError for an
     // invisible reason.
-    disarmTimer(paintTimer);
+    startupDeadline.current.cancel();
     setS((p) => ({ ...p, lastError: null }));
   }, []);
 
@@ -342,7 +334,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // press window; `exit` leaves to the launcher; `ignore` (no realm) lets the OS handle back.
   useEffect(() => {
     const onBack = (): boolean => {
-      const action = policy.current.backPress();
+      const action = policy.current.backPress(overlayOpenRef.current);
+      if (action === 'close-overlay') { onCloseOverlayRef.current?.(); return true; }
       if (action === 'forward') {
         control('window.__whimControl.navBack()');
         if (popTimer.current) clearTimeout(popTimer.current);
@@ -363,7 +356,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   // Runs ONLY on unmount (empty deps). Reads `live` and `popTimer` as refs so the closure is
   // never stale. Does NOT call onExit — unmount already means leaving; onExit is the exit()-path
   // caller's responsibility (explicit user-initiated leave only).
-  useEffect(() => () => { tearDownLiveRealm(live, popTimer); disarmTimer(paintTimer); }, []);
+  useEffect(() => () => { tearDownLiveRealm(live, popTimer); startupDeadline.current.cancel(); }, []);
 
   return {
     runtimeHtml: RUNTIME_HTML,
@@ -371,7 +364,6 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     state: s,
     onMessage,
     deliverBySource,
-    deliverByRecord,
     control,
     exit,
     clearLastError,

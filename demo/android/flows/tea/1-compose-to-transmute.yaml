@@ -4,7 +4,7 @@
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/1-compose-to-transmute.yaml \
 #        --device emulator-5554 --out demo/raw/<date>/shot-1 --name take-1 \
-#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.anycognition.whim --tighten
 #
 # PRECONDITIONS (see ../1-4-compose-to-transmute.yaml for the reasoning behind every idiom here):
 #   * Stock geometry (no `wm size` override). `--size 1080x2404` keeps the native aspect; the
@@ -15,7 +15,7 @@
 #   * Generation server up on :8787 (stock prompts; the 2026-09 demo addendum is gone for good).
 #
 # This take creates the ONE tea-timer instance every later shot is filmed on.
-appId: com.whim
+appId: com.anycognition.whim
 ---
 - extendedWaitUntil:
     visible: "YOUR APPS"

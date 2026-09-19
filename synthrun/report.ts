@@ -16,9 +16,9 @@ import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
 import { wireCapabilityBridge, type CapabilityTraceEntry } from './capability';
 import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
-import type { SynthRunSession } from './session';
+import type { RunContext, SynthRunSession } from './session';
 import { sweepApp } from './sweep';
-import type { RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
+import type { EgressBlockedTraceEntry, RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
 
 const CLOSED_KINDS: readonly string[] = DIAGNOSTIC_KINDS;
 
@@ -91,6 +91,12 @@ export function denialDiagnostic(entry: DenialTraceEntry): RuntimeDiagnostic | n
   };
 }
 
+/** The run's egress refusals as its one `egress_blocked` trace entry: the fact and the saturated
+ *  count, anchored on the run's `startedAt`. Nothing about any attempted destination. */
+function egressBlockedEntry(ctx: RunContext): EgressBlockedTraceEntry {
+  return { kind: 'egress_blocked', method: 'network', atMs: (ctx.egress.firstAt ?? ctx.startedAt) - ctx.startedAt, count: ctx.egress.count };
+}
+
 /**
  * Build the `RunCandidate` entry point bound to one session. Each call: statically extracts the
  * candidate's manifest (capabilities + schema) ONLY to build the `AppRecord` capability wiring
@@ -144,7 +150,9 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
     }
 
     try {
-      const mountDiag = await awaitMount(obs, budgets);
+      // `ctx.signal` is the caller's signal joined with the browser's connection: every wait below
+      // ends promptly on either (design D12/D14).
+      const mountDiag = await awaitMount(obs, budgets, ctx.signal);
 
       let sweepMs = 0;
       let declared: string[] = [];
@@ -158,6 +166,7 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         budgets,
         async () => {
           if (mountDiag) return; // a hung mount never reaches a swept-able page (spec: no reason to burn the budget)
+          if (ctx.signal.aborted) return; // an abandoned run is never swept
           const sweepStart = Date.now();
           const sweep = await sweepApp(ctx, obs, source, budgets);
           sweepMs = Date.now() - sweepStart;
@@ -167,8 +176,12 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
           perScreenMs = sweep.perScreenMs;
           diagnostics.push(...sweep.diagnostics);
         },
-        opts.signal,
+        ctx.signal,
       );
+
+      // A report read off a dead browser would blame the candidate for the crash.
+      const lost = ctx.browserLost();
+      if (lost) throw lost;
 
       // Close out the verdict BEFORE the copy below, so a run that never saw an authenticated
       // `probes` frame carries `containment_unobserved` and `contained: null` never travels
@@ -214,10 +227,14 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
           sweepMs,
           perScreenMs,
         },
-        trace: wiring.trace,
+        // Read once, here: refusals recorded after this point belong to a report already built.
+        trace: ctx.egress.count > 0 ? [...wiring.trace, egressBlockedEntry(ctx)] : wiring.trace,
         screens: { declared, visited },
         budgets,
       };
+    } catch (err) {
+      // Any failure once the browser has gone (a Playwright call on a closed target) is the crash.
+      throw ctx.browserLost() ?? err;
     } finally {
       obs.detach();
       await dispose();

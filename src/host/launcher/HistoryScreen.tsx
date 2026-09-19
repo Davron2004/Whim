@@ -15,7 +15,7 @@
 // summary) and render through the one shared `WhimProse` renderer; everything else on this
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import { InstalledApp } from './app-index';
@@ -55,6 +55,7 @@ import {
 import { BreathingView } from './flow-skeletons';
 import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
+import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
 
 export interface HistoryScreenProps {
@@ -70,6 +71,9 @@ export interface HistoryScreenProps {
    * chain supplies this callback, the button renders and is tappable but does nothing.
    */
   onChangeIt?: (app: InstalledApp) => void;
+  /** Opens the report sheet for the version the user is currently on (content-reporting
+   *  "Reporting from history") — a header action; no history row gains one. */
+  onReport: () => void;
 }
 
 type Filter = 'all' | FilterGroup;
@@ -122,7 +126,7 @@ const KIND_LABEL: Record<SummaryKind, string> = {
   Fixed: COPY.historyKindFixed,
 };
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt }: Readonly<HistoryScreenProps>) {
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport }: Readonly<HistoryScreenProps>) {
   const p = SHELL_PALETTE;
   const appHue = tileColor(app.name, app.record.manifest);
 
@@ -152,13 +156,7 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access, app]);
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   useEffect(() => {
     return () => {
@@ -261,6 +259,14 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt }: Reado
             </Text>
           )}
         </View>
+        <TouchableOpacity
+          onPress={onReport}
+          hitSlop={10}
+          accessibilityRole="button"
+          style={[styles.headerReportBtn, { borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.historyReportAction}</Text>
+        </TouchableOpacity>
       </View>
 
       {!loading && (
@@ -607,6 +613,13 @@ const styles = StyleSheet.create({
   // Design :24's `min-width:0`: without it a long app name pushes the title past the now
   // fixed-width back button instead of wrapping inside the header.
   headerText: { flex: 1 },
+  headerReportBtn: {
+    borderRadius: RADIUS.chip,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    flexShrink: 0,
+  },
   subtitle: { marginTop: 2 },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },
