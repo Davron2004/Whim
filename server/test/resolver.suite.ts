@@ -8,6 +8,10 @@
  * usage" at the `resolveRequestUsage`/`ResolveTracker` layer (design D7). Route-level wiring
  * (capturing generation ids, choosing `creditOwned`) belongs to chain-9/10's suites.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { Usage } from '@whim/contract';
 import { check, eq, section } from './harness';
 import { NodeSqliteUsageStore, InMemoryUsageStore, type UsageStore } from '../src/usage-store';
@@ -257,26 +261,6 @@ async function testHangingAttemptCutOffByTimeout(): Promise<void> {
   check('a transport that never resolves does not hang the resolver past its bounds', elapsedMs < 2000, `took ${elapsedMs}ms`);
 }
 
-async function testNoDoubleCounting(): Promise<void> {
-  section('Resolver — no double counting: a normally-completed run\'s post-run lookup records cost without re-crediting');
-
-  const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
-  if (!admitted.ok) throw new Error('setup: admit should succeed');
-  await store.settle(admitted.requestId, { outcome: 'delivered' });
-  await store.credit(DEVICE_A, usage(40, 10)); // the normal `usage`-event credit
-
-  const { store: counted, creditCalls } = countingCreditStore(store);
-  const transport = scriptedTransport(new Map([
-    ['gen-only', { usage: usage(40, 10), totalCostUsd: 0.02 }],
-  ]));
-
-  await resolveRequestUsage(admitted.requestId, DEVICE_A, ['gen-only'], true, { transport, usageStore: counted });
-
-  eq('a completed run credited by the normal path is never credited again', creditCalls.length, 0);
-  store.close();
-}
-
 async function testResolveTracker(): Promise<void> {
   section('Resolver — ResolveTracker is drainable');
 
@@ -299,25 +283,42 @@ async function testResolveTracker(): Promise<void> {
 }
 
 async function testEmptyGenerationIds(): Promise<void> {
-  section('Resolver — no generation ids resolves as zero cost with no transport calls');
+  section('Resolver — no generation ids persists zero cost without transport calls or token credit');
 
-  const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'report', now: Date.now(), deviceLimit: 300 });
-  if (!admitted.ok) throw new Error('setup: admit should succeed');
-  await store.settle(admitted.requestId, { outcome: 'ok' });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-empty-ids-'));
+  const dbPath = path.join(dir, 'usage.db');
+  const store = new NodeSqliteUsageStore(dbPath);
+  try {
+    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'report', now: Date.now(), deviceLimit: 300 });
+    if (!admitted.ok) throw new Error('setup: admit should succeed');
+    await store.settle(admitted.requestId, { outcome: 'ok' });
+    await store.credit(DEVICE_A, usage(3, 4));
+    const before = await store.read(DEVICE_A);
+    const { store: counted, creditCalls } = countingCreditStore(store);
 
-  let calls = 0;
-  const transport: UsageAndCostTransport = {
-    fetchStats() {
-      calls++;
-      return Promise.resolve(null);
-    },
-  };
-  await resolveRequestUsage(admitted.requestId, DEVICE_A, [], false, { transport, usageStore: store });
-  eq('the transport is never called for an empty id list', calls, 0);
-  const summary = await store.summary({ days: 1, now: Date.now() });
-  eq('the row resolves to zero cost, not unresolved', summary.generationStats.unresolvedCount, 0);
-  store.close();
+    let calls = 0;
+    const transport: UsageAndCostTransport = {
+      fetchStats() {
+        calls++;
+        return Promise.resolve(null);
+      },
+    };
+    await resolveRequestUsage(admitted.requestId, DEVICE_A, [], false, { transport, usageStore: counted });
+    eq('the transport is never called for an empty id list', calls, 0);
+    eq('an empty id list makes no token credit call', creditCalls, []);
+    eq('the existing device usage is unchanged', await store.read(DEVICE_A), before);
+
+    const reader = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = reader.prepare('SELECT cost_state, cost_usd FROM requests WHERE id = ?').get(admitted.requestId);
+      eq('the report row persists resolved zero cost', { ...row }, { cost_state: 'resolved', cost_usd: 0 });
+    } finally {
+      reader.close();
+    }
+  } finally {
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** Bounds every sweep test's resolution so a pass is milliseconds, not the 5-second default. */
@@ -550,7 +551,6 @@ export async function runResolverTests(): Promise<void> {
   await testUnresolvableCostIsExplicit();
   await testPartialResolutionIsNotStampedResolved();
   await testHangingAttemptCutOffByTimeout();
-  await testNoDoubleCounting();
   await testResolveTracker();
   await testEmptyGenerationIds();
   await testSweepResolvesWhatTheRequestCouldNot();

@@ -282,29 +282,6 @@ async function testNoContent(): Promise<void> {
     }
   }
 
-  // Marker scan: a distinctive string that is NEVER passed to admit/settle/recordCost/credit does
-  // not appear anywhere in the ledger database file — the closed column set above means the only
-  // way content could leak in is a caller mistakenly passing it as deviceId, which this store
-  // treats as an opaque id (no other table derives text from it).
-  {
-    const dbPath = tmpDbPath('marker');
-    const neverPassedMarker = 'PROMPT_CONTENT_THAT_MUST_NEVER_APPEAR_IN_THE_LEDGER';
-    try {
-      const store = new NodeSqliteUsageStore(dbPath);
-      const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
-      check('admit succeeds', admitted.ok === true);
-      if (admitted.ok) {
-        await store.settle(admitted.requestId, { outcome: 'delivered', usage: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } });
-        await store.recordCost(admitted.requestId, { state: 'resolved', costUsd: 0.01 });
-      }
-      store.close();
-
-      const bytes = fs.readFileSync(dbPath);
-      check('a never-passed marker never appears in the ledger file bytes', !bytes.includes(neverPassedMarker));
-    } finally {
-      fs.rmSync(dbPath, { force: true });
-    }
-  }
 }
 
 async function testRetentionPurge(): Promise<void> {

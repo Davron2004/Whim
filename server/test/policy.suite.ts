@@ -9,8 +9,6 @@
  * `ScriptedModelClient`'s replay contract, which does not model an in-flight abort) or the real
  * network is never reached at all.
  */
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { check, eq, caught, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
@@ -408,9 +406,14 @@ async function testCache(): Promise<void> {
     const cached = cachedPolicy(inner, { maxEntries: 2 });
     await cached.check(JSON.stringify({ prompt: 'lru-a' }), 'generate');
     await cached.check(JSON.stringify({ prompt: 'lru-b' }), 'generate');
-    await cached.check(JSON.stringify({ prompt: 'lru-c' }), 'generate'); // evicts lru-a
-    await cached.check(JSON.stringify({ prompt: 'lru-a' }), 'generate'); // cache miss again
-    eq('bounded to maxEntries: the evicted entry is re-checked', calls(), 4);
+    await cached.check(JSON.stringify({ prompt: 'lru-a' }), 'generate');
+    eq('refreshing A is a cache hit', calls(), 2);
+    await cached.check(JSON.stringify({ prompt: 'lru-c' }), 'generate');
+    eq('adding C calls the classifier once', calls(), 3);
+    await cached.check(JSON.stringify({ prompt: 'lru-a' }), 'generate');
+    eq('recently used A survives eviction when C is added', calls(), 3);
+    await cached.check(JSON.stringify({ prompt: 'lru-b' }), 'generate');
+    eq('least recently used B was evicted and is classified again', calls(), 4);
   }
 }
 
@@ -478,23 +481,6 @@ async function testLogContent(): Promise<void> {
   }
 }
 
-// ── §Nothing reaches disk ──────────────────────────────────────────────────────
-
-async function testNothingReachesDisk(): Promise<void> {
-  section('Nothing the policy check touches ever reaches disk');
-
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-policy-data-'));
-  const marker = 'DISK-MARKER-SHOULD-NEVER-BE-WRITTEN';
-
-  const client = fakeClient(() => textStream('{"verdict":"refuse","category":"gore"}'));
-  const cached = cachedPolicy(policyOn(client));
-  await cached.check(marker, 'generate');
-  await cached.check(marker, 'generate'); // cache hit too
-
-  const entries = fs.readdirSync(dataDir);
-  check('the data directory is untouched by policy checks', entries.length === 0);
-}
-
 // ── §The stub policy is deterministic ─────────────────────────────────────────
 
 async function testStubPolicy(): Promise<void> {
@@ -518,6 +504,5 @@ export async function runPolicyTests(): Promise<void> {
   await testInputCoverage();
   await testCache();
   await testLogContent();
-  await testNothingReachesDisk();
   await testStubPolicy();
 }

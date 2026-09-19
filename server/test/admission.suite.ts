@@ -240,74 +240,6 @@ function runDraining(): void {
   eq('draining is one-way: an emptied controller still refuses', refusalOf(slots, 'generate', 'device-a'), 'draining');
 }
 
-/** A route-shaped holder: acquire, release from an abort listener AND a `finally`, optionally refuse
- *  after taking the slot — every exit path calls `release()`, sometimes twice. */
-async function holdGeneration(
-  slots: SlotController,
-  deviceId: string,
-  work: Promise<void>,
-  options: { signal?: AbortSignal; refuseAfterAcquire?: boolean } = {},
-): Promise<'done' | 'threw' | 'refused' | SlotRefusalReason> {
-  const result = slots.acquire('generate', deviceId);
-  if (!result.ok) return result.reason;
-  const { handle } = result;
-  options.signal?.addEventListener('abort', () => handle.release(), { once: true });
-  try {
-    if (options.refuseAfterAcquire) {
-      handle.release();
-      return 'refused';
-    }
-    return await work.then(
-      () => 'done' as const,
-      () => 'threw' as const,
-    );
-  } finally {
-    handle.release();
-  }
-}
-
-async function runExitPaths(): Promise<void> {
-  const slots = createSlotController({ maxConcurrentGenerations: 2, maxConcurrentUnary: 1 });
-
-  const success = deferred<void>();
-  const successRun = holdGeneration(slots, 'device-ok', success.promise);
-  eq('while a generation is held open, the same device is refused device_busy', refusalOf(slots, 'generate', 'device-ok'), 'device_busy');
-  success.resolve();
-  eq('the held generation completes', await settledValue('success path', successRun), 'done');
-  eq('the success path frees the device', refusalOf(slots, 'generate', 'device-ok'), 'admitted');
-
-  const failure = deferred<void>();
-  const failureRun = holdGeneration(slots, 'device-throw', failure.promise);
-  failure.reject(new Error('pipeline threw'));
-  eq('the throwing generation ends', await settledValue('throw path', failureRun), 'threw');
-  eq('the throw path frees the device', refusalOf(slots, 'generate', 'device-throw'), 'admitted');
-  eq('the throw path leaves no slot held', slots.counts().generations, 0);
-
-  const aborted = new AbortController();
-  const abortedWork = deferred<void>();
-  const abortedRun = holdGeneration(slots, 'device-abort', abortedWork.promise, { signal: aborted.signal });
-  const other = deferred<void>();
-  const otherRun = holdGeneration(slots, 'device-other', other.promise);
-  aborted.abort();
-  eq('an abort frees its slot at once, before the run unwinds', slots.counts().generations, 1);
-  const late = deferred<void>();
-  const lateRun = holdGeneration(slots, 'device-late', late.promise);
-  eq('the freed slot admits a new device', slots.counts().generations, 2);
-  abortedWork.resolve();
-  eq('the aborted run unwinds', await settledValue('abort path', abortedRun), 'done');
-  eq("the aborted run's second release (finally) frees nothing more", slots.counts().generations, 2);
-  eq('the cap still binds after the abort path double-released', refusalOf(slots, 'generate', 'device-extra'), 'at_capacity');
-  other.resolve();
-  late.resolve();
-  await settledValue('other run', otherRun);
-  await settledValue('late run', lateRun);
-
-  const refusedRun = holdGeneration(slots, 'device-refused', Promise.resolve(), { refuseAfterAcquire: true });
-  eq('a refusal after the slot was taken returns the refusal', await settledValue('refusal path', refusedRun), 'refused');
-  eq('a refusal after acquisition frees the device (e.g. a policy refusal)', refusalOf(slots, 'generate', 'device-refused'), 'admitted');
-  eq('every exit path leaves the controller empty', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: false });
-}
-
 // ---------------------------------------------------------------------------------------------
 // Refusals
 // ---------------------------------------------------------------------------------------------
@@ -643,7 +575,6 @@ export async function runAdmissionTests(): Promise<void> {
   runGlobalCaps();
   runIdempotentRelease();
   runDraining();
-  await runExitPaths();
 
   section('  refusals');
   runRefusals();

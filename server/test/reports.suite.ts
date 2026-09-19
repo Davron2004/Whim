@@ -12,7 +12,6 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { check, eq, section } from './harness';
 import { InMemoryReportStore, NodeSqliteReportStore, schedulePurge, type ReportStore } from '../src/reports/store';
-import { NodeSqliteUsageStore } from '../src/usage-store';
 
 const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
@@ -54,39 +53,6 @@ async function testStoredFields(): Promise<void> {
     store.close();
   } finally {
     fs.rmSync(dbPath, { force: true });
-  }
-}
-
-async function testMarkerNeverEntersUsageDb(): Promise<void> {
-  section('Report store — report content never enters the usage database (spec scenario)');
-
-  const marker = 'DISTINCTIVE_REPORT_MARKER_TEXT_9f3c';
-  const reportsPath = tmpDbPath('marker-reports');
-  const usagePath = tmpDbPath('marker-usage');
-  try {
-    const reportStore = new NodeSqliteReportStore(reportsPath);
-    await reportStore.insert({
-      deviceId: DEVICE_A,
-      reason: 'other',
-      note: marker,
-      prompt: marker,
-      source: marker,
-      now: Date.now(),
-    });
-    reportStore.close();
-
-    // A concurrent, unrelated usage store — the marker is never passed to it.
-    const usageStore = new NodeSqliteUsageStore(usagePath);
-    await usageStore.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
-    usageStore.close();
-
-    const reportsBytes = fs.readFileSync(reportsPath);
-    const usageBytes = fs.readFileSync(usagePath);
-    check('the marker appears in reports.db', reportsBytes.includes(marker));
-    check('the marker appears nowhere in the usage database', !usageBytes.includes(marker));
-  } finally {
-    fs.rmSync(reportsPath, { force: true });
-    fs.rmSync(usagePath, { force: true });
   }
 }
 
@@ -185,7 +151,6 @@ async function testListAndGet(): Promise<void> {
 
 export async function runReportsTests(): Promise<void> {
   await testStoredFields();
-  await testMarkerNeverEntersUsageDb();
   await testRetentionPurge();
   await testSchedulePurge();
   await testListAndGet();

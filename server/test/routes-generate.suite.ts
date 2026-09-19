@@ -1095,8 +1095,27 @@ async function testDataDirectoryHoldsOnlyTheTwoStores(): Promise<void> {
 
     eq('clarify with a marker → 200', (await post('/v1/clarify', { prompt: `a tracker ${markers.clarify}` })).status, 200);
     eq('rewrite with a marker → 200', (await post('/v1/rewrite', { prompt: `a tracker ${markers.rewrite}` })).status, 200);
-    await readEvents('generate with a marker', await post('/v1/generate', { prompt: `a tracker ${markers.generate}` }));
-    eq('report with a marker → 202', (await post('/v1/report', { reason: 'other', note: markers.report, prompt: markers.report })).status, 202);
+    const generated = await post('/v1/generate', { prompt: `a tracker ${markers.generate}` });
+    eq('generate with a marker → 200', generated.status, 200);
+    const events = await readEvents('generate with a marker', generated);
+    eq('the marker generation delivers exactly one result', events.filter((e) => e.type === 'result' || e.type === 'failure').map((e) => e.type), ['result']);
+    const report = {
+      reason: 'other',
+      note: `${markers.report}-note`,
+      appName: `${markers.report}-app`,
+      prompt: `${markers.report}-prompt`,
+      source: `${markers.report}-source`,
+    };
+    const reported = await post('/v1/report', report);
+    eq('report with markers in every content field → 202', reported.status, 202);
+    const { reportId } = await reported.json() as { reportId: string };
+    check('the accepted report has an id', typeof reportId === 'string' && reportId.length > 0);
+    eq('the stored report preserves every supplied field', await reportStore.get(reportId), {
+      reportId,
+      receivedAt: AT_2200_UTC,
+      deviceId: DEVICE_A,
+      ...report,
+    });
     await drained('data directory', tracker);
     usageStore.close();
     reportStore.close();
@@ -1109,7 +1128,9 @@ async function testDataDirectoryHoldsOnlyTheTwoStores(): Promise<void> {
     for (const [kind, marker] of Object.entries(markers)) {
       check(`the usage database holds no ${kind} marker`, !usageFiles.some((f) => fileContains(f, marker)));
     }
-    check('the report database holds the report marker', reportFiles.some((f) => fileContains(f, markers.report)));
+    for (const field of ['note', 'appName', 'prompt', 'source'] as const) {
+      check(`the report database holds the ${field} marker`, reportFiles.some((f) => fileContains(f, report[field])));
+    }
     for (const kind of ['clarify', 'rewrite', 'generate'] as const) {
       check(`the report database holds no ${kind} marker`, !reportFiles.some((f) => fileContains(f, markers[kind])));
     }

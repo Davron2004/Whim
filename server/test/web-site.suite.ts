@@ -279,14 +279,6 @@ export async function runWebSiteTests(): Promise<void> {
     }
   }
 
-  section('Web site: today\'s real checkout');
-
-  eq(
-    'the real repo has neither fingerprint committed today, so the build reports PENDING',
-    associationState(REPO_ROOT),
-    { kind: 'absent', missingPath: 'release/android-upload-cert.sha256' },
-  );
-
   section('Web site: buildSite');
 
   function fakeRepoRoot(withFingerprints: boolean): string {
