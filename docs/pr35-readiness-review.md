@@ -229,7 +229,12 @@ OpenSpec deltas also need normal synchronization/archive at their actual complet
 
 ## Handoff to the next review
 
-The next merge-readiness work is the owner's test-value review, a final review of
+An assisted test-value review and cleanup is recorded in the
+[test exploration guide](pr35-test-exploration.md), with a mind map, per-file
+assessment, removed/replaced checks and verification evidence. The owner's test
+review remains separate; use the guide's reading order and stated coverage limits.
+
+The remaining merge-readiness work is the owner's test review, a final review of
 the whole branch, and history cleanup with the final tree preserved. Recheck CI
 and Sonar on the resulting head. Cosmetic findings and a possible control-plane
 split are scope decisions, not demonstrated product defects.
