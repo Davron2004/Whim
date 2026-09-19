@@ -569,50 +569,74 @@ async function testSettlementFailureReleasesCapacity(): Promise<void> {
   }
 }
 
-async function testRewriteLedgerUsage(): Promise<void> {
-  section('Rewrite ledger persists actual tokens from each completed model attempt');
+async function testRewriteLedgerEnding(ending: 'single' | 'retry' | 'failed-retry'): Promise<void> {
   const firstUsage = { promptTokens: 11, completionTokens: 7, totalTokens: 18 };
   const retryUsage = { promptTokens: 13, completionTokens: 5, totalTokens: 18 };
   const plan = JSON.stringify({ rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }] });
-  for (const ending of ['single', 'retry', 'failed-retry'] as const) {
-    invalidateCreditCache();
-    const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-rewrite-ledger-'));
-    const dbPath = nodePath.join(dir, 'usage.sqlite');
-    const store = new NodeSqliteUsageStore(dbPath);
-    const tracker = new ResolveTracker();
+  invalidateCreditCache();
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-rewrite-ledger-'));
+  const dbPath = nodePath.join(dir, 'usage.sqlite');
+  const store = new NodeSqliteUsageStore(dbPath);
+  const tracker = new ResolveTracker();
+  const creditCalls: Usage[] = [];
+  const credit = store.credit.bind(store);
+  store.credit = (deviceId, usage) => {
+    creditCalls.push(usage);
+    return credit(deviceId, usage);
+  };
+  const resolvedIds: string[] = [];
+  const stats = statsTransport({
+    'rewrite-first': { usage: firstUsage, totalCostUsd: 0.125 },
+    'rewrite-retry': { usage: retryUsage, totalCostUsd: 0.25 },
+  });
+  try {
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: [ending === 'single' ? plan : 'A counter'], usage: firstUsage, id: 'rewrite-first' },
+      ...(ending === 'single' ? [] : [{
+        role: 'rewrite' as const, deltas: [plan], usage: retryUsage, id: 'rewrite-retry',
+        error: ending === 'failed-retry' ? new Error('provider failed') : undefined,
+      }]),
+    ]);
+    const { app } = testApp({ usageStore: store, model, resolver: { tracker, transport: {
+      fetchStats(id, signal) {
+        resolvedIds.push(id);
+        return stats.fetchStats(id, signal);
+      },
+    } } });
+    const response = await post(app, '/v1/rewrite', { prompt: 'counter' }, DEVICE_HEADER);
+    eq(`${ending}: expected route status`, response.status, ending === 'failed-retry' ? 502 : 200);
+    await tracker.drain(2000);
+    const expected = ending !== 'single'
+      ? { promptTokens: 24, completionTokens: 12, totalTokens: 36 }
+      : firstUsage;
+    eq(`${ending}: device usage includes the identified failed retry`, await store.read(DEVICE_ID), expected);
+    eq(`${ending}: each attempt is credited once`, creditCalls, ending === 'single' ? [firstUsage] : [firstUsage, retryUsage]);
+    const expectedIds = ending === 'single' ? ['rewrite-first'] : ['rewrite-first', 'rewrite-retry'];
+    eq(`${ending}: each provider id is fetched once`, resolvedIds.sort((a, b) => a.localeCompare(b)), expectedIds);
+    const settledUsage = ending === 'retry' ? expected : firstUsage;
+    const reader = new DatabaseSync(dbPath);
     try {
-      const model = new ScriptedModelClient(ROSTER, [
-        { role: 'rewrite', deltas: [ending === 'single' ? plan : 'A counter'], usage: firstUsage },
-        ...(ending === 'single' ? [] : [{
-          role: 'rewrite' as const, deltas: [plan], usage: retryUsage,
-          error: ending === 'failed-retry' ? new Error('provider failed') : undefined,
-        }]),
-      ]);
-      const { app } = testApp({ usageStore: store, model, resolver: { tracker } });
-      const response = await post(app, '/v1/rewrite', { prompt: 'counter' }, DEVICE_HEADER);
-      eq(`${ending}: expected route status`, response.status, ending === 'failed-retry' ? 502 : 200);
-      await tracker.drain(2000);
-      const expected = ending === 'retry'
-        ? { promptTokens: 24, completionTokens: 12, totalTokens: 36 }
-        : firstUsage;
-      eq(`${ending}: aggregate credit remains exactly once per completed attempt`, await store.read(DEVICE_ID), expected);
-      const reader = new DatabaseSync(dbPath);
-      try {
-        const rows = reader.prepare('SELECT prompt_tokens, completion_tokens, outcome FROM requests WHERE kind = ?').all('rewrite');
-        eq(`${ending}: persisted request tokens include every completed attempt`, rows.map((row) => ({ ...row })), [{
-          prompt_tokens: expected.promptTokens,
-          completion_tokens: expected.completionTokens,
-          outcome: ending === 'failed-retry' ? 'error' : 'ok',
-        }]);
-      } finally {
-        reader.close();
-      }
+      const rows = reader.prepare('SELECT prompt_tokens, completion_tokens, outcome, cost_state, cost_usd FROM requests WHERE kind = ?').all('rewrite');
+      eq(`${ending}: ledger retains in-stream tokens and the complete resolved cost`, rows.map((row) => ({ ...row })), [{
+        prompt_tokens: settledUsage.promptTokens,
+        completion_tokens: settledUsage.completionTokens,
+        outcome: ending === 'failed-retry' ? 'error' : 'ok',
+        cost_state: 'resolved',
+        cost_usd: ending === 'single' ? 0.125 : 0.375,
+      }]);
     } finally {
-      await tracker.drain(2000);
-      store.close();
-      fs.rmSync(dir, { recursive: true, force: true });
+      reader.close();
     }
+  } finally {
+    await tracker.drain(2000);
+    store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+async function testRewriteLedgerUsage(): Promise<void> {
+  section('Rewrite credits each attempt once and resolves cost even when the retry fails');
+  for (const ending of ['single', 'retry', 'failed-retry'] as const) await testRewriteLedgerEnding(ending);
 }
 
 async function testChunkedBodyCap(): Promise<void> {
