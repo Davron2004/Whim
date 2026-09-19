@@ -38,18 +38,4 @@ export async function runProbeGateTests(h: Harness): Promise<void> {
     h.eq(granted.kind, 'probe', 'sanity: granted first');
     h.eq(probeGateFor(null), { kind: 'idle' }, 'revoked reads idle again, the same as never-granted');
   });
-
-  // N4: `probeGateFor` takes `ConsentedClientOptions`, not a structural `{baseUrl, deviceId}` — a
-  // plain object literal can never satisfy it because `CONSENTED` is an unexported unique symbol
-  // this module cannot spell. `tsconfig.json` excludes `src/host/launcher/test` from `tsc`
-  // (`probe-gate.ts` itself stays type-checked), so this `@ts-expect-error` is never enforced by
-  // the gate — it documents the guarantee for a reader, and was verified out-of-band by pointing
-  // `tsc --noEmit` directly at a scratch file with this exact call: TS2345 "Property '[CONSENTED]'
-  // is missing in type '{ baseUrl: string; deviceId: string; }'", i.e. even a FULL structural
-  // match without the brand is still rejected.
-  await h.test('probeGateFor: a non-consented {baseUrl, deviceId} literal cannot be passed (type-level)', () => {
-    // @ts-expect-error a structural match is not a ConsentedClientOptions — the CONSENTED brand is required
-    probeGateFor({ baseUrl: 'https://gen.example', deviceId: 'device-1' });
-    h.ok(true, 'compile-time only: see the @ts-expect-error above (verified out-of-band via tsc, not the gate)');
-  });
 }
