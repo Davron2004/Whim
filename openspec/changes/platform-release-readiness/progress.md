@@ -203,3 +203,30 @@ the normal artifact reinstalled, and the simulator shut down.
   between verified URL-context delivery and pending associated-domain delivery.
   Tasks 22.1–22.4 are complete. Physical-device and full native-deny acceptance
   remain separately pending; this correction does not close the release change.
+
+## iOS 27 native network-denial acceptance — 2026-09-19
+
+Product `98e9494` passed two 90-second canaries on the iPhone 18 Pro simulator
+(`B93A4639-F5DD-450B-BCA2-83C75D1118DF`), iOS 27.0, Xcode 27.0 (`27A266a`):
+
+- Native rule attached: all six bundles served, zero HTTP hits, zero TLS
+  connections; `expect=zero` passed.
+- Only the native rule attachment removed: all six bundles served, five HTTP
+  hits and four TLS connections; `expect=leak` passed.
+
+The probe/native edits were restored byte-for-byte. The normal Release app was
+rebuilt, reinstalled and visually checked, then cold-opened through
+`devicectl --payload-url`; Water Counter retained 3 glasses and 3 history entries.
+The tracked Podfile.lock was restored after the three successful builds. No
+dependency versions changed. The full local gate passed on the same product tip.
+
+The Mac was locked, so missing-rule Retry/Home interactions were not repeated.
+The September 15 iOS 26.5 interaction receipts above remain historical evidence.
+The last probe diagnostic is partly clipped in the screenshot; no DNS packet
+capture was performed. This closes the missing live iOS HTTP/TLS canary evidence,
+but does not complete all of task 18.5 or the physical-device, cellular and
+Associated Domains requirements. The release change remains open.
+
+Receipts: `~/.cache/whim-pr35-2026-09-19/ios-netdeny/`. The current branch review,
+including the two server accounting fixes and remaining merge/release work, is
+[docs/pr35-readiness-review.md](../../../docs/pr35-readiness-review.md).
