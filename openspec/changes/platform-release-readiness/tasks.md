@@ -173,6 +173,6 @@
 ## 22. iOS 27 scene lifecycle startup
 
 - [x] 22.1 Reproduce the normal Release startup crash and distinguish it from the Hermes/polyfill path; record evidence in `ios-scene-fix.md`.
-- [ ] 22.2 Move window startup to the scene lifecycle with retained RN ownership, launch background, cold-link options and warm-link forwarding, following `ios-scene-fix.md`.
-- [ ] 22.3 Add discriminating scene configuration and wiring validation, pass targeted release checks and fast gate, and complete independent review and integrity checks.
-- [ ] 22.4 Build and install the normal iOS 27 Release artifact; verify mini-app launch within five seconds, interaction, Home navigation and persistence after process restart. Record link-validation limits separately.
+- [x] 22.2 Move window startup to the scene lifecycle with retained RN ownership, launch background, cold-link options and warm-link forwarding, following `ios-scene-fix.md`.
+- [x] 22.3 Add discriminating scene configuration and wiring validation, pass targeted release checks and fast gate, and complete independent review and integrity checks.
+- [x] 22.4 Build and install the normal iOS 27 Release artifact; verify mini-app launch within five seconds, interaction, Home navigation and persistence after process restart. Record link-validation limits separately.

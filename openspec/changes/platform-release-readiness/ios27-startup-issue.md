@@ -1,7 +1,9 @@
 # iOS 27 release build crashes before React Native starts
 
-Status: open, reproduced. Blocks iOS acceptance for PR #35 under the tested
-SDK/runtime combination. Recorded 2026-09-18; no lifecycle fix has been applied.
+Status: startup fixed on the iOS 27 simulator by `f02062d`, integrated as
+`adf271e`. The normal Release build starts, seeded mini-apps render, and storage
+survives process restart. Broader release acceptance below remains separate.
+Original failure recorded 2026-09-18.
 
 ## Reproduction
 
@@ -49,8 +51,8 @@ XCTest/SpringBoard crash and intentional missing-rule recovery are separate issu
 
 ## Acceptance before closure
 
-- [ ] Fresh normal Release build launches under Xcode 27/iOS 27 without this crash.
-- [ ] Seeded apps render; navigation and persistence survive process restart.
+- [x] Fresh normal Release build launches under Xcode 27/iOS 27 without this crash.
+- [x] Seeded apps render; navigation and persistence survive process restart.
 - [ ] Cold-start and warm universal links reach the intended destination.
 - [ ] Native-deny probe executes every variant with zero forbidden traffic, and
       removing the restriction produces traffic in the negative control.
@@ -70,6 +72,32 @@ Local receipts: `/tmp/pr35-ios-normal-build.log`,
 `Whim-2026-09-18-190034.ips` in the same directory. These local files may later be
 removed; the environment, error and observed results are preserved above.
 
-All temporary source/lockfile edits were restored. The normal artifact was
-reinstalled, the temporary checkout removed, and the simulator shut down. The
-normal artifact still has this defect. No production deployment occurred.
+After the original reproduction, all temporary source/lockfile edits were
+restored, the then-unfixed normal artifact was reinstalled, the temporary
+checkout was removed, and the simulator was shut down. No production deployment
+occurred.
+
+## Correction verified — 2026-09-18, 20:05–20:09 America/Toronto
+
+The Release build from `adf271e` compiled and launched on the same iPhone 18 Pro
+iOS 27 simulator. Tip Splitter rendered by 4.400 seconds after a warm URL launch
+request. Water Counter rendered by 2.404 seconds after a cold URL launch request.
+These are screenshot upper bounds, not exact paint measurements.
+
+The owner confirmed that tapping to increment Water Counter, returning Home,
+and reopening the app worked within five seconds. The owner then made further
+taps; screenshots immediately before and after a process restart both show
+3 glasses and 3 history entries. After restart, the complete saved state was
+visible by 2.422 seconds. No new Whim crash report appeared during these runs.
+
+Cold and warm URL-context delivery were exercised with `devicectl process launch
+--payload-url` using the configured `whim.anycognition.ca` host. This does not
+prove associated-domain NSUserActivity delivery from another app. That check,
+the full native-deny probe/negative control, and signed physical-device
+acceptance remain in the release checklist. The existing Hermes polyfills and
+WebView denial were unchanged; all temporary lockfile changes were restored.
+
+Receipts, screenshots and timing JSON are in
+`~/.cache/whim-ios-scene-2026-09-18/`. The installed executable matches the build
+at SHA-256 `9524a27c927048978b43edd4050f642374628b088c6794ea84ac1eab296e5a98`.
+The full integrated repository gate exited 0 with `FULL GATE PASSED`.

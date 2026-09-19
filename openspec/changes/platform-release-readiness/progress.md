@@ -177,3 +177,29 @@ the normal artifact reinstalled, and the simulator shut down.
   `0632494137c0d7821f710f542b63100f177bfffe` on `codex/ios-scene-lifecycle`, worktree
   `.claude/worktrees/ios-scene-lifecycle`. Scope and acceptance are in
   `ios-scene-fix.md`; primary task owns native builds and simulator interaction.
+- Commit `f02062d` passed 231 release checks, lint, the simulator-SDK Swift type
+  check, and the fast gate. Independent review is clean; exact six-file integrity
+  returned 0. Merged into the active staging branch. The root Release build and
+  full integration gate are running with logs at
+  `/tmp/whim-ios-scene-release-build.log` and `/tmp/whim-ios-scene-full-gate.log`.
+- The initial worktree gate exposed a dependency-layout issue: the shared
+  `node_modules` symlink resolved `@whim/contract` into the primary checkout,
+  breaking a source-path assertion. The unchanged primary server suite passed
+  2,658/2,658. Mapping workspace package links into the worktree fixed the
+  assertion and the final worktree gate passed. No server or harness edit.
+- Integration `adf271e` compiled successfully as a normal iOS 27 Release build.
+  Full root regate exited 0 with `FULL GATE PASSED`, including the fast gate,
+  Metro check, Chromium suites and all OpenSpec validations. Temporary
+  CocoaPods checksum changes were restored; no probe or policy control changed.
+- Installed and launched on the original iPhone 18 Pro simulator. Warm URL
+  delivery opened Tip Splitter by the 4.400-second screenshot; cold URL delivery
+  opened Water Counter by 2.404 seconds. The owner confirmed increment, Home,
+  and tile reopening within five seconds, then made further taps. Screenshots
+  show the same 3 glasses/3 history entries before and after terminating and
+  relaunching Whim; restored state was visible by 2.422 seconds. No new crash
+  report appeared. The existing TextDecoder/isomorphic-git path needed no edit.
+- Native receipts and screenshots: `~/.cache/whim-ios-scene-2026-09-18/`.
+  `ios27-startup-issue.md` records exact artifact identity and the distinction
+  between verified URL-context delivery and pending associated-domain delivery.
+  Tasks 22.1–22.4 are complete. Physical-device and full native-deny acceptance
+  remain separately pending; this correction does not close the release change.
