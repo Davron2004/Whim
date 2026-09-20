@@ -1,0 +1,25 @@
+# Source upload for `gcloud builds submit` (deploy/cloudbuild.yaml, design D17). Everything git
+# ignores stays local too; deploy/Dockerfile must stay in the upload.
+#!include:.gitignore
+.git
+.gitignore
+**/node_modules
+**/.env
+**/.env.*
+*.jks
+*.p8
+play-publisher*.json
+.agents
+.bundle
+.claude
+.codex
+.devcontainer
+.github
+.vscode
+android
+ios
+fastlane
+demo
+openspec
+coverage
+graphify-out

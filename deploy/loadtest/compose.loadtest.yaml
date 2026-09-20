@@ -1,0 +1,22 @@
+# Load-test override for `whim-server` alone (design D26; specs/server-deployment "A load test
+# measures capacity without spending provider credit"). `deploy/loadtest/run.sh start` applies this
+# ON TOP OF compose.yaml — `docker compose -f compose.yaml -f loadtest/compose.loadtest.yaml up -d
+# whim-server` — so the `caddy` service, the shared network and every hardening setting neither file
+# repeats (`cap_add`, `security_opt`, `read_only`, `user`, …) all come from compose.yaml unchanged;
+# Chromium's sandbox needs `cap_add: [SYS_CHROOT]` and the seccomp profile exactly as they are there.
+#
+# `!override` replaces the base service's whole `env_file` sequence. An ordinary YAML list appends
+# to the inherited config.env + server.env entries and would expose the production key. The replay
+# keeps config.env's non-secret capacity values alone. `runLoadtestServer` retains D26's backstop:
+# it refuses to boot if `OPENROUTER_API_KEY` is present.
+services:
+  whim-server:
+    image: ${WHIM_LOADTEST_IMAGE:?}
+    env_file: !override
+      - /etc/whim/config.env
+    environment:
+      WHIM_DATA_DIR: /data
+      WHIM_LOADTEST_ENGINEER_TURN_MS: ${WHIM_LOADTEST_ENGINEER_TURN_MS:-15000}
+      WHIM_LOADTEST_REWRITE_TURN_MS: ${WHIM_LOADTEST_REWRITE_TURN_MS:-1000}
+    volumes:
+      - /mnt/disks/whim-data/loadtest:/data

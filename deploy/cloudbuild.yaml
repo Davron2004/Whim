@@ -1,0 +1,21 @@
+# Builds the server image natively on linux/amd64 and pushes it to Artifact Registry, tagged with
+# the full git commit SHA (design D2, D17). deploy/deploy.sh submits it from the repo root:
+#
+#   gcloud builds submit --project <project> --region <region> --config deploy/cloudbuild.yaml \
+#     --substitutions COMMIT_SHA=<full sha>,_REGION=<region> .
+#
+# The build reads no secret and passes no build argument.
+substitutions:
+  _REGION: northamerica-northeast1
+steps:
+  - id: build-image
+    name: gcr.io/cloud-builders/docker@sha256:e036091375b816e40f07620582d1dfaa0e2c2da58ea5731fdcf560534b2a4a57
+    args:
+      - build
+      - --platform=linux/amd64
+      - --file=deploy/Dockerfile
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA
+      - .
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA
+timeout: 3600s

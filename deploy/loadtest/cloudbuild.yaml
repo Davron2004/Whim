@@ -1,0 +1,24 @@
+# Builds the load-test image on top of the already-built production image of the same commit
+# (design D26) and pushes it to Artifact Registry as `server-loadtest`, tagged with the full git
+# commit SHA — never the production `server` repository name, so a forgotten container is
+# unambiguous in `docker images` and in the deploy tripwire.
+#
+#   gcloud builds submit --project <project> --region <region> --config deploy/loadtest/cloudbuild.yaml \
+#     --substitutions COMMIT_SHA=<full sha>,_REGION=<region> .
+#
+# The build reads no secret and passes no build argument beyond the production image reference.
+substitutions:
+  _REGION: northamerica-northeast1
+steps:
+  - id: build-image
+    name: gcr.io/cloud-builders/docker@sha256:e036091375b816e40f07620582d1dfaa0e2c2da58ea5731fdcf560534b2a4a57
+    args:
+      - build
+      - --platform=linux/amd64
+      - --file=deploy/loadtest/Dockerfile
+      - --build-arg=SERVER_IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server-loadtest:$COMMIT_SHA
+      - .
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server-loadtest:$COMMIT_SHA
+timeout: 3600s
