@@ -1,0 +1,18 @@
+[
+  {
+    "trigger": {
+      "url-filter": "^https?:"
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": "^wss?:"
+    },
+    "action": {
+      "type": "block"
+    }
+  }
+]

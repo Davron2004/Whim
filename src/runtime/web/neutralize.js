@@ -65,6 +65,17 @@
   report.WebSocket = neutralize('WebSocket', throwingFn('WebSocket'));
   report.EventSource = neutralize('EventSource', throwingFn('EventSource'));
   report.RTCPeerConnection = neutralize('RTCPeerConnection', throwingFn('RTCPeerConnection'));
+  // Prefixed WebRTC aliases open the SAME transport (STUN/TURN/ICE = UDP/TCP egress) and are
+  // equally uncovered by `connect-src 'none'`, so each one is its own value-strip-only vector.
+  // Chromium — and therefore the Android System WebView, where neutralization is the only
+  // barrier — still exposes `webkitRTCPeerConnection`; leaving it un-stripped was a live egress
+  // channel that the CONTAINED verdict never caught (docs/security/2026-09-14-webrtc-alias.md).
+  // Strip only the aliases the engine actually defines, so we never mint a phantom throwing
+  // global on an engine that lacks one (WebKit/iOS: `webkitRTCPeerConnection` is absent — a
+  // `typeof` feature-detect there must keep reading `undefined`, not our stub).
+  for (const rtcAlias of ['webkitRTCPeerConnection', 'mozRTCPeerConnection']) {
+    if (rtcAlias in window) report[rtcAlias] = neutralize(rtcAlias, throwingFn(rtcAlias));
+  }
 
   // Dynamic code execution — CSP-handled, deliberately NOT value-replaced (over-strip risk).
   report.eval = 'csp (script-src has no unsafe-eval)';
