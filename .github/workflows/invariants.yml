@@ -102,6 +102,11 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.60.0
       - run: npx --ignore-scripts --package=playwright@1.60.0 playwright install --with-deps chromium
+      # Chromium's OS sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts
+      # by default. Synthrun launches with the sandbox on and never falls back to disabling it
+      # (public-generation-server D4), so allow them before any Chromium suite runs.
+      - name: Allow unprivileged user namespaces for the Chromium sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build the retained runtime + bundles
         run: npm run build
       - name: Run the §16.2 isolation suite (blocks on red)

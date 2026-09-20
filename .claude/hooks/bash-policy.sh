@@ -231,10 +231,28 @@ esac
 # must never write it, or it could forge its own Class-1 grant. Same for fixloop/owners (the
 # agent↔worktree binding markers) — forging one would let a fixer claim a sibling's worktree.
 # invariants/ is the never-regress suite (owner-authored) — write-protected like the gate it feeds.
+# One root-only operation reads an app artifact without writing repository config.
+# Recognize the complete literal command, not an xcrun prefix: the filesystem
+# install utility and attached redirects/commands must keep the ordinary deny.
+# The fixed Apple executable avoids PATH lookup; only a UUID and an unquoted
+# absolute .app input are supported. Other shapes keep their previous decision.
+# This is only a protected-write classification; it never calls allow().
+is_root_simulator_install() {
+  [[ -z "$AGENT_ID" && -z "${WHIM_BASH_POLICY_SEGMENT:-}" ]] || return 1
+  local shape='^/usr/bin/xcrun[[:blank:]]+simctl[[:blank:]]+install[[:blank:]]+[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}[[:blank:]]+/[-A-Za-z0-9_./]+\.app$'
+  [[ "$CMD" =~ $shape ]] || return 1
+  case "$CMD" in
+    *$'\n'*|*$'\r'*|*'/../'*|*'/./'*) return 1 ;;
+  esac
+  return 0
+}
+
 PROTECTED='package\.json|package-lock\.json|tsconfig[^ ]*\.json|\.eslintignore|\.eslintrc[^ ]*|eslint\.config\.[a-z]+|knip\.json|knip\.config\.[a-z]+|scripts/gate\.sh|scripts/gate-full\.sh|scripts/fixloop\.sh|scripts/git-cleanup-check\.sh|scripts/sync-codex\.mjs|\.claude/(hooks|settings|agents|commands|fixloop/(grants|owners))|\.codex/|build/|invariants/'
 BND='(^|[[:space:]&;|(])'
 if printf '%s' "$CMD" | grep -Eq ">>?[[:space:]]*[^|&;]*($PROTECTED)|${BND}sed[^|]*-i[^|]*($PROTECTED)|${BND}tee[[:space:]][^|]*($PROTECTED)|${BND}(cp|mv|ln|install|dd|truncate)[[:space:]][^|]*($PROTECTED)|npm[[:space:]]+pkg[[:space:]]+(set|delete)|(yarn|pnpm)[[:space:]]+config[[:space:]]+set"; then
-  deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
+  if ! is_root_simulator_install; then
+    deny "command writes to harness/verification config — use the Edit tool (prompts you on the main thread) or change it as a human; class-B deviation for subagents"
+  fi
 fi
 
 # Compound commands (openspec: compound-command-policy). Positioned BEFORE the git / auto-allow

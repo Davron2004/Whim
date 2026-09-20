@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "android": "react-native run-android",
-    "android:release": "react-native run-android --mode release --active-arch-only",
+    "android:release": "react-native run-android --mode offline --active-arch-only",
     "start": "react-native start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -85,6 +85,11 @@
     "jsSrcsDir": "src/native",
     "android": {
       "javaPackageName": "com.whim.tone"
+    },
+    "ios": {
+      "modulesProvider": {
+        "WhimTone": "WhimToneModule"
+      }
     }
   }
 }

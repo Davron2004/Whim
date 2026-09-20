@@ -1,8 +1,10 @@
 /**
  * static-check-pipeline — import allowlist (task 3.3, spec "Imports resolve only to vc-sdk").
  *
- * Every static import specifier SHALL be exactly `vc-sdk`. `require(...)` and dynamic
- * `import(...)` are rejected outright, regardless of specifier.
+ * Every module specifier SHALL be exactly `vc-sdk`, wherever it appears: an import declaration, a
+ * re-export (`export … from`, `export * from`), or an import-equals declaration
+ * (`import x = require('…')`). `require(...)` and dynamic `import(...)` are rejected outright,
+ * regardless of specifier.
  */
 
 import ts from 'typescript';
@@ -62,12 +64,17 @@ function isDynamicImportCall(node: ts.CallExpression): boolean {
 export const importAllowlistPass: Pass = (ctx: CheckContext) => {
   const { sourceFile } = ctx;
 
+  function checkSpecifier(specifier: ts.Expression | undefined): void {
+    if (specifier && ts.isStringLiteralLike(specifier) && specifier.text !== ALLOWED_SPECIFIER) {
+      ctx.report(offAllowlistDiagnostic(sourceFile, specifier, specifier.text));
+    }
+  }
+
   function visit(node: ts.Node): void {
-    if (ts.isImportDeclaration(node)) {
-      const specifier = node.moduleSpecifier;
-      if (ts.isStringLiteralLike(specifier) && specifier.text !== ALLOWED_SPECIFIER) {
-        ctx.report(offAllowlistDiagnostic(sourceFile, specifier, specifier.text));
-      }
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      checkSpecifier(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      if (ts.isExternalModuleReference(node.moduleReference)) checkSpecifier(node.moduleReference.expression);
     } else if (ts.isCallExpression(node)) {
       if (isDynamicImportCall(node)) {
         ctx.report(dynamicImportDiagnostic(sourceFile, node));
