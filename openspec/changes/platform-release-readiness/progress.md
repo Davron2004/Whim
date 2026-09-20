@@ -1,0 +1,232 @@
+# Progress ledger: platform-release-readiness
+
+Staging branch: integration/store-launch (shared launch run; MAIN_TIP 3a66cca)
+
+- 18:20 dispatched chain-1 BASE 5b74787
+- 18:39 chain-1 report: complete, GATE PASS, class-A (scripts/release/env.d.ts ambient shim) · integrity OK · merged · regate-pass
+- 18:39 dispatched chain-2 BASE 5b85113
+- 18:39 dispatched chain-3 BASE 5b85113
+- 18:52 chain-2 report: complete, GATE PASS · integrity OK · merged · regate-pass. Discrimination is unit-level (bare global lacks TextDecoder, install provides it); the load-order proof is on-device in chain-12. Fix batch: stale "see ./polyfills" comment in src/host/version-store/env.d.ts.
+- 18:52 dispatched chain-4 BASE 4be36ba
+- 19:05 chain-3 report: complete, GATE PASS, class-A x2 (RCTLinkingManager via React umbrella; worktree xcodebuild stops at Metro bundling through symlinked node_modules, compile+link and resolved entitlements verified) · integrity OK · merged · regate-pass. Full simulator Release build + probes delegated to a clean-clone verifier.
+- 19:05 dispatched chain-6 BASE e7dd788
+- 19:12 clean-clone iOS verification at 3823440: Release simulator BUILD SUCCEEDED (com.anycognition.whim, 1.0.0, ITSAppUsesNonExemptEncryption false, privacy manifest bundled); launch PASS, no crash; RUN_STORAGE_PROBE PASS and RUN_BRIDGE_PROBE PASS (the TextDecoder crash is gone end to end). Not covered: WebKit containment 49/49 (no tap driver in the verifier; carry to chain-12 or a Maestro iOS flow); simulator codesign shows empty entitlements (normal for simulator builds, check associated domains on the device build in chain-12).
+- 19:14 plan amendment merged: fourth containment leg (native network deny-all), chains 14-18, chain-12 extended · dispatched chain-14 BASE 7c2f8ce
+- 22:55 RESUME (fresh orchestrator after the usage cutoff at ~19:19): chain-4 worktree held ~300 lines of uncommitted work, handoff/android-build.md written, self-gate never returned → re-dispatched into the same worktree (BASE 4be36ba) to continue from the diff. chain-6 and chain-14 had no work (agents were still reading) → worktrees removed and recreated. Carry: the chain-4 handoff claims the offline build type breaks assembleDebug/assembleOffline at native link (ShadowNode::getDebugName) — verify against BASE before merge.
+- 22:55 dispatched chain-6 BASE 99ed045 (fresh worktree)
+- 23:10 dispatched chain-8 BASE 96b59c2. Owner decisions passed in: App Store and Play listing name "Whim: Small Apps You Describe"; home-screen name stays "Whim"; domain anycognition.ca (URLs derived at upload time, never committed).
+- 23:22 chain-4 report: complete, GATE PASS, class-A x4 (offline pins -DCMAKE_BUILD_TYPE=RelWithDebInfo; offline sets usesCleartextTraffic placeholder; blank WHIM_UPLOAD_* counts as missing; checkAndroidProject strips XML comments and scopes the VIEW filter to MainActivity) · integrity OK · merged · regate-pass. Link failure settled: BASE links; the inherited diff broke it because AGP picks the CMake build type from the variant name ("offline" matched neither rule, so Debug and REACT_NATIVE_DEBUG against the release prefab). Proven: assembleDebug + assembleOffline link (debug-signed, bundle embedded); unconfigured bundleRelease fails loudly naming the four WHIM_UPLOAD_* vars; configured bundleRelease yields an upload-signed, non-debuggable AAB. Carry: android:release is broken until chain-0 lands (applied next).
+- 23:24 chain-0 (HUMAN-BOOTSTRAP, applied by the attended orchestrator): package.json codegenConfig.ios.modulesProvider {WhimTone: WhimToneModule}; android:release → --mode offline · committed 6f50116 · FAST GATE PASS. chain-5 (ios-whimtone) now eligible.
+- 23:28 chain-8 report: complete, GATE PASS (checks 138), class-A x2 (no release_notes.txt for a first submission; age-rating.json descriptor names from ASC AgeRatingDeclaration vocabulary, confirmed at chain-13 upload) · integrity OK · merged · regate-pass. Copy: subtitle "No coding. Just talk."; Play short "Describe an app out loud. Whim builds it and keeps it on your phone." Owner check pending: voice wording vs keyboard-dictation reality.
+- 23:28 dispatched chain-14 BASE 75f9028 (fresh worktree)
+- 23:30 console progress (task 14.3, partial, orchestrator-run via browser agents): Play app created in the Jamila Ruzimetova PERSONAL developer account (7409536398802011901; no AnyCognition Play account exists, owner accepted this) — app ID 4972827149871085117, package com.anycognition.whim bound at creation, name "Whim: Small Apps You Describe"; service account invited with app-level release permissions only. Dashboard confirms the 12-testers/14-days closed-test rule before production. Apple (14.2) blocked: Program License Agreement update awaits the Account Holder, and the browser space is user-held. DNS A records whim/api.whim → 34.118.191.193 entered at GoDaddy, awaiting owner SMS 2FA.
+- 23:31 dispatched chain-5 (ios-whimtone) BASE 44032ad
+- 23:37 chain-6 report: complete, GATE PASS (checks 138), class-A x2 (encodeRgba8 plus color-type-2 decode, since Chromium screenshots drop alpha on opaque frames; node:zlib loaded through a string-typed dynamic import because TS2664 refuses an ambient declaration) · integrity OK · merged · regate-pass. 37 assets from release/assets/icon-foreground.svg, byte-identical on re-run; regenerate with `node scripts/release/run.mjs generate-assets`. Placeholder "w" on #3f3d8f checked by eye (AppIcon-1024, featureGraphic). chain-7 (launch-screen-wiring) now eligible (after 3, 4, 6).
+- 23:38 dispatched chain-7 BASE 03d809b · dispatched chain-9 BASE 03d809b
+- 23:53 chain-5 report: complete, GATE PASS, no deviations. Full simulator Release BUILD SUCCEEDED from the worktree with SKIP_BUNDLING=1 (honored by react-native-xcode.sh; sidesteps the Metro symlink failure); WhimToneModule.mm compiled arm64+x86_64 and linked; codegen emits NativeWhimToneSpec · integrity OK · merged · regate-pass. For chain-12 by ear: tick = 400+1200 Hz 40 ms; chime = one 1200 Hz 100 ms; alarm = three 1319 Hz 125 ms bursts at 0/250/500 ms; follows ringer volume, silent with the Silent switch.
+- 23:56 chain-7 report: complete, GATE PASS, no deviations · integrity OK · merged · regate-pass. Proof: assembleOffline BUILD SUCCESSFUL from the worktree via a scratch Gradle init script (react.bundleConfig → a metro config whose watchFolders include the primary node_modules; require @react-native/metro-config/dist/index.js by absolute path); iOS simulator Release BUILD SUCCEEDED with SKIP_BUNDLING=1 (LaunchScreen.storyboardc + Assets.car present). For chain-12, frame by frame: first frame paper #fbfaf8 with the mark; no white gap at the iOS storyboard→RN hand-off; Android <12 layer-list→plain paper swap (flag if visible); Android 12+ system splash icon vs the storyboard mark look the same.
+- 23:59 chain-14 report: complete, GATE PASS, class-A x3 (probe screen redeclares NetdenyVariant locally so no scripts/ import enters the Metro graph; lint fixes with justified sonarjs disables for 10.0.2.2 and the intentional http dns-name URL; header comment reworded to avoid the retired log-prefix literal) · integrity OK · merged · regate-pass. 15.5 evidence (node http in place of curl): zero with no traffic → PASS exit 0; one loc-href hit → FAIL exit 1; leak with 3/5 → FAIL naming the missing variants; 5/5 + TLS → PASS. chain-15 (attended reproduction on the emulator + simulator + tcpdump) is now eligible and needs the owner present.
+- 00:10 chain-9 report: complete, GATE PASS (checks 181), class-B resolved without improvising: aapt2 provably cannot read an AAB manifest ("could not identify format of APK"), so verify-aab shells to `bundletool dump manifest`, UNVERIFIED end to end (keytool signer read verified). bundletool 1.18.3 installed by the orchestrator via brew; an end-to-end verify-aab smoke is dispatched. Class-A x2 (--store-latest required on preflight per the tasks usage string; credential mode check covers ios asc-api-key.json + review-contact.json, android play-publisher.json, with the keystore covered by WHIM_UPLOAD_* presence) · integrity OK · merged · regate-pass. chain-10 now eligible; server chain-15 (web-host-site) unblocked.
+- 00:10 dispatched chain-10 BASE d42ca84
+- 00:16 verify-aab smoke (orchestrator-dispatched verifier, throwaway worktree + throwaway keystore): bundleRelease -PwhimBuildNumber=42 OK; bundletool 1.18.3 `dump manifest` output matched getAabManifestFacts regexes exactly (package com.anycognition.whim, versionCode 42, no debuggable attr); `verify-aab <aab> --build 42` → passed, exit 0; `--build 41` → "version code is 42, expected 41", exit 1. Gap closed. Still true: the real CLI path needs release/android-upload-cert.sha256 (task 14.1). The AAB link host is still whim.example.com (domain lockstep pending).
+- 00:56 USAGE CUTOFF (session limit) killed every running agent; resumed at low priority by messaging the same agents (transcripts intact). Worktree state at resume: server-15 substantial uncommitted site work; platform-10 Fastfile only; server-9b and compliance-7 empty; iOS planner partial drafts.
+- 01:04 chain-10 report: complete, GATE PASS, class-A x6 (fastlane 2.237.0 is installed, so fastlane lanes and fastlane ios testflight really ran; measured that fastlane sh CWD is fastlane/, so every path is anchored on ROOT_DIR; latest_testflight_build_number rescue so the preflight names a missing credential instead of a Ruby backtrace; upload_app_privacy_details has no api_key option, so the privacy lane is interactive per D12; auto-generated fastlane README and report.xml deleted) · integrity OK · merged · regate-pass. Verified: the testflight lane stops at preflight naming the dirty tree, the missing asc-api-key.json and review-contact.json, and the placeholder WHIM_DOMAIN. Not verified: any real archive or upload step. The orchestrator trimmed the CLAUDE.md android:release bullet back to about its original length (owner rule: instruction files never grow).
+- 01:05 dispatched chain-11 BASE 1e1b78c (all store-launch-compliance chains merged). Extra owner-decision task added: set WHIM_DOMAIN = anycognition.ca in release/whim-release.xcconfig and src/host/launcher/release-config.ts in lockstep (no plan task set the real domain).
+- 01:29 chain-11 report: complete, GATE PASS, class-A x3 (re-pinned native-config.suite + release-config.suite for the real domain without loosening; store-listing.suite baseline gains notes.txt plus a 4001-char boundary; release-config.ts doc comment updated) · integrity OK · merged · regate-pass. Owner task 12.5: WHIM_DOMAIN = anycognition.ca in release/whim-release.xcconfig and release-config.ts; entitlement and intent filter derive; no stale literal (remaining example.com hits are the preflight PLACEHOLDER constant and fixtures). preflight no longer reports a placeholder domain. notes.txt 3991/4000 chars with the network-deny [TODO] visible; three reviewer accuracy fixes applied (async syscalls, the classifier is a model call, post-consent /healthz probe). Decision #66 appended. Remaining chains: 12, 13, 15 (attended), 16-17 after 15, 18.
+- 05:20 whole-change reviewer (Opus) over 5b74787..d029a5a: CHANGES-REQUESTED. Solid: signing (release non-debuggable, loud missing key, offline dev-only), identity single-sourced, Hermes entry-first, WhimTone off-thread, Info.plist/privacy manifest/AppDelegate links, Android filter + strict config, listing limits, notes.txt honest. Findings → fix chains at BASE f217dc7:
+  release-fixes-a: (1 HIGH for chain-13) fastlane rewrites untracked fastlane/README.md after every lane, so the second lane's preflight refuses on a dirty tree → skip_docs + gitignore; (2) ios metadata never uploads screenshots (no screenshots_path); (3) mobile.md openssl fingerprint prints "sha256 Fingerprint=" which parseFingerprintFile rejects, and it contradicts 14.1's keytool flags; (4) preflight does not mode-check AuthKey_*.p8, whim-upload.jks or gradle.properties; (8) store-latest lookups rescue every error to 0; (9) the domain-lockstep mismatch test is tautological, and deploy/defaults.env hosts are outside the lockstep; (10) checkPbxproj pins too little (CURRENT_PROJECT_VERSION, CODE_SIGN_ENTITLEMENTS, DEVELOPMENT_TEAM, base configs); lows (NSUserDefaults symbol, checks/test/release/index.ts comment vs chain-16, doubled whim. fixture, hermes failure detail, launch_screen.xml comment, bundle exec fastlane, deliver prints reviewer contact, tag on upload:false); stale docs (verify-aab header + release-cli.md say bundletool unverified).
+  release-fixes-b: (5) canary --expect zero passes with no bundle fetched → count bundles per variant, zero requires all six fetched; header honesty; (6) flag-gated probe modules ship in release bundles, so the grep marker cannot prove absence → use the on-screen probe title as proof in tasks/handoff; (7) store descriptions + answers.md omit "its name" and say device id "only for daily limits" (contradicts fraud_prevention).
+  decisions.md #66 says "Five decisions" and lists six: left as is (append-only log), noted here.
+- session 3 (implementer reports lost with session 2; a read-only reviewer adjudicated both fix chains directly against the finding list): release-fixes-a f4f5ab4 · reviewer APPROVE (checks 199 pass; all of 1,2,3,4,8,9,10 + lows + stale docs ADDRESSED) · integrity OK · merged feb90ee · regate-pass. Two lows queued for a later fix batch: domain-lockstep.ts header says loadDeployDefaults is "never called by the suite" but the suite calls it; screenshots_path points at release/store/app-store/screenshots/ which task 14.5 creates, so a 14.4 metadata push before 14.5 may warn on the missing dir.
+- session 3: release-fixes-b 2e6405c · reviewer APPROVE (canary test 3/3: zero-with-no-traffic exits 1 naming all six un-fetched variants; 5, 6, 7 ADDRESSED; data-safety.json purposes cross-checked) · integrity OK · merged 5b35b55 · regate-pass. Not covered by a test: a partial fetch (5 of 6 variants). Fix chain `platform-lows` dispatched for the two lows from release-fixes-a.
+- session 3: platform-lows 179e962 (two doc lows from the release-fixes-a review; builder gate PASS; diff inspected by the orchestrator: two edits only) · integrity OK · merged · regate-pass. platform-release-readiness now has no open fix work; remaining tasks are the attended ones (15 → 16 → 17, 12, 13, 18).
+
+## Session 4 — 2026-09-15
+
+- Resumed at `f08ad63de49eb8b8190d48087a88d518a5498ac8` on `integration/store-launch`. Owner reserved the mail and Apple console checklist for later.
+- Full local gate printed `FULL GATE PASSED`; no failed checks or tracked drift. Log: `/tmp/whim-gate-full-2026-09-15-integration-store-launch-f08ad63.log`. The verifier's zsh wrapper subsequently exited 1 because it assigned the read-only `status` variable; this was a wrapper failure after the gate completed.
+- Dispatched attended chain-15 reproduction (tasks 16.1–16.5) against that staging base, using the primary tree for serial native builds and reversible probe flags. Android API 36 emulator and iOS 26.5 simulator are available; physical iPhones are offline. DNS capture remains pending: the repository hook rejected `sudo -n tcpdump -D`. HTTP/TLS evidence can still be collected, but no task is complete yet and chains 16/17 remain blocked pending the baseline verdict.
+
+### Network deny reproduction — Android
+
+- Offline probe build succeeded in 50 seconds. Canary exited 0: `NETDENY PASS expect=leak bundles=6 hits=6 tls=4`. Each navigation variant fetched one bundle. HTTP hits were `loc-href`, `loc-assign`, `meta-refresh`, `anchor-click`, `host-top-frame`, and `/favicon.ico` (one each). TLS accepted four connections.
+- Screenshots and React Native logs show all six mini-app variants fetched, painted and reporting `trusted=true contained=true`; the final `done` row is visible. `host-top-frame` has no load error before the fix. An independent verifier checked these artifacts and confirmed the Android failing-baseline premise.
+- Local evidence: `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/android/` (`build.log`, `canary.log`, `canary.exit`, `react-native.log`, and screenshots). DNS observation remains PENDING because privileged capture was policy-blocked. Full task 16 completion also awaits iOS evidence and final restoration of local probe edits; no checkbox is ticked from this partial result.
+
+### Network deny reproduction — iOS and implementation gate
+
+- Locked Ruby 4.0.6/Bundler 4.0.16 dependency installation and CocoaPods installation (80 pods) exited 0; Release simulator build succeeded. iOS 26.5 on the iPhone 17 Pro Max simulator, Xcode 26.6. Canary exited 0: `NETDENY PASS expect=leak bundles=6 hits=5 tls=4`. The five required HTTP navigation paths each hit once. All six navigation variants fetched, painted and reported trusted containment; `host-top-frame` had no load error; marker and `done` screenshots were captured under the sibling `ios/` evidence directory.
+- `restoration.txt` records byte-identical restoration of `App.tsx` and `ios/Podfile.lock`; primary tracked tree was clean afterwards. Android engine/API output is saved in `android/device-version.txt`.
+- Task 16.5's stop rule is satisfied on both engines: actual navigation leaks exist before the fix. Chains 16/17 may implement against these baselines. This disposition does not complete task 16's DNS observation or the later full native acceptance; those remain PENDING, along with real-iPhone checks.
+- Dispatched chain-16 Android network deny at BASE `f278bda` in `.claude/worktrees/platform-android-network-deny`, branch `chain/platform-android-network-deny`. The scope remains tasks 17.1–17.5 and its original chain block. No iOS implementation runs until this shared-suite chain merges.
+- Chain-16 Class B adjudication: targeted suite passed 205/205, but the worktree native build failed in Metro resolving `@babel/runtime/helpers/interopRequireDefault` before Kotlin compilation. The hook denied the scratch Metro configuration as protected configuration. No retry or protection change was authorized. Worker finishes its fast gate and reports native checks NOT RUN; the attended primary-tree build/probe will run after review, integrity, merge and regate using existing configuration. Task 17.5 remains pending until that evidence exists.
+- Chain-16 commit `be940f3` passed its fast gate and allowlisted integrity. Independent review requested changes: the standing checks could count code in Kotlin comments/literals, and two rationale comments plus the contract's package-list reference needed correction. Production wiring otherwise matched D17 and the installed WebView APIs. Correction pass 1 adds lexical normalization and comment/string-decoy fixtures without changing the original scope; no merge yet.
+- Correction `8370880` passed the fast gate and 208 targeted checks. Independent review approved the lexer and decoy fixtures, but found the prior assertion for the actual startup check's autolinking message had been removed, plus a stale receipt count. Correction pass 2 restores that assertion using the literal attached to the real check body and adds a decoy test; no production-code finding or scope change. Native verification still waits on approval and merge.
+
+- Chain-16 correction `4e0e500` passed independent review, the 209-check targeted suite, fast gate and exact six-file integrity. Merged as `0330427`; primary fast regate exited 0 (`/tmp/whim-gate-android-network-deny-merged.log`). Tasks 17.1–17.4 are complete. Primary offline probe build then exited 0 in 45 seconds, including Kotlin compilation; task 17.5 awaits the live canary verdict.
+- Dispatched chain-17 iOS network deny from pinned BASE `0330427e75f76c9747f36342cabfb046d1a7d9fd` in `.claude/worktrees/platform-ios-network-deny`, with the original four implementation files and its handoff contract. Full simulator probe/fail-closed verification follows review, merge and primary regate.
+
+### Android native deny acceptance
+
+- Correct release package `com.anycognition.whim`, Android API 36/WebView 151: zero canary exited 0 with `NETDENY PASS expect=zero bundles=6 hits=0 tls=0`. Independent screenshots, UI dump and React Native logs confirm all six bundles fetched, painted and reported trusted containment; the UI dump and log confirm `done`. Host-top-frame failed locally with `net::ERR_CACHE_MISS`. Task 17.5 is complete.
+- Removing only `blockNetworkLoads = true` and rebuilding reproduced the leak: timed canary exited 0 with `NETDENY PASS expect=leak bundles=5 hits=6 tls=4`. Each of the five required HTTP paths hit once, plus favicon. The DNS-name bundle fetch failed in this run, so it adds no DNS evidence; privileged DNS capture remains pending. A prior SIGINT run lacked a summary and is retained as visual-only, not acceptance.
+- The first positive test accidentally launched stale development package `com.whim` (installed Sep 11), which never ran the probe. It is recorded as a setup failure. `npm run android:release` installed the correct release package but its launch step targeted the stale namespace; subsequent verification explicitly launched `com.anycognition.whim/com.whim.MainActivity`. No app data was cleared.
+- Both temporary source edits were restored byte-identically (`git diff --exit-code` 0), then the normal launcher rebuild started. Evidence is under `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/android-deny/`, particularly `zero-release-*` and `negative-leak-rerun-*`. Full task 13.6 remains pending for DNS capture; no physical-device claim.
+
+- Normal Android offline rebuild exited 0 in 38 seconds. Explicit launch of `com.anycognition.whim/com.whim.MainActivity` shows the normal LauncherRoot with its three example apps; screenshot `android-deny/restored-launcher.png`. Probe flag is false and the native block is restored.
+
+- Chain-17 `2ad5b0c` passed independent review and five-file integrity, then merged as `2554dcf`; primary fast regate exited 0 (`/tmp/whim-gate-ios-network-deny-merged.log`). Native worktree compilation and rule-resource equality passed; full worktree bundling correctly reported the known Metro resolution failure.
+- Procedure audit found that probe mode can report zero traffic with JavaScript disabled without proving app-error UX. The missing-resource check therefore uses normal LauncherRoot and Tip Splitter. Source analysis found the host watchdog starts only after delivery acknowledgement, so no page script implies no watchdog. Added the bounded host-startup plan and tasks 20.1–20.4; implementation waits for simulator reproduction. Primary first build stopped at the CocoaPods manifest check; a normal pinned pod install and rebuild is in progress, with no check bypass.
+
+### Session 4 checkpoint and iOS installation block
+
+- Primary pinned CocoaPods install and full Release simulator build both exited 0. The test binary at `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app` was built with the resource lookup deliberately set to `WebViewNetworkDenyMissing`, normal LauncherRoot, for task 20.1. It is a missing-rule test artifact, not a distributable build. Build log: `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-deny/missing-before-build.log`.
+- Both the worker's install and root's explicit `xcrun simctl install 1349ACC1-1768-4037-A901-3C1A5F3F93B8 /Users/davrondjabborov/Work/other/Whim/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app` were rejected by PreToolUse as "command writes to harness/verification config." No alternate install path or protection change was attempted. Owner was asked to run that exact command locally and reply installed. Launch, Maestro, missing-rule UI/log observation, new iOS zero/negative canaries and host correction remain pending.
+- Root restored the resource lookup and four generated Podfile.lock checksums through exact inverse patches. `git diff --exit-code` returned 0. App.tsx remains probe=false. The compiled missing-rule test artifact was retained for the pending owner install; rebuild normally before distribution. A later native build may require normal pod install again because the ignored Pods manifest retains generated checksums.
+- Full gate at `11031cf` exited 0 and printed `FULL GATE PASSED`; log `/tmp/whim-gate-full-native-deny-20260915.log`. Independent integration review approved the merged native scope and honest acceptance checkboxes. This is local gate/review evidence, not iOS runtime or DNS acceptance. Merged Android/iOS worktrees and their chain branches were cleaned up; no unmerged native work was removed.
+
+- Owner explicitly approved the simulator install along with the server extra pass. Root retried the exact prepared install; PreToolUse still rejected it as a harness/verification-config write. Approval is recorded, but the tool restriction remains. Root supplied the exact local command and asked the owner to reply `installed`; no alternate install path or protection change was attempted. Source remains clean and the prepared missing-rule test binary is retained.
+
+- Owner replied `installed`. Independent normal-LauncherRoot verification confirmed task 20.1: Tip Splitter remained on `Opening…` after the 15-second error-screen deadline; Maestro exited 1. Native logs contain missing-rule at 16:11:08.962 and rule-list-unavailable at 16:11:10.894. Evidence: `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-deny/missing-before-20260915T200619Z/` (`after-15s.png`, `unified-final.log`, `flow.yaml`, `maestro-final.txt`, `maestro-commands.json`). Initial launcher-selector timing failures are setup evidence, not the reproduction verdict. The bounded host correction may now implement.
+- Owner reported a SpringBoard crash alert. Read-only analysis found simulator SpringBoard crashed at 16:07:42.0858 -0400, about 0.5 seconds after the first Maestro failure screenshot, in `XCTAutomationSession` accessibility initialization. High confidence the automation triggered it; no Whim frame appears on the crashed thread. Report: `~/Library/Logs/DiagnosticReports/SpringBoard-2026-09-15-160815.ips`. Maestro/XCTest processes are stopped. Simulator interaction is paused; source/server work continues. Do not rerun that automation path without addressing the crash risk.
+
+- Dispatched `chain-host-startup-watchdog` at pinned BASE `1e02aa3b319623e986e9b1faedd0835033c375fb`, branch `chain/platform-host-startup-watchdog`, worktree `.claude/worktrees/platform-host-startup-watchdog`. Scope remains the four launcher code/test files and its handoff. Native/UI operations are excluded. An initial compound read-only Git command was rejected; root's four separate read-only checks passed and confirmed the exact clean base before implementation proceeded.
+- Host correction `998cc115dbe8d5204ac78ea47c718c4ad642892a` passed 10,286 launcher checks, lint and its fast gate. The no-op scheduling mutant retained the helper export and failed the absent-frame assertion (got 0, wanted 1); restored code passed. Independent review approved the code and 57-line contract, and exact five-file integrity passed. Root staged and committed the reviewed files after the worker's Git staging was denied despite its correct worktree; root made no source edits. Merged as `1cb18535b9f6c7391843d27e5bf221329d9b5d3a`; full primary regate is running in `/tmp/whim-gate-full-host-watchdog-merged.log`. Native error-screen acceptance remains pending while simulator interaction is paused.
+- Compile-only verification: pinned CocoaPods install and normal Release simulator build both exited 0 after the host merge. Log `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-deny/normal-release-build.log`; output `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app`, bundle `com.anycognition.whim`, version 1.0.0/build 1. Root restored the four known generated Podfile.lock checksums after the worker's restore was denied; `git diff --exit-code -- ios/Podfile.lock` returned 0. No install, launch or UI operation ran. The installed simulator binary is still the earlier missing-rule build. Future verification should use separately identified missing-rule and normal binaries, owner taps and direct simctl evidence, avoiding the Maestro/XCTest path that crashed SpringBoard.
+- Host primary full regate exited 0 and printed `FULL GATE PASSED`, including 41/41 OpenSpec validations. Tasks 20.2–20.3 are complete; 20.4 remains pending for native UI evidence. No source or lockfile drift remains.
+- Owner requested a Sol-high investigation of the iPhone simulator freeze. Read-only review confirmed two separate events: missing native rules disabled page JavaScript and exposed the old no-frame timeout gap; the earlier SpringBoard crash occurred in XCTest accessibility code immediately after a Maestro screenshot. No simulator action ran during the investigation. The merged deadline addresses the observed app-local failure, but post-fix native UI remains unverified; it does not recover a stalled RN thread or a WebView that never reaches onLoadEnd.
+- The investigation found a distinct malformed trusted-paint gap: accepting missing timing cancels the deadline while `paintMs` stays null. The current trusted loader sends numeric timing, so this did not cause either observed event. Dispatched `chain-paint-deadline` from BASE `b60220c7a484f43770b9ddd1e99a9489db4072ce`, branch `chain/platform-paint-deadline`, worktree `.claude/worktrees/platform-paint-deadline`. Its three-file scope in `paint-deadline-fix.md` validates finite nonnegative timing and preserves the existing painted-state invariant. No broader native-load deadline or simulator changes.
+- Paint correction `45f8be0` produced 29 expected red failures before implementation and passed its launcher checks and fast gate. Independent review requested the explicit null timing field, distinct from a null payload. Correction `8e81142` adds that case; launcher checks 10,329/10,329 and fast gate passed, final review APPROVE, exact three-file integrity passed. Root staged the reviewed files after the worker's Git denial without editing source. Merged as `758e6c07ceeca8776adffb1c52fb621a25256774`; combined full regate is running in `/tmp/whim-gate-full-launch-corrections.log`. A final normal iOS compile is running without simulator interaction.
+- Final normal iOS Release simulator compile passed from `420be203612d3eb65b91f4a204188dfb84dda205` (the merge plus a progress-only commit). Pinned pod install and build exited 0; log `~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-deny/normal-final-build.log`. Bundle `com.anycognition.whim`, version 1.0.0/build 1; executable SHA-256 `e41719b38c9cdcb3d8219320c866deff67e179080a73224f98e1dc69247e6be4`; main.jsbundle `96ddd1c89a45fbade20bb116ed1ff1f8312b3c521e07bc219971fa7b4dea0ba6`; rule resource matches source (`2e337da077df82e9be2e2724ac185942064792b7bd6c9dbbde9d21316db27c6f`). Root restored all four known lockfile checksum changes; source tree is clean. Copying the built app to a separate evidence folder was denied for worker and root as a harness/config write; no alternate copy method was attempted. The normal artifact remains at the primary build path, and the simulator still has the earlier missing-rule test app installed. No UI action ran.
+- Independent integration audit of `4fbc3bf..420be203` approved the combined replay, readiness-test and paint corrections. No false native or load-test completion claims; full gate remains in progress.
+- Combined full gate exited 0 and printed `FULL GATE PASSED`, including 41/41 OpenSpec validations (`/tmp/whim-gate-full-launch-corrections.log`). Tasks 21.1–21.3 complete; native task 20.4 remains pending. The source used by the final iOS compile is the same corrected source to be pinned for deployment at `420be203612d3eb65b91f4a204188dfb84dda205`; later primary commits only record results.
+
+## Root simulator verification — 2026-09-15, 23:24–23:35 UTC
+
+The owner applied the reviewed simulator-install hook patch and requested its
+commit/push. Both changed hook files matched the tested candidate byte for byte.
+Commit `18ebcab` is on draft PR #35 (`integration/store-launch` into `main`). All
+77 policy, 46 parser and 13 Codex adapter checks passed, followed by the full
+local gate (`/tmp/whim-gate-full-simulator-policy.log`, exit 0). Both GitHub test
+jobs passed. SonarCloud reported 296 issues across the launch branch, including
+two style findings in the new hook; closure remains pending. The report is
+`~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/pr35-sonar-findings.md`.
+
+Root operated Simulator directly through Computer Use, without subagents or
+Maestro/XCTest. Device: iPhone 17 Pro Max, iOS 26.5, UUID
+`1349ACC1-1768-4037-A901-3C1A5F3F93B8`. Installing the normal artifact with the
+fixed `/usr/bin/xcrun simctl install` form exited 0. Its executable and bundle
+hashes still match the final `420be203` compile receipt above.
+
+Observed normal behavior:
+
+- Tip Splitter, Water Counter and Style Gallery all opened and rendered.
+- Changing Tip Splitter's bill from 100 to 200 produced tip 40, total 240 and
+  per-person 60 with the original 20% and four-person settings.
+- Water Counter saved count 1/history 1 and loaded both after terminating and
+  relaunching the entire app. This test entry remains in the simulator.
+- The mini-app Home control, Settings back chevron and consent-review
+  "Keep AI features on" exit worked. Consent remained on.
+
+For task 20.4, the documented temporary resource-lookup control was compiled to
+the separate `ios/build/sim-missing-after` directory, keeping normal LauncherRoot
+and preserving the normal artifact. Pinned pod install and Release build exited
+0. The native source and four generated Podfile.lock checksums were then restored
+exactly; `git diff --exit-code` passed before installing the control.
+
+Native logs identify the missing resource at 19:32:16.111 local and rule-list
+unavailability on launch at 19:32:34.711 and retry at 19:33:38.680. A timed fresh
+Home-to-Tip-Splitter launch at 23:34:32.162Z showed the required error screen by
+23:34:40.700Z (8.538 seconds). Retry also showed the error by its 8.537-second
+observation. "Back to your apps" returned Home. These are observed upper bounds,
+not measurements of the exact transition time. Task 20.4 is complete.
+
+The 45-second canary recorded zero HTTP hits and zero TLS connections, but exited
+1 because this normal-launcher control fetched zero of the six probe bundles.
+That is its intended non-vacuous guard: this run is not a network-deny acceptance
+pass and does not close 13.7 or 18.5. The normal artifact was reinstalled, launched
+and verified opening Tip Splitter again. No new SpringBoard crash report appeared;
+the only matching report remained the earlier 16:08:15 report. This does not prove
+the underlying XCTest defect is fixed.
+
+Evidence directory:
+`~/.cache/whim-launch-2026-09-14/acceptance-2026-09-15/ios-normal-20260915/`.
+It holds normal-app screenshots, `water-counter-after-restart.png`,
+`missing-rule-timed-opening.png`, `missing-rule-timed-error.png`,
+`missing-rule-launch-timing.json`, retry equivalents,
+`missing-rule-return-home.png`, `normal-restored-tip-splitter.png`, and the
+`whim-ios-missing-after-{build,native,canary}.log` receipts. The simulator is left
+on the healthy normal build, with no temporary source or lockfile changes.
+
+## iOS 27 startup blocker — 2026-09-18
+
+Fresh Release builds from `865f7af` compiled under Xcode 27 but crashed on iOS 27
+before React Native started. The normal build reproduced the probe build's UIKit
+scene-lifecycle failure. [Issue and closure criteria](ios27-startup-issue.md) record
+the environment, crash evidence and required migration. This remains open; it does
+not invalidate the older iOS 26.5 results above. Temporary edits were restored,
+the normal artifact reinstalled, and the simulator shut down.
+
+## iOS scene lifecycle correction — 2026-09-18
+
+- Resumed the existing `integration/store-launch` run for the owner's iOS crash
+  investigation. Primary simulator process 96195 reproduced the documented
+  no-scene-lifecycle crash before React Native started. Current source still has
+  the legacy startup; the Hermes entry polyfill is already installed.
+- Dispatched `chain-ios-scene` from pinned BASE
+  `0632494137c0d7821f710f542b63100f177bfffe` on `codex/ios-scene-lifecycle`, worktree
+  `.claude/worktrees/ios-scene-lifecycle`. Scope and acceptance are in
+  `ios-scene-fix.md`; primary task owns native builds and simulator interaction.
+- Commit `f02062d` passed 231 release checks, lint, the simulator-SDK Swift type
+  check, and the fast gate. Independent review is clean; exact six-file integrity
+  returned 0. Merged into the active staging branch. The root Release build and
+  full integration gate are running with logs at
+  `/tmp/whim-ios-scene-release-build.log` and `/tmp/whim-ios-scene-full-gate.log`.
+- The initial worktree gate exposed a dependency-layout issue: the shared
+  `node_modules` symlink resolved `@whim/contract` into the primary checkout,
+  breaking a source-path assertion. The unchanged primary server suite passed
+  2,658/2,658. Mapping workspace package links into the worktree fixed the
+  assertion and the final worktree gate passed. No server or harness edit.
+- Integration `adf271e` compiled successfully as a normal iOS 27 Release build.
+  Full root regate exited 0 with `FULL GATE PASSED`, including the fast gate,
+  Metro check, Chromium suites and all OpenSpec validations. Temporary
+  CocoaPods checksum changes were restored; no probe or policy control changed.
+- Installed and launched on the original iPhone 18 Pro simulator. Warm URL
+  delivery opened Tip Splitter by the 4.400-second screenshot; cold URL delivery
+  opened Water Counter by 2.404 seconds. The owner confirmed increment, Home,
+  and tile reopening within five seconds, then made further taps. Screenshots
+  show the same 3 glasses/3 history entries before and after terminating and
+  relaunching Whim; restored state was visible by 2.422 seconds. No new crash
+  report appeared. The existing TextDecoder/isomorphic-git path needed no edit.
+- Native receipts and screenshots: `~/.cache/whim-ios-scene-2026-09-18/`.
+  `ios27-startup-issue.md` records exact artifact identity and the distinction
+  between verified URL-context delivery and pending associated-domain delivery.
+  Tasks 22.1–22.4 are complete. Physical-device and full native-deny acceptance
+  remain separately pending; this correction does not close the release change.
+
+## iOS 27 native network-denial acceptance — 2026-09-19
+
+Product `98e9494` passed two 90-second canaries on the iPhone 18 Pro simulator
+(`B93A4639-F5DD-450B-BCA2-83C75D1118DF`), iOS 27.0, Xcode 27.0 (`27A266a`):
+
+- Native rule attached: all six bundles served, zero HTTP hits, zero TLS
+  connections; `expect=zero` passed.
+- Only the native rule attachment removed: all six bundles served, five HTTP
+  hits and four TLS connections; `expect=leak` passed.
+
+The probe/native edits were restored byte-for-byte. The normal Release app was
+rebuilt, reinstalled and visually checked, then cold-opened through
+`devicectl --payload-url`; Water Counter retained 3 glasses and 3 history entries.
+The tracked Podfile.lock was restored after the three successful builds. No
+dependency versions changed. The full local gate passed on the same product tip.
+
+The Mac was locked, so missing-rule Retry/Home interactions were not repeated.
+The September 15 iOS 26.5 interaction receipts above remain historical evidence.
+The last probe diagnostic is partly clipped in the screenshot; no DNS packet
+capture was performed. This closes the missing live iOS HTTP/TLS canary evidence,
+but does not complete all of task 18.5 or the physical-device, cellular and
+Associated Domains requirements. The release change remains open.
+
+Receipts: `~/.cache/whim-pr35-2026-09-19/ios-netdeny/`. The current branch review,
+including the two server accounting fixes and remaining merge/release work, is
+[docs/pr35-readiness-review.md](../../../docs/pr35-readiness-review.md).

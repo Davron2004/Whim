@@ -1,0 +1,660 @@
+/**
+ * Acceptance for `scripts/release/lib/ios-project.ts` (chain-3, platform-release-readiness).
+ * specs/native-release-config/spec.md "Both apps ship under one identity", "The iOS app
+ * declares its export, device and permission surface", "The iOS privacy manifest covers linked
+ * native code and collected data"; specs/app-links/spec.md "The iOS app delivers universal
+ * links to the launcher"; task 4.6.
+ */
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test, assert } from '../harness';
+import { checkIosProject, checkIosSceneLifecycleWiring } from '../../../scripts/release/lib/ios-project';
+import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
+
+const REPO_ROOT = process.cwd();
+
+const FIXTURE_CONFIG: NativeReleaseConfig = {
+  WHIM_APP_ID: 'com.anycognition.whim',
+  WHIM_APPLE_TEAM_ID: '2B7K4YLS34',
+  WHIM_MARKETING_VERSION: '1.0.0',
+  WHIM_BUILD_NUMBER: '1',
+  WHIM_DOMAIN: 'example.com',
+};
+
+interface PbxprojFixtureOpts {
+  debugBundleId?: string;
+  releaseBundleId?: string;
+  debugFamily?: string;
+  releaseFamily?: string;
+  developmentTeam?: string;
+  marketingVersion?: string;
+  currentProjectVersion?: string;
+  codeSignEntitlements?: string;
+  debugProjectXcconfigPath?: string;
+  releaseProjectXcconfigPath?: string;
+  includeSceneDelegateFileReference?: boolean;
+  includeSceneDelegateSourceMembership?: boolean;
+}
+
+function pbxprojFixture(opts: PbxprojFixtureOpts = {}): string {
+  const debugBundleId = opts.debugBundleId ?? '$(WHIM_APP_ID)';
+  const releaseBundleId = opts.releaseBundleId ?? '$(WHIM_APP_ID)';
+  const debugFamily = opts.debugFamily ?? '1';
+  const releaseFamily = opts.releaseFamily ?? '1';
+  const developmentTeam = opts.developmentTeam ?? '$(WHIM_APPLE_TEAM_ID)';
+  const marketingVersion = opts.marketingVersion ?? '$(WHIM_MARKETING_VERSION)';
+  const currentProjectVersion = opts.currentProjectVersion ?? '$(WHIM_BUILD_NUMBER)';
+  const codeSignEntitlements = opts.codeSignEntitlements ?? 'Whim/Whim.entitlements';
+  const debugProjectXcconfigPath = opts.debugProjectXcconfigPath ?? '../release/whim-release.xcconfig';
+  const releaseProjectXcconfigPath = opts.releaseProjectXcconfigPath ?? '../release/whim-release.xcconfig';
+  const includeSceneDelegateFileReference = opts.includeSceneDelegateFileReference ?? true;
+  const includeSceneDelegateSourceMembership = opts.includeSceneDelegateSourceMembership ?? true;
+  const sceneDelegateFileReference = includeSceneDelegateFileReference
+    ? '\n\t\tMMMMMMMMMMMMMMMMMMMMMMMM /* SceneDelegate.swift */ = {isa = PBXFileReference; path = Whim/SceneDelegate.swift; };'
+    : '';
+  const sceneDelegateSourceMembership = includeSceneDelegateSourceMembership
+    ? '\n\t\tLLLLLLLLLLLLLLLLLLLLLLLL /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = MMMMMMMMMMMMMMMMMMMMMMMM; };'
+    : '';
+  const sourceFiles = includeSceneDelegateSourceMembership ? 'LLLLLLLLLLLLLLLLLLLLLLLL,' : '';
+  return `// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	objects = {
+		AAAAAAAAAAAAAAAAAAAAAAAA /* Whim */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BBBBBBBBBBBBBBBBBBBBBBBB;
+			buildPhases = (KKKKKKKKKKKKKKKKKKKKKKKK,);
+			name = Whim;
+		};
+		KKKKKKKKKKKKKKKKKKKKKKKK /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (${sourceFiles});
+		};${sceneDelegateSourceMembership}${sceneDelegateFileReference}
+		BBBBBBBBBBBBBBBBBBBBBBBB /* Build configuration list for PBXNativeTarget "Whim" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CCCCCCCCCCCCCCCCCCCCCCCC,
+				DDDDDDDDDDDDDDDDDDDDDDDD,
+			);
+		};
+		CCCCCCCCCCCCCCCCCCCCCCCC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = "${debugBundleId}";
+				TARGETED_DEVICE_FAMILY = "${debugFamily}";
+				DEVELOPMENT_TEAM = "${developmentTeam}";
+				MARKETING_VERSION = "${marketingVersion}";
+				CURRENT_PROJECT_VERSION = "${currentProjectVersion}";
+				CODE_SIGN_ENTITLEMENTS = ${codeSignEntitlements};
+			};
+			name = Debug;
+		};
+		DDDDDDDDDDDDDDDDDDDDDDDD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_BUNDLE_IDENTIFIER = "${releaseBundleId}";
+				TARGETED_DEVICE_FAMILY = "${releaseFamily}";
+				DEVELOPMENT_TEAM = "${developmentTeam}";
+				MARKETING_VERSION = "${marketingVersion}";
+				CURRENT_PROJECT_VERSION = "${currentProjectVersion}";
+				CODE_SIGN_ENTITLEMENTS = ${codeSignEntitlements};
+			};
+			name = Release;
+		};
+		EEEEEEEEEEEEEEEEEEEEEEEE /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = FFFFFFFFFFFFFFFFFFFFFFFF;
+		};
+		FFFFFFFFFFFFFFFFFFFFFFFF /* Build configuration list for PBXProject "Whim" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				GGGGGGGGGGGGGGGGGGGGGGGG,
+				HHHHHHHHHHHHHHHHHHHHHHHH,
+			);
+		};
+		GGGGGGGGGGGGGGGGGGGGGGGG /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = IIIIIIIIIIIIIIIIIIIIIIII;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		HHHHHHHHHHHHHHHHHHHHHHHH /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = JJJJJJJJJJJJJJJJJJJJJJJJ;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		IIIIIIIIIIIIIIIIIIIIIIII /* whim-release.xcconfig */ = {isa = PBXFileReference; path = "${debugProjectXcconfigPath}"; };
+		JJJJJJJJJJJJJJJJJJJJJJJJ /* whim-release.xcconfig */ = {isa = PBXFileReference; path = "${releaseProjectXcconfigPath}"; };
+	};
+	rootObject = EEEEEEEEEEEEEEEEEEEEEEEE;
+}
+`;
+}
+
+interface InfoPlistFixtureOpts {
+  itsAppUsesNonExemptEncryption?: boolean;
+  emptyUsageDescriptionKey?: string;
+  includeSceneManifest?: boolean;
+  supportsMultipleScenes?: boolean;
+  sceneClassName?: string;
+  sceneDelegateClassName?: string;
+  sceneConfigurationCount?: number;
+}
+
+function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
+  const its = opts.itsAppUsesNonExemptEncryption ?? false;
+  const includeSceneManifest = opts.includeSceneManifest ?? true;
+  const supportsMultipleScenes = opts.supportsMultipleScenes ?? false;
+  const sceneClassName = opts.sceneClassName ?? 'UIWindowScene';
+  const sceneDelegateClassName = opts.sceneDelegateClassName ?? '$(PRODUCT_MODULE_NAME).SceneDelegate';
+  const sceneConfigurationCount = opts.sceneConfigurationCount ?? 1;
+  const usageKeyXml = opts.emptyUsageDescriptionKey
+    ? `\n\t<key>${opts.emptyUsageDescriptionKey}</key>\n\t<string></string>`
+    : '';
+  const sceneConfiguration = `
+\t\t\t<dict>
+\t\t\t\t<key>UISceneClassName</key>
+\t\t\t\t<string>${sceneClassName}</string>
+\t\t\t\t<key>UISceneDelegateClassName</key>
+\t\t\t\t<string>${sceneDelegateClassName}</string>
+\t\t\t</dict>`;
+  const sceneManifest = includeSceneManifest
+    ? `
+\t<key>UIApplicationSceneManifest</key>
+\t<dict>
+\t\t<key>UISupportsMultipleScenes</key>
+\t\t<${supportsMultipleScenes}/>
+\t\t<key>UISceneConfigurations</key>
+\t\t<dict>
+\t\t\t<key>UIWindowSceneSessionRoleApplication</key>
+\t\t\t<array>${sceneConfiguration.repeat(sceneConfigurationCount)}
+\t\t\t</array>
+\t\t</dict>
+\t</dict>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<${its}/>${usageKeyXml}${sceneManifest}
+</dict>
+</plist>
+`;
+}
+
+function entitlementsFixture(host = 'applinks:whim.$(WHIM_DOMAIN)'): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>${host}</string>
+	</array>
+</dict>
+</plist>
+`;
+}
+
+interface PrivacyManifestFixtureOpts {
+  includeDiskSpace?: boolean;
+  tracking?: boolean;
+}
+
+function privacyManifestFixture(opts: PrivacyManifestFixtureOpts = {}): string {
+  const includeDiskSpace = opts.includeDiskSpace ?? true;
+  const tracking = opts.tracking ?? false;
+  const diskSpaceEntry = includeDiskSpace
+    ? `
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>${diskSpaceEntry}
+	</array>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyTracking</key>
+	<${tracking}/>
+</dict>
+</plist>
+`;
+}
+
+interface FixtureOverrides {
+  pbxproj?: string;
+  infoPlist?: string;
+  entitlements?: string;
+  privacyManifest?: string;
+  appDelegate?: string;
+  sceneDelegate?: string;
+}
+
+const VALID_APP_DELEGATE_SOURCE = `
+class AppDelegate {
+  var reactNativeDelegate: ReactNativeDelegate?
+  var reactNativeFactory: RCTReactNativeFactory?
+
+  func startReactNative(in window: UIWindow, launchOptions: [UIApplication.LaunchOptionsKey: Any]?) {
+    let factory: RCTReactNativeFactory
+    if let existingFactory = reactNativeFactory {
+      factory = existingFactory
+    } else {
+      let delegate = ReactNativeDelegate()
+      let newFactory = RCTReactNativeFactory(delegate: delegate)
+      reactNativeDelegate = delegate
+      reactNativeFactory = newFactory
+      factory = newFactory
+    }
+    factory.startReactNative(withModuleName: "Whim", in: window, launchOptions: launchOptions)
+    window.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
+  }
+
+  func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+  ) -> Bool {
+    RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
+  }
+
+  func application(
+    _ app: UIApplication,
+    open url: URL,
+    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+  ) -> Bool {
+    RCTLinkingManager.application(app, open: url, options: options)
+  }
+}
+`;
+
+const VALID_SCENE_DELEGATE_SOURCE = `
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene,
+          let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
+      return
+    }
+    let window = UIWindow(windowScene: windowScene)
+    self.window = window
+    let launchOptions = Self.launchOptions(from: connectionOptions)
+    appDelegate.startReactNative(in: window, launchOptions: launchOptions)
+  }
+
+  func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    RCTLinkingManager.application(
+      UIApplication.shared,
+      continue: userActivity,
+      restorationHandler: { _ in }
+    )
+  }
+
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    for context in URLContexts {
+      RCTLinkingManager.application(
+        UIApplication.shared,
+        open: context.url,
+        options: Self.applicationOpenOptions(from: context.options)
+      )
+    }
+  }
+
+  private static func launchOptions(
+    from connectionOptions: UIScene.ConnectionOptions
+  ) -> [UIApplication.LaunchOptionsKey: Any]? {
+    if let userActivity = connectionOptions.userActivities.first(
+      where: { $0.activityType == NSUserActivityTypeBrowsingWeb && $0.webpageURL != nil }
+    ) {
+      return [
+        UIApplication.LaunchOptionsKey.userActivityDictionary: [
+          UIApplication.LaunchOptionsKey.userActivityType: userActivity.activityType,
+          "UIApplicationLaunchOptionsUserActivityKey": userActivity,
+        ],
+      ]
+    }
+    if let context = connectionOptions.urlContexts.first {
+      return [UIApplication.LaunchOptionsKey.url: context.url]
+    }
+    return nil
+  }
+
+  private static func applicationOpenOptions(
+    from sceneOptions: UIScene.OpenURLOptions
+  ) -> [UIApplication.OpenURLOptionsKey: Any] {
+    var options: [UIApplication.OpenURLOptionsKey: Any] = [
+      .annotation: sceneOptions.annotation,
+      .openInPlace: sceneOptions.openInPlace,
+    ]
+    if let sourceApplication = sceneOptions.sourceApplication {
+      options[.sourceApplication] = sourceApplication
+    }
+    return options
+  }
+}
+`;
+
+/** Writes a minimal-but-complete fixture project under a fresh temp dir and runs `fn` against it, cleaning up after. */
+function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-ios-project-'));
+  try {
+    const pbxprojDir = path.join(dir, 'ios/Whim.xcodeproj');
+    const whimDir = path.join(dir, 'ios/Whim');
+    fs.mkdirSync(pbxprojDir, { recursive: true });
+    fs.mkdirSync(whimDir, { recursive: true });
+    fs.writeFileSync(path.join(pbxprojDir, 'project.pbxproj'), overrides.pbxproj ?? pbxprojFixture(), 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'Info.plist'), overrides.infoPlist ?? infoPlistFixture(), 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'Whim.entitlements'), overrides.entitlements ?? entitlementsFixture(), 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'PrivacyInfo.xcprivacy'), overrides.privacyManifest ?? privacyManifestFixture(), 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'AppDelegate.swift'), overrides.appDelegate ?? VALID_APP_DELEGATE_SOURCE, 'utf8');
+    fs.writeFileSync(path.join(whimDir, 'SceneDelegate.swift'), overrides.sceneDelegate ?? VALID_SCENE_DELEGATE_SOURCE, 'utf8');
+    fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function messagesFor(dir: string): string[] {
+  return checkIosProject(dir, FIXTURE_CONFIG).map((f) => `${f.file}: ${f.message}`);
+}
+
+function sceneWiringMessagesFor(dir: string): string[] {
+  return checkIosSceneLifecycleWiring(dir).map((f) => `${f.file}: ${f.message}`);
+}
+
+export async function run(): Promise<void> {
+  await test('ios-project: the real ios/ project passes with zero findings', () => {
+    const config = loadNativeReleaseConfig(REPO_ROOT);
+    const findings = [...checkIosProject(REPO_ROOT, config), ...checkIosSceneLifecycleWiring(REPO_ROOT)];
+    assert(findings.length === 0, `expected no findings against the real repo, got ${JSON.stringify(findings)}`);
+  });
+
+  await test('ios-project: a well-formed fixture passes with zero findings (baseline for the defect cases below)', () => {
+    withFixtureRepo({}, (dir) => {
+      const findings = [...checkIosProject(dir, FIXTURE_CONFIG), ...checkIosSceneLifecycleWiring(dir)];
+      assert(findings.length === 0, `expected the baseline fixture to pass, got ${JSON.stringify(findings)}`);
+    });
+  });
+
+  await test('ios-project: a missing UIApplicationSceneManifest fails before a no-scene lifecycle build reaches UIKit', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ includeSceneManifest: false }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('Info.plist') && message.includes('UIApplicationSceneManifest')),
+        `expected a missing-scene-manifest finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a scene manifest that permits multiple scenes fails', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ supportsMultipleScenes: true }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('UISupportsMultipleScenes')),
+        `expected a multiple-scenes finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a non-UIWindowScene application configuration fails', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneClassName: 'UIScene' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('UISceneClassName') && message.includes('UIWindowScene')),
+        `expected a UIWindowScene-class finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a scene configuration with a wrong delegate class fails', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneDelegateClassName: '$(PRODUCT_MODULE_NAME).OtherSceneDelegate' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('UISceneDelegateClassName') && message.includes('SceneDelegate')),
+        `expected a scene-delegate finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: more than one application scene configuration fails', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneConfigurationCount: 2 }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('exactly one UIWindowSceneSessionRoleApplication')),
+        `expected a single-configuration finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: SceneDelegate.swift missing from the Whim Sources phase fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ includeSceneDelegateSourceMembership: false }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('SceneDelegate.swift') && message.includes('Sources build phase')),
+        `expected a SceneDelegate Sources-membership finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  // These source checks lock the callback routes, but do not execute UIKit or prove that an
+  // associated domain causes iOS to invoke the callbacks. Device acceptance owns that evidence.
+  await test('ios-project: scene callback checks reject a cold user activity disconnected from its launch option', () => {
+    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('connectionOptions.userActivities', 'connectionOptions.notificationResponses') }, (dir) => {
+      const messages = sceneWiringMessagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('translate a cold browsing activity into the user-activity launch option')),
+        `expected a cold-user-activity wiring finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: scene callback checks reject a cold URL context disconnected from its launch option', () => {
+    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('connectionOptions.urlContexts', 'connectionOptions.shortcutItem') }, (dir) => {
+      const messages = sceneWiringMessagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('translate a cold URL context into the URL launch option')),
+        `expected a cold-URL wiring finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: scene callback checks reject missing warm user-activity forwarding', () => {
+    withFixtureRepo(
+      {
+        sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace(
+          'RCTLinkingManager.application(\n      UIApplication.shared,\n      continue: userActivity,',
+          'LinkingManager.application(\n      UIApplication.shared,\n      continue: userActivity,',
+        ),
+      },
+      (dir) => {
+        const messages = sceneWiringMessagesFor(dir);
+        assert(
+          messages.some((message) => message.includes('forward warm user activities')),
+          `expected a warm-user-activity wiring finding, got ${JSON.stringify(messages)}`,
+        );
+      },
+    );
+  });
+
+  await test('ios-project: scene callback checks reject missing warm URL forwarding', () => {
+    withFixtureRepo(
+      {
+        sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace(
+          'RCTLinkingManager.application(\n        UIApplication.shared,\n        open: context.url,',
+          'LinkingManager.application(\n        UIApplication.shared,\n        open: context.url,',
+        ),
+      },
+      (dir) => {
+        const messages = sceneWiringMessagesFor(dir);
+        assert(
+          messages.some((message) => message.includes('forward warm URL contexts')),
+          `expected a warm-URL wiring finding, got ${JSON.stringify(messages)}`,
+        );
+      },
+    );
+  });
+
+  await test('ios-project: scene callback checks reject startup that discards the connection-options conversion result', () => {
+    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('Self.launchOptions(from: connectionOptions)', 'nil') }, (dir) => {
+      const messages = sceneWiringMessagesFor(dir);
+      assert(
+        messages.some((message) => message.includes('pass the connection-options conversion result to React Native startup')),
+        `expected a connection-options-to-startup wiring finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: an empty usage-description string fails, naming the key', () => {
+    withFixtureRepo({ infoPlist: infoPlistFixture({ emptyUsageDescriptionKey: 'NSLocationWhenInUseUsageDescription' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('ios/Whim/Info.plist') && m.includes('NSLocationWhenInUseUsageDescription')),
+        `expected a finding naming the empty usage-description key, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: TARGETED_DEVICE_FAMILY = "1,2" fails (iPad included)', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ debugFamily: '1,2', releaseFamily: '1,2' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('TARGETED_DEVICE_FAMILY')),
+        `expected a TARGETED_DEVICE_FAMILY finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal DEVELOPMENT_TEAM fails, distinguished from the macro', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ developmentTeam: FIXTURE_CONFIG.WHIM_APPLE_TEAM_ID }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('DEVELOPMENT_TEAM') && m.includes('literal')),
+        `expected a literal-DEVELOPMENT_TEAM finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal MARKETING_VERSION fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ marketingVersion: FIXTURE_CONFIG.WHIM_MARKETING_VERSION }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('MARKETING_VERSION')),
+        `expected a MARKETING_VERSION finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal CURRENT_PROJECT_VERSION fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ currentProjectVersion: FIXTURE_CONFIG.WHIM_BUILD_NUMBER }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('CURRENT_PROJECT_VERSION')),
+        `expected a CURRENT_PROJECT_VERSION finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a wrong CODE_SIGN_ENTITLEMENTS path fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ codeSignEntitlements: 'Whim/Other.entitlements' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('CODE_SIGN_ENTITLEMENTS') && m.includes('Other.entitlements')),
+        `expected a CODE_SIGN_ENTITLEMENTS finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: the Debug project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ debugProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('Debug project-level baseConfigurationReference')),
+        `expected a Debug project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: the Release project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ releaseProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('Release project-level baseConfigurationReference')),
+        `expected a Release project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a literal bundle id fails, distinguished from the "$(WHIM_APP_ID)" macro', () => {
+    withFixtureRepo({ pbxproj: pbxprojFixture({ releaseBundleId: 'com.anycognition.whim' }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('project.pbxproj') && m.includes('PRODUCT_BUNDLE_IDENTIFIER') && m.includes('literal')),
+        `expected a literal-bundle-id finding for Release, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test(
+    'ios-project: ITSAppUsesNonExemptEncryption = true fails (discriminating: a presence-only check would pass this)',
+    () => {
+      withFixtureRepo({ infoPlist: infoPlistFixture({ itsAppUsesNonExemptEncryption: true }) }, (dir) => {
+        const messages = messagesFor(dir);
+        assert(
+          messages.some((m) => m.includes('ios/Whim/Info.plist') && m.includes('ITSAppUsesNonExemptEncryption')),
+          `expected an ITSAppUsesNonExemptEncryption finding, got ${JSON.stringify(messages)}`,
+        );
+      });
+    },
+  );
+
+  await test('ios-project: an entitlement host not built from $(WHIM_DOMAIN) fails', () => {
+    withFixtureRepo({ entitlements: entitlementsFixture('applinks:whim.example.com') }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('Whim.entitlements') && m.includes('literal domain')),
+        `expected an entitlement-host finding naming the literal domain, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a privacy manifest without the DiskSpace category fails', () => {
+    withFixtureRepo({ privacyManifest: privacyManifestFixture({ includeDiskSpace: false }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('PrivacyInfo.xcprivacy') && m.includes('DiskSpace')),
+        `expected a missing-DiskSpace finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('ios-project: a privacy manifest declaring tracking fails', () => {
+    withFixtureRepo({ privacyManifest: privacyManifestFixture({ tracking: true }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.includes('PrivacyInfo.xcprivacy') && m.includes('NSPrivacyTracking')),
+        `expected an NSPrivacyTracking finding, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+}
