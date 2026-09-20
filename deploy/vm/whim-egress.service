@@ -1,0 +1,15 @@
+# Boot-persistent egress rules for the Whim container network (design D17).
+# Installed by deploy/vm/bootstrap.sh.
+[Unit]
+Description=Whim container egress firewall (DOCKER-USER)
+After=docker.service
+Wants=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/whim-egress.sh
+
+[Install]
+WantedBy=multi-user.target
