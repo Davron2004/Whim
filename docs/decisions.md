@@ -1085,3 +1085,154 @@ Apple rejects Whim itself.
 **Google Play is not where the risk is.** Its Device and Network Abuse policy exempts "JavaScript
 in a webview" from the ban on downloaded executable code. Its AI-Generated Content policy requires
 in-app reporting, which the same submission work covers.
+
+### 65. Store-launch compliance: consent, refusals, and app links `[DECIDED — openspec: store-launch-compliance]`
+
+Seven decisions from `store-launch-compliance/design.md`, one line of why each:
+
+- **D1 — consent is asked at the first data-sending action, not at first launch.** A launch-time
+  wall would contradict "a fresh install is not empty" and the brief's requirement that declining
+  keep apps usable; asking exactly where the first request would go satisfies 5.1.2(i)'s "before"
+  with no wasted tap.
+- **D2 — nothing is requested before consent, enforced by a branded `ConsentedClientOptions` type.**
+  A call site that forgot the check would still compile under a plain boolean; the brand turns a
+  missed site into a type error, which is the only way "nothing leaves before you agree" is
+  actually true rather than merely intended.
+- **D3 — reports don't require AI consent.** A report is user-initiated and goes only to
+  AnyCognition, never through the model-adjacent content policy; gating it behind AI consent would
+  stop someone who declined AI features from reporting an example app they find objectionable,
+  which is the opposite of what Play's reporting requirement asks for.
+- **D6 — one domain constant, one `release-config.ts` module.** `WHIM_DOMAIN` derives every Whim
+  URL from one place, so a build shipped with the placeholder (IANA-reserved `example.com`) can
+  never reach someone else's server, and a source-scan suite can enforce that nothing else in the
+  launcher hardcodes the domain.
+- **D7 — Settings sections, with the server address under a collapsed Advanced.** The field still
+  needs to exist for TestFlight/closed-track testers and LAN demos pointing at a non-production
+  server, but a release build's ordinary users and App/Play reviewers shouldn't meet a field that
+  means nothing to them.
+- **D10 — a refused generate settles or discards its pending record depending on how it was
+  started.** The record has to exist before the request (prompt-flow and pending-builds both need
+  the id up front), so a refusal can't just vanish silently; it either deletes the untouched record
+  (fresh attempt) or settles it `failed` with the server's own hint (already detached, or a Retry),
+  so a ghost tile never appears unexplained.
+- **D16 — the app-link reveal uses selectable text, not a clipboard button.** RN core has shipped no
+  clipboard API since 0.60, and adding one is a new native dependency that belongs with the platform
+  change, not this one; `<Text selectable>` gets the system copy menu on both platforms for free and
+  still satisfies 4.7.4's "reveal the link" requirement.
+
+### 66. Platform release readiness: one native config file, minute-resolution builds, split Android build types, relocated Hermes prerequisites, iOS tones, fastlane orchestration `[DECIDED — openspec: platform-release-readiness]`
+
+Five decisions from `platform-release-readiness/design.md`, one line of why each:
+
+- **D1 — one native release file, in xcconfig syntax.** `release/whim-release.xcconfig` is the
+  single place identity, version and domain live; Xcode reads it natively, Gradle and
+  `scripts/release/lib/native-config.ts` parse the same five-key grammar, and a domain change is
+  the two one-line edits (this file, `release-config.ts`) the domain-lockstep suite holds together
+  in the gate, down from a checklist across three files.
+- **D3 — build numbers are minutes since 2026-01-01T00:00Z.** A monotonic, credential-free,
+  state-free number that fits both platforms' ceilings for millennia beats commit count (falls
+  when history is rewritten) or store-latest-plus-one (needs credentials before a build starts).
+- **D4 — Android's `release` build type is the store build; `offline` replaces the old `release`
+  dev loop.** Splitting the names stops a manual console upload from ever shipping the debug-signed
+  flavor that the emulator loop still needs while Metro's NAT route stays dead.
+- **D8 — the Hermes-prerequisites recipe (originally #36 D2 / #39) moves to `src/host/platform/`.**
+  `hermes-polyfills.ts` and the new RN-only `install-entry-polyfills.ts` drop the module-level
+  `installed` flag that could lock out a platform-less first call, and `index.js`'s first statement
+  now runs the installer before anything else loads.
+- **D9 — iOS `WhimTone` synthesizes the AOSP tones as system sounds.** `AVAudioEngine` and bundled
+  audio files both lose to three `AudioServicesPlaySystemSound` calls generated once and cached,
+  because a session lifecycle and a second copy of the tone table are too much for three beeps.
+- **D12 — fastlane (Homebrew, pinned `>= 2.237.0`) drives store calls; TypeScript owns everything
+  checkable.** `deliver`, `supply` and `pilot` already handle edit sessions, screenshot reservations
+  and processing waits that a hand-rolled client would have to re-implement; the preflight, AAB
+  verification, privacy audit and tagging stay pure functions in `scripts/release/lib/`, reachable
+  from both the gate and a real release.
+
+### 67. iOS launcher back navigation: one seam, a gate-enforced exit table `[DECIDED — openspec: ios-launcher-back-navigation]`
+
+Eleven decisions from `ios-launcher-back-navigation/design.md`, one line of why each:
+
+- **D1 — one shared seam (`useSystemBack`) and a declared exit table, not a shared header.** Nine
+  hand-written `BackHandler` listeners had already drifted from their visible control once (the
+  plan step); a shared header would also restyle screens whose exit reads as a destination, not a
+  chevron.
+- **D2 — the same controls on both platforms, no `Platform.OS` branch.** An iOS-only variant would
+  mean the Android emulator no longer covers what an iPhone user sees.
+- **D3 — no edge-swipe back in this change.** `WKWebView` eats the pan over a running mini-app, a
+  root `PanResponder` would fight scroll views and Android's own back gesture, and App Review only
+  asks for a visible way back, which this change already gives every screen.
+- **D4 — flow steps step back; they never cancel.** The plan step's header and system back now
+  share one `planBackAction`, so both cancel an open row edit before leaving; a flow-level abandon
+  would need a confirmation of its own for no user who is actually stuck.
+- **D5 — a running mini-app is left through the orb; no host pop on iOS.** Depth is an untrusted
+  hint a hostile app could fake, and no seeded app pushes a screen, so a degraded — never trapped —
+  sub-screen beats a new orb affordance for a case nothing exercises yet.
+- **D6 — consent review renders its two buttons from one pure function.** `consentScreenActions`
+  keeps the mode → label table in one place instead of a second copy inline in the screen's JSX.
+- **D7 — the error screen offers a way home.** `onLeave` passes through the boundary unchanged, so
+  a screen that throws on every render is never a dead end — except on Home, where `Try again` is
+  already the way out.
+- **D8 — the exit table is gate-enforced.** A `Screen` kind missing from `ScreenKind` fails to
+  typecheck, and a source scanner proves every screen is on the seam, declared, bound to a real
+  control, labelled, and a real kind — coverage a checklist would silently drift out of.
+- **D9 — the hook binds once and always runs the latest handler.** Reading `handler` through a ref
+  on every render is what stops compose, clarify and plan re-registering their listener on every
+  keystroke.
+- **D10 — the root frame applies the bottom inset everywhere except where a screen already owns
+  it.** Padding the frame under a running mini-app or `DevProbeScreen` would double an inset each
+  already applies itself.
+- **D11 — the flow header's `Back` meets the 44-point touch target.** Raising its `hitSlop` from 10
+  to 16 gets there with no visual change.
+
+### 68. Public generation server: sandboxed egress, spend controls, and the pages host `[DECIDED — openspec: public-generation-server]`
+
+Whim's generation server moves from a LAN-only dev tool to a public service behind
+`api.whim.anycognition.ca`, with `whim.anycognition.ca` as a second, static pages host on the same
+Caddy. One line of why each load-bearing piece:
+
+- **Sandbox on, no egress, proven twice.** Chromium's OS sandbox is always on (never
+  `--no-sandbox`), and the candidate's browser context has every request aborted except its own page
+  served from memory — a browser-wide dead proxy and a WebRTC UDP policy back that up. The boot
+  self-test proves it on every start (`probeEgressBlocked`), and smoke proves it again on the
+  running container (a fetch to the metadata server must fail), so a regression fails closed at boot
+  rather than surfacing as a live leak.
+- **Dependency budget amended.** `esbuild`, `playwright` and `typescript` become declared
+  `@whim/server` runtime dependencies, pinned to the lockfile's exact root versions — the pipeline
+  already needed all three at run time, and pretending otherwise just hid them from the budget the
+  spec enforces.
+- **Node 22 base, not the Playwright image.** The vendored Playwright image ships Node 24; the
+  production image builds on `node:22-bookworm-slim` and pins Chromium itself, keeping the runtime
+  major the one the gate and the rest of the repo already target.
+- **Spend controls and their defaults.** A dedicated OpenRouter key with a provider credit limit is
+  the hard backstop; per-device daily limits and global admission caps are the controls that
+  actually shape day-to-day spend (design.md D6's table). Recommended starting credit limit: $50,
+  raised after a week of real `whim-admin usage` data replaces the placeholder cost model.
+- **Reports are the one deliberate exception to #33's "no content stored."** A device can send a
+  content report; it lands in its own SQLite file with secure deletion and a retention purge, never
+  in the usage ledger, so "the ledger holds no content" stays a file-level property a test can
+  assert.
+- **#56 D8's "threaded, not raced" is superseded for three synthrun waits.** Abort now races
+  concurrency acquisition, `openRun`'s navigation and `awaitMount` instead of only threading through
+  them, bringing real client-disconnect teardown within a bound. esbuild and the static check stay
+  unraced — both finish in milliseconds under the existing body and output caps.
+- **An injectable device verifier, not a hardcoded UUID check.** The `/v1` gate now runs through a
+  seam a future App Attest or Play Integrity verifier can fill without touching a route.
+- **Real hostnames, and the pages host rides the same Caddy.** `api.whim.anycognition.ca` and
+  `whim.anycognition.ca` replace the sslip.io stand-in as the defaults; the pages host is a second
+  Caddy site block serving flat files only (`/privacy`, `/support`, `/a/*`, the association files),
+  so the deploy stays one VM, one certificate store, one proxy to patch (design.md D20–D21).
+- **Association files come only from the release tooling, gated on the Play signing fingerprint.**
+  The site build never writes one itself; both files ship together only once the Play fingerprint is
+  committed, so no upload-key-only file — which verifies nothing anyone actually installs — ever
+  goes live (design.md D22).
+- **The privacy policy is checked against the consent screen, not hand-maintained.** A parity
+  tripwire fails the gate the moment a new `consent…` disclosure lands without the hosted policy
+  quoting it verbatim, denying by default rather than trusting a maintained key list (design.md D23).
+- **Capacity profiles tie machine type to concurrency limits as one named unit.** `standard` and
+  `event` change together, so raising demo-night concurrency without the bigger VM (or the reverse)
+  isn't a state the repo can express (design.md D25).
+- **The load test can't spend a cent, by construction, not by discipline.** It runs a separate image
+  with no OpenRouter key reachable, a replay model with no transport at all, and a `fetch` trap that
+  turns any missed override into a loud failure — three independent reasons it can't reach the
+  provider, plus a production-bundle metafile check that it can't reach production either
+  (design.md D26).
