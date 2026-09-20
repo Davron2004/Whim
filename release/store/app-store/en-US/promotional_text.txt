@@ -1,0 +1,1 @@
+Describe an app in your own words. Whim asks a question or two, then builds it — ready to open on your phone in about a minute.
