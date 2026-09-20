@@ -30,12 +30,31 @@ export type RuntimeDiagnostic = Omit<StaticDiagnostic, 'line'> & { line?: number
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The minimum every trace entry carries; chain 3 extends this into a discriminated union of
- *  concrete syscall/cue/denial record shapes (its own contract owns those fields). */
+ *  concrete syscall/cue/denial record shapes (its own contract owns those fields).
+ *  `egress_blocked` is the harness's own entry, `EgressBlockedTraceEntry` below. */
 export interface TraceEntry {
-  kind: 'syscall' | 'cue' | 'denial';
+  kind: 'syscall' | 'cue' | 'denial' | 'egress_blocked';
   method: string;
   /** Milliseconds since the run's `startedAt` anchor (`RunContext.startedAt`, session.ts). */
   atMs: number;
+}
+
+/** The fixed cap for the blocked-egress count. Refusals beyond it saturate, exactly like
+ *  `REJECTED_FORGERY_CAP`: the signal needed is "did this candidate try to reach the network, once
+ *  or repeatedly", and a candidate must not be able to grow the report by retrying. */
+export const BLOCKED_EGRESS_CAP = 16;
+
+/** Spec §A synthetic run has no network egress: every request or WebSocket the run's browser
+ *  context aborted, recorded as the FACT (this entry is present) plus a BOUNDED count. At most one
+ *  per report, appended last, and only when something was refused. It never carries a URL: the
+ *  destination is candidate-chosen text. */
+export interface EgressBlockedTraceEntry extends TraceEntry {
+  kind: 'egress_blocked';
+  method: 'network';
+  /** When the first refusal happened, from the run's `startedAt` anchor. */
+  atMs: number;
+  /** Refusals observed, saturating at `BLOCKED_EGRESS_CAP` (read a capped value as "at least"). */
+  count: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,9 +90,11 @@ export interface StageTimings {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Semaphore {
-  /** Resolves once a concurrency slot is free; call the returned function exactly once to
-   *  release it. */
-  acquire(): Promise<() => void>;
+  /** Resolves once a concurrency slot is free with the function that releases it. When `signal`
+   *  aborts first, the waiter MUST leave the queue without ever holding a slot, and the promise
+   *  rejects with an `AbortError`. Calling the release function again after the first call does
+   *  nothing. */
+  acquire(signal?: AbortSignal): Promise<() => void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,14 +143,20 @@ export interface RunOptions {
    *  compose by wrapping: `session.openRun(source,
    *  { beforeNavigate: async (page, ctx) => { await a(page, ctx); await b(page, ctx); } })`. */
   beforeNavigate?: (page: Page, context: BrowserContext) => Promise<void>;
-  /** Cancellation (chain 6, design D8, generation-loop spec "Cancellation aborts the pipeline at
-   *  every boundary"). Threaded into `observe.ts`'s `withTotalBudget` — the SAME cleanup path the
-   *  total-budget watchdog already uses: an abort races the in-flight work exactly like a budget
-   *  overrun, hard-kills the page, and the caller's existing `dispose()` (context close + semaphore
-   *  release) then runs from its own `finally` block, unchanged. Not raced against `runCandidate` as
-   *  a whole — an abort during build/boot/mount-wait is observed the next time control reaches
-   *  `withTotalBudget`, not before (D8: "threaded, not raced" — the rejected alternative leaks a
-   *  context/slot for up to `totalBudgetMs` per cancellation). */
+  /** Cancellation (generation-pipeline spec "Cancellation aborts the pipeline at every boundary",
+   *  synthetic-run spec "Abort is honoured at every wait in a run"). Raced at every wait
+   *  (public-generation-server design D12, which supersedes #56 D8's "threaded, not raced" for
+   *  the slot, navigation and mount waits). The page and context are closed within 5 s of the
+   *  abort, and the slot is released exactly once:
+   *  - while queued for a slot: the waiter leaves the queue, never holds the slot and never opens a
+   *    context; the call rejects with an `AbortError`;
+   *  - while a replacement browser launches, before the context is created, or during navigation:
+   *    `openRun` closes what it opened, releases the slot and rejects with an `AbortError`;
+   *  - while awaiting mount: the wait ends within one poll, the sweep is skipped, and the run
+   *    disposes;
+   *  - during the sweep: `withTotalBudget` hard-kills the page and returns `aborted: true`.
+   *  Once `openRun` has returned, `runCandidate` resolves with a report the caller must discard.
+   *  esbuild and the synchronous static check stay unraced; both are bounded by input caps. */
   signal?: AbortSignal;
 }
 
