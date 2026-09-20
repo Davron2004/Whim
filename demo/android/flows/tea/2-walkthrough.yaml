@@ -4,7 +4,7 @@
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/2-walkthrough.yaml \
 #        --device emulator-5554 --out demo/raw/2026-09-11/shot-2 --name take-1 \
-#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.anycognition.whim --tighten
 #
 # PRECONDITION: Whim foregrounded ON the grid with the "Tea Steeper" tile (the instance shot 1
 # built, grid slot 4). The app must be on Green, steep time 180 (3:00, "Preset" badge), timer Idle.
@@ -21,7 +21,7 @@
 # also sets the value, which is how the off-camera reset to exactly 180 was done.
 # 23%→48% lands on 445 s (7:25), measured. The a11y tree is populated on open without a wake tap
 # on this instance (verified warm AND cold), so there is no wake tap and no stray ring.
-appId: com.whim
+appId: com.anycognition.whim
 ---
 - extendedWaitUntil:
     visible: "YOUR APPS"

@@ -4,7 +4,7 @@
 #
 #   node ~/Work/other/filmkit/film-android.mjs demo/android/flows/tea/4-rewrite.yaml \
 #        --device emulator-5554 --out demo/raw/2026-09-11/shot-4 --name take-1 \
-#        --size 1080x2404 --bit-rate 20000000 --guard-app com.whim --tighten
+#        --size 1080x2404 --bit-rate 20000000 --guard-app com.anycognition.whim --tighten
 #
 # PRECONDITIONS: Whim foregrounded ON the grid at top, exactly one tea-timer tile ("Tea Steeper",
 # slot 4), no forks; the user's setting already changed in-app to 440 s / 7:20 (shots 2–3 filmed
@@ -27,7 +27,7 @@
 # with the plan sitting on screen). Header there reads "Here's the change".
 # The "Leave it running" sheet is tolerated rather than required: if the rewrite path ever skips
 # it, the run still reaches the build wait instead of hanging with the sheet undismissed.
-appId: com.whim
+appId: com.anycognition.whim
 env:
   TILE_RE: "Tea Steeper"
   SETTING_RE: ".*7:20.*"
