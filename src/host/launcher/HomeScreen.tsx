@@ -25,6 +25,7 @@ import { isAppBusy, type AppBusyMap } from './app-busy';
 import { ghostTileColorFor } from './prompt-flow';
 import type { PendingBuildRecord } from './pending-builds';
 import AppTile, { APP_TILE_SIZE } from './app-tile';
+import AppLinkSheet from './AppLinkSheet';
 import { COPY, deleteBody, forkedFromLabel } from './copy';
 import { composeGrid, InstalledTile } from './grid-composition';
 import { tilePillFor, TILE_PILL } from './tile-pill';
@@ -66,6 +67,10 @@ export interface HomeScreenProps {
   onSettings: () => void;
   /** __DEV__ entry: long-press the title to reach the containment/bridge probe surface (D6). */
   onOpenDevProbe?: () => void;
+  /** The session connectivity indicator (server-connectivity, design.md decision 7): visible only
+   *  while the configured server is unreachable — omitted/false for `'unknown'`, `'checking'` and
+   *  `'online'`. Never obscures or gates the grid below it. */
+  offline?: boolean;
 
   // ── Pending builds (launcher-ghost-tiles; contract `handoff/ghost-handlers.md`) ─────────────
   // The shell supplies all four together or none of them. The grid composition and the ghost
@@ -97,6 +102,7 @@ export default function HomeScreen({
   onCreate,
   onSettings,
   onOpenDevProbe,
+  offline,
   pending,
   onOpenPending,
   onCancelPending,
@@ -105,6 +111,9 @@ export default function HomeScreen({
   const [selected, setSelected] = useState<InstalledApp | null>(null);
   const [forkTarget, setForkTarget] = useState<InstalledApp | null>(null);
   const [selectedGhost, setSelectedGhost] = useState<PendingBuildRecord | null>(null);
+  // The App link reveal sheet (spec app-links "Every installed app can reveal its link from the
+  // home grid") — installed-tile only, never offered for a ghost.
+  const [appLinkTarget, setAppLinkTarget] = useState<InstalledApp | null>(null);
   const p = SHELL_PALETTE;
   const cellWidth = homeGridCellWidth(useWindowDimensions().width, APP_TILE_SIZE);
 
@@ -136,13 +145,19 @@ export default function HomeScreen({
             {COPY.homeTitle}
           </Text>
           <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.homeSubtitle}</Text>
+          {offline && (
+            <View style={styles.offlineRow}>
+              <View style={[styles.offlineDot, { backgroundColor: p.textMuted }]} />
+              <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.homeOfflineIndicator}</Text>
+            </View>
+          )}
         </View>
         <TouchableOpacity
           onPress={onSettings}
           accessibilityLabel={COPY.settingsTitle}
           style={[styles.settingsBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
-          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙'}</Text>
+          <Text style={[styles.settingsGlyph, { color: p.text }]}>{'⚙︎'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -208,6 +223,7 @@ export default function HomeScreen({
             <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
             <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
             <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
+            <SheetRow label={COPY.actionAppLink} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setAppLinkTarget(a); }} />
             <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
             {selectedRebuild && (
               <GhostActionRow
@@ -255,6 +271,8 @@ export default function HomeScreen({
           </Pressable>
         </Pressable>
       </Modal>
+
+      <AppLinkSheet app={appLinkTarget} onClose={() => setAppLinkTarget(null)} />
     </View>
   );
 }
@@ -352,6 +370,11 @@ const styles = StyleSheet.create({
   },
   headerText: { flexShrink: 1 },
   eyebrow: { marginTop: SPACING.xs },
+  // The quiet offline indicator (server-connectivity, design.md decision 7): a small muted dot
+  // plus a caption, sitting under the eyebrow — never a banner, never anything that competes with
+  // the grid for attention.
+  offlineRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.xs, marginTop: SPACING.xs },
+  offlineDot: { width: 6, height: 6, borderRadius: 3 },
   settingsBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   /** design html:386 `font:400 16px/1` (ruling R25). Was `TYPE_SCALE.body`, which L1 retargeted
    *  15 -> 13.5 this batch — that widened a 1px gap to 2.5px AND dragged body's 20.925 line-height

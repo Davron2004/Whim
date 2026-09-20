@@ -26,9 +26,11 @@ import {
   clarificationsFrom,
   clarifyStep,
   composeStep,
+  composeTextChanged,
   currentActionSentence,
   doneStep,
   isClarifySkip,
+  planBackAction,
   planRowsFrom,
   planStep,
   primaryActionLabel,
@@ -42,7 +44,7 @@ import {
   withStage,
   workingLineText,
 } from '../prompt-flow';
-import type { ClarifyScreen, ComposeScreen, PlanScreen } from '../prompt-flow';
+import type { ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
 
 function read(file: string): string {
@@ -76,6 +78,14 @@ function plannedFlow(rows?: { label: string; text: string }[]): PlanScreen {
   return withPlan(pending, { rewrittenPrompt: 'a brew timer', ...(rows ? { plan: rows } : {}) });
 }
 
+/** A text-landing (`danger`-tone) refusal notice, the shape `content_policy`/`payload_too_large`
+ *  produce — the case `composeTextChanged`/`updatePlanRow` clear on an edit. */
+const DANGER_NOTICE: FlowNotice = { hint: 'That wording isn’t allowed.', tone: 'danger' };
+
+/** A sender-landing (`neutral`-tone) refusal notice — unrelated to the words being retyped, so it
+ *  survives an edit (design D12: "clears when its window ends or the user leaves the step"). */
+const NEUTRAL_NOTICE: FlowNotice = { hint: 'Whim is busy right now.', tone: 'neutral' };
+
 export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // ── the five steps, in order ────────────────────────────────────────────────────────────────
 
@@ -85,6 +95,24 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(clarify.text, 'make me a dice roller', 'the submitted prompt is carried verbatim');
     h.eq(clarify.answers, {}, 'no question is answered for the user');
     h.eq(clarify.questions.length, 2, 'both questions reach the step');
+  });
+
+  await h.test('composeTextChanged: a danger-tone (text-landing) notice clears when the text changes', () => {
+    const withNotice: ComposeScreen = { ...composedFlow(), notice: DANGER_NOTICE };
+    const changed = composeTextChanged(withNotice, 'a gentler timer for my pour-over');
+    h.eq(changed.text, 'a gentler timer for my pour-over', 'the text always updates');
+    h.eq(changed.notice, undefined, 'the notice about the refused words is gone');
+  });
+
+  await h.test('composeTextChanged: a neutral-tone (sender-landing) notice survives a text change', () => {
+    const withNotice: ComposeScreen = { ...composedFlow(), notice: NEUTRAL_NOTICE };
+    const changed = composeTextChanged(withNotice, 'a gentler timer for my pour-over');
+    h.eq(changed.notice, NEUTRAL_NOTICE, 'an availability/limit refusal is unrelated to what is being retyped');
+  });
+
+  await h.test('composeTextChanged: no notice at all is a plain text update', () => {
+    const changed = composeTextChanged(composedFlow(), 'something else entirely');
+    h.eq(changed.notice, undefined, 'nothing is invented');
   });
 
   await h.test('flow: the clarify step opens loading, carrying compose’s text and editing scope', () => {
@@ -217,6 +245,18 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(edited.rows[0].label, 'The screen', 'labels are untouched too');
   });
 
+  await h.test('updatePlanRow: a danger-tone (text-landing) notice clears when a row is saved', () => {
+    const plan = { ...plannedFlow([{ label: '', text: 'a brew timer' }]), notice: DANGER_NOTICE };
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(edited.notice, undefined, 'saving a row edit clears the notice about the refused words');
+  });
+
+  await h.test('updatePlanRow: a neutral-tone (sender-landing) notice survives a row save', () => {
+    const plan = { ...plannedFlow([{ label: '', text: 'a brew timer' }]), notice: NEUTRAL_NOTICE };
+    const edited = updatePlanRow(plan, 0, 'a brew timer with a bell at the end');
+    h.eq(edited.notice, NEUTRAL_NOTICE, 'an availability/limit refusal is unrelated to the plan’s own words');
+  });
+
   await h.test('flow: promptForBuild trusts the rewrite response until a row is hand-edited', () => {
     const plan = plannedFlow([{ label: '', text: 'a brew timer' }]);
     h.eq(plan.edited, false, 'nothing has been edited yet');
@@ -325,6 +365,15 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(buildBackAction(false), 'leave', 'sheet closed: back leaves the run running');
   });
 
+  // Regression coverage for mismatch 2 (research.md A): the plan step's hardware-back listener
+  // used to cancel an open row edit before calling `onBack`, while `FlowHeader`'s `Back` got the
+  // raw `onBack` and discarded the draft. `planBackAction` is the one decision `PlanStep` now
+  // builds `handleBack` from for both the hook and the header.
+  await h.test('plan back: cancels an open row edit, otherwise leaves the step — same for header Back and system back', () => {
+    h.eq(planBackAction(true), 'cancel-edit', 'a row is being edited: back cancels it and stays');
+    h.eq(planBackAction(false), 'leave', 'no row is being edited: back moves one step back');
+  });
+
   // ── the primary action ──────────────────────────────────────────────────────────────────────
 
   await h.test('flow: the primary action’s words never depend on being busy — only editing branches them', () => {
@@ -422,7 +471,9 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
     h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
     h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled editing=\{editing\} onPress/.test(clarifySrc), 'no validation gate: the action is live with zero answers, once it is shown at all');
+    // store-launch-compliance chain-4: the only gate left is the refusal retry window
+    // (`enabled={!gated}`) — there is still no validation gate from the answers themselves.
+    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled=\{!gated\} editing=\{editing\} onPress/.test(clarifySrc), 'no answer-validation gate: the action is live with zero answers, once it is shown at all');
   });
 
   await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
@@ -446,8 +497,10 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(composeSrc.includes('composePlaceholder(editing)'), 'and its field placeholder');
     h.ok(planSrc.includes('planHeadline(editing)'), 'plan branches its headline');
     h.ok(planSrc.includes('workingPlanPhrase(editing)'), 'and its working-line phrase');
+    // store-launch-compliance chain-4: `enabled` is now `{!gated}` (the refusal retry window),
+    // not the bare literal — still unconditionally live otherwise.
     h.ok(
-      /\{!loading && <PrimaryAction step="plan" enabled editing=\{editing\}/.test(planSrc),
+      /\{!loading && <PrimaryAction step="plan" enabled=\{!gated\} editing=\{editing\}/.test(planSrc),
       'plan\'s primary action is told whether it is editing, so Build it can become Make the change',
     );
   });
@@ -511,7 +564,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
 
   await h.test('build: arriving text is never faded in or typed in per character', () => {
     h.ok(!/Animated|Easing|typewriter|fadeIn/i.test(buildSrc), 'the build screen holds no animation at all');
-    h.ok(buildSrc.includes('COPY.buildLeaveRunning') && buildSrc.includes('onLeaveRunning'), 'it offers Leave it running');
+    h.ok(buildSrc.includes('COPY.buildLeaveRunning') && /onPress=\{onBack\}/.test(buildSrc), 'it offers Leave it running, wired to the same onBack system back uses');
   });
 
   // Regression: hardware back on the build screen used to cancel the whole run (BuildStep's
@@ -520,12 +573,12 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   // sheet's own listener). The fix: this screen no longer decides anything about back at all, it
   // only forwards the press to one `onBack` prop with a STABLE dependency, and the caller
   // (`LauncherRoot.tsx`) is the one place that decides sheet-close vs leave-running.
-  await h.test('build: hardware back only forwards to onBack, registered with a stable dependency', () => {
+  await h.test('build: system back only forwards to onBack, bound once per mount', () => {
     h.ok(!/\bonCancel\b/.test(buildSrc), 'the old cancel-on-back prop is gone entirely');
+    h.ok(!/\bonLeaveRunning\b/.test(buildSrc), 'the old separate leave-running prop is gone — one onBack for both');
     h.ok(/onBack: \(\) => void/.test(buildSrc), 'onBack is declared as a plain callback prop');
-    const backEffect = buildSrc.slice(buildSrc.indexOf('useEffect(() => {\n    const sub'), buildSrc.indexOf('return () => sub.remove();') + 30);
-    h.ok(backEffect.includes("addEventListener('hardwareBackPress'") && /onBack\(\);/.test(backEffect), 'the listener calls onBack, nothing else');
-    h.ok(/\}, \[onBack\]\);/.test(buildSrc), 'the effect depends on onBack alone — stable in the caller, so this registers once per mount');
+    h.ok(/useSystemBack\(onBack\);/.test(buildSrc), 'the hook binds onBack — the hook registers once per mount through a ref regardless of handler identity');
+    h.ok(!/BackHandler/.test(buildSrc), 'the screen owns no hardware-back listener of its own any more');
   });
 
   await h.test('done: Open it and Back to your apps are two distinct destinations', () => {
@@ -551,7 +604,10 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
       'buildTitle', 'buildTitleEdit', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
       'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails', 'doneBody',
       'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
-      'promptServerUnconfigured', 'promptOpenSettings', 'failureTitle', 'failureRephrase', 'failureBack',
+      // `promptServerUnconfigured`/`promptOpenSettings` retired (store-launch-compliance chain-3):
+      // compose opens only once AI-data consent is granted and a server address always exists, so
+      // the "set an address in Settings" notice they gated no longer has any way to happen.
+      'promptServerUnreachable', 'failureTitle', 'failureRephrase', 'failureBack',
       'failureDismiss',
     ] as const;
     for (const key of keys) {

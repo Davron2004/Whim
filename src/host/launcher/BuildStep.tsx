@@ -23,8 +23,8 @@
  * from this screen's back handling.
  */
 
-import React, { useEffect } from 'react';
-import { BackHandler, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { buildLivenessLine, buildTitle, COPY } from './copy';
 import { EditingEyebrow } from './flow-chrome';
@@ -39,6 +39,7 @@ import {
   type Stage,
 } from './prompt-flow';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 /** A step that has not started is dimmed rather than hidden — the whole list is legible from the
  *  first frame, so nothing appears or moves as the run progresses. */
@@ -61,12 +62,11 @@ export interface BuildStepProps {
   editing?: boolean;
   /** The app being changed, for the eyebrow's "Changing <name>" line. Only read while `editing`. */
   editingName?: string;
-  /** Returns to the shell; the run keeps going and its result is still delivered. */
-  onLeaveRunning: () => void;
-  /** Hardware back: the caller decides what this means (close the details sheet if it is open,
-   *  otherwise leave the run running) — this screen only forwards the press. MUST be a stable
-   *  identity (the caller's `useCallback`), so the listener below registers once per mount rather
-   *  than once per liveness tick — the exact bug this contract replaces. */
+  /** `Leave it running` AND system back both call this — the caller decides what it means (close
+   *  the details sheet if it is open, otherwise leave the run running without cancelling it).
+   *  `useSystemBack` binds its listener once per mount regardless of this prop's identity (design
+   *  D9: it always reads the LATEST value through a ref) — the exact listener-churn bug this
+   *  contract replaces, without requiring a stable `useCallback` identity to fix it. */
   onBack: () => void;
   /** Activating the details affordance: the caller shows this attempt's run timeline, reading it
    *  once on open — never per render and never per tick. */
@@ -80,7 +80,6 @@ export default function BuildStep({
   now,
   editing = false,
   editingName,
-  onLeaveRunning,
   onBack,
   onShowDetails,
 }: Readonly<BuildStepProps>) {
@@ -90,13 +89,7 @@ export default function BuildStep({
   const liveness = signals === null ? null : livenessOf(signals, now);
   const livenessTone = liveness === 'stalled' ? 'stalled' : 'accent';
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  useSystemBack(onBack);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -146,7 +139,7 @@ export default function BuildStep({
       </View>
 
       <TouchableOpacity
-        onPress={onLeaveRunning}
+        onPress={onBack}
         accessibilityRole="button"
         style={[styles.leave, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
       >

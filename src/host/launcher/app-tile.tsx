@@ -143,8 +143,22 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
   return (
     <Animated.View style={[styles.root, isDone ? styles.rootDone : null, fluidRoot, riseStyle]}>
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
-        <Text style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]} numberOfLines={1}>{mono}</Text>
-        <Text style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]} numberOfLines={1}>{mono}</Text>
+        <Text
+          style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]}
+          numberOfLines={1}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          {mono}
+        </Text>
+        <Text
+          style={[styles.foregroundMonogram, isDone ? styles.foregroundMonogramDone : null]}
+          numberOfLines={1}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          {mono}
+        </Text>
         {!isDone && pill != null && <TilePill kind={pill.kind} onPress={pill.onPress} />}
       </View>
       {!isDone && <Text style={styles.name} numberOfLines={1}>{name}</Text>}

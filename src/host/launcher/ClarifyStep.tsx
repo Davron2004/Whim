@@ -9,15 +9,17 @@
  * rather than a paraphrase. This screen consumes and emits no `GenerationEvent`.
  */
 
-import React, { useEffect } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyHeadline } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
-import type { FlowAnswers, FlowQuestion } from './prompt-flow';
+import type { FlowAnswers, FlowNotice, FlowQuestion } from './prompt-flow';
+import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
+import { useSystemBack } from './use-system-back';
 
 export interface ClarifyStepProps {
   /** The user's submitted prompt, echoed verbatim as their own words. */
@@ -29,6 +31,9 @@ export interface ClarifyStepProps {
   loading: boolean;
   /** When the in-flight exchange started, for `WorkingLine`'s clock. Only read while `loading`. */
   startedAt?: number;
+  /** A service refusal that landed here (design D9/D12) — always a `sender`-landing refusal (an
+   *  availability/limit code), never about the answers themselves. */
+  notice?: FlowNotice;
   /** Scopes the screen to a re-prompt (C1) — present together with `editingName`. */
   editing: boolean;
   editingName?: string;
@@ -45,6 +50,7 @@ export default function ClarifyStep({
   answers,
   loading,
   startedAt,
+  notice,
   editing,
   editingName,
   onAnswer,
@@ -52,14 +58,8 @@ export default function ClarifyStep({
   onBack,
 }: Readonly<ClarifyStepProps>) {
   const p = SHELL_PALETTE;
-
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => sub.remove();
-  }, [onBack]);
+  const gated = useRetryGate(notice?.retryAt);
+  useSystemBack(onBack);
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
@@ -131,10 +131,13 @@ export default function ClarifyStep({
         )}
       </ScrollView>
 
+      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+
       {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
           action mounts once the real questions have landed; `WorkingLine` is the only liveness
-          element while loading. */}
-      {!loading && <PrimaryAction step="clarify" enabled editing={editing} onPress={onContinue} />}
+          element while loading. No validation gate of its own — the retry window is the only
+          thing that can disable it. */}
+      {!loading && <PrimaryAction step="clarify" enabled={!gated} editing={editing} onPress={onContinue} />}
     </View>
   );
 }

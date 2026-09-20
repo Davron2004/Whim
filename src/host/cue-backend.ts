@@ -5,8 +5,10 @@
 // (`useMiniAppHost` injects it into `createDefaultRegistry`), NEVER by `src/host/bridge/*` — the
 // bridge rows bind to the pure `CueBackend` interface so they stay loadable under Node (the
 // deterministic suites). The token→pattern (haptics) and token→tone (sound) mappings live here
-// (and, for sound, in the Kotlin module): the syscall contract exposes only the closed tokens,
-// so this table can be tuned for on-device feel without touching the contract (D4 swappability).
+// (and, for sound, in each platform's native module — Android's Kotlin `WhimToneModule` and
+// iOS's Objective-C++ `WhimToneModule`, rendering the same tones as a system sound): the syscall
+// contract exposes only the closed tokens, so this table can be tuned for on-device feel without
+// touching the contract (D4 swappability).
 import { Vibration } from 'react-native';
 import type { CueBackend, HapticKind, SoundName } from './bridge/contract';
 import WhimTone from '../native/NativeWhimTone';
@@ -45,9 +47,9 @@ export function createCueBackend(): CueBackend {
     },
     sound(name: SoundName): void {
       try {
-        // The Kotlin module owns the token→tone+duration table (host-side, D6); we pass the
-        // closed token straight through. Null when the native module isn't present (e.g. a
-        // codegen-less dev build) → sound is a no-op, haptics still fire.
+        // Each platform's native module owns its own token→tone+duration table (host-side, D6);
+        // we pass the closed token straight through. Null when the native module isn't present
+        // (e.g. a codegen-less dev build) → sound is a no-op, haptics still fire.
         WhimTone?.play(name);
       } catch (e) {
         log.debug(CHANNELS.app, 'sound cue failed', {

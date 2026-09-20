@@ -46,9 +46,11 @@ export interface OrbProps {
   /** Opens the compose step prefilled for the running app ("Change it") — the same path
    *  History's own "Change it from here" row action uses. */
   onChangeIt: () => void;
+  /** Opens the report sheet for the running app (design D13) — sends nothing on its own. */
+  onReport: () => void;
 }
 
-export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProps>) {
+export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readonly<OrbProps>) {
   // Same `whim.launcher` KVBackend id every other launcher setting persists through (see
   // highlighting.ts) — a second MMKV instance opened with the same id shares the same storage.
   const kv = useRef(createMmkvBackend('whim.launcher')).current;
@@ -82,6 +84,7 @@ export default function Orb({ onExit, onVersions, onChangeIt }: Readonly<OrbProp
     setMenuOpen(false);
     if (id === 'home') onExit();
     else if (id === 'versions') onVersions();
+    else if (id === 'report') onReport();
     else onChangeIt();
   };
 

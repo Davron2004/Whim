@@ -168,9 +168,39 @@ export const COPY = {
   orbActionChangeIt: 'Change it',
   orbActionHome: 'Home',
   orbActionVersions: 'Versions',
+  orbActionReport: 'Report this app',
   orbMenuOpenLabel: 'Open the app menu',
   orbMenuCloseLabel: 'Close the app menu',
   orbMenuDismissLabel: 'Dismiss the app menu',
+
+  // ── the report sheet (content-reporting; design D13/D14) ────────────────────
+  reportSheetTitle: 'Report this app',
+  /** The done step's plain-text entry point, below its two fixed destinations. */
+  doneReportThisApp: 'Report this app',
+  /** The history header's entry point — reports the version the user is currently on. */
+  historyReportAction: 'Report',
+  reportReasonEyebrow: 'What went wrong?',
+  reportReasonOffensive: 'Offensive',
+  reportReasonHarmful: 'Harmful',
+  reportReasonBroken: 'Doesn’t work',
+  reportReasonOther: 'Something else',
+  reportNotePlaceholder: 'Add a note (optional)',
+  reportPreviewTitle: 'What gets sent',
+  reportFieldReason: 'Reason',
+  reportFieldNote: 'Note',
+  reportFieldAppName: 'App',
+  reportFieldPrompt: 'The prompt',
+  reportFieldSource: 'The code',
+  reportIncludePrompt: 'Include the prompt',
+  reportIncludeSource: 'Include the code',
+  reportAnonIdLine: 'An anonymous ID for this phone travels with this report, which goes to AnyCognition.',
+  reportSend: 'Send report',
+  reportSendBusy: 'One moment',
+  reportShowMore: 'Show more',
+  reportShowLess: 'Show less',
+  reportThanksTitle: 'Thanks. The Whim team reads every report.',
+  reportThanksDone: 'Done',
+  reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
 
   // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
   //    first paint") ──────────────────────────────────────────────────────────
@@ -207,26 +237,94 @@ export const COPY = {
   screenErrorTitle: 'This screen stopped working',
   screenErrorBody: 'Nothing you made was lost. Try again, and it should come back.',
   screenErrorRetry: 'Try again',
+  // Shown only when the failed screen is not Home (design D7; spec launcher-screen-exits "A screen
+  // without a declared exit fails the fast gate") — a screen that throws on every render would
+  // otherwise be a dead end with only `Try again` to press.
+  screenErrorBack: 'Back to your apps',
   // The `3b` failure checklist (obs-v1) — the two rows the screen writes itself. Every other row
   // is a diagnostic's own `hint`, so no mechanism vocabulary can reach the panel.
   failureRecoveredTitle: 'Fixed it',
   failureRowLastVersionWorks: 'The version you already had still works and is still installed',
   failureRowSayItDifferently: 'Describing it differently usually gets past this',
 
+  // ── AI-data consent (ai-data-consent; design D4/D5) ─────────────────────────
+  // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
+  // only the bottom actions below differ by mode.
+  consentTitle: 'Before Whim makes apps for you',
+  consentLead:
+    'To make or change an app, Whim sends your request to AnyCognition’s server. The server uses AI models from other companies, reached through OpenRouter, to write the app.',
+  consentWhatSentTitle: 'What gets sent',
+  consentWhatSentRequest: 'What you ask for: your description, your answers to Whim’s questions, and the plan you approve',
+  consentWhatSentEdit: 'When you change an app: its name, its code, its current description, and the layout of its saved data',
+  consentWhatSentDevice: 'An anonymous ID for this phone, used for daily limits',
+  consentWhatNeverSentTitle: 'What never gets sent',
+  consentWhatNeverSent: 'Anything you save inside your apps',
+  consentFootnote: 'You can turn this off in Settings. Apps you already have keep working either way.',
+  // Shown above the disclosure only when the stored grant is outdated (spec "A policy change asks again").
+  consentOutdatedLine: 'What Whim sends has changed since you last agreed.',
+  consentAgree: 'Agree and continue',
+  consentDecline: 'Not now',
+  // Review mode's action set (spec "Settings shows consent and can review or turn it off"): the
+  // large button is always the safe one — keeping AI features on, or turning them on from off.
+  consentReviewKeepOn: 'Keep AI features on',
+  consentReviewTurnOff: 'Turn off AI features',
+  consentReviewTurnOn: 'Turn on AI features',
+  // Shared between the consent screen's own link and the Settings About row (identical text, two
+  // surfaces) — one key, so the two can never read differently.
+  privacyPolicyLabel: 'Privacy policy',
+  supportLabel: 'Support',
+
   // ── settings ────────────────────────────────────────────────────────────────
+  settingsAISectionTitle: 'AI features',
+  settingsAIOff: 'Off',
+  settingsAboutSectionTitle: 'About',
+  settingsAdvancedSectionTitle: 'Advanced',
+  settingsUseDefaultServer: 'Use Whim’s server',
+  // Shown in place of the save-time probe result while AI features are off (server-connectivity
+  // "Without a current consent grant the system SHALL NOT probe").
+  settingsProbeNeutral: 'Checked once AI features are on',
   serverAddressSectionTitle: 'Server address',
-  // v1 is LAN-dev/personal-use only (design D3, prompt-flow-ux) — the address is an
-  // unauthenticated LAN address the user enters themselves, not a security boundary.
-  // eslint-disable-next-line sonarjs/no-clear-text-protocols
-  serverAddressPlaceholder: 'http://192.168.1.20:4000',
   serverAddressHint: 'Where Whim sends your prompts to build apps.',
-  promptServerUnconfigured: 'Set your server’s address in Settings before making an app.',
-  promptOpenSettings: 'Open Settings',
+  // The debounced save-time probe's three-way inline result (server-connectivity, design.md
+  // decision 3) — shown under the server-address field a moment after the user stops typing.
+  serverProbeVerified: 'Verified — this is a Whim server.',
+  serverProbeUnverified: 'Something answered, but it doesn’t look like a Whim server.',
+  serverProbeUnreachable: 'Can’t reach this address.',
+
+  // ── connectivity (offline UX surfaces, design.md decision 7) ────────────────
+  // The home screen's quiet indicator and the compose entry point's advisory notice, both keyed
+  // off the session's `connectivity` state (server-connectivity spec "The home screen shows a
+  // quiet connectivity indicator" / "The compose entry point shows a server-unreachable notice
+  // without blocking generation") — the compose step opens only once AI-data consent is granted,
+  // so there is no separate "no address configured" message any more (a server address always
+  // exists, per `release-config`).
+  homeOfflineIndicator: 'Can’t reach the server',
+  promptServerUnreachable: 'Can’t reach your server right now — you can still try.',
+
+  // ── app links (app-links; design D15/D16) ───────────────────────────────────
+  actionAppLink: 'App link',
+  appLinkMissingTitle: 'This app lives on another phone',
+  appLinkMissingBody:
+    'Apps made with Whim stay on the phone that made them, so this link only opens there.',
+  appLinkMissingBack: 'Back to your apps',
+  appLinkSheetClose: 'Done',
 } as const;
+
+/** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
+ *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */
+export function aiFeaturesStatusLine(kind: 'granted' | 'absent' | 'outdated', sinceLabel?: string): string {
+  return kind === 'granted' && sinceLabel != null ? `On since ${sinceLabel}` : COPY.settingsAIOff;
+}
 
 /** "Forked from Water Counter" — fork provenance for a tile (product vocabulary). */
 export function forkedFromLabel(name: string): string {
   return `Forked from ${name}`;
+}
+
+/** The App link reveal sheet's one line of copy (design D16): "Opens Water Counter on this phone.
+ *  Press and hold the link to copy it." — the selectable `<Text>` itself carries the link. */
+export function appLinkSheetLine(name: string): string {
+  return `Opens ${name} on this phone. Press and hold the link to copy it.`;
 }
 
 /** A ghost/rebuild tile's state caption, by `PendingBuildRecord.state` (kept as the bare literal
@@ -236,6 +334,16 @@ export function ghostStateCaption(state: 'building' | 'failed' | 'interrupted'):
   if (state === 'building') return COPY.ghostCaptionBuilding;
   if (state === 'failed') return COPY.ghostCaptionFailed;
   return COPY.ghostCaptionInterrupted;
+}
+
+/** The Settings screen's save-time probe result (server-connectivity, design.md decision 1;
+ *  `server-probe.ts`'s `ProbeResult`). Kept as the bare literal union rather than importing
+ *  `ProbeResult` — `copy.ts` stays free of any non-`react`/non-`react-native` module dependency,
+ *  the same discipline `ghostStateCaption` keeps. */
+export function serverProbeLabel(result: 'verified' | 'unverified' | 'unreachable'): string {
+  if (result === 'verified') return COPY.serverProbeVerified;
+  if (result === 'unverified') return COPY.serverProbeUnverified;
+  return COPY.serverProbeUnreachable;
 }
 
 /** The delete confirmation body for a named app. */
@@ -483,4 +591,46 @@ export function attemptsUsedLabel(observed: number): string {
 /** The toast after a restore: "You're on v4 now". */
 export function restoredToast(version: string): string {
   return `You’re on ${version} now`;
+}
+
+/** The report sheet's collapsed code row (content-reporting "the app's code (its size, with the
+ *  full text expandable)"): "482 characters" — never the code itself until expanded. */
+export function reportCodeSizeLabel(chars: number): string {
+  return chars === 1 ? '1 character' : `${chars} characters`;
+}
+
+// ── the refusal notice's retry-window line (service-refusals; design D11) ────
+// `service-refusal.ts#retryLine` owns the bucket ARITHMETIC (which of these five applies, and any
+// rounding); this module owns only the WORDING, the same split `timelineStageLine` already keeps
+// between `prompt-flow.ts`'s counts and its own phrasing.
+
+export function retryLineSeconds(n: number): string {
+  return n === 1 ? 'in about 1 second' : `in about ${n} seconds`;
+}
+
+export function retryLineMinutes(n: number): string {
+  return n === 1 ? 'in about 1 minute' : `in about ${n} minutes`;
+}
+
+/** The `Intl`-missing fallback — an hours-only estimate when no formatter could exist to build a
+ *  local-time string at all. */
+export function retryLineHoursFallback(n: number): string {
+  return n === 1 ? 'in about 1 hour' : `in about ${n} hours`;
+}
+
+/** The window had already ended by the moment this line was read: naming a bucket ("in about 0
+ *  seconds") would just be a stale estimate restated, so this names no number at all. */
+export function retryLineElapsed(): string {
+  return 'shortly';
+}
+
+/** Later the same local day: "after 4:30 PM". `time` is already formatted by the caller's
+ *  injected `Intl.DateTimeFormat`-backed formatter. */
+export function retryLineSameDay(time: string): string {
+  return `after ${time}`;
+}
+
+/** Beyond the same local day: "tomorrow after 9:00 AM". */
+export function retryLineTomorrow(time: string): string {
+  return `tomorrow after ${time}`;
 }

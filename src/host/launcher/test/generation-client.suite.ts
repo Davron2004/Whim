@@ -26,9 +26,9 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { getDeviceId } from '../device-id';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, sendReport } from '../generation-client';
 import { buildRewriteAppContext } from '../generation-request';
-import type { ClientOptions } from '../generation-client';
+import type { ConsentedClientOptions } from '../generation-client';
 import type { InstalledApp } from '../app-index';
 import type { GenerationEvent } from '@whim/contract';
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
@@ -82,7 +82,7 @@ function abortableSseResponse(startEvent: GenerationEvent, signal: AbortSignal |
   return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-const BASE: ClientOptions = { baseUrl: 'https://example.invalid', deviceId: 'device-1' };
+const BASE = { baseUrl: 'https://example.invalid', deviceId: 'device-1' } as ConsentedClientOptions;
 
 /** One installed entry to re-prompt: a storage app whose display names ("Completions", "Date",
  *  "Note") are deliberately different from the burned ids underneath them ("c1", "f1", "f2"), so
@@ -285,6 +285,76 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
         'Include a UUID in the x-whim-device request header.',
         'carries the server hint',
       );
+    }
+  });
+
+  // store-launch-compliance chain-2 task 2.1: `code`/`retryAfterSeconds` on the fetch path
+  // (spec "The streaming transport preserves the client error taxonomy" — the fetch, XHR, and
+  // non-streaming clarify/rewrite/report paths all read these identically).
+  await h.test('rewritePrompt: a 429 refusal carries code and retryAfterSeconds from the body and header', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
+        status: 429,
+        headers: { 'Retry-After': '120' },
+      })) as typeof fetch;
+    try {
+      await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.kind, 'http', 'kind is http');
+      h.eq(e.status, 429, 'status is carried through');
+      h.eq(e.code, 'server_busy', "code carries the body's ApiError identifier");
+      h.eq(e.hint, 'Try again soon', 'hint is carried through');
+      h.eq(e.retryAfterSeconds, 120, 'retryAfterSeconds parses the positive-integer header');
+    }
+  });
+
+  await h.test('rewritePrompt: a malformed Retry-After is dropped without changing kind/status/code/hint', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
+        status: 429,
+        headers: { 'Retry-After': 'soon' },
+      })) as typeof fetch;
+    try {
+      await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.retryAfterSeconds, undefined, 'a non-integer Retry-After leaves the field absent');
+      h.eq(e.kind, 'http', 'kind is unaffected');
+      h.eq(e.status, 429, 'status is unaffected');
+      h.eq(e.code, 'server_busy', 'code is unaffected');
+      h.eq(e.hint, 'Try again soon', 'hint is unaffected');
+    }
+  });
+
+  await h.test('rewritePrompt: zero, negative, and non-integer Retry-After values are all treated as absent', async () => {
+    for (const value of ['0', '-5', '3.5']) {
+      const fetchImpl = (async () =>
+        new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
+          status: 429,
+          headers: { 'Retry-After': value },
+        })) as typeof fetch;
+      try {
+        await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+        h.ok(false, 'expected a throw');
+      } catch (err) {
+        const e = err as GenerationClientError;
+        h.eq(e.retryAfterSeconds, undefined, `Retry-After: ${value} is treated as absent`);
+      }
+    }
+  });
+
+  await h.test('rewritePrompt: a non-ApiError body leaves code absent', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ oops: true }), { status: 500 })) as typeof fetch;
+    try {
+      await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.code, undefined, 'a body with no error identifier leaves code absent');
+      h.eq(e.kind, 'http', 'still classified http');
     }
   });
 
@@ -524,7 +594,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   await h.test(
     'generateApp (fetch path): no first event within the connect window raises GenerationClientError{kind:"network"}',
     async () => {
-      const opts: ClientOptions = { ...BASE, fetchImpl: hangingFetch(), connectTimeoutMs: WINDOW_MS };
+      const opts = { ...BASE, fetchImpl: hangingFetch(), connectTimeoutMs: WINDOW_MS } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err !== 'hung', 'the hung connect is bounded rather than waiting forever');
       h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
@@ -539,7 +609,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       // The transport already classified this failure, so the surfaced error must be THAT error —
       // re-wrapping it keeps `kind` but buries the hint the failure screen shows.
       const hold: { controller?: ReadableStreamDefaultController<Uint8Array> } = {};
-      const opts: ClientOptions = { ...BASE, fetchImpl: openEndedSseFetch(hold), connectTimeoutMs: WINDOW_MS };
+      const opts = { ...BASE, fetchImpl: openEndedSseFetch(hold), connectTimeoutMs: WINDOW_MS } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err !== 'hung', 'the silent stream is bounded rather than waiting forever');
       h.ok(err instanceof GenerationClientError, 'raises GenerationClientError');
@@ -555,10 +625,10 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       // and everything the transport attached beyond the message (a status, in particular) is
       // dropped. The stream reader must rethrow such an error as-is.
       const classified = new GenerationClientError('http', { status: 503, hint: 'The service is warming up' });
-      const opts: ClientOptions = {
+      const opts = {
         ...BASE,
         streamTransport: async () => ({ read: async () => { throw classified; } }),
-      };
+      } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err === classified, 'the transport’s own error instance is what surfaces');
       h.eq(err instanceof GenerationClientError ? err.kind : undefined, 'http', 'its kind is not forced to network');
@@ -625,4 +695,59 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       }
     },
   );
+
+  // --- store-launch-compliance chain-2 task 2.4: sendReport (design D14) ---
+
+  await h.test('sendReport: a 202 response resolves the reportId and posts the given body verbatim', async () => {
+    let sentBody: unknown;
+    const fetchImpl = (async (_url, init) => {
+      sentBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ reportId: 'r-1' }), { status: 202 });
+    }) as typeof fetch;
+    const result = await sendReport({ ...BASE, fetchImpl }, { reason: 'broken' });
+    h.eq(result, { reportId: 'r-1' }, 'resolves the parsed report response');
+    h.eq(sentBody, { reason: 'broken' }, 'posts the given body verbatim');
+  });
+
+  await h.test('sendReport: a 413 payload_too_large refusal carries its code through httpErrorFrom', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: 'payload_too_large', hint: 'Leave the code out and try again.' }), {
+        status: 413,
+      })) as typeof fetch;
+    try {
+      await sendReport({ ...BASE, fetchImpl }, { reason: 'other' });
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.kind, 'http', 'kind is http');
+      h.eq(e.status, 413, 'status is carried through');
+      h.eq(e.code, 'payload_too_large', "the ApiError identifier is carried as code");
+      h.eq(e.hint, 'Leave the code out and try again.', 'hint is carried through');
+    }
+  });
+
+  await h.test('sendReport: a thrown fetch failure raises GenerationClientError{kind:"network"}', async () => {
+    const fetchImpl = (async () => {
+      throw new Error('offline');
+    }) as typeof fetch;
+    try {
+      await sendReport({ ...BASE, fetchImpl }, { reason: 'other' });
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.kind, 'network', 'kind is network');
+      h.eq(e.hint, 'offline', 'carries the underlying error message');
+    }
+  });
+
+  await h.test('sendReport: a malformed 202 body raises GenerationClientError{kind:"http"}, never silently accepted', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ ok: true }), { status: 202 })) as typeof fetch;
+    try {
+      await sendReport({ ...BASE, fetchImpl }, { reason: 'other' });
+      h.ok(false, 'expected a throw');
+    } catch (err) {
+      const e = err as GenerationClientError;
+      h.eq(e.kind, 'http', 'a body without a reportId is classified http, not accepted as success');
+    }
+  });
 }

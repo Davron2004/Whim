@@ -253,6 +253,10 @@ export async function openXhrGenerateStream(
       const fakeResponse = {
         status: xhr.status,
         json: async () => JSON.parse(xhr.responseText) as unknown,
+        // `httpErrorFrom` reads `retryAfterSeconds` off `response.headers.get('Retry-After')`
+        // (store-launch-compliance design D8); RN's XHR has no real `Response`, so this adapter
+        // forwards to `xhr.getResponseHeader`, the one header accessor it does have.
+        headers: { get: (name: string) => xhr.getResponseHeader(name) },
       } as unknown as Response;
       httpErrorFrom(fakeResponse, '/v1/generate', opts.baseUrl).then((err) => {
         opened = true;
