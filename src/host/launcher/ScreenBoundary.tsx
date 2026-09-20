@@ -30,6 +30,10 @@ export interface ScreenFallbackProps {
   screen: string;
   /** Clears the error state and remounts the failed subtree from scratch. */
   resetErrorBoundary: () => void;
+  /** A way home, given only when the failed screen isn't Home (design D7; spec
+   *  launcher-screen-exits "A screen without a declared exit fails the fast gate") — passed
+   *  straight through from `ScreenBoundaryProps`, unchanged. */
+  onLeave?: () => void;
 }
 
 export interface ScreenBoundaryProps {
@@ -38,6 +42,9 @@ export interface ScreenBoundaryProps {
   screen: string;
   /** The recoverable error screen. `ScreenErrorFallback` is the launcher's. */
   FallbackComponent: ComponentType<ScreenFallbackProps>;
+  /** Forwarded to the fallback unchanged (design D7) — `undefined` on Home, where the error screen
+   *  offers `Try again` only. */
+  onLeave?: () => void;
   children: ReactNode;
 }
 
@@ -72,7 +79,12 @@ function signatureOf(error: unknown): string {
  */
 let lastReported: string | null = null;
 
-export default function ScreenBoundary({ screen, FallbackComponent, children }: Readonly<ScreenBoundaryProps>) {
+export default function ScreenBoundary({
+  screen,
+  FallbackComponent,
+  onLeave,
+  children,
+}: Readonly<ScreenBoundaryProps>) {
   const renderFallback = useCallback(
     ({ error, resetErrorBoundary }: { error: unknown; resetErrorBoundary: () => void }) => {
       const failure = `${screen}|${signatureOf(error)}`;
@@ -85,9 +97,11 @@ export default function ScreenBoundary({ screen, FallbackComponent, children }: 
           stack: stackOf(error),
         });
       }
-      return <FallbackComponent error={error} screen={screen} resetErrorBoundary={resetErrorBoundary} />;
+      return (
+        <FallbackComponent error={error} screen={screen} resetErrorBoundary={resetErrorBoundary} onLeave={onLeave} />
+      );
     },
-    [FallbackComponent, screen],
+    [FallbackComponent, screen, onLeave],
   );
 
   const onReset = useCallback(() => {
