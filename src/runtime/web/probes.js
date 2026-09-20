@@ -51,6 +51,12 @@ function __whimRunProbes() {
   // RTCPeerConnection is load-bearing: WebRTC bypasses connect-src 'none', so the value-strip is
   // the ONLY thing that closes this vector — CSP does not help here (see neutralize.js).
   expectThrow('network', 'RTCPeerConnection', function () { return new RTCPeerConnection(); });
+  // Prefixed alias — same transport, same connect-src gap. Chromium/Android WebView expose
+  // `webkitRTCPeerConnection`; it constructed and sent STUN datagrams to a UDP canary with a
+  // CONTAINED verdict until neutralize.js stripped it (docs/security/2026-09-14-webrtc-alias.md).
+  // On an engine that lacks the alias this reads a bare undefined global → ReferenceError → still
+  // "threw" (unreachable is contained too).
+  expectThrow('network', 'webkitRTCPeerConnection (prefixed alias)', function () { return new webkitRTCPeerConnection(); });
   expectThrow('network', 'EventSource', function () { return new EventSource('https://evil.example'); });
   expectThrow('network', 'window.fetch (stub)', function () { return window.fetch('https://example.com'); });
   expectThrow('network', 'navigator.sendBeacon', function () { return navigator.sendBeacon('https://example.com', 'x'); });
@@ -72,6 +78,23 @@ function __whimRunProbes() {
   expectThrow('escape', '({}).constructor.constructor', function () { return ({}).constructor.constructor('return this')(); });
   expectThrow('escape', '[].constructor.constructor', function () { return [].constructor.constructor('return globalThis')(); });
   expectThrow('escape', 'function.constructor walk', function () { return (function () {}).constructor('return 1')(); });
+
+  // 4b. nested-realm neutralization. neutralize.js runs ONCE in this realm; a child browsing
+  // context the bundle creates would carry PRISTINE (un-neutralized) network globals — including
+  // the WebRTC constructors and aliases. The locked CSP (`frame-src`/`child-src 'none'`) must
+  // deny the child frame outright so no fresh realm is reachable. This is what closes the
+  // nested-realm route for RTCPeerConnection AND its aliases (docs/security/2026-09-14-webrtc-alias.md);
+  // if that CSP leg were ever weakened, a usable WebRTC constructor would appear here → flagged.
+  expectUnreachable('escape', 'nested-realm WebRTC ctor via child iframe', function () {
+    const f = document.createElement('iframe');
+    (document.body || document.documentElement).appendChild(f);
+    try {
+      const w = f.contentWindow;
+      return w ? (w.webkitRTCPeerConnection || w.RTCPeerConnection || null) : null;
+    } finally {
+      if (f.parentNode) f.parentNode.removeChild(f);
+    }
+  });
 
   // 5. host / native reach — the only crossing allowed is parent.postMessage
   expectUnreachable('reach', 'window.frameElement', function () { return window.frameElement; });
@@ -117,6 +140,7 @@ function __whimRunProbes() {
       'try{new WebSocket("wss://evil.example");o.ws="DID-NOT-THROW";}catch(e){o.ws="threw:"+e.name;}' +
       'try{localStorage.setItem("x","y");o.ls="DID-NOT-THROW";}catch(e){o.ls="threw:"+e.name;}' +
       'try{new RTCPeerConnection();o.rtc="DID-NOT-THROW";}catch(e){o.rtc="threw:"+e.name;}' +
+      'try{new webkitRTCPeerConnection();o.wrtc="DID-NOT-THROW";}catch(e){o.wrtc="threw:"+e.name;}' +
       'try{eval("1+1");o.eval="DID-NOT-THROW";}catch(e){o.eval="threw:"+e.name;}' +
       'return o;})();';
     const t1s = document.createElement('script');
@@ -129,11 +153,11 @@ function __whimRunProbes() {
     } else {
       const t1blocked = t1.fetch.startsWith('threw:') && t1.xhr.startsWith('threw:') &&
         t1.ws.startsWith('threw:') && t1.ls.startsWith('threw:') &&
-        t1.rtc.startsWith('threw:') && t1.eval.startsWith('threw:');
+        t1.rtc.startsWith('threw:') && t1.wrtc.startsWith('threw:') && t1.eval.startsWith('threw:');
       record('pentest-T1', 'self-injected fresh <script> reclaim globals', t1blocked,
         (t1blocked ? 'ALL blocked in fresh scope → ' : 'ESCAPE → ') +
         'fetch=' + t1.fetch + ' xhr=' + t1.xhr + ' ws=' + t1.ws +
-        ' ls=' + t1.ls + ' rtc=' + t1.rtc + ' eval=' + t1.eval);
+        ' ls=' + t1.ls + ' rtc=' + t1.rtc + ' wrtc=' + t1.wrtc + ' eval=' + t1.eval);
     }
     try { delete window.__WHIM_T1; } catch (e) {}
   } catch (e) {
