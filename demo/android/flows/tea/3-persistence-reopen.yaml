@@ -18,7 +18,7 @@
 # itself reopens on its card screen, so one tile tap is enough to land on the readout. The a11y
 # tree is populated on a cold open without a wake tap on this instance (measured), so there is no
 # wake tap and no stray tap ring in dead space.
-appId: com.whim
+appId: com.anycognition.whim
 env:
   TILE_RE: "Tea Steeper"
   SETTING_RE: ".*7:20.*"
