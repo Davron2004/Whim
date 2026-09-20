@@ -72,18 +72,79 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+/**
+ * Whim's native release file (design D1): identity, version and domain. Same grammar as
+ * scripts/release/lib/native-config.ts: "KEY = VALUE" lines, "//" comments and blank lines only,
+ * no #include, no $(...), all five keys exactly once. The TypeScript parser also checks each
+ * value's shape and runs in the gate, so a file this parser accepts but reads differently fails
+ * there first.
+ */
+def parseWhimReleaseConfig(File configFile) {
+    // Script methods can't see script-level `def` variables, so the key list lives in here.
+    def whimReleaseConfigKeys = [
+        'WHIM_APP_ID', 'WHIM_APPLE_TEAM_ID', 'WHIM_MARKETING_VERSION', 'WHIM_BUILD_NUMBER', 'WHIM_DOMAIN',
+    ]
+    def values = [:]
+    def lineNumber = 0
+    configFile.eachLine { line ->
+        lineNumber++
+        def trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith('//')) return
+        def eq = trimmed.indexOf('=')
+        if (eq == -1) {
+            throw new GradleException("${configFile}:${lineNumber}: not a \"KEY = VALUE\" line, \"//\" comment, or blank line")
+        }
+        def key = trimmed.substring(0, eq).trim()
+        def value = trimmed.substring(eq + 1).trim()
+        if (!whimReleaseConfigKeys.contains(key)) {
+            throw new GradleException("${configFile}:${lineNumber}: unknown key \"${key}\"")
+        }
+        if (value.contains('$(')) {
+            throw new GradleException("${configFile}:${lineNumber}: \"${key}\" may not reference \"\$(...)\"")
+        }
+        if (values.containsKey(key)) {
+            throw new GradleException("${configFile}:${lineNumber}: duplicate key \"${key}\" (already set earlier in the file)")
+        }
+        values[key] = value
+    }
+    def missing = whimReleaseConfigKeys.findAll { !values.containsKey(it) }
+    if (!missing.isEmpty()) {
+        throw new GradleException("${configFile}: missing required key(s): ${missing.join(', ')}")
+    }
+    return values
+}
+
+def whimReleaseConfig = parseWhimReleaseConfig(file('../../release/whim-release.xcconfig'))
+
+/**
+ * The store build's upload-signing values (design D4): a Gradle property, else an environment
+ * variable of the same name. A blank value counts as missing. `preReleaseBuild`'s `doFirst` below
+ * refuses to build `release` when any is missing; `debug` and `offline` never use them.
+ */
+def whimUploadPropertyNames = [
+    'WHIM_UPLOAD_STORE_FILE', 'WHIM_UPLOAD_STORE_PASSWORD', 'WHIM_UPLOAD_KEY_ALIAS', 'WHIM_UPLOAD_KEY_PASSWORD',
+]
+
+def whimUploadProperty(String name) {
+    def value = project.hasProperty(name) ? project.property(name)?.toString() : System.getenv(name)
+    return value?.trim() ? value : null
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.whim"
+    def whimVersionCode = (project.hasProperty('whimBuildNumber') ? project.property('whimBuildNumber') : whimReleaseConfig.WHIM_BUILD_NUMBER).toString().toInteger()
     defaultConfig {
-        applicationId "com.whim"
+        applicationId whimReleaseConfig.WHIM_APP_ID
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionName whimReleaseConfig.WHIM_MARKETING_VERSION
+        versionCode whimVersionCode
+        // A single-key assignment, never a map replacement (design D1).
+        manifestPlaceholders.whimWebHost = "whim.${whimReleaseConfig.WHIM_DOMAIN}"
     }
     signingConfigs {
         debug {
@@ -92,24 +153,71 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def storeFilePath = whimUploadProperty('WHIM_UPLOAD_STORE_FILE')
+            if (storeFilePath != null) {
+                storeFile file(storeFilePath)
+            }
+            storePassword whimUploadProperty('WHIM_UPLOAD_STORE_PASSWORD')
+            keyAlias whimUploadProperty('WHIM_UPLOAD_KEY_ALIAS')
+            keyPassword whimUploadProperty('WHIM_UPLOAD_KEY_PASSWORD')
+        }
     }
+    // Three build types (design D4), all under the one application id:
+    //   • debug   — debug-signed, debuggable, JS from Metro, dev cleartext hosts (src/debug/res).
+    //   • offline — the dev loop without Metro: release's configuration with the JS bundle baked
+    //     in, but debug-signed, debuggable, and with the dev cleartext hosts. `npm run
+    //     android:release` builds it, because the emulator's NAT route to Metro is dead and the
+    //     LAN generation server speaks http. Never uploaded.
+    //   • release — the store build: upload-signed from the four WHIM_UPLOAD_* values, never the
+    //     debug key, not debuggable, no cleartext exception, shipped as an AAB.
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Whim v0.1 emulator-acceptance build (DEVLOG gotcha): we run the *release*
-            // variant so the JS bundle is baked into the APK (offline) — the emulator NAT to
-            // the Metro dev server is dead and `adb reverse` does not rescue it. We keep it
-            //   • debug-signed (signingConfig below) so it installs without a real keystore, and
-            //   • `debuggable true` so it stays attachable and JS logs still reach logcat
-            //     (tag ReactNativeJS), our only on-device log channel under bridgeless RN 0.85.
-            // For a true production build, generate your own keystore (see
-            // https://reactnative.dev/docs/signed-apk-android) and drop `debuggable`.
-            signingConfig signingConfigs.debug
-            debuggable true
+            signingConfig signingConfigs.release
+            debuggable false
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+        offline {
+            initWith release
+            signingConfig signingConfigs.debug
+            debuggable true
+            matchingFallbacks = ['release']
+            // The RN plugin sets this placeholder in `finalizeDsl`, on build types it knows by name
+            // only, after `initWith release` has already copied release's placeholders. The value
+            // is inert (the network security config wins on API 24+) and matches old `release`.
+            manifestPlaceholders.usesCleartextTraffic = "false"
+            // AGP picks the CMake build type from the variant name ("*release" → RelWithDebInfo,
+            // "*debug" → Debug) and falls back to `debuggable` for any other name, so `offline`
+            // would compile C++ as Debug: no NDEBUG, so REACT_NATIVE_DEBUG, so codegen'd
+            // component code references debug-only symbols (ShadowNode::getDebugName, ...) that
+            // the release react-android AAR picked by `matchingFallbacks` doesn't export. Pinning
+            // the type keeps the old `release` build's native flags (RN's own `debugOptimized`
+            // build type pairs its release fallback with a pinned CMake type the same way).
+            externalNativeBuild {
+                cmake {
+                    arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+                }
+            }
+        }
+    }
+    sourceSets {
+        offline {
+            res.srcDirs += 'src/debug/res'
+        }
+    }
+}
+
+// Fails any `release` build on a machine without the upload key, naming each missing value.
+// `tasks.named` can't be used: AGP registers `preReleaseBuild` after this script runs.
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
+    doFirst {
+        def missing = whimUploadPropertyNames.findAll { whimUploadProperty(it) == null }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Android release build is missing: ${missing.join(', ')}. See docs/release/mobile.md.")
         }
     }
 }

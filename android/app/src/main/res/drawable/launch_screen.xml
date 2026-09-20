@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch wiring (design D10): the mark centered on the launch background color, used as
+     AppTheme.Launch's windowBackground below Android 12 (values-v31 overrides with the system
+     splash screen API on 12+, which draws the adaptive launcher icon instead and never reads
+     this drawable). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+    <item
+        android:width="160dp"
+        android:height="160dp"
+        android:gravity="center"
+        android:drawable="@drawable/launch_mark" />
+</layer-list>

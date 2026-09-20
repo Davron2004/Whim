@@ -4,6 +4,13 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@color/launch_background</item>
+    </style>
+
+    <!-- Launch wiring (design D10): the mark centered on the launch background color, shown
+         while the app cold-starts, before AppTheme takes over in MainActivity.onCreate. -->
+    <style name="Theme.Whim.Launch" parent="AppTheme">
+        <item name="android:windowBackground">@drawable/launch_screen</item>
     </style>
 
 </resources>
