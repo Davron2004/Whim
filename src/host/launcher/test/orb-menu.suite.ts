@@ -30,7 +30,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
   // ── the action set ─────────────────────────────────────────────────────────
   await h.test('orb-menu: the action set contains nothing destructive', async () => {
     const ids = ORB_ACTIONS.map((a) => a.id);
-    h.eq(ids, ['change', 'home', 'versions'], 'exactly the 3 wired actions, in order — no placeholder "copy"');
+    h.eq(ids, ['change', 'home', 'versions', 'report'], 'exactly the 4 wired actions, in order — no placeholder "copy"');
     const destructive = ['delete', 'rename', 'restore'];
     for (const bad of destructive) {
       h.ok(!ids.includes(bad as OrbActionId), `"${bad}" must never be an orb menu action`);
@@ -45,6 +45,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(ORB_ACTIONS.find((a) => a.id === 'change')?.label, COPY.orbActionChangeIt, 'change label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'home')?.label, COPY.orbActionHome, 'home label');
     h.eq(ORB_ACTIONS.find((a) => a.id === 'versions')?.label, COPY.orbActionVersions, 'versions label');
+    h.eq(ORB_ACTIONS.find((a) => a.id === 'report')?.label, COPY.orbActionReport, 'report label');
   });
 
   // ── the per-row swatch (design `3a`/`3b`/`3c`, html:220-224) ──────────────
@@ -56,6 +57,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.eq(orbRowGlyphColor('change'), SHELL_COLORS.accent, 'change is the accented row');
     h.eq(orbRowGlyphColor('home'), SHELL_COLORS.text, 'home takes the plain text colour');
     h.eq(orbRowGlyphColor('versions'), SHELL_COLORS.text, 'versions takes the plain text colour');
+    h.eq(orbRowGlyphColor('report'), SHELL_COLORS.text, 'report takes the plain text colour');
   });
 
   // ── instrumentation persists, cross-session, off-screen ───────────────────
@@ -161,10 +163,11 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     h.ok(recordIdx >= 0 && menuCloseIdx > recordIdx, 'instrumentation happens before the menu closes');
   });
 
-  await h.test('orb-menu: "versions" and "change" navigate to their real destinations, not a placeholder sheet', async () => {
+  await h.test('orb-menu: "versions", "change" and "report" navigate to their real destinations, not a placeholder sheet', async () => {
     const onActionBody = orbSource.slice(orbSource.indexOf('const onAction'), orbSource.indexOf('return (', orbSource.indexOf('const onAction')));
     h.ok(/onVersions\(\)/.test(onActionBody), '"versions" calls the onVersions callback');
     h.ok(/onChangeIt\(\)/.test(onActionBody), '"change" calls the onChangeIt callback');
+    h.ok(/onReport\(\)/.test(onActionBody), '"report" calls the onReport callback');
     h.ok(!/OrbSheetKind|sheetTitle|styles\.sheet\b/.test(orbSource), 'the orb-local placeholder sheet is gone entirely');
   });
 

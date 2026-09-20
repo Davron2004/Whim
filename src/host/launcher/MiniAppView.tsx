@@ -23,6 +23,10 @@ import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
 import Orb from './Orb';
+import ReportSheet from './ReportSheet';
+import type { InstalledApp } from './app-index';
+import type { StoreAccess } from './store-access';
+import type { ClientOptions } from './generation-client';
 
 export interface MiniAppViewProps {
   record: AppRecord;
@@ -37,6 +41,13 @@ export interface MiniAppViewProps {
   /** Orb "Change it" — opens the compose step prefilled for this running app (same path
    *  History's own "Change it from here" row action uses). */
   onChangeIt: () => void;
+  /** The installed-apps entry for this running app (design D13) — `ReportSheet`'s
+   *  `reportDraftFor(entry, access)` input for the orb's "Report this app" action. */
+  installedApp: InstalledApp;
+  access: StoreAccess;
+  /** Plain `ClientOptions` for the report sheet's `sendReport` call — no AI-data consent required
+   *  (design D3). */
+  reportOptions: ClientOptions;
 }
 
 export default function MiniAppView({
@@ -47,8 +58,15 @@ export default function MiniAppView({
   onExit,
   onVersions,
   onChangeIt,
+  installedApp,
+  access,
+  reportOptions,
 }: Readonly<MiniAppViewProps>) {
-  const host = useMiniAppHost({ onExit });
+  // The report sheet is a host-layer overlay over the running realm (design D14): while it is
+  // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
+  // app or exiting (mini-app-back-navigation delta "A host sheet takes back first").
+  const [reportOpen, setReportOpen] = useState(false);
+  const host = useMiniAppHost({ onExit, overlayOpen: reportOpen, onCloseOverlay: () => setReportOpen(false) });
   const p = SHELL_PALETTE;
   const bg = p.bg;
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
@@ -157,7 +175,13 @@ export default function MiniAppView({
           <Text style={[TYPE_SCALE.bodyEmphatic, styles.bootLabel, { color: p.textMuted }]}>{COPY.appBootLabel}</Text>
         </View>
       )}
-      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} />
+      <Orb onExit={host.exit} onVersions={onVersions} onChangeIt={onChangeIt} onReport={() => setReportOpen(true)} />
+      <ReportSheet
+        app={reportOpen ? installedApp : null}
+        access={access}
+        options={reportOptions}
+        onClose={() => setReportOpen(false)}
+      />
     </View>
   );
 }

@@ -11,6 +11,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, View, StyleSheet, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { runBridgeDeviceAcceptance, BridgeVerdict } from './bridge/device-acceptance';
 
 export default function BridgeProbeScreen() {
@@ -31,7 +32,7 @@ export default function BridgeProbeScreen() {
   }, []);
 
   return (
-    <View style={styles.root}>
+    <SafeAreaView style={styles.root}>
       <Text style={styles.title}>Whim · capability-bridge on-device acceptance</Text>
       {!verdict && !error && (
         <View style={styles.center}>
@@ -53,12 +54,12 @@ export default function BridgeProbeScreen() {
           <Text style={styles.mono}>{JSON.stringify(verdict, null, 2)}</Text>
         </ScrollView>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b1020', paddingTop: 48, paddingHorizontal: 12 },
+  root: { flex: 1, backgroundColor: '#0b1020', paddingHorizontal: 12 },
   title: { color: '#cbd5e1', fontSize: 14, fontWeight: '600', marginBottom: 8 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   muted: { color: '#64748b', marginTop: 8 },

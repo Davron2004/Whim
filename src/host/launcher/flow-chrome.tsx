@@ -28,7 +28,7 @@ export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
   const reached = INDICATOR_STEPS.indexOf(step);
   return (
     <View style={styles.header}>
-      <TouchableOpacity onPress={onBack} hitSlop={10}>
+      <TouchableOpacity onPress={onBack} hitSlop={16}>
         <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
       </TouchableOpacity>
       <View style={styles.bars}>

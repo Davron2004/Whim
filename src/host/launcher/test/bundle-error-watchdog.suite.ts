@@ -4,8 +4,8 @@
  * A launch that is refused PRE-delivery already surfaces honest copy (`launchFailed`,
  * `launch-failure-ui.suite.ts`). This suite covers what happens AFTER delivery: a FATAL bundle
  * error (loader.js: no AppSpec export / a render throw / the delivery wrapper itself throwing) or
- * an ACCEPTED delivery that never paints (the paint watchdog) both leave the realm dark with no
- * recovery path otherwise. `MiniAppView.tsx`/`useMiniAppHost.ts` are not rendered under Node, so —
+ * an ATTEMPTED delivery that produces no page frames both leave the realm dark with no recovery
+ * path otherwise. `MiniAppView.tsx`/`useMiniAppHost.ts` are not rendered under Node, so —
  * mirroring `launch-failure-ui.suite.ts` — this is a static source assertion. It verifies:
  *  (1) a `lastError` recovery branch distinct from `launchFailed`, rendering honest static copy
  *      (never the raw error string), whose Retry BOTH clears the error state (so the branch falls
@@ -14,10 +14,9 @@
  *      gates the branch, and clearing alone can never remount without a fresh WebView instance;
  *  (2) the `error` frame is narrowed to fatal `where`s only, so a healthy running app's post-paint
  *      diagnostic errors (e.g. `where: 'probes'`) never trigger a full-screen takeover;
- *  (3) the `delivery` frame only arms the paint watchdog when the bundle was actually accepted,
- *      so a refused delivery does not also start a redundant countdown to a takeover;
- *  (4) the shared `disarmTimer` helper is used to keep `paintTimer` inert at bind()/exit()/unmount,
- *      in addition to the moment a `paint` frame lands.
+ *  (3) source delivery starts the deadline before page control, covering native failures that
+ *      suppress all frames; an accepted delivery restarts the established paint allowance;
+ *  (4) the startup deadline is cancelled at bind/error/exit/retry/unmount and trusted paint.
  */
 
 import * as fs from 'node:fs';
@@ -159,36 +158,46 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     h.ok(/log\.(debug|warn)\(/.test(nonFatalPath), 'the non-fatal path must log the frame, not drop it silently');
   });
 
-  await h.test("bundle-error: the 'delivery' case only arms the paint watchdog when accepted === true", () => {
+  await h.test('bundle-error: attempted source delivery starts the deadline before page control', () => {
+    const deliveryBySourceBody = hostSrc.slice(hostSrc.indexOf('const deliverBySource = useCallback'), hostSrc.indexOf('const onMessage'));
+    const beginIdx = deliveryBySourceBody.indexOf('startupDeadline.current.begin()');
+    const controlIdx = deliveryBySourceBody.indexOf('control(js)');
+    h.ok(beginIdx !== -1, 'deliverBySource must begin the startup deadline');
+    h.ok(controlIdx !== -1, 'deliverBySource must inject the assembled source');
+    h.ok(beginIdx < controlIdx, 'the deadline must start before page control can lose every frame');
+    h.ok(beginIdx > deliveryBySourceBody.indexOf('deliverBySourceJs('), 'the deadline starts only after source assembly succeeds');
+  });
+
+  await h.test("bundle-error: an accepted 'delivery' frame restarts the paint allowance", () => {
     const deliveryBody = caseBody(hostSrc, 'delivery');
     h.ok(deliveryBody.length > 0, "expected a 'delivery' case");
     h.ok(!/^case 'delivery':\s*$/.test(deliveryBody.trim()), "the 'delivery' case must no longer be a bare return");
-    // Whatever shape it takes (inline or a named helper), the accepted check must gate arming.
-    const armSiteSrc = deliveryBody.includes('handleDeliveryFrame')
+    const restartSiteSrc = deliveryBody.includes('handleDeliveryFrame')
       ? functionBody(hostSrc, 'handleDeliveryFrame')
       : deliveryBody;
-    h.ok(armSiteSrc.includes('accepted'), 'the watchdog-arming path must check payload.accepted');
-    h.ok(armSiteSrc.includes('=== true'), 'the accepted check must require === true, not just truthiness of the frame');
+    h.ok(restartSiteSrc.includes('accepted'), 'the restart path must check payload.accepted');
+    h.ok(restartSiteSrc.includes('=== true'), 'the accepted check must require === true, not frame truthiness');
+    h.ok(restartSiteSrc.includes('.begin()'), 'accepted delivery must restart the deadline');
   });
 
-  await h.test('bundle-error: paintTimer is disarmed (via the shared disarmTimer helper) at every lifecycle edge', () => {
-    // bind() start, the 'paint' case, exit(), clearLastError(), and the unmount effect all must
-    // render the realm's watchdog inert -- checked per-site so a build that clears it in only
-    // SOME of them still fails.
-    const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverByRecord'));
-    h.ok(/disarmTimer\(paintTimer\)/.test(bindBody), 'bind() must disarm paintTimer before rebinding');
+  await h.test('bundle-error: the startup deadline is cancelled at every terminal lifecycle edge', () => {
+    const bindBody = hostSrc.slice(hostSrc.indexOf('const bind = useCallback'), hostSrc.indexOf('const deliverBySource'));
+    h.ok(/startupDeadline\.current\.cancel\(\)/.test(bindBody), 'bind() must invalidate the previous attempt');
 
-    // The paint path delegates to the named `handlePaintFrame` helper (kept out of the switch for
-    // cognitive complexity). Pin BOTH halves unconditionally -- a conditional fallback to the
-    // case body would silently pass on a rename, checking a branch that no longer runs.
     const paintBody = caseBody(hostSrc, 'paint');
     h.ok(paintBody.includes('handlePaintFrame'), "the 'paint' case must delegate to handlePaintFrame");
-    const paintDisarmSrc = functionBody(hostSrc, 'handlePaintFrame');
-    h.ok(paintDisarmSrc.length > 0, 'and that helper must exist');
-    h.ok(paintDisarmSrc.includes('disarmTimer(paintTimer)'), "the 'paint' path must disarm paintTimer");
+    const paintFinishSrc = functionBody(hostSrc, 'handlePaintFrame');
+    h.ok(paintFinishSrc.length > 0, 'and that helper must exist');
+    h.ok(paintFinishSrc.includes('acceptPaint(frame)'), 'the paint path must pass through trust-gated completion');
+
+    const fatalErrorSrc = functionBody(hostSrc, 'handleErrorFrame');
+    const fatalCancelIdx = fatalErrorSrc.indexOf('startupDeadline.cancel()');
+    const fatalSetIdx = fatalErrorSrc.indexOf('setS(');
+    h.ok(fatalCancelIdx !== -1, 'a fatal realm error must cancel the current deadline');
+    h.ok(fatalCancelIdx < fatalSetIdx, 'fatal cancellation must precede publishing the real error');
 
     const exitBody = hostSrc.slice(hostSrc.indexOf('const exit = useCallback'), hostSrc.indexOf('const clearLastError'));
-    h.ok(/disarmTimer\(paintTimer\)/.test(exitBody), 'exit() must disarm paintTimer');
+    h.ok(/startupDeadline\.current\.cancel\(\)/.test(exitBody), 'exit() must cancel the deadline');
 
     // clearLastError() is Retry's own clearing step -- an accepted delivery whose watchdog is
     // still armed when a fatal error lands must not have that STALE timer fire after Retry has
@@ -197,10 +206,10 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
     h.ok(clearLastErrorIdx !== -1, 'expected a clearLastError useCallback');
     const clearLastErrorCloseIdx = hostSrc.indexOf('}, []);', clearLastErrorIdx);
     const clearLastErrorBody = hostSrc.slice(clearLastErrorIdx, clearLastErrorCloseIdx + '}, []);'.length);
-    h.ok(/disarmTimer\(paintTimer\)/.test(clearLastErrorBody), 'clearLastError() must also disarm paintTimer');
+    h.ok(/startupDeadline\.current\.cancel\(\)/.test(clearLastErrorBody), 'clearLastError() must cancel the stale attempt');
 
     const unmountIdx = hostSrc.indexOf('Unmount teardown');
     const unmountRegion = hostSrc.slice(unmountIdx, unmountIdx + 800);
-    h.ok(/disarmTimer\(paintTimer\)/.test(unmountRegion), 'the unmount effect must disarm paintTimer');
+    h.ok(/startupDeadline\.current\.cancel\(\)/.test(unmountRegion), 'the unmount effect must cancel the deadline');
   });
 }

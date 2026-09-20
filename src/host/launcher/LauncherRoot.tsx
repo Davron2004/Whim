@@ -15,7 +15,7 @@
 // one app: launching reads the active bundle source from the record and hands it to MiniAppView
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
+import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
@@ -40,11 +40,12 @@ import type { RunJournal, RunTerminalCounts } from './run-journal';
 import {
   deliverAndSettle,
   dropPendingBuild,
-  EmptyBundleError,
   failPendingBuild,
   hydratedDiagnostics,
   journalStreamEvent,
+  refusedGenerateOutcome,
   retryBuildScreen,
+  settleRefusedGenerate,
   startPendingBuild,
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
@@ -61,8 +62,15 @@ import PlanStep from './PlanStep';
 import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
+import ConsentScreen from './ConsentScreen';
+import AppLinkMissingScreen from './AppLinkMissingScreen';
+import { parseAppLink } from './app-link';
+import { schemeAndHostOf } from './scheme-host';
+import { resolveAppLink, linkExitFor, PendingLinkHolder } from './link-routing';
+import type { LinkExit } from './link-routing';
 import ScreenBoundary from './ScreenBoundary';
 import ScreenErrorFallback from './ScreenErrorFallback';
+import { SCREEN_EXITS, frameEdgesFor } from './screen-exits';
 import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import RunDetailsSheet from './RunDetailsSheet';
@@ -78,6 +86,7 @@ import {
   clarifyStep,
   clarificationsFrom,
   composeStep,
+  composeTextChanged,
   doneStep,
   isClarifySkip,
   planStep,
@@ -90,14 +99,31 @@ import {
   withQuestions,
   withStage,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { loadServerUrl, saveServerUrl } from './server-address';
+import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from './server-address';
+import { probeServer } from './server-probe';
+import { ConnectivityLoop } from './connectivity';
+import type { Connectivity } from './connectivity';
+import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from './generation-client';
-import type { ClientOptions } from './generation-client';
+import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
+import type { ClientOptions, ConsentedClientOptions } from './generation-client';
+import ReportSheet from './ReportSheet';
+import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
+import { declineTarget, entryDecision } from './consent-flow';
+import type { ConsentContinuation } from './consent-flow';
+import { REFUSAL_RULES, retryAtOf, serviceRefusalOf } from './service-refusal';
+import type { ServiceRefusal } from './service-refusal';
+import { rewriteRefusalTarget } from './refusal-target';
+import type { RefusalSentFrom } from './refusal-target';
+import { useNoticeWindowClear } from './ServiceNotice';
+import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
+import { liveClientOptions } from './consent-options';
+import { resolveOptions } from './resolve-options';
+import { probeGateFor } from './probe-gate';
 
 type Screen =
   | { kind: 'home' }
@@ -105,6 +131,15 @@ type Screen =
   | { kind: 'dev' }
   | { kind: 'settings' }
   | { kind: 'history'; app: InstalledApp }
+  // An app link's id matched neither an installed app nor a pending build (design D15; spec
+  // app-links "A link to an app that isn't on this phone shows a friendly screen").
+  | { kind: 'link-missing' }
+  // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `ask` opens in place of a
+  // data-sending action taken with no current grant, carrying the continuation to resume on
+  // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
+  // from Settings' AI features row and shows the identical disclosure.
+  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdated: boolean }
+  | { kind: 'consent'; mode: 'review' }
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
   | FlowScreen
@@ -134,9 +169,11 @@ type Screen =
        *  launcher id, or the record's own. The what-happened section is read from it ONCE, when
        *  the screen opens; a missing journal changes nothing else about the screen. */
       journalId?: string;
+      /** A refused Retry's notice (design D9/D10): set only for the moment a live refusal is
+       *  still showing on this exact screen — never resurrected from a hydrated ghost, since the
+       *  retry window is not persisted (design D11: "the server stays authoritative"). */
+      notice?: FlowNotice;
     };
-
-const GENERIC_STREAM_ERROR = "Something went wrong while building your app. Please try again.";
 
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
@@ -163,23 +200,6 @@ function defaultSeeds(): SeedSpec[] {
     .map(s => ({ ...s, record: APP_RECORDS[s.id], bundleSource: APP_BUNDLES[s.id] }));
 }
 
-/** Maps a thrown error from the client calls down to the failure screen's honest
- *  `{reason, diagnostics}` shape — never the raw error kind/status, matching the "failure shown
- *  honestly" requirement's hint-only discipline (diagnostics stay empty here; only a terminal
- *  `failure` event ever carries real per-diagnostic hints). */
-function errorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
-  if (err instanceof GenerationClientError && err.hint) {
-    return { reason: err.hint, diagnostics: [] };
-  }
-  // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
-  // no app is a failed generation, not a crash, so it reads with its own honest reason rather than
-  // the generic one.
-  if (err instanceof EmptyBundleError) {
-    return { reason: err.message, diagnostics: [] };
-  }
-  return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
-}
-
 /** The taxonomy `errorReason()` intentionally scrubs off the screen, as named fields: constructor,
  *  GenerationClientError kind/status/hint, message, stack. Never prompt text or generated source. */
 function errorFields(err: unknown): Record<string, unknown> {
@@ -195,6 +215,25 @@ function errorFields(err: unknown): Record<string, unknown> {
 /** Breadcrumb for a swallowed generation-path error, on the generation channel. */
 function logGenError(stage: string, err: unknown): void {
   log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
+}
+
+/** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
+ *  the hint verbatim, the tone `REFUSAL_RULES` assigns its code, and — only when it carried a
+ *  `Retry-After` — the re-enable moment. `ServiceNotice` derives the copy-table retry line from
+ *  `retryAt` fresh on every render, so nothing here precomputes or caches that text. */
+function noticeFrom(refusal: ServiceRefusal): FlowNotice {
+  const retryAt = retryAtOf(refusal, Date.now());
+  return {
+    hint: refusal.hint,
+    tone: REFUSAL_RULES[refusal.code].tone,
+    ...(retryAt !== undefined ? { retryAt } : {}),
+  };
+}
+
+/** Every service refusal is recorded through the logging seam with its code, status and which
+ *  request it refused (`service-refusals` "The refusal is recoverable from the log"). */
+function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal: ServiceRefusal): void {
+  log.warn(CHANNELS.gen, 'service refusal', { request, code: refusal.code, status: refusal.status });
 }
 
 /** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
@@ -300,6 +339,42 @@ function DevLogTools() {
   );
 }
 
+/**
+ * The consent screen's two modes (design D5), in one small switch — kept out of `LauncherShell`'s
+ * own screen-kind chain so branching between them never adds to that function's own complexity.
+ */
+function ConsentScreenForShell({
+  screen,
+  onAskAgree,
+  onAskDecline,
+  onReviewTurnOn,
+  onReviewTurnOff,
+  onReviewClose,
+  consentOn,
+}: Readonly<{
+  screen: Extract<Screen, { kind: 'consent' }>;
+  onAskAgree: (continuation: ConsentContinuation) => void;
+  onAskDecline: (returnTo: Screen) => void;
+  onReviewTurnOn: () => void;
+  onReviewTurnOff: () => void;
+  onReviewClose: () => void;
+  consentOn: boolean;
+}>) {
+  if (screen.mode === 'ask') {
+    return (
+      <ConsentScreen
+        mode="ask"
+        outdated={screen.outdated}
+        onAgree={() => onAskAgree(screen.continuation)}
+        onClose={() => onAskDecline(screen.returnTo)}
+      />
+    );
+  }
+  return (
+    <ConsentScreen mode="review" consentOn={consentOn} onAgree={onReviewTurnOn} onTurnOff={onReviewTurnOff} onClose={onReviewClose} />
+  );
+}
+
 function LauncherShell({
   index,
   access,
@@ -316,17 +391,121 @@ function LauncherShell({
   const palette = SHELL_PALETTE;
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
+  // instant its retry window ends (design D12: "A sender refusal clears when its window ends").
+  // Leaving the step already clears it for free — the step's own constructor never carries a
+  // `notice` forward — so this only ever needs to fire while `screen` itself is unchanged; the
+  // reference check below is what keeps a stale timer from clearing a DIFFERENT refusal's notice
+  // that has since replaced this one on the same step.
+  const noticeOnScreen = 'notice' in screen ? screen.notice : undefined;
+  useNoticeWindowClear(noticeOnScreen, () => {
+    setScreen((prev) => {
+      if (!('notice' in prev) || prev.notice !== noticeOnScreen) return prev;
+      return { ...prev, notice: undefined };
+    });
+  });
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildRecord[]>([]);
   const [ready, setReady] = useState(false);
+  // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
+  // resubscribing `Linking`'s event on every first-run tick.
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
   const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
+  // The report sheet's target for the done-step and history-header entry points (design D13) —
+  // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
+  // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
+  // policy input.
+  const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
-  const clientOptions = useMemo<ClientOptions | null>(
-    () => (serverUrl != null ? { baseUrl: serverUrl, deviceId } : null),
-    [serverUrl, deviceId],
+  // The one gate `clarifyPrompt`/`rewritePrompt`/`generateApp`/the connectivity probe read their
+  // options through (design D2; spec ai-data-consent "Request options ... SHALL come from one
+  // gate that yields nothing without a current grant"): `null` unless AI-data consent is CURRENT.
+  // `consentTick` has no other purpose than forcing this memo to re-read `consentStatus(kv)` after
+  // `grantConsent`/`revokeConsent` mutate the store out from under it (a plain KV write is not
+  // itself a React dependency).
+  const [consentTick, setConsentTick] = useState(0);
+  const clientOptions = useMemo<ConsentedClientOptions | null>(
+    () => consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId),
+    // consentTick/serverUrl stand in for the KV reads above (grantConsent/revokeConsent/
+    // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
+    // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [consentTick, serverUrl, deviceId, kv],
   );
+
+  /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
+   *  the current grant, or a fresh live read (`consent-options.ts`) when it does not yet — the gap
+   *  `onConsentAskAgree` falls into, since `grantConsent`'s `consentTick` bump does not retire the
+   *  memo until the render AFTER this call returns (spec ai-data-consent "After the user agrees,
+   *  the action they started SHALL continue as if consent had already existed"). */
+  const resolveClientOptions = (): ConsentedClientOptions | null =>
+    resolveOptions(clientOptions, liveClientOptions(kv, deviceId));
+
+  // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
+  // ONE request that needs no AI-data consent, so this is never gated by `consentStatus`/
+  // `consentTick` the way `clientOptions` above is).
+  const reportClientOptions = useMemo<ClientOptions>(
+    () => ({ baseUrl: effectiveServerUrl(kv), deviceId }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [serverUrl, deviceId, kv],
+  );
+
+  const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
+  const connectivityLoopRef = useRef<ConnectivityLoop | null>(null);
+  const connectivityEpoch = useRef(0);
+
+  // Capture at request start. A response belongs to the address and consent session that sent
+  // it, even if a detached generation outlives a Settings edit or a revoke/regrant cycle.
+  const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
+    const epoch = connectivityEpoch.current;
+    return () => {
+      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
+        connectivityLoopRef.current?.markOnline();
+      }
+    };
+  };
+
+  const invalidateConnectivity = () => {
+    connectivityEpoch.current += 1;
+    connectivityLoopRef.current?.stop();
+    connectivityLoopRef.current = null;
+  };
+
+  // `clientOptions == null` leaves `connectivity` at its `'unknown'` default — no current AI-data
+  // consent grant, so there is nothing to probe (spec ai-data-consent "Nothing is sent to the
+  // server before consent is granted"), distinct from `'offline'` (probed and unreachable).
+  // `clientOptions` is keyed on `consentTick` above (design D2), so granting consent starts a
+  // fresh `ConnectivityLoop` here and revoking it tears the old one down through the SAME cleanup
+  // that runs on an address change or unmount — one effect serves startup, grant and revoke alike.
+  useEffect(() => {
+    const decision = probeGateFor(clientOptions);
+    if (decision.kind === 'idle') {
+      connectivityLoopRef.current = null;
+      setConnectivity('unknown');
+      return undefined;
+    }
+    const loop = new ConnectivityLoop({
+      probe: () => probeServer(decision.baseUrl),
+      publish: setConnectivity,
+    });
+    connectivityLoopRef.current = loop;
+    loop.start();
+    return () => {
+      loop.stop();
+      if (connectivityLoopRef.current === loop) connectivityLoopRef.current = null;
+    };
+  }, [clientOptions]);
+
+  // A breadcrumb for every connectivity transition, the same device-observability discipline as
+  // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of
+  // its own yet (offline-ux-surfaces, a later change reads it off this shell), so the seam is the
+  // only place a transition is currently observable.
+  useEffect(() => {
+    log.debug(CHANNELS.app, 'connectivity state changed', { connectivity });
+  }, [connectivity]);
 
   /** How many tiles the grid is known to be about to show — the skeleton's exact count. Read
    *  synchronously from the index at mount, before first-run seeding resolves. */
@@ -360,6 +539,14 @@ function LauncherShell({
   // state, which is the only half the screens render.
   const appOps = useRef(new AppBusy()).current;
   const [appBusy, setAppBusy] = useState<AppBusyMap>({});
+
+  // App links (design D15): the last link that arrived before first-run finished, and a stable
+  // handle onto the latest `openAppLink` closure — refreshed every render below, the same
+  // stable-identity idiom `onLeaveRunningRef`/`timelineRef` already keep, so the mount-once
+  // `Linking` subscription (registered once, further down) always reaches the CURRENT `screen`/
+  // `reportTarget` rather than the ones captured at mount.
+  const pendingLinkHolder = useRef(new PendingLinkHolder()).current;
+  const openAppLinkRef = useRef<(id: string) => void>(() => {});
 
   // The build screen of the attempt currently in flight, kept live even while the user is
   // elsewhere. This is ALL that "tap a building ghost to reattach" needs (design D7): the stream
@@ -423,7 +610,45 @@ function LauncherShell({
       }
       refresh();
       setReady(true);
+      // `readyRef.current` set here too, not left to the next render's own `readyRef.current =
+      // ready` mirroring assignment: the app-link listener effect reads the ref synchronously and could
+      // otherwise re-hold a link that arrives in the same tick as `release()` below, right after
+      // this effect already drained the holder — stuck forever with nothing left to release it.
+      readyRef.current = true;
+      // A link that arrived while first-run was still running (spec app-links "A link that
+      // arrives before the launcher is ready waits") resolves now, exactly as it would on an
+      // already-ready launcher. `openAppLinkRef.current`, not `openAppLink` directly — see the
+      // ref's own doc comment.
+      const heldId = pendingLinkHolder.release();
+      if (heldId != null) openAppLinkRef.current(heldId);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The app-link listener (design D15; spec app-links): registered ONCE — `Linking.getInitialURL`
+  // for a cold start, `Linking`'s `url` event for one that arrives while the process runs. Both
+  // funnel through the SAME rejection/hold/open handling, so a cold-start link and a warm one
+  // behave identically. `openAppLink` (below, among the ghost-tile handlers) is referenced here
+  // only through `openAppLinkRef`, which every render keeps pointed at the CURRENT closure — the
+  // same "declared later, reached only through a ref/deferred closure" pattern `runContinuation`
+  // already relies on for `onRetryPending`.
+  useEffect(() => {
+    const handleIncomingUrl = (url: string | null) => {
+      if (!url) return;
+      const id = parseAppLink(url);
+      if (id == null) {
+        log.warn(CHANNELS.app, 'app link rejected', schemeAndHostOf(url));
+        return;
+      }
+      if (!readyRef.current) {
+        pendingLinkHolder.hold(id);
+        return;
+      }
+      openAppLinkRef.current(id);
+    };
+    Linking.getInitialURL().then(handleIncomingUrl);
+    const sub = Linking.addEventListener('url', (event) => handleIncomingUrl(event.url));
+    return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -495,13 +720,119 @@ function LauncherShell({
   };
 
   const onServerUrlChange = (url: string) => {
+    const previous = effectiveServerUrl(kv);
     saveServerUrl(kv, url);
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
     setServerUrl(loadServerUrl(kv));
   };
 
   const onHighlightingChange = (enabled: boolean) => {
     saveHighlighting(kv, enabled);
     setHighlighting(enabled);
+  };
+
+  const onUseDefaultServer = () => {
+    const previous = effectiveServerUrl(kv);
+    clearServerUrl(kv);
+    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
+    setServerUrl(loadServerUrl(kv));
+  };
+
+  /** Forces `clientOptions` (and every other `consentStatus(kv)` read this render produces) to
+   *  reflect a grant/revoke that just happened — see the `clientOptions` memo's own doc comment. */
+  const bumpConsent = () => {
+    invalidateConnectivity();
+    setConsentTick((t) => t + 1);
+  };
+
+  const onGrantConsent = () => {
+    grantConsent(kv, new Date().toISOString());
+    bumpConsent();
+  };
+
+  const onRevokeConsent = () => {
+    revokeConsent(kv);
+    bumpConsent();
+  };
+
+  // ── The AI-data consent gate (design D1/D2/D5) ─────────────────────────────────────────────
+  // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
+  // history's "Change it from here", and Retry — calls `openWithConsent` instead of acting
+  // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
+  // only inside a closure that never runs before this render completes, so its declaration order
+  // doesn't matter — the same pattern `onLeaveRunningRef.current = onLeaveRunning` already relies
+  // on further down this component.
+
+  /** What a gated action resumes once consent is current: a compose continuation reopens the
+   *  composer, scoped exactly as the entry point asked; a retry continuation re-runs the stored
+   *  prompt on the SAME pending-build record, exactly as an unguarded Retry would. */
+  const runContinuation = (continuation: ConsentContinuation) => {
+    if (continuation.kind === 'compose') {
+      openCompose(continuation.editing);
+    } else {
+      onRetryPending(continuation.record);
+    }
+  };
+
+  /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
+   *  that would send data asks for consent at that moment"): a current grant runs the
+   *  continuation right away; otherwise the consent screen opens in the entry point's place,
+   *  carrying the continuation and the screen it replaced (`returnTo`), so declining knows where
+   *  to land (design D5). */
+  const openWithConsent = (continuation: ConsentContinuation) => {
+    const status = consentStatus(kv);
+    const decision = entryDecision(status, continuation);
+    if (decision.kind === 'continue') {
+      runContinuation(continuation);
+      return;
+    }
+    setScreen({
+      kind: 'consent',
+      mode: 'ask',
+      continuation: decision.continuation,
+      returnTo: screen,
+      outdated: status.kind === 'outdated',
+    });
+  };
+
+  /** Ask mode's `Agree and continue`: grants, then resumes exactly the continuation that opened
+   *  this screen (spec "After the user agrees, the action they started SHALL continue as if
+   *  consent had already existed"). */
+  const onConsentAskAgree = (continuation: ConsentContinuation) => {
+    onGrantConsent();
+    runContinuation(continuation);
+  };
+
+  /** Ask mode's decline (`Not now`, and hardware back — both routed through `ConsentScreen`'s one
+   *  `onClose`): grants nothing, and returns to whatever screen this one replaced (design D5:
+   *  Home for a running mini-app, since a torn-down realm is never resumed). */
+  const onConsentAskDecline = (returnTo: Screen) => {
+    setScreen(declineTarget<Screen>(returnTo));
+  };
+
+  /** Opens the consent screen in review mode, from Settings' AI features row. */
+  const onOpenAIFeaturesReview = () => {
+    setScreen({ kind: 'consent', mode: 'review' });
+  };
+
+  /** Review mode with consent off: the one action grants and returns to Settings. */
+  const onConsentReviewTurnOn = () => {
+    onGrantConsent();
+    setScreen({ kind: 'settings' });
+  };
+
+  /** Review mode with consent on: the plain-text action deletes the grant and returns to
+   *  Settings — the connectivity effect above (keyed on `clientOptions`) cancels any scheduled
+   *  probe and resets the state to unknown as a consequence, with no separate call needed here. */
+  const onConsentReviewTurnOff = () => {
+    onRevokeConsent();
+    setScreen({ kind: 'settings' });
+  };
+
+  /** Review mode's `Keep AI features on` (consent on) and hardware back (either sub-state):
+   *  nothing changes, just return to Settings. */
+  const onConsentReviewClose = () => {
+    setScreen({ kind: 'settings' });
   };
 
   // ── The `2a` flow (group D) ────────────────────────────────────────────────────────────────
@@ -574,9 +905,15 @@ function LauncherShell({
   };
 
   /** Fetch the plan and show it: the step opens immediately under its row skeleton, and its own
-   *  primary action stays busy until the rewrite response lands. */
-  const openPlan = async (prev: ComposeScreen | ClarifyScreen) => {
-    if (!clientOptions) return;
+   *  primary action stays busy until the rewrite response lands. `sentFrom` is the step whose OWN
+   *  `Continue` fired this request — `'clarify'` from the clarify step's own action, `'compose'`
+   *  when a zero-question exchange skips it and `onComposeContinue` opens plan directly from the
+   *  loading `clarify` screen it built (never `prev.kind`, which would misattribute that skip's
+   *  refusal landing to a clarify step the user never saw). */
+  const openPlan = async (prev: ComposeScreen | ClarifyScreen, sentFrom: RefusalSentFrom) => {
+    const options = resolveClientOptions();
+    if (!options) return;
+    const markOnline = onlineForRequest(options);
     const plan = planStep(prev);
     // Guarded like every other post-navigation write: this runs straight after the clarify await
     // on the compose path, and a user who has already left must not be pulled onto a plan step.
@@ -584,7 +921,7 @@ function LauncherShell({
     const request = flowRequests.start('plan');
     try {
       const response = await rewritePrompt(
-        clientOptions,
+        options,
         plan.text,
         clarificationsFrom(plan.questions, plan.answers),
         // A re-prompt tells the rewrite which app it is changing, and what it currently is;
@@ -593,11 +930,27 @@ function LauncherShell({
         buildRewriteAppContext(plan.editing, aboutFor(plan.editing)),
         request.controller.signal,
       );
+      markOnline();
       if (request.cancelled) return;
       setScreen(onlyOnStep<Screen, 'plan'>('plan', (s) => withPlan(s, response)));
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
       if (request.cancelled) return;
+      // A structured service refusal proves the server answered — proof of connectivity
+      // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
+      // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
+      // connectivity").
+      const refusal = serviceRefusalOf(e);
+      if (refusal) markOnline();
+      if (refusal) {
+        // Never the failure screen (service-refusals "never opens the failure screen"): the
+        // rewrite's landing is compose or clarify — whichever step's Continue sent it — for a
+        // sender refusal, and always compose for a refusal about the words themselves.
+        logServiceRefusal('rewrite', refusal);
+        const target = rewriteRefusalTarget(sentFrom, plan, refusal, noticeFrom(refusal));
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => target));
+        return;
+      }
       logGenError('rewrite failed', e);
       const failed = failure(plan.editing, plan.text, e, 'rewrite failed');
       setScreen(onlyOnStep<Screen, 'plan'>('plan', () => failed));
@@ -611,7 +964,9 @@ function LauncherShell({
    *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
    *  "skip to the plan step", not a dead end (`isClarifySkip`). */
   const onComposeContinue = async (from: ComposeScreen) => {
-    if (!clientOptions) return;
+    const options = resolveClientOptions();
+    if (!options) return;
+    const markOnline = onlineForRequest(options);
     const loading = clarifyStep(from);
     setScreen(loading);
     const request = flowRequests.start('compose');
@@ -620,7 +975,7 @@ function LauncherShell({
       questions = acceptClarifyQuestions(
         (
           await clarifyPrompt(
-            clientOptions,
+            options,
             from.text,
             // The same context a rewrite would carry (name, collections, description) — so the
             // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
@@ -630,11 +985,29 @@ function LauncherShell({
           )
         ).questions,
       );
+      // A resolved `clarifyPrompt` is a real server response — proof of connectivity equivalent
+      // to a successful dedicated probe (spec "A real generation or rewrite call succeeding...").
+      markOnline();
     } catch (e) {
       // The user left the loading clarify screen while this was in flight (back to compose, or
       // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
       // screen, no breadcrumb.
       if (request.cancelled) return;
+      // A structured service refusal proves the server answered (spec "A real generation or
+      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+      // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
+      // reads as one (that path is 502-only).
+      const refusal = serviceRefusalOf(e);
+      if (refusal) markOnline();
+      if (refusal) {
+        // Never the failure screen (service-refusals "never opens the failure screen"): a
+        // clarify request's only sender is compose, and a refusal about the words themselves
+        // lands there too, so the landing is always compose.
+        logServiceRefusal('clarify', refusal);
+        const notice = noticeFrom(refusal);
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => ({ ...from, notice })));
+        return;
+      }
       if (!isClarifySkip(e)) {
         logGenError('clarify failed', e);
         const failed = failure(from.editing, from.text, e, 'clarify failed');
@@ -650,8 +1023,9 @@ function LauncherShell({
     } else {
       // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
       // step — its own skeleton replaces this one, so the wait reads as continuous, never as a
-      // clarify screen that flashed empty.
-      await openPlan(loading);
+      // clarify screen that flashed empty. `'compose'`, not `loading.kind` (`'clarify'`) — it was
+      // THIS Continue that sent the rewrite request (M3 review fix).
+      await openPlan(loading, 'compose');
     }
   };
 
@@ -746,15 +1120,56 @@ function LauncherShell({
   };
 
   /**
+   * A refused `generateApp` call (design D10; `refusedGenerateOutcome` decides drop vs settle):
+   * a fresh attempt still on its build screen is dropped exactly as a cancel drops it, and the
+   * flow returns to `fromPlan` (when given) with the notice. Everything else — a detached
+   * attempt, or any Retry — settles `failed` with the refusal's hint as the reason; a Retry
+   * additionally refreshes the failure screen it was launched from, with Retry gated by the
+   * notice's own `retryAt`.
+   */
+  const handleGenerateRefusal = (
+    attemptId: string,
+    refusal: ServiceRefusal,
+    isRetry: boolean,
+    detached: boolean,
+    fromPlan: PlanScreen | undefined,
+    counts: RunTerminalCounts,
+  ): void => {
+    logServiceRefusal('generate', refusal);
+    const notice = noticeFrom(refusal);
+    const outcome = refusedGenerateOutcome(isRetry, detached);
+    releaseLiveRef(attemptId);
+    settleRefusedGenerate(pending, journal, attemptId, outcome, refusal.hint, counts);
+    refresh();
+    if (outcome === 'drop') {
+      if (fromPlan) {
+        setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...fromPlan, notice })));
+      }
+      return;
+    }
+    if (!isRetry) return;
+    const updated = pending.get(attemptId);
+    if (updated) {
+      setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...failureFromRecord(updated), notice })));
+    }
+  };
+
+  /**
    * ONE generation attempt, end to end: the launcher id and its `building` record are written
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
    * settlements follows — delivered (record deleted, after the store and index are both written),
    * failed (record persisted with its payload, never deleted), or cancelled (record deleted by the
    * cancel path itself). The plan's `Build it` and a ghost's Retry are its only two entries, so
    * this stays the shell's single `generateApp` call site.
+   *
+   * `fromPlan` is the plan screen `Build it` was tapped from — carried ONLY so a fresh attempt
+   * refused while still on the build screen can return to plan with every row exactly as it was
+   * (design D9/D10); a Retry passes none, since a refused Retry never lands on plan.
    */
-  const runAttempt = async (building: BuildScreen, reuseId?: string) => {
-    if (!clientOptions) return;
+  const runAttempt = async (building: BuildScreen, reuseId?: string, fromPlan?: PlanScreen) => {
+    const options = resolveClientOptions();
+    if (!options) return;
+    const markOnline = onlineForRequest(options);
     setScreen(building);
 
     const controller = new AbortController();
@@ -812,7 +1227,7 @@ function LauncherShell({
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
-      for await (const event of generateApp({ ...clientOptions, onKeepalive }, request, controller.signal)) {
+      for await (const event of generateApp({ ...options, onKeepalive }, request, controller.signal)) {
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
@@ -827,6 +1242,10 @@ function LauncherShell({
           terminal = event;
         }
       }
+      // The stream loop completed without throwing a transport-classified error — a real server
+      // response, proof of connectivity equivalent to a successful dedicated probe (spec "A real
+      // generation or rewrite call succeeding...").
+      markOnline();
 
       if (ctl.cancelled) return; // explicit cancel (abortLiveAttempt) already deleted the record
       releaseGenRef(ctl);
@@ -898,6 +1317,18 @@ function LauncherShell({
       setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
+      // A structured service refusal proves the server answered (spec "A real generation or
+      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+      // as proof of connectivity").
+      const refusal = serviceRefusalOf(e);
+      if (refusal) {
+        markOnline();
+        releaseGenRef(ctl);
+        // Never the failure screen (service-refusals "never opens the failure screen") — design
+        // D10's three-way split lives in `handleGenerateRefusal`.
+        handleGenerateRefusal(attemptId, refusal, reuseId !== undefined, ctl.detached, fromPlan, terminalCounts());
+        return;
+      }
       releaseGenRef(ctl);
       logGenError('build failed', e);
       const reasoned = errorReason(e);
@@ -908,7 +1339,7 @@ function LauncherShell({
 
   /** The approval gate's action — the first moment a generation request is sent. */
   const onBuildIt = async (from: PlanScreen) => {
-    await runAttempt(buildStep(from));
+    await runAttempt(buildStep(from), undefined, from);
   };
 
   /** `Leave it running`: back to the shell WITHOUT cancelling — the run finishes and its result
@@ -933,9 +1364,10 @@ function LauncherShell({
   /** Hardware back on the build screen (bug fix — see `BuildStep.tsx`'s header comment and
    *  `prompt-flow.ts#buildBackAction`): NEVER cancels. Closes the details sheet if it is open;
    *  otherwise defers to `onLeaveRunning`, the exact action the "Leave it running" button performs.
-   *  A stable identity (empty dependency array) so `BuildStep`'s listener is registered once per
-   *  mount, never once per tick. Cancellation stays reachable only from other explicit affordances
-   *  (a ghost tile's own Cancel, `onCancelPending` below). */
+   *  The hook binds once per mount through a ref regardless of handler identity; `useCallback` here
+   *  is kept for render stability only, not for the listener's registration count. Cancellation
+   *  stays reachable only from other explicit affordances (a ghost tile's own Cancel,
+   *  `onCancelPending` below). */
   const onBuildBack = useCallback(() => {
     if (buildBackAction(timelineRef.current !== null) === 'close-sheet') {
       setTimeline(null);
@@ -1024,6 +1456,48 @@ function LauncherShell({
     await runAttempt(retryBuildScreen(rec, edited ?? undefined), rec.id);
   };
 
+  /** The side effect of an arriving link's safe exit (design D15; spec app-links "An arriving link
+   *  leaves the current screen through that screen's own safe exit") — no screen assignment; the
+   *  caller (`openAppLink`) sets the resolved target right after. Cancelling whatever compose/plan
+   *  request the CURRENT screen owns applies unconditionally (a no-op off those two steps), the
+   *  same way `goHome` always does it. `'leave-build'` additionally detaches the live attempt so it
+   *  keeps streaming (exactly `onLeaveRunning`, without ALSO navigating home first — the caller is
+   *  about to navigate somewhere more specific). `'close-overlay'` also clears the host-level
+   *  report sheet, mirroring `back-policy.ts`'s `overlayOpen` precedent: never forwarded, never
+   *  counted toward anything else. */
+  const leaveForLink = (exit: LinkExit) => {
+    leaveFlowStep(screen.kind);
+    aboutRef.current = null;
+    if (exit === 'leave-build') {
+      const ctl = genRef.current;
+      if (ctl) ctl.detached = true;
+    } else if (exit === 'close-overlay') {
+      setReportTarget(null);
+    }
+  };
+
+  /** The one entry point every arriving app link resolves through (design D15): a link to the
+   *  app already open is left exactly as it is (spec "A link to the app that is already open SHALL
+   *  leave it as it is"); otherwise the current screen takes its safe exit, and the link's target
+   *  opens through the SAME handlers a tile tap already uses (`onOpen`/`onOpenPending`) — so it
+   *  opens "exactly as a tap on its tile does" by construction, never a second code path that could
+   *  drift from the first. Reads `index`/`pending` directly rather than the `apps`/`pendingBuilds`
+   *  React state, which can still be mount-time-stale the ONE time this fires before first render
+   *  settles (the "waits" release, above). */
+  const openAppLink = (id: string) => {
+    if (screen.kind === 'app' && screen.app.id === id) return;
+    const resolution = resolveAppLink(id, index.list(), pending.list());
+    leaveForLink(linkExitFor(reportTarget != null ? 'sheet' : screen.kind));
+    if (resolution.kind === 'open') {
+      onOpen(resolution.app);
+    } else if (resolution.kind === 'missing') {
+      setScreen({ kind: 'link-missing' });
+    } else {
+      onOpenPending(resolution.record);
+    }
+  };
+  openAppLinkRef.current = openAppLink;
+
   /** The what-happened section's entries, read ONCE per failure screen shown — `screen` is a new
    *  object only when the shell navigates, so no render or tick re-reads the store. A missing or
    *  unreadable journal reads as `null` and the section falls back to its empty note; nothing else
@@ -1057,7 +1531,10 @@ function LauncherShell({
     if (ghost != null) {
       return {
         retryable: true,
-        onRephrase: () => onRetryPending(ghost),
+        // Retry is a data-sending action (spec ai-data-consent "The first action that would send
+        // data asks for consent at that moment") — gated the same way as the other four entry
+        // points, through `openWithConsent`.
+        onRephrase: () => openWithConsent({ kind: 'retry', record: ghost }),
         onBack: onLeaveFailure,
         onDismiss: () => onDismissPending(ghost),
       };
@@ -1074,6 +1551,189 @@ function LauncherShell({
   // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
   const statusBarStyle = 'dark-content';
 
+  /** The ready-gated screen switch, pulled out of `LauncherShell`'s own body (a nested
+   *  closure sonarjs's cognitive-complexity rule assesses separately) purely to keep the
+   *  count of `Screen` kinds this shell can render from ever competing with `LauncherShell`'s
+   *  own control flow for the same budget — adding a `Screen` member costs this function one
+   *  branch, never the other. */
+  const renderScreenContent = (): React.ReactNode => {
+    if (screen.kind === 'app') {
+      return (
+        <MiniAppView
+          key={screen.app.id}
+          record={screen.record}
+          bundleSource={screen.source}
+          engineAppId={screen.engineAppId}
+          theme={DEFAULT_THEME}
+          onExit={goHome}
+          onVersions={() => onHistory(screen.app)}
+          onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
+          installedApp={screen.app}
+          access={access}
+          reportOptions={reportClientOptions}
+        />
+      );
+    } else if (screen.kind === 'dev') {
+      return <DevProbeScreen onExit={goHome} />;
+    } else if (screen.kind === 'settings') {
+      return (
+        <SettingsScreen
+          onBack={goHome}
+          serverUrl={serverUrl}
+          onServerUrlChange={onServerUrlChange}
+          onUseDefaultServer={onUseDefaultServer}
+          highlighting={highlighting}
+          onHighlightingChange={onHighlightingChange}
+          consentStatus={consentStatus(kv)}
+          canProbe={clientOptions != null}
+          onOpenAIFeatures={onOpenAIFeaturesReview}
+        />
+      );
+    } else if (screen.kind === 'consent') {
+      return (
+        <ConsentScreenForShell
+          screen={screen}
+          onAskAgree={onConsentAskAgree}
+          onAskDecline={onConsentAskDecline}
+          onReviewTurnOn={onConsentReviewTurnOn}
+          onReviewTurnOff={onConsentReviewTurnOff}
+          onReviewClose={onConsentReviewClose}
+          consentOn={consentStatus(kv).kind === 'granted'}
+        />
+      );
+    } else if (screen.kind === 'history') {
+      return (
+        <>
+          <HistoryScreen
+            app={screen.app}
+            access={access}
+            onBack={goHome}
+            onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
+            onReport={() => setReportTarget(screen.app)}
+          />
+          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+        </>
+      );
+    } else if (screen.kind === 'link-missing') {
+      return <AppLinkMissingScreen onBackToApps={goHome} />;
+    } else if (screen.kind === 'compose') {
+      const from = screen;
+      return (
+        <ComposeStep
+          text={from.text}
+          notice={from.notice}
+          serverUnreachable={showServerUnreachableNotice(connectivity, clientOptions != null)}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onChangeText={(text) => setScreen(composeTextChanged(from, text))}
+          onContinue={() => onComposeContinue(from)}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'clarify') {
+      const from = screen;
+      return (
+        <ClarifyStep
+          prompt={from.text}
+          questions={from.questions}
+          answers={from.answers}
+          loading={from.loading}
+          startedAt={from.startedAt}
+          notice={from.notice}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
+          onContinue={() => openPlan(from, 'clarify')}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'plan') {
+      const from = screen;
+      return (
+        <PlanStep
+          rows={from.rows}
+          loading={from.loading}
+          startedAt={from.startedAt}
+          notice={from.notice}
+          editing={from.editing != null}
+          editingName={from.editing?.name}
+          onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
+          onBuild={() => onBuildIt(from)}
+          onBack={() => goBack(from)}
+        />
+      );
+    } else if (screen.kind === 'build') {
+      const from = screen;
+      return (
+        <>
+          <BuildStep
+            stage={from.stage}
+            delivering={from.delivering}
+            signals={signalsRef.current}
+            now={Date.now()}
+            editing={from.editing != null}
+            editingName={from.editing?.name}
+            onBack={onBuildBack}
+            onShowDetails={onShowDetails}
+          />
+          <RunDetailsSheet
+            open={timeline !== null}
+            entries={timeline}
+            devMode={timelineDevMode}
+            onClose={() => setTimeline(null)}
+          />
+        </>
+      );
+    } else if (screen.kind === 'done') {
+      const from = screen;
+      return (
+        <>
+          <DoneStep
+            app={from.app}
+            onOpen={() => onOpen(from.app)}
+            onBackToApps={goHome}
+            onReport={() => setReportTarget(from.app)}
+          />
+          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+        </>
+      );
+    } else if (screen.kind === 'failure') {
+      return (
+        <FailureScreen
+          reason={screen.reason}
+          diagnostics={screen.diagnostics}
+          observedRepairAttempts={screen.observedRepairAttempts}
+          hasWorkingVersion={screen.hasWorkingVersion}
+          notice={screen.notice}
+          journal={failureJournal}
+          attemptStarted={screen.journalId != null}
+          devMode={timelineDevMode}
+          {...failureActions(screen)}
+        />
+      );
+    } else {
+      return (
+        <HomeScreen
+          apps={apps}
+          pending={pendingBuilds}
+          onOpen={onOpen}
+          onFork={onFork}
+          onDelete={onDelete}
+          appBusy={appBusy}
+          onHistory={onHistory}
+          onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
+          onCreate={() => openWithConsent({ kind: 'compose' })}
+          onSettings={() => setScreen({ kind: 'settings' })}
+          onOpenDevProbe={devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined}
+          offline={showOfflineIndicator(connectivity)}
+          onOpenPending={onOpenPending}
+          onCancelPending={onCancelPending}
+          onDismissPending={onDismissPending}
+        />
+      );
+    }
+  };
+
   let content: React.ReactNode;
   if (!ready) {
     content = (
@@ -1086,144 +1746,8 @@ function LauncherShell({
         />
       </View>
     );
-  } else if (screen.kind === 'app') {
-    content = (
-      <MiniAppView
-        key={screen.app.id}
-        record={screen.record}
-        bundleSource={screen.source}
-        engineAppId={screen.engineAppId}
-        theme={DEFAULT_THEME}
-        onExit={goHome}
-        onVersions={() => onHistory(screen.app)}
-        onChangeIt={() => openCompose(screen.app)}
-      />
-    );
-  } else if (screen.kind === 'dev') {
-    content = <DevProbeScreen onExit={goHome} />;
-  } else if (screen.kind === 'settings') {
-    content = (
-      <SettingsScreen
-        onBack={goHome}
-        serverUrl={serverUrl}
-        onServerUrlChange={onServerUrlChange}
-        highlighting={highlighting}
-        onHighlightingChange={onHighlightingChange}
-      />
-    );
-  } else if (screen.kind === 'history') {
-    content = (
-      <HistoryScreen
-        app={screen.app}
-        access={access}
-        onBack={goHome}
-        onChangeIt={(app) => openCompose(app)}
-      />
-    );
-  } else if (screen.kind === 'compose') {
-    const from = screen;
-    content = (
-      <ComposeStep
-        text={from.text}
-        serverConfigured={clientOptions != null}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onChangeText={(text) => setScreen({ ...from, text })}
-        onContinue={() => onComposeContinue(from)}
-        onBack={() => goBack(from)}
-        onOpenSettings={() => setScreen({ kind: 'settings' })}
-      />
-    );
-  } else if (screen.kind === 'clarify') {
-    const from = screen;
-    content = (
-      <ClarifyStep
-        prompt={from.text}
-        questions={from.questions}
-        answers={from.answers}
-        loading={from.loading}
-        startedAt={from.startedAt}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
-        onContinue={() => openPlan(from)}
-        onBack={() => goBack(from)}
-      />
-    );
-  } else if (screen.kind === 'plan') {
-    const from = screen;
-    content = (
-      <PlanStep
-        rows={from.rows}
-        loading={from.loading}
-        startedAt={from.startedAt}
-        editing={from.editing != null}
-        editingName={from.editing?.name}
-        onChangeRow={(rowIndex, text) => setScreen(updatePlanRow(from, rowIndex, text))}
-        onBuild={() => onBuildIt(from)}
-        onBack={() => goBack(from)}
-      />
-    );
-  } else if (screen.kind === 'build') {
-    const from = screen;
-    content = (
-      <>
-        <BuildStep
-          stage={from.stage}
-          delivering={from.delivering}
-          signals={signalsRef.current}
-          now={Date.now()}
-          editing={from.editing != null}
-          editingName={from.editing?.name}
-          onLeaveRunning={onLeaveRunning}
-          onBack={onBuildBack}
-          onShowDetails={onShowDetails}
-        />
-        <RunDetailsSheet
-          open={timeline !== null}
-          entries={timeline}
-          devMode={timelineDevMode}
-          onClose={() => setTimeline(null)}
-        />
-      </>
-    );
-  } else if (screen.kind === 'done') {
-    const from = screen;
-    content = (
-      <DoneStep app={from.app} onOpen={() => onOpen(from.app)} onBackToApps={goHome} />
-    );
-  } else if (screen.kind === 'failure') {
-    content = (
-      <FailureScreen
-        reason={screen.reason}
-        diagnostics={screen.diagnostics}
-        observedRepairAttempts={screen.observedRepairAttempts}
-        hasWorkingVersion={screen.hasWorkingVersion}
-        journal={failureJournal}
-        attemptStarted={screen.journalId != null}
-        devMode={timelineDevMode}
-        {...failureActions(screen)}
-      />
-    );
   } else {
-    content = (
-      <HomeScreen
-        apps={apps}
-        pending={pendingBuilds}
-        onOpen={onOpen}
-        onFork={onFork}
-        onDelete={onDelete}
-        appBusy={appBusy}
-        onHistory={onHistory}
-        onPromptAgain={(app) => openCompose(app)}
-        onCreate={() => openCompose()}
-        onSettings={() => setScreen({ kind: 'settings' })}
-        onOpenDevProbe={__DEV__ ? () => setScreen({ kind: 'dev' }) : undefined}
-        onOpenPending={onOpenPending}
-        onCancelPending={onCancelPending}
-        onDismissPending={onDismissPending}
-      />
-    );
+    content = renderScreenContent();
   }
 
   // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen
@@ -1231,11 +1755,16 @@ function LauncherShell({
   // blank-screen failure mode this exists to remove — still render. `screen.kind` is both the
   // failing-screen identifier in the log record and the reset key, so navigating away and back
   // re-attempts a screen that failed once.
+  const exit = SCREEN_EXITS[screen.kind];
   return (
     <HighlightingProvider enabled={highlighting}>
-      <SafeAreaView edges={['top']} style={[styles.root, { backgroundColor: palette.bg }]}>
+      <SafeAreaView edges={frameEdgesFor(screen.kind)} style={[styles.root, { backgroundColor: palette.bg }]}>
         <StatusBar barStyle={statusBarStyle} />
-        <ScreenBoundary screen={screen.kind} FallbackComponent={ScreenErrorFallback}>
+        <ScreenBoundary
+          screen={screen.kind}
+          FallbackComponent={ScreenErrorFallback}
+          onLeave={exit.back === 'root' ? undefined : goHome}
+        >
           {content}
         </ScreenBoundary>
         <DevLogTools />

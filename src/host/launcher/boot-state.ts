@@ -57,9 +57,12 @@ export interface PaintFrame {
 }
 
 /**
- * Whether a `paint` frame may move the boot state to `running`. ONE guard: the frame must be
+ * Whether a `paint` frame may move the boot state to `running`. The frame must be
  * nonce-authenticated (`trusted`, stamped by the outer page — the same check the `probes` branch
- * applies), so a bundle cannot post a `paint` for itself to skip its own boot state.
+ * applies), so a bundle cannot post a `paint` for itself to skip its own boot state. Its timing
+ * must also be a finite, nonnegative number: `paintMs !== null` is the host's only painted-state
+ * signal, so accepting a frame that cannot populate it would cancel the deadline while leaving
+ * the UI on `Opening…` forever.
  *
  * Deliberately NOT generation-fenced, unlike `nav-depth`. Two independent reasons:
  *
@@ -72,5 +75,77 @@ export interface PaintFrame {
  *    pre-incremented per bind, so the first launch is 2. Comparing them rejects every real paint.
  */
 export function paintAccepted(frame: PaintFrame | null | undefined): boolean {
-  return !!frame && frame.trusted === true;
+  const paintMs = frame?.payload?.mountToFirstPaintMs;
+  return frame?.trusted === true
+    && typeof paintMs === 'number'
+    && Number.isFinite(paintMs)
+    && paintMs >= 0;
+}
+
+/** Six seconds from an attempted source delivery, or from its accepted-delivery acknowledgement. */
+export const STARTUP_DEADLINE_MS = 6_000;
+
+/** Injected timer seam for deterministic Node tests; production uses the platform timers below. */
+export interface StartupDeadlineScheduler {
+  set(callback: () => void, delayMs: number): unknown;
+  clear(handle: unknown): void;
+}
+
+/** One currently bound realm's startup deadline. */
+export interface StartupDeadline {
+  /** Start, or restart, the allowance for the current attempt. */
+  begin(): void;
+  /** Complete startup only for authenticated paint carrying finite, nonnegative timing. */
+  acceptPaint(frame: PaintFrame | null | undefined): boolean;
+  /** Cancel the current attempt and invalidate a callback already queued by the platform. */
+  cancel(): void;
+}
+
+const platformScheduler: StartupDeadlineScheduler = {
+  set(callback, delayMs) {
+    return setTimeout(callback, delayMs);
+  },
+  clear(handle) {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
+
+/**
+ * Create a deadline whose callbacks are fenced by an attempt token. `clearTimeout` normally
+ * prevents a cancelled callback, but the token also covers a callback that was already queued
+ * when bind/reset, retry, exit, unmount, paint, or a fatal error cancelled its attempt.
+ */
+export function createStartupDeadline(
+  onTimeout: () => void,
+  scheduler: StartupDeadlineScheduler = platformScheduler,
+): StartupDeadline {
+  let handle: unknown | null = null;
+  let attempt = 0;
+
+  const cancel = (): void => {
+    attempt += 1;
+    if (handle !== null) {
+      scheduler.clear(handle);
+      handle = null;
+    }
+  };
+
+  return {
+    begin() {
+      cancel();
+      const ownedAttempt = attempt;
+      handle = scheduler.set(() => {
+        if (ownedAttempt !== attempt) return;
+        handle = null;
+        attempt += 1;
+        onTimeout();
+      }, STARTUP_DEADLINE_MS);
+    },
+    acceptPaint(frame) {
+      if (!paintAccepted(frame)) return false;
+      cancel();
+      return true;
+    },
+    cancel,
+  };
 }
