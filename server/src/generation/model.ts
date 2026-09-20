@@ -56,6 +56,13 @@ export interface ModelClient {
   stream(req: ModelRequest, signal?: AbortSignal): ModelStream;
 }
 
+/** True when a model call failed because the operator's provider credit is exhausted (HTTP 402,
+ *  design D6b). Structural so it stays provider-agnostic: an adapter signals it by throwing an
+ *  error whose `status` is `402`, as `OpenRouterCreditError` does. */
+export function isCreditExhaustedError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 402;
+}
+
 // ─── Roster: per-role model ids, read from the environment ─────────────────
 
 export type ModelRole = 'rewrite' | 'engineer';

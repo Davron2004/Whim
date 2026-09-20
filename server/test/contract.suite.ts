@@ -13,8 +13,11 @@ import {
   DeviceIdError,
   GenerateRequest,
   GenerationEvent,
+  ReportRequest,
+  ReportResponse,
   RewriteRequest,
   RewriteResponse,
+  ServiceRefusalCode,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
@@ -280,6 +283,61 @@ export function runContractTests(): void {
   check('exactly one terminal event', terminals.length === 1);
   check('terminal event is last', stream.at(-1)?.type === 'result');
 
+  // Report request/response shapes (public-generation-server, generation-contract "Report
+  // request and response shapes").
+  section('Report request/response shapes');
+  check(
+    'ReportRequest: a full report validates',
+    ReportRequest.safeParse({
+      reason: 'offensive',
+      note: 'x'.repeat(1000),
+      appName: 'A'.repeat(200),
+      prompt: 'the prompt that produced this app',
+      source: 'export default {}',
+    }).success,
+  );
+  check('ReportRequest: only the reason is required', ReportRequest.safeParse({ reason: 'other' }).success);
+  check(
+    'ReportRequest: a 1001-character note fails',
+    !ReportRequest.safeParse({ reason: 'other', note: 'x'.repeat(1001) }).success,
+  );
+  check(
+    'ReportRequest: a 201-character appName fails',
+    !ReportRequest.safeParse({ reason: 'other', appName: 'A'.repeat(201) }).success,
+  );
+  check(
+    'ReportRequest: an unlisted reason fails',
+    !ReportRequest.safeParse({ reason: 'spam' }).success,
+  );
+  check('ReportResponse: an empty reportId fails', !ReportResponse.safeParse({ reportId: '' }).success);
+  check('ReportResponse: a missing reportId fails', !ReportResponse.safeParse({}).success);
+  check(
+    'ReportResponse: a non-empty reportId validates',
+    ReportResponse.safeParse({ reportId: 'r-1' }).success,
+  );
+
+  // Service refusal codes are a closed vocabulary (generation-contract).
+  section('Service refusal codes are a closed vocabulary');
+  check(
+    'ServiceRefusalCode rejects a code outside the closed set',
+    !ServiceRefusalCode.safeParse('rate_limited').success,
+  );
+  for (const code of [
+    'payload_too_large',
+    'daily_limit',
+    'device_busy',
+    'server_busy',
+    'content_policy',
+    'policy_unavailable',
+    'budget_exhausted',
+  ] as const) {
+    check(`ServiceRefusalCode accepts ${code}`, ServiceRefusalCode.safeParse(code).success);
+  }
+  check(
+    'ApiError stays untouched: an arbitrary open error string still validates',
+    ApiError.safeParse({ error: 'invalid_request', hint: 'fix the request and try again' }).success,
+  );
+
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');
   const root = process.cwd();
@@ -299,10 +357,25 @@ export function runContractTests(): void {
   eq('server runtime deps are exactly the allowed set', serverDeps, [
     '@hono/node-server',
     '@whim/contract',
+    'esbuild',
     'hono',
     'pino',
+    'playwright',
+    'typescript',
   ]);
   check('server has no React-adjacent dep', !serverDeps.some(isReactAdjacent));
+
+  // The synthetic-run toolchain runs in production, so the server pins it to exactly the version the
+  // root lockfile resolves: one copy of each, and the server never drifts from what CI tested.
+  const lock = JSON.parse(readFileSync(path.join(root, 'package-lock.json'), 'utf8')) as {
+    packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+  };
+  const serverLockDeps = lock.packages.server?.dependencies ?? {};
+  for (const dep of ['esbuild', 'playwright', 'typescript']) {
+    const resolved = lock.packages[`node_modules/${dep}`]?.version;
+    check(`${dep} is resolved at the lockfile root`, typeof resolved === 'string');
+    eq(`server pins ${dep} to the lockfile-resolved version exactly`, serverLockDeps[dep], resolved);
+  }
 
   // The pretty printer is a HUMAN convenience, not part of the service: the server must run with
   // structured JSON where it is absent (spec "The service runs without the pretty printer"), so it

@@ -13,8 +13,15 @@
  * Deterministic throughout: every model call goes through `ScriptedModelClient` or an
  * `OpenRouterClient` wired to a fake `fetch` (never the real network), and the whole file passes
  * with `OPENROUTER_API_KEY` unset — it is never read here.
+ *
+ * chain-4 (public-generation-server) adds the content-policy rating-rule tripwires at the bottom
+ * (spec content-policy "The 13+ content policy has one written source"): a missing document
+ * section fails loudly, every system message that authors shipped source (rewrite, generate,
+ * repair) carries the rating rule verbatim while the plan turn does not, and no copy of either
+ * document section exists elsewhere in source.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { check, eq, caught, section } from './harness';
@@ -24,7 +31,7 @@ import type { FetchFn } from '../src/openrouter';
 import { openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
 import { ScriptedModelClient, ScriptedModelClientExhaustedError, ScriptedModelClientRoleMismatchError, noNetworkTransport } from './scripted-model';
 import type { CapturedRequest, ScriptedTurn } from './scripted-model';
-import { loadSdkReference, loadFewShotExamples, loadPromptInputs, PromptInputError } from '../src/generation/prompts/inputs';
+import { loadSdkReference, loadFewShotExamples, loadPromptInputs, loadContentPolicyDocument, PromptInputError } from '../src/generation/prompts/inputs';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   buildRewriteMessages,
@@ -715,6 +722,98 @@ async function testNoModelIdLiteral(): Promise<void> {
   }
 }
 
+// ── §chain-4 tripwires: the content-policy document is the one source ────────
+
+/** A scratch `docs/content-policy.md` under a throwaway cwd, missing whichever section
+ *  `omit` names, so `loadContentPolicyDocument` fails loudly instead of touching the real file. */
+function scratchContentPolicyCwd(omit: 'Rating rule' | 'Categories'): string {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-content-policy-'));
+  fs.mkdirSync(path.join(cwd, 'docs'));
+  const sections = [
+    ['Rating rule', 'Build for a general audience aged 13 and up.'],
+    ['Categories', '- Graphic violence or gore'],
+  ].filter(([heading]) => heading !== omit);
+  const doc = sections.map(([heading, body]) => `## ${heading}\n\n${body}`).join('\n\n');
+  fs.writeFileSync(path.join(cwd, 'docs', 'content-policy.md'), `# Whim content policy\n\n${doc}\n`, 'utf8');
+  return cwd;
+}
+
+async function testContentPolicyMissingSectionFailsTheBuild(): Promise<void> {
+  section('Tripwire: docs/content-policy.md — a missing section fails loudly, naming it');
+
+  const missingRatingRule = await caught(async () => { loadContentPolicyDocument(scratchContentPolicyCwd('Rating rule')); });
+  check(
+    'a document with no "Rating rule" section throws PromptInputError naming it',
+    missingRatingRule instanceof PromptInputError && /Rating rule/.test(missingRatingRule.message),
+  );
+
+  const missingCategories = await caught(async () => { loadContentPolicyDocument(scratchContentPolicyCwd('Categories')); });
+  check(
+    'a document with no "Categories" section throws PromptInputError naming it',
+    missingCategories instanceof PromptInputError && /Categories/.test(missingCategories.message),
+  );
+}
+
+/** Every turn whose output is authored into shipped app source must carry the rating rule — repair
+ *  included, since `REPAIR_INSTRUCTIONS` asks for the FULL corrected source, so a repair is the
+ *  last author of what a device runs. The plan turn is deliberately excluded: its JSON is never
+ *  delivered, and the rule would only spend tokens there. */
+async function testEveryAuthoringPromptCarriesTheRatingRule(): Promise<void> {
+  section('Tripwire: the rewrite, generate and repair system messages carry the rating rule verbatim — the plan turn does not');
+
+  const { ratingRule } = loadContentPolicyDocument(repoRoot);
+  check('sanity: the real document has a non-empty rating rule', ratingRule.trim().length > 0);
+
+  const inputs = loadPromptInputs(repoRoot);
+  const systemOf = (messages: { role: string; content: string }[]): string =>
+    messages.find((m) => m.role === 'system')?.content ?? '';
+
+  const covered: { turn: string; system: string }[] = [
+    { turn: 'rewrite', system: systemOf(buildRewriteMessages({ request: { prompt: 'a timer' } })) },
+    { turn: 'generate', system: systemOf(buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs)) },
+    {
+      turn: 'repair',
+      system: systemOf(buildRepairMessages(
+        {
+          request: EDIT_REQUEST,
+          plan: PLAN,
+          currentSource: 'export default {};',
+          diagnostics: [{ kind: 'raw_timer', severity: 'error', message: 'raw setTimeout', hint: 'use delay/interval instead' }],
+          schemaContext: '',
+        },
+        inputs,
+      )),
+    },
+  ];
+  for (const { turn, system } of covered) {
+    check(`${turn} system message carries the rating rule verbatim`, system.includes(ratingRule));
+  }
+
+  const planSystem = systemOf(buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' }));
+  check('plan system message does NOT carry the rating rule (its JSON is never delivered)', !planSystem.includes(ratingRule));
+}
+
+async function testContentPolicyNotDuplicatedInSource(): Promise<void> {
+  section('Tripwire: no copy of the content-policy document exists in the source tree');
+
+  const { ratingRule, categories } = loadContentPolicyDocument(repoRoot);
+  // A short, distinctive slice rather than the whole section: robust to incidental line-wrapping
+  // differences while still catching a careless copy-paste.
+  const ratingSnippet = ratingRule.slice(0, 40);
+  const categoriesSnippet = categories.split('\n').find((line) => line.trim().length > 10) ?? categories.slice(0, 40);
+
+  const scanDirs = [path.join(repoRoot, 'server', 'src'), path.join(repoRoot, 'checks')];
+  const files = scanDirs.flatMap((dir) => tsFilesUnder(dir));
+  check('duplication tripwire: scanned at least one file (sanity)', files.length > 0);
+
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    const relative = path.relative(repoRoot, file);
+    check(`no copy of the rating-rule text in ${relative}`, !text.includes(ratingSnippet));
+    check(`no copy of the categories text in ${relative}`, !text.includes(categoriesSnippet));
+  }
+}
+
 function testJsonBlockParsing(): void {
   section('json-block.ts — parseJsonBlock: tolerant of an unclosed fence');
 
@@ -747,5 +846,8 @@ export async function runPromptsTests(): Promise<void> {
   await testSchemaArtifactDocumented();
   await testFewShotFixturesAreHonest();
   await testNoModelIdLiteral();
+  await testContentPolicyMissingSectionFailsTheBuild();
+  await testEveryAuthoringPromptCarriesTheRatingRule();
+  await testContentPolicyNotDuplicatedInSource();
   testJsonBlockParsing();
 }
