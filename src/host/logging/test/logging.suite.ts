@@ -212,7 +212,7 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     for (const name of SENSITIVE_FIELD_NAMES) {
       fields[name] = secret;
     }
-    fields.nested = { apiKey: secret, note: 'kept too' };
+    fields.nested = { apiKey: secret, label: 'kept too' };
     seam.error(CHANNELS.gen, 'boom', fields);
 
     const [record] = seam.buffer.snapshot();
@@ -220,8 +220,19 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     const leaked = SENSITIVE_FIELD_NAMES.filter(name => record.fields[name] !== REDACTED);
     h.eq(leaked, [], 'every sensitive field carries the marker');
     h.eq((record.fields.nested as Record<string, unknown>).apiKey, REDACTED, 'nested values are redacted too');
-    h.eq((record.fields.nested as Record<string, unknown>).note, 'kept too', 'nested non-sensitive values survive');
+    h.eq((record.fields.nested as Record<string, unknown>).label, 'kept too', 'nested non-sensitive values survive');
     h.ok(!JSON.stringify(record).includes(secret), 'the original value appears nowhere in the record');
+  });
+
+  // store-launch-compliance chain-2 task 2.6 (host-observability delta): report note text joins
+  // the sensitive keys, matching content-reporting's "Report content never reaches device logs".
+  await h.test('a report note field is redacted at the seam and never reaches the ring buffer', () => {
+    const seam = createSeam({ console: false });
+    seam.error(CHANNELS.gen, 'report failed', { note: 'This app crashes every time I open it' });
+
+    const [record] = seam.buffer.snapshot();
+    h.eq(record.fields.note, REDACTED, 'the note field carries the redaction marker in the ring buffer');
+    h.ok(!JSON.stringify(record).includes('crashes every time'), 'the note text appears nowhere in the record');
   });
 
   await h.test('the buffer reader and the sink reader observe the same redacted value', async () => {
@@ -520,8 +531,10 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     // repo's established idiom for this file (`prompt-flow-wiring.suite.ts`).
     const src = fs.readFileSync(path.join(process.cwd(), 'src', 'host', 'launcher', 'LauncherRoot.tsx'), 'utf8');
     h.ok(
-      /<ScreenBoundary screen=\{screen\.kind\} FallbackComponent=\{ScreenErrorFallback\}>/.test(src),
-      'the boundary is keyed by the active screen and given the launcher fallback explicitly',
+      /<ScreenBoundary\s+screen=\{screen\.kind\}\s+FallbackComponent=\{ScreenErrorFallback\}\s+onLeave=\{[^}]*\}\s*>/.test(
+        src,
+      ),
+      'the boundary is keyed by the active screen and given the launcher fallback and a way home explicitly',
     );
     const frame = src.slice(src.indexOf('<SafeAreaView'), src.indexOf('</SafeAreaView>'));
     h.ok(frame.includes('<ScreenBoundary'), 'the boundary sits INSIDE the safe-area frame (design D1) — a screen failure keeps the shell');

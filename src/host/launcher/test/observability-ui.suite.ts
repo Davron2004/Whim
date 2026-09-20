@@ -297,4 +297,32 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     );
     h.eq(thirdParty, [], 'no third-party overlay package — react and react-native only');
   });
+
+  // ── review fix F9: no developer diagnostics surface is gated on __DEV__ alone ────────────────
+  // decision #60(c) / app-launcher "Production builds hide developer diagnostics surfaces": every
+  // `__DEV__` in launcher source must be the sole argument of a gate call (`devLogOverlayEnabled`
+  // today), never a bare condition — this project ships RELEASE builds where `__DEV__` is false,
+  // and a bare `__DEV__ ? a : b` reaches production with no build-time flag to override it.
+  function withoutComments(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  }
+
+  function bareDevFlag(text: string): boolean {
+    const gated = text.replace(/\w\(__DEV__\)/g, '');
+    return /__DEV__/.test(gated);
+  }
+
+  await h.test('gate (non-vacuity): the bare-__DEV__ scan tells a gated read from a bare condition', () => {
+    h.ok(!bareDevFlag('gate(__DEV__)'), 'a gate call must not fire the scan');
+    h.ok(bareDevFlag('__DEV__ ? a : b'), 'a bare conditional must fire the scan');
+  });
+
+  await h.test('gate: LauncherRoot.tsx never reads __DEV__ outside a gate call', () => {
+    const src = withoutComments(readSource('src/host/launcher/LauncherRoot.tsx'));
+    const hits: number[] = [];
+    src.split('\n').forEach((line, i) => {
+      if (bareDevFlag(line)) hits.push(i + 1);
+    });
+    h.eq(hits, [], 'every __DEV__ read in LauncherRoot.tsx must be the sole argument of a gate call, e.g. devLogOverlayEnabled(__DEV__)');
+  });
 }
