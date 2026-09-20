@@ -189,6 +189,27 @@ export const RewriteResponse = z.object({
 });
 export type RewriteResponse = z.infer<typeof RewriteResponse>;
 
+/** The closed set of reasons a device can attach to a content report. */
+export const ReportReason = z.enum(['offensive', 'harmful', 'broken', 'other']);
+export type ReportReason = z.infer<typeof ReportReason>;
+
+/** `POST /v1/report` request. Only `reason` is mandatory. `note` and `appName` are shape-bounded
+ *  (server-facing display text); `prompt` and `source` carry no character bound here — their byte
+ *  caps are an admission concern (`413`), not a shape rule, since the cap is UTF-8-byte-measured
+ *  and configurable. Carries no device identity: identity rides `x-whim-device`. */
+export const ReportRequest = z.object({
+  reason: ReportReason,
+  note: z.string().max(1000).optional(),
+  appName: z.string().max(200).optional(),
+  prompt: z.string().optional(),
+  source: z.string().optional(),
+});
+export type ReportRequest = z.infer<typeof ReportRequest>;
+
+/** `POST /v1/report` response. */
+export const ReportResponse = z.object({ reportId: z.string().min(1) });
+export type ReportResponse = z.infer<typeof ReportResponse>;
+
 /** The closed set of change kinds the device groups history by. Closed on purpose: a history
  *  screen groups by these and nothing else. */
 export const SummaryKind = z.enum(['Start', 'Added', 'Changed', 'Removed', 'Look', 'Fixed']);
@@ -273,3 +294,22 @@ export const DeviceIdError = z.object({
   hint: z.string().min(1),
 });
 export type DeviceIdError = z.infer<typeof DeviceIdError>;
+
+/** The closed vocabulary of `error` identifiers a conforming server uses for size, admission,
+ *  content-policy, and operator-budget refusals. Every value validates as `ApiError`, whose `error`
+ *  stays an open string — this is a narrower, closed-enum specialization used by admission control
+ *  and the content policy, the same pattern `DeviceIdError` uses above. `budget_exhausted` means
+ *  the operator's own provider credit is exhausted (distinct from `daily_limit`, a device/global
+ *  admission ceiling, and `policy_unavailable`, the content classifier being down); its `hint`
+ *  SHALL say generation is unavailable for now without naming the provider or a dollar amount.
+ *  Grows only additively — no refusal introduces a second error shape. */
+export const ServiceRefusalCode = z.enum([
+  'payload_too_large',
+  'daily_limit',
+  'device_busy',
+  'server_busy',
+  'content_policy',
+  'policy_unavailable',
+  'budget_exhausted',
+]);
+export type ServiceRefusalCode = z.infer<typeof ServiceRefusalCode>;

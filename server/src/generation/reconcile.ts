@@ -8,11 +8,17 @@
  * normally is never routed here at all (design D9: "two crediting paths in one component is how
  * double-counting bugs are born").
  *
+ * Reduced (design D7) to a thin, token-only wrapper over `../usage/resolve.ts`'s shared retry
+ * internals, which now also carry cost. This module's exported `GenerationStatsTransport` and
+ * `reconcileAbortedUsage` signatures are UNCHANGED so every existing import site (`app.ts`,
+ * `main.ts`, `routes/generate.ts`, `generation/index.ts`) keeps working untouched; those sites
+ * migrate to `resolveRequestUsage` directly in a later chain (composition, `handoff/composition.md`).
  * Introduces NO server-side persistence beyond the existing per-device `UsageStore` counter — no
  * new table, no in-memory retry queue that survives this one call.
  */
 import type { Usage } from '@whim/contract';
 import type { UsageStore } from '../usage-store';
+import { sumGenerationStats, type ResolveBounds, type UsageAndCostTransport } from '../usage/resolve';
 
 /**
  * Fetches the provider's authoritative post-hoc usage for one generation id. Injectable so tests
@@ -24,83 +30,30 @@ export interface GenerationStatsTransport {
   fetchStats(generationId: string): Promise<Usage | null>;
 }
 
-export interface ReconcileBounds {
-  /** Per-id cap on resolution attempts. */
-  maxAttempts: number;
-  /** Shared wall-clock deadline for the WHOLE call (every id), not per id — the record resolves
-   *  asynchronously upstream and this must stay bounded regardless of how many ids a run left. */
-  totalBudgetMs: number;
-  /** Delay between attempts for the same id. */
-  retryDelayMs: number;
-}
+export type { ResolveBounds as ReconcileBounds };
 
-export const DEFAULT_RECONCILE_BOUNDS: Readonly<ReconcileBounds> = Object.freeze({
+export const DEFAULT_RECONCILE_BOUNDS: Readonly<ResolveBounds> = Object.freeze({
   maxAttempts: 5,
   totalBudgetMs: 5000,
   retryDelayMs: 500,
+  perAttemptTimeoutMs: 2000,
 });
 
 export interface ReconcileDeps {
   transport: GenerationStatsTransport;
   usageStore: UsageStore;
-  bounds?: Partial<ReconcileBounds>;
+  bounds?: Partial<ResolveBounds>;
 }
 
-function sumUsage(a: Usage, b: Usage): Usage {
+/** Adapts the token-only legacy transport to the resolver's `{usage, totalCostUsd}` shape (cost
+ *  is always 0 here — this wrapper never records a ledger row, so cost is never observed). */
+function adaptTransport(transport: GenerationStatsTransport): UsageAndCostTransport {
   return {
-    promptTokens: a.promptTokens + b.promptTokens,
-    completionTokens: a.completionTokens + b.completionTokens,
-    totalTokens: a.totalTokens + b.totalTokens,
+    async fetchStats(generationId: string) {
+      const usage = await transport.fetchStats(generationId);
+      return usage ? { usage, totalCostUsd: 0 } : null;
+    },
   };
-}
-
-const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** One id's retry loop: up to `bounds.maxAttempts` attempts, never past `deadline`. Returns the
- *  resolved `Usage`, or `null` if the id never resolved within budget — a transport rejection is
- *  treated identically to an unresolved `null` (quiet give-up covers both). */
-async function resolveOneId(id: string, deadline: number, bounds: ReconcileBounds, transport: GenerationStatsTransport): Promise<Usage | null> {
-  for (let attempt = 0; attempt < bounds.maxAttempts && Date.now() < deadline; attempt++) {
-    let usage: Usage | null;
-    try {
-      usage = await transport.fetchStats(id);
-    // eslint-disable-next-line no-restricted-syntax -- intentional: a transport rejection is treated identically to an unresolved null, per the doc comment above
-    } catch {
-      usage = null;
-    }
-    if (usage) return usage;
-
-    const isLastAttempt = attempt === bounds.maxAttempts - 1;
-    const remaining = deadline - Date.now();
-    if (!isLastAttempt && remaining > 0) await sleep(Math.min(bounds.retryDelayMs, remaining));
-  }
-  return null;
-}
-
-/** Sums the resolved usage across every id in `generationIds`, stopping once the shared
- *  `deadline` passes. `foundAny` distinguishes "resolved zero-valued usage" from "resolved
- *  nothing at all" — only the latter skips crediting entirely. */
-async function resolveAll(
-  generationIds: readonly string[],
-  deadline: number,
-  bounds: ReconcileBounds,
-  transport: GenerationStatsTransport,
-): Promise<{ total: Usage; foundAny: boolean }> {
-  let total = ZERO_USAGE;
-  let foundAny = false;
-  for (const id of generationIds) {
-    if (Date.now() >= deadline) break;
-    const usage = await resolveOneId(id, deadline, bounds, transport);
-    if (usage) {
-      total = sumUsage(total, usage);
-      foundAny = true;
-    }
-  }
-  return { total, foundAny };
 }
 
 /**
@@ -117,10 +70,10 @@ async function resolveAll(
 export async function reconcileAbortedUsage(deviceId: string, generationIds: readonly string[], deps: ReconcileDeps): Promise<void> {
   if (generationIds.length === 0) return;
   try {
-    const bounds = { ...DEFAULT_RECONCILE_BOUNDS, ...deps.bounds };
+    const bounds: ResolveBounds = { ...DEFAULT_RECONCILE_BOUNDS, ...deps.bounds };
     const deadline = Date.now() + bounds.totalBudgetMs;
-    const { total, foundAny } = await resolveAll(generationIds, deadline, bounds, deps.transport);
-    if (foundAny) await deps.usageStore.credit(deviceId, total);
+    const { totalUsage, foundAny } = await sumGenerationStats(generationIds, deadline, bounds, adaptTransport(deps.transport));
+    if (foundAny) await deps.usageStore.credit(deviceId, totalUsage);
   // eslint-disable-next-line no-restricted-syntax -- intentional: best-effort per spec "gives up quietly" — must never surface a user-visible failure
   } catch {
     // best-effort — reconciliation must never fail anything user-visible (spec "gives up quietly")

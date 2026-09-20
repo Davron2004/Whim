@@ -11,7 +11,9 @@
  *  2. **It cannot fail a run.** `summarise` resolves `{}` instead of rejecting on every failure
  *     path (bad JSON, unusable prose, transport error, timeout), and `machine.ts` additionally
  *     catches — so a run that produced a deliverable record still emits its `result`, with the
- *     summary simply absent.
+ *     summary simply absent. Swallowing a failure is not the same as forgetting it: a provider
+ *     `402` swallowed here still invalidates the operator credit cache, because the credit really
+ *     is gone and the next admission must re-query rather than trust a stale value.
  *
  * The model is asked for PROSE plus two optional PHRASES, never for character offsets: offsets are
  * resolved here, deterministically, against the text the model actually returned. That is what
@@ -19,7 +21,8 @@
  * about a small model's arithmetic.
  */
 import type { Diagnostic, RunSummary, SummaryKind, SummaryMark, Usage } from '@whim/contract';
-import type { ModelClient, ModelRoster } from './model';
+import { isCreditExhaustedError, type ModelClient, type ModelRoster } from './model';
+import { invalidateCreditCache } from '../admission/credit';
 import { buildSummaryMessages } from './prompts';
 import { parseJsonBlock } from './json-block';
 
@@ -174,6 +177,14 @@ export interface ModelSummariserOptions {
   timeoutMs?: number;
 }
 
+/** Swallows a failed turn (the no-throw contract above) without losing what a `402` means: the
+ *  operator's provider credit is exhausted, so the cached credit value is dropped exactly as it is
+ *  for a `402` on any other model call (`machine.ts#endOnThrow`). */
+function noteCreditExhaustion(err: unknown): undefined {
+  if (isCreditExhaustedError(err)) invalidateCreditCache();
+  return undefined;
+}
+
 /** Resolves `undefined` after `ms`, with a timer that never keeps the process alive. */
 function timeoutAfter(ms: number): { promise: Promise<undefined>; cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -220,7 +231,7 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
           return summary ? { summary, usage } : { usage };
         })();
 
-        const settled = await Promise.race([turn.catch(() => undefined), timeout.promise]);
+        const settled = await Promise.race([turn.catch(noteCreditExhaustion), timeout.promise]);
         if (settled === undefined) controller.abort(); // timed out (or threw) — stop the turn
         return settled ?? {};
       // eslint-disable-next-line no-restricted-syntax -- intentional: mirrors the race/timeout no-throw contract this turn documents above

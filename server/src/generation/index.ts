@@ -7,7 +7,7 @@
  */
 import { OpenRouterClient } from '../openrouter';
 import type { Pipeline } from '../pipeline';
-import type { GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
+import type { GenerateRequest, GenerationEvent } from '@whim/contract';
 import {
   modelRosterFromEnv,
   openRouterModelClient,
@@ -20,7 +20,6 @@ import { createBuildStage } from './stages/build';
 import { createRunStage } from './stages/run';
 import { GenerationMachine, type PipelineBounds, type RunTrace } from './machine';
 import { createModelSummariser } from './summarise';
-import type { GenerationStatsTransport } from './reconcile';
 import { createRunCandidate } from '../../../synthrun/report';
 import type { SynthRunSession } from '../../../synthrun/session';
 
@@ -43,8 +42,8 @@ export class MissingApiKeyError extends Error {
 export interface ModelDeps {
   model: ModelClient;
   roster: ModelRoster;
-  /** Kept alongside `model`/`roster` so a caller (`main.ts`) can build the generation-stats
-   *  transport below without re-reading the environment a second time. */
+  /** Kept alongside `model`/`roster` so a caller (`main.ts`) can build the generation-stats and
+   *  credit transports without re-reading the environment a second time. */
   apiKey: string;
 }
 
@@ -62,41 +61,6 @@ export function buildModelDepsFromEnv(env: NodeJS.ProcessEnv = process.env): Mod
   return { model: openRouterModelClient(new OpenRouterClient()), roster, apiKey };
 }
 
-const GENERATION_STATS_URL = 'https://openrouter.ai/api/v1/generation';
-
-/**
- * The real `GenerationStatsTransport` (design D9, `handoff/run-stage.md`) — OpenRouter's
- * post-hoc generation-stats lookup, used ONLY by `routes/generate.ts`'s post-abort
- * reconciliation, never on the normal crediting path. Never throws: any failure (network,
- * non-2xx, unexpected body shape) resolves `null` — "not yet resolved" — which `reconcile.ts`'s
- * own retry loop already treats identically to a transport rejection.
- */
-export function openRouterGenerationStatsTransport(
-  apiKey: string,
-  fetchFn: typeof globalThis.fetch = globalThis.fetch,
-): GenerationStatsTransport {
-  return {
-    async fetchStats(generationId: string): Promise<Usage | null> {
-      try {
-        const res = await fetchFn(`${GENERATION_STATS_URL}?id=${encodeURIComponent(generationId)}`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
-        if (!res.ok) return null;
-        const body = (await res.json()) as { data?: Record<string, unknown> };
-        const data = body.data;
-        if (!data) return null;
-        const promptTokens = Number(data.tokens_prompt ?? data.native_tokens_prompt ?? 0);
-        const completionTokens = Number(data.tokens_completion ?? data.native_tokens_completion ?? 0);
-        if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens)) return null;
-        return { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens };
-      // eslint-disable-next-line no-restricted-syntax -- intentional: per this function's contract above, any failure resolves null, never throws
-      } catch {
-        return null;
-      }
-    },
-  };
-}
-
 export interface CreatePipelineOptions {
   /** The already-launched synthetic-run session this process's pipeline uses for its whole
    *  lifetime (`handoff/run-stage.md`'s "one session per pipeline, per-run slot") — this module
@@ -108,6 +72,8 @@ export interface CreatePipelineOptions {
   modelDeps?: ModelDeps;
   env?: NodeJS.ProcessEnv;
   bounds?: Partial<PipelineBounds>;
+  /** Each run's wall-clock budget (`ServerConfig.generationMaxMs`); the machine's default when absent. */
+  maxRunMs?: number;
 }
 
 /**
@@ -137,6 +103,7 @@ export function createGenerationPipeline(options: CreatePipelineOptions): Pipeli
     clock,
     summariser: createModelSummariser({ model, roster }),
     bounds: options.bounds,
+    maxRunMs: options.maxRunMs,
   });
 
   return {
