@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, report, assert, assertHasKind, assertNoKind, findByKind, kindsOf } from './harness';
 import { runHostileCorpus } from './hostile/corpus';
+import { runReleaseSuites } from './release';
 import {
   CAPABILITY_EXPORTS,
   CheckReport,
@@ -442,6 +443,39 @@ async function testImportAllowlist(): Promise<void> {
     const src = "async function boot() { await import('vc-sdk'); }\n";
     const r = runStaticChecks(src);
     assertHasKind(r, 'disallowed_import', 'dynamic import() must be rejected even when the specifier is on-allowlist');
+  });
+
+  // Spec "A re-export of a file path is rejected". `ok === false` is the check stage's refusal: the
+  // pipeline builds only a candidate whose report is ok, so this one never reaches the build stage.
+  await test('C §imports: a re-export of a file path is rejected, naming the specifier', { greenBy: 'C' }, () => {
+    const reExports: [string, string][] = [
+      ["export * from '/etc/hosts';\n", '/etc/hosts'],
+      ["export { x } from '../../server/src/main';\n", '../../server/src/main'],
+    ];
+    for (const [src, specifier] of reExports) {
+      const r = runStaticChecks(src);
+      const d = assertHasKind(r, 'disallowed_import', `no disallowed_import for the re-export of "${specifier}"`);
+      assert(d.symbol === specifier, `expected symbol "${specifier}", got "${String(d.symbol)}"`);
+      assert(d.severity === 'error', `a re-export of a file path must be an error, got ${d.severity}`);
+      assert(/vc-sdk/.test(d.hint), `hint should point at vc-sdk for "${specifier}", got: ${d.hint}`);
+      assert(r.ok === false, `a candidate re-exporting "${specifier}" must not pass the check stage`);
+    }
+  });
+
+  // Spec "An import-equals require is rejected".
+  await test('C §imports: an import-equals require is rejected, naming the specifier', { greenBy: 'C' }, () => {
+    const r = runStaticChecks("import cfg = require('./config.json');\n");
+    const d = assertHasKind(r, 'disallowed_import', 'no disallowed_import for an import-equals require');
+    assert(d.symbol === './config.json', `expected symbol "./config.json", got "${String(d.symbol)}"`);
+    assert(d.severity === 'error', `an import-equals require must be an error, got ${d.severity}`);
+  });
+
+  // Non-vacuity for the two cases above: the same positions naming `vc-sdk` draw nothing, so the
+  // pass reads the specifier in each position rather than refusing the syntax wholesale.
+  await test('C §imports: re-export and import-equals forms naming vc-sdk are not flagged', { greenBy: 'C' }, () => {
+    for (const src of ["export { Screen } from 'vc-sdk';\n", "export * from 'vc-sdk';\n", "import sdk = require('vc-sdk');\n"]) {
+      assertNoKind(runStaticChecks(src), 'disallowed_import', `"${src.trim()}" names only vc-sdk and must not be flagged`);
+    }
   });
 }
 
@@ -1369,6 +1403,7 @@ async function main(): Promise<void> {
   await testAssemblyOrderingPurity();
   await testHonestFixturesAndLatencyProbe();
   await runHostileCorpus();
+  await runReleaseSuites();
 }
 
 main()

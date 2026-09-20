@@ -11,10 +11,7 @@
     "sha.js",
     "@babel/preset-env",
     "@babel/runtime",
-    "@react-native/new-app-screen",
-    "react-test-renderer",
-    "@types/react-test-renderer",
-    "pino-pretty"
+    "@react-native/new-app-screen"
   ],
   "ignoreExportsUsedInFile": true,
   "workspaces": {
@@ -36,8 +33,7 @@
         "invariants/**/*.mjs",
         "fixtures/**/*.app.tsx",
         "checks/test/**",
-        "evals/test/**",
-        "evals/cli.mjs"
+        "evals/test/**"
       ],
       "project": [
         "App.tsx",
@@ -50,11 +46,14 @@
       ]
     },
     "contract": {
-      "entry": ["src/index.ts"],
       "project": "src/**/*.ts"
     },
     "server": {
-      "entry": ["test/**", "src/main.ts"],
+      "entry": [
+        "test/**",
+        "src/main.ts",
+        "src/admin/main.ts"
+      ],
       "project": "{src,test}/**/*.{ts,mjs}"
     }
   }

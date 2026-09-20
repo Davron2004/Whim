@@ -11,7 +11,7 @@
  * pin / fork all still resolve — now against the packfile.
  */
 
-import './polyfills';
+import '../platform/hermes-polyfills';
 import * as git from 'isomorphic-git';
 import { MemoryFs } from './fs/memory-fs';
 

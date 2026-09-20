@@ -75,8 +75,11 @@ case "${1:-}" in
     # stream-json emits the live event stream (tool calls + messages) instead of a
     # single end-of-run dump; 2>&1 folds the firewall output and any errors into the
     # log too. pipefail (set above) surfaces docker's exit code through the pipe.
+    # The seccomp profile lets the gate's synthrun suites launch Chromium with its OS sandbox on
+    # (user namespaces); see devcontainer.json. Never swap it for --no-sandbox.
     docker run --rm \
       --cap-add=NET_ADMIN --cap-add=NET_RAW \
+      --security-opt seccomp="$REPO/deploy/seccomp/chromium-playwright-1.60.0.json" \
       -e CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
       -v "$REPO":/workspace \
       -v "$VOLUME":/workspace/node_modules:ro \

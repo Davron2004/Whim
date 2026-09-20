@@ -4,7 +4,15 @@
 
   // NET_ADMIN + NET_RAW: required by init-firewall.sh (iptables/ipset) to lock
   // egress to Anthropic only. This is the Threat-C boundary.
-  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+  // seccomp: synthrun launches Chromium with its OS sandbox on (public-generation-server D4),
+  // which needs user namespaces. Docker's default profile refuses them; the vendored Playwright
+  // profile is that default plus the namespace syscalls. Never swap this for --no-sandbox.
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+    "--security-opt",
+    "seccomp=${localWorkspaceFolder}/deploy/seccomp/chromium-playwright-1.60.0.json"
+  ],
 
   // The host repo is BIND-MOUNTED (the default workspaceMount does this), so
   // worktrees under .claude/worktrees/ and merges to the staging branch land on the host FS

@@ -9,6 +9,7 @@
  * test due), which is what the merged main tip and CI always see.
  */
 
+import nodeAssert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CheckReport, Diagnostic, DiagnosticKind } from '../contract';
@@ -87,7 +88,7 @@ export async function test(
 // hostile/corpus.ts, so they live here rather than being duplicated in each. ─────────────
 
 export function assert(cond: boolean, msg: string): void {
-  if (!cond) throw new Error(msg);
+  nodeAssert.ok(cond, msg);
 }
 
 export function kindsOf(r: CheckReport): DiagnosticKind[] {
