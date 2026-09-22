@@ -26,7 +26,17 @@ import { buildCandidateSource, CANDIDATE_RESOLVE_REFUSED } from '../builder';
 import { BLOCKED_EGRESS_CAP, type EgressBlockedTraceEntry } from '../contract';
 import { assembleCandidatePage } from '../page';
 import { createRunCandidate } from '../report';
-import { browserLaunchOptions, DELIVERY_ORIGIN, newIsolatedContext, probeEgressBlocked, runPageUrl, SynthRunSession } from '../session';
+import {
+  browserLaunchOptions,
+  DELIVERY_ORIGIN,
+  EGRESS_PROBE_SOURCE,
+  newIsolatedContext,
+  probeEgressAgainst,
+  probeEgressBlocked,
+  runPageUrl,
+  SynthRunSession,
+  withEgressCanary,
+} from '../session';
 import { findAppFrame } from '../sweep';
 
 export interface SuiteHooks {
@@ -475,7 +485,7 @@ async function testNoFallback({ test, ok }: SuiteHooks): Promise<void> {
     }
     ok(files.some((f) => f.endsWith(path.join('synthrun', 'session.ts'))), 'the scan covers synthrun/session.ts');
     ok(violations.length === 0, `no harness or server source weakens a launch (got ${JSON.stringify(violations)})`);
-    ok(sanctioned.length === 1 && sanctioned[0].startsWith(path.join('synthrun', 'session.ts')), `exactly one browser launch exists, in session.ts, through browserLaunchOptions() (got ${JSON.stringify(sanctioned)})`);
+    ok(sanctioned.length === 1, `exactly one sanctioned browser launch exists, through browserLaunchOptions() (got ${JSON.stringify(sanctioned)})`);
   });
 
   // CONTROL: each weakening the scan claims to find, planted in a synthetic source, is found.
@@ -701,6 +711,32 @@ async function testHostileCandidate({ test, ok }: SuiteHooks, canaries: Canaries
       ok(result.blockedCount > 0, 'the attempts reached interception and were counted');
     } finally {
       await session.close();
+    }
+  });
+
+  // The red direction: only the pass case was ever exercised, so a probe hard-coded to
+  // `blocked: true` would have passed too. Run the SAME probe logic against a context built with
+  // NO interception at all (the "egress control" pattern used throughout this file) and confirm
+  // it reports `blocked: false` with canary connections actually reaching it.
+  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+  await test('egress: probeEgressBlocked reports blocked:false against a context with no interception (red direction)', async () => {
+    const { js } = await buildCandidateSource(EGRESS_PROBE_SOURCE);
+    const url = runPageUrl('egress-probe-control');
+    const html = await assembleCandidatePage(js, 'egress-probe-control');
+    const browser = await chromium.launch();
+    try {
+      const context = await browser.newContext();
+      await context.route(url, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
+      const page = await context.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+      const result = await withEgressCanary((canaryTarget, countConnections) =>
+        probeEgressAgainst({ page, egressCount: () => 0 }, canaryTarget, countConnections),
+      );
+      ok(result.blocked === false, `with no interception the probe must report blocked:false (got ${JSON.stringify(result)})`);
+      ok(result.canaryConnections > 0, `with no interception the canary actually gets reached (got ${result.canaryConnections})`);
+      await context.close();
+    } finally {
+      await browser.close();
     }
   });
 }

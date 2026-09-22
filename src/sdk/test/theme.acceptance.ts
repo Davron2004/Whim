@@ -38,8 +38,15 @@ const HEX_RE = /^#[0-9a-f]{6}$/i;
 equal(appColor('Water Counter'), appColor('Water Counter'), 'appColor: same name -> same colour');
 equal(appColor(''), appColor(''), 'appColor: empty-string name is still deterministic');
 
+// One sweep over the named apps plus a denser hash exercise (purely to cover many inputs, never
+// asserting a fixed distribution): every result is a hex colour, deterministic on repeat, and
+// outside the FULL reserved set (a merge of the two sweeps this replaces — the second one's own
+// reserved set had silently dropped STATUS_COLORS.done).
 {
-  const names = ['Water Counter', 'Tip Splitter', 'Habit Tracker', 'Recipe Box', 'Countdown', 'Budget'];
+  const names = [
+    'Water Counter', 'Tip Splitter', 'Habit Tracker', 'Recipe Box', 'Countdown', 'Budget',
+    ...Array.from({ length: 200 }, (_, i) => `app-${i}`),
+  ];
   const reserved = new Set(
     [
       STATUS_COLORS.working,
@@ -57,28 +64,6 @@ equal(appColor(''), appColor(''), 'appColor: empty-string name is still determin
     const color = appColor(name);
     ok(HEX_RE.test(color), `appColor(${name}): result "${color}" is a hex colour`);
     ok(!reserved.has(color.toLowerCase()), `appColor(${name}): result "${color}" must not be a reserved hue`);
-  }
-}
-
-// A denser sweep, purely to exercise the hash across many inputs without asserting a fixed
-// distribution (only that every result stays a hex colour outside the reserved set).
-{
-  const reserved = new Set(
-    [
-      STATUS_COLORS.working,
-      STATUS_COLORS.broken,
-      STATUS_COLORS.waiting,
-      STATUS_COLORS_ON_INK.working,
-      STATUS_COLORS_ON_INK.broken,
-      SHELL_COLORS.accent,
-      SHELL_COLORS.yours,
-      SHELL_COLORS.yoursOnDark,
-    ].map((hex) => hex.toLowerCase()),
-  );
-  for (let i = 0; i < 200; i++) {
-    const name = `app-${i}`;
-    const color = appColor(name);
-    ok(!reserved.has(color.toLowerCase()), `appColor(${name}): "${color}" must not be a reserved hue`);
     equal(appColor(name), color, `appColor(${name}): repeat call is stable`);
   }
 }

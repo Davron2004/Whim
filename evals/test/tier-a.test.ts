@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { observationFromRunReport } from '../adapters/synthetic-run';
-import type { RunObservation, TierAResult, TierBResult, TierCResult } from '../contract';
+import type { RunObservation, TierAResult, TierBResult } from '../contract';
 import { computeCaseVerdict } from '../tiers/case';
 import { evaluateTierA } from '../tiers/tier-a';
 import { check, eq, section } from './harness';
@@ -153,7 +153,6 @@ const FAILED_TIER_A: TierAResult = {
 };
 const PASSED_TIER_A: TierAResult = { status: 'pass', diagnostics: [], containment: { authenticated: true, contained: true } };
 const SKIPPED_TIER_B: TierBResult = { status: 'skipped', reason: 'tier_a_failed' };
-const SKIPPED_TIER_C: TierCResult = { status: 'skipped', reason: 'tier_a_failed' };
 const FAILING_TIER_B: TierBResult = {
   status: 'evaluated',
   assertions: [{ english: 'the home screen is reachable', kind: 'screen-reachable', status: 'fail', observed: [] }],
@@ -162,34 +161,12 @@ const PASSING_TIER_B: TierBResult = {
   status: 'evaluated',
   assertions: [{ english: 'the home screen is reachable', kind: 'screen-reachable', status: 'pass', observed: ['Home'] }],
 };
-const LOW_SCORED_TIER_C: TierCResult = {
-  status: 'scored',
-  verdict: {
-    rubricVersion: 'v1',
-    judgeIdentity: 'scripted:test',
-    criteria: [{ criterion: 'polish', score: 0, rationale: 'bottom of the rubric range' }],
-  },
-};
-
-eq(
-  'Tier A failure short-circuits: case verdict is fail, Tier B and Tier C are recorded skipped',
-  { verdict: computeCaseVerdict(FAILED_TIER_A, SKIPPED_TIER_B), tierB: SKIPPED_TIER_B, tierC: SKIPPED_TIER_C },
-  { verdict: 'fail', tierB: { status: 'skipped', reason: 'tier_a_failed' }, tierC: { status: 'skipped', reason: 'tier_a_failed' } },
-);
-
-{
-  const verdict = computeCaseVerdict(PASSED_TIER_A, FAILING_TIER_B);
-  eq('Tier B failure does not suppress Tier C: verdict is fail, Tier C result still stands', {
-    verdict,
-    tierC: LOW_SCORED_TIER_C,
-  }, { verdict: 'fail', tierC: LOW_SCORED_TIER_C });
-}
-
-{
-  const verdict = computeCaseVerdict(PASSED_TIER_A, PASSING_TIER_B);
-  eq(
-    'Tier C never gates: verdict is pass even though Tier C scored the lowest possible on every criterion',
-    { verdict, tierC: LOW_SCORED_TIER_C },
-    { verdict: 'pass', tierC: LOW_SCORED_TIER_C },
-  );
+// Tier C takes no part: computeCaseVerdict reads only Tier A and Tier B.
+for (const [name, tierA, tierB, want] of [
+  ['failed Tier A, passing Tier B', FAILED_TIER_A, PASSING_TIER_B, 'fail'],
+  ['passed Tier A, failing Tier B', PASSED_TIER_A, FAILING_TIER_B, 'fail'],
+  ['passed Tier A, skipped Tier B', PASSED_TIER_A, SKIPPED_TIER_B, 'fail'],
+  ['passed Tier A, passing Tier B', PASSED_TIER_A, PASSING_TIER_B, 'pass'],
+] as const) {
+  eq(`case verdict: ${name} is ${want}`, computeCaseVerdict(tierA, tierB), want);
 }
