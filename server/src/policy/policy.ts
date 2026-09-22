@@ -25,7 +25,13 @@ export type PolicyVerdict = 'allow' | { refuse: string };
  *  and unparseable or structurally invalid classifier output all collapse to this ONE type. Fail
  *  closed: a caller catches this and refuses; it is never thrown alongside an `'allow'` result. */
 export class PolicyUnavailableError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Metering from a classifier call that completed but produced no usable verdict. */
+    readonly usage?: Usage,
+    /** Provider id from that same completed classifier call, for deferred cost resolution. */
+    readonly generationId?: string,
+  ) {
     super(message);
     this.name = 'PolicyUnavailableError';
   }
@@ -135,19 +141,30 @@ export class ModelContentPolicy implements ContentPolicy {
       usage = await stream.usage;
       generationId = await stream.id;
     } catch (err) {
+      // OpenRouter exposes this from the first stream chunk, before the final usage record. A
+      // later stream failure must not discard an id the routes can still reconcile for cost.
+      const failedGenerationId = await stream.id.catch(() => undefined);
       if (timeoutSignal.aborted) {
         throw new PolicyUnavailableError(
           `content policy check for "${route}" exceeded WHIM_POLICY_TIMEOUT_MS (${this.opts.timeoutMs}ms)`,
+          undefined,
+          failedGenerationId,
         );
       }
       throw new PolicyUnavailableError(
         `content policy classifier call failed for "${route}": ${err instanceof Error ? err.message : String(err)}`,
+        undefined,
+        failedGenerationId,
       );
     }
 
     const verdict = parseVerdict(text);
     if (verdict === undefined) {
-      throw new PolicyUnavailableError(`content policy classifier for "${route}" returned no well-formed verdict`);
+      throw new PolicyUnavailableError(
+        `content policy classifier for "${route}" returned no well-formed verdict`,
+        usage,
+        generationId,
+      );
     }
     return { verdict, usage, generationId };
   }
