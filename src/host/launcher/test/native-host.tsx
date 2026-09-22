@@ -14,7 +14,14 @@ export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const SafeAreaView = host('SafeAreaView');
 export const StatusBar = host('StatusBar');
-export const WebView = host('WebView');
+/** Every script the host injected into a rendered WebView, oldest first. */
+export const injectedScripts: string[] = [];
+/** The WebView exposes `injectJavaScript` through its ref, as react-native-webview does, so a
+ *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`. */
+export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void }, HostProps>((props, ref) => {
+  React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); } }), []);
+  return React.createElement('WebView', props, props.children);
+});
 export const Modal = (props: HostProps) => props.visible ? React.createElement('Modal', props, props.children) : null;
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
