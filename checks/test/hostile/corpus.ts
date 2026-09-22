@@ -154,6 +154,26 @@ export default defineApp(actual);
 `,
     expected: 'manifest_not_static',
   },
+  {
+    name: 'a declared capability with no SDK facade reaches the host through the raw syscall global',
+    source: `${APP_IMPORT}
+function Home() {
+  (globalThis as unknown as { __whimSyscall: (verb: string, args: unknown) => unknown }).__whimSyscall('diag.echo', { message: 'hi' });
+  return null;
+}
+
+export default defineApp({
+  name: 'Hostile Raw Syscall',
+  initial: 'Home',
+  screens: { Home },
+  capabilities: ['diag'],
+});
+`,
+    expected: 'forbidden_global',
+    check: (report) => {
+      assertHasKind(report, 'unused_capability', 'the diag capability has no SDK facade, so declaring it always draws unused_capability');
+    },
+  },
 ];
 
 export async function runHostileCorpus(): Promise<void> {

@@ -23,6 +23,7 @@ import {
   RealmRecord,
   RegistryRow,
   SyscallFrame,
+  UNDECLARED_CAPABILITY_KIND,
 } from './contract';
 import { CapabilityRegistry } from './registry';
 
@@ -61,7 +62,7 @@ export async function runGate(
   // 2 — capability declared in the HOST-HELD manifest (D4: never the bundle's self-claim)?
   if (!realm.manifest.capabilities.includes(row.capability)) {
     return deny({
-      kind: 'undeclared_capability',
+      kind: UNDECLARED_CAPABILITY_KIND,
       method: frame.method,
       capability: row.capability,
       hint: `This app's manifest does not declare "${row.capability}"; add it to the defineApp capabilities array.`,

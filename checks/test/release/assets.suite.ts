@@ -15,6 +15,7 @@ import zlib from 'node:zlib';
 import { test, assert } from '../harness';
 import { checkAssets, generateAssets, ASSET_TABLE, GENERATED_JSON_PATH, BRAND_JSON_PATH, ICON_FOREGROUND_SVG_PATH, ICON_FOREGROUND_PNG_PATH } from '../../../scripts/release/lib/assets';
 import { readPngInfo, decodeRgba8, encodeRgb8, encodeRgba8 } from '../../../scripts/release/lib/png';
+import { SHELL_COLORS } from '../../../src/sdk/design-tokens';
 
 const REPO_ROOT = process.cwd();
 
@@ -205,7 +206,10 @@ export async function run(): Promise<void> {
       const hits = findingsFor(checkAssets(dir), BRAND_JSON_PATH);
       const brandHit = hits.find((f) => /launchBackground/.test(f.message));
       assert(!!brandHit, `expected a launchBackground finding, got ${JSON.stringify(hits)}`);
-      assert(brandHit!.message.includes('#ffffff') && brandHit!.message.includes('#fbfaf8'), `expected both values in the message, got ${brandHit!.message}`);
+      assert(
+        brandHit!.message.includes('#ffffff') && brandHit!.message.includes(SHELL_COLORS.paper),
+        `expected both values in the message, got ${brandHit!.message}`,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

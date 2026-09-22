@@ -122,58 +122,55 @@ export async function run(): Promise<void> {
     }
   });
 
-  await test('android-project: a VIEW intent-filter without autoVerify fails', () => {
-    const dir = makeTempDir();
-    try {
-      writeValidFixture(dir);
-      writeFile(dir, ANDROID_MANIFEST_PATH, manifest({ autoVerify: false, host: '${whimWebHost}' }));
-      const findings = checkAndroidProject(dir);
-      const hit = findings.find((f) => f.file === ANDROID_MANIFEST_PATH && /autoVerify/.test(f.message));
-      assert(!!hit, `expected an autoVerify finding, got ${JSON.stringify(findings)}`);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  const mutationCases: readonly {
+    name: string;
+    file: string;
+    content: () => string;
+    expectFile: string;
+    matches: RegExp;
+  }[] = [
+    {
+      name: 'a VIEW intent-filter without autoVerify fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: false, host: '${whimWebHost}' }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /autoVerify/,
+    },
+    {
+      name: 'an app-link filter on an activity other than the launcher fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: true, host: '${whimWebHost}', linkActivity: '.LinkActivity' }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /VIEW intent-filter/,
+    },
+    {
+      name: 'a literal host instead of the ${whimWebHost} placeholder fails',
+      file: ANDROID_MANIFEST_PATH,
+      content: () => manifest({ autoVerify: true, host: 'whim.example.com' }),
+      expectFile: ANDROID_MANIFEST_PATH,
+      matches: /host/,
+    },
+    {
+      name: 'a main config with a cleartext domain-config fails (discriminating: a check of base-config alone would miss it)',
+      file: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      content: () => MAIN_NETWORK_CONFIG_WITH_CLEARTEXT_DOMAIN,
+      expectFile: ANDROID_MAIN_NETWORK_CONFIG_PATH,
+      matches: /./,
+    },
+  ];
 
-  await test('android-project: an app-link filter on an activity other than the launcher fails', () => {
-    const dir = makeTempDir();
-    try {
-      writeValidFixture(dir);
-      writeFile(dir, ANDROID_MANIFEST_PATH, manifest({ autoVerify: true, host: '${whimWebHost}', linkActivity: '.LinkActivity' }));
-      const findings = checkAndroidProject(dir);
-      const hit = findings.find((f) => f.file === ANDROID_MANIFEST_PATH && /VIEW intent-filter/.test(f.message));
-      assert(!!hit, `expected a missing-filter finding on MainActivity, got ${JSON.stringify(findings)}`);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  await test('android-project: a literal host instead of the ${whimWebHost} placeholder fails', () => {
-    const dir = makeTempDir();
-    try {
-      writeValidFixture(dir);
-      writeFile(dir, ANDROID_MANIFEST_PATH, manifest({ autoVerify: true, host: 'whim.example.com' }));
-      const findings = checkAndroidProject(dir);
-      const hit = findings.find((f) => f.file === ANDROID_MANIFEST_PATH && /host/.test(f.message));
-      assert(!!hit, `expected a literal-host finding, got ${JSON.stringify(findings)}`);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  await test(
-    'android-project: a main config with a cleartext domain-config fails (discriminating: a check of base-config alone would miss it)',
-    () => {
+  for (const c of mutationCases) {
+    await test(`android-project: ${c.name}`, () => {
       const dir = makeTempDir();
       try {
         writeValidFixture(dir);
-        writeFile(dir, ANDROID_MAIN_NETWORK_CONFIG_PATH, MAIN_NETWORK_CONFIG_WITH_CLEARTEXT_DOMAIN);
+        writeFile(dir, c.file, c.content());
         const findings = checkAndroidProject(dir);
-        const hit = findings.find((f) => f.file === ANDROID_MAIN_NETWORK_CONFIG_PATH);
-        assert(!!hit, `expected a cleartext finding on the main network config, got ${JSON.stringify(findings)}`);
+        const hit = findings.find((f) => f.file === c.expectFile && c.matches.test(f.message));
+        assert(!!hit, `expected a finding on ${c.expectFile} matching ${c.matches}, got ${JSON.stringify(findings)}`);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
-    },
-  );
+    });
+  }
 }

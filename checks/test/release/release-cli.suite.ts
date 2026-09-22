@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import nodeAssert from 'node:assert';
 import { test, assert } from '../harness';
 import {
   evaluatePreflight,
@@ -95,27 +96,21 @@ export async function run(): Promise<void> {
     );
   });
 
-  await test('preflight: a group-readable extra credential file (e.g. the Android keystore) fails with a chmod fix', () => {
-    const snapshot = baseSnapshot({
-      extraCredentialFiles: [{ label: 'Android upload keystore (WHIM_UPLOAD_STORE_FILE)', file: { path: '/home/ops/.config/whim/whim-upload.jks', exists: true, mode: 0o644 } }],
+  for (const c of [
+    { label: 'Android upload keystore (WHIM_UPLOAD_STORE_FILE)', path: '/home/ops/.config/whim/whim-upload.jks', named: ['Android upload keystore', 'whim-upload.jks'] },
+    { label: '~/.gradle/gradle.properties (holds WHIM_UPLOAD_* secrets)', path: '/home/ops/.gradle/gradle.properties', named: ['gradle.properties', 'WHIM_UPLOAD_*'] },
+  ]) {
+    await test(`preflight: a group-readable extra credential file (${c.label}) fails with a chmod fix`, () => {
+      const snapshot = baseSnapshot({
+        extraCredentialFiles: [{ label: c.label, file: { path: c.path, exists: true, mode: 0o644 } }],
+      });
+      const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
+      assert(
+        findings.some((f) => c.named.every((token) => f.reason.includes(token)) && f.fix.includes('chmod 600')),
+        `expected a ${c.label} mode finding with a chmod fix, got ${JSON.stringify(findings)}`,
+      );
     });
-    const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
-    assert(
-      findings.some((f) => f.reason.includes('Android upload keystore') && f.reason.includes('whim-upload.jks') && f.fix.includes('chmod 600')),
-      `expected a keystore-mode finding with a chmod fix, got ${JSON.stringify(findings)}`,
-    );
-  });
-
-  await test('preflight: gradle.properties holding WHIM_UPLOAD_* secrets in the clear fails with a chmod fix', () => {
-    const snapshot = baseSnapshot({
-      extraCredentialFiles: [{ label: '~/.gradle/gradle.properties (holds WHIM_UPLOAD_* secrets)', file: { path: '/home/ops/.gradle/gradle.properties', exists: true, mode: 0o644 } }],
-    });
-    const findings = evaluatePreflight(snapshot, PASS_OPTIONS);
-    assert(
-      findings.some((f) => f.reason.includes('gradle.properties') && f.reason.includes('WHIM_UPLOAD_*') && f.fix.includes('chmod 600')),
-      `expected a gradle.properties-mode finding with a chmod fix, got ${JSON.stringify(findings)}`,
-    );
-  });
+  }
 
   await test('preflight: the placeholder domain refuses, naming that no server is reachable', () => {
     const snapshot = baseSnapshot({ config: { ...FIXTURE_CONFIG, WHIM_DOMAIN: 'example.com' } });
@@ -218,14 +213,9 @@ export async function run(): Promise<void> {
   await test('privacy-audit: categoriesFor classifies raw mach-o import "_statfs" as DiskSpace', () => {
     const hits = categoriesFor(['_statfs'], []);
     assert(
-      hits.some((h) => h.category === 'DiskSpace' && h.referencingName === '_statfs'),
-      `expected a DiskSpace hit naming "_statfs", got ${JSON.stringify(hits)}`,
+      hits.length === 1 && hits[0].category === 'DiskSpace' && hits[0].referencingName === '_statfs',
+      `expected exactly one DiskSpace hit naming "_statfs", got ${JSON.stringify(hits)}`,
     );
-  });
-
-  await test('privacy-audit: categoriesFor does not classify "statfs" without the mach-o underscore as some other category (discriminating: it is still DiskSpace either way)', () => {
-    const hits = categoriesFor(['statfs'], []);
-    assert(hits.length === 1 && hits[0].category === 'DiskSpace', `expected exactly one DiskSpace hit, got ${JSON.stringify(hits)}`);
   });
 
   await test('privacy-audit: categoriesFor classifies the raw mach-o class symbol "_OBJC_CLASS_$_NSUserDefaults" as UserDefaults', () => {
@@ -276,18 +266,11 @@ export async function run(): Promise<void> {
 
   await test('association-files: the AASA and assetlinks shape for the real team (spec scenario)', () => {
     const aasa = buildAasa('2B7K4YLS34', 'com.anycognition.whim');
-    assert(
-      JSON.stringify(aasa) === JSON.stringify({ applinks: { details: [{ appIDs: ['2B7K4YLS34.com.anycognition.whim'], components: [{ '/': '/a/*' }] }] } }),
-      `unexpected AASA shape: ${JSON.stringify(aasa)}`,
-    );
+    nodeAssert.deepStrictEqual(aasa, { applinks: { details: [{ appIDs: ['2B7K4YLS34.com.anycognition.whim'], components: [{ '/': '/a/*' }] }] } });
     const assetLinks = buildAssetLinks('com.anycognition.whim', 'PLAY_FP', 'UPLOAD_FP');
-    assert(
-      JSON.stringify(assetLinks) ===
-        JSON.stringify([
-          { relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: 'com.anycognition.whim', sha256_cert_fingerprints: ['PLAY_FP', 'UPLOAD_FP'] } },
-        ]),
-      `unexpected assetlinks shape (Play fingerprint must be first): ${JSON.stringify(assetLinks)}`,
-    );
+    nodeAssert.deepStrictEqual(assetLinks, [
+      { relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: 'com.anycognition.whim', sha256_cert_fingerprints: ['PLAY_FP', 'UPLOAD_FP'] } },
+    ]);
   });
 
   await test('association-files: a missing Play signing fingerprint file names it', () => {

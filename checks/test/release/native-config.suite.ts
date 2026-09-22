@@ -53,15 +53,13 @@ function gitAddAll(root: string): void {
 }
 
 export async function run(): Promise<void> {
-  await test('native-config: the real release/whim-release.xcconfig parses to the chosen release identity', () => {
+  await test('native-config: the real release/whim-release.xcconfig parses to the published bundle id and team', () => {
+    // A published bundle id and Apple team must never change. Version/build/domain are NOT
+    // pinned here: the first version bump would break this test, and domain agreement with
+    // release-config.ts is domain-lockstep's job (domain-lockstep.suite.ts).
     const config = loadNativeReleaseConfig(REPO_ROOT);
     assert(config.WHIM_APP_ID === 'com.anycognition.whim', `expected WHIM_APP_ID com.anycognition.whim, got ${config.WHIM_APP_ID}`);
     assert(config.WHIM_APPLE_TEAM_ID === '2B7K4YLS34', `expected WHIM_APPLE_TEAM_ID 2B7K4YLS34, got ${config.WHIM_APPLE_TEAM_ID}`);
-    assert(config.WHIM_MARKETING_VERSION === '1.0.0', `expected WHIM_MARKETING_VERSION 1.0.0, got ${config.WHIM_MARKETING_VERSION}`);
-    assert(config.WHIM_BUILD_NUMBER === '1', `expected WHIM_BUILD_NUMBER 1, got ${config.WHIM_BUILD_NUMBER}`);
-    // Re-pinned by platform-release-readiness task 12.5: WHIM_DOMAIN moved off the IANA-reserved
-    // placeholder to the real production domain, in lockstep with release-config.ts.
-    assert(config.WHIM_DOMAIN === 'anycognition.ca', `expected WHIM_DOMAIN anycognition.ca, got ${config.WHIM_DOMAIN}`);
   });
 
   const VALID_LINES = [

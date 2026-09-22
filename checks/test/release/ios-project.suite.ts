@@ -266,6 +266,111 @@ function messagesFor(dir: string): string[] {
   return checkIosProject(dir, FIXTURE_CONFIG).map((f) => `${f.file}: ${f.message}`);
 }
 
+interface MutationCase {
+  readonly name: string;
+  readonly overrides: FixtureOverrides;
+  /** Every one of these substrings must appear together on at least one finding message. */
+  readonly expect: readonly string[];
+}
+
+const MUTATION_CASES: readonly MutationCase[] = [
+  {
+    name: 'a missing UIApplicationSceneManifest fails before a no-scene lifecycle build reaches UIKit',
+    overrides: { infoPlist: infoPlistFixture({ includeSceneManifest: false }) },
+    expect: ['Info.plist', 'UIApplicationSceneManifest'],
+  },
+  {
+    name: 'a scene manifest that permits multiple scenes fails',
+    overrides: { infoPlist: infoPlistFixture({ supportsMultipleScenes: true }) },
+    expect: ['UISupportsMultipleScenes'],
+  },
+  {
+    name: 'a non-UIWindowScene application configuration fails',
+    overrides: { infoPlist: infoPlistFixture({ sceneClassName: 'UIScene' }) },
+    expect: ['UISceneClassName', 'UIWindowScene'],
+  },
+  {
+    name: 'a scene configuration with a wrong delegate class fails',
+    overrides: { infoPlist: infoPlistFixture({ sceneDelegateClassName: '$(PRODUCT_MODULE_NAME).OtherSceneDelegate' }) },
+    expect: ['UISceneDelegateClassName', 'SceneDelegate'],
+  },
+  {
+    name: 'more than one application scene configuration fails',
+    overrides: { infoPlist: infoPlistFixture({ sceneConfigurationCount: 2 }) },
+    expect: ['exactly one UIWindowSceneSessionRoleApplication'],
+  },
+  {
+    name: 'SceneDelegate.swift missing from the Whim Sources phase fails',
+    overrides: { pbxproj: pbxprojFixture({ includeSceneDelegateSourceMembership: false }) },
+    expect: ['SceneDelegate.swift', 'Sources build phase'],
+  },
+  {
+    name: 'an empty usage-description string fails, naming the key',
+    overrides: { infoPlist: infoPlistFixture({ emptyUsageDescriptionKey: 'NSLocationWhenInUseUsageDescription' }) },
+    expect: ['ios/Whim/Info.plist', 'NSLocationWhenInUseUsageDescription'],
+  },
+  {
+    name: 'TARGETED_DEVICE_FAMILY = "1,2" fails (iPad included)',
+    overrides: { pbxproj: pbxprojFixture({ debugFamily: '1,2', releaseFamily: '1,2' }) },
+    expect: ['project.pbxproj', 'TARGETED_DEVICE_FAMILY'],
+  },
+  {
+    name: 'a literal DEVELOPMENT_TEAM fails, distinguished from the macro',
+    overrides: { pbxproj: pbxprojFixture({ developmentTeam: FIXTURE_CONFIG.WHIM_APPLE_TEAM_ID }) },
+    expect: ['project.pbxproj', 'DEVELOPMENT_TEAM', 'literal'],
+  },
+  {
+    name: 'a literal MARKETING_VERSION fails',
+    overrides: { pbxproj: pbxprojFixture({ marketingVersion: FIXTURE_CONFIG.WHIM_MARKETING_VERSION }) },
+    expect: ['project.pbxproj', 'MARKETING_VERSION'],
+  },
+  {
+    name: 'a literal CURRENT_PROJECT_VERSION fails',
+    overrides: { pbxproj: pbxprojFixture({ currentProjectVersion: FIXTURE_CONFIG.WHIM_BUILD_NUMBER }) },
+    expect: ['project.pbxproj', 'CURRENT_PROJECT_VERSION'],
+  },
+  {
+    name: 'a wrong CODE_SIGN_ENTITLEMENTS path fails',
+    overrides: { pbxproj: pbxprojFixture({ codeSignEntitlements: 'Whim/Other.entitlements' }) },
+    expect: ['project.pbxproj', 'CODE_SIGN_ENTITLEMENTS', 'Other.entitlements'],
+  },
+  {
+    name: 'the Debug project-level baseConfigurationReference not resolving to whim-release.xcconfig fails',
+    overrides: { pbxproj: pbxprojFixture({ debugProjectXcconfigPath: '../release/some-other.xcconfig' }) },
+    expect: ['project.pbxproj', 'Debug project-level baseConfigurationReference'],
+  },
+  {
+    name: 'the Release project-level baseConfigurationReference not resolving to whim-release.xcconfig fails',
+    overrides: { pbxproj: pbxprojFixture({ releaseProjectXcconfigPath: '../release/some-other.xcconfig' }) },
+    expect: ['project.pbxproj', 'Release project-level baseConfigurationReference'],
+  },
+  {
+    name: 'a literal bundle id fails, distinguished from the "$(WHIM_APP_ID)" macro',
+    overrides: { pbxproj: pbxprojFixture({ releaseBundleId: 'com.anycognition.whim' }) },
+    expect: ['project.pbxproj', 'PRODUCT_BUNDLE_IDENTIFIER', 'literal'],
+  },
+  {
+    name: 'ITSAppUsesNonExemptEncryption = true fails (discriminating: a presence-only check would pass this)',
+    overrides: { infoPlist: infoPlistFixture({ itsAppUsesNonExemptEncryption: true }) },
+    expect: ['ios/Whim/Info.plist', 'ITSAppUsesNonExemptEncryption'],
+  },
+  {
+    name: 'an entitlement host not built from $(WHIM_DOMAIN) fails',
+    overrides: { entitlements: entitlementsFixture('applinks:whim.example.com') },
+    expect: ['Whim.entitlements', 'literal domain'],
+  },
+  {
+    name: 'a privacy manifest without the DiskSpace category fails',
+    overrides: { privacyManifest: privacyManifestFixture({ includeDiskSpace: false }) },
+    expect: ['PrivacyInfo.xcprivacy', 'DiskSpace'],
+  },
+  {
+    name: 'a privacy manifest declaring tracking fails',
+    overrides: { privacyManifest: privacyManifestFixture({ tracking: true }) },
+    expect: ['PrivacyInfo.xcprivacy', 'NSPrivacyTracking'],
+  },
+];
+
 export async function run(): Promise<void> {
   await test('ios-project: the real ios/ project passes with zero findings', () => {
     const config = loadNativeReleaseConfig(REPO_ROOT);
@@ -280,196 +385,15 @@ export async function run(): Promise<void> {
     });
   });
 
-  await test('ios-project: a missing UIApplicationSceneManifest fails before a no-scene lifecycle build reaches UIKit', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ includeSceneManifest: false }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('Info.plist') && message.includes('UIApplicationSceneManifest')),
-        `expected a missing-scene-manifest finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a scene manifest that permits multiple scenes fails', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ supportsMultipleScenes: true }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('UISupportsMultipleScenes')),
-        `expected a multiple-scenes finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a non-UIWindowScene application configuration fails', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneClassName: 'UIScene' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('UISceneClassName') && message.includes('UIWindowScene')),
-        `expected a UIWindowScene-class finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a scene configuration with a wrong delegate class fails', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneDelegateClassName: '$(PRODUCT_MODULE_NAME).OtherSceneDelegate' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('UISceneDelegateClassName') && message.includes('SceneDelegate')),
-        `expected a scene-delegate finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: more than one application scene configuration fails', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ sceneConfigurationCount: 2 }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('exactly one UIWindowSceneSessionRoleApplication')),
-        `expected a single-configuration finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: SceneDelegate.swift missing from the Whim Sources phase fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ includeSceneDelegateSourceMembership: false }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('SceneDelegate.swift') && message.includes('Sources build phase')),
-        `expected a SceneDelegate Sources-membership finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: an empty usage-description string fails, naming the key', () => {
-    withFixtureRepo({ infoPlist: infoPlistFixture({ emptyUsageDescriptionKey: 'NSLocationWhenInUseUsageDescription' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('ios/Whim/Info.plist') && m.includes('NSLocationWhenInUseUsageDescription')),
-        `expected a finding naming the empty usage-description key, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: TARGETED_DEVICE_FAMILY = "1,2" fails (iPad included)', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ debugFamily: '1,2', releaseFamily: '1,2' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('TARGETED_DEVICE_FAMILY')),
-        `expected a TARGETED_DEVICE_FAMILY finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a literal DEVELOPMENT_TEAM fails, distinguished from the macro', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ developmentTeam: FIXTURE_CONFIG.WHIM_APPLE_TEAM_ID }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('DEVELOPMENT_TEAM') && m.includes('literal')),
-        `expected a literal-DEVELOPMENT_TEAM finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a literal MARKETING_VERSION fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ marketingVersion: FIXTURE_CONFIG.WHIM_MARKETING_VERSION }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('MARKETING_VERSION')),
-        `expected a MARKETING_VERSION finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a literal CURRENT_PROJECT_VERSION fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ currentProjectVersion: FIXTURE_CONFIG.WHIM_BUILD_NUMBER }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('CURRENT_PROJECT_VERSION')),
-        `expected a CURRENT_PROJECT_VERSION finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a wrong CODE_SIGN_ENTITLEMENTS path fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ codeSignEntitlements: 'Whim/Other.entitlements' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('CODE_SIGN_ENTITLEMENTS') && m.includes('Other.entitlements')),
-        `expected a CODE_SIGN_ENTITLEMENTS finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: the Debug project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ debugProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('Debug project-level baseConfigurationReference')),
-        `expected a Debug project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: the Release project-level baseConfigurationReference not resolving to whim-release.xcconfig fails', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ releaseProjectXcconfigPath: '../release/some-other.xcconfig' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('Release project-level baseConfigurationReference')),
-        `expected a Release project-level baseConfigurationReference finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a literal bundle id fails, distinguished from the "$(WHIM_APP_ID)" macro', () => {
-    withFixtureRepo({ pbxproj: pbxprojFixture({ releaseBundleId: 'com.anycognition.whim' }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('project.pbxproj') && m.includes('PRODUCT_BUNDLE_IDENTIFIER') && m.includes('literal')),
-        `expected a literal-bundle-id finding for Release, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test(
-    'ios-project: ITSAppUsesNonExemptEncryption = true fails (discriminating: a presence-only check would pass this)',
-    () => {
-      withFixtureRepo({ infoPlist: infoPlistFixture({ itsAppUsesNonExemptEncryption: true }) }, (dir) => {
+  for (const c of MUTATION_CASES) {
+    await test(`ios-project: ${c.name}`, () => {
+      withFixtureRepo(c.overrides, (dir) => {
         const messages = messagesFor(dir);
         assert(
-          messages.some((m) => m.includes('ios/Whim/Info.plist') && m.includes('ITSAppUsesNonExemptEncryption')),
-          `expected an ITSAppUsesNonExemptEncryption finding, got ${JSON.stringify(messages)}`,
+          messages.some((message) => c.expect.every((token) => message.includes(token))),
+          `expected a finding matching [${c.expect.join(', ')}], got ${JSON.stringify(messages)}`,
         );
       });
-    },
-  );
-
-  await test('ios-project: an entitlement host not built from $(WHIM_DOMAIN) fails', () => {
-    withFixtureRepo({ entitlements: entitlementsFixture('applinks:whim.example.com') }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('Whim.entitlements') && m.includes('literal domain')),
-        `expected an entitlement-host finding naming the literal domain, got ${JSON.stringify(messages)}`,
-      );
     });
-  });
-
-  await test('ios-project: a privacy manifest without the DiskSpace category fails', () => {
-    withFixtureRepo({ privacyManifest: privacyManifestFixture({ includeDiskSpace: false }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('PrivacyInfo.xcprivacy') && m.includes('DiskSpace')),
-        `expected a missing-DiskSpace finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: a privacy manifest declaring tracking fails', () => {
-    withFixtureRepo({ privacyManifest: privacyManifestFixture({ tracking: true }) }, (dir) => {
-      const messages = messagesFor(dir);
-      assert(
-        messages.some((m) => m.includes('PrivacyInfo.xcprivacy') && m.includes('NSPrivacyTracking')),
-        `expected an NSPrivacyTracking finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
+  }
 }

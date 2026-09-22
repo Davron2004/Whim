@@ -174,6 +174,11 @@ export interface BridgeError {
   hint: string;
 }
 
+/** `gate.ts` step 2's denial kind (D4). Named so the static checker's `undeclared_capability`
+ *  diagnostic can be compared against the runtime constant the gate actually returns, rather
+ *  than two hand-copied literals that agree by coincidence. */
+export const UNDECLARED_CAPABILITY_KIND: BridgeErrorKind = 'undeclared_capability';
+
 export function bridgeError(detail: BridgeError): BridgeError {
   return detail;
 }

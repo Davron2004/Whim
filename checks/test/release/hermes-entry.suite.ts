@@ -89,21 +89,23 @@ export async function run(): Promise<void> {
     assert(roundTripped === 'héllo ✓', `expected the UTF-8 round trip to return the original string, got "${roundTripped}"`);
   });
 
-  await test('hermes-entry: an existing TextDecoder is kept by identity, never replaced (spec scenario)', () => {
-    const existing = function ExistingTextDecoder(): void {};
-    const target: HermesGlobal = { TextDecoder: existing };
-    installHermesPolyfills(target);
-    assert(target.TextDecoder === existing, 'an existing TextDecoder must be kept by identity, not replaced');
-  });
+  await test('hermes-entry: existing globals are never replaced — a fresh install, a re-install, and a platform already set', () => {
+    const existingDecoder = function ExistingTextDecoder(): void {};
+    const preseeded: HermesGlobal = { TextDecoder: existingDecoder };
+    installHermesPolyfills(preseeded);
+    assert(preseeded.TextDecoder === existingDecoder, 'an existing TextDecoder must be kept by identity, not replaced');
 
-  await test('hermes-entry: a second call is a no-op for already-installed globals — no module-level "installed" flag', () => {
     const target: HermesGlobal = {};
     installHermesPolyfills(target);
     const bufferRef = target.Buffer;
     const decoderRef = target.TextDecoder;
-    installHermesPolyfills(target);
+    installHermesPolyfills(target); // second call: no module-level "installed" flag drives this
     assert(target.Buffer === bufferRef, 'a second call must not replace an already-installed Buffer');
     assert(target.TextDecoder === decoderRef, 'a second call must not replace an already-installed TextDecoder');
+
+    const platformed: HermesGlobal = { process: { platform: 'ios' } };
+    installHermesPolyfills(platformed, 'android');
+    assert(platformed.process?.platform === 'ios', 'an existing process.platform must never be overwritten by a later call');
   });
 
   await test('hermes-entry: iOS reports ios (spec scenario, simulated Platform.OS mapping)', () => {
@@ -118,11 +120,5 @@ export async function run(): Promise<void> {
     assert(target.process?.platform === undefined, 'process.platform must stay missing when no platform is passed');
     installHermesPolyfills(target, 'android');
     assert(target.process?.platform === 'android', `expected process.platform "android", got ${String(target.process?.platform)}`);
-  });
-
-  await test('hermes-entry: an existing process.platform is never overwritten by a later call (spec scenario)', () => {
-    const target: HermesGlobal = { process: { platform: 'ios' } };
-    installHermesPolyfills(target, 'android');
-    assert(target.process?.platform === 'ios', 'an existing process.platform must never be overwritten');
   });
 }
