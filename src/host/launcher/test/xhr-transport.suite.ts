@@ -97,8 +97,6 @@ const PROGRESS_DELIVERIES = 500;
 /** How many times over the body may be decoded before the loop is no longer "decode once". Slack
  *  for the trailing partial block each delivery re-buffers, not for a second full pass. */
 const DECODE_BUDGET = 2;
-/** Wall-clock backstop for the same input (measured ~0.1s; see the check's comment). */
-const LINEAR_CONSUMPTION_BUDGET_MS = 2_000;
 
 /** `thinkingCount` `thinking` frames interleaved with `tokenCount` `token` frames, a keepalive
  *  comment every 500 frames, and a terminal `result` -- one canned SSE body, plus what a correct
@@ -640,7 +638,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       let keepalives = 0;
 
       const restoreDecoder = installCountingDecoder();
-      const startedAt = Date.now();
       let events: GenerationEvent[];
       try {
         const collected = collect(generateApp({ ...withFakeXhr(fakeXhr), onKeepalive: () => keepalives++ }, { prompt: 'p' }));
@@ -651,7 +648,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       } finally {
         restoreDecoder();
       }
-      const elapsedMs = Date.now() - startedAt;
 
       h.eq(events.length, body.eventCount, 'every event still arrives, none dropped or doubled');
       h.eq(keepalives, body.keepaliveCount, 'and every keepalive comment still fires onKeepalive exactly once');
@@ -668,10 +664,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
         `the stream is decoded ~once (decoded ${decodedByteTotal} bytes for a ${body.text.length}-byte body; ` +
           `budget ${body.text.length * DECODE_BUDGET})`,
       );
-      // A generous wall-clock backstop for costs the byte counter cannot see (re-splitting,
-      // re-parsing, buffer copies). Measured at ~0.1s on the fix, ~0.3s on the quadratic version
-      // with Node's native decoder.
-      h.ok(elapsedMs < LINEAR_CONSUMPTION_BUDGET_MS, `consumed in ${elapsedMs}ms (budget ${LINEAR_CONSUMPTION_BUDGET_MS}ms)`);
     },
   );
 

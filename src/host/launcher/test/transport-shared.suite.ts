@@ -36,33 +36,21 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
     }
   });
 
-  // httpErrorFrom's Retry-After parsing (design D8/D11): only a bare positive integer
-  // (delta-seconds) is accepted — `Number()` alone would also accept scientific notation and hex,
-  // neither of which is a delta-seconds value HTTP's grammar allows, and the HTTP-date form is
-  // deliberately never parsed (see transport-shared.ts).
-  await h.test('httpErrorFrom: Retry-After "1e3" (scientific notation) is rejected, not read as 1000', async () => {
-    const e = await httpErrorFrom(refusalResponse('1e3'), '/v1/generate', 'https://example.invalid');
-    h.eq(e.retryAfterSeconds, undefined, '"1e3" is not a bare digit string');
+  // httpErrorFrom's Retry-After parsing (design D8/D11), shared by the fetch, XHR and unary paths:
+  // only a bare positive integer (delta-seconds) is read. `Number()` alone would also accept
+  // scientific notation and hex, which HTTP's grammar does not allow, and the HTTP-date form is
+  // deliberately never parsed. An unreadable value is dropped without disturbing anything else.
+  await h.test('httpErrorFrom: Retry-After is read only as a bare positive integer; anything else leaves it absent', async () => {
+    const cases: Array<[string, number | undefined]> = [
+      ['120', 120], ['5', 5],
+      ['0', undefined], ['-5', undefined], ['3.5', undefined], ['soon', undefined],
+      ['1e3', undefined], ['0x10', undefined], [new Date(Date.now() + 120_000).toUTCString(), undefined],
+    ];
+    for (const [header, seconds] of cases) {
+      const e = await httpErrorFrom(refusalResponse(header), '/v1/generate', 'https://example.invalid');
+      h.ok(e.retryAfterSeconds === seconds, `Retry-After "${header}" reads as ${seconds} (got ${e.retryAfterSeconds})`);
+      h.eq([e.kind, e.status, e.code, e.hint], ['http', 429, 'server_busy', 'Try again soon'], `and "${header}" leaves the rest of the error intact`);
+    }
   });
 
-  await h.test('httpErrorFrom: Retry-After "0x10" (hex) is rejected, not read as 16', async () => {
-    const e = await httpErrorFrom(refusalResponse('0x10'), '/v1/generate', 'https://example.invalid');
-    h.eq(e.retryAfterSeconds, undefined, '"0x10" is not a bare digit string');
-  });
-
-  await h.test('httpErrorFrom: Retry-After "-5" is rejected', async () => {
-    const e = await httpErrorFrom(refusalResponse('-5'), '/v1/generate', 'https://example.invalid');
-    h.eq(e.retryAfterSeconds, undefined, 'a negative value is treated as absent');
-  });
-
-  await h.test('httpErrorFrom: Retry-After "5" (plain delta-seconds) is accepted', async () => {
-    const e = await httpErrorFrom(refusalResponse('5'), '/v1/generate', 'https://example.invalid');
-    h.eq(e.retryAfterSeconds, 5, 'a bare positive integer is read as delta-seconds');
-  });
-
-  await h.test('httpErrorFrom: an HTTP-date Retry-After is treated as absent, not parsed', async () => {
-    const futureDate = new Date(Date.now() + 120_000).toUTCString();
-    const e = await httpErrorFrom(refusalResponse(futureDate), '/v1/generate', 'https://example.invalid');
-    h.eq(e.retryAfterSeconds, undefined, 'only the delta-seconds form is accepted; an HTTP-date is absent');
-  });
 }

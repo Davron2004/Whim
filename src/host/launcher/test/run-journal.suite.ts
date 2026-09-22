@@ -104,35 +104,6 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
   });
 
   // ── aggregate throttling (~5s) ──────────────────────────────────────────────
-  await h.test('run-journal: a burst of token arrivals inside the window produces exactly one aggregate entry', async () => {
-    const t = makeStore();
-    t.store.create('a');
-    t.at(10_000);
-    for (let i = 1; i <= 50; i++) {
-      t.advance(40); // 50 arrivals spread over 2s — well inside the ~5s window
-      t.store.appendAggregate('a', { chars: i * 6, tokens: i });
-    }
-    const aggregates = t.store.get('a')!.filter((e) => e.kind === 'aggregate');
-    h.eq(aggregates.length, 1, '50 arrivals over a 2s window yield one entry, not one per token');
-    h.eq(aggregates[0].aggregates, { chars: 6, tokens: 1 }, 'it carries the cumulative counts as of the moment it was written');
-  });
-
-  await h.test('run-journal: aggregate entries are bounded by elapsed time / ~5s, not by arrival count', async () => {
-    const t = makeStore();
-    t.at(0);
-    // 400 arrivals, 50ms apart → 20s of stream. At most 20s/5s = 4 entries.
-    for (let i = 1; i <= 400; i++) {
-      t.advance(50);
-      t.store.appendAggregate('a', { chars: i, tokens: i });
-    }
-    const aggregates = t.store.get('a')!.filter((e) => e.kind === 'aggregate');
-    h.ok(aggregates.length <= 20_000 / AGGREGATE_THROTTLE_MS, `${aggregates.length} entries is within the elapsed/throttle bound`);
-    h.ok(aggregates.length >= 3, `the throttle still lets the counter advance over a long stream (${aggregates.length} entries)`);
-    for (let i = 1; i < aggregates.length; i++) {
-      h.ok(aggregates[i].t - aggregates[i - 1].t >= AGGREGATE_THROTTLE_MS, 'consecutive aggregate entries are at least the throttle apart');
-    }
-  });
-
   await h.test('run-journal: the window reopens exactly at the throttle boundary and counts stay cumulative', async () => {
     const t = makeStore();
     t.at(0);

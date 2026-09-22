@@ -1,20 +1,13 @@
 /**
  * run-timeline Node suite (generation-observability chain-4, tasks 5.1–5.4), from
- * `prompt-flow/spec.md`: the build screen's details affordance into the run timeline, the failure
- * screen's what-happened section, and the flag-gated developer counts — plus
- * `generation-run-journal`'s "a journal is never a second source of truth" fallback.
- *
- * What a journal BECOMES lives in the RN-free `run-timeline-view.ts` + `copy.ts` and is exercised
- * for real here; only the properties that genuinely live in JSX (the section being additional to
- * the checklist, the read happening on open rather than on a tick, token-only styling) are
- * asserted from source, the idiom `failure-screen.suite.ts` / `observability-ui.suite.ts`
- * established.
+ * `prompt-flow/spec.md`: what a run journal becomes as timeline rows, and the flag-gated developer
+ * counts — plus `generation-run-journal`'s "a journal is never a second source of truth" fallback.
+ * The screens that show it are rendered in `failure-screen.suite.ts` (the what-happened section)
+ * and `prompt-flow-ui.suite.tsx` (the build screen's Details sheet).
  *
  * Nothing here awaits a promise that could fail to settle.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { journalStreamEvent } from '../build-lifecycle';
@@ -25,15 +18,6 @@ import {
   SHOW_RUN_TIMELINE_DIAGNOSTICS,
   runTimelineRows,
 } from '../run-timeline-view';
-
-function readSource(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
-}
-
-/** Source with its comments removed: the negative assertions are about what the code DOES. */
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-}
 
 const stage = (t: number, s: RunJournalEntry['stage']): RunJournalEntry => ({ t, kind: 'stage', stage: s });
 const aggregate = (t: number, chars: number, tokens: number, thinkingChars = 0): RunJournalEntry => ({
@@ -278,36 +262,6 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.ok(!/error|missing|failed|null/i.test(COPY.timelineEmpty), 'which reads as an absence, never as a failure');
   });
 
-  await h.test('timeline: a failure that never started an attempt has no what-happened section at all', () => {
-    // Clarify and rewrite failures fail before any attempt exists, so the shell hands them no
-    // `journalId` — heading a section and answering "nothing was recorded" would be answering a
-    // question the user never asked.
-    const src = code(readSource('FailureScreen.tsx'));
-    h.ok(/attemptStarted\?: boolean/.test(src), 'the screen is told whether an attempt was ever started');
-    h.ok(/attemptStarted = false/.test(src), 'and assumes none was, so a caller that says nothing gets no section');
-    h.ok(
-      /\{\(journal != null \|\| attemptStarted\) && \(/.test(src),
-      'the whole section — heading and empty note together — is behind that guard',
-    );
-    const rootSrc = code(readSource('LauncherRoot.tsx'));
-    h.ok(
-      /attemptStarted=\{screen\.journalId != null\}/.test(rootSrc),
-      'the shell answers it from the one thing that marks an attempt as having started',
-    );
-  });
-
-  await h.test('timeline: the failure screen falls back without changing anything else it shows', () => {
-    const src = code(readSource('FailureScreen.tsx'));
-    h.ok(/entries=\{journal\}/.test(src), 'the section renders the journal the caller handed it');
-    h.ok(/journal = null/.test(src), 'an absent journal is null, so the timeline renders its empty note');
-    h.ok(/failureChecklistRows\(\{ diagnostics, hasWorkingVersion \}\)/.test(src), 'the checklist still comes from the props');
-    h.ok(!/journal\.(map|filter|find|length)/.test(src), 'and no row of the screen’s own state is derived from the journal');
-    h.ok(
-      src.indexOf('<RunTimeline') > src.indexOf('failureChecklistRows('),
-      'the what-happened section is IN ADDITION to the checklist panel, not in place of it',
-    );
-  });
-
   // ── the dev gate (task 5.2) ─────────────────────────────────────────────────
 
   await h.test('timeline dev mode: the counts appear only behind the flag, and the flag ships false', () => {
@@ -351,36 +305,6 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     const silent = runTimelineRows([stage(1_000, 'check'), terminal(2_000)], true).map((r) => r.text);
     h.ok(!silent.some((t) => t.startsWith('Diagnostics:')), 'no diagnostics row when the run recorded no count');
     h.ok(silent.includes('Repair attempts: 0'), 'the repair count, which the journal can always vouch for, still shows');
-  });
-
-  // ── the component and its wiring (tasks 5.1 / 5.4) ──────────────────────────
-
-  await h.test('timeline: the build screen’s details affordance reads the journal ON OPEN', () => {
-    const rootSrc = code(readSource('LauncherRoot.tsx'));
-    const handler = rootSrc.slice(rootSrc.indexOf('const onShowDetails'), rootSrc.indexOf('const failureActions'));
-    h.ok(handler.includes('journal.get(id)'), 'the read is inside the affordance’s handler');
-    h.ok(handler.includes('liveRef.current?.id'), 'and it reads the attempt actually in flight');
-    h.ok(rootSrc.includes('onShowDetails={onShowDetails}'), 'the build screen is handed the callback — without this the affordance is inert');
-
-    const tickEffect = rootSrc.slice(
-      rootSrc.indexOf("if (screen.kind !== 'build') return undefined;"),
-      rootSrc.indexOf('const refresh ='),
-    );
-    h.ok(!tickEffect.includes('journal.get'), 'the tick and the details state around it read nothing out of the store');
-    h.eq((rootSrc.match(/journal\.get\(/g) ?? []).length, 2, 'exactly two reads exist: the details affordance and the failure screen’s');
-  });
-
-  await h.test('timeline: the details view is a bottom sheet, and back closes it instead of cancelling the run', () => {
-    const rootSrc = code(readSource('LauncherRoot.tsx'));
-    h.ok(/<RunDetailsSheet/.test(rootSrc), 'the build screen’s details view is the sheet component');
-    h.ok(/open=\{timeline !== null\}/.test(rootSrc), 'told to open/close from the same `timeline` state as before');
-    h.ok(/entries=\{timeline\}/.test(rootSrc), 'over the entries read on open');
-    h.ok(/devMode=\{timelineDevMode\}/.test(rootSrc), 'and the same dev-mode verdict every other timeline surface uses');
-    h.ok(/onClose=\{\(\) => setTimeline\(null\)\}/.test(rootSrc), 'and it offers a labelled way out');
-    const onBuildBack = rootSrc.slice(rootSrc.indexOf('const onBuildBack = useCallback('), rootSrc.indexOf('}, []);', rootSrc.indexOf('const onBuildBack = useCallback(')));
-    h.ok(onBuildBack.includes("=== 'close-sheet'") && onBuildBack.includes('setTimeline(null)'), 'hardware back closes the details view when it is open');
-    h.ok(onBuildBack.includes('return;') && onBuildBack.includes('onLeaveRunningRef.current()'), 'and stops there; otherwise it leaves the run running, never cancelling it');
-    h.ok(rootSrc.includes("if (screen.kind !== 'build') setTimeline(null);"), 'leaving the build screen closes it, so it can never reopen onto a previous attempt');
   });
 
 }

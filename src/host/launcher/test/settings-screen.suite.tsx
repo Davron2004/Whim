@@ -9,6 +9,8 @@ import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
 import { StyleSheet } from './native-host';
 
 const noop = () => {};
+const isAdvancedTitle = (node: TestRenderer.ReactTestInstance) => node.type === 'Text' && node.children.includes(COPY.settingsAdvancedSectionTitle);
+const advancedHeader = (tree: TestRenderer.ReactTestRenderer) => tree.root.find(node => node.type === 'TouchableOpacity' && node.findAll(isAdvancedTitle).length > 0);
 function isProbeResult(node: TestRenderer.ReactTestInstance): boolean {
   return node.type === 'Text' && [COPY.serverProbeVerified, COPY.serverProbeUnverified, COPY.serverProbeUnreachable].some(text => node.children.includes(text));
 }
@@ -68,6 +70,20 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
       h.eq(clock.count(600), 0, 'no probe scheduled without consent');
       h.eq(tree.root.findAll(node => node.type === 'Text' && node.children.includes(COPY.settingsProbeNeutral)).length, 1, 'neutral consent explanation is visible');
     } finally { await unmountScreen(tree); clock.restore(); }
+  });
+  await h.test('Settings: Advanced starts collapsed with no saved address, and open with one', async () => {
+    for (const serverUrl of [undefined, '   ']) {
+      const tree = await renderScreen(<SettingsScreen {...props} serverUrl={serverUrl} />);
+      try {
+        h.eq(tree.root.findAll(node => node.type === 'TextInput').length, 0, `no address field while collapsed (saved: ${JSON.stringify(serverUrl)})`);
+        await TestRenderer.act(async () => advancedHeader(tree).props.onPress());
+        h.eq(tree.root.findAll(node => node.type === 'TextInput').length, 1, 'opening Advanced shows the address field');
+      } finally { await unmountScreen(tree); }
+    }
+    const saved = await renderScreen(<SettingsScreen {...props} serverUrl="192.168.1.20:4000" />);
+    try {
+      h.eq(saved.root.findAll(node => node.type === 'TextInput').length, 1, 'a saved override opens Advanced already');
+    } finally { await unmountScreen(saved); }
   });
   await h.test('Settings: leaving before debounce cancels the pending probe', async () => {
     const clock = captureTimeouts();

@@ -70,6 +70,39 @@ Fanned out to three agents in worktrees (launcher on Opus 5; server and tooling+
 | run-against-build: T7 same-realm re-injection | done (removed) | 999f9fa | A strict version is impossible: probes run once per realm, so there is no gen-2 verdict |
 | bash-policy.test.sh smuggling rows merged; L40 named | done | 63763b6 | 15 rows removed, 63 pass |
 
+Merged from the tooling+core agent (18 commits, 0916a78..95dd91e, cherry-picked):
+
+| Item | Status | Commit | Note |
+|---|---|---|---|
+| checks: verb-time kinds from the engine (`STORAGE_ERROR_KINDS`), raw-timer test over all three timers, nav table, `assertAllWellFormed` on every report, latency-probe case in the hostile corpus, static vs bridge `undeclared_capability` constant | done | see "test(checks): rewrite constant-pin tests" | Red-checked: kind dropped from DIAGNOSTIC_KINDS; bridge constant renamed |
+| native-network-deny mutation tests as a table; exact-message rule dropped | done | "test(release): table-drive native-network-deny" | |
+| native-network-deny lexer rewrite to invariant tokens | parked | - | See follow-ups.md: only guard of native network deny, no independent way to validate a new lexer |
+| ios-project, android-project tables; release-cli, hermes-entry merges; native-config pins; assets constant | done | "test(release): …" (4 commits) | |
+| evals: tier-b kind coverage table; report.test negative control | done | "test(evals): …" (2 commits) | |
+| evals: tier-a case-verdict table | done (orchestrator) | "test(evals): table the case verdict" | The agent judged it already fine; it wasn't (constants vs own literals, no failed-A/passing-B row). Red-checked: ignoring Tier A fails the new row |
+| netdeny canary: variants from source, SIGINT instead of --seconds | done | "test(netdeny): …" | Gate wiring pending (gate.sh, orchestrator) |
+| fixloop-preflight text pins; sonar-pr-issues merges | done | "test(scripts): …" (2 commits) | |
+| synthrun: determinism, 9 fixed sleeps, awaitQuiet race, forgery count, date hint; probeEgressBlocked red direction; launch-site pin | done | "test(synthrun): …" (2 commits) | synthrun 313 checks pass |
+| logging: sensitive-field list in the test, LEVELS pins, flush poll | done | "test(logging): …" | |
+| storage-engine §F injection tests (collection, field, tombstone id), §C/§D merges | done | "test(storage-engine): …" | Security red-check pending (identifier validation) |
+| version-store §2.3 specific error; §4.2/§6.1/unborn-HEAD/§C8/assertNoGitLeak merges | done | "test(version-store): …" | Red-checked: `dataStore` dropped from the refusal list |
+| bridge §A verb list; §C latch | done | "test(bridge): …" | |
+| sdk appColor sweep merge; List renders its children | done | "test(sdk): …" | Red-checked: List rendering nothing |
+
+Merged from the launcher agent (it could not commit; applied as a patch in three commits):
+
+| Item | Status | Commit | Note |
+|---|---|---|---|
+| prompt-flow-wiring greps → prompt-flow-ui + attempt-lifecycle-ui (approve order, leave/abort, rewrite context, refusal landing, token text, leave-it-running + Details sheet, demotion, reattach, hydration, Discard, concurrency, journal) | done | 84360dc | Replaces refusal-target.suite and run-timeline's journal/back greps. ~30 red-checks, two regressions the greps missed |
+| logging.suite screen-boundary grep → rendered | done | 84360dc | |
+| highlighting provider grep (overturned DELETE) → rendered | done | 84360dc | |
+| bundle-error-watchdog, realm-delivery, launch-failure-ui, boot-state paint trust, unmount-teardown → mini-app-host-ui | done | d5bdc36 | Three suites deleted. Paint-trust security red-check pending |
+| grid, tile colour, flow screens, orb, report sheet, app-busy, history, observability, WhimProse, failure screen, settings-sections | done | d5bdc36 | |
+| product-verbs FORBIDDEN gains schema/database/storage/clone | done, `link` overturned | d5bdc36 | "App link" is product copy |
+| Retry-After table, scheme-host/link-routing/app-link tables, contract-arm list, run-journal/store-access merges, xhr backstop, acceptance.ts wiring, deliver-by-source wait, stale spec checklists | done | bdea0ec | |
+| generation-client timing (low priority); moving whim-prose to src/host/ui; deliver-by-source bootstrap into invariants | skipped | - | Low value or owner-only |
+| whim-prose "never faded/typed in" grep | dropped | 84360dc | The native shim can't observe animation |
+
 ## Not in any batch (README "Bugs and gaps")
 
 | Item | Status | Reason |

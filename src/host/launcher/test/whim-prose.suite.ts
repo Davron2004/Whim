@@ -3,9 +3,8 @@
  * shared renderer, and the discipline caps the renderer must enforce ITSELF rather than trust a
  * producer to respect.
  *
- * Everything under test is pure, so this runs under Node with no rendering. The RN component
- * (`WhimProse.tsx`) is a thin `Text` mapping over `renderProse` + `proseStyle`, both checked
- * here; its own source is asserted textually the way the other launcher screen suites do.
+ * The lexer, renderer and styles are pure and run directly; the component (`WhimProse.tsx`, a thin
+ * `Text` mapping over `renderProse` + `proseStyle`) is rendered at the end.
  *
  * Nothing in this suite awaits a promise that could fail to settle — a bare `await` on a pending
  * promise turns one failed check into a whole-suite hang with no test named.
@@ -13,7 +12,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import React from 'react';
 import { Harness } from './harness';
+import WhimProse, { HighlightingProvider } from '../../ui/whim-prose/WhimProse';
+import { renderScreen, textOf as screenText, unmountScreen } from './react-screen';
 import { lexProse, STATE_VOCABULARY } from '../../ui/whim-prose/lex';
 import {
   flattenProse,
@@ -300,15 +302,11 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
     h.eq(countOf(asProse, 'app'), 1, 'the identical words outside the table lex normally');
   });
 
-  await h.test('copy: every string the launcher can show survives being rendered flat', () => {
+  // That every one of these strings also survives being rendered flat is the first renderer test.
+  await h.test('copy: every string the launcher can show is non-empty and carries no exclamation mark', () => {
     for (const text of everyCopyString()) {
       h.ok(text.trim().length > 0, 'no empty string reaches the surface');
       h.ok(!text.includes('!'), `"${text}" carries no exclamation mark (house voice)`);
-      h.eq(
-        flattenProse(renderProse(text, { apps: [POUR_TIMER], storedPrompt: 'go faster' })),
-        text,
-        `"${text}" reads identically with every mark removed`,
-      );
     }
   });
 
@@ -364,10 +362,23 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
       const src = readSource(path.join('src/host/ui/whim-prose', file));
       h.ok(!src.includes("from 'react-native'"), `${file} stays pure so it is Node-checkable`);
     }
+  });
 
-    const component = readSource('src/host/ui/whim-prose/WhimProse.tsx');
-    h.ok(component.includes('renderProse('), 'the component renders through the shared renderer');
-    h.ok(component.includes('HighlightingProvider'), 'the off-switch reaches every screen by context');
-    h.ok(!/Animated|setTimeout|fadeIn/.test(component), 'arriving prose is never faded or typed in');
+  // ── the component, rendered ─────────────────────────────────────────────────
+
+  await h.test('component: WhimProse styles its spans, and renders flat text when the provider turns highlighting off', async () => {
+    const text = 'Pour Timer is broken after 2 tries.';
+    // One outer Text holds the sentence; every styled span is a Text nested inside it.
+    const styledSpans = (tree: Awaited<ReturnType<typeof renderScreen>>) => tree.root.findAll((n) => n.type === 'Text').length - 1;
+    const on = await renderScreen(React.createElement(WhimProse, { text, apps: [POUR_TIMER] }));
+    const off = await renderScreen(React.createElement(HighlightingProvider, { enabled: false }, React.createElement(WhimProse, { text, apps: [POUR_TIMER] })));
+    try {
+      h.ok(styledSpans(on) > 0, 'with highlighting on, the app name, state and count are styled spans');
+      h.eq(styledSpans(off), 0, 'under a provider with highlighting off, nothing is styled');
+      h.eq(screenText(off.root), text, 'and the words are unchanged');
+    } finally {
+      await unmountScreen(on);
+      await unmountScreen(off);
+    }
   });
 }

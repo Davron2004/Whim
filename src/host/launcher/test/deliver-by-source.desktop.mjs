@@ -35,6 +35,26 @@ async function writePage(name, html) {
   return p;
 }
 
+/** Poll `ready` until it holds or `timeoutMs` passes. A condition that never holds just lets the
+ *  run continue, and the verdict below reports what was actually on the page. */
+async function until(ready, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/** How many children each frame's `#whim-root` has (frames without one are skipped). */
+async function rootChildCounts(page) {
+  const counts = [];
+  for (const f of page.frames()) {
+    const n = await f.evaluate(() => document.getElementById('whim-root')?.childNodes.length ?? null).catch(() => null);
+    if (n !== null) counts.push(n);
+  }
+  return counts;
+}
+
 async function run(browser, file, drive, waitForVerdict = true) {
   const page = await browser.newPage();
   const errors = [];
@@ -47,8 +67,12 @@ async function run(browser, file, drive, waitForVerdict = true) {
   if (drive) await drive(page);
   if (waitForVerdict) {
     await page.waitForFunction(() => (document.title || '') !== 'WHIM:pending', { timeout: 12000 }).catch(() => {});
+    // Then until the sandboxed app has actually rendered into its root.
+    await until(async () => (await rootChildCounts(page)).some((n) => n > 0));
+  } else {
+    // A bootstrap that fails closed reports itself as a page error.
+    await until(async () => errors.length > 0);
   }
-  await page.waitForTimeout(400);
   const dom = await page.evaluate(() => ({
     title: document.title || '',
     probes: document.getElementById('probes')?.textContent || '',

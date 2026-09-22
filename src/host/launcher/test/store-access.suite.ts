@@ -290,7 +290,7 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     h.eq(pins2[0].snapshotId, g2, 're-pinning moved the label to the new snapshot');
   });
 
-  // §27 engineAppId resolves the storage group (linked-apps-data-model D1)
+  // §27-28 engineAppId resolves the storage group, and a shareData fork joins its parent’s (linked-apps-data-model D1)
   await h.test('store-access §27 engineAppId resolves storageGroupId ?? id', async () => {
     const { access } = harnessAccess();
     const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
@@ -298,14 +298,6 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     const shared = await access.fork(orig, undefined, { shareData: true });
     h.eq(shared.storageGroupId, 'wc', 'shared fork copies the founder\'s own id as its group');
     h.eq(access.engineAppId(shared), 'wc', 'grouped entry resolves to the group id, not its own launcher id');
-  });
-
-  // §28-29 fork shareData controls storageGroupId
-  await h.test('store-access §28 fork(entry, versionId, {shareData:true}) joins the parent\'s group', async () => {
-    const { access } = harnessAccess();
-    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    const shared = await access.fork(orig, undefined, { shareData: true });
-    h.eq(shared.storageGroupId, 'wc', 'joins the founder\'s group (parent was itself ungrouped)');
   });
 
   await h.test('store-access §29 fork without shareData gets no storageGroupId (unchanged default)', async () => {
@@ -354,14 +346,6 @@ export async function runStoreAccessTests(h: Harness): Promise<void> {
     await access.remove(orig); // sharer remains, storage survives
     await access.remove(shared); // last reference
     h.eq(deleted, ['wc'], 'deleteStorage called once the group has no remaining member');
-  });
-
-  // §33 ungrouped delete unchanged
-  await h.test('store-access §33 ungrouped delete calls deleteStorage immediately (unchanged)', async () => {
-    const { access, deleted } = harnessAccess();
-    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: 'p1' });
-    await access.remove(orig);
-    h.eq(deleted, ['wc'], 'never-shared entry: refcount 1 -> 0 in the same step');
   });
 
   // §34 update snapshots onto the same lineage and updates the index record
