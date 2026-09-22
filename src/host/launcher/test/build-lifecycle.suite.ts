@@ -221,15 +221,20 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     // A fork copies the parent's record wholesale, so `editing.record.appId` here is the PARENT's
     // id — the case where a shared injection would produce a THIRD distinct hue.
     const forked: InstalledApp = { ...APP, id: 'app-fork', name: APP.name };
+    const forkCalls: unknown[][] = [];
     const behindTip = {
       ...fakeAccess({ updates }),
       timeline: async () => [{ id: 'snap-2' }, { id: 'snap-1' }],
       activeId: async () => 'snap-1',
-      fork: async () => forked,
+      fork: async (...args: unknown[]) => { forkCalls.push(args); return forked; },
     } as unknown as StoreAccess;
     const id = startPendingBuild(store, { editing: APP, text: 'add a dark mode' });
     await deliverResult({ access: behindTip, appId: id, editing: APP, text: 'add a dark mode', wire: WIRE });
     h.eq(updates.length, 1, 'sanity: the behind-tip branch forked and then updated the fork');
+    // Decision #52 D2: the continuation keeps the user's data, so the fork shares the original's.
+    h.eq(forkCalls.length, 1, 'the rebuild forked once');
+    h.eq((forkCalls[0]?.[0] as InstalledApp | undefined)?.id, APP.id, 'it forked the app being edited');
+    h.ok(forkCalls[0]?.[2] != null && (forkCalls[0][2] as { shareData?: unknown }).shareData === true, `the fork shares the original's data (got ${JSON.stringify(forkCalls[0]?.[2])})`);
     h.eq(updates[0].entry.id, forked.id, 'onto the fork, not the original');
     h.ok(updates[0].spec.record.manifest.tileColor === undefined, 'and again records no colour');
     h.eq(tileColor(forked.name, updates[0].spec.record.manifest), appColor(APP.name), 'the fork resolves the same name hash its parent does');
