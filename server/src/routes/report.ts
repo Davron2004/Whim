@@ -81,16 +81,22 @@ export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore
       }
       const { requestId } = admitted;
 
-      const reportId = await reportStore.insert({
-        deviceId,
-        reason: parsed.data.reason,
-        note: parsed.data.note,
-        appName: parsed.data.appName,
-        prompt: parsed.data.prompt,
-        source: parsed.data.source,
-        now: clock(),
-      });
-      await usageStore.settle(requestId, { outcome: 'ok' });
+      let reportId: string;
+      try {
+        reportId = await reportStore.insert({
+          deviceId,
+          reason: parsed.data.reason,
+          note: parsed.data.note,
+          appName: parsed.data.appName,
+          prompt: parsed.data.prompt,
+          source: parsed.data.source,
+          now: clock(),
+        });
+        await usageStore.settle(requestId, { outcome: 'ok' });
+      } catch (err) {
+        await settleFailedReportAdmission(usageStore, requestId, clock, err);
+        throw err;
+      }
 
       reportLog.info({ reportId, reason: parsed.data.reason, promptBytes, sourceBytes }, 'report accepted');
       return c.json({ reportId } satisfies ReportResponse, 202);
@@ -98,4 +104,32 @@ export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore
   );
 
   return app;
+}
+
+/** A failure after report admission can happen while persisting the report or settling its normal
+ * `ok` outcome. Close the row best-effort so it cannot keep consuming an allowance forever, while
+ * preserving the original error for the app-level 500 handler. */
+async function settleFailedReportAdmission(
+  usageStore: UsageStore,
+  requestId: string,
+  clock: () => number,
+  cause: unknown,
+): Promise<void> {
+  try {
+    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+  } catch (settleErr) {
+    reportLogError(requestId, settleErr, cause);
+  }
+}
+
+function reportLogError(requestId: string, settleErr: unknown, cause: unknown): void {
+  log.error(
+    {
+      scope: 'report',
+      requestId,
+      detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
+      cause: cause instanceof Error ? cause.message : String(cause),
+    },
+    'could not settle the ledger row of a failed report admission',
+  );
 }

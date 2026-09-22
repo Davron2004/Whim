@@ -307,13 +307,34 @@ async function admitUnaryWithSlot(
     return { ok: true, requestId, release: () => handle.release(), policyGenerationId: result.generationId };
   } catch (err) {
     if (err instanceof PolicyUnavailableError) {
-      await usageStore.settle(requestId, { outcome: 'unavailable', now: clock() });
-      await usageStore.refund(requestId);
-      handle.release();
-      return { ok: false, refusal: policyUnavailableRefusal() };
+      return settleUnavailablePolicyAdmission(deps, handle, requestId, err);
     }
     throw err;
   }
+}
+
+/** The classifier can have spent tokens before it proves unusable. Preserve that accounting while
+ * keeping the existing fail-closed refusal and daily-unit refund. */
+async function settleUnavailablePolicyAdmission(
+  deps: UnaryAdmissionDeps,
+  handle: SlotHandle,
+  requestId: string,
+  error: PolicyUnavailableError,
+): Promise<UnaryAdmissionOutcome> {
+  const { deviceId, usageStore, clock, resolveTransport, resolveBounds, resolveTracker } = deps;
+  if (error.usage) await usageStore.credit(deviceId, error.usage);
+  await usageStore.settle(requestId, { outcome: 'unavailable', usage: error.usage, now: clock() });
+  await usageStore.refund(requestId);
+  handle.release();
+  const ids = error.generationId ? [error.generationId] : [];
+  resolveTracker.track(
+    resolveRequestUsage(requestId, deviceId, ids, error.usage !== undefined, {
+      transport: resolveTransport,
+      usageStore,
+      bounds: resolveBounds,
+    }),
+  );
+  return { ok: false, refusal: policyUnavailableRefusal() };
 }
 
 export interface ClarifyRouteOptions {

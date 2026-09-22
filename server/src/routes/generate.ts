@@ -36,7 +36,7 @@ import {
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
-import type { ContentPolicy, PolicyCheckResult } from '../policy/policy';
+import { PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult } from '../policy/policy';
 import { buildGeneratePolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -275,14 +275,21 @@ async function admitWithSlot(
 
   // Any failure to produce a verdict is `policy_unavailable` (specs/content-policy "The policy
   // check fails closed"); `cachedPolicy` has already logged it as `unavailable`.
+  let unavailable: PolicyUnavailableError | undefined;
   const checked = await policy.check(buildGeneratePolicyInput(request), 'generate', signal).then(
     (result): PolicyCheckResult | undefined => result,
-    () => undefined,
+    (err): undefined => {
+      unavailable = err instanceof PolicyUnavailableError ? err : undefined;
+      return undefined;
+    },
   );
   if (!checked) {
-    await usageStore.settle(requestId, { outcome: 'unavailable', now: clock() });
+    if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
+    await usageStore.settle(requestId, { outcome: 'unavailable', usage: unavailable?.usage, now: clock() });
     await usageStore.refund(requestId);
     handle.release();
+    const ids = unavailable?.generationId ? [unavailable.generationId] : [];
+    deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, unavailable?.usage !== undefined, resolveDeps(deps)));
     return { ok: false, refusal: policyUnavailableRefusal() };
   }
 

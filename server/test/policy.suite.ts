@@ -129,6 +129,10 @@ async function testFailClosed(): Promise<void> {
     const policy = policyOn(client);
     const err = await caught(async () => { await policy.check('some text', 'generate'); });
     check('prose reply: throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
+    if (err instanceof PolicyUnavailableError) {
+      eq('prose reply keeps the completed classifier usage', err.usage, ZERO_USAGE);
+      eq('prose reply keeps the completed classifier generation id', err.generationId, 'gen-policy-fake');
+    }
   }
 
   // An unknown verdict value is not an allow.
@@ -161,6 +165,23 @@ async function testFailClosed(): Promise<void> {
     const policy = policyOn(client);
     const err = await caught(async () => { await policy.check('some text', 'generate'); });
     check('transport error: throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
+  }
+
+  // The provider id can arrive with the first streamed chunk while the stream fails before its
+  // final usage record. Preserve that id so route-level reconciliation can recover the cost.
+  {
+    const err = new Error('connection reset');
+    const client = fakeClient(() => ({
+      deltas: rejectingIterable<ModelDelta>(err),
+      usage: Promise.reject(err),
+      id: Promise.resolve('gen-policy-failed'),
+    }));
+    const failure = await caught(async () => { await policyOn(client).check('some text', 'generate'); });
+    check('known-id transport error: throws PolicyUnavailableError', failure instanceof PolicyUnavailableError);
+    if (failure instanceof PolicyUnavailableError) {
+      eq('known-id transport error keeps the provider id', failure.generationId, 'gen-policy-failed');
+      eq('known-id transport error has no completed usage', failure.usage, undefined);
+    }
   }
 
   // Every allow/refuse verdict still resolves normally.

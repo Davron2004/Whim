@@ -23,7 +23,7 @@ import {
   type RequestOutcome,
   type UsageStore,
 } from '../src/usage-store';
-import { InMemoryReportStore } from '../src/reports/store';
+import { InMemoryReportStore, type ReportStore } from '../src/reports/store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createSlotController, DEFAULT_MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
@@ -52,7 +52,7 @@ interface TestAppOpts {
   policy?: ContentPolicy;
   creditTransport?: CreditTransport;
   slots?: SlotController;
-  reportStore?: InMemoryReportStore;
+  reportStore?: ReportStore;
   stub?: boolean;
   usageStore?: UsageStore;
   resolver?: { transport?: UsageAndCostTransport; tracker?: ResolveTracker };
@@ -169,6 +169,76 @@ function creditThrowingStore(): CreditThrowingStore {
     purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
   };
   return { store, admitted, settles };
+}
+
+/** A report insert can fail after its separate daily-unit ledger row was admitted. Keep the
+ * recorded settlement visible so the HTTP test can prove the handler did not strand that row. */
+function reportInsertFailureStore(): {
+  usageStore: UsageStore;
+  reportStore: ReportStore;
+  admitted: string[];
+  settles: { requestId: string; outcome: RequestOutcome }[];
+} {
+  const inner = new InMemoryUsageStore();
+  const admitted: string[] = [];
+  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  const usageStore: UsageStore = {
+    credit: (deviceId, usage) => inner.credit(deviceId, usage),
+    read: (deviceId) => inner.read(deviceId),
+    admit: async (params) => {
+      const result = await inner.admit(params);
+      if (result.ok) admitted.push(result.requestId);
+      return result;
+    },
+    refund: (requestId) => inner.refund(requestId),
+    settle: async (requestId, params) => {
+      settles.push({ requestId, outcome: params.outcome });
+      await inner.settle(requestId, params);
+    },
+    recordCost: (requestId, params) => inner.recordCost(requestId, params),
+    listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
+    summary: (params) => inner.summary(params),
+    purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+  };
+  const reports = new InMemoryReportStore();
+  const reportStore: ReportStore = {
+    insert: () => Promise.reject(new Error('report store unavailable')),
+    list: (params) => reports.list(params),
+    get: (reportId) => reports.get(reportId),
+    purgeOlderThan: (beforeMs) => reports.purgeOlderThan(beforeMs),
+  };
+  return { usageStore, reportStore, admitted, settles };
+}
+
+/** The report itself may persist before the usage ledger's normal `ok` settlement throws. The
+ * next settlement must close that already-admitted row as `error`. */
+function reportOkSettlementFailureStore(): {
+  usageStore: UsageStore;
+  reportStore: ReportStore;
+  settles: { requestId: string; outcome: RequestOutcome }[];
+} {
+  const inner = new InMemoryUsageStore();
+  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  let failOkSettlement = true;
+  const usageStore: UsageStore = {
+    credit: (deviceId, usage) => inner.credit(deviceId, usage),
+    read: (deviceId) => inner.read(deviceId),
+    admit: (params) => inner.admit(params),
+    refund: (requestId) => inner.refund(requestId),
+    settle: async (requestId, params) => {
+      settles.push({ requestId, outcome: params.outcome });
+      if (params.outcome === 'ok' && failOkSettlement) {
+        failOkSettlement = false;
+        throw new Error('usage store unavailable');
+      }
+      await inner.settle(requestId, params);
+    },
+    recordCost: (requestId, params) => inner.recordCost(requestId, params),
+    listUnresolvedCostRows: (query) => inner.listUnresolvedCostRows(query),
+    summary: (params) => inner.summary(params),
+    purgeLedger: (beforeUtcDay) => inner.purgeLedger(beforeUtcDay),
+  };
+  return { usageStore, reportStore: new InMemoryReportStore(), settles };
 }
 
 /** JSON, or `undefined` when the body is not JSON at all — a plain-text 500, say. */
@@ -810,6 +880,71 @@ async function testCachedVerdictAddsNoClassifierUsage(): Promise<void> {
   eq('exactly one classifier call was ever made', classifierCalls.length, 1);
 }
 
+async function testMalformedClassifierVerdictKeepsAccounting(): Promise<void> {
+  section('Malformed classifier verdicts fail closed while retaining their metering');
+
+  const classifierUsage: Usage = { promptTokens: 6, completionTokens: 3, totalTokens: 9 };
+  const classifierId = 'gen-policy-malformed-unary';
+  for (const route of ['clarify', 'rewrite'] as const) {
+    invalidateCreditCache();
+    const usageStore = new RecordingUsageStore();
+    const tracker = new ResolveTracker();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: classifierId },
+    ]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app } = testApp({
+      model,
+      policy,
+      usageStore,
+      resolver: { tracker, transport: statsTransport({ [classifierId]: { usage: classifierUsage, totalCostUsd: 0.006 } }) },
+    });
+    const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    eq(`${route}: malformed classifier verdict → 503 policy_unavailable`, res.status, 503);
+    const body = (await res.json()) as ApiError;
+    eq(`${route}: refusal remains policy_unavailable`, body.error, 'policy_unavailable');
+    await tracker.drain(2000);
+    eq(`${route}: classifier usage is credited despite malformed output`, await usageStore.read(DEVICE_ID), classifierUsage);
+    const countByKind = (await usageStore.summary({ days: 1, now: FIXED_NOW })).days[0]?.countByKind;
+    eq(`${route}: policy_unavailable still refunds its daily unit`, countByKind?.[route], undefined);
+    const resolved = usageStore.recordCostCalls.filter((entry) => entry.state === 'resolved');
+    eq(`${route}: classifier cost resolves despite the refunded unit`, resolved.length, 1);
+    eq(`${route}: classifier cost amount is retained`, resolved[0]?.costUsd, 0.006);
+  }
+}
+
+async function testFailedClassifierUsageStillResolvesById(): Promise<void> {
+  section('Classifier IDs survive a stream failure before usage');
+
+  const classifierId = 'gen-policy-failed-unary';
+  const reconciledUsage: Usage = { promptTokens: 4, completionTokens: 5, totalTokens: 9 };
+  for (const route of ['clarify', 'rewrite'] as const) {
+    invalidateCreditCache();
+    const usageStore = new RecordingUsageStore();
+    const tracker = new ResolveTracker();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: [], error: new Error('classifier connection reset'), id: classifierId },
+    ]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app } = testApp({
+      model,
+      policy,
+      usageStore,
+      resolver: { tracker, transport: statsTransport({ [classifierId]: { usage: reconciledUsage, totalCostUsd: 0.007 } }) },
+    });
+    const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    eq(`${route}: classifier stream failure → 503 policy_unavailable`, res.status, 503);
+    await tracker.drain(2000);
+    eq(`${route}: resolver credits usage from the known classifier id`, await usageStore.read(DEVICE_ID), reconciledUsage);
+    const resolved = usageStore.recordCostCalls.filter((entry) => entry.state === 'resolved');
+    eq(`${route}: resolver records the known classifier cost`, resolved[0]?.costUsd, 0.007);
+  }
+}
+
 /**
  * Fix chain 9c: `admitUnaryRequest` credits the classifier's usage the moment `policy.check`
  * returns. On an allow, its generation id is folded into the route's own ids and resolved for cost
@@ -1021,6 +1156,31 @@ async function testReportRoute(): Promise<void> {
     eq('a minimal report → 202', res.status, 202);
   }
 
+  // Storage can fail after admission. The device gets the normal internal-error response, while
+  // the accepted report row must stop consuming daily/global allowance as a forever-pending row.
+  {
+    const failing = reportInsertFailureStore();
+    const { app } = testApp({ usageStore: failing.usageStore, reportStore: failing.reportStore });
+    const res = await post(app, '/v1/report', { reason: 'broken' }, DEVICE_HEADER);
+    eq('a report store failure → 500', res.status, 500);
+    const body = (await res.json()) as ApiError;
+    eq('the storage failure remains an internal error', body.error, 'internal_error');
+    eq('one report ledger row was admitted', failing.admitted.length, 1);
+    eq('the admitted report row settles as error', failing.settles, [{ requestId: failing.admitted[0], outcome: 'error' }]);
+    eq('the failed report remains charged to the report daily allowance', (await failing.usageStore.summary({ days: 1, now: FIXED_NOW })).days[0]?.countByKind.report, 1);
+  }
+
+  // The report write can succeed before the first `ok` settlement fails. Its fallback settlement
+  // must still close the accepted ledger row rather than leaving it pending.
+  {
+    const failing = reportOkSettlementFailureStore();
+    const { app, reportStore } = testApp({ usageStore: failing.usageStore, reportStore: failing.reportStore });
+    const res = await post(app, '/v1/report', { reason: 'broken' }, DEVICE_HEADER);
+    eq('an ok-settlement failure after report persistence → 500', res.status, 500);
+    eq('the report remains stored after the failed settlement', (await reportStore.list({ now: FIXED_NOW })).length, 1);
+    eq('the failed ok settlement is followed by error cleanup', failing.settles.map((entry) => entry.outcome), ['ok', 'error']);
+  }
+
   // An over-long note is a shape error.
   {
     const { app, reportStore } = testApp();
@@ -1177,6 +1337,8 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
   await testCachedVerdictAddsNoClassifierUsage();
+  await testMalformedClassifierVerdictKeepsAccounting();
+  await testFailedClassifierUsageStillResolvesById();
   await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();
   await testReportRoute();

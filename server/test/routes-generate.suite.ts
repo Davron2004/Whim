@@ -570,6 +570,60 @@ async function testPolicyOutcomes(): Promise<void> {
     eq('the pipeline was never invoked', pipeline.runs, 0);
     eq('the device\'s daily count is unchanged', await h.usageStore.generationUnits(AT_2200_UTC), 0);
   }
+
+  // The provider can complete and meter the classifier call before returning malformed verdict
+  // text. That still fails closed, but the usage and cost are real and must be retained.
+  {
+    const classifierUsage: Usage = { promptTokens: 3, completionTokens: 2, totalTokens: 5 };
+    const classifierId = 'gen-policy-malformed';
+    const classifier = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: classifierId },
+    ]);
+    const h = harness({
+      pipeline: new HeldPipeline(),
+      policy: modelPolicy(classifier),
+      resolveTransport: statsTransport({ [classifierId]: { usage: classifierUsage, totalCostUsd: 0.004 } }).transport,
+    });
+    await expectRefusal(
+      'a malformed but metered classifier verdict',
+      await postGenerate(h.app, PROMPT, DEVICE_A),
+      503,
+      'policy_unavailable',
+      null,
+    );
+    await h.tracker.drain(2000);
+    eq('the failed-closed classifier usage is credited', await h.usageStore.read(DEVICE_A), classifierUsage);
+    eq('the daily unit is still refunded', await h.usageStore.generationUnits(AT_2200_UTC), 0);
+    eq('the unavailable ledger row retains classifier usage', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.usage), [classifierUsage]);
+    const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
+    eq('the classifier cost resolves on the unavailable ledger row', cost, { requestId: h.usageStore.admitted[0], state: 'resolved', costUsd: 0.004 });
+  }
+
+  // OpenRouter exposes an id from the first chunk even if the stream then fails before usage. The
+  // route still fails closed, but resolution can recover the provider's authoritative accounting.
+  {
+    const classifierId = 'gen-policy-failed';
+    const reconciledUsage: Usage = { promptTokens: 7, completionTokens: 4, totalTokens: 11 };
+    const classifier = new ScriptedModelClient(ROSTER, [
+      { role: 'rewrite', deltas: [], error: new Error('classifier connection reset'), id: classifierId },
+    ]);
+    const h = harness({
+      pipeline: new HeldPipeline(),
+      policy: modelPolicy(classifier),
+      resolveTransport: statsTransport({ [classifierId]: { usage: reconciledUsage, totalCostUsd: 0.008 } }).transport,
+    });
+    await expectRefusal(
+      'a classifier failure with a provider id',
+      await postGenerate(h.app, PROMPT, DEVICE_A),
+      503,
+      'policy_unavailable',
+      null,
+    );
+    await h.tracker.drain(2000);
+    eq('the resolver credits usage from the known classifier id', await h.usageStore.read(DEVICE_A), reconciledUsage);
+    const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
+    eq('the resolver records cost from the known classifier id', cost, { requestId: h.usageStore.admitted[0], state: 'resolved', costUsd: 0.008 });
+  }
 }
 
 // ─── The stream's single teardown path ──────────────────────────────────────
