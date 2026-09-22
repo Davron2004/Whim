@@ -20,8 +20,8 @@ context: |
     channel (b) DOM-inserted inline <script> (fallback (a) srcdoc-inline; blob: refused —
     never widen the CSP); modules = H1b host-injected externals {vc-sdk, react, react-dom}
     only. **REQUIRED READING: docs/spike2-findings.md** — the contract + security model + FIVE
-    load-bearing constraints the runtime MUST honor. Runnable regression suite (Spike-6 CI
-    seed): invariants/sandbox-isolation/spike2-bundle-contract/.
+    load-bearing constraints the runtime MUST honor. Runnable regression suite:
+    invariants/sandbox-isolation/run-against-build.mjs (npm run invariants).
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

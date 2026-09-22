@@ -25,8 +25,15 @@ import type { AppRecord } from '../../src/host/bridge';
 import { storageError, type StorageEngine } from '../../src/host/storage-engine/contract';
 import { sweepApp, getScreenInfo, findAppFrame, type SweptElement } from '../sweep';
 import { createRunCandidate, denialDiagnostic } from '../report';
+import nodeAssert from 'node:assert';
+import { recordAssertion, results, test } from './harness';
 import { testIsolation } from './isolation';
 import { testResilience } from './resilience';
+
+function ok(cond: boolean, msg: string): void {
+  recordAssertion(() => nodeAssert.ok(cond, msg), msg);
+}
+
 
 // `process.cwd()` (the repo root) — NOT `import.meta.url`: `run.mjs` esbuild-bundles this file
 // into one output module, which collapses every module's `import.meta.url` onto the bundle's
@@ -41,32 +48,7 @@ const PRODUCTION_ARTIFACT = path.join(ROOT, 'build/generated/tip-splitter.app.js
 // from `build/generated/*`.
 const NAVIGATION_DEMO_FIXTURE = path.join(ROOT, 'fixtures/navigation-demo.app.tsx');
 
-let passed = 0;
-const failures: string[] = [];
-
-function ok(cond: boolean, msg: string): void {
-  if (cond) {
-    passed++;
-    return;
-  }
-  failures.push(msg);
-  console.error('  ✗ ' + msg);
-}
-
-async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
-  try {
-    await fn();
-    console.log('• ' + name);
-  } catch (err) {
-    failures.push(`${name}: threw ${(err as Error).message}`);
-    console.error(`  ✗ ${name} THREW: ${(err as Error).stack}`);
-  }
-}
-
 async function main(): Promise<void> {
-  // Asserts via the house `ok()` helper (the storage/bridge/checks acceptance-suite idiom),
-  // which S2699 does not recognize.
-  // eslint-disable-next-line sonarjs/assertions-in-tests
   await test('byte-equivalence: buildCandidateFile === checked-in production artifact (tip-splitter)', async () => {
     const [harness, production] = await Promise.all([
       buildCandidateFile(FIXTURE),
@@ -92,18 +74,18 @@ async function main(): Promise<void> {
   await testDenialDiagnostics();
 
   // ── public-generation-server tasks 7.3–7.4: OS sandbox, no egress, builder file reads ───────
-  await testIsolation({ test, ok });
+  await testIsolation();
 
   // ── public-generation-server task 8.4: abort at every wait, crash replacement ───────────────
-  await testResilience({ test, ok });
+  await testResilience();
 
   console.log('');
-  if (failures.length === 0) {
-    console.log(`✓ synthrun acceptance: ${passed} checks passed`);
+  if (results.failures.length === 0) {
+    console.log(`✓ synthrun acceptance: ${results.passed} checks passed`);
     return;
   }
-  console.error(`✗ synthrun acceptance: ${failures.length} FAILED, ${passed} passed`);
-  for (const f of failures) console.error('  - ' + f);
+  console.error(`✗ synthrun acceptance: ${results.failures.length} FAILED, ${results.passed} passed`);
+  for (const f of results.failures) console.error('  - ' + f);
   process.exit(1);
 }
 
@@ -291,7 +273,6 @@ const APP_MISSING_SCHEMA: AppRecord = {
 async function testCapabilityWiring(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 4 });
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('undeclared capability: the production denial is collected host-side even when the candidate swallows it', async () => {
       const wiring = wireCapabilityBridge(APP_UNDECLARED);
       const { ctx, dispose } = await session.openRun(FIXTURE_SWALLOWED_DENIAL, {
@@ -323,7 +304,6 @@ async function testCapabilityWiring(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('no cross-candidate contamination: a fresh :memory: engine per run means candidate B never sees candidate A\'s write', async () => {
       const wiringA = wireCapabilityBridge(APP_STORAGE);
       const runA = await session.openRun(FIXTURE_STORAGE_MARK, { appId: APP_STORAGE.appId, beforeNavigate: wiringA.beforeNavigate });
@@ -339,7 +319,6 @@ async function testCapabilityWiring(): Promise<void> {
       ok(wiringB.realm?.engine?.kv.get('mark') === undefined, "candidate B's fresh engine observes an empty store, not candidate A's write");
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('schema-application failure surfaces as a diagnostic, not a delivered bundle', () => {
       const wiring = wireCapabilityBridge(APP_MISSING_SCHEMA);
       ok(wiring.realm === null, 'no realm was bound');
@@ -352,7 +331,6 @@ async function testCapabilityWiring(): Promise<void> {
 
   // ── red-check (non-vacuity, task 3.3): a GRANTED capability must NOT be denied — proves the
   // undeclared-capability assertion above is a real gate, not a permanently-closed one.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('red-check: a declared capability is NOT denied (the gate is a live path, not vacuously closed)', async () => {
     const wiring = wireCapabilityBridge(APP_STORAGE);
     const sysretRaw = await wiring.dispatch(JSON.stringify({ whim: 'syscall', v: 1, id: 1, gen: 1, method: 'storage.kv.set', params: { key: 'k', value: 'v' } }));
@@ -447,7 +425,6 @@ function eventKinds(obs: AttachedObservers): ObservedFrameKind[] {
 async function testObservers(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 4 });
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('runtime_throw: source-anchored throw during mount (spec §Diagnostics, "Throw with a source anchor")', async () => {
       const { obs, dispose } = await openObservedRun(session, FIXTURE_THROW_ON_MOUNT);
       try {
@@ -475,7 +452,6 @@ async function testObservers(): Promise<void> {
     // Forced here instead of raced, so the anchor's independence from arrival order is asserted
     // deterministically rather than sampled. The `recorded` assertion is the non-vacuity anchor:
     // without it the test would silently degrade into a second copy of the one above.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('source anchor: a throw recorded BEFORE finish() supplies the map still resolves (spec §Diagnostics, "Throw with a source anchor")', async () => {
       let early: EarlyObservers | undefined;
       const { ctx, dispose } = await session.openRun(FIXTURE_THROW_ON_MOUNT, {
@@ -505,7 +481,6 @@ async function testObservers(): Promise<void> {
     // stays null because no paint EXISTS — not because a paint frame was lost racing the relay
     // install, which is what the parked version of this test was actually measuring. The stub
     // red-checks below stay as the non-vacuity anchor for `awaitMount`'s own timeout arithmetic.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('mount_timeout: an unbounded top-level hang never posts paint (spec "Never-settling mount")', async () => {
       const { obs, dispose } = await openObservedRun(session, FIXTURE_MOUNT_HANG);
       try {
@@ -528,7 +503,6 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('legal interval: mounts fine, ticks forever, produces NO diagnostic (spec "Legal interval never fails the run")', async () => {
       const { obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
       try {
@@ -543,7 +517,6 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('forged verdict: a raw unauthenticated probes frame is rejected, never adopted (spec "Forged verdict attempt")', async () => {
       // Every run tallies rejections of its own (probes.js's T6b pen test posts an
       // unauthenticated spoof from inside every realm), so measure that baseline on a harmless
@@ -580,7 +553,6 @@ async function testObservers(): Promise<void> {
     });
 
     // ── 4.2a: the confinement chain-2 actually achieved, pinned so a refactor cannot drop it ──
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('confinement: the host relay binding is undefined in the sandbox realm as installed (spec "The relay binding is not reachable from the sandbox realm")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
       try {
@@ -638,7 +610,6 @@ async function testObservers(): Promise<void> {
     // RED-CHECKED against pre-fix behaviour (task 2.4) by neutering that guard: the two frames below
     // then land in the observation state verbatim — events +2, diagnostics 0 → 1, the run's verdict
     // driven true → false, and `hostProvenanceRefusals` stuck at 0.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('confinement: the RE-MINTED host relay is inert as a CAPABILITY from the sandbox realm (spec "The relay cannot be re-acquired from inside the sandbox")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
       try {
@@ -708,7 +679,6 @@ async function testObservers(): Promise<void> {
     // RED-CHECKED (task 2.4) by neutering the same guard on the dispatch binding: the call then
     // returns a real `ok:true` sysret, a `syscall` entry appears in the host-side trace, and
     // `engine.kv.get('pwned')` reads back `'yes'` — the original exploit, verbatim.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('confinement: a hand-rolled syscall frame to whimHostDispatch from the sandbox realm invokes nothing (spec "Host syscall dispatch cannot be reached from inside the sandbox")', async () => {
       const wiring = wireCapabilityBridge(APP_STORAGE);
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS, {
@@ -773,7 +743,6 @@ async function testObservers(): Promise<void> {
     // `state.contained === false && contained === true`, i.e. keyed on the cell instead of on the
     // permanent record — because that is the implementation this case used to be unable to tell
     // apart from the shipped one; the interposed malformed frame below is what discriminates them.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('an observed verdict is not overridden by a later frame (spec "An observed verdict is not overridden by a later frame")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
       try {
@@ -833,7 +802,6 @@ async function testObservers(): Promise<void> {
     });
 
     // ── 4.3: a malformed authenticated verdict payload is UNOBSERVED, never a breach ───────────
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('malformed verdict payload: unobserved, not a breach (spec "A malformed verdict payload is unobserved, not a breach")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS);
       try {
@@ -884,7 +852,6 @@ async function testObservers(): Promise<void> {
     // `EarlyObservers.finish()` — `exposeFunction` + a post-navigation `page.evaluate` installing
     // the transport, i.e. the pre-fix ordering verbatim — the pre-`load` frame is never observed and
     // this test goes red, while the post-`load` control still lands.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('a frame emitted before load is not dropped (spec "A frame emitted before load is not dropped")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_HARMLESS, {
         beforeNavigate: async (page) => {
@@ -928,7 +895,6 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('withTotalBudget: overrun hard-kills the page and marks run_truncated', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
       try {
@@ -945,7 +911,6 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('withTotalBudget: signal (task 6.1, design D8) hard-kills the page promptly, never marks run_truncated', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
       try {
@@ -974,7 +939,6 @@ async function testObservers(): Promise<void> {
 
   // ── red-check (non-vacuity, task 2.4): mount_timeout against a WATCHDOG-FREE stub — no real
   // page, no session; `awaitMount`'s OWN logic must be what fires, not some external safety net.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('red-check: awaitMount times out against a bare stub that never posts paint', async () => {
     const stub = stubObservers();
     const started = Date.now();
@@ -984,7 +948,6 @@ async function testObservers(): Promise<void> {
     ok(elapsed >= 75, `the wait actually spanned close to the budget (elapsed=${elapsed}ms)`);
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('red-check: awaitMount is non-vacuous — a stub WITH paintAtMs set resolves immediately, no diagnostic', async () => {
     const stub = stubObservers();
     stub.state.paintAtMs = 5;
@@ -995,7 +958,6 @@ async function testObservers(): Promise<void> {
     ok(elapsed < 500, `the wait exited immediately rather than burning the 5s budget (elapsed=${elapsed}ms)`);
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('red-check: awaitQuiet rides out the hard cap under continuous activity, never blocks past it', async () => {
     const stub = stubObservers();
     const bumper = setInterval(() => {
@@ -1020,7 +982,6 @@ async function testObservers(): Promise<void> {
     }
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('red-check: awaitQuiet is non-vacuous — a genuinely idle stub settles at the quiet window, well under the hard cap', async () => {
     const stub = stubObservers();
     const started = Date.now();
@@ -1071,7 +1032,6 @@ async function testSweep(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 4 });
   const sweepBudgets = mergeBudgets({ actionQuietMs: 40, actionHardCapMs: 250, mountBudgetMs: 5000 });
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('state-minted element is swept exactly once, then the sweep terminates', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_MINT_ONE);
       try {
@@ -1089,7 +1049,6 @@ async function testSweep(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('unreachable screen: cold-mounted directly and flagged (spec "Unreachable screen is rendered and flagged")', async () => {
       const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_UNREACHABLE_SCREEN);
       try {
@@ -1119,7 +1078,6 @@ async function testSweep(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('determinism: two independent runs of the same candidate produce the same action sequence + diagnostics', async () => {
       // FIXTURE_MINT_ONE has interactive elements (Mint, then the state-minted Extra) — a fixture
       // with nothing to sweep would make both runs' action sequences the empty string, so the
@@ -1196,7 +1154,6 @@ function diagnosticSignature(d: { kind: string }): string {
 async function testRunCandidate(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('clean report: a well-formed multi-screen candidate (sdk-navigation 4.2 fixture) yields ok:true', async () => {
       const runCandidate = createRunCandidate(session);
       const source = await readFile(NAVIGATION_DEMO_FIXTURE, 'utf8');
@@ -1234,7 +1191,6 @@ async function testRunCandidate(): Promise<void> {
       ok(report.forgeries.count > 0, `a clean candidate still tallies the oracle's own T6b spoof (got ${report.forgeries.count})`);
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('six-way hostile: exactly the expected diagnostic set, forged verdict rejected', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_SIX_WAY_HOSTILE, {
@@ -1284,7 +1240,6 @@ async function testRunCandidate(): Promise<void> {
 
     // ── 4.3: the three verdict states, separated end-to-end on the assembled report ────────────
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('verdict false: a genuine breach is a breach (spec "A negative verdict is still negative")', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_CONTAINMENT_BREACH, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
@@ -1301,7 +1256,6 @@ async function testRunCandidate(): Promise<void> {
       ok(report.ok === false, 'a breached run is not ok');
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('verdict null after a paint: unobserved, not negative (spec "An unobserved verdict after a successful paint")', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_PROBE_SABOTAGE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
@@ -1320,7 +1274,6 @@ async function testRunCandidate(): Promise<void> {
       ok(report.ok === false, 'an unverified run is not ok');
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('verdict null with no probes frame at all: mount_timeout AND containment_unobserved, neither standing in for the other', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_MOUNT_HANG, { budgets: { mountBudgetMs: 600, actionQuietMs: 40, actionHardCapMs: 250 } });
@@ -1333,7 +1286,6 @@ async function testRunCandidate(): Promise<void> {
     });
 
     // ── 4.4: a flood of forged frames costs a fixed-size, payload-free signal ──────────────────
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('forgery flood: the count saturates at the declared cap and no forged byte reaches the report (spec "A rejected forgery is counted, never echoed")', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_FORGERY_FLOOD, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
@@ -1420,7 +1372,6 @@ const FIXTURE_DATE_STRING_WRITE = dateFieldCandidate('DateString', `'2026-08-23'
 const FIXTURE_DATE_EPOCH_WRITE = dateFieldCandidate('DateEpoch', 'Date.now()');
 
 async function testDenialDiagnostics(): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('§denial diagnostics: every verb-time engine kind maps to an error diagnostic under the engine\'s own name', () => {
     for (const kind of VERB_TIME_KINDS) {
       const d = denialDiagnostic(denialEntry(kind, 'storage.records.list', `engine hint for ${kind}`));
@@ -1431,7 +1382,6 @@ async function testDenialDiagnostics(): Promise<void> {
     }
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('§denial diagnostics: a host fault is no candidate diagnostic, and an unknown kind is still never minted', () => {
     for (const kind of HOST_FAULT_KINDS) {
       ok(
@@ -1450,7 +1400,6 @@ async function testDenialDiagnostics(): Promise<void> {
     );
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('§denial diagnostics: a host-fault denial stays VERBATIM in the trace (never dropped from both)', async () => {
     const wiring = wireCapabilityBridge(APP_STORAGE, { engineFactory: hostFaultEngine });
     const sysretRaw = await wiring.dispatch(
@@ -1471,7 +1420,6 @@ async function testDenialDiagnostics(): Promise<void> {
 
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('§denial diagnostics: a date STRING into a date field fails the run with a type_mismatch (spec "A bad date write fails the run")', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_DATE_STRING_WRITE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
@@ -1494,7 +1442,6 @@ async function testDenialDiagnostics(): Promise<void> {
 
     // RED-CHECK (non-vacuity): the SAME candidate with a legal epoch-ms value must be clean — so
     // the diagnostic above tracks the value the candidate wrote, not merely its use of storage.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('§denial diagnostics red-check: the same candidate writing a real epoch-ms value is clean', async () => {
       const runCandidate = createRunCandidate(session);
       const report = await runCandidate(FIXTURE_DATE_EPOCH_WRITE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });

@@ -11,6 +11,8 @@
  *
  * Called from `acceptance.ts` with that suite's own `test`/`ok` helpers.
  */
+import nodeAssert from 'node:assert';
+import { recordAssertion, test } from './harness';
 import { execFileSync } from 'node:child_process';
 import dgram from 'node:dgram';
 import fs from 'node:fs';
@@ -39,10 +41,11 @@ import {
 } from '../session';
 import { findAppFrame } from '../sweep';
 
-export interface SuiteHooks {
-  test(name: string, fn: () => void | Promise<void>): Promise<void>;
-  ok(cond: boolean, msg: string): void;
+function ok(cond: boolean, msg: string): void {
+  recordAssertion(() => nodeAssert.ok(cond, msg), msg);
 }
+
+
 
 const ROOT = process.cwd();
 
@@ -372,21 +375,21 @@ export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home },
 // Suites
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function testIsolation(hooks: SuiteHooks): Promise<void> {
-  await testBuilderFileReads(hooks);
-  await testNoFallback(hooks);
+export async function testIsolation(): Promise<void> {
+  await testBuilderFileReads();
+  await testNoFallback();
   const canaries = await startCanaries();
   try {
-    await testSandboxedProcess(hooks);
-    await testLayers(hooks, canaries);
-    await testHostileCandidate(hooks, canaries);
-    await testServiceWorkers(hooks);
+    await testSandboxedProcess();
+    await testLayers(canaries);
+    await testHostileCandidate(canaries);
+    await testServiceWorkers();
   } finally {
     await canaries.close();
   }
 }
 
-async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
+async function testBuilderFileReads(): Promise<void> {
   // A server source file with no imports of its own, so the unguarded control below builds it
   // whole. Its lines are read at run time, so the check follows the file as it changes.
   const target = path.join(ROOT, 'server/src/generation/json-block.ts');
@@ -396,7 +399,6 @@ async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
     .map((l) => l.trim())
     .filter((l) => l.length >= 24);
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('builder: a re-exported server file never enters the bundle (spec "A re-exported server file never enters the bundle")', async () => {
     ok(targetLines.length > 0, 'precondition: the target file has distinctive lines to look for');
     const failure = await buildCandidateSource(`export * from ${JSON.stringify(target)};\n`).then(
@@ -413,7 +415,6 @@ async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
     ok(!targetLines.some((l) => surfaced.includes(l)), 'no line of the re-exported file appears anywhere in what the failed build returns');
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('builder: every other import, require or re-export is refused by name; the three externals are not', async () => {
     // Each binding is used: TypeScript semantics erase an unused import before resolution (next case).
     const refused = [
@@ -438,7 +439,6 @@ async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
   // CONTROL: the identical production build contract without the resolve plugin reads the file
   // into the bundle and its source map. Without this the refusal above could pass against a
   // builder that simply cannot resolve absolute paths.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('builder control: without the resolve allowlist the same re-export does leak the file', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'synthrun-leak-control-'));
     try {
@@ -472,8 +472,7 @@ async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testNoFallback({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testNoFallback(): Promise<void> {
   await test('sandbox: no code path launches Chromium with the sandbox disabled (spec "No fallback exists")', () => {
     const files = [...tsFilesUnder(path.join(ROOT, 'synthrun'), false), ...tsFilesUnder(path.join(ROOT, 'server/src'), true)];
     const violations: string[] = [];
@@ -489,7 +488,6 @@ async function testNoFallback({ test, ok }: SuiteHooks): Promise<void> {
   });
 
   // CONTROL: each weakening the scan claims to find, planted in a synthetic source, is found.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('sandbox control: the scan finds every planted weakening, and passes the sanctioned launch', () => {
     const planted: Record<string, string> = {
       'a direct launch': 'chromium.launch({ headless: true });',
@@ -509,8 +507,7 @@ async function testNoFallback({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testSandboxedProcess({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testSandboxedProcess(): Promise<void> {
   await test('sandbox: the launched browser process carries no sandbox-disabling flag (spec "The launched browser process carries no sandbox-disabling flag")', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
@@ -533,11 +530,10 @@ async function testSandboxedProcess({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise<void> {
+async function testLayers(canaries: Canaries): Promise<void> {
   const layers = layerLaunchOptions();
   const canaryUrl = `http://${canaries.httpHost}/navigation`;
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: interception alone blocks a direct navigation and a WebSocket, and counts both (spec "Interception alone blocks a direct navigation")', async () => {
     const browser = await chromium.launch(layers.bare);
     try {
@@ -565,7 +561,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
     }
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: the harness launch options block a navigation with no interception (spec "The proxy pin alone blocks a direct navigation")', async () => {
     const browser = await chromium.launch(browserLaunchOptions());
     try {
@@ -582,7 +577,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
   // Each browser layer alone, against the bare browser (sandbox on, no network layers) as control.
   const bare = await chromium.launch(layers.bare);
   try {
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('egress control: with no network layer at all, navigation, WebSocket and WebRTC UDP all reach their canaries (spec "The canary is reachable without the guards")', async () => {
       const context = await bare.newContext();
       canaries.reset();
@@ -600,7 +594,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
       ['proxyOnly', 'the dead proxy alone'],
       ['resolverOnly', 'the resolver rule alone'],
     ] as const) {
-      // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
       await test(`egress: ${expectation} blocks a navigation and a WebSocket`, async () => {
         const browser = await chromium.launch(layers[layer]);
         try {
@@ -616,7 +609,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
       });
     }
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('egress: the WebRTC UDP restriction alone keeps a STUN request off the network', async () => {
       const browser = await chromium.launch(layers.udpOnly);
       try {
@@ -634,7 +626,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
     await bare.close();
   }
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: the blocked count saturates at BLOCKED_EGRESS_CAP, and a second navigation to the run URL is refused', async () => {
     const browser = await chromium.launch(browserLaunchOptions());
     try {
@@ -656,10 +647,9 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
   });
 }
 
-async function testHostileCandidate({ test, ok }: SuiteHooks, canaries: Canaries): Promise<void> {
+async function testHostileCandidate(canaries: Canaries): Promise<void> {
   const source = hostileCandidate(canaries);
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: a hostile candidate reaches no canary, and the trace records the blocked attempts (spec "A hostile candidate reaches no canary")', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
@@ -681,7 +671,6 @@ async function testHostileCandidate({ test, ok }: SuiteHooks, canaries: Canaries
 
   // CONTROL, all three layers removed: the same page, delivered the same way, from a default-options
   // browser whose route serves the page and intercepts nothing else.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress control: the same hostile candidate without the guards does reach a canary', async () => {
     const { js } = await buildCandidateSource(source);
     const url = runPageUrl('hostile-control');
@@ -701,7 +690,6 @@ async function testHostileCandidate({ test, ok }: SuiteHooks, canaries: Canaries
     }
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: probeEgressBlocked passes on a live session', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
@@ -718,7 +706,6 @@ async function testHostileCandidate({ test, ok }: SuiteHooks, canaries: Canaries
   // `blocked: true` would have passed too. Run the SAME probe logic against a context built with
   // NO interception at all (the "egress control" pattern used throughout this file) and confirm
   // it reports `blocked: false` with canary connections actually reaching it.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: probeEgressBlocked reports blocked:false against a context with no interception (red direction)', async () => {
     const { js } = await buildCandidateSource(EGRESS_PROBE_SOURCE);
     const url = runPageUrl('egress-probe-control');
@@ -768,10 +755,9 @@ function readServiceWorkerApiInPage(): string {
   }
 }
 
-async function testServiceWorkers({ test, ok }: SuiteHooks): Promise<void> {
+async function testServiceWorkers(): Promise<void> {
   const register = (page: Page): Promise<string> => page.evaluate(registerServiceWorkerInPage);
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('service workers: the outer page cannot register one, the refusal is counted, and the candidate realm cannot reach the API', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
@@ -795,7 +781,6 @@ async function testServiceWorkers({ test, ok }: SuiteHooks): Promise<void> {
   });
 
   // CONTROL: the same launch options with a route that serves the worker script do register one.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('service workers control: when a route serves the script, the same registration succeeds', async () => {
     const browser = await chromium.launch(browserLaunchOptions());
     try {

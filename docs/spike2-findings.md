@@ -5,7 +5,7 @@ the findings that outlive the spike — the contract, the security model, and th
 the real v0.1 bundle-execution mechanism must honor. Canonical detail: `docs/decisions.md`
 #37 (+ #35 for the sandbox) and the `DEVLOG.md` Spike 1/2 captures.*
 
-*The spike code was deleted once these lessons were captured (it is throwaway by design). The **runnable adversarial suite** (T1–T7 + F4) was preserved at `invariants/sandbox-isolation/spike2-bundle-contract/` — self-contained pages + a headless Playwright runner (`npm test`) — as the Spike-6 CI seed.*
+*The spike code was deleted once these lessons were captured (it is throwaway by design). The **runnable adversarial suite** (T1–T7 + F4) was kept at `invariants/sandbox-isolation/spike2-bundle-contract/` as the Spike-6 CI seed until `invariants/sandbox-isolation/run-against-build.mjs` (`npm run invariants`) superseded it; it was removed in 2026-09 and is in git history.*
 
 ## The decision (the contract the agent emits and the runtime runs)
 

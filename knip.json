@@ -1,8 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [
-    "src/runtime/web/**",
-    "invariants/**/reference/**"
+    "src/runtime/web/**"
   ],
   "ignoreDependencies": [
     "buffer",

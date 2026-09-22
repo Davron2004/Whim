@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Whim runtime — containment probe checklist (the retained §16.2 isolation oracle).
 // ─────────────────────────────────────────────────────────────────────────────
-// Productionized from the proven adversarial suite (invariants/sandbox-isolation/
-// spike2-bundle-contract/reference/probes.js); the assertions are kept verbatim — this is
+// Productionized from the proven Spike-2 adversarial suite (removed from invariants/ in
+// 2026-09, see git history); the assertions are kept verbatim — this is
 // THE never-regress oracle (§16.2: "a bundle cannot reach the network or any native
 // capability except through the SDK"). It defines `__whimRunProbes()` → Promise<Result>.
 //

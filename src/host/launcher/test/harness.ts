@@ -1,28 +1,39 @@
 /**
- * Tiny shared test harness for the launcher Node suites (back-policy, app-index, store-access).
- * Mirrors the version-store / storage-engine acceptance idiom: ok/eq/test, a running pass
- * count, and a failure list the runner reports + exits non-zero on.
+ * Shared test harness for the launcher Node suites: ok/eq/test, a running pass count, and a
+ * failure list the runner reports and exits non-zero on. ok and eq delegate to node:assert
+ * (CLAUDE.md "Test assertions"); a failed assertion is recorded, not thrown, so one run reports
+ * every failure.
  */
+
+import nodeAssert from 'node:assert';
+import { inspect } from 'node:util';
+
+function show(value: unknown): string {
+  return inspect(value, { depth: 6, breakLength: Infinity });
+}
 
 export class Harness {
   passed = 0;
   failures: string[] = [];
 
   ok(passedCheck: boolean, msg: string): void {
-    if (passedCheck) {
-      this.passed++;
-      return;
-    }
-
-    this.failures.push(msg);
-    console.error('  ✗ ' + msg);
+    this.record(() => nodeAssert.ok(passedCheck, msg), msg);
   }
 
+  /** Deep, strict equality: key order doesn't matter, but an extra key holding `undefined` does. */
   eq(a: unknown, b: unknown, msg: string): void {
-    this.ok(
-      JSON.stringify(a) === JSON.stringify(b),
-      `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`,
-    );
+    this.record(() => nodeAssert.deepStrictEqual(a, b, msg), `${msg} (got ${show(a)}, want ${show(b)})`);
+  }
+
+  private record(assertion: () => void, failure: string): void {
+    try {
+      assertion();
+      this.passed++;
+    } catch (err) {
+      if (!(err instanceof nodeAssert.AssertionError)) throw err;
+      this.failures.push(failure);
+      console.error('  ✗ ' + failure);
+    }
   }
 
   async test(name: string, fn: () => void | Promise<void>): Promise<void> {

@@ -1,9 +1,10 @@
 # Sandbox-isolation invariant
 
-The forbidden-globals + escape **probe checklist**, preserved from Spike 1
-(`spike-sandbox-runtime`). This is the seed of the spec **§16.2 network/native-
-isolation invariant** and the **Spike 6** headless CI suite — what §28 calls the
-most important never-regress assertion in the codebase.
+The forbidden-globals + escape **probe checklist** from Spike 1
+(`spike-sandbox-runtime`), now run against the real build. It is the spec **§16.2
+network/native-isolation invariant** — what §28 calls the most important
+never-regress assertion in the codebase. The Spike-1 and Spike-2 sources it grew
+from were removed in 2026-09 and are in git history.
 
 ## What it asserts
 
@@ -37,21 +38,13 @@ so the suite fails loudly when containment is actually broken.
    non-configurable global. `Function`/`eval` are NOT value-replaced — that would
    break the React render path; CSP handles them.
 
-## Running it
-
-`sandbox-isolation-probe.html` is self-contained and rendering-independent (no
-React needed — containment is orthogonal to rendering). Load it in the target
-WebView; CI asserts `document.title === "WHIM_CONTAINED:true"` (also emitted as
-`console.log("WHIM_CONTAINMENT <json>")` for logcat scraping).
-
 > **D3 caveat:** the verdict only counts on the **real target engine** (Android
-> System WebView via react-native-webview), not desktop Chrome. Spike 1 confirmed
-> `contained:true` there (Android API 36, react-native-webview 13.16); Spike 6
-> wires this into on-device CI. Desktop Chrome is a fast pre-check only.
+> System WebView via react-native-webview), not desktop Chrome. Desktop Chromium is a fast
+> pre-check only.
 
 ## Retained v0.1 suite — `run-against-build.mjs` (the §16.2 blocking gate)
 
-`webview-sandbox-runtime` **productionized** these reference sources into the real runtime
+`webview-sandbox-runtime` **productionized** the Spike-1 sources into the real runtime
 (`src/runtime/web/{neutralize,resolver,probes,loader}.js` + the `vc-sdk` SDK + the esbuild
 build step). `run-against-build.mjs` is the promoted, never-regress suite: it assembles
 scenario pages from **this build's** runtime + bundles (via `build/assemble.mjs` +
@@ -59,19 +52,21 @@ scenario pages from **this build's** runtime + bundles (via `build/assemble.mjs`
 
 ```
 npm run build        # esbuild → runtime HTML + bundles + artifacts
-npm run invariants   # → 7 checks; exit 0 = held, 1 = regression
+npm run invariants   # exit 0 = held, 1 = regression
 ```
 
 What it asserts against the retained build:
-- **b-tip** (channel b): tip splitter CONTAINED (42/42 probes) + rendered + a tap round-trips
+- **b-tip** (channel b): tip splitter CONTAINED (every probe) + rendered + a tap round-trips
   to the host (sandbox-rendering) + paint measured.
 - **a-tip** (channel a): the pre-baked parser-inserted fallback is CONTAINED + renders.
 - **b-evil** (F4): a malicious bundle forges its verdict + spoofs control frames; the host
   REJECTS the unauthenticated frames (per-realm nonce, constraint #4) and the **trusted-vantage**
   verdict (closure-captured probes, constraint #3) still shows CONTAINED.
+- **A1**: a self-posted `__whimDeliver`/`__whimHostInit` is ignored (`ev.source` guard), while a
+  real host re-injection still advances the generation.
 - **reset re-injection** (constraint #5 seam): re-creating the iframe gives gen-2 a clean realm
-  (`anyPoison=false`); **same-realm re-injection** reproduces the T7 finding (`anyPoison=true`,
-  containment still holds) — the reason the reset seam exists.
+  (`anyPoison=false`, read from the trusted probes line).
+- **INV-TIMER**: a gen-1 SDK `interval` never ticks after a realm reset, with a no-reset control.
 - **c-blob**: a `blob:` `<script src>` stays REFUSED under the locked CSP (never widen script-src).
 - **broken-CSP negative control**: a deliberately weakened CSP (`'unsafe-eval'` added) is
   FLAGGED red — proving the suite is not vacuously green (task 8.3).
@@ -79,21 +74,3 @@ What it asserts against the retained build:
 CI: `.github/workflows/invariants.yml` runs `build` + `invariants` as a **blocking gate**
 (the Spike-6 seed). Desktop is the fast filter; the authoritative pass is on-device (§8).
 Invariants are authored by the runtime owners, never by a feature-implementing agent (§16.4).
-
-## `reference/`
-
-The readable, proven Spike-1 harness sources (the non-distilled originals the
-`.html` inlines), kept for v0.1 and Spike 6 to build from — the spike scaffold
-itself was deleted:
-
-- `neutralize.js` — the forbidden-globals neutralization shim
-- `probes.js` — the full probe checklist (incl. module-isolation probes)
-- `runner.js` — the transport shim + D3 shadowed execution scope + mount
-- `sdk.js` — the fake one-function SDK (`{ Button }`)
-- `bundle.js` — the hand-written ~20-line mini-app
-- `spike1-android-result.png` — the on-device result (26/26 pass, `contained=true`,
-  paint 11.8 ms) captured on the Android API 36 emulator. NOTE: 26/26 is the frozen
-  Spike-1 baseline, predating the T1–T7 adversarial probes; the promoted suite now runs
-  42/42 (the `b-tip` line above) — this screenshot is a historical artifact, not the
-  current probe count.
-

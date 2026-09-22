@@ -15,6 +15,8 @@
  *   §G  cues — syscall #2/#3 gated, fire-and-forget, at-most-once (effects-and-cues D5/D7)
  */
 
+import nodeAssert from 'node:assert';
+import { inspect } from 'node:util';
 import { createEngine } from '../../storage-engine/engine';
 import { createNodeSqlExecutor } from '../../storage-engine/bindings/node-sqlite';
 import { SchemaArtifact, StorageEngine } from '../../storage-engine/contract';
@@ -38,17 +40,24 @@ import {
 let passed = 0;
 const failures: string[] = [];
 
-function ok(passedCheck: boolean, msg: string): void {
-  if (passedCheck) {
+/** Delegates to node:assert (CLAUDE.md "Test assertions"); a failure is recorded, not thrown, so
+ *  one run reports every failure. */
+function record(assertion: () => void, msg: string): void {
+  try {
+    assertion();
     passed++;
-    return;
+  } catch (err) {
+    if (!(err instanceof nodeAssert.AssertionError)) throw err;
+    failures.push(msg);
+    console.error('  ✗ ' + msg);
   }
-
-  failures.push(msg);
-  console.error('  ✗ ' + msg);
 }
+function ok(passedCheck: boolean, msg: string): void {
+  record(() => nodeAssert.ok(passedCheck, msg), msg);
+}
+/** Deep, strict equality: key order doesn't matter, an extra key holding `undefined` does. */
 function eq(a: unknown, b: unknown, msg: string): void {
-  ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
+  record(() => nodeAssert.deepStrictEqual(a, b, msg), `${msg} (got ${inspect(a, { depth: 6 })}, want ${inspect(b, { depth: 6 })})`);
 }
 async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
