@@ -1,9 +1,5 @@
 /**
- * Node acceptance for the static-check pipeline (design D8/D9 — TDD per §16.2, tests-first).
- * Chain B authors the FULL B–E corpus up front; every `test()` call is tagged `greenBy` per
- * `handoff/greenby-harness.md`'s schedule. Under `.phase = 'B'` only the `greenBy:'B'` tests
- * are due — everything else is expected/tolerated PENDING (the public entry, `runStaticChecks`,
- * is a deliberate "not implemented" stub until Chains C/D/E build the passes it composes).
+ * Node acceptance for the static-check pipeline (design D8/D9).
  *
  * Black-box style throughout (design D8): every scenario test drives `runStaticChecks(source,
  * opts)` and reads the returned `CheckReport` — never a pass-internal function. Individual
@@ -11,20 +7,20 @@
  * (Chain C), not depended on here.
  *
  * Sections (one function per section below, run in order by `main()`):
- *   §B0  contract.ts + harness self-tests                          (greenBy: B)
- *   §B1  storage-surface scanner (one scanner, two consumers)      (greenBy: B)
- *   §C1  parse gate                                                 (greenBy: C)
- *   §C2  import allowlist                                           (greenBy: C)
- *   §C3  forbidden-global walk (T8) + shadowing + no-suppression    (greenBy: C)
- *   §D1  manifest extraction                                        (greenBy: D)
- *   §D2  capability declarations ⇄ use, both directions             (greenBy: D)
- *   §D3  screen graph                                                (greenBy: D)
- *   §D4  SDK lint                                                    (greenBy: D)
- *   §D5  schema check (validate + diff)                              (greenBy: D)
- *   §schema identity  edit continuity: burned IDs survive a rewrite  (untagged: due now)
- *   §storage continuity  edit continuity: reads survive a rewrite    (untagged: due now)
- *   §E1  assembly: ordering / purity / determinism                   (greenBy: E)
- *   §E2  honest fixtures (zero-diagnostics) + latency-probe pinned   (greenBy: E)
+ *   §B0  contract.ts
+ *   §B1  storage-surface scanner (one scanner, two consumers)
+ *   §C1  parse gate
+ *   §C2  import allowlist
+ *   §C3  forbidden-global walk (T8) + shadowing + no-suppression
+ *   §D1  manifest extraction
+ *   §D2  capability declarations ⇄ use, both directions
+ *   §D3  screen graph
+ *   §D4  SDK lint
+ *   §D5  schema check (validate + diff)
+ *   §schema identity  edit continuity: burned IDs survive a rewrite
+ *   §storage continuity  edit continuity: reads survive a rewrite
+ *   §E1  assembly: ordering / purity / determinism
+ *   §E2  honest fixtures (zero-diagnostics) + latency-probe pinned
  */
 
 import fs from 'node:fs';
@@ -119,10 +115,10 @@ export default defineApp({
 `;
 }
 
-// ── §B0 contract.ts + harness self-tests (greenBy: B) ──────────────────────
+// ── §B0 contract.ts ──────────────────────
 
 async function testContractAndHarnessSelfTests(): Promise<void> {
-  await test('B §contract: DiagnosticKind union is closed and matches the P4 verbatim-reused names', () => {
+  await test('contract: DiagnosticKind union is closed and matches the P4 verbatim-reused names', () => {
     const expected = [
       'parse_error',
       'disallowed_import',
@@ -170,7 +166,7 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     }
   });
 
-  await test('B §contract: the storage engine\'s VERB-TIME kinds are carried under the engine\'s own names', () => {
+  await test('contract: the storage engine\'s VERB-TIME kinds are carried under the engine\'s own names', () => {
     // The element type is the INTERSECTION of the two vocabularies, so a rename on either side
     // (engine union or `DIAGNOSTIC_KINDS`) fails to typecheck rather than silently drifting —
     // a run that sees a refused syscall must have the engine's own name for it.
@@ -187,7 +183,7 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     }
   });
 
-  await test('B §contract: the HOST-FAULT storage kinds not_open/corrupt_storage are NOT in the vocabulary', () => {
+  await test('contract: the HOST-FAULT storage kinds not_open/corrupt_storage are NOT in the vocabulary', () => {
     // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: these report the
     // harness's own engine state and carry no fix a candidate could apply, so they are surfaced
     // through the run report's trace — never renamed into a candidate diagnostic kind.
@@ -199,7 +195,7 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     }
   });
 
-  await test('B §contract: unobserved, failed and timed-out containment are three distinct kinds', () => {
+  await test('contract: unobserved, failed and timed-out containment are three distinct kinds', () => {
     // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: a verdict that was
     // never observed, a verdict that reported a breach, and a candidate that never painted are
     // three separate members — collapsing any two loses the distinction the repair loop reads.
@@ -210,7 +206,7 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     assert(new Set<string>(trio).size === 3, 'the three containment-related kinds must be distinct strings');
   });
 
-  await test('B §contract: the synthetic run mints no kind of its own — its roster is a subset of DIAGNOSTIC_KINDS', () => {
+  await test('contract: the synthetic run mints no kind of its own — its roster is a subset of DIAGNOSTIC_KINDS', () => {
     // Downstream stages extend the vocabulary additively THROUGH `checks/contract.ts`, never by
     // minting an ad-hoc kind string at the producer (same requirement).
     for (const k of RUNTIME_OBSERVED_KINDS) {
@@ -225,23 +221,13 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     );
   });
 
-  await test('B §contract: GLOBAL_ROOTS + FORBIDDEN_DIRECT_NAMES tables are well-formed', () => {
-    assert(GLOBAL_ROOTS.length > 0, 'GLOBAL_ROOTS must not be empty');
-    for (const root of ['window', 'globalThis', 'self', 'top', 'parent', 'frames']) {
-      assert((GLOBAL_ROOTS as readonly string[]).includes(root), `GLOBAL_ROOTS missing "${root}"`);
-    }
-    for (const name of ['eval', 'Function', 'document', 'fetch']) {
-      assert((FORBIDDEN_DIRECT_NAMES as readonly string[]).includes(name), `FORBIDDEN_DIRECT_NAMES missing "${name}"`);
-    }
-  });
-
-  await test('B §contract: CAPABILITY_EXPORTS has exactly storage + cues rows, no diag row', () => {
+  await test('contract: CAPABILITY_EXPORTS has exactly storage + cues rows, no diag row', () => {
     const caps = CAPABILITY_EXPORTS.map((r) => r.capability).sort((a, b) => a.localeCompare(b));
     assert(JSON.stringify(caps) === JSON.stringify(['cues', 'storage']), `expected capability rows [cues, storage], got [${caps.join(', ')}]`);
     assert(!CAPABILITY_EXPORTS.some((r) => r.capability === 'diag'), 'diag must have NO row (no SDK facade)');
   });
 
-  await test('B §contract: NAV_CALL_SHAPES ships exactly the nav.navigate target row', () => {
+  await test('contract: NAV_CALL_SHAPES ships exactly the nav.navigate target row', () => {
     assert(NAV_CALL_SHAPES.length === 1, `NAV_CALL_SHAPES must ship exactly one row, got ${NAV_CALL_SHAPES.length}`);
     const [row] = NAV_CALL_SHAPES;
     assert(
@@ -250,28 +236,16 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     );
   });
 
-  await test('B §contract: SDK_LINT_RULES steers setTimeout/setInterval/requestAnimationFrame', () => {
+  await test('contract: SDK_LINT_RULES steers setTimeout/setInterval/requestAnimationFrame', () => {
     const names = SDK_LINT_RULES.map((r) => r.globalName).sort((a, b) => a.localeCompare(b));
     assert(
       JSON.stringify(names) === JSON.stringify(['requestAnimationFrame', 'setInterval', 'setTimeout']),
       `expected the three raw-timer rule names, got [${names.join(', ')}]`,
     );
   });
-
-  const selfTestMarker: string[] = [];
-  await test('B §harness: legacy untagged test() call runs its body (defaults to greenBy:B, due now)', () => {
-    selfTestMarker.push('legacy-ran');
-  });
-  await test('B §harness: explicitly-tagged {greenBy:"B"} test() call runs its body', { greenBy: 'B' }, () => {
-    selfTestMarker.push('tagged-B-ran');
-  });
-  await test('B §harness: both due-now forms above actually executed (self-test)', () => {
-    assert(selfTestMarker.includes('legacy-ran'), 'the untagged test() call should have executed (greenBy defaults to B, which is due at phase B)');
-    assert(selfTestMarker.includes('tagged-B-ran'), 'the explicitly-tagged greenBy:B test() call should have executed');
-  });
 }
 
-// ── §B1 storage-surface scanner (greenBy: B) ───────────────────────────────
+// ── §B1 storage-surface scanner ───────────────────────────────
 // generation-pipeline req "The storage-surface instruction and the drift check read one
 // scanner". Driven through the PUBLIC entry (`checks/index.ts`) — that re-export is what the
 // generation server imports, so reaching into the module directly would not prove it exists.
@@ -287,7 +261,7 @@ function assertAnchors(src: string, at: { line: number; column: number }, token:
 }
 
 async function testStorageSurfaceScanner(): Promise<void> {
-  await test('B §storage-surface: literal kv keys are collected with their method and anchor', () => {
+  await test('storage-surface: literal kv keys are collected with their method and anchor', () => {
     const src = [
       "import { storage } from 'vc-sdk';",
       "const load = () => storage.kv.get('habitCompletionHistory');",
@@ -306,7 +280,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(surface.dynamic.length === 0, 'every argument was a literal — nothing dynamic');
   });
 
-  await test('B §storage-surface: literal record collections are collected, deduplicated, in source order', () => {
+  await test('storage-surface: literal record collections are collected, deduplicated, in source order', () => {
     const src = [
       "import { storage } from 'vc-sdk';",
       "const add = () => storage.records.append('Completions', { done: 1 });",
@@ -326,7 +300,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(surface.kvKeys.length === 0, 'a records-only source names no kv keys');
   });
 
-  await test('B §storage-surface: a computed argument is recorded as a dynamic site, not as a name', () => {
+  await test('storage-surface: a computed argument is recorded as a dynamic site, not as a name', () => {
     const src = [
       "import { storage } from 'vc-sdk';",
       'const key = (d: string) => `day-${d}`;',
@@ -346,7 +320,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assertAnchors(src, surface.dynamic[1] as { line: number; column: number }, 'c)', 'dynamic records site anchor');
   });
 
-  await test('B §storage-surface: a substitution-free template is a literal; an interpolated one is dynamic', () => {
+  await test('storage-surface: a substitution-free template is a literal; an interpolated one is dynamic', () => {
     const surface = scanStorageSurface(
       [
         "import { storage } from 'vc-sdk';",
@@ -361,7 +335,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(surface.dynamic.length === 1, `the interpolated template names no provable key — expected 1 dynamic site, got ${surface.dynamic.length}`);
   });
 
-  await test('B §storage-surface: KNOWN LIMIT — a facade held in a local alias is NOT collected', () => {
+  await test('storage-surface: KNOWN LIMIT — a facade held in a local alias is NOT collected', () => {
     // Documented, not accidental: aliasing would need value-flow analysis the checker does not
     // do. The failure mode is a missed guarantee (an uncollected read), never a false
     // accusation — continuity can only fire on locations the scanner DID collect.
@@ -375,7 +349,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(surface.dynamic.length === 0, 'and an aliased call is no dynamic site either — the scanner never saw a storage-facade call');
   });
 
-  await test('B §storage-surface: a `storage` that is not the vc-sdk import is never collected (binding resolution, not token matching)', () => {
+  await test('storage-surface: a `storage` that is not the vc-sdk import is never collected (binding resolution, not token matching)', () => {
     const shadowed = scanStorageSurface(
       ["const storage = { kv: { get: (k: string) => k } };", "const read = () => storage.kv.get('total');"].join('\n'),
     );
@@ -387,7 +361,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(otherModule.kvKeys.length === 0, 'an import of `storage` from another module is not the SDK facade either');
   });
 
-  await test('B §storage-surface: the namespace-import form resolves too', () => {
+  await test('storage-surface: the namespace-import form resolves too', () => {
     const surface = scanStorageSurface(
       ["import * as sdk from 'vc-sdk';", "const read = () => sdk.storage.records.list('Notes');"].join('\n'),
     );
@@ -395,7 +369,7 @@ async function testStorageSurfaceScanner(): Promise<void> {
     assert(JSON.stringify(names) === JSON.stringify(['Notes']), `expected [Notes] via the namespace import, got [${names.join(', ')}]`);
   });
 
-  await test('B §storage-surface: a source with no storage use yields an empty surface', () => {
+  await test('storage-surface: a source with no storage use yields an empty surface', () => {
     const surface: StorageSurface = scanStorageSurface(appSource('[]'));
     assert(
       surface.kvKeys.length === 0 && surface.collections.length === 0 && surface.dynamic.length === 0,
@@ -404,10 +378,10 @@ async function testStorageSurfaceScanner(): Promise<void> {
   });
 }
 
-// ── §C1 parse gate (greenBy: C) — "Parse gate runs first and alone" ────────
+// ── §C1 parse gate — "Parse gate runs first and alone" ────────
 
 async function testParseGate(): Promise<void> {
-  await test('C §parse: a syntax error short-circuits — only parse_error diagnostics, at the offending line', { greenBy: 'C' }, () => {
+  await test('parse: a syntax error short-circuits — only parse_error diagnostics, at the offending line', () => {
     const src = "import { defineApp } from 'vc-sdk';\nconst x = ;\n";
     const r = runStaticChecks(src);
     const parseErr = assertHasKind(r, 'parse_error');
@@ -419,10 +393,10 @@ async function testParseGate(): Promise<void> {
   });
 }
 
-// ── §C2 import allowlist (greenBy: C) — "Imports resolve only to vc-sdk" ───
+// ── §C2 import allowlist — "Imports resolve only to vc-sdk" ───
 
 async function testImportAllowlist(): Promise<void> {
-  await test('C §imports: off-allowlist static specifiers are rejected, naming the specifier', { greenBy: 'C' }, () => {
+  await test('imports: off-allowlist static specifiers are rejected, naming the specifier', () => {
     for (const specifier of ['lodash', 'react', 'react/jsx-runtime', './local', 'vc-sdk/ui']) {
       const src = `import x from '${specifier}';\n`;
       const r = runStaticChecks(src);
@@ -432,14 +406,14 @@ async function testImportAllowlist(): Promise<void> {
     }
   });
 
-  await test('C §imports: require(...) is rejected with a hint naming vc-sdk', { greenBy: 'C' }, () => {
+  await test('imports: require(...) is rejected with a hint naming vc-sdk', () => {
     const src = "const x = require('vc-sdk');\n";
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'disallowed_import');
     assert(/vc-sdk/.test(d.hint), `hint should name vc-sdk, got: ${d.hint}`);
   });
 
-  await test('C §imports: dynamic import() is rejected regardless of specifier', { greenBy: 'C' }, () => {
+  await test('imports: dynamic import() is rejected regardless of specifier', () => {
     const src = "async function boot() { await import('vc-sdk'); }\n";
     const r = runStaticChecks(src);
     assertHasKind(r, 'disallowed_import', 'dynamic import() must be rejected even when the specifier is on-allowlist');
@@ -447,7 +421,7 @@ async function testImportAllowlist(): Promise<void> {
 
   // Spec "A re-export of a file path is rejected". `ok === false` is the check stage's refusal: the
   // pipeline builds only a candidate whose report is ok, so this one never reaches the build stage.
-  await test('C §imports: a re-export of a file path is rejected, naming the specifier', { greenBy: 'C' }, () => {
+  await test('imports: a re-export of a file path is rejected, naming the specifier', () => {
     const reExports: [string, string][] = [
       ["export * from '/etc/hosts';\n", '/etc/hosts'],
       ["export { x } from '../../server/src/main';\n", '../../server/src/main'],
@@ -463,7 +437,7 @@ async function testImportAllowlist(): Promise<void> {
   });
 
   // Spec "An import-equals require is rejected".
-  await test('C §imports: an import-equals require is rejected, naming the specifier', { greenBy: 'C' }, () => {
+  await test('imports: an import-equals require is rejected, naming the specifier', () => {
     const r = runStaticChecks("import cfg = require('./config.json');\n");
     const d = assertHasKind(r, 'disallowed_import', 'no disallowed_import for an import-equals require');
     assert(d.symbol === './config.json', `expected symbol "./config.json", got "${String(d.symbol)}"`);
@@ -472,76 +446,110 @@ async function testImportAllowlist(): Promise<void> {
 
   // Non-vacuity for the two cases above: the same positions naming `vc-sdk` draw nothing, so the
   // pass reads the specifier in each position rather than refusing the syntax wholesale.
-  await test('C §imports: re-export and import-equals forms naming vc-sdk are not flagged', { greenBy: 'C' }, () => {
+  await test('imports: re-export and import-equals forms naming vc-sdk are not flagged', () => {
     for (const src of ["export { Screen } from 'vc-sdk';\n", "export * from 'vc-sdk';\n", "import sdk = require('vc-sdk');\n"]) {
       assertNoKind(runStaticChecks(src), 'disallowed_import', `"${src.trim()}" names only vc-sdk and must not be flagged`);
     }
   });
 }
 
-// ── §C3 forbidden-global walk (greenBy: C) — "Forbidden-global walk closes T8" ──
+// ── §C3 forbidden-global walk — "Forbidden-global walk closes T8" ──
 
 async function testForbiddenGlobalsWalk(): Promise<void> {
-  await test('C §globals: direct reference to a forbidden name is flagged', { greenBy: 'C' }, () => {
+  // The names the sandbox must never hand a mini-app: codegen, the DOM root, and the runtime's
+  // neutralize list (network, ambient persistence, threads). Written out here, not read from the
+  // checker's own table, so dropping a name from the table fails this test. Names the table adds
+  // later are exercised too.
+  const mustFlag = new Set([
+    'eval', 'Function', 'document',
+    'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'RTCPeerConnection',
+    'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'Worker', 'SharedWorker',
+    ...FORBIDDEN_DIRECT_NAMES,
+  ]);
+  const roots = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames', ...GLOBAL_ROOTS]);
+
+  await test('globals: every forbidden name is flagged as a bare reference and through every global root', () => {
+    for (const name of mustFlag) {
+      for (const src of [`const r = ${name};\nvoid r;\n`, ...[...roots].map((root) => `const r = ${root}.${name};\nvoid r;\n`)]) {
+        assertHasKind(runStaticChecks(src), 'forbidden_global', `expected forbidden_global for ${JSON.stringify(src)}`);
+      }
+    }
+  });
+
+  await test('globals: every global root is flagged when read directly', () => {
+    for (const root of roots) {
+      assertHasKind(runStaticChecks(`const r = ${root}.whatever;\nvoid r;\n`), 'forbidden_global', `expected forbidden_global for ${root}.whatever`);
+    }
+  });
+
+  await test('globals: a parameter that shadows a forbidden name or root is never flagged', () => {
+    // `eval` can't be a binding name in a module (strict mode), so it has no shadowing case.
+    for (const name of [...mustFlag, ...roots].filter((n) => n !== 'eval')) {
+      const src = `function f(${name}: string): string {\n  return ${name} + '!';\n}\nf('a');\n`;
+      assertNoKind(runStaticChecks(src), 'forbidden_global', `a parameter named ${name} must not be flagged`);
+    }
+  });
+
+  await test('globals: direct reference to a forbidden name is flagged', () => {
     const r = runStaticChecks("fetch('http://evil.example');\n");
     assertHasKind(r, 'forbidden_global');
   });
 
-  await test('C §globals: bare reference to a global root is itself flagged', { greenBy: 'C' }, () => {
+  await test('globals: bare reference to a global root is itself flagged', () => {
     const r = runStaticChecks('const x = globalThis;\nvoid x;\n');
     assertHasKind(r, 'forbidden_global');
   });
 
-  await test('C §globals: member access through an alias is flagged (taint follows lexical assignment)', { greenBy: 'C' }, () => {
+  await test('globals: member access through an alias is flagged (taint follows lexical assignment)', () => {
     const r = runStaticChecks("const g = globalThis;\nconst h = g;\nh.fetch('x');\n");
     assertHasKind(r, 'forbidden_global');
   });
 
-  await test('C §globals: computed access on a tainted alias is flagged even with an unknown key (token scan would miss it)', { greenBy: 'C' }, () => {
+  await test('globals: computed access on a tainted alias is flagged even with an unknown key (token scan would miss it)', () => {
     const src = "const g = globalThis;\nconst k = 'fe' + 'tch';\ng[k]('url');\n";
     const r = runStaticChecks(src);
     assertHasKind(r, 'forbidden_global', 'no fetch token appears in the source — only binding resolution catches this');
   });
 
-  await test('C §globals: .constructor access is flagged (prototype-walk codegen)', { greenBy: 'C' }, () => {
+  await test('globals: .constructor access is flagged (prototype-walk codegen)', () => {
     const r = runStaticChecks("({}).constructor.constructor('return 1')();\n");
     assertHasKind(r, 'forbidden_global');
   });
 
-  await test('C §globals: Object.prototype pollution attempt is flagged, naming the pollution pattern', { greenBy: 'C' }, () => {
+  await test('globals: Object.prototype pollution attempt is flagged, naming the pollution pattern', () => {
     const r = runStaticChecks("Object.defineProperty(Object.prototype, 'x', { value: 1 });\n");
     assertHasKind(r, 'prototype_pollution');
   });
 
-  await test('C §globals: string-argument setTimeout/setInterval is flagged as implicit eval', { greenBy: 'C' }, () => {
+  await test('globals: string-argument setTimeout/setInterval is flagged as implicit eval', () => {
     const r = runStaticChecks("setTimeout('doEvil()', 1000);\n");
     assertHasKind(r, 'implicit_eval');
   });
 
-  await test('C §globals: honest shadowing (a local binding named like a forbidden global) is NOT flagged', { greenBy: 'C' }, () => {
+  await test('globals: honest shadowing (a local binding named like a forbidden global) is NOT flagged', () => {
     const src = "function f(fetch: string): string {\n  return fetch + '!';\n}\nf('a');\n";
     const r = runStaticChecks(src);
     assertNoKind(r, 'forbidden_global', 'a parameter named "fetch", used only as a plain local value, must not be flagged');
   });
 
-  await test('C §globals: a forbidden-global diagnostic carries a non-empty, SDK-shaped hint (harness-diagnostics req 1)', { greenBy: 'C' }, () => {
+  await test('globals: a forbidden-global diagnostic carries a non-empty, SDK-shaped hint (harness-diagnostics req 1)', () => {
     const r = runStaticChecks("fetch('http://evil.example');\n");
     const d = assertHasKind(r, 'forbidden_global');
     assert(d.hint.trim().length > 0, 'hint must be non-empty');
     assertAllWellFormed(r);
   });
 
-  await test('C §globals: no inline pragma suppresses a diagnostic (harness-diagnostics req 4)', { greenBy: 'C' }, () => {
+  await test('globals: no inline pragma suppresses a diagnostic (harness-diagnostics req 4)', () => {
     const src = "// whim-disable-next-line forbidden-global\nfetch('http://evil.example');\n";
     const r = runStaticChecks(src);
     assertHasKind(r, 'forbidden_global', 'a disable-style comment pragma must not suppress the diagnostic — there is no suppression mechanism');
   });
 }
 
-// ── §D1 manifest extraction (greenBy: D) — "app manifest is extracted statically" ──
+// ── §D1 manifest extraction — "app manifest is extracted statically" ──
 
 async function testManifestExtraction(): Promise<void> {
-  await test('D §manifest: computed capabilities are rejected (identifier indirection and string-built elements)', { greenBy: 'D' }, () => {
+  await test('manifest: computed capabilities are rejected (identifier indirection and string-built elements)', () => {
     const identifierSrc = appSource('someArray', 'defineApp', 'return null;', "const someArray = ['storage'];");
     const r1 = runStaticChecks(identifierSrc);
     const d1 = assertHasKind(r1, 'manifest_not_static');
@@ -552,7 +560,7 @@ async function testManifestExtraction(): Promise<void> {
     assertHasKind(r2, 'manifest_not_static');
   });
 
-  await test('D §manifest: extraction survives a later failure — the report still carries the manifest', { greenBy: 'D' }, () => {
+  await test('manifest: extraction survives a later failure — the report still carries the manifest', () => {
     const src = appSource('[]', 'defineApp', 'return null;', "fetch('http://evil.example');", 'Honest Name');
     const r = runStaticChecks(src);
     assert(r.ok === false, 'the forbidden-global violation must still fail the report');
@@ -562,10 +570,10 @@ async function testManifestExtraction(): Promise<void> {
   });
 }
 
-// ── §D2 capability directions (greenBy: D) ──────────────────────────────────
+// ── §D2 capability directions ──────────────────────────────────
 
 async function testCapabilityDirections(): Promise<void> {
-  await test('D §capabilities: used but undeclared → undeclared_capability error naming the capability (matches the bridge gate kind)', { greenBy: 'D' }, () => {
+  await test('capabilities: used but undeclared → undeclared_capability error naming the capability (matches the bridge gate kind)', () => {
     const src = appSource('[]', 'defineApp, storage', 'return null;', "storage.kv.set('k', 1);");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'undeclared_capability');
@@ -574,7 +582,7 @@ async function testCapabilityDirections(): Promise<void> {
     assert(/capabilities/.test(d.hint), `hint should show the corrected capabilities array, got: ${d.hint}`);
   });
 
-  await test('D §capabilities: declared but unused → unused_capability warning naming the capability', { greenBy: 'D' }, () => {
+  await test('capabilities: declared but unused → unused_capability warning naming the capability', () => {
     const src = appSource("['storage']");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'unused_capability');
@@ -582,38 +590,38 @@ async function testCapabilityDirections(): Promise<void> {
     assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
   });
 
-  await test('D §diagnostics: static undeclared_capability matches the runtime bridge gate kind string verbatim (harness-diagnostics req 2)', { greenBy: 'D' }, () => {
+  await test('diagnostics: static undeclared_capability matches the runtime bridge gate kind string verbatim (harness-diagnostics req 2)', () => {
     const src = appSource('[]', 'defineApp, storage', 'return null;', "storage.kv.get('k');");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'undeclared_capability');
     assert(d.kind === ('undeclared_capability' as DiagnosticKind), 'the static kind string must be identical to the bridge gate denial kind "undeclared_capability"');
   });
 
-  // ── §D2b capability shadow guard (greenBy: D, reviewer capfix Finding 1/3) — a root
+  // ── §D2b capability shadow guard (reviewer capfix Finding 1/3) — a root
   // identifier only counts as SDK-export use when it resolves to the `vc-sdk` import, not by
   // root-identifier-TEXT matching alone (a local shadow of the same name must not count).
 
-  await test('D §capabilities: a local shadow of an imported-but-unused SDK export is NOT counted as use — no false-positive undeclared_capability', { greenBy: 'D' }, () => {
+  await test('capabilities: a local shadow of an imported-but-unused SDK export is NOT counted as use — no false-positive undeclared_capability', () => {
     const src = appSource('[]', 'defineApp, storage', "const storage = { value: 'not the SDK' };\n  return storage.value;");
     const r = runStaticChecks(src);
     assertNoKind(r, 'undeclared_capability', 'a local const "storage" shadowing the (unused) vc-sdk import must not be treated as SDK use');
   });
 
-  await test('D §capabilities: a declared capability whose only "storage" reference is a local shadow still draws unused_capability — the shadow must not mask it', { greenBy: 'D' }, () => {
+  await test('capabilities: a declared capability whose only "storage" reference is a local shadow still draws unused_capability — the shadow must not mask it', () => {
     const src = appSource("['storage']", 'defineApp, storage', "const storage = { value: 'not the SDK' };\n  return storage.value;");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'unused_capability', 'the shadow must not suppress the genuinely-unused "storage" capability warning');
     assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
   });
 
-  await test('D §capabilities: a real vc-sdk storage use is still flagged undeclared (positive control — the fix must not over-correct)', { greenBy: 'D' }, () => {
+  await test('capabilities: a real vc-sdk storage use is still flagged undeclared (positive control — the fix must not over-correct)', () => {
     const src = appSource('[]', 'defineApp, storage', "storage.kv.set('k', 1);\n  return null;");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'undeclared_capability', 'a genuine vc-sdk storage use with no declared capability must still be flagged');
     assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
   });
 
-  await test('D §manifest: two default-exported defineApp calls draw a manifest_not_static diagnostic (duplicate lock-in)', { greenBy: 'D' }, () => {
+  await test('manifest: two default-exported defineApp calls draw a manifest_not_static diagnostic (duplicate lock-in)', () => {
     const src = `${appSource('[]')}
 export default defineApp({
   name: 'T2', initial: 'Home', screens: { Home }, capabilities: [],
@@ -625,10 +633,10 @@ export default defineApp({
   });
 }
 
-// ── §D3 screen graph (greenBy: D) — "Screen graph resolves statically" ─────
+// ── §D3 screen graph — "Screen graph resolves statically" ─────
 
 async function testScreenGraph(): Promise<void> {
-  await test('D §screens: unresolvable initial produces an error listing the declared screens', { greenBy: 'D' }, () => {
+  await test('screens: unresolvable initial produces an error listing the declared screens', () => {
     const src = `
 import { defineApp } from 'vc-sdk';
 function Home() { return null; }
@@ -641,7 +649,7 @@ export default defineApp({
     assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
 
-  await test('D §screens: a dangling nav.navigate target is rejected through the shipped call-shape row', { greenBy: 'D' }, () => {
+  await test('screens: a dangling nav.navigate target is rejected through the shipped call-shape row', () => {
     const src = `
 import { defineApp, nav } from 'vc-sdk';
 function Home() {
@@ -658,7 +666,7 @@ export default defineApp({
     assert(!!d && /Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d?.hint}`);
   });
 
-  await test('D §screens: a non-literal nav.navigate target is rejected conservatively', { greenBy: 'D' }, () => {
+  await test('screens: a non-literal nav.navigate target is rejected conservatively', () => {
     const src = `
 import { defineApp, nav } from 'vc-sdk';
 function Home() {
@@ -676,7 +684,7 @@ export default defineApp({
     assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
 
-  await test('D §screens: direct, aliased, and namespace vc-sdk navigation accept a declared literal target', { greenBy: 'D' }, () => {
+  await test('screens: direct, aliased, and namespace vc-sdk navigation accept a declared literal target', () => {
     const spellings = {
       direct: {
         imports: "import { defineApp, nav } from 'vc-sdk';",
@@ -709,7 +717,7 @@ export default defineApp({
     }
   });
 
-  await test('D §screens: aliased nav import rejects dangling and non-literal targets identically to direct nav', { greenBy: 'D' }, () => {
+  await test('screens: aliased nav import rejects dangling and non-literal targets identically to direct nav', () => {
     const calls = ["router.navigate('Settings');", "const target = 'Home';\n  router.navigate(target);"];
     const detected: boolean[] = [];
     for (const call of calls) {
@@ -728,7 +736,7 @@ export default defineApp({
     assert(detected.every(Boolean), `aliased vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
   });
 
-  await test('D §screens: namespace nav import rejects dangling and non-literal targets identically to direct nav', { greenBy: 'D' }, () => {
+  await test('screens: namespace nav import rejects dangling and non-literal targets identically to direct nav', () => {
     const calls = ["sdk.nav.navigate('Settings');", "const target = 'Home';\n  sdk.nav.navigate(target);"];
     const detected: boolean[] = [];
     for (const call of calls) {
@@ -748,7 +756,7 @@ export default defineApp({
     assert(detected.every(Boolean), `namespace vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
   });
 
-  await test('D §screens: unrelated, local, and shadowed nav bindings are not SDK navigation', { greenBy: 'D' }, () => {
+  await test('screens: unrelated, local, and shadowed nav bindings are not SDK navigation', () => {
     const sources = {
       unrelated: `
 import { defineApp } from 'vc-sdk';
@@ -775,7 +783,7 @@ export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabi
     assert(falselyFlagged.length === 0, `non-SDK nav bindings incorrectly flagged: [${falselyFlagged.join(', ')}]`);
   });
 
-  await test('D §screens: later-declared and hoisted shadows are not mistaken for vc-sdk navigation', { greenBy: 'D' }, () => {
+  await test('screens: later-declared and hoisted shadows are not mistaken for vc-sdk navigation', () => {
     const sources = {
       'later block-scoped direct nav': `
 import { defineApp, nav } from 'vc-sdk';
@@ -818,10 +826,10 @@ export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabi
   });
 }
 
-// ── §D4 SDK lint (greenBy: D) — "SDK lint steers toward the taught path" ───
+// ── §D4 SDK lint — "SDK lint steers toward the taught path" ───
 
 async function testSdkLint(): Promise<void> {
-  await test('D §sdk-lint: a raw setTimeout(fn, …) is a warning naming delay/interval', { greenBy: 'D' }, () => {
+  await test('sdk-lint: a raw setTimeout(fn, …) is a warning naming delay/interval', () => {
     const src = 'setTimeout(() => {}, 1000);\n';
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'raw_timer');
@@ -829,14 +837,14 @@ async function testSdkLint(): Promise<void> {
     assert(/delay|interval/.test(d.hint), `hint should name delay/interval, got: ${d.hint}`);
   });
 
-  await test('D §diagnostics: a warning alone still fails ok (harness-diagnostics req 3)', { greenBy: 'D' }, () => {
+  await test('diagnostics: a warning alone still fails ok (harness-diagnostics req 3)', () => {
     const r = runStaticChecks('setTimeout(() => {}, 1000);\n');
     assert(r.diagnostics.every((d) => d.severity !== 'error'), 'this fixture should produce only a warning, no error, to isolate the assertion');
     assert(r.ok === false, 'a report with one warning and zero errors must still be ok:false — no severity-threshold knob');
   });
 }
 
-// ── §D5 schema check (greenBy: D) — reuses the storage engine's pure functions ──
+// ── §D5 schema check — reuses the storage engine's pure functions ──
 
 async function testSchemaCheck(): Promise<void> {
   const APPLIED_ONE_TEXT_FIELD: AppliedSchema = {
@@ -847,7 +855,7 @@ async function testSchemaCheck(): Promise<void> {
     collections: { Notes: { id: 'c1', tombstones: [], fields: { body: { id: 'f1', type: 'int' } } } },
   };
 
-  await test('D §schema: a generation-time type_change conflict is caught before any run, hint matches the engine verbatim', { greenBy: 'D' }, () => {
+  await test('schema: a generation-time type_change conflict is caught before any run, hint matches the engine verbatim', () => {
     const engineDiff = diffSchemas(APPLIED_ONE_TEXT_FIELD, INCOMING_TYPE_CHANGE);
     assert(engineDiff.kind === 'conflict', 'test setup error: expected the engine itself to see this as a conflict');
     const engineHint = engineDiff.kind === 'conflict' ? engineDiff.errors.find((e) => e.kind === 'type_change')?.hint : undefined;
@@ -859,7 +867,7 @@ async function testSchemaCheck(): Promise<void> {
     assert(d.hint === engineHint, `checker hint must match the engine's fix hint verbatim; got "${d.hint}" vs engine "${engineHint}"`);
   });
 
-  await test('D §schema: first generation (no applied schema) validates shape only — no schema diagnostics', { greenBy: 'D' }, () => {
+  await test('schema: first generation (no applied schema) validates shape only — no schema diagnostics', () => {
     const src = schemaAppSource('text', true);
     const r = runStaticChecks(src);
     const schemaKinds: DiagnosticKind[] = [
@@ -869,7 +877,7 @@ async function testSchemaCheck(): Promise<void> {
     for (const k of schemaKinds) assertNoKind(r, k, `no ${k} expected on a well-formed first-generation schema`);
   });
 
-  await test('D §schema: validateArtifact kinds surface verbatim on a malformed schema literal', { greenBy: 'D' }, () => {
+  await test('schema: validateArtifact kinds surface verbatim on a malformed schema literal', () => {
     const src = schemaAppSource('not-a-real-type');
     const r = runStaticChecks(src);
     assertHasKind(r, 'bad_field_type');
@@ -881,7 +889,7 @@ async function testSchemaCheck(): Promise<void> {
     collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }, { id: 'f5', type: 'text' }], retired: [] }],
   };
 
-  await test('D §schema: reusing a never-allocated gap below the floor is id_below_floor, naming the field and hinting the next free id', { greenBy: 'D' }, () => {
+  await test('schema: reusing a never-allocated gap below the floor is id_below_floor, naming the field and hinting the next free id', () => {
     const src = schemaAppSourceFields({ a: { id: 'f1' }, e: { id: 'f5' }, c: { id: 'f3', default: '' } }, 'c1');
     const r = runStaticChecks(src, { appliedSchema: APPLIED_GAP });
     const d = assertHasKind(r, 'id_below_floor');
@@ -889,7 +897,7 @@ async function testSchemaCheck(): Promise<void> {
     assert(/f6/.test(d.hint), `hint should name the next free id "f6", got: ${d.hint}`);
   });
 
-  await test('D §schema: a retired column still raises the floor — a tombstoned ID stays burned', { greenBy: 'D' }, () => {
+  await test('schema: a retired column still raises the floor — a tombstoned ID stays burned', () => {
     const applied: AppliedSchema = {
       collections: [{ id: 'c1', active: [{ id: 'f2', type: 'text' }], retired: [{ id: 'f9', type: 'text' }] }],
     };
@@ -899,13 +907,13 @@ async function testSchemaCheck(): Promise<void> {
     assert(d.symbol === 'f5', `expected symbol "f5", got "${String(d.symbol)}"`);
   });
 
-  await test('D §schema: an allocation above the floor is clean — no id_below_floor', { greenBy: 'D' }, () => {
+  await test('schema: an allocation above the floor is clean — no id_below_floor', () => {
     const src = schemaAppSourceFields({ a: { id: 'f1' }, e: { id: 'f5' }, g: { id: 'f6', default: '' } }, 'c1');
     const r = runStaticChecks(src, { appliedSchema: APPLIED_GAP });
     assertNoKind(r, 'id_below_floor', 'f6 is above the f1/f5 floor of 5 — no diagnostic expected');
   });
 
-  await test('D §schema: a collection absent from the applied schema has no floor — any allocation is clean', { greenBy: 'D' }, () => {
+  await test('schema: a collection absent from the applied schema has no floor — any allocation is clean', () => {
     const appliedOtherCollection: AppliedSchema = {
       collections: [{ id: 'c9', active: [{ id: 'f1', type: 'text' }], retired: [] }],
     };
@@ -1151,10 +1159,10 @@ async function testStorageContinuity(): Promise<void> {
   });
 }
 
-// ── §E1 assembly: ordering / purity / determinism (greenBy: E) ─────────────
+// ── §E1 assembly: ordering / purity / determinism ─────────────
 
 async function testAssemblyOrderingPurity(): Promise<void> {
-  await test('E §assembly: independent passes accumulate (only the parse gate short-circuits)', { greenBy: 'E' }, () => {
+  await test('assembly: independent passes accumulate (only the parse gate short-circuits)', () => {
     const src = `
 import x from 'lodash';
 fetch('http://evil.example');
@@ -1179,7 +1187,7 @@ export default defineApp({
 });
 `;
 
-  await test('E §assembly: diagnostics from independent passes appear in PASSES declaration order, not source order', { greenBy: 'E' }, () => {
+  await test('assembly: diagnostics from independent passes appear in PASSES declaration order, not source order', () => {
     const r = runStaticChecks(MULTI_PASS_SRC);
     // Source order would put forbidden_global (line 5) before unresolved_screen (line 8) before
     // raw_timer (line 6) — but PASSES order is import-allowlist, forbidden-globals, ...,
@@ -1191,14 +1199,14 @@ export default defineApp({
     );
   });
 
-  await test('E §purity: the same source checked twice (any order) yields deeply-equal, non-trivial reports', { greenBy: 'E' }, () => {
+  await test('purity: the same source checked twice (any order) yields deeply-equal, non-trivial reports', () => {
     const r1 = runStaticChecks(MULTI_PASS_SRC);
     const r2 = runStaticChecks(MULTI_PASS_SRC);
     assert(r1.diagnostics.length > 1, 'purity fixture must produce more than one diagnostic — an empty-array comparison would be vacuous');
     assert(JSON.stringify(r1) === JSON.stringify(r2), 'two checks of the identical source must produce deeply-equal reports');
   });
 
-  await test('E §purity: a hostile top-level side effect is never observed — the checker never executes the source', { greenBy: 'E' }, () => {
+  await test('purity: a hostile top-level side effect is never observed — the checker never executes the source', () => {
     const sentinelKey = '__checksAcceptanceSentinel__';
     (globalThis as Record<string, unknown>)[sentinelKey] = false;
     const src = `(globalThis as any).${sentinelKey} = true;\nthrow new Error('this must never run');\n`;
@@ -1207,7 +1215,7 @@ export default defineApp({
   });
 }
 
-// ── §E2 honest fixtures + latency-probe pinned expected-flagged (greenBy: E) ──
+// ── §E2 honest fixtures + latency-probe pinned expected-flagged ──
 
 async function testHonestFixturesAndLatencyProbe(): Promise<void> {
   const HONEST_FIXTURES = [
@@ -1218,7 +1226,7 @@ async function testHonestFixturesAndLatencyProbe(): Promise<void> {
     'navigation-demo.app.tsx',
   ];
 
-  await test('E §honest-corpus: every real honest fixture is ok with zero diagnostics', { greenBy: 'E' }, () => {
+  await test('honest-corpus: every real honest fixture is ok with zero diagnostics', () => {
     for (const name of HONEST_FIXTURES) {
       const src = readFixture(name);
       const r = runStaticChecks(src);
@@ -1368,7 +1376,7 @@ export default defineApp({
 `,
   };
 
-  await test('E §honest-corpus: corpus-shaped synthetic samples are ok with zero diagnostics', { greenBy: 'E' }, () => {
+  await test('honest-corpus: corpus-shaped synthetic samples are ok with zero diagnostics', () => {
     for (const [label, src] of Object.entries(CORPUS_SAMPLES)) {
       const r = runStaticChecks(src);
       assert(r.ok === true, `corpus sample "${label}" should be ok, got diagnostics: ${JSON.stringify(r.diagnostics)}`);
@@ -1376,7 +1384,7 @@ export default defineApp({
     }
   });
 
-  await test('E §honest-corpus: latency-probe is pinned expected-flagged (raw __whimSyscall + facade-less diag), never in the honest set', { greenBy: 'E' }, () => {
+  await test('honest-corpus: latency-probe is pinned expected-flagged (raw __whimSyscall + facade-less diag), never in the honest set', () => {
     const src = readFixture('latency-probe.app.tsx');
     const r = runStaticChecks(src);
     assert(r.ok === false, 'latency-probe must NOT be zero-diagnostics — it deliberately bypasses the SDK');

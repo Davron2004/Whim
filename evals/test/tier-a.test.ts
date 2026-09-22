@@ -108,8 +108,8 @@ section('synthetic-run adapter: normalizes a recorded report fixture (design D6)
     diagnostics: [],
     declaredScreens: ['Home'],
     reachedScreens: ['Home'],
-    syscallsInvoked: ['storage.get', 'storage.set'],
-    cuesInvoked: ['cues.haptic'],
+    syscallsInvoked: ['storage.kv.get', 'storage.kv.set', 'storage.kv.set'],
+    cuesInvoked: [],
     containment: { authenticated: true, contained: true },
   });
 }

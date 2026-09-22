@@ -177,7 +177,7 @@ export async function runHostileCorpus(): Promise<void> {
     });
   }
 
-  await test('F §hostile-negative: dynamic deep-merge pollution boundary is documented, not silently claimed', () => {
+  await test('hostile-negative: dynamic deep-merge pollution boundary is documented, not silently claimed', () => {
     const r = runStaticChecks(KNOWN_BOUNDARY_SOURCE);
     assertNoKind(
       r,

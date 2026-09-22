@@ -94,8 +94,8 @@ export type Severity = 'error' | 'warning';
  *                                (req "SDK lint steers toward the taught path")
  *
  * Array-first: `DiagnosticKind` (below) is derived from `DIAGNOSTIC_KINDS` via `typeof …
- * [number]` so the type and the runtime self-check list (task 2.3's harness self-test —
- * greenBy:B) can never drift apart.
+ * [number]` so the type and the runtime self-check list (task 2.3's harness self-test)
+ * can never drift apart.
  */
 export const DIAGNOSTIC_KINDS = [
   // — new, authored here —

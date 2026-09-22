@@ -11,9 +11,10 @@
    jest-shaped test file; sonarjs's `*.test.ts` heuristic doesn't recognize it. Every
    `evals/test/*.test.ts` file needs this same line (D14 naming convention, pinned in the
    contract) — see `handoff/eval-contract.md`. */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { observationFromRunReport } from '../adapters/synthetic-run';
 import { evaluateAssertion } from '../assertions';
 import { ASSERTION_KINDS } from '../contract';
 import type { EvalAssertion, RunObservation } from '../contract';
@@ -25,8 +26,15 @@ import { caught, check, eq, section } from './harness';
 // Shared fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Declares `Detail` but only ever reaches `Home`; carries one error diagnostic and both storage
- *  legs plus one cue — enough surface for every kind's red case below. */
+/** A real synthrun run of `fixtures/water-counter.app.tsx`, so the syscall names are the ones the
+ *  SDK actually sends. */
+const RECORDED_OBSERVATION = observationFromRunReport(
+  'recorded-water-counter',
+  JSON.parse(readFileSync(join(process.cwd(), 'evals', 'test', 'fixtures', 'synthetic-run-report.json'), 'utf8')),
+);
+
+/** Declares `Detail` but only ever reaches `Home`; carries one error diagnostic, the recorded run's
+ *  storage syscalls and one cue — enough surface for every kind's red case below. */
 const BASE_OBSERVATION: RunObservation = {
   caseId: 'tier-b-fixture',
   diagnostics: [
@@ -34,7 +42,7 @@ const BASE_OBSERVATION: RunObservation = {
   ],
   declaredScreens: ['Home', 'Detail'],
   reachedScreens: ['Home'],
-  syscallsInvoked: ['storage.get', 'storage.set'],
+  syscallsInvoked: RECORDED_OBSERVATION.syscallsInvoked,
   cuesInvoked: ['cues.haptic'],
   containment: { authenticated: true, contained: true },
 };
@@ -42,8 +50,6 @@ const BASE_OBSERVATION: RunObservation = {
 /** Same shape, no diagnostics — the clean run used for `renders-without-error`'s green case. */
 const CLEAN_OBSERVATION: RunObservation = { ...BASE_OBSERVATION, diagnostics: [] };
 
-/** Wrote but never read back — `storage-roundtrip`'s red case. */
-const WRITE_ONLY_OBSERVATION: RunObservation = { ...BASE_OBSERVATION, syscallsInvoked: ['storage.set'] };
 
 function assertion(kind: EvalAssertion['kind'], target?: string, expected?: boolean): EvalAssertion {
   return {
@@ -77,16 +83,16 @@ check('this suite covers every closed assertion kind', ASSERTION_KINDS.length ==
 }
 
 {
-  const result = evaluateAssertion(assertion('syscall-invoked', 'storage.get'), BASE_OBSERVATION);
+  const result = evaluateAssertion(assertion('syscall-invoked', 'storage.kv.get'), BASE_OBSERVATION);
   eq('syscall-invoked: a recorded syscall passes', result.status, 'pass');
 }
 {
-  const result = evaluateAssertion(assertion('syscall-invoked', 'storage.delete'), BASE_OBSERVATION);
+  const result = evaluateAssertion(assertion('syscall-invoked', 'storage.kv.remove'), BASE_OBSERVATION);
   eq('syscall-invoked: an un-recorded syscall fails', result.status, 'fail');
   eq(
     'the failure lists the invocations actually recorded (spec "Syscall assertion reads the recorded trace")',
     (result.observed as { invoked: readonly string[] }).invoked,
-    ['storage.get', 'storage.set'],
+    RECORDED_OBSERVATION.syscallsInvoked,
   );
 }
 
@@ -129,13 +135,18 @@ check('this suite covers every closed assertion kind', ASSERTION_KINDS.length ==
   );
 }
 
-{
-  const result = evaluateAssertion(assertion('storage-roundtrip'), BASE_OBSERVATION);
-  eq('storage-roundtrip: a write and a read both recorded passes', result.status, 'pass');
+for (const [name, syscallsInvoked, want] of [
+  ['the recorded water-counter run (kv get + set)', RECORDED_OBSERVATION.syscallsInvoked, 'pass'],
+  ['a records append then list', ['storage.records.append', 'storage.records.list'], 'pass'],
+  ['a kv write with no read', ['storage.kv.set'], 'fail'],
+  ['a kv read with no write', ['storage.kv.get'], 'fail'],
+  ['a kv write and a records read (no single store round-tripped)', ['storage.kv.set', 'storage.records.list'], 'fail'],
+] as const) {
+  const result = evaluateAssertion(assertion('storage-roundtrip'), { ...BASE_OBSERVATION, syscallsInvoked });
+  eq(`storage-roundtrip: ${name} ${want === 'pass' ? 'passes' : 'fails'}`, result.status, want);
 }
 {
-  const result = evaluateAssertion(assertion('storage-roundtrip'), WRITE_ONLY_OBSERVATION);
-  eq('storage-roundtrip: a write with no matching read fails', result.status, 'fail');
+  const result = evaluateAssertion(assertion('storage-roundtrip'), { ...BASE_OBSERVATION, syscallsInvoked: ['storage.kv.set'] });
   eq(
     'the failure names which leg is missing',
     { wrote: (result.observed as { wrote: boolean }).wrote, read: (result.observed as { read: boolean }).read },

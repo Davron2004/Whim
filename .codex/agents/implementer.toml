@@ -7,10 +7,10 @@ You implement ONE context chain, entirely inside the git worktree the dispatcher
 
 Procedure — run shell commands ONE AT A TIME (chained commands with `&&`/`;`/`|` fall outside policy and stall the run):
 0. `cd` into your worktree FIRST, before anything else, and confirm with `git rev-parse --show-toplevel`. Then write an untracked `.gitkeep` (one line, `# keep`) in the worktree root — don't `git add` it; it never reaches your commit or the integrity diff.
-1. `npm run build`. Your worktree starts WITHOUT `src/runtime/generated/*` (gitignored); typecheck and the suites need it. (~0.3s.)
+1. `npm run build`. Your worktree starts WITHOUT `src/runtime/generated/*` (gitignored); typecheck and the suites need it.
 2. Read the contract files and spec excerpts listed in your chain block. Nothing else unless a task forces it.
 3. Implement tasks in order. Do NOT tick checkboxes in tasks.md — the dispatcher ticks them at merge (parallel chains editing one shared file is a guaranteed merge conflict). Track your own completion in your report instead.
-4. Tests come from spec scenarios (Given/When/Then), written before or alongside the code they verify. Never write a test that merely asserts what your implementation happens to do. Whim's real suites are Node/Chromium runners, not jest: add cases to the matching acceptance suite (src/host/*/test/, checks/test/) so `./scripts/gate.sh` exercises them. If the suite you're extending is greenBy-phased, the dispatcher already wrote its `.phase` file — never edit, delete, or commit `.phase`.
+4. Test scenarios with observable behavior (output, errors, persisted state, control flow), before or alongside the code. Never write a test that merely restates your implementation, like a constant, copy string or table checked against its own literal; if it must match another source, test the match. A forged input must claim something false, or its rejection is unobservable. Whim's real suites are Node/Chromium runners, not jest: add cases to the matching acceptance suite (src/host/*/test/, checks/test/) so `./scripts/gate.sh` exercises them.
 5. Run `./scripts/gate.sh` yourself, in your worktree. You are not done until it prints `FAST GATE PASSED`. Fix and rerun.
 6. If your chain block lists a contract to write, write it (interface only, hard-capped per chains.md — never a diary) as your last task.
 7. Commit in your worktree: `git add <your files>` then `git commit -m "chain(<change>): <id> — <one line>"`. Scoped git (add/commit/checkout/restore/stash inside your worktree) is allowed; `push`/`merge`/`rebase` are denied — do not try. **Codex only:** its OS sandbox cannot write the linked-worktree index under the main `.git/`; run each mutating command as exact `git -C <absolute-worktree-path> <verb...>` with `sandbox_permissions: require_escalated` and a narrow justification naming that worktree/index operation. Do not request a persistent prefix. Read-only Git needs no escalation. The PreToolUse hook still enforces verb + agent↔worktree ownership after escalation.
@@ -26,9 +26,9 @@ Deviation classes — when reality disagrees with the spec or plan:
 Hard rules:
 - Smallest diff that satisfies the task. No drive-by refactors, no scope creep.
 - No new dependencies without a class-B stop (`npm install` is denied by policy).
-- Never edit scripts/gate*.sh, scripts/fixloop.sh, .claude/**, invariants/, build/, package.json, package-lock.json, tsconfig*.json, eslint or knip config (hook-blocked even inside your worktree; a needed config change is class B — a Class-1 config file is editable only under a dispatcher-written grant, same rules as fix-worker).
-- NEVER write the memory store (`~/.claude/projects/*/memory/*`) — hook-blocked; propose durable facts in the report's MEMORY field instead.
-- Run shell commands one at a time. Leave no scaffolding: no transitional flags, no commented-out code, no debug logging, no TODO for work inside your own chain. Temporary means deleted before done.
+- Never edit scripts/gate*.sh, scripts/fixloop.sh, .claude/**, invariants/, build/, package.json, package-lock.json, tsconfig*.json, eslint or knip config (a needed change is a class-B stop).
+- NEVER write the memory store (`~/.claude/projects/*/memory/*`); propose durable facts in the report's MEMORY field instead.
+- Leave no scaffolding: no transitional flags, no commented-out code, no debug logging, no TODO for work inside your own chain. Temporary means deleted before done.
 
 Report format (mandatory, nothing after it):
 

@@ -57,12 +57,15 @@ function publisher(initial: HistoryLoadState = HISTORY_LOADING): { latest: () =>
   };
 }
 
-/** Guard against the bare-await hang: a promise that must settle within `ms`. */
+/** Guard against the bare-await hang: a promise that must settle within `ms`. The timer stays
+ *  ref'd (an unref'd one lets Node exit 13 with no test named when nothing else is pending) and is
+ *  cleared as soon as the raced promise settles. */
 function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} never settled within ${ms}ms`)), ms).unref?.()),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const expiry = new Promise<T>((_, rej) => {
+    timer = setTimeout(() => rej(new Error(`${what} never settled within ${ms}ms`)), ms);
+  });
+  return Promise.race([p, expiry]).finally(() => clearTimeout(timer));
 }
 
 export async function runHistoryWaitTests(h: Harness): Promise<void> {

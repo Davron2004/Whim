@@ -108,12 +108,20 @@ function policyOn(client: ModelClient, timeoutMs = 5000): ModelContentPolicy {
 async function testFailClosed(): Promise<void> {
   section('ModelContentPolicy — every failure mode throws PolicyUnavailableError, never allow');
 
-  // A timeout is not an allow.
+  // A timeout is not an allow. The policy's own AbortSignal.timeout timer is unref'd and nothing
+  // else keeps Node alive here, so race a ref'd deadline: a policy that never times out fails this
+  // check by name instead of ending the process with exit 13.
   {
     const client = fakeClient((_req, signal) => hangingStream(signal!));
     const policy = policyOn(client, 30);
-    const err = await caught(async () => { await policy.check('some text', 'generate'); });
-    check('timeout: throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<'no answer within 2s'>((resolve) => {
+      timer = setTimeout(() => resolve('no answer within 2s'), 2000);
+    });
+    const err = await Promise.race([caught(async () => { await policy.check('some text', 'generate'); }), deadline]).finally(() =>
+      clearTimeout(timer),
+    );
+    check('timeout: throws PolicyUnavailableError', err instanceof PolicyUnavailableError, String(err));
   }
 
   // Malformed classifier output (prose) is not an allow.
