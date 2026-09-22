@@ -32,7 +32,8 @@
         "invariants/**/*.mjs",
         "fixtures/**/*.app.tsx",
         "checks/test/**",
-        "evals/test/**"
+        "evals/test/**",
+        "evals/tiers/case.ts"
       ],
       "project": [
         "App.tsx",
@@ -51,9 +52,13 @@
       "entry": [
         "test/**",
         "src/main.ts",
-        "src/admin/main.ts"
+        "src/admin/main.ts",
+        "src/loadtest/drive.ts"
       ],
-      "project": "{src,test}/**/*.{ts,mjs}"
+      "project": "{src,test}/**/*.{ts,mjs}",
+      "ignoreDependencies": [
+        "playwright"
+      ]
     }
   }
 }

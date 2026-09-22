@@ -123,6 +123,42 @@ const SUCCESS_FRAMES = [
 
 const MODEL_ID = 'openai/gpt-4o-mini';
 
+const HTTP_ERROR_CTORS = {
+  auth: OpenRouterAuthError,
+  rate_limit: OpenRouterRateLimitError,
+  credit: OpenRouterCreditError,
+  network: OpenRouterNetworkError,
+} as const;
+
+/** §7.4a-c — pre-stream HTTP failures each map to their own typed error, and to no other one —
+ *  one table instead of three near-identical blocks, now including 402 (previously only exercised
+ *  mid-stream, never as the pre-stream HTTP status OpenRouter also uses for it). */
+async function testPreStreamHttpErrors(): Promise<void> {
+  const httpCases: { label: string; status: number; expected: keyof typeof HTTP_ERROR_CTORS }[] = [
+    { label: '401', status: 401, expected: 'auth' },
+    { label: '429', status: 429, expected: 'rate_limit' },
+    { label: '402', status: 402, expected: 'credit' },
+  ];
+  for (const c of httpCases) {
+    const client = new OpenRouterClient(makeSseFetch([], c.status));
+    const { deltas, usage: usagePromise } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    usagePromise.catch(() => undefined);
+    const err = await caught(async () => { await drain(deltas); });
+    check(`HTTP ${c.label}: mapped to its own typed error`, err instanceof HTTP_ERROR_CTORS[c.expected], String(err));
+    for (const [kind, ctor] of Object.entries(HTTP_ERROR_CTORS)) {
+      if (kind === c.expected) continue;
+      check(`HTTP ${c.label}: not ${ctor.name}`, !(err instanceof ctor));
+    }
+  }
+
+  // 401 also carries the "no chunk arrived" generation-id contract.
+  const authClient = new OpenRouterClient(makeSseFetch([], 401));
+  const { deltas, id: idPromise, usage } = authClient.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+  usage.catch(() => undefined);
+  await caught(async () => { await drain(deltas); });
+  eq('generation id: undefined when the stream ends without a chunk', await idPromise, undefined);
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 export async function runOpenRouterTests(): Promise<void> {
@@ -255,40 +291,7 @@ export async function runOpenRouterTests(): Promise<void> {
     }
   }
 
-  // §7.4a-c — pre-stream HTTP failures each map to their own typed error, and to no other one —
-  // one table instead of three near-identical blocks, now including 402 (previously only exercised
-  // mid-stream, never as the pre-stream HTTP status OpenRouter also uses for it).
-  {
-    const ERROR_CTORS = {
-      auth: OpenRouterAuthError,
-      rate_limit: OpenRouterRateLimitError,
-      credit: OpenRouterCreditError,
-      network: OpenRouterNetworkError,
-    } as const;
-    const httpCases: { label: string; status: number; expected: keyof typeof ERROR_CTORS }[] = [
-      { label: '401', status: 401, expected: 'auth' },
-      { label: '429', status: 429, expected: 'rate_limit' },
-      { label: '402', status: 402, expected: 'credit' },
-    ];
-    for (const c of httpCases) {
-      const client = new OpenRouterClient(makeSseFetch([], c.status));
-      const { deltas, usage: usagePromise } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
-      usagePromise.catch(() => undefined);
-      const err = await caught(async () => { await drain(deltas); });
-      check(`HTTP ${c.label}: mapped to its own typed error`, err instanceof ERROR_CTORS[c.expected], String(err));
-      for (const [kind, ctor] of Object.entries(ERROR_CTORS)) {
-        if (kind === c.expected) continue;
-        check(`HTTP ${c.label}: not ${ctor.name}`, !(err instanceof ctor));
-      }
-    }
-
-    // 401 also carries the "no chunk arrived" generation-id contract.
-    const authClient = new OpenRouterClient(makeSseFetch([], 401));
-    const { deltas, id: idPromise, usage } = authClient.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
-    usage.catch(() => undefined);
-    await caught(async () => { await drain(deltas); });
-    eq('generation id: undefined when the stream ends without a chunk', await idPromise, undefined);
-  }
+  await testPreStreamHttpErrors();
 
   // §7.4c — transport throw → network error, distinct from every HTTP-status-mapped error.
   {
