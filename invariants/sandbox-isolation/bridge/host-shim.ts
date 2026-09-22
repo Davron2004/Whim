@@ -4,7 +4,7 @@
  * The browser scenario pages run the REAL sandbox (Chromium enforces the #35 CSP + the iframe)
  * delivering a REAL hostile bundle over the REAL syscall transport; this shim is the host end
  * of that pipe — the SAME gate/dispatcher/registry modules the RN host uses, over a REAL
- * `node:sqlite` `:memory:` engine. It is exposed to the page via Playwright's `exposeFunction`,
+ * `node:sqlite` `:memory:` engine. It is exposed to the page via Playwright's `exposeBinding`,
  * so a syscall the bundle makes travels iframe → relay → `whimHostDispatch` (here) → engine and
  * back. The only thing simulated is "RN host" → "Node host"; the design's authoritative run is
  * still on-device (D8).
@@ -51,6 +51,11 @@ export interface Host {
   bumpGeneration: () => void;
   /** The recording cue backend wired into this host's registry (INV-CUEGATE asserts log==[]). */
   cueLog: string[];
+  /** Every sysret this host answered, parsed — the host-side record the checks judge by, instead of
+   *  the bundle's own rendered text (a bundle can print anything). */
+  sysrets: { method?: string; ok: boolean; error?: { kind?: string } }[];
+  /** The user tables in the app's SQLite database, read from `sqlite_master` on the host side. */
+  tables: () => string[];
 }
 
 /** Build a host over one app record. `manifestOverride` lets the negative control deliberately
@@ -63,15 +68,18 @@ export function makeHost(app: AppRecord, manifestOverride?: string[]): Host {
     ? { ...app, manifest: { capabilities: manifestOverride }, schemaArtifact: app.schemaArtifact ?? defaultSchema() }
     : app;
 
-  const launched = launchApp(effective, () => createEngine(createNodeSqlExecutor(':memory:')));
+  const executor = createNodeSqlExecutor(':memory:');
+  const launched = launchApp(effective, () => createEngine(executor));
   if (!launched.ok) throw new Error('host shim launch refused: ' + launched.error.hint);
   const realm = launched.realm;
   let dispatcher = Dispatcher.forRealm(realm, registry);
+  const sysrets: Host['sysrets'] = [];
 
   return {
     realm,
     dispatch: async (frameString: string): Promise<string | null> => {
       const sysret = await dispatcher.handle(frameString);
+      if (sysret) sysrets.push({ method: methodOf(frameString), ok: sysret.ok, error: sysret.ok ? undefined : sysret.error });
       return sysret ? JSON.stringify(sysret) : null;
     },
     bumpGeneration: (): void => {
@@ -79,7 +87,21 @@ export function makeHost(app: AppRecord, manifestOverride?: string[]): Host {
       dispatcher = Dispatcher.forRealm(realm, registry); // new generation → empty dedup, fresh id space
     },
     cueLog: cueBackend.log,
+    sysrets,
+    tables: () =>
+      executor
+        .execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .rows.map((row) => String(row.name)),
   };
+}
+
+function methodOf(frameString: string): string | undefined {
+  try {
+    const frame = JSON.parse(frameString) as { method?: unknown };
+    return typeof frame.method === 'string' ? frame.method : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A minimal schema so a misconfigured (manifest-override) host still has a store to open. */

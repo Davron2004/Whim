@@ -165,7 +165,7 @@ const browser = await chromium.launch();
   const after = f ? await f.evaluate(() => ({ gen: globalThis.__whimGeneration, ran: !!globalThis.__WHIM_SELFPOST_RAN })) : { gen: null, ran: true };
   // CONTROL: a real host re-injection (parent → ev.source === parent) must still bump the generation.
   await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'tip-splitter' })).catch(() => {});
-  await page.waitForTimeout(400);
+  if (f && genBefore !== null) await f.waitForFunction((g) => globalThis.__whimGeneration > g, genBefore, { timeout: 4000 }).catch(() => {});
   f = await appFrame();
   const genAfterLegit = f ? await f.evaluate(() => globalThis.__whimGeneration) : null;
   await page.close();
@@ -196,30 +196,16 @@ const browser = await chromium.launch();
   const anyPoison = pick(r.dom.probes, /anyPoison=(true|false)/);
   const contained = pick(r.dom.probes, /contained=(true|false)/);
   // after a reset the realm is fresh → gen counter restarts at 1; the key assertion is the
-  // victim sees NO gen-1 poison.
-  const cleanRealm = /realm appears clean|no generation-1 pollution|backdoor visible: false/i.test(r.iframeText) || anyPoison === 'false';
+  // victim sees NO gen-1 poison, read from the trusted probes line, never the victim's own text.
+  const cleanRealm = anyPoison === 'false';
   const ok = contained === 'true' && cleanRealm;
   record(ok, 'reset re-injection (constraint #5 seam)', `contained=${contained} gen-2 realm clean=${cleanRealm} (anyPoison=${anyPoison})`);
 }
 
-// 5. T7 finding (informational) — SAME-realm re-injection WITHOUT reset lets gen-1 poison
-//    persist into gen-2. This is a FINDING, not a containment failure (persistence ≠ escape):
-//    contained must still be true; anyPoison documents why the reset path above is required.
-{
-  const r = await run(browser, files['b-reinject'], {
-    drive: async (page) => {
-      await page.waitForFunction(() => /gen 1/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
-      await page.evaluate(() => globalThis.__whimControl.reinject({ reset: false, bundle: 'victim' }));
-      await page.waitForFunction(() => /gen 2/.test((document.getElementById('status') || {}).textContent || ''), { timeout: 8000 }).catch(() => {});
-      await page.waitForTimeout(400);
-    },
-  });
-  const anyPoison = pick(r.dom.probes, /anyPoison=(true|false)/);
-  const contained = pick(r.dom.probes, /contained=(true|false)/);
-  const ok = contained === 'true'; // containment holds even in a poisoned realm
-  record(ok, 'same-realm re-injection (T7 finding)', `contained=${contained} (persistence ≠ escape); anyPoison=${anyPoison} → reset IS required (constraint #5)`);
-  notes.push(`NOTE T7: same-realm gen-2 anyPoison=${anyPoison} (expected true; the reset seam above is what prevents it)`);
-}
+// 5. T7 (same-realm re-injection without a reset) is not checked here. probes.js runs once per
+//    realm, so a same-realm re-injection produces no generation-2 verdict to read; a check could
+//    only see the generation-1 line, which says nothing about persistence. The product never
+//    re-injects into a live realm: a realm reset recreates the iframe (constraint #5, check 4).
 
 // 5b. INV-TIMER (effects-and-cues task 7.1, timer teardown) — a gen-1 SDK `interval` can never
 //     tick into gen-2 after a realm reset. The timer-ticker fixture marks each tick observably by

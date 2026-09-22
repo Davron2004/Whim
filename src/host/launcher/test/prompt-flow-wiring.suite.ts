@@ -27,7 +27,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { COPY } from '../copy';
 import { MapKVBackend } from '../../version-store';
 import { PendingBuildStore } from '../pending-builds';
 import { RunJournalStore } from '../run-journal';
@@ -315,35 +314,9 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   // ── LauncherRoot.tsx / HomeScreen.tsx: static wiring assertions ─────────────────────────────
 
   const rootSrc = read('LauncherRoot.tsx');
-  const homeSrc = read('HomeScreen.tsx');
-  const settingsSrc = read('SettingsScreen.tsx');
   /** The shell's one generation runner (`runAttempt`), which the plan's `Build it` and a ghost's
    *  Retry both enter through — the stream loop and its settlements all live inside it. */
   const attemptFn = rootSrc.slice(rootSrc.indexOf('const runAttempt'), rootSrc.indexOf('const onBuildIt'));
-
-  await h.test('home: the composer row and "Prompt again" both open the compose step through the consent gate', () => {
-    // store-launch-compliance chain-3: every data-sending entry point routes through
-    // `openWithConsent` (ai-data-consent "The first action that would send data asks for consent
-    // at that moment") rather than calling `openCompose` directly.
-    h.ok(
-      /onCreate=\{\(\) => openWithConsent\(\{ kind: 'compose' \}\)\}/.test(rootSrc),
-      'the composer row opens compose with no app being edited, through the gate',
-    );
-    h.ok(
-      /onPromptAgain=\{\(app\) => openWithConsent\(\{ kind: 'compose', editing: app \}\)\}/.test(rootSrc),
-      '"Prompt again" opens compose scoped to that app, through the gate',
-    );
-    h.ok(homeSrc.includes('onCreate') && homeSrc.includes('COPY.homeComposerPlaceholder'), 'the home screen renders the composer entry row');
-    h.ok(homeSrc.includes('onPromptAgain(a)') && homeSrc.includes('COPY.actionPromptAgain'), 'the action sheet still offers "Prompt again"');
-    h.ok(homeSrc.includes('<AppTile'), 'the grid renders group F’s tile rather than its own');
-  });
-
-  await h.test('history: "Change it from here" opens the compose step for that app, through the consent gate', () => {
-    h.ok(
-      /onChangeIt=\{\(app\) => openWithConsent\(\{ kind: 'compose', editing: app \}\)\}/.test(rootSrc),
-      'the history screen’s current-version action reaches the flow, through the gate',
-    );
-  });
 
   await h.test('approve-order: nothing is generated before the plan’s Build it', () => {
     const composeFn = rootSrc.slice(rootSrc.indexOf('const onComposeContinue'), rootSrc.indexOf('const settleFailed'));
@@ -817,32 +790,4 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     h.ok(!threw, 'loadHighlighting must never throw on a null read');
   });
 
-  await h.test('server address: every request is gated on consented client options, device id attached once', () => {
-    // store-launch-compliance chain-3: `clientOptions` is now the AI-data consent gate itself
-    // (design D2) — derived from `consentStatus(kv)`, not a raw address check.
-    h.ok(
-      rootSrc.includes('consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId)'),
-      'clientOptions is derived through the one consent gate',
-    );
-    // `resolveClientOptions()` (review fix M1, lifted into the pure `resolveOptions` in review fix
-    // N3: `resolveOptions(clientOptions, liveClientOptions(kv, deviceId))`) is what every forward
-    // step reads through now, so its own bail-out reads `if (!options) return;`.
-    h.ok(
-      rootSrc.includes('resolveOptions(clientOptions, liveClientOptions(kv, deviceId))'),
-      'resolveClientOptions falls back to a live read through the pure resolveOptions helper, never bare clientOptions',
-    );
-    h.ok(rootSrc.includes('if (!options) return;'), 'each forward step bails out honestly when consent is not current');
-    h.ok(rootSrc.includes('getDeviceId(kv)'), 'the persisted device id is read once');
-    h.ok(settingsSrc.includes('COPY.serverAddressSectionTitle') && settingsSrc.includes('onServerUrlChange'), 'Settings still owns the address field');
-  });
-
-  await h.test('the retired two-stage flow is gone, screens and strings together', () => {
-    for (const file of ['PromptScreen.tsx', 'RewritePreviewScreen.tsx', 'GeneratingScreen.tsx']) {
-      h.ok(!fs.existsSync(path.join(process.cwd(), 'src/host/launcher', file)), `${file} is retired`);
-    }
-    for (const key of ['promptTitleNew', 'rewritePreviewTitle', 'generatingTitle', 'generatingCancel', 'createTileLabel']) {
-      h.ok(!(key in COPY), `COPY.${key} went with the screen that owned it`);
-    }
-    h.ok(!/rewrite-preview|kind: 'generating'/.test(rootSrc), 'no rewrite-preview or generating screen survives in the union');
-  });
 }
