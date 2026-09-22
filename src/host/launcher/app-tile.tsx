@@ -145,7 +145,6 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text
           style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]}
-          numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
         >
@@ -196,15 +195,21 @@ const styles = StyleSheet.create({
     // The glow itself is set at the call site — it is the tile's own resolved colour.
   },
   ghostMonogram: {
+    // `right: -8` alone (no `left`/`width`) let Yoga measure this Text against the tile's
+    // remaining inner width instead of its own intrinsic size, truncating wider two-letter
+    // monograms ("WC" -> "W…", issue #48). `alignSelf: 'flex-end'` anchors the box's right edge
+    // to the tile with no inset math involved, so the box always sizes to the full text; the
+    // `-8` bleed becomes a `translateX`, applied after that intrinsic sizing.
     position: 'absolute',
     top: -13,
-    right: -8,
+    alignSelf: 'flex-end',
+    transform: [{ translateX: 8 }],
     fontFamily: FONT_FAMILY.sansBold,
     fontSize: 62,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.16)',
   },
-  ghostMonogramDone: { top: -20, right: -12, fontSize: 92 },
+  ghostMonogramDone: { top: -20, transform: [{ translateX: 12 }], fontSize: 92 },
   foregroundMonogram: {
     fontFamily: FONT_FAMILY.sansSemiBold,
     fontSize: 19,

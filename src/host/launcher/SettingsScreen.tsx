@@ -12,8 +12,8 @@
 // sections, with the server address under Advanced"): AI features (opens the consent screen in
 // review mode), Highlighting (unchanged), About (privacy policy + support), Advanced (the server
 // address override, collapsed unless one is saved).
-import React, { useEffect, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
@@ -59,6 +59,8 @@ export interface SettingsScreenProps {
  *  this takes no palette-typed parameter of its own) — no hex literal of this screen's own.
  *  `verified` reads as done (teal), `unreachable` as the shell's danger red, `unverified` as the
  *  reserved muted grey — the only third distinct hue this token set offers. */
+const ADVANCED_CHEVRON_DURATION_MS = 200;
+
 function probeResultColor(result: ProbeResult, dangerColor: string): string {
   if (result === 'verified') return STATUS_COLORS.done;
   if (result === 'unreachable') return dangerColor;
@@ -80,6 +82,22 @@ export default function SettingsScreen({
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
   const [advancedOpen, setAdvancedOpen] = useState(() => advancedInitiallyOpen(serverUrl));
   const p = SHELL_PALETTE;
+
+  // The Advanced disclosure chevron rotates smoothly between closed (right) and open (down)
+  // rather than snapping — bare `Easing.ease` is CSS ease-IN (accelerates); `Easing.inOut(Easing.
+  // ease)` eases both ends instead, so the rotation settles rather than flicking.
+  const chevronAnim = useRef(new Animated.Value(advancedOpen ? 1 : 0)).current;
+  useEffect(() => {
+    const anim = Animated.timing(chevronAnim, {
+      toValue: advancedOpen ? 1 : 0,
+      duration: ADVANCED_CHEVRON_DURATION_MS,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: true,
+    });
+    anim.start();
+    return () => anim.stop();
+  }, [advancedOpen, chevronAnim]);
+  const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['-45deg', '45deg'] });
 
   // The debounced probe (design.md decision 3) is created once and lives for the screen's own
   // lifetime — `publish` is a stable `setState` dispatch, `probe` a stable module import, so no
@@ -195,11 +213,10 @@ export default function SettingsScreen({
           style={styles.advancedHeader}
         >
           <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
-          <View
+          <Animated.View
             style={[
               styles.advancedChevron,
-              { borderColor: p.textMuted },
-              advancedOpen ? styles.advancedChevronOpen : styles.advancedChevronClosed,
+              { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
             ]}
           />
         </TouchableOpacity>
@@ -303,9 +320,10 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingVertical: 10,
   },
+  // A box with its right+bottom borders visible draws a corner whose bisector points down-right
+  // (45deg); `chevronRotate` (-45deg closed / 45deg open) turns that corner to point right when
+  // collapsed and down when expanded, per `chevronAnim` above.
   advancedChevron: { width: 8, height: 8, borderRightWidth: 2, borderBottomWidth: 2 },
-  advancedChevronClosed: { transform: [{ rotate: '-45deg' }] },
-  advancedChevronOpen: { transform: [{ rotate: '135deg' }] },
   serverInput: { borderWidth: 1, borderRadius: RADIUS.field, paddingHorizontal: 12, paddingVertical: 10 },
   hint: { marginTop: 6 },
   useDefaultAction: { marginTop: 10 },

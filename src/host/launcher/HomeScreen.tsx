@@ -209,7 +209,14 @@ export default function HomeScreen({
         style={[styles.composer, { backgroundColor: p.card, borderColor: p.cardBorder }]}
       >
         <View style={[styles.composerPlus, { backgroundColor: p.accent }]}>
-          <Text style={[styles.composerPlusGlyph, { color: p.onAccent }]}>{'＋'}</Text>
+          {/* Drawn from two bars, not a '+' glyph: a text glyph's ascender/descender and side
+              bearings differ per platform/font and can never land exactly centered (it was
+              reading ~1px low-left). Two Views sharing one geometric center center by
+              construction, on every platform. */}
+          <View style={styles.composerPlusIcon}>
+            <View style={[styles.composerPlusBarH, { backgroundColor: p.onAccent }]} />
+            <View style={[styles.composerPlusBarV, { backgroundColor: p.onAccent }]} />
+          </View>
         </View>
         <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{COPY.homeComposerPlaceholder}</Text>
       </TouchableOpacity>
@@ -405,10 +412,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   composerPlus: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  /** design html:402 `font:400 17px/1`. A one-off icon glyph is not a typographic role, so it gets
-   *  a local face rather than a new `TYPE_SCALE` entry (R2 is scoped to roles) — the same
-   *  precedent as `app-tile.tsx`'s monogram faces. */
-  composerPlusGlyph: { fontFamily: FONT_FAMILY.sansRegular, fontSize: 17, lineHeight: 17, fontWeight: '400' },
+  // design html:402 sized the old glyph `font:400 17px/1`; the two-bar plus matches that visible
+  // ink size. Even dimensions throughout (14, 2, 6) so neither platform ever rounds to a half
+  // pixel, which is what let the two bars drift out of alignment in the first place.
+  composerPlusIcon: { width: 14, height: 14 },
+  composerPlusBarH: { position: 'absolute', top: 6, left: 0, width: 14, height: 2 },
+  composerPlusBarV: { position: 'absolute', top: 0, left: 6, width: 2, height: 14 },
   sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
   sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
