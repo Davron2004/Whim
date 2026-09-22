@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { loadNativeReleaseConfig, scanNativeLiterals, type NativeReleaseConfig, type NativeLiteralFinding } from './native-config';
 import { checkIosProject, type IosProjectFinding } from './ios-project';
 import { checkAndroidProject, type AndroidProjectFinding } from './android-project';
@@ -237,17 +237,24 @@ function javaHomeFromGradleProperties(repoRoot: string): string | undefined {
   return readPropertiesFile(path.join(repoRoot, 'android/gradle.properties')).get('org.gradle.java.home');
 }
 
+/**
+ * The major version in `java -version` output, or undefined when the banner has none. The JDK
+ * prints that banner on stderr (a JDK 21 install writes nothing to stdout), so callers hand in
+ * both streams joined.
+ */
+export function parseJdkMajorVersion(versionOutput: string): number | undefined {
+  const match = /version "(\d+)/.exec(versionOutput);
+  return match ? Number(match[1]) : undefined;
+}
+
 function jdkMajorVersion(repoRoot: string): number | undefined {
   const javaHome = javaHomeFromGradleProperties(repoRoot) ?? process.env.JAVA_HOME;
   const javaBin = javaHome ? path.join(javaHome, 'bin', 'java') : 'java';
-  try {
-    const output = execFileSync(javaBin, ['-version'], { encoding: 'utf8' });
-    const match = /version "(\d+)/.exec(output);
-    return match ? Number(match[1]) : undefined;
-    // eslint-disable-next-line no-restricted-syntax -- intentional: "no JDK found at this path" is reported as jdkMajorVersion===undefined, which evaluatePreflight already turns into a finding
-  } catch {
-    return undefined;
-  }
+  // "no JDK found at this path" (spawn error or non-zero exit) is reported as undefined, which
+  // evaluatePreflight already turns into a finding.
+  const result = spawnSync(javaBin, ['-version'], { encoding: 'utf8' });
+  if (result.error || result.status !== 0) return undefined;
+  return parseJdkMajorVersion(`${result.stdout}\n${result.stderr}`);
 }
 
 function xcodebuildPresent(): boolean {
