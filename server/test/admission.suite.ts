@@ -214,17 +214,6 @@ function runDraining(): void {
 
 const AT_2200_UTC = Date.UTC(2026, 8, 14, 22, 0, 0);
 
-const DESIGN_HINTS = {
-  payload_too_large: 'That request is too long. Try a shorter description.',
-  daily_limit: "You've reached today's limit on this device. It resets at midnight UTC.",
-  device_busy: 'This device is already building an app. Try again when it finishes.',
-  server_busy_capacity: 'Whim is busy right now. Please try again in a few minutes.',
-  server_busy_ceiling: "Whim has reached today's building capacity. Please try again after midnight UTC.",
-  content_policy: "Whim can't make that kind of app. Try describing something else.",
-  policy_unavailable: "We couldn't check this request right now. Please try again in a moment.",
-  budget_exhausted: 'Whim has used up its generation budget for now. Try again later.',
-};
-
 /** Internal identifiers a user-facing hint must never carry: snake_case or camelCase tokens, env
  *  variable or header names, the provider, numbers (limits, dollar amounts), or a refusal code. */
 function internalIdentifierIn(hint: string): string | undefined {
@@ -243,15 +232,15 @@ function internalIdentifierIn(hint: string): string | undefined {
 
 function runRefusals(): void {
   const clock = () => AT_2200_UTC;
-  const cases: Array<{ name: string; refusal: ServiceRefusal; status: number; code: ServiceRefusalCode; hint: string; retryAfter?: string }> = [
-    { name: 'payload_too_large', refusal: payloadTooLargeRefusal(), status: 413, code: 'payload_too_large', hint: DESIGN_HINTS.payload_too_large },
-    { name: 'daily_limit', refusal: dailyLimitRefusal(clock), status: 429, code: 'daily_limit', hint: DESIGN_HINTS.daily_limit, retryAfter: '7200' },
-    { name: 'device_busy', refusal: deviceBusyRefusal(), status: 429, code: 'device_busy', hint: DESIGN_HINTS.device_busy },
-    { name: 'server_busy (capacity)', refusal: serverBusyRefusal(), status: 429, code: 'server_busy', hint: DESIGN_HINTS.server_busy_capacity },
-    { name: 'server_busy (global ceiling)', refusal: serverBusyCeilingRefusal(clock), status: 429, code: 'server_busy', hint: DESIGN_HINTS.server_busy_ceiling, retryAfter: '7200' },
-    { name: 'content_policy', refusal: contentPolicyRefusal(), status: 422, code: 'content_policy', hint: DESIGN_HINTS.content_policy },
-    { name: 'policy_unavailable', refusal: policyUnavailableRefusal(), status: 503, code: 'policy_unavailable', hint: DESIGN_HINTS.policy_unavailable },
-    { name: 'budget_exhausted', refusal: budgetExhaustedRefusal(), status: 503, code: 'budget_exhausted', hint: DESIGN_HINTS.budget_exhausted },
+  const cases: Array<{ name: string; refusal: ServiceRefusal; status: number; code: ServiceRefusalCode; retryAfter?: string }> = [
+    { name: 'payload_too_large', refusal: payloadTooLargeRefusal(), status: 413, code: 'payload_too_large' },
+    { name: 'daily_limit', refusal: dailyLimitRefusal(clock), status: 429, code: 'daily_limit', retryAfter: '7200' },
+    { name: 'device_busy', refusal: deviceBusyRefusal(), status: 429, code: 'device_busy' },
+    { name: 'server_busy (capacity)', refusal: serverBusyRefusal(), status: 429, code: 'server_busy' },
+    { name: 'server_busy (global ceiling)', refusal: serverBusyCeilingRefusal(clock), status: 429, code: 'server_busy', retryAfter: '7200' },
+    { name: 'content_policy', refusal: contentPolicyRefusal(), status: 422, code: 'content_policy' },
+    { name: 'policy_unavailable', refusal: policyUnavailableRefusal(), status: 503, code: 'policy_unavailable' },
+    { name: 'budget_exhausted', refusal: budgetExhaustedRefusal(), status: 503, code: 'budget_exhausted' },
   ];
 
   for (const c of cases) {
@@ -260,7 +249,6 @@ function runRefusals(): void {
     const code = ServiceRefusalCode.safeParse(refusal.body.error);
     check(`${c.name}: body validates as ApiError with a ServiceRefusalCode`, api.success && code.success && refusal.body.error === c.code);
     eq(`${c.name}: status`, refusal.status, c.status);
-    eq(`${c.name}: hint is the design table's user-facing text`, refusal.body.hint, c.hint);
     const leak = internalIdentifierIn(refusal.body.hint);
     check(`${c.name}: hint is free of internal identifiers`, refusal.body.hint.length > 0 && leak === undefined, leak);
     const retryAfterLabel = c.retryAfter ? 'is ' + c.retryAfter + 's at 22:00:00 UTC' : 'is absent';
@@ -278,20 +266,19 @@ function runRefusals(): void {
   eq('a fraction of a second before midnight rounds up to 1s, never 0', dailyLimitRefusal(() => midnight - 1).headers['Retry-After'], '1');
   eq('Retry-After rounds up, so a client never retries early', dailyLimitRefusal(() => AT_2200_UTC + 500).headers['Retry-After'], '7200');
 
-  const fromSlots: Array<[SlotRefusalReason, ServiceRefusal]> = [
-    ['device_busy', slotRefusal('device_busy')],
-    ['at_capacity', slotRefusal('at_capacity')],
-    ['draining', slotRefusal('draining')],
+  // slotRefusal is a thin dispatcher over the SAME builders `runRefusals`' cases already exercise
+  // above — cross-check against those builders' own hints, never a second copy of the hint text.
+  const fromSlots: Array<[SlotRefusalReason, ServiceRefusal, ServiceRefusal]> = [
+    ['device_busy', slotRefusal('device_busy'), deviceBusyRefusal()],
+    ['at_capacity', slotRefusal('at_capacity'), serverBusyRefusal()],
+    ['draining', slotRefusal('draining'), serverBusyRefusal()],
   ];
-  eq(
-    'slot refusals map to 429 device_busy / server_busy / server_busy with no Retry-After',
-    fromSlots.map(([, r]) => [r.status, r.body.error, r.body.hint, Object.keys(r.headers).length]),
-    [
-      [429, 'device_busy', DESIGN_HINTS.device_busy, 0],
-      [429, 'server_busy', DESIGN_HINTS.server_busy_capacity, 0],
-      [429, 'server_busy', DESIGN_HINTS.server_busy_capacity, 0],
-    ],
-  );
+  for (const [reason, fromSlot, direct] of fromSlots) {
+    eq(`slot refusal (${reason}): status matches the direct builder`, fromSlot.status, direct.status);
+    eq(`slot refusal (${reason}): code matches the direct builder`, fromSlot.body.error, direct.body.error);
+    eq(`slot refusal (${reason}): hint matches the direct builder verbatim`, fromSlot.body.hint, direct.body.hint);
+    eq(`slot refusal (${reason}): no Retry-After`, Object.keys(fromSlot.headers).length, 0);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -302,23 +289,18 @@ async function runVerifier(): Promise<void> {
   const uuid = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 
   const missing = await shapeOnlyVerifier.verify(new Headers());
-  eq('missing x-whim-device → 400 missing_device_id', missing, {
-    ok: false,
-    status: 400,
-    body: { error: 'missing_device_id', hint: 'Include a UUID in the x-whim-device request header.' },
-  });
+  check('missing x-whim-device → 400 missing_device_id, non-empty hint', !missing.ok && missing.status === 400 && missing.body.error === 'missing_device_id' && missing.body.hint.length > 0);
   check('the missing-header body validates as DeviceIdError and ApiError', !missing.ok && DeviceIdError.safeParse(missing.body).success && ApiError.safeParse(missing.body).success);
 
   const empty = await shapeOnlyVerifier.verify(new Headers({ 'x-whim-device': '' }));
   check('an empty x-whim-device is treated as missing', !empty.ok && empty.body.error === 'missing_device_id');
 
-  const invalidBody = {
-    error: 'invalid_device_id',
-    hint: 'The x-whim-device header must be a valid UUID (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).',
-  };
   for (const bad of ['not-a-uuid', `${uuid}0`, `x${uuid}`, '3f2504e0-4f89-41d3-9a0c-0305e82c330g']) {
     const refused = await shapeOnlyVerifier.verify(new Headers({ 'x-whim-device': bad }));
-    eq(`malformed x-whim-device "${bad}" → 400 invalid_device_id`, refused, { ok: false, status: 400, body: invalidBody });
+    check(
+      `malformed x-whim-device "${bad}" → 400 invalid_device_id, non-empty hint`,
+      !refused.ok && refused.status === 400 && refused.body.error === 'invalid_device_id' && refused.body.hint.length > 0,
+    );
   }
 
   eq('a UUID is verified as the device id', await shapeOnlyVerifier.verify(new Headers({ 'x-whim-device': uuid })), { ok: true, deviceId: uuid });

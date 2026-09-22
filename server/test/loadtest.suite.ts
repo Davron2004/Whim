@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { caught, check, eq, section } from './harness';
-import { bundleServerEntry } from '../build.mjs';
+import { productionEntryInputs } from './build-fixtures';
 import type { ServerHandle, StartServerOptions, StartServerOverrides } from '../src/lifecycle';
 import type { ServerConfig } from '../src/config';
 import { runLoadtestServer, LoadtestConfigError, LOADTEST_ROSTER, LOADTEST_INERT_API_KEY, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
@@ -224,17 +224,15 @@ async function testMachineOverReplayModel(): Promise<void> {
 async function testProductionExclusion(): Promise<void> {
   section('the production entry bundle carries no server/src/loadtest/ input (design D26)');
 
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-loadtest-redcheck-'));
-  try {
-    const mainInputs = await bundleServerEntry({ entry: 'server/src/main.ts', outfile: path.join(scratch, 'main-probe.mjs'), write: false });
-    eq(
-      'no input under server/src/loadtest/ reaches the production entry',
-      mainInputs.filter((i) => i.startsWith('server/src/loadtest/')),
-      [],
-    );
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  }
+  // Shares its one bundle pass with prod-build.suite.ts's own scan of this same entry — no
+  // input under `server/src/loadtest/` was reaching it before this existed, but the bundle was
+  // computed twice per gate run to check two different things about it.
+  const mainInputs = await productionEntryInputs();
+  eq(
+    'no input under server/src/loadtest/ reaches the production entry',
+    mainInputs.filter((i) => i.startsWith('server/src/loadtest/')),
+    [],
+  );
 }
 
 // ── The load-test compose override (design D26) ──

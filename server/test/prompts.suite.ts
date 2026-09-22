@@ -39,6 +39,10 @@ import {
   buildPlanMessages,
   buildGenerateMessages,
   buildRepairMessages,
+  CURRENT_SOURCE_HEADING,
+  SOURCE_INCLUDED_CLAIM,
+  STORAGE_LOCATIONS_HEADING,
+  IDENTITY_CONTINUITY,
   type PromptPlan,
 } from '../src/generation/prompts';
 import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
@@ -83,30 +87,45 @@ const SUCCESS_FRAMES = [
 async function testModelClientAdapter(): Promise<void> {
   section('Model client adapter (openRouterModelClient) — fake transport, no live network');
 
-  // "The model id is a parameter": the resolved model id appears verbatim in the outgoing request.
-  {
-    let captured: { url: string; init?: RequestInit } | undefined;
-    const openRouter = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, (call) => { captured = call; }));
-    const client = openRouterModelClient(openRouter);
-    const { deltas } = client.stream({ model: 'test-vendor/engineer-model', messages: [{ role: 'user', content: 'hi' }] });
-    await drain(deltas);
-
-    check('adapter: request captured', captured !== undefined);
-    const body = JSON.parse((captured?.init?.body as string) ?? '{}') as Record<string, unknown>;
-    eq('adapter: model id passthrough is verbatim', body.model, 'test-vendor/engineer-model');
-  }
-
-  // The adapter forwards the abort signal (structural pass-through, no re-shaping).
+  // A full ModelRequest through the adapter: every field `openRouterModelClient` claims to map
+  // (design D3's "thin pass-through") must actually reach the outgoing body, and the abort signal
+  // must reach the transport by identity — not just the one field (model id) a narrower test would
+  // catch a dropped `maxTokens` or `reasoning` from missing entirely.
   {
     const controller = new AbortController();
     let captured: { url: string; init?: RequestInit } | undefined;
     const openRouter = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, (call) => { captured = call; }));
     const client = openRouterModelClient(openRouter);
-    const { deltas } = client.stream({ model: 'x/y', messages: [{ role: 'user', content: 'hi' }] }, controller.signal);
+    const { deltas } = client.stream(
+      {
+        model: 'test-vendor/engineer-model',
+        messages: [{ role: 'user', content: 'hi' }],
+        maxTokens: 4096,
+        reasoning: true,
+      },
+      controller.signal,
+    );
     await drain(deltas);
-    check('adapter: abort signal forwarded', captured?.init?.signal === controller.signal);
+
+    check('adapter: request captured', captured !== undefined);
+    const body = JSON.parse((captured?.init?.body as string) ?? '{}') as Record<string, unknown>;
+    eq('adapter: model id passthrough is verbatim', body.model, 'test-vendor/engineer-model');
+    eq('adapter: maxTokens reaches the wire as max_tokens', body.max_tokens, 4096);
+    eq('adapter: reasoning:true reaches the wire as {enabled:true}', body.reasoning, { enabled: true });
+    check('adapter: abort signal forwarded by identity', captured?.init?.signal === controller.signal);
   }
 
+  // The negative of the reasoning case: unset (the rewrite/clarify shape) never asks for it.
+  {
+    let captured: { url: string; init?: RequestInit } | undefined;
+    const openRouter = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, (call) => { captured = call; }));
+    const client = openRouterModelClient(openRouter);
+    const { deltas } = client.stream({ model: 'x/y', messages: [{ role: 'user', content: 'hi' }] });
+    await drain(deltas);
+    const body = JSON.parse((captured?.init?.body as string) ?? '{}') as Record<string, unknown>;
+    check('adapter: reasoning unset never asks the provider for it', !('reasoning' in body));
+    check('adapter: maxTokens unset is never sent', !('max_tokens' in body));
+  }
 }
 
 // ── §Prompt input loading ─────────────────────────────────────────────────────
@@ -311,55 +330,41 @@ async function testEditTurnPrompt(): Promise<void> {
 
   const inputs = loadPromptInputs(repoRoot);
 
+  // Presence/absence of the three section markers across every case — never the full sentence
+  // around them, so a reword of the instruction text doesn't fail this test.
   const withSource = userContent(
     buildGenerateMessages(
       { request: EDIT_WITH_SOURCE, plan: PLAN, schemaContext: '', storageSurface: SURFACE_LIST },
       inputs,
     ),
   );
-  check('generate (edit): the "Current source" block holds the source verbatim', withSource.includes(`Current source:\n${PREVIOUS_SOURCE}`));
-  check(
-    'generate (edit): the prompt claims the source is included — and it is',
-    withSource.includes('included below under "Current source"'),
-  );
-  check(
-    'generate (edit): the app keeps its name unless a rename was asked for',
-    withSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
-  );
-  check(
-    'generate (edit): existing concepts keep the IDs they already have',
-    withSource.includes('keeps the collection and field IDs it already has'),
-  );
+  check('generate (edit): the current-source block holds the source verbatim', withSource.includes(`${CURRENT_SOURCE_HEADING}\n${PREVIOUS_SOURCE}`));
+  check('generate (edit): the prompt claims the source is included — and it is', withSource.includes(SOURCE_INCLUDED_CLAIM));
+  check('generate (edit): identity continuity is carried', withSource.includes(IDENTITY_CONTINUITY));
   check('generate (edit): both storage locations are named', withSource.includes('habitCompletionHistory') && withSource.includes('Completions'));
-  check(
-    'generate (edit): the locations carry the keep-reading, add-do-not-replace instruction',
-    withSource.includes('Keep reading and writing these exact locations') && withSource.includes('never replace or rename an existing one'),
-  );
+  check('generate (edit): the storage-locations section is rendered', withSource.includes(STORAGE_LOCATIONS_HEADING));
 
   // Source absent (or failed pre-flight): the honest-regeneration path, unchanged — and no claim
   // that source is included, because it is not.
   const withoutSource = userContent(
     buildGenerateMessages({ request: EDIT_WITHOUT_SOURCE, plan: PLAN, schemaContext: '' }, inputs),
   );
-  check('generate (edit, no source): no "Current source" block', !withoutSource.includes('Current source:'));
-  check('generate (edit, no source): no claim that source is included', !withoutSource.includes('included below under "Current source"'));
+  check('generate (edit, no source): no current-source block', !withoutSource.includes(CURRENT_SOURCE_HEADING));
+  check('generate (edit, no source): no claim that source is included', !withoutSource.includes(SOURCE_INCLUDED_CLAIM));
   check('generate (edit, no source): the honest-regeneration instruction survives', withoutSource.includes('Regenerate it honestly from the manifest and schema'));
-  check('generate (edit, no source): no storage-location list', !withoutSource.includes('Storage locations the app being edited'));
-  check(
-    'generate (edit, no source): identity continuity still applies',
-    withoutSource.includes("Keep the app's current name unless this request explicitly asks to rename it."),
-  );
+  check('generate (edit, no source): no storage-locations section', !withoutSource.includes(STORAGE_LOCATIONS_HEADING));
+  check('generate (edit, no source): identity continuity still applies', withoutSource.includes(IDENTITY_CONTINUITY));
 
-  // A new app is unconstrained: none of the three continuity instructions.
+  // A new app is unconstrained: none of the three continuity markers.
   const newApp = userContent(buildGenerateMessages({ request: NEW_APP_REQUEST, plan: PLAN, schemaContext: '' }, inputs));
-  check('generate (new app): no "Current source" block', !newApp.includes('Current source:'));
-  check('generate (new app): no storage-location list', !newApp.includes('Storage locations the app being edited'));
-  check('generate (new app): no identity-continuity instruction', !newApp.includes("Keep the app's current name"));
+  check('generate (new app): no current-source block', !newApp.includes(CURRENT_SOURCE_HEADING));
+  check('generate (new app): no storage-locations section', !newApp.includes(STORAGE_LOCATIONS_HEADING));
+  check('generate (new app): no identity-continuity section', !newApp.includes(IDENTITY_CONTINUITY));
 
   // The plan turn does not render the source (design D2) — so it must not claim to.
   const planUser = userContent(buildPlanMessages({ request: EDIT_WITH_SOURCE, schemaContext: '', storageSurface: SURFACE_LIST }));
-  check('plan (edit): no "Current source" block', !planUser.includes('Current source:'));
-  check('plan (edit): does not claim the source is included', !planUser.includes('included below under "Current source"'));
+  check('plan (edit): no current-source block', !planUser.includes(CURRENT_SOURCE_HEADING));
+  check('plan (edit): does not claim the source is included', !planUser.includes(SOURCE_INCLUDED_CLAIM));
   check('plan (edit): still names the storage locations', planUser.includes('habitCompletionHistory'));
 }
 
@@ -453,10 +458,7 @@ async function testEditTurnThreading(): Promise<void> {
   check('machine: the generate prompt states the numeric floor', generateUser.includes('new field IDs start above 7'));
   check('machine: the repair prompt states the numeric floor', repairUser.includes('new field IDs start above 7'));
   check('machine: the floor is stated per collection', generateUser.includes('collection "c1": new field IDs start above 7'));
-  check(
-    'machine: the prompt asks the model to KEEP the existing IDs',
-    generateUser.includes('Keep the existing collection and field IDs for every concept that already has one'),
-  );
+  check('machine: the prompt asks the model to keep existing IDs (identity continuity is carried)', generateUser.includes(IDENTITY_CONTINUITY));
   check('machine: no avoid-these-IDs instruction survives', !/do not reuse/i.test(generateUser) && !/do not reuse/i.test(repairUser));
 }
 

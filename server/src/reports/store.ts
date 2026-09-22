@@ -76,6 +76,10 @@ export interface PurgeScheduleOptions {
   now?: () => number;
   /** Defaults to one hour (design D10: "Purge runs at boot and hourly"). */
   intervalMs?: number;
+  /** Called once after each purge run settles — the immediate (boot) run and every scheduled tick
+   *  after it. Lets a caller (a test) await a specific run deterministically instead of guessing
+   *  how long a purge takes with a fixed sleep. */
+  onTick?: () => void;
 }
 
 export interface PurgeSchedule {
@@ -92,10 +96,12 @@ export function schedulePurge(store: ReportStore, options: PurgeScheduleOptions)
 
   const runOnce = (): void => {
     const cutoffMs = now() - options.retentionDays * 86_400_000;
-    store.purgeOlderThan(cutoffMs).catch(() => {
-      // Swallowed deliberately: a failed scheduled purge must not crash the process or stop
-      // future ticks. The operator's `reports purge` subcommand surfaces a failure explicitly.
-    });
+    store.purgeOlderThan(cutoffMs)
+      .catch(() => {
+        // Swallowed deliberately: a failed scheduled purge must not crash the process or stop
+        // future ticks. The operator's `reports purge` subcommand surfaces a failure explicitly.
+      })
+      .finally(() => options.onTick?.());
   };
 
   runOnce();

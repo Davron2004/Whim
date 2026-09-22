@@ -20,7 +20,7 @@ import {
   machinePipeline,
   waitFor,
   within,
-} from './routes-generate.suite';
+} from './route-doubles';
 import { createApp } from '../src/app';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
@@ -146,7 +146,7 @@ async function testGenerateDisconnect(): Promise<void> {
   const tracker = new ResolveTracker();
   const inFlight = new InFlightGenerations();
   const app = createApp({
-    pipeline: observed(machinePipeline(model, { now: () => Date.now() }), seen),
+    pipeline: observed(machinePipeline(model, { now: () => Date.now() }, ROSTER), seen),
     usageStore,
     config: config(),
     slots,

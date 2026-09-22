@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { check, eq, section } from './harness';
+import { TIMED_OUT, within } from './route-doubles';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
 import { NodeSqliteUsageStore } from '../src/usage-store';
@@ -108,8 +109,9 @@ export async function runMeteringTests(): Promise<void> {
     eq('GET /v1/usage status 200', usageRes.status, 200);
     const usage = (await usageRes.json()) as { promptTokens: number; completionTokens: number; totalTokens: number };
 
-    // The stub pipeline emits a fixed usage — totalTokens must be > 0
-    check('readback: totalTokens > 0 after generation', usage.totalTokens > 0);
+    // The stub pipeline emits a fixed usage (createStubPipeline, src/pipeline.ts) — the exact
+    // amount, not merely "some usage was credited", so a double-credit doesn't pass this check.
+    eq('readback: the stub pipeline\'s exact usage was credited once', usage, { promptTokens: 42, completionTokens: 128, totalTokens: 170 });
 
     // Read usage for device B (should be zeros)
     const usageBRes = await app.request('/v1/usage', {
@@ -123,6 +125,30 @@ export async function runMeteringTests(): Promise<void> {
     eq('readback: route matches store promptTokens', usage.promptTokens, storeUsage.promptTokens);
     eq('readback: route matches store completionTokens', usage.completionTokens, storeUsage.completionTokens);
     eq('readback: route matches store totalTokens', usage.totalTokens, storeUsage.totalTokens);
+  }
+
+  // Money property: usage is credited BEFORE the terminal event reaches the client, not merely by
+  // the time the whole stream has closed — read the store the moment the `result` frame's bytes
+  // arrive, with the stream still open, never after `drainSse`/readSseResponse has consumed it.
+  {
+    const { app, usageStore } = testApp(':memory:');
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, { 'x-whim-device': DEVICE_A });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const readUntilResult = (async (): Promise<string> => {
+      let buffered = '';
+      while (!buffered.includes('"type":"result"')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += decoder.decode(value, { stream: true });
+      }
+      return buffered;
+    })();
+    const buffered = await within(readUntilResult, 5000);
+    check('setup: the result frame actually arrived before the stream closed', buffered !== TIMED_OUT && buffered.includes('"type":"result"'));
+    const usageAtResult = await usageStore.read(DEVICE_A);
+    eq('money: usage is already credited when the result frame is read, stream still open', usageAtResult, { promptTokens: 42, completionTokens: 128, totalTokens: 170 });
+    await reader.cancel();
   }
 
   // §6.4 — unknown id reads zeros, not error

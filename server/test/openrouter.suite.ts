@@ -255,43 +255,42 @@ export async function runOpenRouterTests(): Promise<void> {
     }
   }
 
-  // §7.4a — replayed 401 → auth error
+  // §7.4a-c — pre-stream HTTP failures each map to their own typed error, and to no other one —
+  // one table instead of three near-identical blocks, now including 402 (previously only exercised
+  // mid-stream, never as the pre-stream HTTP status OpenRouter also uses for it).
   {
-    const client = new OpenRouterClient(makeSseFetch([], 401));
-    const { deltas, usage: usagePromise, id: idPromise } = client.stream({
-      model: MODEL_ID,
-      messages: [{ role: 'user', content: 'hi' }],
-    });
-    // Suppress the usage rejection (same error as the delta throw)
-    usagePromise.catch(() => undefined);
-    const err = await caught(async () => {
-      await drain(deltas);
-    });
-    check('auth error: instanceof OpenRouterAuthError', err instanceof OpenRouterAuthError);
-    check('auth error: distinct from rate-limit', !(err instanceof OpenRouterRateLimitError));
-    check('auth error: distinct from network', !(err instanceof OpenRouterNetworkError));
+    const ERROR_CTORS = {
+      auth: OpenRouterAuthError,
+      rate_limit: OpenRouterRateLimitError,
+      credit: OpenRouterCreditError,
+      network: OpenRouterNetworkError,
+    } as const;
+    const httpCases: { label: string; status: number; expected: keyof typeof ERROR_CTORS }[] = [
+      { label: '401', status: 401, expected: 'auth' },
+      { label: '429', status: 429, expected: 'rate_limit' },
+      { label: '402', status: 402, expected: 'credit' },
+    ];
+    for (const c of httpCases) {
+      const client = new OpenRouterClient(makeSseFetch([], c.status));
+      const { deltas, usage: usagePromise } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+      usagePromise.catch(() => undefined);
+      const err = await caught(async () => { await drain(deltas); });
+      check(`HTTP ${c.label}: mapped to its own typed error`, err instanceof ERROR_CTORS[c.expected], String(err));
+      for (const [kind, ctor] of Object.entries(ERROR_CTORS)) {
+        if (kind === c.expected) continue;
+        check(`HTTP ${c.label}: not ${ctor.name}`, !(err instanceof ctor));
+      }
+    }
 
-    const generationId = await idPromise;
-    eq('generation id: undefined when the stream ends without a chunk', generationId, undefined);
+    // 401 also carries the "no chunk arrived" generation-id contract.
+    const authClient = new OpenRouterClient(makeSseFetch([], 401));
+    const { deltas, id: idPromise, usage } = authClient.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    usage.catch(() => undefined);
+    await caught(async () => { await drain(deltas); });
+    eq('generation id: undefined when the stream ends without a chunk', await idPromise, undefined);
   }
 
-  // §7.4b — replayed 429 → rate-limit error
-  {
-    const client = new OpenRouterClient(makeSseFetch([], 429));
-    const { deltas, usage: usagePromise } = client.stream({
-      model: MODEL_ID,
-      messages: [{ role: 'user', content: 'hi' }],
-    });
-    usagePromise.catch(() => undefined);
-    const err = await caught(async () => {
-      await drain(deltas);
-    });
-    check('rate-limit error: instanceof OpenRouterRateLimitError', err instanceof OpenRouterRateLimitError);
-    check('rate-limit error: distinct from auth', !(err instanceof OpenRouterAuthError));
-    check('rate-limit error: distinct from network', !(err instanceof OpenRouterNetworkError));
-  }
-
-  // §7.4c — transport throw → network error
+  // §7.4c — transport throw → network error, distinct from every HTTP-status-mapped error.
   {
     const transportErr = new Error('ECONNREFUSED');
     const client = new OpenRouterClient(makeThrowingFetch(transportErr));
@@ -306,6 +305,7 @@ export async function runOpenRouterTests(): Promise<void> {
     check('network error: instanceof OpenRouterNetworkError', err instanceof OpenRouterNetworkError);
     check('network error: distinct from auth', !(err instanceof OpenRouterAuthError));
     check('network error: distinct from rate-limit', !(err instanceof OpenRouterRateLimitError));
+    check('network error: distinct from credit', !(err instanceof OpenRouterCreditError));
   }
 
   // §7.4d — a 200 response with a null body throws a typed network error AND rejects the
@@ -357,7 +357,10 @@ export async function runOpenRouterTests(): Promise<void> {
       controller.abort();
     }
 
-    check('abort: signal forwarded in outgoing request-init', capturedCall?.init?.signal === controller.signal);
+    // Identity (`=== controller.signal`) would fail harmlessly on a client that links its own
+    // timeout in via `AbortSignal.any` — what actually matters is that the abort reaches the
+    // transport, i.e. the forwarded signal observes it.
+    check('abort: the forwarded signal observes the abort', capturedCall?.init?.signal?.aborted === true);
     check(
       'abort: iteration stopped promptly (did not drain all recorded deltas)',
       collected.length > 0 && collected.length < 3,

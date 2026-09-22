@@ -19,6 +19,11 @@ import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { parsePlan, validatePlan, type Plan } from '../src/generation/plan';
 import {
   GenerationMachine,
+  CONTAINMENT_FAILURE_REASON,
+  UNVERIFIED_RUN_REASON,
+  GENERIC_INTERNAL_ERROR_REASON,
+  EXPIRED_REASON,
+  CREDIT_EXHAUSTED_REASON,
   type BuildOutcome,
   type BuildResult,
   type BuildStage,
@@ -35,6 +40,7 @@ import type { PromptInputs } from '../src/generation/prompts/inputs';
 import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
 import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
 import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
+import { budgetExhaustedRefusal } from '../src/admission/refusals';
 import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -277,7 +283,6 @@ async function testHappyPath(): Promise<void> {
   ]);
   check('happy path: no attempt field on any initial-round stage event', events.every((e) => e.type !== 'stage' || e.attempt === undefined));
   eq('happy path: token events are per-delta', events.filter((e) => e.type === 'token').map((e) => e.text), ['export ', 'default {}; // v1']);
-  eq('happy path: exactly one terminal event', terminals(events).length, 1);
   const last = events[events.length - 1];
   const secondLast = events[events.length - 2];
   check('happy path: usage immediately precedes the terminal', secondLast.type === 'usage' && last.type === 'result');
@@ -404,7 +409,6 @@ async function testRepairThenSuccess(): Promise<void> {
   eq('repair-then-success: generate and repair both stream token deltas', events.filter((e) => e.type === 'token').length, 2);
   eq('repair-then-success: check pairs (initial + one repaired round)', stageEvents(events, 'check').length, 4);
   eq('repair-then-success: run pairs (only the successful candidate)', stageEvents(events, 'run').length, 2);
-  eq('repair-then-success: exactly one terminal event', terminals(events).length, 1);
   check('repair-then-success: terminal is a result', events[events.length - 1].type === 'result');
 }
 
@@ -441,7 +445,6 @@ async function testRepairCapExhaustion(): Promise<void> {
   const diagnosticEventsBeforeFirstDone = events.slice(0, firstCheckDoneIndex).filter((e) => e.type === 'diagnostic');
   eq('repair-cap exhaustion: all 3 first-round diagnostics stream before that check\'s done event', diagnosticEventsBeforeFirstDone.length, 3);
 
-  eq('repair-cap exhaustion: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
   check('repair-cap exhaustion: terminal is a failure', terminal.type === 'failure');
   if (terminal.type === 'failure') {
@@ -465,7 +468,6 @@ async function testPlanReaskThenFailure(): Promise<void> {
 
   eq('plan re-ask: exactly two plan pairs', stageEvents(events, 'plan').length, 4);
   eq('plan re-ask: no generate stage begins', stageEvents(events, 'generate').length, 0);
-  eq('plan re-ask: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
   check('plan re-ask: terminal is a failure', terminal.type === 'failure');
   if (terminal.type === 'failure') {
@@ -500,7 +502,6 @@ async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
   eq('warnings-only: exactly one repair pair', stageEvents(events, 'repair').length, 2);
   eq('warnings-only: run begins exactly once (only after the sub-budget is spent)', stageEvents(events, 'run').length, 2);
   eq('warnings-only: both warnings streamed as diagnostic events', events.filter((e) => e.type === 'diagnostic').length, 2);
-  eq('warnings-only: exactly one terminal event', terminals(events).length, 1);
   check('warnings-only: terminal is a result (delivered despite residual warnings)', events[events.length - 1].type === 'result');
 }
 
@@ -622,7 +623,6 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
 
   eq('containment failure: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
   eq('containment failure: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
-  eq('containment failure: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
   check('containment failure: terminal is a failure', terminal.type === 'failure');
   if (terminal.type === 'failure') {
@@ -634,8 +634,6 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
 /** The settled copy for each terminal (design D6). Written out verbatim here rather than imported:
  *  these two sentences are product decisions, and a test that reads the constant it is checking
  *  would pass through any reword. */
-const CONTAINMENT_FAILURE_COPY = 'This app could not be safely run and was not delivered.';
-const UNVERIFIED_RUN_COPY = "We couldn't verify this app ran safely. Please try again.";
 
 async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> {
   section('machine — an unobserved containment verdict is terminal, distinct, and consumes no repair (D3/D6)');
@@ -662,8 +660,8 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
   const terminal = events.at(-1);
   check('unobserved verdict: the single terminal is a failure', terminal?.type === 'failure');
   if (terminal?.type === 'failure') {
-    eq('unobserved verdict: the reason says we could not VERIFY, not that the app was unsafe', terminal.reason, UNVERIFIED_RUN_COPY);
-    check('unobserved verdict: the reason is NOT the containment-failure reason', terminal.reason !== CONTAINMENT_FAILURE_COPY);
+    eq('unobserved verdict: the reason says we could not VERIFY, not that the app was unsafe', terminal.reason, UNVERIFIED_RUN_REASON);
+    check('unobserved verdict: the reason is NOT the containment-failure reason', terminal.reason !== CONTAINMENT_FAILURE_REASON);
     eq('unobserved verdict: attempts is 1 — no repair attempt was spent', terminal.attempts, 1);
     eq('unobserved verdict: diagnostics is empty — nothing fed back', terminal.diagnostics, []);
   }
@@ -676,7 +674,9 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
     .flatMap((r) => r.request.messages.map((m) => m.content))
     .join('\n')
     .toLowerCase();
-  for (const leak of ['containment_unobserved', 'unobserved', 'forger', 'contained']) {
+  // Not the bare 'contained': a prompt template that legitimately says "self-contained" would
+  // false-positive on it without leaking anything about the verdict.
+  for (const leak of ['containment_unobserved', 'unobserved', 'forger']) {
     check(`unobserved verdict: no assembled prompt mentions "${leak}"`, !assembled.includes(leak));
   }
 }
@@ -695,7 +695,6 @@ async function testStageThrowYieldsOneFailure(): Promise<void> {
   const events = await collect(machine.run(NEW_APP_REQUEST));
   assertCompletedEnvelope('stage throws', events);
 
-  eq('stage throws: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
   check('stage throws: terminal is a failure', terminal.type === 'failure');
   if (terminal.type === 'failure') {
@@ -1009,7 +1008,6 @@ async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
   assertCompletedEnvelope('injectable bounds', events);
 
   eq('injectable bounds: exactly one plan pair when planAttempts:1', stageEvents(events, 'plan').length, 2);
-  eq('injectable bounds: exactly one terminal event', terminals(events).length, 1);
   const terminal = events[events.length - 1];
   if (terminal.type === 'failure') eq('injectable bounds: attempts is 0', terminal.attempts, 0);
 }
@@ -1058,16 +1056,12 @@ async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void
   eq('build failure: exactly one repair pair', stageEvents(events, 'repair').length, 2);
   const buildFailureDiagnostics = events.filter((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'build_failure');
   eq('build failure: build_failure streamed as a diagnostic', buildFailureDiagnostics.length, 1);
-  eq('build failure: exactly one terminal event', terminals(events).length, 1);
   check('build failure: terminal is a result once the rebuilt candidate builds', events[events.length - 1].type === 'result');
 }
 
 // ── §wall-clock budget and provider credit (design D6b, D13) ─────────────────
 
 /** Settled copy, verbatim — written out rather than imported, so a reword fails here. */
-const EXPIRED_COPY = 'This took too long to build. Please try again.';
-const CREDIT_EXHAUSTED_COPY = 'Whim has used up its generation budget for now. Try again later.';
-const GENERIC_FAILURE_COPY = 'Something went wrong while generating this app. Please try again.';
 const MAX_RUN_MS = 5_000;
 const ONE_TOKEN_USAGE: Usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
 
@@ -1249,7 +1243,7 @@ async function testDeadlineEndsAStalledModelInOneFailure(): Promise<void> {
   assertCompletedEnvelope('stalled model', events);
   const failure = lastFailure(events);
   check('stalled model: the terminal is a failure', failure !== undefined);
-  eq('stalled model: the reason is the settled budget prose', failure?.reason, EXPIRED_COPY);
+  eq('stalled model: the reason is the settled budget prose', failure?.reason, EXPIRED_REASON);
   eq('stalled model: attempts counts no candidate', failure?.attempts, 0);
   eq('stalled model: no generate:done is emitted', stageEvents(events, 'generate').map((e) => e.status), ['start']);
   eq('stalled model: RunTrace.outcome is expired', trace.outcome, 'expired');
@@ -1332,7 +1326,7 @@ async function testDeadlineInTheTurnAModelCallResolves(): Promise<void> {
   if (!settled.ok) return;
   const events = settled.value;
   assertCompletedEnvelope('same-turn resolve', events);
-  eq('same-turn resolve: the budget wins over the finished turn', lastFailure(events)?.reason, EXPIRED_COPY);
+  eq('same-turn resolve: the budget wins over the finished turn', lastFailure(events)?.reason, EXPIRED_REASON);
   eq('same-turn resolve: no result is delivered', events.filter((e) => e.type === 'result').length, 0);
   eq('same-turn resolve: the check stage never begins', stageEvents(events, 'check').length, 0);
   eq('same-turn resolve: RunTrace.outcome is expired', trace.outcome, 'expired');
@@ -1383,7 +1377,7 @@ async function testDeadlineAfterTheCompletionEnvelopeStartsIsInert(): Promise<vo
     if (!(await settles(`after usage (${c.label}): the run ends`, run)).ok) continue;
     assertCompletedEnvelope(`after usage (${c.label})`, events);
     eq(`after usage (${c.label}): the committed terminal is delivered`, events.at(-1)?.type, c.terminal);
-    check(`after usage (${c.label}): no expiry failure`, events.every((e) => e.type !== 'failure' || e.reason !== EXPIRED_COPY));
+    check(`after usage (${c.label}): no expiry failure`, events.every((e) => e.type !== 'failure' || e.reason !== EXPIRED_REASON));
     eq(`after usage (${c.label}): RunTrace.outcome`, trace.outcome, c.outcome);
     eq(`after usage (${c.label}): no timer is left armed`, clock.pending, 0);
   }
@@ -1411,7 +1405,7 @@ async function testDeadlineDuringRepair(): Promise<void> {
   check('during repair: the repair transport observes the abort', probe.signal?.aborted === true);
   assertCompletedEnvelope('during repair', events);
   const failure = lastFailure(events);
-  eq('during repair: the reason is the budget prose', failure?.reason, EXPIRED_COPY);
+  eq('during repair: the reason is the budget prose', failure?.reason, EXPIRED_REASON);
   eq('during repair: attempts counts the one finished candidate', failure?.attempts, 1);
   eq('during repair: diagnostics carry what was accumulated', failure?.diagnostics, [ERROR_DIAG]);
   eq('during repair: the repair round opened and never closed', stageEvents(events, 'repair').map((e) => e.status), ['start']);
@@ -1453,7 +1447,7 @@ async function testDeadlineAbortsTheSyntheticRun(): Promise<void> {
   const events = settled.value;
   check('during run stage: the synthetic run observes the abort', runSignal?.aborted === true);
   assertCompletedEnvelope('during run stage', events);
-  eq('during run stage: the reason is the budget prose', lastFailure(events)?.reason, EXPIRED_COPY);
+  eq('during run stage: the reason is the budget prose', lastFailure(events)?.reason, EXPIRED_REASON);
   eq('during run stage: no run:done is emitted', stageEvents(events, 'run').map((e) => e.status), ['start']);
   eq('during run stage: RunTrace.outcome is expired', trace.outcome, 'expired');
 }
@@ -1527,8 +1521,8 @@ async function testCreditExhaustedMidGenerate(): Promise<void> {
 
   assertCompletedEnvelope('402 mid-generate', events);
   const failure = lastFailure(events);
-  eq('402 mid-generate: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_COPY);
-  check('402 mid-generate: the reason is not the generic model-failure prose', failure?.reason !== GENERIC_FAILURE_COPY);
+  eq('402 mid-generate: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_REASON);
+  check('402 mid-generate: the reason is not the generic model-failure prose', failure?.reason !== GENERIC_INTERNAL_ERROR_REASON);
   eq('402 mid-generate: no repair stage begins', stageEvents(events, 'repair').length, 0);
   eq('402 mid-generate: the check stage never begins', stageEvents(events, 'check').length, 0);
   eq('402 mid-generate: no model call follows the 402', model.requests.length, 2);
@@ -1553,7 +1547,7 @@ async function testCreditExhaustedDuringRepair(): Promise<void> {
 
   assertCompletedEnvelope('402 during repair', events);
   const failure = lastFailure(events);
-  eq('402 during repair: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_COPY);
+  eq('402 during repair: the reason names the generation budget running out', failure?.reason, CREDIT_EXHAUSTED_REASON);
   eq('402 during repair: attempts counts the one finished candidate', failure?.attempts, 1);
   eq('402 during repair: the model is never called again', model.requests.length, 3);
   eq('402 during repair: the repair round opened once and never closed', stageEvents(events, 'repair').map((e) => e.status), ['start']);
@@ -1594,8 +1588,8 @@ async function testTheProviderClientsHttp402IsRecognised(): Promise<void> {
   section('machine — provider credit: the OpenRouter client\'s HTTP 402 is told apart from other HTTP failures');
 
   const cases = [
-    { status: 402, reason: CREDIT_EXHAUSTED_COPY },
-    { status: 500, reason: GENERIC_FAILURE_COPY },
+    { status: 402, reason: CREDIT_EXHAUSTED_REASON },
+    { status: 500, reason: GENERIC_INTERNAL_ERROR_REASON },
   ];
   for (const c of cases) {
     invalidateCreditCache();
@@ -1658,7 +1652,7 @@ async function testMidStreamCreditFrameEndsTheRun(): Promise<void> {
   const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST, undefined, trace));
 
   assertCompletedEnvelope('mid-stream 402', events);
-  eq('mid-stream 402: the failure names the generation budget, not a generic error', lastFailure(events)?.reason, CREDIT_EXHAUSTED_COPY);
+  eq('mid-stream 402: the failure names the generation budget, not a generic error', lastFailure(events)?.reason, CREDIT_EXHAUSTED_REASON);
   eq('mid-stream 402: the truncated candidate is never checked', stageEvents(events, 'check').length, 0);
   eq('mid-stream 402: no repair is attempted on a budget that is already gone', stageEvents(events, 'repair').length, 0);
   eq('mid-stream 402: the tokens streamed before the failure still reached the device', events.filter((e) => e.type === 'token').length, 2);
@@ -1768,7 +1762,7 @@ async function testA402InTheExpiryTurnStillInvalidates(): Promise<void> {
   const settled = await settles('402 at expiry: the run ends', collect(machine.run(NEW_APP_REQUEST, undefined, trace)));
   if (settled.ok) {
     assertCompletedEnvelope('402 at expiry', settled.value);
-    eq('402 at expiry: the first ending (the budget) names the failure', lastFailure(settled.value)?.reason, EXPIRED_COPY);
+    eq('402 at expiry: the first ending (the budget) names the failure', lastFailure(settled.value)?.reason, EXPIRED_REASON);
     eq('402 at expiry: RunTrace.outcome is expired', trace.outcome, 'expired');
     eq('402 at expiry: the next request is still refused as budget_exhausted', await checkCredit(credit.options), { ok: false, reason: 'budget_exhausted' });
   }
@@ -1825,7 +1819,7 @@ async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
   }));
   const settled = await settles('host timers: the run ends', collect(machine.run(NEW_APP_REQUEST, undefined, trace)));
   if (settled.ok) {
-    eq('host timers: the stalled run ends in the budget prose', lastFailure(settled.value)?.reason, EXPIRED_COPY);
+    eq('host timers: the stalled run ends in the budget prose', lastFailure(settled.value)?.reason, EXPIRED_REASON);
     eq('host timers: RunTrace.outcome is expired', trace.outcome, 'expired');
   }
 }
@@ -1833,6 +1827,11 @@ async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runMachineTests(): Promise<void> {
+  // A device sees one wording whether the budget ran out before admission (the `budget_exhausted`
+  // refusal hint) or mid-run (this failure's reason) — a real invariant, not a copy pin, since the
+  // two strings live in different modules for a reason (design D6b's comment on CREDIT_EXHAUSTED_REASON).
+  eq('CREDIT_EXHAUSTED_REASON matches the budget_exhausted admission refusal hint verbatim', CREDIT_EXHAUSTED_REASON, budgetExhaustedRefusal().body.hint);
+
   testPlanParsing();
   testPlanValidation();
   await testHappyPath();

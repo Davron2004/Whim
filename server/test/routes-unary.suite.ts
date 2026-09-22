@@ -27,7 +27,7 @@ import { InMemoryReportStore } from '../src/reports/store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createSlotController, DEFAULT_MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
-import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
+import { CLASSIFIER_SYSTEM_MARKER, cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import { ScriptedModelClient } from './scripted-model';
@@ -56,6 +56,7 @@ interface TestAppOpts {
   stub?: boolean;
   usageStore?: UsageStore;
   resolver?: { transport?: UsageAndCostTransport; tracker?: ResolveTracker };
+  probeFrameIntervalMs?: number;
 }
 
 function testApp(opts: TestAppOpts = {}) {
@@ -74,6 +75,7 @@ function testApp(opts: TestAppOpts = {}) {
     reportStore,
     stub: opts.stub,
     resolver: opts.resolver,
+    probeFrameIntervalMs: opts.probeFrameIntervalMs,
   });
   return { app, usageStore, reportStore, config };
 }
@@ -482,11 +484,65 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
   eq('the unary pool still admits a later request', after.status, 200);
 }
 
-async function testUnaryFailureRecovery(
-  kind: 'clarify' | 'rewrite',
-  failure: 'settle' | 'persistent-settle' | 'credit' | 'model',
-  stub = false,
-): Promise<void> {
+interface RecoveryCase {
+  kind: 'clarify' | 'rewrite';
+  failure: 'settle' | 'persistent-settle' | 'credit' | 'model';
+  stub?: boolean;
+  /** How many times cleanup tries `usageStore.settle`. */
+  settleCalls: number;
+  /** The "could not settle" secondary-failure log, or none. */
+  secondaryLog: Array<{ cause: string; detail: string }>;
+  /** The original ledger row's ended_at/outcome once cleanup has run. */
+  row: { endedAt: number | null; outcome: 'error' | null };
+  /** Tokens recorded on that row. */
+  recordedTokens: { promptTokens: number; completionTokens: number; totalTokens: number };
+  /** The device's usage total after a healthy request following recovery. */
+  finalRead: { promptTokens: number; completionTokens: number; totalTokens: number };
+}
+
+/** One row per (route, failure, stub) combination — the expected status/row/settle-count/credited
+ *  total written out literally, so a failing row can be read without re-deriving the branching
+ *  logic that used to compute these from the test's own parameters. */
+const RECOVERY_CASES: RecoveryCase[] = (['clarify', 'rewrite'] as const).flatMap((kind) => [
+  {
+    kind, failure: 'settle',
+    settleCalls: 2, secondaryLog: [],
+    row: { endedAt: FIXED_NOW, outcome: 'error' },
+    recordedTokens: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+    finalRead: { promptTokens: 2, completionTokens: 4, totalTokens: 6 },
+  },
+  {
+    kind, failure: 'persistent-settle',
+    settleCalls: 2, secondaryLog: [{ cause: STORE_BLIP_MESSAGE, detail: 'secondary settlement failure' }],
+    row: { endedAt: null, outcome: null },
+    recordedTokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    finalRead: { promptTokens: 2, completionTokens: 4, totalTokens: 6 },
+  },
+  {
+    kind, failure: 'credit',
+    settleCalls: 1, secondaryLog: [],
+    row: { endedAt: FIXED_NOW, outcome: 'error' },
+    recordedTokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    finalRead: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+  },
+  {
+    kind, failure: 'model',
+    settleCalls: 1, secondaryLog: [],
+    row: { endedAt: FIXED_NOW, outcome: 'error' },
+    recordedTokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    finalRead: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+  },
+  {
+    kind, failure: 'settle', stub: true,
+    settleCalls: 2, secondaryLog: [],
+    row: { endedAt: FIXED_NOW, outcome: 'error' },
+    recordedTokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    finalRead: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  },
+]);
+
+async function testUnaryFailureRecovery(recoveryCase: RecoveryCase): Promise<void> {
+  const { kind, failure, stub = false } = recoveryCase;
   invalidateCreditCache();
   const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'whim-unary-recovery-'));
   const dbPath = nodePath.join(dir, 'usage.sqlite');
@@ -525,18 +581,16 @@ async function testUnaryFailureRecovery(
     eq(`${label}: capacity is released after the error`, slots.counts().unary, 0);
     eq(`${label}: original error is preserved in the app log`, withMessage(capture, 'unhandled route error').map((r) => r.detail), [STORE_BLIP_MESSAGE]);
     const secondary = withMessage(capture, 'could not settle the ledger row of a failed unary request');
-    eq(`${label}: only a failed cleanup is logged separately`, secondary.map((r) => [r.cause, r.detail]),
-      failure === 'persistent-settle' ? [[STORE_BLIP_MESSAGE, 'secondary settlement failure']] : []);
-    eq(`${label}: cleanup tries settlement exactly once`, settleCalls, failure.includes('settle') ? 2 : 1);
+    eq(`${label}: only a failed cleanup is logged separately`, secondary.map((r) => ({ cause: r.cause, detail: r.detail })), recoveryCase.secondaryLog);
+    eq(`${label}: cleanup tries settlement exactly once`, settleCalls, recoveryCase.settleCalls);
     const row = reader.prepare('SELECT ended_at, outcome, refunded, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens AS total_tokens FROM requests').get();
-    const recordedTokens = failure === 'settle' && !stub ? usage : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     eq(`${label}: recovered store closes the original row without refunding it`, { ...row }, {
-      ended_at: failure === 'persistent-settle' ? null : FIXED_NOW,
-      outcome: failure === 'persistent-settle' ? null : 'error',
+      ended_at: recoveryCase.row.endedAt,
+      outcome: recoveryCase.row.outcome,
       refunded: 0,
-      prompt_tokens: recordedTokens.promptTokens,
-      completion_tokens: recordedTokens.completionTokens,
-      total_tokens: recordedTokens.totalTokens,
+      prompt_tokens: recoveryCase.recordedTokens.promptTokens,
+      completion_tokens: recoveryCase.recordedTokens.completionTokens,
+      total_tokens: recoveryCase.recordedTokens.totalTokens,
     });
     usageStore.settle = settle;
     usageStore.credit = credit;
@@ -544,12 +598,7 @@ async function testUnaryFailureRecovery(
     const second = await post(app, `/v1/${kind}`, body, DEVICE_HEADER);
     eq(`${label}: a healthy request is admitted after recovery`, second.status, 200);
     eq(`${label}: no capacity remains held`, slots.counts().unary, 0);
-    const completed = failure.includes('settle') ? 2 : 1;
-    eq(`${label}: error cleanup never credits tokens again`, await usageStore.read(DEVICE_ID), {
-      promptTokens: stub ? 0 : completed,
-      completionTokens: stub ? 0 : completed * 2,
-      totalTokens: stub ? 0 : completed * 3,
-    });
+    eq(`${label}: error cleanup never credits tokens again`, await usageStore.read(DEVICE_ID), recoveryCase.finalRead);
   } finally {
     capture.stop();
     await tracker.drain(2000);
@@ -561,11 +610,8 @@ async function testUnaryFailureRecovery(
 
 async function testSettlementFailureReleasesCapacity(): Promise<void> {
   section('Unary failures preserve the error, close recoverable ledger rows and free capacity');
-  for (const kind of ['clarify', 'rewrite'] as const) {
-    for (const failure of ['settle', 'persistent-settle', 'credit', 'model'] as const) {
-      await testUnaryFailureRecovery(kind, failure);
-    }
-    await testUnaryFailureRecovery(kind, 'settle', true);
+  for (const recoveryCase of RECOVERY_CASES) {
+    await testUnaryFailureRecovery(recoveryCase);
   }
 }
 
@@ -697,18 +743,24 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   section('specs/content-policy "A refused rewrite makes no rewrite call"');
 
   invalidateCreditCache();
+  // The classifier's own usage, distinct from any rewrite usage, so crediting it is observable —
+  // the rewrite model is never called at all (specs/content-policy "The policy check is metered
+  // and observable without content").
+  const CLASSIFIER_USAGE: Usage = { promptTokens: 8, completionTokens: 4, totalTokens: 12 };
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'rewrite', deltas: ['{"verdict":"refuse","category":"test"}'] },
+    { role: 'rewrite', deltas: ['{"verdict":"refuse","category":"test"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-rewrite' },
   ]);
   const policy = cachedPolicy(
     new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
   );
-  const { app } = testApp({ model, policy });
+  const { app, usageStore } = testApp({ model, policy });
   const res = await post(app, '/v1/rewrite', { prompt: 'something bad' }, DEVICE_HEADER);
   eq('a policy-refused rewrite → 422', res.status, 422);
   const body = (await res.json()) as ApiError;
   eq('refusal code is content_policy', body.error, 'content_policy');
   eq('exactly one model call recorded (the classifier)', model.requests.length, 1);
+  const total = await usageStore.read(DEVICE_ID);
+  eq('a refused request still meters the classifier', total, CLASSIFIER_USAGE);
 }
 
 function sumUsage(a: Usage, b: Usage): Usage {
@@ -719,58 +771,43 @@ function sumUsage(a: Usage, b: Usage): Usage {
   };
 }
 
-async function testPolicyCallIsMetered(): Promise<void> {
-  section('specs/content-policy "The policy check is metered and observable without content"');
+async function testCachedVerdictAddsNoClassifierUsage(): Promise<void> {
+  section('specs/content-policy "The policy check is metered and observable without content" — cached verdict');
 
   const CLASSIFIER_USAGE: Usage = { promptTokens: 7, completionTokens: 3, totalTokens: 10 };
   const CLARIFY_USAGE: Usage = { promptTokens: 20, completionTokens: 15, totalTokens: 35 };
-  const REWRITE_CLASSIFIER_USAGE: Usage = { promptTokens: 8, completionTokens: 4, totalTokens: 12 };
 
-  // (b) A policy-refused rewrite still meters the classifier's own call, even though the rewrite
-  // model is never called.
-  {
-    invalidateCreditCache();
-    const model = new ScriptedModelClient(ROSTER, [
-      { role: 'rewrite', deltas: ['{"verdict":"refuse","category":"test"}'], usage: REWRITE_CLASSIFIER_USAGE, id: 'gen-policy-rewrite' },
-    ]);
-    const policy = cachedPolicy(
-      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
-    );
-    const { app, usageStore } = testApp({ model, policy });
-    const res = await post(app, '/v1/rewrite', { prompt: 'something bad' }, DEVICE_HEADER);
-    eq('the rewrite is refused', res.status, 422);
-    const total = await usageStore.read(DEVICE_ID);
-    eq('a refused request still meters the classifier', total, REWRITE_CLASSIFIER_USAGE);
-  }
+  // A cached verdict makes no classifier call, so it adds no further usage to the ledger.
+  invalidateCreditCache();
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-cache' },
+    { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-1' },
+    { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-2' },
+  ]);
+  const policy = cachedPolicy(
+    new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+  );
+  const { app, usageStore } = testApp({ model, policy });
+  const SAME_PROMPT = { prompt: 'the exact same prompt text' };
+  const first = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
+  eq('first clarify succeeds', first.status, 200);
+  const afterFirst = await usageStore.read(DEVICE_ID);
+  eq('first check: classifier + clarify usage', afterFirst, sumUsage(CLASSIFIER_USAGE, CLARIFY_USAGE));
 
-  // (c) A cached verdict makes no classifier call, so it adds no further usage to the ledger.
-  {
-    invalidateCreditCache();
-    const model = new ScriptedModelClient(ROSTER, [
-      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-cache' },
-      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-1' },
-      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-2' },
-    ]);
-    const policy = cachedPolicy(
-      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
-    );
-    const { app, usageStore } = testApp({ model, policy });
-    const SAME_PROMPT = { prompt: 'the exact same prompt text' };
-    const first = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
-    eq('first clarify succeeds', first.status, 200);
-    const afterFirst = await usageStore.read(DEVICE_ID);
-    eq('first check: classifier + clarify usage', afterFirst, sumUsage(CLASSIFIER_USAGE, CLARIFY_USAGE));
-
-    const second = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
-    eq('second clarify (cached verdict) succeeds', second.status, 200);
-    const afterSecond = await usageStore.read(DEVICE_ID);
-    eq(
-      'the cache hit added no extra classifier usage — only the second clarify call\'s usage',
-      afterSecond,
-      sumUsage(afterFirst, CLARIFY_USAGE),
-    );
-    eq('exactly one classifier call was ever made', model.requests.filter((r) => r.request.maxTokens === 48).length, 1);
-  }
+  const second = await post(app, '/v1/clarify', SAME_PROMPT, DEVICE_HEADER);
+  eq('second clarify (cached verdict) succeeds', second.status, 200);
+  const afterSecond = await usageStore.read(DEVICE_ID);
+  eq(
+    'the cache hit added no extra classifier usage — only the second clarify call\'s usage',
+    afterSecond,
+    sumUsage(afterFirst, CLARIFY_USAGE),
+  );
+  // Classifier calls are identified by their own system message marker — never by the internal
+  // token-budget constant (48) that happens to be unique to them today.
+  const classifierCalls = model.requests.filter((r) =>
+    r.request.messages.some((m) => m.role === 'system' && m.content.includes(CLASSIFIER_SYSTEM_MARKER)),
+  );
+  eq('exactly one classifier call was ever made', classifierCalls.length, 1);
 }
 
 /**
@@ -1071,9 +1108,12 @@ async function testReportRoute(): Promise<void> {
 async function testHealthzSse(): Promise<void> {
   section('GET /healthz/sse (specs/server-deployment "An anonymous stream probe verifies proxy flushing")');
 
-  // Three frames, roughly one second apart, then close — no device header needed.
+  // Three frames, spaced `probeFrameIntervalMs` apart, then close — no device header needed. The
+  // production spacing is `PROBE_FRAME_INTERVAL_MS` (one second); the test injects a small value
+  // via the app option so the spacing assertion costs milliseconds, not real seconds.
   {
-    const { app } = testApp();
+    const intervalMs = 20;
+    const { app } = testApp({ probeFrameIntervalMs: intervalMs });
     const started = Date.now();
     const res = await app.request('/healthz/sse');
     eq('the probe answers 200', res.status, 200);
@@ -1092,7 +1132,14 @@ async function testHealthzSse(): Promise<void> {
     }
     const elapsedMs = Date.now() - started;
     eq('exactly three frames', frameCount, 3);
-    check('the frames were spaced roughly one second apart (~2s total)', elapsedMs >= 1800 && elapsedMs < 6000, `took ${elapsedMs}ms`);
+    // Three frames means two gaps: a lower bound loose enough not to flake, an upper bound loose
+    // enough for CI jitter but tight enough to catch a spacing that silently reverted to a much
+    // larger (or absent) interval.
+    check(
+      `the frames were spaced roughly ${intervalMs}ms apart (~${intervalMs * 2}ms total)`,
+      elapsedMs >= intervalMs * 1.8 && elapsedMs < intervalMs * 20,
+      `took ${elapsedMs}ms`,
+    );
   }
 
   // Concurrent probes count against the probe's OWN cap, never the paid unary pool — the
@@ -1129,7 +1176,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
-  await testPolicyCallIsMetered();
+  await testCachedVerdictAddsNoClassifierUsage();
   await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();
   await testReportRoute();

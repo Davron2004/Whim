@@ -113,7 +113,14 @@ export async function runWebSiteTests(): Promise<void> {
   const missing = missingConsentDisclosures(COPY, CONSENT_ALLOWLIST, normalizedPolicy);
   eq('privacy.html quotes every non-allowlisted consent key verbatim', missing, []);
 
-  check('privacy.html names OpenRouter as the processor, not a specific model', renderedPolicy.includes('through OpenRouter'));
+  // The processor must be named (not just implied), and no specific model vendor named instead —
+  // "via OpenRouter" or any other rewording of the sentence around it still passes; only the
+  // disclosure itself, and its absence, can fail this.
+  check('privacy.html names OpenRouter as the processor', renderedPolicy.includes('OpenRouter'));
+  const lowerPolicy = normalizedPolicy.toLowerCase();
+  for (const vendor of ['deepseek', 'anthropic', 'openai', 'gemini', 'claude', 'gpt']) {
+    check(`privacy.html does not name a specific model vendor (${vendor})`, !lowerPolicy.includes(vendor));
+  }
 
   const config = loadServerConfig({});
   eq(
@@ -219,17 +226,8 @@ export async function runWebSiteTests(): Promise<void> {
 
   section('Web site: associationState');
 
-  {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-assoc-neither-'));
-    try {
-      eq('neither fingerprint file: absent, naming the upload path', associationState(dir), {
-        kind: 'absent',
-        missingPath: 'release/android-upload-cert.sha256',
-      });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  }
+  // The "neither fingerprint file" case is the same `missingPath` the `buildSite` "no
+  // fingerprints" case below already asserts, end to end — not duplicated here.
 
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-assoc-upload-only-'));

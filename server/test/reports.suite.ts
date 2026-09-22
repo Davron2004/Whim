@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { check, eq, section } from './harness';
+import { within } from './route-doubles';
 import { InMemoryReportStore, NodeSqliteReportStore, schedulePurge, type ReportStore } from '../src/reports/store';
 
 const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -94,6 +95,20 @@ async function testRetentionPurge(): Promise<void> {
   }
 }
 
+/** A promise per completed `schedulePurge` tick, resolved in `onTick` — lets a test await a
+ *  specific run deterministically instead of guessing how long a purge takes with a fixed sleep. */
+function tickWaiter(): { onTick: () => void; next: () => Promise<void> } {
+  let resolveNext: () => void = () => {};
+  let waiting = new Promise<void>((resolve) => { resolveNext = resolve; });
+  return {
+    onTick: () => {
+      resolveNext();
+      waiting = new Promise((resolve) => { resolveNext = resolve; });
+    },
+    next: () => waiting,
+  };
+}
+
 async function testSchedulePurge(): Promise<void> {
   section('Report store — purge scheduling hook (design D10: "runs at boot and hourly")');
 
@@ -101,15 +116,18 @@ async function testSchedulePurge(): Promise<void> {
   const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
   const oldId = await store.insert({ deviceId: DEVICE_A, reason: 'broken', now: now - 200 * 86_400_000 });
 
-  const schedule = schedulePurge(store, { retentionDays: 90, now: () => now, intervalMs: 10 });
-  // The immediate (boot) run fires an async purge before schedulePurge returns; give it one tick.
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  const ticks = tickWaiter();
+  const bootTick = ticks.next();
+  const schedule = schedulePurge(store, { retentionDays: 90, now: () => now, intervalMs: 10, onTick: ticks.onTick });
+  // The immediate (boot) run fires an async purge before schedulePurge returns; wait for it to
+  // settle (bounded — a suite-wide timeout catches a hang) rather than guessing at a sleep.
+  await within(bootTick, 2000);
   check('the old report is purged on the immediate (boot) run', (await store.get(oldId)) === undefined);
 
   // A report that only turns stale AFTER the boot run is still caught by the next scheduled tick
   // — proving the interval actually re-runs, not just the immediate call.
   const laterId = await store.insert({ deviceId: DEVICE_A, reason: 'broken', now: now - 200 * 86_400_000 });
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await within(ticks.next(), 2000);
   schedule.stop();
   check('a later scheduled tick also purges stale rows', (await store.get(laterId)) === undefined);
 }
