@@ -3,7 +3,6 @@
  *
  * Covers the spec scenarios from `host-observability`:
  *   - "Levels order and filter" (default and per-channel thresholds)
- *   - the channel registry is the ONE place a channel name is written
  *   - "A sensitive field is redacted at the seam" / "Redaction is not sink-dependent"
  *   - "Capacity is enforced by eviction" / "A snapshot is stable"
  *   - "Records are batched, not sent one by one" / "Off by default" /
@@ -12,8 +11,6 @@
  * Runs under Node via `npm run launcher:test` (registered in `../../launcher/test/acceptance.ts`).
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import type { Harness } from '../../launcher/test/harness';
 import { CHANNELS } from '../channels';
 import { REDACTED, isSensitiveField } from '../redact';
@@ -51,82 +48,6 @@ async function settle(): Promise<void> {
 async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<void> {
   const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline && !predicate()) await new Promise<void>(resolve => setTimeout(resolve, 5));
-}
-
-const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js'];
-
-/**
- * The FLAG-GATED on-device acceptance probe surfaces. Their `console.*` calls are not diagnostics:
- * they are how a probe reports its verdict on a device (CLAUDE.md, "Android build & run" — the
- * verdict is read from logcat `ReactNativeJS`), each one is off by default behind a `RUN_*_PROBE`
- * flag, and none is on the product's path. Written out one by one, never as a glob, so the
- * carve-out cannot silently widen.
- */
-const PROBE_SURFACES: ReadonlySet<string> = new Set([
-  path.join('src', 'host', 'BridgeProbeScreen.tsx'),
-  path.join('src', 'host', 'StorageProbeScreen.tsx'),
-  path.join('src', 'host', 'VersionStoreProbeScreen.tsx'),
-  path.join('src', 'host', 'bridge', 'device-acceptance.ts'),
-  path.join('src', 'host', 'storage-engine', 'device-acceptance.ts'),
-  path.join('src', 'host', 'version-store', 'device-acceptance.ts'),
-]);
-
-/** Every source file under the given repo-relative roots, recursively. */
-function sourceFiles(roots: readonly string[]): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    for (const name of fs.readdirSync(dir)) {
-      if (name === 'node_modules' || name.startsWith('.')) {
-        continue;
-      }
-      const full = path.join(dir, name);
-      if (SOURCE_EXTENSIONS.some(ext => name.endsWith(ext))) {
-        out.push(full);
-        continue;
-      }
-      // This repo's ambient Node surface (`evals/env.d.ts`) has no `statSync`, so reading the
-      // entry as a directory IS the directory test: `ENOTDIR` means it was a file. Any OTHER
-      // read failure is real and rethrown — a skipped directory would silently weaken the scans.
-      try {
-        walk(full);
-      } catch (error_) {
-        if (!String(error_).includes('ENOTDIR')) {
-          throw error_;
-        }
-      }
-    }
-  };
-  for (const root of roots) {
-    const full = path.join(process.cwd(), root);
-    if (fs.existsSync(full)) {
-      walk(full);
-    }
-  }
-  return out;
-}
-
-/** Repo-relative, for readable failure output (no `path.relative` in the ambient surface). */
-function rel(file: string): string {
-  const root = process.cwd() + '/';
-  return file.startsWith(root) ? file.slice(root.length) : file;
-}
-
-/** The seam itself — the ONE place allowed to reach the console, plus its own tests. */
-function isSeamModule(file: string): boolean {
-  return rel(file).startsWith(path.join('src', 'host', 'logging'));
-}
-
-/**
- * A Node acceptance suite or its runner. Their `console.*` calls ARE their output — a suite prints
- * its results to a terminal, and there is no device, no logcat and no ring buffer in that process.
- * The requirement is about device diagnostics, so the scan stops at the test boundary.
- */
-function isNodeSuite(file: string): boolean {
-  return rel(file).split('/').includes('test');
-}
-
-function isProbeSurface(file: string): boolean {
-  return PROBE_SURFACES.has(rel(file));
 }
 
 export async function runLoggingTests(h: Harness): Promise<void> {
@@ -420,41 +341,4 @@ export async function runLoggingTests(h: Harness): Promise<void> {
   // ── The migration is complete (chain-E) ──────────────────────────────────────────────────
   // A source-scanned standing invariant: the seam is the only console caller.
 
-  await h.test('the seam is the only diagnostic console caller in src/host', () => {
-    const offenders = sourceFiles([path.join('src', 'host')])
-      .filter(file => !isSeamModule(file) && !isProbeSurface(file) && !isNodeSuite(file))
-      .filter(file => /\bconsole\s*\.\s*(log|warn|error|info|debug)\s*\(/.test(fs.readFileSync(file, 'utf8')))
-      .map(rel);
-    h.eq(offenders, [], 'no module outside the seam logs a diagnostic through console');
-  });
-
-  await h.test('the dev-log wire types cross the device seam type-only, and carry no runtime value', () => {
-    // The device may name these types freely; what must never happen is a VALUE import, which
-    // would put the contract package (and therefore zod) into the Metro graph.
-    const names = ['DevLogRecord', 'DevLogBatch', 'DevLogLevel', 'DevLogSinkPath'];
-    const offenders: string[] = [];
-    for (const file of sourceFiles(['src'])) {
-      const src = fs.readFileSync(file, 'utf8');
-      // Every import statement in the file, `import type` or not, split into clause + specifier.
-      for (const [statement, clause, specifier] of src.matchAll(/^import\s([\s\S]*?)from\s+'([^']+)';/gm)) {
-        const isDevLogModule = /(^|\/)dev-log$/.test(specifier);
-        const isWireTypeFromContract = specifier === '@whim/contract' && names.some(n => clause.includes(n));
-        if ((isDevLogModule || isWireTypeFromContract) && !/^import\s+type\s/.test(statement)) {
-          offenders.push(`${rel(file)}: ${statement.replace(/\s+/g, ' ')}`);
-        }
-      }
-    }
-    h.eq(offenders, [], 'every device-side dev-log import is an `import type`');
-
-    // Non-vacuity: the scan found the imports it is meant to police at all.
-    const seen = sourceFiles(['src']).filter(file =>
-      /^import\s+type\s[\s\S]*?DevLogRecord[\s\S]*?from\s+'@whim\/contract';/m.test(fs.readFileSync(file, 'utf8')),
-    );
-    h.ok(seen.length >= 3, 'the wire types are actually imported by the device, so the scan is not vacuous');
-
-    // …and the module on the other side of that import exports nothing executable.
-    const contractSrc = fs.readFileSync(path.join(process.cwd(), 'contract', 'src', 'dev-log.ts'), 'utf8');
-    const runtimeExports = [...contractSrc.matchAll(/^export\s+(?!type\b|interface\b)(\w+)/gm)].map(m => m[1]);
-    h.eq(runtimeExports, [], 'contract/src/dev-log.ts exports only types — a value export would let zod in');
-  });
 }

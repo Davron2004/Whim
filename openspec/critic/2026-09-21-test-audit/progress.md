@@ -103,6 +103,31 @@ Merged from the launcher agent (it could not commit; applied as a patch in three
 | generation-client timing (low priority); moving whim-prose to src/host/ui; deliver-by-source bootstrap into invariants | skipped | - | Low value or owner-only |
 | whim-prose "never faded/typed in" grep | dropped | 84360dc | The native shim can't observe animation |
 
+Also in the main tree: frameEdgesFor's 13 generated tests (a batch 3 DELETE the name-based pass missed) deleted in 95fa013; the netdeny canary test wired into the fast gate in dd54505 (about 2 s, no browser).
+
+## Batch 5: lint and checks/ moves, node:assert
+
+| Item | Status | Commit | Note |
+|---|---|---|---|
+| Console only through the logging seam (logging.suite grep) | done → ESLint `no-console` | 75894a1 | src/host minus the seam and the six probe surfaces |
+| @whim/contract type-only in device code (logging.suite grep) | done → `@typescript-eslint/no-restricted-imports` | 75894a1 | Now covers every contract import, not four DevLog names |
+| Direct BackHandler only in the two adapters (screen-exits grep) | done → `no-restricted-properties` | 75894a1 | Now all of src/host |
+| Bare `__DEV__` (observability-ui grep) | done → `no-restricted-syntax` | 75894a1 | Now all launcher source, not only LauncherRoot |
+| vc-sdk never imports whim-prose (whim-prose grep) | done → `no-restricted-imports` | 75894a1 | The "stays pure for Node" half dropped: the runner renders RN now |
+| Emoji text presentation (theme.suite) | done → checks/test/repo/source-scans.suite.ts | 75894a1 | Red-checked with a planted glyph |
+| Release-domain literal (release-config.suite) | done → checks/test/repo/source-scans.suite.ts | 75894a1 | Red-checked with a planted domain |
+| Each lint rule red-checked on a planted violation and an allowed form | done | 75894a1 | |
+| Launcher, evals, synthrun, storage-engine, version-store, bridge helpers → node:assert | done | 083143f | eq is deepStrictEqual; every suite passed unchanged; a planted false assertion fails each |
+| synthrun's 60 `sonarjs/assertions-in-tests` disables | done (removed) | 083143f | Local `ok` wrappers: the ESLint rule follows a helper within its file, not across an import |
+| evals `sonarjs/no-empty-test-file` suppressions | kept (audit premise wrong) | - | That rule wants test-framework calls, not assertions; it still fires |
+| server/test/harness.ts → node:assert | waiting | - | After the server agent's work merges |
+
+## Batch 6: invariants/ spike leftovers
+
+| Item | Status | Commit | Note |
+|---|---|---|---|
+| reference/, sandbox-isolation-probe.html, spike2-bundle-contract/ | done | ea8a9d2 | 2,929 lines + ~3.2 MB of pages; references updated; knip ignore dropped |
+
 ## Not in any batch (README "Bugs and gaps")
 
 | Item | Status | Reason |

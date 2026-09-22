@@ -9,6 +9,8 @@
  * mini-app-versioning / mini-app-forking spec scenario (§7.4).
  */
 
+import nodeAssert from 'node:assert';
+import { inspect } from 'node:util';
 import * as git from 'isomorphic-git';
 import {
   createMemoryStore,
@@ -25,18 +27,25 @@ import {
 let passed = 0;
 const failures: string[] = [];
 
-function ok(cond: boolean, msg: string): void {
-  if (cond) {
+/** Delegates to node:assert (CLAUDE.md "Test assertions"); a failure is recorded, not thrown, so
+ *  one run reports every failure. */
+function record(assertion: () => void, msg: string): void {
+  try {
+    assertion();
     passed++;
-  } else {
+  } catch (err) {
+    if (!(err instanceof nodeAssert.AssertionError)) throw err;
     failures.push(msg);
-    // eslint-disable-next-line no-console
     console.error('  ✗ ' + msg);
   }
 }
+function ok(cond: boolean, msg: string): void {
+  record(() => nodeAssert.ok(cond, msg), msg);
+}
 
+/** Deep, strict equality: key order doesn't matter, an extra key holding `undefined` does. */
 function eq(a: unknown, b: unknown, msg: string): void {
-  ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
+  record(() => nodeAssert.deepStrictEqual(a, b, msg), `${msg} (got ${inspect(a, { depth: 6 })}, want ${inspect(b, { depth: 6 })})`);
 }
 
 async function test(name: string, fn: () => Promise<void>): Promise<void> {

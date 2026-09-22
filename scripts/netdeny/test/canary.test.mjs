@@ -10,13 +10,9 @@
 // soon as it's imported) and drives it with real HTTP and TCP traffic, asserting on the process's
 // stdout summary line and exit code.
 //
-// Not wired into `scripts/gate.sh` — `package.json` is Class-1 protected and the canary is
-// documented (`handoff/netdeny-probe.md`'s "Verified directly" section) as a manually-run
-// reproduction harness, same as before this fix. Run by hand from the repo root:
+// Runs in the fast gate (`scripts/gate.sh`, "netdeny canary"); by hand from the repo root:
 //
 //   node scripts/netdeny/test/canary.test.mjs
-//
-// and re-run whenever `canary.ts` changes.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';

@@ -28,6 +28,7 @@ import path from 'node:path';
 import { test, report, assert, assertHasKind, assertNoKind, findByKind } from './harness';
 import { runHostileCorpus } from './hostile/corpus';
 import { runReleaseSuites } from './release';
+import { run as runSourceScans } from './repo/source-scans.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1200,6 +1201,7 @@ async function main(): Promise<void> {
   await testHonestFixturesAndLatencyProbe();
   await runHostileCorpus();
   await runReleaseSuites();
+  await runSourceScans();
 }
 
 main()

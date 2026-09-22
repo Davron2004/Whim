@@ -10,8 +10,6 @@
  * promise turns one failed check into a whole-suite hang with no test named.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import React from 'react';
 import { Harness } from './harness';
 import WhimProse, { HighlightingProvider } from '../../ui/whim-prose/WhimProse';
@@ -54,10 +52,6 @@ function countOf(segments: readonly ProseSegment[], cls: WhimClass): number {
 
 function textOf(segments: readonly ProseSegment[], cls: WhimClass): string[] {
   return segments.filter((s) => s.cls === cls).map((s) => s.text);
-}
-
-function readSource(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 }
 
 /** Every string this table and its helpers can put on screen. */
@@ -349,20 +343,6 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   });
 
   // ── placement (design D7): shell-side, one renderer ─────────────────────────
-
-  await h.test('placement: Whim Syntax is shell-side and is never exported from vc-sdk', () => {
-    const sdk = fs
-      .readdirSync(path.join(process.cwd(), 'src/sdk'))
-      .filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
-      .map((f) => readSource(path.join('src/sdk', f)))
-      .join('\n');
-    h.ok(!sdk.includes('whim-prose'), 'vc-sdk must not reach into the shell renderer');
-
-    for (const file of ['lex.ts', 'render.ts', 'styles.ts', 'types.ts']) {
-      const src = readSource(path.join('src/host/ui/whim-prose', file));
-      h.ok(!src.includes("from 'react-native'"), `${file} stays pure so it is Node-checkable`);
-    }
-  });
 
   // ── the component, rendered ─────────────────────────────────────────────────
 

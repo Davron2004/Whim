@@ -14,7 +14,14 @@ import { createSemaphore } from '../concurrency';
 import type { RunReport, Semaphore } from '../contract';
 import { createRunCandidate } from '../report';
 import { browserLaunchOptions, SessionError, SynthRunSession } from '../session';
-import { hasSwitch, processArgs, SANDBOX_DISABLING_SWITCHES, type SuiteHooks } from './isolation';
+import nodeAssert from 'node:assert';
+import { recordAssertion, test } from './harness';
+import { hasSwitch, processArgs, SANDBOX_DISABLING_SWITCHES } from './isolation';
+
+function ok(cond: boolean, msg: string): void {
+  recordAssertion(() => nodeAssert.ok(cond, msg), msg);
+}
+
 
 /** The spec's bound on releasing an aborted or crashed run. */
 const RELEASE_BOUND_MS = 5000;
@@ -134,16 +141,15 @@ async function startHangingRun(runCandidate: ReturnType<typeof createRunCandidat
   return { outcome };
 }
 
-export async function testResilience(hooks: SuiteHooks): Promise<void> {
-  await testSemaphore(hooks);
-  await testAbortWhileQueued(hooks);
-  await testAbortDuringMount(hooks);
-  await testCrashRecovery(hooks);
-  await testFailedRelaunch(hooks);
+export async function testResilience(): Promise<void> {
+  await testSemaphore();
+  await testAbortWhileQueued();
+  await testAbortDuringMount();
+  await testCrashRecovery();
+  await testFailedRelaunch();
 }
 
-async function testSemaphore({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testSemaphore(): Promise<void> {
   await test('concurrency: a waiter aborted while queued leaves the queue without ever holding the slot', async () => {
     const semaphore = createSemaphore(1);
     const releaseHolder = await within(semaphore.acquire(), 1000, 'the first acquire');
@@ -166,7 +172,6 @@ async function testSemaphore({ test, ok }: SuiteHooks): Promise<void> {
     await within(fresh.acquire(), 1000, 'an acquire after the refused one, on a semaphore it must not have taken');
   });
 
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('concurrency: calling a release twice frees one slot, not two', async () => {
     const semaphore = createSemaphore(1);
     const release = await within(semaphore.acquire(), 1000, 'the first acquire');
@@ -186,8 +191,7 @@ async function testSemaphore({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testAbortWhileQueued({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testAbortWhileQueued(): Promise<void> {
   await test('abort: a run aborted while queued never opens a context, and the running one is unaffected (spec "An abort while queued never takes the slot")', async () => {
     const session = await SynthRunSession.launch({ concurrency: 1 });
     try {
@@ -234,8 +238,7 @@ async function testAbortWhileQueued({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testAbortDuringMount({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testAbortDuringMount(): Promise<void> {
   await test('abort: 250 ms into a hanging mount, the context closes and the slot frees within 5 s, once each (spec "An abort during mount releases promptly")', async () => {
     const counted = countingSemaphore(1);
     const session = await SynthRunSession.launch({ semaphore: counted.semaphore });
@@ -281,8 +284,7 @@ async function testAbortDuringMount({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testCrashRecovery({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testCrashRecovery(): Promise<void> {
   await test('crash: killing the browser mid-run ends that run with browser_disconnected, and the next run completes on a fresh sandboxed browser (spec "Runs recover after the browser dies")', async () => {
     const counted = countingSemaphore(1);
     const session = await SynthRunSession.launch({ semaphore: counted.semaphore });
@@ -317,8 +319,7 @@ async function testCrashRecovery({ test, ok }: SuiteHooks): Promise<void> {
   });
 }
 
-async function testFailedRelaunch({ test, ok }: SuiteHooks): Promise<void> {
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
+async function testFailedRelaunch(): Promise<void> {
   await test('crash: a failed relaunch fails only the run that needed it, and later runs share one retried launch', async () => {
     const session = await SynthRunSession.launch({ concurrency: 2 });
     const launches = spyOnLaunch();

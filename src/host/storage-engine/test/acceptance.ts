@@ -12,12 +12,13 @@
  *       feature test: caller text is bound or rejected, never interpolated.
  */
 
+import nodeAssert from 'node:assert';
+import { inspect } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { createEngine, readAppliedSchema } from '../engine';
-import { assertExecuteSyncAvailable } from '../bindings/assert-executesync';
 import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../bindings/node-sqlite';
 import { RecordingExecutor } from '../sql-executor';
 import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
@@ -28,17 +29,24 @@ import { AppliedSchema, burnedIdFloor, emptyApplied } from '../schema';
 let passed = 0;
 const failures: string[] = [];
 
-function ok(passedCheck: boolean, msg: string): void {
-  if (passedCheck) {
+/** Delegates to node:assert (CLAUDE.md "Test assertions"); a failure is recorded, not thrown, so
+ *  one run reports every failure. */
+function record(assertion: () => void, msg: string): void {
+  try {
+    assertion();
     passed++;
-    return;
+  } catch (err) {
+    if (!(err instanceof nodeAssert.AssertionError)) throw err;
+    failures.push(msg);
+    console.error('  ✗ ' + msg);
   }
-
-  failures.push(msg);
-  console.error('  ✗ ' + msg);
 }
+function ok(passedCheck: boolean, msg: string): void {
+  record(() => nodeAssert.ok(passedCheck, msg), msg);
+}
+/** Deep, strict equality: key order doesn't matter, an extra key holding `undefined` does. */
 function eq(a: unknown, b: unknown, msg: string): void {
-  ok(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)}, want ${JSON.stringify(b)})`);
+  record(() => nodeAssert.deepStrictEqual(a, b, msg), `${msg} (got ${inspect(a, { depth: 6 })}, want ${inspect(b, { depth: 6 })})`);
 }
 function test(name: string, fn: () => void): void {
   try {

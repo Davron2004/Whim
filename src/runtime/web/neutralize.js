@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Whim runtime — forbidden-globals neutralization (runs FIRST inside the iframe).
 // ─────────────────────────────────────────────────────────────────────────────
-// Productionized from the proven Spike-1 shim (invariants/sandbox-isolation/reference/
-// neutralize.js); behavior is kept verbatim — this is the retained #35 surgical strip.
+// Productionized from the proven Spike-1 shim (removed from invariants/ in 2026-09, see git
+// history); behavior is kept verbatim — this is the retained #35 surgical strip.
 //
 // One of the three load-bearing security legs (none sufficient alone — docs/spike2-findings):
 //   (a) the cross-origin sandboxed iframe (no allow-same-origin) denies host/native reach;

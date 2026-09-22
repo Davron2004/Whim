@@ -1,6 +1,4 @@
 /** System-back lifetime, boundary recovery, safe-area policy and rendered exit controls. */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -144,12 +142,4 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
     TestRenderer.act(() => tree!.unmount());
   });
 
-  await h.test('native system-back subscriptions stay in the two platform adapters', () => {
-    const dir = path.join(process.cwd(), 'src/host/launcher');
-    for (const file of fs.readdirSync(dir)) {
-      if (!/\.tsx?$/.test(file) || ['use-system-back.ts', 'useMiniAppHost.ts'].includes(file)) continue;
-      const source = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-      h.ok(!/\bBackHandler\.addEventListener\s*\(/.test(source), `${file} uses the shared back adapter`);
-    }
-  });
 }
