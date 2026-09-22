@@ -148,26 +148,33 @@ export interface CreateEngineOptions {
 // Structured errors (D8) — every refusal carries a machine-actionable fix hint
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type StorageErrorKind =
+// Array-first: `StorageErrorKind` is derived via `typeof … [number]` so a consumer that needs
+// the closed set at runtime (checks/test, which esbuild strips of types unchecked — it is
+// excluded from tsconfig.json) can read it instead of hand-copying the union.
+export const STORAGE_ERROR_KINDS = [
   // — artifact validation (shape / types / defaults / IDs) —
-  | 'invalid_artifact'
-  | 'bad_field_type'
-  | 'bad_default'
-  | 'malformed_id'
+  'invalid_artifact',
+  'bad_field_type',
+  'bad_default',
+  'malformed_id',
   // — schema evolution conflicts (the four D4/§2.3 reject kinds) —
-  | 'type_change'
-  | 'id_reuse'
-  | 'tombstone_violation'
-  | 'missing_default'
+  'type_change',
+  'id_reuse',
+  'tombstone_violation',
+  'missing_default',
   // — verb-time resolution / validation —
-  | 'unknown_collection'
-  | 'unknown_field'
-  | 'unknown_record'
-  | 'type_mismatch'
-  | 'unqueryable_field'
-  | 'kv_too_large'
-  | 'not_open'
-  | 'corrupt_storage';
+  'unknown_collection',
+  'unknown_field',
+  'unknown_record',
+  'type_mismatch',
+  'unqueryable_field',
+  'kv_too_large',
+  // — HOST-FAULT: the harness's own engine state, never a candidate mistake —
+  'not_open',
+  'corrupt_storage',
+] as const;
+
+export type StorageErrorKind = (typeof STORAGE_ERROR_KINDS)[number];
 
 export interface StorageError {
   kind: StorageErrorKind;

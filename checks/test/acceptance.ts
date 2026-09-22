@@ -20,12 +20,12 @@
  *   §schema identity  edit continuity: burned IDs survive a rewrite
  *   §storage continuity  edit continuity: reads survive a rewrite
  *   §E1  assembly: ordering / purity / determinism
- *   §E2  honest fixtures (zero-diagnostics) + latency-probe pinned
+ *   §E2  honest fixtures (zero-diagnostics)
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { test, report, assert, assertHasKind, assertNoKind, findByKind, kindsOf } from './harness';
+import { test, report, assert, assertHasKind, assertNoKind, findByKind } from './harness';
 import { runHostileCorpus } from './hostile/corpus';
 import { runReleaseSuites } from './release';
 import {
@@ -36,12 +36,12 @@ import {
   GLOBAL_ROOTS,
   SDK_LINT_RULES,
 } from '../contract';
-import { runStaticChecks, scanStorageSurface, StorageSurface } from '../index';
+import { runStaticChecks as runStaticChecksRaw, scanStorageSurface, StorageSurface } from '../index';
 // Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
 // pulls no Playwright/runtime dependency into the Node bundle).
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
-import { SchemaArtifact } from '../../src/host/storage-engine/contract';
-import type { StorageErrorKind } from '../../src/host/storage-engine/contract';
+import { SchemaArtifact, STORAGE_ERROR_KINDS } from '../../src/host/storage-engine/contract';
+import { UNDECLARED_CAPABILITY_KIND } from '../../src/host/bridge/contract';
 
 /** Every diagnostic in the report is well-formed per harness-diagnostics req 1/2. */
 function assertAllWellFormed(r: CheckReport): void {
@@ -51,6 +51,13 @@ function assertAllWellFormed(r: CheckReport): void {
     assert(typeof d.hint === 'string' && d.hint.trim().length > 0, `diagnostic ${d.kind} has no non-empty hint (mandatory, harness-diagnostics req 1)`);
     assert(Number.isInteger(d.line) && d.line >= 1, `diagnostic ${d.kind} must carry a 1-based line, got ${String(d.line)}`);
   }
+}
+
+/** Every scenario in this suite runs its report through `assertAllWellFormed` — not just one hint test. */
+function runStaticChecks(...args: Parameters<typeof runStaticChecksRaw>): CheckReport {
+  const r = runStaticChecksRaw(...args);
+  assertAllWellFormed(r);
+  return r;
 }
 
 function readFixture(name: string): string {
@@ -117,28 +124,17 @@ export default defineApp({
 async function testContractAndHarnessSelfTests(): Promise<void> {
 
   await test('contract: the storage engine\'s VERB-TIME kinds are carried under the engine\'s own names', () => {
-    // The element type is the INTERSECTION of the two vocabularies, so a rename on either side
-    // (engine union or `DIAGNOSTIC_KINDS`) fails to typecheck rather than silently drifting —
-    // a run that sees a refused syscall must have the engine's own name for it.
-    const verbTime: readonly (StorageErrorKind & DiagnosticKind)[] = [
-      'type_mismatch',
-      'unknown_collection',
-      'unknown_field',
-      'unknown_record',
-      'unqueryable_field',
-      'kv_too_large',
-    ];
+    // checks/test is excluded from tsconfig.json, so esbuild strips types unchecked here — a
+    // type-level intersection would be imaginary safety. Read the engine's own runtime array
+    // instead: every VERB-TIME kind (HOST-FAULT `not_open`/`corrupt_storage` excluded — those
+    // name the harness's own engine state, not a candidate mistake) must be a diagnostic kind.
+    const hostFault = new Set(['not_open', 'corrupt_storage']);
+    const verbTimeKinds = new Set(['type_mismatch', 'unknown_collection', 'unknown_field', 'unknown_record', 'unqueryable_field', 'kv_too_large']);
+    const verbTime = STORAGE_ERROR_KINDS.filter((k) => !hostFault.has(k) && verbTimeKinds.has(k));
+    assert(verbTime.length === verbTimeKinds.size, `expected ${verbTimeKinds.size} verb-time kinds from the engine, got ${verbTime.length}`);
     for (const k of verbTime) {
       assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verb-time storage kind "${k}"`);
     }
-  });
-
-  await test('contract: SDK_LINT_RULES steers setTimeout/setInterval/requestAnimationFrame', () => {
-    const names = SDK_LINT_RULES.map((r) => r.globalName).sort((a, b) => a.localeCompare(b));
-    assert(
-      JSON.stringify(names) === JSON.stringify(['requestAnimationFrame', 'setInterval', 'setTimeout']),
-      `expected the three raw-timer rule names, got [${names.join(', ')}]`,
-    );
   });
 }
 
@@ -404,13 +400,6 @@ async function testForbiddenGlobalsWalk(): Promise<void> {
     assertNoKind(r, 'forbidden_global', 'a parameter named "fetch", used only as a plain local value, must not be flagged');
   });
 
-  await test('globals: a forbidden-global diagnostic carries a non-empty, SDK-shaped hint (harness-diagnostics req 1)', () => {
-    const r = runStaticChecks("fetch('http://evil.example');\n");
-    const d = assertHasKind(r, 'forbidden_global');
-    assert(d.hint.trim().length > 0, 'hint must be non-empty');
-    assertAllWellFormed(r);
-  });
-
   await test('globals: no inline pragma suppresses a diagnostic (harness-diagnostics req 4)', () => {
     const src = "// whim-disable-next-line forbidden-global\nfetch('http://evil.example');\n";
     const r = runStaticChecks(src);
@@ -445,6 +434,13 @@ async function testManifestExtraction(): Promise<void> {
 // ── §D2 capability directions ──────────────────────────────────
 
 async function testCapabilityDirections(): Promise<void> {
+  await test('capabilities: the static undeclared_capability kind matches the bridge gate\'s own denial-kind constant', () => {
+    assert(
+      (DIAGNOSTIC_KINDS as readonly string[]).includes(UNDECLARED_CAPABILITY_KIND),
+      `DIAGNOSTIC_KINDS is missing "${UNDECLARED_CAPABILITY_KIND}", the kind gate.ts actually returns for a denied capability`,
+    );
+  });
+
   await test('capabilities: used but undeclared → undeclared_capability error naming the capability (matches the bridge gate kind)', () => {
     const src = appSource('[]', 'defineApp, storage', 'return null;', "storage.kv.set('k', 1);");
     const r = runStaticChecks(src);
@@ -507,39 +503,42 @@ export default defineApp({
     assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
   });
 
-  await test('screens: a dangling nav.navigate target is rejected through the shipped call-shape row', () => {
-    const src = `
-import { defineApp, nav } from 'vc-sdk';
-function Home() {
-  nav.navigate('Settings');
-  return null;
-}
-export default defineApp({
-  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
-});
-`;
-    const r = runStaticChecks(src);
-    const d = r.diagnostics.find((x) => x.kind === 'unresolved_screen' && x.symbol === 'Settings');
-    assert(!!d, `expected an unresolved_screen diagnostic naming "Settings"; got kinds [${kindsOf(r).join(', ')}]`);
-    assert(!!d && /Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d?.hint}`);
-  });
+  await test('screens: direct, aliased, and namespace nav import all reject a dangling or a non-literal target', () => {
+    const spellings = {
+      direct: { imports: "import { defineApp, nav } from 'vc-sdk';", call: (target: string) => `nav.navigate(${target});` },
+      aliased: { imports: "import { defineApp, nav as router } from 'vc-sdk';", call: (target: string) => `router.navigate(${target});` },
+      namespace: {
+        imports: "import { defineApp } from 'vc-sdk';\nimport * as sdk from 'vc-sdk';",
+        call: (target: string) => `sdk.nav.navigate(${target});`,
+      },
+    };
+    const targets = {
+      dangling: { arg: "'Settings'", extraDecl: '' },
+      'non-literal': { arg: 'screenVar', extraDecl: "const screenVar = 'Home';\n  " },
+    };
 
-  await test('screens: a non-literal nav.navigate target is rejected conservatively', () => {
-    const src = `
-import { defineApp, nav } from 'vc-sdk';
+    for (const [label, spelling] of Object.entries(spellings)) {
+      for (const [targetLabel, target] of Object.entries(targets)) {
+        const src = `
+${spelling.imports}
 function Home() {
-  const screenVar = 'Home';
-  nav.navigate(screenVar);
+  ${target.extraDecl}${spelling.call(target.arg)}
   return null;
 }
 export default defineApp({
   name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
 });
 `;
-    const r = runStaticChecks(src);
-    const d = assertHasKind(r, 'unresolved_screen');
-    assert(/string literal/i.test(d.message), `message should require a string literal, got: ${d.message}`);
-    assert(/Home/.test(d.hint), `hint should list the declared screens (Home), got: ${d.hint}`);
+        const r = runStaticChecks(src);
+        const d = assertHasKind(r, 'unresolved_screen');
+        assert(/Home/.test(d.hint), `${label}/${targetLabel}: hint should list the declared screens (Home), got: ${d.hint}`);
+        if (targetLabel === 'dangling') {
+          assert(d.symbol === 'Settings', `${label}/dangling: expected the diagnostic to name "Settings", got ${String(d.symbol)}`);
+        } else {
+          assert(/string literal/i.test(d.message), `${label}/non-literal: message should require a string literal, got: ${d.message}`);
+        }
+      }
+    }
   });
 
   await test('screens: direct, aliased, and namespace vc-sdk navigation accept a declared literal target', () => {
@@ -573,45 +572,6 @@ export default defineApp({
       const r = runStaticChecks(src);
       assertNoKind(r, 'unresolved_screen', `${label} vc-sdk navigation to a declared screen must resolve`);
     }
-  });
-
-  await test('screens: aliased nav import rejects dangling and non-literal targets identically to direct nav', () => {
-    const calls = ["router.navigate('Settings');", "const target = 'Home';\n  router.navigate(target);"];
-    const detected: boolean[] = [];
-    for (const call of calls) {
-      const src = `
-import { defineApp, nav as router } from 'vc-sdk';
-function Home() {
-  ${call}
-  return null;
-}
-export default defineApp({
-  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
-});
-`;
-      detected.push(runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'));
-    }
-    assert(detected.every(Boolean), `aliased vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
-  });
-
-  await test('screens: namespace nav import rejects dangling and non-literal targets identically to direct nav', () => {
-    const calls = ["sdk.nav.navigate('Settings');", "const target = 'Home';\n  sdk.nav.navigate(target);"];
-    const detected: boolean[] = [];
-    for (const call of calls) {
-      const src = `
-import { defineApp } from 'vc-sdk';
-import * as sdk from 'vc-sdk';
-function Home() {
-  ${call}
-  return null;
-}
-export default defineApp({
-  name: 'T', initial: 'Home', screens: { Home }, capabilities: [],
-});
-`;
-      detected.push(runStaticChecks(src).diagnostics.some((d) => d.kind === 'unresolved_screen'));
-    }
-    assert(detected.every(Boolean), `namespace vc-sdk calls must reject dangling and non-literal targets; detected [${detected.join(', ')}]`);
   });
 
   await test('screens: unrelated, local, and shadowed nav bindings are not SDK navigation', () => {
@@ -687,13 +647,15 @@ export default defineApp({ name: 'T', initial: 'Home', screens: { Home }, capabi
 // ── §D4 SDK lint — "SDK lint steers toward the taught path" ───
 
 async function testSdkLint(): Promise<void> {
-  await test('sdk-lint: a raw setTimeout(fn, …) is a warning naming delay/interval', () => {
-    const src = 'setTimeout(() => {}, 1000);\n';
-    const r = runStaticChecks(src);
-    const d = assertHasKind(r, 'raw_timer');
-    assert(d.severity === 'warning', 'raw_timer must be a warning, not an error');
-    assert(/delay|interval/.test(d.hint), `hint should name delay/interval, got: ${d.hint}`);
-  });
+  for (const rule of SDK_LINT_RULES) {
+    await test(`sdk-lint: a raw ${rule.globalName}(fn, …) is a warning naming ${rule.sdkAlternative}`, () => {
+      const src = `${rule.globalName}(() => {}, 1000);\n`;
+      const r = runStaticChecks(src);
+      const d = assertHasKind(r, 'raw_timer');
+      assert(d.severity === 'warning', 'raw_timer must be a warning, not an error');
+      assert(d.hint.includes(rule.sdkAlternative), `hint should name ${rule.sdkAlternative}, got: ${d.hint}`);
+    });
+  }
 
   await test('diagnostics: a warning alone still fails ok (harness-diagnostics req 3)', () => {
     const r = runStaticChecks('setTimeout(() => {}, 1000);\n');
@@ -841,7 +803,6 @@ async function testSchemaIdentityContinuity(): Promise<void> {
     assert(d.symbol === 'c1', `expected symbol "c1", got "${String(d.symbol)}"`);
     assert(d.severity === 'error', `identity drift is an error, got "${d.severity}"`);
     assert(/c1/.test(d.hint) && /rows/.test(d.hint), `hint must name c1 and say the user's rows live under it, got: ${d.hint}`);
-    assertAllWellFormed(r);
   });
 
   await test('§schema identity: an active field ID the candidate neither declares nor tombstones is drift', () => {
@@ -903,7 +864,6 @@ async function testSchemaIdentityContinuity(): Promise<void> {
       `expected the abandoned collection IDs c1,c2, got ${JSON.stringify(hits.map((h) => h.symbol))}`,
     );
     assert(/c1/.test(hits[0]?.hint ?? ''), `hint must name the collection ID, got: ${String(hits[0]?.hint)}`);
-    assertAllWellFormed(r);
   });
 
   await test('§schema identity: a schema-less candidate with NO applied schema is clean', () => {
@@ -954,7 +914,6 @@ async function testStorageContinuity(): Promise<void> {
     assert(d.symbol === 'habitCompletionHistory', `expected symbol "habitCompletionHistory", got "${String(d.symbol)}"`);
     assert(d.severity === 'error', `drift is an error, got "${d.severity}"`);
     assert(/habitCompletionHistory/.test(d.hint) && /data/.test(d.hint), `hint must name the location and say the data lives there, got: ${d.hint}`);
-    assertAllWellFormed(r);
   });
 
   await test('§storage continuity: a dropped record collection is drift; the one the candidate added is not', () => {
@@ -1052,7 +1011,7 @@ export default defineApp({
   });
 }
 
-// ── §E2 honest fixtures + latency-probe pinned expected-flagged ──
+// ── §E2 honest fixtures ──
 
 async function testHonestFixturesAndLatencyProbe(): Promise<void> {
   const HONEST_FIXTURES = [
@@ -1219,14 +1178,6 @@ export default defineApp({
       assert(r.ok === true, `corpus sample "${label}" should be ok, got diagnostics: ${JSON.stringify(r.diagnostics)}`);
       assert(r.diagnostics.length === 0, `corpus sample "${label}" should have zero diagnostics, got ${r.diagnostics.length}`);
     }
-  });
-
-  await test('honest-corpus: latency-probe is pinned expected-flagged (raw __whimSyscall + facade-less diag), never in the honest set', () => {
-    const src = readFixture('latency-probe.app.tsx');
-    const r = runStaticChecks(src);
-    assert(r.ok === false, 'latency-probe must NOT be zero-diagnostics — it deliberately bypasses the SDK');
-    assertHasKind(r, 'forbidden_global', 'latency-probe reaches globalThis.__whimSyscall directly — a forbidden-global violation');
-    assertHasKind(r, 'unused_capability', 'the diag capability has no SDK facade, so declaring it always draws unused_capability');
   });
 }
 

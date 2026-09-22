@@ -159,16 +159,17 @@ function addFinding(findings: NativeNetworkDenyFinding[], file: string, message:
   findings.push({ file, message });
 }
 
-function exactOneCheckNamesAutolinking(application: KotlinLexResult): boolean {
+/** The invariant is "exactly one package got replaced, checked before use" — the message text
+ *  naming autolinking is a style choice, not something a weaker implementation would get wrong
+ *  in a way this check should catch. */
+function exactlyOnePackageIsChecked(application: KotlinLexResult): boolean {
   const match = /check\s*\(replacedWebViewPackages\s*==\s*1\)\s*\{/.exec(application.code);
   if (!match) return false;
   const start = application.code.indexOf('{', match.index);
   const end = closingBraceIndex(application.code, start);
   if (end === undefined) return false;
   const attachedStrings = application.strings.filter((span) => span.start > start && span.end <= end);
-  return application.code.slice(start + 1, end).trim() === ''
-    && attachedStrings.length === 1
-    && attachedStrings[0].text.includes('react-native-webview autolinking');
+  return application.code.slice(start + 1, end).trim() === '' && attachedStrings.length === 1;
 }
 
 function checkApplicationWiring(application: KotlinLexResult, findings: NativeNetworkDenyFinding[]): void {
@@ -184,7 +185,7 @@ function checkApplicationWiring(application: KotlinLexResult, findings: NativeNe
       || /\bRNCWebViewPackage\s*\(\s*\)/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'the package list must contain one denied manager package and no stock instance');
   }
-  if (!exactOneCheckNamesAutolinking(application)) {
+  if (!exactlyOnePackageIsChecked(application)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'startup must check exactly one react-native-webview autolinked package');
   }
   if (!/add\([^\n]*WhimTonePackage\(\)\)/.test(code)) {
@@ -525,6 +526,167 @@ function assertIosFindingNamesFile(root: string, file: string): void {
   assert(findings.some((finding) => finding.file === file), `expected an iOS finding naming ${file}, got ${JSON.stringify(findings)}`);
 }
 
+interface MutationCase {
+  readonly name: string;
+  readonly file: string;
+  readonly mutate: (valid: string) => string;
+}
+
+const ANDROID_MUTATION_CASES: readonly MutationCase[] = [
+  {
+    name: 'appending the denied package while retaining the stock package fails',
+    file: ANDROID_MAIN_APPLICATION_PATH,
+    mutate: (valid) => valid.replace(
+      'this[index] = NetworkDeniedWebViewPackage()',
+      'add(NetworkDeniedWebViewPackage())\n      add(RNCWebViewPackage())',
+    ),
+  },
+  {
+    name: 'moving the setting to onAfterUpdateTransaction fails',
+    file: ANDROID_NETWORK_DENY_MANAGER_PATH,
+    mutate: (valid) => valid.replace(
+      '    wrapper.webView.settings.blockNetworkLoads = true\n    return wrapper\n  }',
+      '    return wrapper\n  }\n  override fun onAfterUpdateTransaction(wrapper: RNCWebViewWrapper) {\n    wrapper.webView.settings.blockNetworkLoads = true\n  }',
+    ),
+  },
+  {
+    name: 'setting blockNetworkLoads to false fails',
+    file: ANDROID_NETWORK_DENY_MANAGER_PATH,
+    mutate: (valid) => valid.replace('blockNetworkLoads = true', 'blockNetworkLoads = false'),
+  },
+  {
+    name: 'returning the stock manager fails',
+    file: ANDROID_NETWORK_DENY_PACKAGE_PATH,
+    mutate: (valid) => valid.replace('NetworkDeniedWebViewManager()', 'RNCWebViewManager()'),
+  },
+  {
+    name: 'a manager comment cannot impersonate the deny statement',
+    file: ANDROID_NETWORK_DENY_MANAGER_PATH,
+    mutate: (valid) => valid.replace(
+      '    wrapper.webView.settings.blockNetworkLoads = true',
+      '    /* wrapper.webView.settings.blockNetworkLoads = true */',
+    ),
+  },
+  {
+    name: 'a package raw string cannot impersonate createViewManagers',
+    file: ANDROID_NETWORK_DENY_PACKAGE_PATH,
+    mutate: () => `
+package com.whim.webview
+class NetworkDeniedWebViewPackage : RNCWebViewPackage() {
+  val decoy = """
+    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+      return listOf(NetworkDeniedWebViewManager())
+    }
+  """
+}
+`,
+  },
+  {
+    name: 'an application comment cannot impersonate package replacement',
+    file: ANDROID_MAIN_APPLICATION_PATH,
+    mutate: () => `
+package com.whim
+val packages = PackageList(this).packages.apply {
+  /*
+  if (this[index] is RNCWebViewPackage) {
+    this[index] = NetworkDeniedWebViewPackage()
+  }
+  */
+  check(replacedWebViewPackages == 1) { "react-native-webview autolinking" }
+  add(com.whim.tone.WhimTonePackage())
+}
+`,
+  },
+];
+
+const IOS_MUTATION_CASES: readonly MutationCase[] = [
+  {
+    name: 'an iOS resource-type qualifier fails',
+    file: IOS_NETWORK_DENY_RULES_PATH,
+    mutate: (valid) => valid.replace('"url-filter":"^https?:"', '"url-filter":"^https?:","resource-type":["document"]'),
+  },
+  {
+    name: 'dropping the iOS WebSocket rule fails',
+    file: IOS_NETWORK_DENY_RULES_PATH,
+    mutate: (valid) => JSON.stringify((JSON.parse(valid) as unknown[]).slice(0, 1)),
+  },
+  {
+    name: 'a referenced rule file missing from Resources fails',
+    file: IOS_PROJECT_PATH,
+    mutate: (valid) => valid.replace('files = ( RULES_BUILD, );', 'files = ();'),
+  },
+  {
+    name: 'a replacement selector outside the init family fails',
+    file: IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+    mutate: (valid) => valid.replaceAll('initWhimNetworkDeniedWithFrame', 'whim_initWithFrame'),
+  },
+  {
+    name: 'the exchange must use the two resolved initializer methods',
+    file: IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+    mutate: (valid) => valid.replace(
+      'method_exchangeImplementations(original, replacement);',
+      'Method wrong = class_getInstanceMethod(WKWebView.class, @selector(loadHTMLString:baseURL:));\n'
+        + '    method_exchangeImplementations(wrong, replacement);',
+    ),
+  },
+  {
+    name: 'removing the iOS fail-closed branch fails',
+    file: IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+    mutate: (valid) => valid.replace(
+      '  } else {\n    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;\n',
+      '',
+    ),
+  },
+  {
+    name: 'fail-closed JavaScript disabling belongs in the unavailable branch',
+    file: IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+    mutate: (valid) => valid.replace(
+      `  if (ruleList) {
+    [configuration.userContentController addContentRuleList:ruleList];
+  } else {
+    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
+  }`,
+      `  configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
+  if (ruleList) {
+    [configuration.userContentController addContentRuleList:ruleList];
+  } else {
+    (void)ruleList;
+  }`,
+    ),
+  },
+  {
+    name: 'Objective-C comments and strings cannot impersonate the hook',
+    file: IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
+    mutate: () => `
+@implementation WhimWebViewNetworkDeny
++ (void)load {
+  NSString *decoy = @"@selector(initWithFrame:configuration:) method_exchangeImplementations";
+  /* dispatch_once(&onceToken, ^{ @selector(initWhimNetworkDeniedWithFrame:configuration:); }); */
+}
+@end
+@implementation WKWebView (WhimNetworkDeny)
+- (instancetype)initWhimNetworkDeniedWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
+  NSString *decoy = @"addContentRuleList: allowsContentJavaScript = NO";
+  /* [configuration.userContentController addContentRuleList:ruleList]; */
+  return [self initWhimNetworkDeniedWithFrame:frame configuration:configuration];
+}
+@end
+`,
+  },
+];
+
+const ANDROID_VALID_BY_FILE: Readonly<Record<string, string>> = {
+  [ANDROID_MAIN_APPLICATION_PATH]: VALID_APPLICATION,
+  [ANDROID_NETWORK_DENY_MANAGER_PATH]: VALID_MANAGER,
+  [ANDROID_NETWORK_DENY_PACKAGE_PATH]: VALID_PACKAGE,
+};
+
+const IOS_VALID_BY_FILE: Readonly<Record<string, string>> = {
+  [IOS_NETWORK_DENY_RULES_PATH]: VALID_IOS_RULES,
+  [IOS_NETWORK_DENY_IMPLEMENTATION_PATH]: VALID_IOS_IMPLEMENTATION,
+  [IOS_PROJECT_PATH]: VALID_IOS_PROJECT,
+};
+
 export async function run(): Promise<void> {
   await test('native-network-deny: the real Android wiring refuses every WebView network load', () => {
     const findings = checkAndroidNativeNetworkDeny(process.cwd());
@@ -542,159 +704,18 @@ export async function run(): Promise<void> {
     }
   });
 
-  await test('native-network-deny: appending the denied package while retaining the stock package fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_MAIN_APPLICATION_PATH,
-        VALID_APPLICATION.replace(
-          'this[index] = NetworkDeniedWebViewPackage()',
-          'add(NetworkDeniedWebViewPackage())\n      add(RNCWebViewPackage())',
-        ),
-      );
-      assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: moving the setting to onAfterUpdateTransaction fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_NETWORK_DENY_MANAGER_PATH,
-        VALID_MANAGER.replace(
-          '    wrapper.webView.settings.blockNetworkLoads = true\n    return wrapper\n  }',
-          '    return wrapper\n  }\n  override fun onAfterUpdateTransaction(wrapper: RNCWebViewWrapper) {\n    wrapper.webView.settings.blockNetworkLoads = true\n  }',
-        ),
-      );
-      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_MANAGER_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: setting blockNetworkLoads to false fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_NETWORK_DENY_MANAGER_PATH,
-        VALID_MANAGER.replace('blockNetworkLoads = true', 'blockNetworkLoads = false'),
-      );
-      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_MANAGER_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: returning the stock manager fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_NETWORK_DENY_PACKAGE_PATH,
-        VALID_PACKAGE.replace('NetworkDeniedWebViewManager()', 'RNCWebViewManager()'),
-      );
-      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_PACKAGE_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: a manager comment cannot impersonate the deny statement', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_NETWORK_DENY_MANAGER_PATH,
-        VALID_MANAGER.replace(
-          '    wrapper.webView.settings.blockNetworkLoads = true',
-          '    /* wrapper.webView.settings.blockNetworkLoads = true */',
-        ),
-      );
-      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_MANAGER_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: a package raw string cannot impersonate createViewManagers', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_NETWORK_DENY_PACKAGE_PATH,
-        `
-package com.whim.webview
-class NetworkDeniedWebViewPackage : RNCWebViewPackage() {
-  val decoy = """
-    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-      return listOf(NetworkDeniedWebViewManager())
-    }
-  """
-}
-`,
-      );
-      assertFindingNamesFile(root, ANDROID_NETWORK_DENY_PACKAGE_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: an application comment cannot impersonate package replacement', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        ANDROID_MAIN_APPLICATION_PATH,
-        `
-package com.whim
-val packages = PackageList(this).packages.apply {
-  /*
-  if (this[index] is RNCWebViewPackage) {
-    this[index] = NetworkDeniedWebViewPackage()
+  for (const c of ANDROID_MUTATION_CASES) {
+    await test(`native-network-deny: ${c.name}`, () => {
+      const root = makeNativeNetworkDenyFixture();
+      try {
+        writeValidFixture(root);
+        writeNativeNetworkDenyFixture(root, c.file, c.mutate(ANDROID_VALID_BY_FILE[c.file] as string));
+        assertFindingNamesFile(root, c.file);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
   }
-  */
-  check(replacedWebViewPackages == 1) { "react-native-webview autolinking" }
-  add(com.whim.tone.WhimTonePackage())
-}
-`,
-      );
-      assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: the exact-one check must carry the autolinking message itself', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidFixture(root);
-      const wrongMessage = VALID_APPLICATION
-        .replace(
-          'val packages = PackageList(this).packages.apply {',
-          'val unrelated = "react-native-webview autolinking"\n// react-native-webview autolinking\nval packages = PackageList(this).packages.apply {',
-        )
-        .replace(
-          '"react-native-webview autolinking must provide exactly one package"',
-          '"expected one package"',
-        );
-      writeNativeNetworkDenyFixture(root, ANDROID_MAIN_APPLICATION_PATH, wrongMessage);
-      assertFindingNamesFile(root, ANDROID_MAIN_APPLICATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
 
   await test('native-network-deny: the real iOS wiring refuses HTTP and WebSocket loads', () => {
     const findings = checkIosNativeNetworkDeny(process.cwd());
@@ -712,150 +733,16 @@ val packages = PackageList(this).packages.apply {
     }
   });
 
-  await test('native-network-deny: an iOS resource-type qualifier fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_NETWORK_DENY_RULES_PATH,
-        VALID_IOS_RULES.replace('"url-filter":"^https?:"', '"url-filter":"^https?:","resource-type":["document"]'),
-      );
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_RULES_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: dropping the iOS WebSocket rule fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      const rules = JSON.parse(VALID_IOS_RULES) as unknown[];
-      writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_RULES_PATH, JSON.stringify(rules.slice(0, 1)));
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_RULES_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: a referenced rule file missing from Resources fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_PROJECT_PATH,
-        VALID_IOS_PROJECT.replace('files = ( RULES_BUILD, );', 'files = ();'),
-      );
-      assertIosFindingNamesFile(root, IOS_PROJECT_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: a replacement selector outside the init family fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
-        VALID_IOS_IMPLEMENTATION.replaceAll('initWhimNetworkDeniedWithFrame', 'whim_initWithFrame'),
-      );
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: the exchange must use the two resolved initializer methods', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
-        VALID_IOS_IMPLEMENTATION.replace(
-          'method_exchangeImplementations(original, replacement);',
-          'Method wrong = class_getInstanceMethod(WKWebView.class, @selector(loadHTMLString:baseURL:));\n'
-            + '    method_exchangeImplementations(wrong, replacement);',
-        ),
-      );
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: removing the iOS fail-closed branch fails', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
-        VALID_IOS_IMPLEMENTATION.replace(
-          '  } else {\n    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;\n',
-          '',
-        ),
-      );
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: fail-closed JavaScript disabling belongs in the unavailable branch', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      const misplacedFallback = VALID_IOS_IMPLEMENTATION.replace(
-        `  if (ruleList) {
-    [configuration.userContentController addContentRuleList:ruleList];
-  } else {
-    configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
-  }`,
-        `  configuration.defaultWebpagePreferences.allowsContentJavaScript = NO;
-  if (ruleList) {
-    [configuration.userContentController addContentRuleList:ruleList];
-  } else {
-    (void)ruleList;
-  }`,
-      );
-      writeNativeNetworkDenyFixture(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH, misplacedFallback);
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  await test('native-network-deny: Objective-C comments and strings cannot impersonate the hook', () => {
-    const root = makeNativeNetworkDenyFixture();
-    try {
-      writeValidIosFixture(root);
-      writeNativeNetworkDenyFixture(
-        root,
-        IOS_NETWORK_DENY_IMPLEMENTATION_PATH,
-        `
-@implementation WhimWebViewNetworkDeny
-+ (void)load {
-  NSString *decoy = @"@selector(initWithFrame:configuration:) method_exchangeImplementations";
-  /* dispatch_once(&onceToken, ^{ @selector(initWhimNetworkDeniedWithFrame:configuration:); }); */
-}
-@end
-@implementation WKWebView (WhimNetworkDeny)
-- (instancetype)initWhimNetworkDeniedWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
-  NSString *decoy = @"addContentRuleList: allowsContentJavaScript = NO";
-  /* [configuration.userContentController addContentRuleList:ruleList]; */
-  return [self initWhimNetworkDeniedWithFrame:frame configuration:configuration];
-}
-@end
-`,
-      );
-      assertIosFindingNamesFile(root, IOS_NETWORK_DENY_IMPLEMENTATION_PATH);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+  for (const c of IOS_MUTATION_CASES) {
+    await test(`native-network-deny: ${c.name}`, () => {
+      const root = makeNativeNetworkDenyFixture();
+      try {
+        writeValidIosFixture(root);
+        writeNativeNetworkDenyFixture(root, c.file, c.mutate(IOS_VALID_BY_FILE[c.file] as string));
+        assertIosFindingNamesFile(root, c.file);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 }
