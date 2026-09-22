@@ -21,18 +21,40 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createConnection, createServer } from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// Mirrors `scripts/netdeny/variants.ts`'s `NAVIGATION_VARIANTS`, in order, by hand — a plain Node
-// script can't import the `.ts` module without a loader.
-const NAVIGATION_VARIANTS = ['loc-href', 'loc-assign', 'meta-refresh', 'anchor-click', 'loc-href-https', 'dns-name'];
-const LEAK_REQUIRED = ['loc-href', 'loc-assign', 'meta-refresh', 'anchor-click', 'host-top-frame'];
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import { build } from 'esbuild';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
 const runMjs = path.join(repoRoot, 'scripts', 'netdeny', 'run.mjs');
 const CANARY_TIMEOUT_MS = 10_000;
 const READY_LINE = 'netdeny canary: listening ';
+
+// `variants.ts` has no side effects (unlike `canary.ts`, whose module top level starts the
+// server as soon as it's imported), so bundle just it to a temp module and read the arrays off
+// it directly — never a hand-copy that can drift from the source it's supposed to mirror.
+async function loadVariants() {
+  const entry = path.join(repoRoot, 'scripts', 'netdeny', 'variants.ts');
+  const outfile = path.join(repoRoot, `.netdeny-variants.${process.pid}.tmp.mjs`);
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node20',
+    tsconfigRaw: '{}',
+    logLevel: 'warning',
+  });
+  try {
+    return await import(pathToFileURL(outfile).href);
+  } finally {
+    fs.rmSync(outfile, { force: true });
+  }
+}
+
+const { NAVIGATION_VARIANTS, LEAK_REQUIRED_VARIANTS: LEAK_REQUIRED } = await loadVariants();
 
 let pass = 0;
 async function test(name, fn) {
@@ -145,6 +167,13 @@ function spawnCanary(args) {
       }
       return result;
     },
+    /** End the run the way an operator would after the traffic is done — SIGINT, which
+     *  `canary.ts` handles the same way as its `--seconds` timer (prints the summary, exits) —
+     *  instead of racing a fixed wall-clock window that a loaded machine can close mid-fetch. */
+    async finishAndWaitForExit() {
+      if (!closed) child.kill('SIGINT');
+      return this.waitForExit();
+    },
     async stop() {
       if (!closed) child.kill('SIGKILL');
       await exited;
@@ -182,16 +211,7 @@ await test('zero after fetching all six bundles with no hits exits 0', async () 
   const [httpPort, tlsPort] = await allocatePortPair();
   const base = `http://127.0.0.1:${httpPort}`;
   const tlsBase = `https://127.0.0.1:${tlsPort}`;
-  const canary = spawnCanary([
-    '--expect',
-    'zero',
-    '--seconds',
-    '3',
-    '--http-port',
-    String(httpPort),
-    '--tls-port',
-    String(tlsPort),
-  ]);
+  const canary = spawnCanary(['--expect', 'zero', '--http-port', String(httpPort), '--tls-port', String(tlsPort)]);
 
   try {
     await canary.waitForReady();
@@ -201,7 +221,7 @@ await test('zero after fetching all six bundles with no hits exits 0', async () 
       await res.text();
     }
 
-    const result = await canary.waitForExit();
+    const result = await canary.finishAndWaitForExit();
     assert.equal(result.code, 0, `expected exit 0\n${diagnostics(result)}`);
     assert.ok(
       result.stdout.includes(`bundles=${NAVIGATION_VARIANTS.length}`),
@@ -219,16 +239,7 @@ await test('zero after fetching all six bundles with no hits exits 0', async () 
 
 await test('leak passes on every required hit and a TLS connection, unaffected by zero bundle fetches', async () => {
   const [httpPort, tlsPort] = await allocatePortPair();
-  const canary = spawnCanary([
-    '--expect',
-    'leak',
-    '--seconds',
-    '3',
-    '--http-port',
-    String(httpPort),
-    '--tls-port',
-    String(tlsPort),
-  ]);
+  const canary = spawnCanary(['--expect', 'leak', '--http-port', String(httpPort), '--tls-port', String(tlsPort)]);
 
   try {
     await canary.waitForReady();
@@ -243,7 +254,7 @@ await test('leak passes on every required hit and a TLS connection, unaffected b
       socket.once('error', reject);
     });
 
-    const result = await canary.waitForExit();
+    const result = await canary.finishAndWaitForExit();
     assert.equal(result.code, 0, `expected exit 0\n${diagnostics(result)}`);
     assert.ok(result.stdout.includes('bundles=0'), `should report zero bundle fetches\n${diagnostics(result)}`);
     assert.match(result.stdout, /NETDENY PASS expect=leak/, diagnostics(result));

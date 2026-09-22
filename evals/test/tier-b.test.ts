@@ -49,7 +49,15 @@ const BASE_OBSERVATION: RunObservation = {
 const CLEAN_OBSERVATION: RunObservation = { ...BASE_OBSERVATION, diagnostics: [] };
 
 
+/** Every kind exercised below by a green-or-red `evaluateAssertion` case (not the skip/framing
+ *  or English-statement sections, which reuse `screen-reachable`). Checked at the bottom of this
+ *  section against `ASSERTION_KINDS`, so a kind added to the closed vocabulary with no case here
+ *  fails the suite — the count-only version of this check couldn't tell a missing kind from an
+ *  unrelated drift in the total. */
+const EXERCISED_KINDS = new Set<EvalAssertion['kind']>();
+
 function assertion(kind: EvalAssertion['kind'], target?: string, expected?: boolean): EvalAssertion {
+  EXERCISED_KINDS.add(kind);
   return {
     english: `fixture assertion for kind "${kind}"`,
     kind,
@@ -61,8 +69,6 @@ function assertion(kind: EvalAssertion['kind'], target?: string, expected?: bool
 // ─────────────────────────────────────────────────────────────────────────────
 section('non-vacuity: every ASSERTION_KINDS entry has a green and a red case');
 // ─────────────────────────────────────────────────────────────────────────────
-
-check('this suite covers every closed assertion kind', ASSERTION_KINDS.length === 6, `ASSERTION_KINDS: ${ASSERTION_KINDS.join(', ')}`);
 
 {
   const result = evaluateAssertion(assertion('screen-reachable', 'Home'), BASE_OBSERVATION);
@@ -151,6 +157,11 @@ for (const [name, syscallsInvoked, want] of [
     { wrote: true, read: false },
   );
 }
+
+for (const kind of ASSERTION_KINDS) {
+  check(`this suite exercises the closed kind "${kind}" with a green and a red case`, EXERCISED_KINDS.has(kind));
+}
+eq('this suite exercises no kind outside ASSERTION_KINDS', [...EXERCISED_KINDS].filter((k) => !(ASSERTION_KINDS as readonly string[]).includes(k)), []);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('the English statement reaches the report (spec "The English statement reaches the report")');

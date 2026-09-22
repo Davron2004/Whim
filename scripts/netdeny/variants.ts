@@ -33,6 +33,12 @@ export const NAVIGATION_VARIANTS: readonly NavigationVariant[] = [
   'dns-name',
 ];
 
+/** The variants `--expect leak` requires a hit for, plus `host-top-frame` (the outer-page
+ *  navigation, which has no mini-app source — see module comment). `loc-href-https` and
+ *  `dns-name` are deliberately excluded: they prove the TLS/DNS legs are blocked, not that a
+ *  leak landed. */
+export const LEAK_REQUIRED_VARIANTS: readonly NetdenyVariant[] = ['loc-href', 'loc-assign', 'meta-refresh', 'anchor-click', 'host-top-frame'];
+
 /** The addresses and run label a canary app source is parameterized over. `httpBase` and
  *  `tlsBase` are full origins (`http://host:port`, `https://host:port`); `runId` labels every hit
  *  so a shared canary can tell runs apart. */
