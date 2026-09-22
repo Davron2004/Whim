@@ -178,17 +178,20 @@ const chromiumBrowser = await chromium.launch();
 
 // 4. FORGED-SYSRET INERTNESS — a sysret the bundle posts to its OWN window cannot resolve a
 //    stub promise; the real host answer wins (host-channel-only acceptance, ev.source check).
+//    The `get` is issued first and stays pending while forged answers for ids 1..1000 are
+//    queued, so whatever id it drew, a forgery for it is dispatched before the host's reply.
+//    The check does not depend on how many syscalls the fixture made before it.
 {
   const r = await scenario('forged-sysret', 'water-counter', {
     evaluate: async (page) => {
       const f = await appFrame(page);
       return f ? f.evaluate(async () => {
-        for (let id = 1; id <= 8; id++) {
+        await globalThis.__whimSyscall.call('storage.kv.set', { key: 'probe', value: 'REAL' });
+        const pending = globalThis.__whimSyscall.call('storage.kv.get', { key: 'probe' });
+        for (let id = 1; id <= 1000; id++) {
           globalThis.postMessage(JSON.stringify({ whim: 'sysret', v: 1, id, ok: true, result: { found: true, value: 'ATTACKER' } }), '*'); // NOSONAR - self-posted forged sysret must target this opaque sandbox frame.
         }
-        await globalThis.__whimSyscall.call('storage.kv.set', { key: 'probe', value: 'REAL' });
-        const got = await globalThis.__whimSyscall.call('storage.kv.get', { key: 'probe' });
-        return got; // { found, value }
+        return pending; // { found, value }
       }) : null;
     },
   });
@@ -238,8 +241,9 @@ const chromiumBrowser = await chromium.launch();
 //    cue-intruder (declares NO capabilities) tries valid-token haptic+sound, an off-set token,
 //    and a forged self-posted sysret, end-to-end through the REAL sandbox → syscall → host. The
 //    TRUSTED VANTAGE is the host: a recording-fake CueBackend (host-shim) must log ZERO device
-//    invocations while undeclared, the gate must answer with STRUCTURED denials, and the forged
-//    sysret must be inert. A GRANTED sub-run is the non-vacuity control: once the manifest grants
+//    invocations while undeclared, and the gate must answer with STRUCTURED denials. (Whether a
+//    forged sysret is inert is check 4's job; this fixture only reports that it posted one.)
+//    A GRANTED sub-run is the non-vacuity control: once the manifest grants
 //    `cues`, the valid-token calls DO fire the backend (and the off-set one is still rejected
 //    `invalid_params`) — so the undeclared denials are a real gate, not a dead path.
 {
@@ -248,12 +252,11 @@ const chromiumBrowser = await chromium.launch();
   const hapticDenied = /cues\.haptic\(double\): ✓ denied: undeclared_capability/.test(undeclared.text);
   const soundDenied = /cues\.sound\(chime\): ✓ denied: undeclared_capability/.test(undeclared.text);
   const offsetWhileUndeclared = /cues\.sound\(siren\) \[off-set\]: ✓ denied: \w+/.test(undeclared.text); // cap gate trips first
-  const forgedInert = /forged self sysret: ↩ posted to self/.test(undeclared.text);
   const noFire = undeclared.host.cueLog.length === 0;
-  const undeclaredOk = hapticDenied && soundDenied && offsetWhileUndeclared && forgedInert && noFire;
+  const undeclaredOk = hapticDenied && soundDenied && offsetWhileUndeclared && noFire;
   record(undeclaredOk, 'INV-CUEGATE undeclared (hostile cue denied end-to-end, backend untouched)',
     `haptic→undeclared_capability=${hapticDenied} sound→undeclared_capability=${soundDenied} off-set-denied=${offsetWhileUndeclared} ` +
-    `forged-sysret-inert=${forgedInert} backend-invocations=${undeclared.host.cueLog.length} (must be 0)`);
+    `backend-invocations=${undeclared.host.cueLog.length} (must be 0)`);
 
   // (b) OFF-SET while GRANTED — the off-set token is rejected `invalid_params` even with the cap.
   //     This is BOTH the invalid_params arm of the invariant AND the non-vacuity control: the two

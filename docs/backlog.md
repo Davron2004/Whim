@@ -14,6 +14,22 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ## Open
 
+### [high] Act on the 2026-09-21 test audit
+- [ ] open
+- **Where:** `openspec/critic/2026-09-21-test-audit/` (`README.md` for the summary, one report per slice).
+- **What:** a repo-wide audit found ~4,600 lines of tests to delete, ~4,300 to rewrite or merge, and ~2,880 lines plus ~3.2 MB of dead spike artifacts in `invariants/`. It also found real bugs the tests hid: eval storage-roundtrip can never pass on a real run, the greenBy harness fails open, the synthrun forged-verdict test is vacuous, and the forbidden-globals static check has no behavioral test.
+- **Why it matters:** PR #35 carries ~18.8k of those test lines. Several containment and consent paths are locked only by source greps.
+- **Suggested approach:** read `verification.md` in that folder first (8 DELETE verdicts were overturned, 2 are conditional), then follow the README's "Suggested order of work". The forged-sysret question was settled by a mutation run on 2026-09-21 (the check is live but fragile); the README records the result and the re-run commands.
+- **Source:** test audit, 2026-09-21.
+
+### [idea — owner experiment] Digest the repo's Markdown into a knowledge graph
+- [ ] open
+- **Where:** 694 tracked `.md` files. Most sit in `openspec/changes/` (544, mostly archived proposals, designs, research and handoffs). The rest are `docs/` (handoffs, PR review notes, `spec.md`, which is stale per decision #42), `DEVLOG.md`, `HANDOFF-v1-sprint.md`, `openspec/critic/` and the agent skill/command mirrors. `graphify-out/` already holds dated Graphify runs.
+- **What:** many of these files were written during development and no longer document anything current. They're historical, but they still hold real knowledge: decisions, measured gotchas, spike evidence. The goal is to distill that into one navigable form, possibly a graph, so the current knowledge is findable and the history stops competing with it.
+- **Why it matters:** agents and people who orient from the docs can't tell a live file from a dead one, so stale guidance gets followed and real lessons get missed.
+- **Suggested approach:** owner-led. The owner has specific ideas to try here, including Graphify. Don't start this without them.
+- **Source:** owner, 2026-09-21.
+
 ### [med] Choose the generation models for public cost, not just quality
 - [ ] open
 - **Where:** `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` (server env, read in `server/src/generation/model.ts`), and the pipeline's system prompts, which are tuned to the current pair.

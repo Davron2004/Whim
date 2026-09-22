@@ -1,5 +1,9 @@
 # Exploring PR #35's tests
 
+> **Superseded for verdicts (2026-09-21):** the per-file Keep/Rewrite calls below were replaced by the
+> repo-wide test audit in `openspec/critic/2026-09-21-test-audit/`. Use this file only as a reading
+> guide.
+
 Review baseline: `5e7b682ea5f54c62887d08ccbf7e57197c3c9f54`, compared with
 `3a66cca3993aab0ce4680560fea326c349c55730`. Reviewed on September 19, 2026.
 

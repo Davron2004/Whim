@@ -3,8 +3,7 @@
  * TypeScript acceptance suite and runs it under Node — no test framework, house idiom.
  * Mirrors `src/host/bridge/test/run.mjs` verbatim, plus `tsconfigRaw: '{}'` (the esbuild
  * jsx-runtime gotcha, P2 — without it the project tsconfig's `jsx: "react-jsx"` leaks in).
- * Exits non-zero iff a DUE test failed (the greenBy harness, `harness.ts`), so CI/gate.sh
- * gate on it.
+ * Exits non-zero iff a test failed (`harness.ts`), so CI/gate.sh gate on it.
  *
  *   npm run checks:test
  */

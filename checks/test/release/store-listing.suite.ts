@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, assert } from '../harness';
 import { checkStoreListing } from '../../../scripts/release/lib/store-listing';
-import type { NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
+import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 
 const REPO_ROOT = process.cwd();
 
@@ -142,7 +142,7 @@ function messagesFor(dir: string): string[] {
 
 export async function run(): Promise<void> {
   await test('store-listing: the real repo passes with zero findings', () => {
-    const findings = checkStoreListing(REPO_ROOT, FIXTURE_CONFIG);
+    const findings = checkStoreListing(REPO_ROOT, loadNativeReleaseConfig(REPO_ROOT));
     assert(findings.length === 0, `expected no findings against the real repo, got ${JSON.stringify(findings)}`);
   });
 

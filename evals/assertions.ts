@@ -102,19 +102,27 @@ function evaluateRendersWithoutError(assertion: EvalAssertion, observation: RunO
   return renderedCleanly === expected ? pass(assertion, observed) : fail(assertion, observed);
 }
 
+/** The storage verbs the SDK sends (`src/sdk/index.tsx`), grouped by store: a round trip is a write
+ *  and a read on the same store. */
+const STORAGE_STORES = [
+  { prefix: 'storage.kv', writes: ['storage.kv.set'], reads: ['storage.kv.get'] },
+  { prefix: 'storage.records', writes: ['storage.records.append', 'storage.records.update'], reads: ['storage.records.list'] },
+] as const;
+
 /**
- * `target` optionally names a storage-capability prefix (defaulting to `storage`, matching the
- * bridge's `storage.get`/`storage.set` capability names, `handoff/run-observation.md`'s fixture).
- * A round trip is observed as both a write and a read invocation being recorded — `RunObservation`
- * carries only the invocation trace, never syscall payloads, so this is the strongest inert-data
- * check available.
+ * `target` optionally narrows the check to one store (`storage.kv` or `storage.records`); the
+ * default, `storage`, accepts either. A round trip is observed as both a write and a read on the
+ * same store being recorded — `RunObservation` carries only the invocation trace, never syscall
+ * payloads, so this is the strongest inert-data check available.
  */
 function evaluateStorageRoundtrip(assertion: EvalAssertion, observation: RunObservation): TierBAssertionResult {
   const prefix = assertion.target ?? 'storage';
   const expected = assertion.expected ?? true;
-  const wrote = observation.syscallsInvoked.includes(`${prefix}.set`);
-  const read = observation.syscallsInvoked.includes(`${prefix}.get`);
-  const roundTripped = wrote && read;
+  const invoked = (method: string): boolean => observation.syscallsInvoked.includes(method);
+  const stores = STORAGE_STORES.filter((store) => store.prefix === prefix || store.prefix.startsWith(`${prefix}.`));
+  const wrote = stores.some((store) => store.writes.some(invoked));
+  const read = stores.some((store) => store.reads.some(invoked));
+  const roundTripped = stores.some((store) => store.writes.some(invoked) && store.reads.some(invoked));
   const observed = { wrote, read, invoked: observation.syscallsInvoked };
   return roundTripped === expected ? pass(assertion, observed) : fail(assertion, observed);
 }

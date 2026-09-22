@@ -2,21 +2,45 @@
   "ok": true,
   "diagnostics": [],
   "contained": true,
-  "forgeries": { "rejected": false, "count": 0 },
+  "forgeries": {
+    "rejected": true,
+    "count": 1
+  },
   "truncated": false,
   "timings": {
-    "buildMs": 42,
-    "bootMs": 310,
-    "mountToPaintMs": 180,
-    "sweepMs": 95,
-    "perScreenMs": { "Home": 95 }
+    "buildMs": 4,
+    "bootMs": 159,
+    "mountToPaintMs": 84,
+    "sweepMs": 763,
+    "perScreenMs": {
+      "Home": 761
+    }
   },
   "trace": [
-    { "kind": "syscall", "method": "storage.get", "atMs": 210 },
-    { "kind": "cue", "method": "cues.haptic", "atMs": 260 },
-    { "kind": "syscall", "method": "storage.set", "atMs": 275 }
+    {
+      "kind": "syscall",
+      "method": "storage.kv.get",
+      "atMs": 171
+    },
+    {
+      "kind": "syscall",
+      "method": "storage.kv.set",
+      "atMs": 295
+    },
+    {
+      "kind": "syscall",
+      "method": "storage.kv.set",
+      "atMs": 667
+    }
   ],
-  "screens": { "declared": ["Home"], "visited": ["Home"] },
+  "screens": {
+    "declared": [
+      "Home"
+    ],
+    "visited": [
+      "Home"
+    ]
+  },
   "budgets": {
     "mountBudgetMs": 8000,
     "actionQuietMs": 300,

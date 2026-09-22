@@ -169,8 +169,7 @@ the run's staging branch (`integration/<change-id>`, from `main`'s recorded tip)
 
 1. Per eligible chain (deps merged): record BASE = the staging branch tip
    (`git rev-parse integration/<change-id>`), pre-create an orchestrator-owned worktree +
-   `chain/<change>-<id>` branch, `npm run build` in it, write `.phase` if the change uses a
-   greenBy suite (§6).
+   `chain/<change>-<id>` branch, `npm run build` in it.
 2. One implementer per chain, in parallel where the DAG allows. Each self-gates `gate.sh`,
    commits, reports. Implementers do **not** tick tasks.md — the dispatcher ticks at merge.
 3. Per report: adjudicate deviations (A log / B adjudicate / C halt), `fixloop.sh integrity`,
@@ -182,27 +181,11 @@ the run's staging branch (`integration/<change-id>`, from `main`'s recorded tip)
    force-push → ancestor check → ready flip → single human merge click) is orchestrator-executed
    on the attended host and follows apply.md step 12 as the canonical text; then `/opsx:archive`.
 
-## 6. Phased TDD across chains — greenBy
+## 6. Phased TDD across chains — greenBy (retired)
 
-For a change that authors one test corpus up front (strict TDD) but turns it green across several
-chains. Reference implementation + full contract:
-`openspec/changes/archive/2026-07-12-static-check-pipeline/handoff/greenby-harness.md`.
-
-- Each test is tagged `greenBy: <chain>` on the house ~30-line test harness (no shared framework).
-- The runner reads an untracked, gitignored `<suite>/.phase` file holding one chain id:
-  `.phase = N` ⇒ tests with `greenBy ≤ N` are *due* (must pass), later ones are tolerated
-  *pending*; **`.phase` absent ⇒ strict** (everything due). Exit non-zero iff a due test fails.
-- **XPASS** — a not-yet-due test that already passes — is reported, never swallowed: a test green
-  before its code exists is probably vacuous (same ethos as the invariants negative control).
-- The **dispatcher** writes `.phase` into each chain's worktree before dispatch (§5 step 1).
-  Because `.phase` is untracked, it can never reach a commit — so the final `gate-full.sh` on the
-  merged main tip and CI's fresh checkout are strict *by construction*, with no delete step to
-  forget.
-- Why a file and not an env var: `bash-policy.sh` auto-allows `./scripts/gate.sh` anchored at
-  command start; an env-assignment prefix matches nothing and stalls a subagent on a prompt it
-  cannot answer.
-- Don't confuse this with the fast/full gate split: that split is cost-based (Metro/Chromium
-  deferred); `.phase` encodes completeness-over-time.
+Retired 2026-09-21 by the test audit (`openspec/critic/2026-09-21-test-audit/`): no suite is phased
+any more, and the scheduler failed open (a stale untracked `.phase` turned failures into PENDING
+with exit 0). A test either passes or fails.
 
 ## 7. Test classification (decided at PLAN time, honored by workers)
 
@@ -244,7 +227,7 @@ policy), so a chained payload is auditable rather than blanket-denied.
 **Current (built, validated):** worktree-parallel execution for both loops; the
 server-side-`main`-protected remote-write policy (main-thread branch pushes auto-allow, any push
 naming `main` denied for all callers, subagents always denied — decision #49) with compound-command
-unrolling; scoped git + owners binding; Class-1 grants; greenBy; containerized unattended fix-loop
+unrolling; scoped git + owners binding; Class-1 grants; containerized unattended fix-loop
 runs.
 
 **Current (built, unit-verified, closure pending):** the per-run staging branch
@@ -270,7 +253,7 @@ is **pending the first live staging-lane run**, which is the supervised closure 
 - *Dependency adds by agents:* always human-in-the-loop — a Class-1 file grant alone cannot make
   one work (`npm install` is denied for supply-chain safety).
 - *Red-check for chains:* the fix-loop's per-finding red-check has no chain-level equivalent yet;
-  greenBy XPASS + the reviewer carry that weight for dispatched changes.
+  the reviewer carries that weight for dispatched changes.
 - *Codex overflow lane:* artifacts are already portable markdown; nothing to build until wanted.
 
 ## 10. Cross-agent mirror (Codex) — one source of truth, zero drift

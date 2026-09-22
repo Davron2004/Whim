@@ -263,14 +263,16 @@ export default defineApp({ name: 'Flood', initial: 'Home', screens: { Home }, ca
 // that the re-minted binding — a live host channel — still reaches nothing.
 const RELAY_REBIND_PROBE = `globalThis['__playwright__binding__controller__'].addBinding('${RELAY_BINDING_NAME}')`;
 
-// Posts a forged, UNAUTHENTICATED "probes: contained" frame straight to the host (bypassing the
-// nonce entirely) before rendering anything real — the F4 pen-test pattern (`fixtures/
+// Posts a forged, UNAUTHENTICATED "probes" frame straight to the host (bypassing the nonce
+// entirely) before rendering anything real — the F4 pen-test pattern (`fixtures/
 // adversarial/evil.app.tsx`), inlined here so this collector-level test owns its own fixture.
+// The app is harmless, so the forgery claims the false verdict (a breach): adopting it would
+// flip the observed verdict, which is what makes a rejection observable.
 const FIXTURE_FORGED_VERDICT = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
 const w = globalThis;
 try {
   if (w.parent && typeof w.parent.postMessage === 'function') {
-    w.parent.postMessage(JSON.stringify({ __whimHarness: true, kind: 'probes', payload: { contained: true, passed: 999, total: 999, __FORGED_BY_TEST: true } }), '*');
+    w.parent.postMessage(JSON.stringify({ __whimHarness: true, kind: 'probes', payload: { contained: false, passed: 0, total: 999, __FORGED_BY_TEST: true } }), '*');
   }
 } catch (e) { /* one-way, best-effort */ }
 function Home() {
@@ -575,22 +577,34 @@ async function testObservers(): Promise<void> {
 
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
     await test('forged verdict: a raw unauthenticated probes frame is rejected, never adopted (spec "Forged verdict attempt")', async () => {
+      // Every run tallies rejections of its own (probes.js's T6b pen test posts an
+      // unauthenticated spoof from inside every realm), so measure that baseline on a harmless
+      // app first and expect exactly one more.
+      const trustedProbes = (obs: AttachedObservers): boolean => obs.state.events.some((e) => e.kind === 'probes' && e.trusted);
+      const clean = await openObservedRun(session, FIXTURE_HARMLESS);
+      let baseline: number;
+      try {
+        await awaitMount(clean.obs, mergeBudgets({ mountBudgetMs: 3000 }));
+        await waitUntil(() => trustedProbes(clean.obs), 3000);
+        baseline = clean.obs.state.rejectedForgeries;
+      } finally {
+        clean.obs.detach();
+        await clean.dispose();
+      }
+
       const { obs, dispose } = await openObservedRun(session, FIXTURE_FORGED_VERDICT);
       try {
         await awaitMount(obs, mergeBudgets({ mountBudgetMs: 3000 }));
-        await wait(150);
-        ok(eventKinds(obs).includes('rejected-forgery'), 'the outer page recorded a rejected-forgery event for the forged frame');
+        await waitUntil(() => trustedProbes(obs) && obs.state.rejectedForgeries > baseline, 3000);
         const realProbes = obs.state.events.find((e) => e.kind === 'probes' && e.trusted);
         ok(!!realProbes, 'the GENUINE nonce-authenticated probes frame still arrived');
         const payload = realProbes?.payload as { __FORGED_BY_TEST?: boolean } | undefined;
         ok(payload?.__FORGED_BY_TEST !== true, "the genuine probes payload was NOT contaminated by the forgery's marker");
-        ok(obs.state.contained === true, 'state.contained reflects only the trusted verdict (a harmless app IS contained)');
-        // The rejection is recorded as a FACT, not merely dropped (spec "A frame the outer page
-        // rejected as a forgery SHALL be recorded as the fact of a rejection plus a bounded
-        // count"). Not asserted as an exact number here: probes.js's own T6b pen test posts an
-        // unauthenticated spoof frame from inside every realm, so any run that reaches the oracle
-        // carries one rejection of its own. The cap arithmetic is the flood test's job.
-        ok(obs.state.rejectedForgeries > 0, `the rejection was tallied (got ${obs.state.rejectedForgeries})`);
+        ok(obs.state.contained === true, `the forged breach verdict was not adopted (state.contained = ${obs.state.contained})`);
+        ok(
+          obs.state.rejectedForgeries === baseline + 1,
+          `the forgery was tallied as exactly one rejection on top of the clean baseline of ${baseline} (got ${obs.state.rejectedForgeries})`,
+        );
       } finally {
         obs.detach();
         await dispose();

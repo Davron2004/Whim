@@ -89,10 +89,9 @@ jobs:
       - name: Run the launcher core suite (blocks on red)
         run: npm run launcher:test
       # ── static-check pipeline (static-check-pipeline, chain E) ──────────────────
-      # Pure host-side AST library (no browser, no I/O): the greenBy harness runs STRICT here
-      # (no `checks/test/.phase` is ever checked in — it's gitignored, dispatcher-written only
-      # inside a chain's worktree), so every due-now assertion — including the honest-corpus
-      # false-positive gate and the pinned latency-probe expected-flagged sample — must pass.
+      # Pure host-side AST library (no browser, no I/O): every assertion — including the
+      # honest-corpus false-positive gate and the pinned latency-probe expected-flagged sample —
+      # must pass.
       - name: Run the static-checks acceptance suite (blocks on red)
         run: npm run checks:test
       # Key is pinned to the playwright version above — bump it in lockstep if that version changes.
