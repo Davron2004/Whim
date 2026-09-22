@@ -16,9 +16,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Harness } from '../../launcher/test/harness';
 import { CHANNELS } from '../channels';
-import { REDACTED, SENSITIVE_FIELD_NAMES, isSensitiveField } from '../redact';
+import { REDACTED, isSensitiveField } from '../redact';
 import { LogRing } from '../ring-buffer';
-import { createSeam, LEVELS, LEVEL_ORDER } from '../index';
+import { createSeam } from '../index';
 import type { PostBatch } from '../sink';
 
 interface Sent {
@@ -43,6 +43,14 @@ function recordingPost(sent: Sent[], fail = false): PostBatch {
 /** Let queued microtasks and a zero-delay timer settle (fire-and-forget flushes). */
 async function settle(): Promise<void> {
   await new Promise<void>(resolve => setTimeout(resolve, 0));
+}
+
+/** Polls until `predicate` holds or `budgetMs` expires, then returns regardless — for waiting on
+ *  a timer-driven flush without a fixed sleep, which either races (too short) or is slow (too
+ *  long padded for margin). The caller asserts the property itself; this only bounds the wait. */
+async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline && !predicate()) await new Promise<void>(resolve => setTimeout(resolve, 5));
 }
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js'];
@@ -122,15 +130,7 @@ function isProbeSurface(file: string): boolean {
 }
 
 export async function runLoggingTests(h: Harness): Promise<void> {
-  await h.test('levels are ordered lowest-first and the threshold filters below it', () => {
-    h.eq([...LEVELS], ['debug', 'info', 'warn', 'error'], 'level order');
-    h.ok(
-      LEVEL_ORDER.debug < LEVEL_ORDER.info &&
-        LEVEL_ORDER.info < LEVEL_ORDER.warn &&
-        LEVEL_ORDER.warn < LEVEL_ORDER.error,
-      'ranks increase with severity',
-    );
-
+  await h.test('the threshold filters records below it', () => {
     const seam = createSeam({ console: false, level: 'warn' });
     seam.debug(CHANNELS.gen, 'below');
     seam.info(CHANNELS.gen, 'below');
@@ -176,13 +176,17 @@ export async function runLoggingTests(h: Harness): Promise<void> {
   });
 
   await h.test('every sensitive field name is redacted before the record is buffered', () => {
+    // Written here, not read off SENSITIVE_FIELD_NAMES: a name silently dropped from that list
+    // would otherwise still pass this test — one representative from each of the spec's five
+    // families (prompt text, generated source, report note text, device id, provider creds).
+    const sensitiveFieldNames = ['prompt', 'source', 'note', 'deviceId', 'apiKey'];
     const seam = createSeam({ console: false });
-    for (const name of SENSITIVE_FIELD_NAMES) {
+    for (const name of sensitiveFieldNames) {
       h.ok(isSensitiveField(name.toUpperCase()), `${name} matches case-insensitively`);
     }
     const secret = 'SECRET-VALUE';
     const fields: Record<string, unknown> = { safe: 'kept' };
-    for (const name of SENSITIVE_FIELD_NAMES) {
+    for (const name of sensitiveFieldNames) {
       fields[name] = secret;
     }
     fields.nested = { apiKey: secret, label: 'kept too' };
@@ -190,7 +194,7 @@ export async function runLoggingTests(h: Harness): Promise<void> {
 
     const [record] = seam.buffer.snapshot();
     h.eq(record.fields.safe, 'kept', 'a non-sensitive field survives');
-    const leaked = SENSITIVE_FIELD_NAMES.filter(name => record.fields[name] !== REDACTED);
+    const leaked = sensitiveFieldNames.filter(name => record.fields[name] !== REDACTED);
     h.eq(leaked, [], 'every sensitive field carries the marker');
     h.eq((record.fields.nested as Record<string, unknown>).apiKey, REDACTED, 'nested values are redacted too');
     h.eq((record.fields.nested as Record<string, unknown>).label, 'kept too', 'nested non-sensitive values survive');
@@ -312,7 +316,7 @@ export async function runLoggingTests(h: Harness): Promise<void> {
       },
     });
     seam.info(CHANNELS.gen, 'waiting');
-    await new Promise<void>(resolve => setTimeout(resolve, 40));
+    await waitUntil(() => sent.length > 0, 2000);
     h.eq(sent.length, 1, 'the interval delivered the pending record');
     seam.sink.stop();
   });

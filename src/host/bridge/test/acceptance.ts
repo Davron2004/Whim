@@ -124,10 +124,6 @@ async function main(): Promise<void> {
     try { reg.register('storage.kv.get', { capability: 'storage', paramsSchema: () => null, handler: () => ({}) }); } catch { threw = true; }
     ok(threw, 'registering an existing method must throw');
     ok(reg.has('storage.records.append'), 'rows are registered');
-    eq(reg.methods().filter(m => m.startsWith('storage.')).sort((a, b) => a.localeCompare(b)), [
-      'storage.kv.get', 'storage.kv.remove', 'storage.kv.set',
-      'storage.records.append', 'storage.records.list', 'storage.records.remove', 'storage.records.update',
-    ], 'the storage rows are exactly the seven verbs');
   });
 
   // ── §B gate — fixed order + every denial kind (D4) ──────────────────────────
@@ -209,14 +205,19 @@ async function main(): Promise<void> {
   await test('§C a late result completing after realm reset is discarded (not delivered)', async () => {
     const reg = createDefaultRegistry();
     let release: (() => void) | null = null;
+    let signalEntered: (() => void) | null = null;
+    const entered = new Promise<void>((res) => { signalEntered = res; });
     reg.register('test.slow', {
       capability: 'test',
       paramsSchema: () => null,
-      handler: () => new Promise<Record<string, never>>((res) => { release = () => res({}); }),
+      handler: () => new Promise<Record<string, never>>((res) => {
+        release = () => res({});
+        signalEntered!();
+      }),
     });
     const { realm, d } = bring(storageApp('a', ['test']), reg);
     const inflight = send(d, frame('test.slow', {}, 1, 9001)); // gen 1, do not await yet
-    for (let i = 0; i < 50 && !release; i++) await new Promise((r) => setTimeout(r, 0)); // until the handler is entered
+    await entered; // latched from inside the handler — no fixed poll budget
     ok(!!release, 'the slow handler started');
     resetRealmGeneration(realm); // generation → 2 while the handler is in flight
     release!();

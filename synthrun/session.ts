@@ -410,7 +410,7 @@ export interface EgressProbeResult {
   blockedCount: number;
 }
 
-const EGRESS_PROBE_SOURCE = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+export const EGRESS_PROBE_SOURCE = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
 function Probe() { return <Screen><Stack><Heading size="title">egress probe</Heading></Stack></Screen>; }
 export default defineApp({ name: 'EgressProbe', initial: 'Probe', screens: { Probe }, capabilities: [] });
 `;
@@ -446,15 +446,37 @@ async function attemptEgressInPage([host, budgetMs]: [string, number]): Promise<
   return reached;
 }
 
+/** What `probeEgressAgainst` needs from a run to attempt egress against — `RunContext`'s `page`
+ *  and `egress.count` are exactly this shape, but the seam exists so a test can supply a page
+ *  opened against a context with NO interception (the red direction: `blocked` must read
+ *  `false`), not only the production `session.openRun` path. */
+export interface EgressProbeTarget {
+  page: Page;
+  egressCount(): number;
+}
+
 /**
- * Proves, on a live session, that a run cannot reach the network. Starts an HTTP canary on a
- * random loopback port, opens a real run (build, in-memory delivery, isolated context) and, from
- * the outer page's main frame, the most privileged realm in the run (no CSP, no neutralization),
- * attempts a `fetch` and a WebSocket toward the canary, then navigates the main frame to it from
- * the harness side. Passes only when the canary accepted no connection, neither the fetch nor the
- * navigation got through, and the interception counted the attempts.
+ * Attempts a `fetch` and a WebSocket toward `target` from the outer page's main frame (the most
+ * privileged realm — no CSP, no neutralization), then navigates the main frame to it from the
+ * harness side. Passes only when the canary accepted no connection, neither the fetch nor the
+ * navigation got through, and interception counted the attempts (`blockedCount > 0`) — against a
+ * page with no interception at all, every leg gets through and `blockedCount` stays 0, so
+ * `blocked` reads `false`.
  */
-export async function probeEgressBlocked(session: SynthRunSession): Promise<EgressProbeResult> {
+export async function probeEgressAgainst(target: EgressProbeTarget, canaryTarget: string, countConnections: () => number): Promise<EgressProbeResult> {
+  const fetched = await target.page.evaluate(attemptEgressInPage, [canaryTarget, PROBE_ATTEMPT_MS] as [string, number]);
+  const navigated = await target.page.goto(`http://${canaryTarget}/probe`, { timeout: PROBE_ATTEMPT_MS * 2 }).then(
+    () => true,
+    () => false,
+  );
+  const blockedCount = target.egressCount();
+  const canaryConnections = countConnections();
+  return { blocked: canaryConnections === 0 && !fetched && !navigated && blockedCount > 0, canaryConnections, fetched, navigated, blockedCount };
+}
+
+/** Starts an HTTP canary on a random loopback port and runs `attempt` against it, tallying
+ *  connections it accepted. Shared by `probeEgressBlocked` and its red-direction test. */
+export async function withEgressCanary<T>(attempt: (canaryTarget: string, countConnections: () => number) => Promise<T>): Promise<T> {
   let canaryConnections = 0;
   const canary = createServer((_req, res) => {
     res.end('canary');
@@ -468,20 +490,28 @@ export async function probeEgressBlocked(session: SynthRunSession): Promise<Egre
   });
   const target = `127.0.0.1:${(canary.address() as AddressInfo).port}`;
   try {
-    const { ctx, dispose } = await session.openRun(EGRESS_PROBE_SOURCE);
-    try {
-      const fetched = await ctx.page.evaluate(attemptEgressInPage, [target, PROBE_ATTEMPT_MS] as [string, number]);
-      const navigated = await ctx.page.goto(`http://${target}/probe`, { timeout: PROBE_ATTEMPT_MS * 2 }).then(
-        () => true,
-        () => false,
-      );
-      const blockedCount = ctx.egress.count;
-      return { blocked: canaryConnections === 0 && !fetched && !navigated && blockedCount > 0, canaryConnections, fetched, navigated, blockedCount };
-    } finally {
-      await dispose();
-    }
+    return await attempt(target, () => canaryConnections);
   } finally {
     canary.closeAllConnections();
     await new Promise<void>((resolve) => canary.close(() => resolve()));
   }
+}
+
+/**
+ * Proves, on a live session, that a run cannot reach the network. Starts an HTTP canary on a
+ * random loopback port, opens a real run (build, in-memory delivery, isolated context) and, from
+ * the outer page's main frame, the most privileged realm in the run (no CSP, no neutralization),
+ * attempts a `fetch` and a WebSocket toward the canary, then navigates the main frame to it from
+ * the harness side. Passes only when the canary accepted no connection, neither the fetch nor the
+ * navigation got through, and the interception counted the attempts.
+ */
+export async function probeEgressBlocked(session: SynthRunSession): Promise<EgressProbeResult> {
+  return withEgressCanary(async (canaryTarget, countConnections) => {
+    const { ctx, dispose } = await session.openRun(EGRESS_PROBE_SOURCE);
+    try {
+      return await probeEgressAgainst({ page: ctx.page, egressCount: () => ctx.egress.count }, canaryTarget, countConnections);
+    } finally {
+      await dispose();
+    }
+  });
 }

@@ -91,14 +91,16 @@ await test('§2.2 the code-artifact set is tracked incl. prompt.md', async () =>
 });
 
 await test('§2.3 code/data boundary — constructor refuses a data handle', async () => {
-  let threw = false;
+  let message: string | undefined;
   try {
     // @ts-expect-error deliberately passing a forbidden data handle
     new VersionStore({ backend: new (await import('../fs/memory-fs')).MemoryFs(), dataStore: {} });
-  } catch {
-    threw = true;
+  } catch (err) {
+    message = (err as Error).message;
   }
-  ok(threw, 'VersionStore rejects a user-data handle');
+  // The specific refusal, not any thrown error — `new (await import(...))...` failing for an
+  // unrelated reason (a bad import path, say) would also throw and pass a bare `threw` check.
+  eq(message, 'VersionStore holds no handle to user data — refusing "dataStore" option', 'VersionStore rejects a user-data handle with the code/data boundary message');
 });
 
 // --- §3 product verbs (mini-app-versioning) --------------------------------
@@ -249,17 +251,19 @@ await test('§timeline: an app with no repo at all returns []', async () => {
   eq(await s.timeline('never-created'), [], 'timeline on an unknown app returns []');
 });
 
-await test('§timeline: unborn HEAD (repo exists, no commits) returns []', async () => {
-  const backend = new MemoryFs();
-  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
-  const dir = '/whim/apps/app';
-  const gitdir = '/whim/apps/app/.git';
-  await backend.mkdir('/whim');
-  await backend.mkdir('/whim/apps');
-  await backend.mkdir(dir);
-  await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
-  eq(await s.timeline('app'), [], 'unborn HEAD (repo exists, no commits) still resolves to []');
-});
+for (const verb of ['timeline', 'history'] as const) {
+  await test(`§${verb}: unborn HEAD (repo exists, no commits) returns []`, async () => {
+    const backend = new MemoryFs();
+    const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+    const dir = '/whim/apps/app';
+    const gitdir = '/whim/apps/app/.git';
+    await backend.mkdir('/whim');
+    await backend.mkdir('/whim/apps');
+    await backend.mkdir(dir);
+    await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
+    eq(await s[verb]('app'), [], `unborn HEAD (repo exists, no commits) still resolves to [] for ${verb}()`);
+  });
+}
 
 await test('§timeline: round-trip stability — rollback -> timeline -> roll-forward -> timeline', async () => {
   const s = freshStore();
@@ -474,13 +478,6 @@ await test('§4 compaction drops loose objects; history/rollback/pin/fork still 
   ok(lineageId === 'fork-1', 'fork created post-pack');
 });
 
-await test('§4.2 auto-compaction fires on the loose-object threshold', async () => {
-  const s = freshStore({ autoCompact: true, compactionThreshold: 12 });
-  for (let v = 1; v <= 12; v++) await s.snapshot('app', { 'bundle.js': BUNDLE(v) }, `p${v}`);
-  ok(s.looseObjectCount('app') <= 12, 'auto-compaction kept loose count bounded');
-  eq((await s.history('app')).length, 12, 'history intact after auto-compaction');
-});
-
 await test('§4 compaction removes the PREVIOUS pack instead of accumulating stale pack files', async () => {
   const backend = new MemoryFs();
   const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
@@ -547,21 +544,13 @@ await test('§5 auto-compaction on a KV-backed store reduces real KV key count (
 
 // --- §6 forward seams: content-agnostic + multi-file lockstep --------------
 
-await test('§6.1 an extra (schema) artifact is versioned/diffed/rolled-back like any file', async () => {
-  const s = freshStore();
-  await s.snapshot('app', { 'bundle.js': BUNDLE(1), 'schema.json': '{"fields":[]}' }, 'p1');
-  await s.snapshot('app', { 'bundle.js': BUNDLE(2), 'schema.json': '{"fields":["a"]}' }, 'p2');
-  const changes = await s.diff('app', 'g1', 'g2');
-  const schema = changes.find(c => c.file === 'schema.json');
-  ok(!!schema && schema.status === 'modified', 'schema.json diffed with no special-casing');
-  await s.rollback('app', 'g1');
-  eq((await s.active('app'))!.artifacts['schema.json'], '{"fields":[]}', 'schema rolled back like any file');
-});
-
-await test('§6.2 rollback restores ALL tracked files in lockstep', async () => {
+await test('§6.2 an extra (schema) artifact is diffed with no special-casing, and rollback restores ALL tracked files in lockstep', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1), 'schema.json': 'S1', 'manifest.json': MANIFEST(1) }, 'p1');
   await s.snapshot('app', { 'bundle.js': BUNDLE(2), 'schema.json': 'S2', 'manifest.json': MANIFEST(2) }, 'p2');
+  const changes = await s.diff('app', 'g1', 'g2');
+  const schema = changes.find(c => c.file === 'schema.json');
+  ok(!!schema && schema.status === 'modified', 'schema.json diffed with no special-casing');
   await s.rollback('app', 'g1');
   const active = await s.active('app');
   eq(active!.artifacts['bundle.js'], BUNDLE(1), 'bundle rolled back');
@@ -655,21 +644,6 @@ await test('§4 C1: snapshot() resolves even when auto-compaction throws', async
 //     HEAD case (repo exists, no commits) — any other git.log failure must --
 //     reject, not silently surface as an empty history -----------------------
 
-await test('§ST-3: history() still resolves [] for the unborn-HEAD case (repo exists, no commits)', async () => {
-  const backend = new MemoryFs();
-  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
-  const dir = '/whim/apps/app';
-  const gitdir = '/whim/apps/app/.git';
-  // Mirror what ensureRepo() does on first use, WITHOUT ever committing —
-  // HEAD exists (points at refs/heads/main) but that ref has no commits.
-  await backend.mkdir('/whim');
-  await backend.mkdir('/whim/apps');
-  await backend.mkdir(dir);
-  await git.init({ fs: { promises: backend }, dir, gitdir, defaultBranch: 'main' });
-
-  eq(await s.history('app'), [], 'unborn HEAD (repo exists, no commits) still resolves to []');
-});
-
 await test('§ST-3: history() REJECTS on a generic git.log failure instead of returning []', async () => {
   const backend = new MemoryFs();
   const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
@@ -701,19 +675,15 @@ await test('§ST-3: history() REJECTS on a generic git.log failure instead of re
   ok(!isNotFoundError, 'the rejection is a genuine failure, not the unborn-HEAD NotFoundError case');
 });
 
-// --- C9: assertNoGitLeak's HEX40 value-scan must not false-positive on -----
-//        opaque mini-app artifact content nested under an "artifacts" key,
-//        while FORBIDDEN_KEYS key-checking still fires everywhere -----------
+// --- C9: assertNoGitLeak's HEX40 value-scan must still throw on a forbidden --
+//        key or a top-level HEX40 value — the false-positive-avoidance half
+//        (opaque artifact content is never flagged) needs no test of its own:
+//        every §3.7/§6.x call above already passes real HEX40-shaped bundle
+//        content through assertNoGitLeak, so a regression there fails loudly
+//        on its own. assertNoGitLeak is a test oracle — only this suite and
+//        device-acceptance call it. -----------------------------------------
 
-await test('§assertNoGitLeak: HEX40 artifact content does not false-positive', async () => {
-  let threw1 = false;
-  try {
-    assertNoGitLeak({ artifacts: { 'bundle.js': 'a'.repeat(40) } }, 'snap');
-  } catch {
-    threw1 = true;
-  }
-  ok(!threw1, 'HEX40 string inside artifacts does not throw');
-
+await test('§assertNoGitLeak: a forbidden key or a top-level HEX40 value still throws', async () => {
   let threw2 = false;
   try {
     assertNoGitLeak({ oid: 'a'.repeat(40) }, 'snap');
@@ -734,55 +704,33 @@ await test('§assertNoGitLeak: HEX40 artifact content does not false-positive', 
 // --- C8: an untagged commit (no whim/snap/* tag) must throw loudly, never --
 //        silently surface as id:'' ----------------------------------------
 
-await test('§C8: history() throws an invariant error on an untagged commit', async () => {
-  const backend = new MemoryFs();
-  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
-  const dir = '/whim/apps/app';
-  const gitdir = '/whim/apps/app/.git';
-  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // creates repo/branch/HEAD + one tagged commit
+for (const verb of ['history', 'active'] as const) {
+  await test(`§C8: ${verb}() throws an invariant error on an untagged commit`, async () => {
+    const backend = new MemoryFs();
+    const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+    const dir = '/whim/apps/app';
+    const gitdir = '/whim/apps/app/.git';
+    await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // creates repo/branch/HEAD + one tagged commit
 
-  // Advance HEAD with a commit that has NO snap tag — the legitimate way the engine
-  // itself would never produce, but a corrupted/partial repo could.
-  await git.commit({
-    fs: { promises: backend },
-    dir,
-    gitdir,
-    message: 'untagged',
-    author: { name: 't', email: 't' },
+    // Advance HEAD with a commit that has NO snap tag — the legitimate way the engine
+    // itself would never produce, but a corrupted/partial repo could.
+    await git.commit({
+      fs: { promises: backend },
+      dir,
+      gitdir,
+      message: 'untagged',
+      author: { name: 't', email: 't' },
+    });
+
+    let threw = false;
+    try {
+      await s[verb]('app');
+    } catch (err) {
+      threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
+    }
+    ok(threw, `${verb}() throws an invariant error instead of returning id:""`);
   });
-
-  let threw = false;
-  try {
-    await s.history('app');
-  } catch (err) {
-    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
-  }
-  ok(threw, 'history() throws an invariant error instead of returning id:""');
-});
-
-await test('§C8: active() throws an invariant error on an untagged commit', async () => {
-  const backend = new MemoryFs();
-  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
-  const dir = '/whim/apps/app';
-  const gitdir = '/whim/apps/app/.git';
-  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
-
-  await git.commit({
-    fs: { promises: backend },
-    dir,
-    gitdir,
-    message: 'untagged',
-    author: { name: 't', email: 't' },
-  });
-
-  let threw = false;
-  try {
-    await s.active('app');
-  } catch (err) {
-    threw = /invariant: commit .* has no snap tag/.test((err as Error).message);
-  }
-  ok(threw, 'active() throws an invariant error instead of returning id:""');
-});
+}
 
 // --- summary ---------------------------------------------------------------
 
