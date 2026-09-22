@@ -53,14 +53,14 @@ export interface SettingsScreenProps {
   onOpenAIFeatures: () => void;
 }
 
+const ADVANCED_CHEVRON_DURATION_MS = 200;
+
 /** The save-time probe result's colour (design.md decision 1's three-way classification), drawn
  *  from the same status hues the rest of the launcher uses for state (`STATUS_COLORS`) plus
  *  `SHELL_PALETTE.danger` (passed in as a plain string — `SettingsScreen` is the one caller, so
  *  this takes no palette-typed parameter of its own) — no hex literal of this screen's own.
  *  `verified` reads as done (teal), `unreachable` as the shell's danger red, `unverified` as the
  *  reserved muted grey — the only third distinct hue this token set offers. */
-const ADVANCED_CHEVRON_DURATION_MS = 200;
-
 function probeResultColor(result: ProbeResult, dangerColor: string): string {
   if (result === 'verified') return STATUS_COLORS.done;
   if (result === 'unreachable') return dangerColor;

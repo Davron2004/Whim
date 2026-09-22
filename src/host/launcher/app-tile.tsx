@@ -28,6 +28,8 @@ import type { AppManifest } from '../bridge/contract';
  *  (group D, sdk-design-system "Loading skeletons derive their geometry from exported component
  *  constants") imports these rather than restating them, guaranteeing no layout jump on load. */
 export const APP_TILE_SIZE = 88;
+/** Wider than any two-letter monogram at the Done tile's 92px, so the watermark never truncates. */
+const GHOST_MONOGRAM_BOX_WIDTH = 240;
 export const APP_TILE_RADIUS = RADIUS.tile;
 
 /** The done step's celebration tile rises in once on mount (design html:524
@@ -145,6 +147,7 @@ export default function AppTile({ name, manifest, size, width = APP_TILE_SIZE, g
       <View style={[styles.tile, isDone ? styles.tileDone : null, fluidTile, { backgroundColor: bg }, glow, ghostTileStyle, busy ? styles.tileBusy : null]}>
         <Text
           style={[styles.ghostMonogram, isDone ? styles.ghostMonogramDone : null]}
+          numberOfLines={1}
           accessibilityElementsHidden
           importantForAccessibility="no"
         >
@@ -195,21 +198,21 @@ const styles = StyleSheet.create({
     // The glow itself is set at the call site — it is the tile's own resolved colour.
   },
   ghostMonogram: {
-    // `right: -8` alone (no `left`/`width`) let Yoga measure this Text against the tile's
-    // remaining inner width instead of its own intrinsic size, truncating wider two-letter
-    // monograms ("WC" -> "W…", issue #48). `alignSelf: 'flex-end'` anchors the box's right edge
-    // to the tile with no inset math involved, so the box always sizes to the full text; the
-    // `-8` bleed becomes a `translateX`, applied after that intrinsic sizing.
+    // Without a width, Yoga sized this absolute Text from the tile's content box, narrower than
+    // wide pairs, so "WC" truncated to "W…" (issue #48). A fixed box far wider than any two
+    // letters, right-aligned, keeps the `right` bleed exact and can never truncate or wrap; the
+    // tile's `overflow: 'hidden'` clips the unused left side.
     position: 'absolute',
     top: -13,
-    alignSelf: 'flex-end',
-    transform: [{ translateX: 8 }],
+    right: -8,
+    width: GHOST_MONOGRAM_BOX_WIDTH,
+    textAlign: 'right',
     fontFamily: FONT_FAMILY.sansBold,
     fontSize: 62,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.16)',
   },
-  ghostMonogramDone: { top: -20, transform: [{ translateX: 12 }], fontSize: 92 },
+  ghostMonogramDone: { top: -20, right: -12, fontSize: 92 },
   foregroundMonogram: {
     fontFamily: FONT_FAMILY.sansSemiBold,
     fontSize: 19,
