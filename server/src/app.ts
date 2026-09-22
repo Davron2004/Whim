@@ -107,6 +107,10 @@ export interface AppOptions {
   /** The in-flight generation registry a drain aborts once its wait runs out. Omitted, `createApp`
    *  makes one unreachable from outside. */
   inFlight?: InFlightGenerations;
+  /** Spacing between `GET /healthz/sse`'s three probe frames. Defaults to `PROBE_FRAME_INTERVAL_MS`
+   *  (production: one second, matching the proxy-flush window the probe is checking). Tests inject
+   *  a small value so the spacing assertion doesn't cost real wall clock. */
+  probeFrameIntervalMs?: number;
 }
 
 const PROBE_FRAME = ': whim-healthz-probe\n\n';
@@ -115,10 +119,10 @@ const PROBE_FRAME_INTERVAL_MS = 1000;
 const probeEncoder = new TextEncoder();
 
 /** `GET /healthz/sse` (specs/server-deployment "An anonymous stream probe verifies proxy
- *  flushing"): three SSE comment frames one second apart, then close — no model call, no stored
+ *  flushing"): three SSE comment frames `intervalMs` apart, then close — no model call, no stored
  *  state. `onSettled` fires exactly once, however the stream ends, so the caller can release its
  *  unary slot regardless of a normal close vs. a client cancel. */
-function buildProbeStream(onSettled: () => void): ReadableStream<Uint8Array> {
+function buildProbeStream(onSettled: () => void, intervalMs: number): ReadableStream<Uint8Array> {
   let cancelled = false;
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -133,7 +137,7 @@ function buildProbeStream(onSettled: () => void): ReadableStream<Uint8Array> {
       for (let i = 0; i < PROBE_FRAME_COUNT && !cancelled; i++) {
         if (i > 0) {
           await new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, PROBE_FRAME_INTERVAL_MS);
+            timer = setTimeout(resolve, intervalMs);
           });
         }
         if (cancelled) break;
@@ -233,7 +237,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       if (released) return;
       released = true;
       handle.release();
-    });
+    }, options.probeFrameIntervalMs ?? PROBE_FRAME_INTERVAL_MS);
     return new Response(stream, {
       status: 200,
       headers: {

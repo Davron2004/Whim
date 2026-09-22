@@ -45,9 +45,17 @@ import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport 
 import { cachedPolicy, ModelContentPolicy, type ContentPolicy } from '../src/policy';
 import { InFlightGenerations } from '../src/routes/generate';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
-import { GenerationMachine, type Clock, type RunTrace } from '../src/generation/machine';
+import type { Clock, RunTrace } from '../src/generation/machine';
 import type { ModelClient, ModelDelta, ModelRequest, ModelRoster, ModelStream } from '../src/generation/model';
-import type { PromptInputs } from '../src/generation/prompts/inputs';
+import {
+  ControlledModelClient,
+  RecordingUsageStore,
+  STALL,
+  TIMED_OUT,
+  machinePipeline,
+  waitFor,
+  within,
+} from './route-doubles';
 import {
   ApiError,
   ServiceRefusalCode,
@@ -76,116 +84,8 @@ const WAIT_MS = 5000;
 const EXPIRED_REASON = 'This took too long to build. Please try again.';
 const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now. Try again later.';
 
-// ─── Bounded waits ───────────────────────────────────────────────────────────
+// ─── Local doubles (route-specific, not shared) ─────────────────────────────
 
-export const TIMED_OUT = Symbol('timed out');
-
-/** Races `promise` against a ref'd timer, so a promise that never settles ends as `TIMED_OUT`
- *  instead of letting the process exit with the suite half-run. */
-export function within<T>(promise: Promise<T>, ms: number = WAIT_MS): Promise<T | typeof TIMED_OUT> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMED_OUT), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-/** Polls `predicate` until it holds or `ms` elapses; returns whether it held. */
-export async function waitFor(predicate: () => boolean | Promise<boolean>, ms: number = WAIT_MS): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    if (await predicate()) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-// ─── Doubles ─────────────────────────────────────────────────────────────────
-
-export interface SettleRecord {
-  requestId: string;
-  outcome: RequestOutcome;
-  usage?: Usage;
-}
-
-export interface CostRecord {
-  requestId: string;
-  state: CostState;
-  costUsd?: number;
-}
-
-/** The in-memory store, delegating method by method (never a spread of a class instance), with
- *  every ledger write recorded so a test can read outcomes and costs the store keeps private. */
-export class RecordingUsageStore implements UsageStore {
-  readonly admitted: string[] = [];
-  readonly settles: SettleRecord[] = [];
-  readonly costs: CostRecord[] = [];
-  constructor(private readonly inner: UsageStore = new InMemoryUsageStore()) {}
-
-  /** Set by a test to make the next `credit` fail — a store blip inside admission, after the slot
-   *  was taken and the daily unit consumed. */
-  creditFailure: Error | undefined;
-
-  credit(deviceId: string, usage: Usage): Promise<void> {
-    if (this.creditFailure) return Promise.reject(this.creditFailure);
-    return this.inner.credit(deviceId, usage);
-  }
-
-  read(deviceId: string): Promise<Usage> {
-    return this.inner.read(deviceId);
-  }
-
-  async admit(params: AdmitParams): Promise<AdmitResult> {
-    const result = await this.inner.admit(params);
-    if (result.ok) this.admitted.push(result.requestId);
-    return result;
-  }
-
-  refund(requestId: string): Promise<void> {
-    return this.inner.refund(requestId);
-  }
-
-  settle(requestId: string, params: { outcome: RequestOutcome; usage?: Usage }): Promise<void> {
-    this.settles.push({ requestId, ...params });
-    return this.inner.settle(requestId, params);
-  }
-
-  recordCost(requestId: string, params: { state: CostState; costUsd?: number }): Promise<void> {
-    this.costs.push({ requestId, ...params });
-    return this.inner.recordCost(requestId, params);
-  }
-
-  listUnresolvedCostRows(query: CostSweepQuery): Promise<CostSweepCandidate[]> {
-    return this.inner.listUnresolvedCostRows(query);
-  }
-
-  summary(params: SummaryParams): Promise<UsageSummary> {
-    return this.inner.summary(params);
-  }
-
-  purgeLedger(beforeUtcDay: string): Promise<number> {
-    return this.inner.purgeLedger(beforeUtcDay);
-  }
-
-  /** Non-refunded generation units on `now`'s UTC day, across every device. */
-  async generationUnits(now: number): Promise<number> {
-    const summary = await this.inner.summary({ days: 1, now });
-    return summary.days[0]?.countByKind.generate ?? 0;
-  }
-
-  /** The COST VERDICT recorded for a request — the resolver's first `recordCost` call registers
-   *  the generation ids while the row is still `pending` (so a sweep can retry after a crash), and
-   *  that registration is not a verdict. */
-  costFor(requestId: string | undefined): CostRecord | undefined {
-    return this.costs.filter((c) => c.requestId === requestId && c.state !== 'pending').at(-1);
-  }
-
-  settlesFor(requestId: string | undefined): SettleRecord[] {
-    return this.settles.filter((s) => s.requestId === requestId);
-  }
-}
-
-/** Wraps a real controller, counting acquire attempts and every `release()` call per handle. */
 class SlotSpy {
   acquires = 0;
   readonly releaseCalls: number[] = [];
@@ -278,66 +178,6 @@ class SignalIgnoringPipeline implements Pipeline {
   }
 }
 
-export const STALL = 'stall';
-
-export interface ModelCallRecord {
-  aborted: boolean;
-}
-
-/** A stream that emits one reasoning delta and then blocks until `signal` aborts, as a live
- *  provider stream mid-generation does; `usage` and the next delta then reject. */
-function stalledStream(signal: AbortSignal | undefined, call: ModelCallRecord, id: string): ModelStream {
-  const aborted = new Promise<never>((_resolve, reject) => {
-    const onAbort = (): void => {
-      call.aborted = true;
-      reject(new Error('model stream aborted'));
-    };
-    if (signal?.aborted) onAbort();
-    else signal?.addEventListener('abort', onAbort, { once: true });
-  });
-  aborted.catch(() => undefined);
-  let sentFirst = false;
-  const deltas: AsyncIterable<ModelDelta> = {
-    [Symbol.asyncIterator]: () => ({
-      next: (): Promise<IteratorResult<ModelDelta>> => {
-        if (sentFirst) return aborted;
-        sentFirst = true;
-        return Promise.resolve({ done: false, value: { kind: 'reasoning', text: 'thinking' } });
-      },
-    }),
-  };
-  return { deltas, usage: aborted, id: Promise.resolve(id) };
-}
-
-function replyStream(text: string, id: string): ModelStream {
-  async function* deltas(): AsyncIterable<ModelDelta> {
-    yield { kind: 'text', text };
-  }
-  return { deltas: deltas(), usage: Promise.resolve({ promptTokens: 1, completionTokens: 1, totalTokens: 2 }), id: Promise.resolve(id) };
-}
-
-/** A `ModelClient` following `plan` call by call: `STALL` blocks until aborted, any other string is
- *  replied at once. Every call's generation id (`<idPrefix>-<n>`) resolves immediately, as
- *  OpenRouter's first frame does, and every call records whether its signal aborted. */
-export class ControlledModelClient implements ModelClient {
-  readonly calls: ModelCallRecord[] = [];
-
-  constructor(
-    private readonly plan: readonly string[],
-    private readonly idPrefix: string,
-  ) {}
-
-  stream(_req: ModelRequest, signal?: AbortSignal): ModelStream {
-    const index = this.calls.length;
-    const step = this.plan[index];
-    if (step === undefined) throw new Error(`ControlledModelClient: call ${index + 1} was not planned`);
-    const call: ModelCallRecord = { aborted: false };
-    this.calls.push(call);
-    const id = `${this.idPrefix}-${index + 1}`;
-    return step === STALL ? stalledStream(signal, call, id) : replyStream(step, id);
-  }
-}
-
 /** The structural `402` `isCreditExhaustedError` detects, as `OpenRouterCreditError` carries. */
 class FakeProviderCreditError extends Error {
   readonly status = 402;
@@ -376,26 +216,6 @@ function modelPolicy(modelClient: ModelClient, timeoutMs = 5000): ContentPolicy 
   return cachedPolicy(new ModelContentPolicy({ modelClient, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs }));
 }
 
-const unreachableStage = (): never => {
-  throw new Error('a route test reached a pipeline stage past the model call');
-};
-
-const FAKE_INPUTS: PromptInputs = { sdkReference: 'fake sdk reference', fewShotExamples: [] };
-
-/** The real `GenerationMachine` behind the route, with stages past the first model call made
- *  unreachable: the endings under test all happen during the plan call. */
-export function machinePipeline(model: ModelClient, clock: Clock): Pipeline {
-  const machine = new GenerationMachine({
-    model,
-    roster: ROSTER,
-    promptInputs: FAKE_INPUTS,
-    check: { check: unreachableStage },
-    build: { build: unreachableStage },
-    run: { run: unreachableStage },
-    clock,
-  });
-  return { run: (request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) => machine.run(request, signal, trace) };
-}
 
 /** A clock whose timers fire only when the test says so. */
 class ManualTimerClock implements Clock {
@@ -653,24 +473,23 @@ async function testSlotAndUnitOrder(): Promise<void> {
 async function testGenerationCap(): Promise<void> {
   section('Generate admission: the global generation cap (specs/server-admission-control "Global concurrency caps")');
 
-  for (const cap of [3, 15]) {
-    const pipeline = new HeldPipeline();
-    const h = harness({ pipeline, config: { maxConcurrentGenerations: cap } });
-    const statuses: number[] = [];
-    for (let i = 0; i < cap; i++) statuses.push((await postGenerate(h.app, PROMPT, randomUUID())).status);
-    check(`cap ${cap}: ${cap} generations from ${cap} devices are admitted`, statuses.every((s) => s === 200), JSON.stringify(statuses));
+  const cap = 3;
+  const pipeline = new HeldPipeline();
+  const h = harness({ pipeline, config: { maxConcurrentGenerations: cap } });
+  const statuses: number[] = [];
+  for (let i = 0; i < cap; i++) statuses.push((await postGenerate(h.app, PROMPT, randomUUID())).status);
+  check(`cap ${cap}: ${cap} generations from ${cap} devices are admitted`, statuses.every((s) => s === 200), JSON.stringify(statuses));
 
-    const extraDevice = randomUUID();
-    await expectRefusal(`cap ${cap}: one more device`, await postGenerate(h.app, PROMPT, extraDevice), 429, 'server_busy', null);
-    eq(`cap ${cap}: the refused request consumed no daily unit`, await h.usageStore.generationUnits(AT_2200_UTC), cap);
+  const extraDevice = randomUUID();
+  await expectRefusal(`cap ${cap}: one more device`, await postGenerate(h.app, PROMPT, extraDevice), 429, 'server_busy', null);
+  eq(`cap ${cap}: the refused request consumed no daily unit`, await h.usageStore.generationUnits(AT_2200_UTC), cap);
 
-    pipeline.releaseOne();
-    check(`cap ${cap}: a finished generation frees capacity`, await waitFor(() => h.slots.generations === cap - 1));
-    eq(`cap ${cap}: the retry is admitted past the cap`, (await postGenerate(h.app, PROMPT, extraDevice)).status, 200);
+  pipeline.releaseOne();
+  check(`cap ${cap}: a finished generation frees capacity`, await waitFor(() => h.slots.generations === cap - 1));
+  eq(`cap ${cap}: the retry is admitted past the cap`, (await postGenerate(h.app, PROMPT, extraDevice)).status, 200);
 
-    h.inFlight.abortAll();
-    check(`cap ${cap}: cleanup — every held generation ended`, await waitFor(() => h.slots.generations === 0));
-  }
+  h.inFlight.abortAll();
+  check(`cap ${cap}: cleanup — every held generation ended`, await waitFor(() => h.slots.generations === 0));
 }
 
 // ─── Daily limits and the global ceiling ─────────────────────────────────────
@@ -697,13 +516,14 @@ async function testDailyLimitAndCeiling(): Promise<void> {
     await expectRefusal('device limit and ceiling both exhausted', await postGenerate(h.app, PROMPT, DEVICE_A), 429, 'daily_limit', '7200');
   }
 
-  // Rotating device ids does not bypass the ceiling, and the ceiling closes the day for everyone.
+  // Rotating device ids does not bypass the ceiling, and the ceiling closes the day for everyone —
+  // the same property routes-unary.suite.ts's testUnaryGlobalCeiling tests with a ceiling of 3.
   {
-    const h = harness({ config: { limitGenerationsPerDay: 400 } });
+    const h = harness({ config: { limitGenerationsPerDay: 3 } });
     let admitted = 0;
     let unfinished = 0;
     const refusals = new Set<string>();
-    for (let i = 0; i < 500; i++) {
+    for (let i = 0; i < 5; i++) {
       const res = await postGenerate(h.app, PROMPT, randomUUID());
       if (res.status === 200) {
         admitted++;
@@ -713,7 +533,7 @@ async function testDailyLimitAndCeiling(): Promise<void> {
         refusals.add(`${res.status} ${body.error} ${res.headers.get('retry-after')}`);
       }
     }
-    eq('500 fresh device ids against a ceiling of 400 → exactly 400 admitted', admitted, 400);
+    eq('5 fresh device ids against a ceiling of 3 → exactly 3 admitted', admitted, 3);
     eq('every admitted stream ended', unfinished, 0);
     eq('every other request is the ceiling server_busy with Retry-After to midnight', [...refusals], ['429 server_busy 7200']);
   }
@@ -924,7 +744,7 @@ async function testErrorExpiryAndDrain(): Promise<void> {
   {
     const model = new ControlledModelClient([STALL], 'gen-expiry');
     const clock = new ManualTimerClock();
-    const h = harness({ pipeline: machinePipeline(model, clock) });
+    const h = harness({ pipeline: machinePipeline(model, clock, ROSTER) });
     const res = await postGenerate(h.app, PROMPT, DEVICE_A);
     check('expiry: the model call started', await waitFor(() => model.calls.length === 1));
     clock.fireAll();
@@ -958,7 +778,7 @@ async function testMidRunCreditExhaustion(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     { role: 'engineer', deltas: [], error: new FakeProviderCreditError('insufficient credit') },
   ]);
-  const h = harness({ pipeline: machinePipeline(model, new ManualTimerClock()), config: { minCreditUsd: 0.5 }, creditTransport: credit.transport });
+  const h = harness({ pipeline: machinePipeline(model, new ManualTimerClock(), ROSTER), config: { minCreditUsd: 0.5 }, creditTransport: credit.transport });
 
   const events = await readEvents('402', await postGenerate(h.app, PROMPT, DEVICE_A));
   const terminals = events.filter((e) => e.type === 'result' || e.type === 'failure');

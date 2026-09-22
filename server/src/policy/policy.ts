@@ -52,6 +52,11 @@ export interface ContentPolicy {
 
 const MAX_TOKENS = 48;
 
+/** Present in every classifier call's system message and no other model call's — a test can pick
+ *  the classifier's own calls out of a roster's requests by this, without relying on an internal
+ *  token-budget constant that happens to be unique today. */
+export const CLASSIFIER_SYSTEM_MARKER = "Whim's content-safety classifier";
+
 function classifierSystemMessage(categories: string): string {
   return [
     "You are Whim's content-safety classifier. Judge ONLY the quoted user text given to you below",

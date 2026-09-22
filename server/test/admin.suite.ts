@@ -11,6 +11,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { check, eq, section } from './harness';
 import { runAdminCli, type AdminCliDeps } from '../src/admin/cli';
 import { InMemoryReportStore, NodeSqliteReportStore } from '../src/reports/store';
@@ -19,6 +20,12 @@ import { InMemoryUsageStore, NodeSqliteUsageStore } from '../src/usage-store';
 const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DEVICE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const NOW = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
+
+/** Matches `usage-store.ts`'s own private `utcDayString` — duplicated here only to build a raw,
+ *  schema-valid row for the uncommitted-write proof below. */
+function utcDayString(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
 
 function tmpDbPath(label: string): string {
   return path.join(os.tmpdir(), `whim-admin-test-${label}-${process.pid}-${Date.now()}.db`);
@@ -133,28 +140,49 @@ async function testUsageSummary(): Promise<void> {
   eq('json summary carries the unresolved count', parsed.generationStats.unresolvedCount, 1);
 }
 
+/** Every `NodeSqlite*Store` method is a synchronous `DatabaseSync` call, so two stores driven from
+ *  Promise.all on one JS thread never actually contend for anything — they simply run one after
+ *  the other. The real proof needs a transaction genuinely left open: a raw `DatabaseSync`
+ *  connection starts `BEGIN IMMEDIATE` (SQLite's write lock) and inserts a marked row it never
+ *  commits, THEN the operator command runs against a separate connection. WAL mode means that read
+ *  must neither wait out `busy_timeout` (5000ms) nor see the uncommitted row. */
 async function testReadWhileWriting(): Promise<void> {
-  section('Operator command — reading while the server writes (both stores)');
+  section('Operator command — reading while the server writes (both stores, a real uncommitted BEGIN IMMEDIATE)');
 
-  // Reports: a second connection lists while inserts proceed on the first.
+  const MARKER = 'UNCOMMITTED-MARKER-9f3e';
+  const UNCOMMITTED_DEVICE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+  // Reports.
   {
     const dbPath = tmpDbPath('read-write-reports');
     try {
-      const writer = new NodeSqliteReportStore(dbPath);
+      const bootstrap = new NodeSqliteReportStore(dbPath);
+      bootstrap.close();
+
+      const raw = new DatabaseSync(dbPath);
+      // A tiny single-row transaction never forces SQLite to escalate past a RESERVED lock, so it
+      // alone can't force the timing/blocking half of this property to fail — WAL mode is what
+      // actually guarantees a concurrent reader never blocks on it. Verify it directly.
+      const mode = raw.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
+      eq('reports: the store runs in WAL mode (readers never block on a writer)', mode.journal_mode, 'wal');
+      raw.exec('BEGIN IMMEDIATE');
+      raw.prepare(`
+        INSERT INTO reports (id, device_id, reason, received_at, note, app_name, prompt, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('uncommitted-report', UNCOMMITTED_DEVICE, 'broken', NOW, MARKER, '', '', '');
+
       const reader = new NodeSqliteReportStore(dbPath);
       const deps = baseDeps({ reportStore: reader });
+      const startedAt = Date.now();
+      const result = await runAdminCli(['reports', 'list', '--limit', '50'], deps);
+      const elapsedMs = Date.now() - startedAt;
 
-      const writes = Promise.all(
-        Array.from({ length: 20 }, (_unused, i) =>
-          writer.insert({ deviceId: DEVICE_A, reason: 'broken', now: NOW + i, note: `n${i}` }),
-        ),
-      );
-      const read = runAdminCli(['reports', 'list', '--limit', '50'], deps);
-      const [writeResults, readResult] = await Promise.all([writes, read]);
+      eq('reports: the read completes successfully against an uncommitted write', result.exitCode, 0);
+      check('reports: the read does not wait out busy_timeout (5000ms)', elapsedMs < 2000, `took ${elapsedMs}ms`);
+      check('reports: the read never sees the uncommitted row', !result.output.includes(MARKER) && !result.output.includes(UNCOMMITTED_DEVICE));
 
-      eq('all 20 inserts succeeded', writeResults.length, 20);
-      eq('the concurrent list command completed successfully', readResult.exitCode, 0);
-      writer.close();
+      raw.exec('ROLLBACK');
+      raw.close();
       reader.close();
     } finally {
       fs.rmSync(dbPath, { force: true });
@@ -163,25 +191,35 @@ async function testReadWhileWriting(): Promise<void> {
     }
   }
 
-  // Usage: the operator's usage command completes while admits proceed on another connection.
+  // Usage.
   {
     const dbPath = tmpDbPath('read-write-usage');
     try {
-      const writer = new NodeSqliteUsageStore(dbPath);
+      const bootstrap = new NodeSqliteUsageStore(dbPath);
+      bootstrap.close();
+
+      const raw = new DatabaseSync(dbPath);
+      const mode = raw.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
+      eq('usage: the store runs in WAL mode (readers never block on a writer)', mode.journal_mode, 'wal');
+      raw.exec('BEGIN IMMEDIATE');
+      raw.prepare(`
+        INSERT INTO requests
+          (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids, refunded)
+        VALUES (?, ?, 'generate', ?, ?, ?, 'delivered', 0, 0, 9.99, 'resolved', NULL, 0)
+      `).run('uncommitted-request', UNCOMMITTED_DEVICE, utcDayString(NOW), NOW, NOW);
+
       const reader = new NodeSqliteUsageStore(dbPath);
       const deps = baseDeps({ usageStore: reader });
+      const startedAt = Date.now();
+      const result = await runAdminCli(['usage', '--days', '1', '--top', '5'], deps);
+      const elapsedMs = Date.now() - startedAt;
 
-      const writes = Promise.all(
-        Array.from({ length: 20 }, (_unused, i) =>
-          writer.admit({ deviceId: DEVICE_A, kind: 'generate', now: NOW + i, deviceLimit: 400 }),
-        ),
-      );
-      const read = runAdminCli(['usage', '--days', '1'], deps);
-      const [writeResults, readResult] = await Promise.all([writes, read]);
+      eq('usage: the read completes successfully against an uncommitted write', result.exitCode, 0);
+      check('usage: the read does not wait out busy_timeout (5000ms)', elapsedMs < 2000, `took ${elapsedMs}ms`);
+      check('usage: the read never sees the uncommitted device or its cost', !result.output.includes(UNCOMMITTED_DEVICE) && !result.output.includes('9.99'));
 
-      check('all admits succeeded', writeResults.every((r) => r.ok));
-      eq('the concurrent usage command completed successfully', readResult.exitCode, 0);
-      writer.close();
+      raw.exec('ROLLBACK');
+      raw.close();
       reader.close();
     } finally {
       fs.rmSync(dbPath, { force: true });

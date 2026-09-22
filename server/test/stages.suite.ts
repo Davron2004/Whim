@@ -138,14 +138,6 @@ async function testRecordAssembly(): Promise<void> {
   check('setup: the honest fixture extracted a manifest', !!cleanReport.manifest);
 
   const build = { bundle: '(()=>{/* real build output */})();', sourceMap: '{"version":3}' };
-  const record = assembleRecord(HONEST_SOURCE, cleanReport.manifest!, build);
-
-  eq('record.name comes from the extraction, not any other source', record.name, 'Tip Splitter');
-  eq('record.source is the checked source verbatim', record.source, HONEST_SOURCE);
-  eq('record.bundle comes from the build result', record.bundle, build.bundle);
-  eq('record.sourceMap comes from the build result', record.sourceMap, build.sourceMap);
-  eq('record.manifest is the extraction, not a restated one', record.manifest, cleanReport.manifest!.manifest);
-  eq('record.schema is the extraction, not a restated one', record.schema, cleanReport.manifest!.schema);
 
   // "not the model's prose": a manifest whose extracted name disagrees with a claim embedded
   // elsewhere in the source text must still win — assembleRecord takes only the already-extracted

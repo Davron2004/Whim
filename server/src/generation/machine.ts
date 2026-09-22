@@ -187,18 +187,21 @@ const PLAN_FAILURE_FALLBACK_REASON =
   'This app could not be planned from the request. Try describing it differently.';
 const REPAIR_EXHAUSTED_REASON =
   'Could not produce a working app after several attempts. Try describing it differently or more specifically.';
-const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and was not delivered.';
+/** Exported — not because a caller resolves reasons by string, but so `machine.suite.ts` can
+ *  assert against these directly instead of keeping its own duplicated copy (a reword there used
+ *  to fail about a dozen assertions across the file for no behavioral reason). */
+export const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and was not delivered.';
 /** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
  *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
  *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
  *  rather than promising an automatic retry (design D3 declines to add one). */
-const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
-const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
+export const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
+export const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
 /** Design D13, verbatim. */
-const EXPIRED_REASON = 'This took too long to build. Please try again.';
+export const EXPIRED_REASON = 'This took too long to build. Please try again.';
 /** A provider `402` (design D6b). Same sentence as the `budget_exhausted` admission refusal hint, so
  *  a device sees one wording whether the budget ran out before admission or mid-run. */
-const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now. Try again later.';
+export const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now. Try again later.';
 
 function sumUsage(a: Usage, b: Usage): Usage {
   return {

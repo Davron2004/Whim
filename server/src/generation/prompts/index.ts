@@ -34,6 +34,12 @@ export interface PromptPlan {
 
 // ─── Shared rendering helpers ────────────────────────────────────────────────
 
+/** The claim made only when the current-source block is actually about to be rendered (spec "The
+ *  edit turn sees the app it is changing": the prompt SHALL NOT state that source is included when
+ *  it is not) — exported so a test can assert this exact honesty property without pinning the rest
+ *  of the sentence around it. */
+export const SOURCE_INCLUDED_CLAIM = 'included below under "Current source"';
+
 /**
  * `sourceRendered` is whether THIS turn goes on to render the `Current source:` block — the plan
  * turn deliberately does not (design D2: it does not need the whole source and paying its tokens
@@ -49,7 +55,7 @@ function editOpeningLine(sourceOnFile: boolean, sourceRendered: boolean): string
     );
   }
   return sourceRendered
-    ? 'This is an edit. The current TypeScript source is included below under "Current source" — read it before changing anything.'
+    ? `This is an edit. The current TypeScript source is ${SOURCE_INCLUDED_CLAIM} — read it before changing anything.`
     : 'This is an edit of an app the user already has installed.';
 }
 
@@ -63,16 +69,20 @@ function requestEditSection(request: GenerateRequest, sourceRendered: boolean): 
   return lines.join('\n');
 }
 
-/** The one shape "here is the code" takes, whichever turn renders it — the generate turn's
- *  pre-flighted `app.source` and the repair turn's failing candidate use the same heading. */
+/** The heading "here is the code" is rendered under, whichever turn renders it — the generate
+ *  turn's pre-flighted `app.source` and the repair turn's failing candidate use the same one.
+ *  Exported so a test can assert its presence/absence without pinning the source text next to it. */
+export const CURRENT_SOURCE_HEADING = 'Current source:';
+
 function currentSourceSection(source: string): string {
-  return `Current source:\n${source}`;
+  return `${CURRENT_SOURCE_HEADING}\n${source}`;
 }
 
 /** The identity half of edit continuity (spec "The edit turn sees the app it is changing").
  *  Carried by every turn for a request with an `app`, source on file or not: an honest
- *  regeneration must preserve the app's identity just as much as an edit that can read the code. */
-const IDENTITY_CONTINUITY = [
+ *  regeneration must preserve the app's identity just as much as an edit that can read the code.
+ *  Exported so a test can assert its presence/absence without pinning its wording. */
+export const IDENTITY_CONTINUITY = [
   "Continuity — this app already exists and holds the user's data:",
   '- Keep the app\'s current name unless this request explicitly asks to rename it.',
   "- Every concept that already exists keeps the collection and field IDs it already has: the user's",
@@ -83,6 +93,10 @@ function identityContinuitySection(request: GenerateRequest): string {
   return request.app ? IDENTITY_CONTINUITY : '';
 }
 
+/** The heading the storage half of edit continuity is rendered under. Exported so a test can
+ *  assert presence/absence without pinning the keep-reading/add-do-not-replace wording next to it. */
+export const STORAGE_LOCATIONS_HEADING = 'Storage locations the app being edited reads and writes:';
+
 /** The storage half of edit continuity. `storageSurface` is the location list rendered by the
  *  machine from the ONE per-run `scanStorageSurface` result (design D3: the same value the static
  *  checker takes as its drift baseline) — empty for a new app, or for an edit whose source is
@@ -90,7 +104,7 @@ function identityContinuitySection(request: GenerateRequest): string {
 function storageSurfaceSection(storageSurface: string | undefined): string {
   if (!storageSurface || storageSurface.trim().length === 0) return '';
   return (
-    `Storage locations the app being edited reads and writes:\n${storageSurface}\n` +
+    `${STORAGE_LOCATIONS_HEADING}\n${storageSurface}\n` +
     "Keep reading and writing these exact locations — the user's existing data lives there. Add a new " +
     'location when the change needs one; never replace or rename an existing one.'
   );

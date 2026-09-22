@@ -15,6 +15,7 @@ import { createApp } from '../src/app';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { createCheckStage } from '../src/generation/stages/check';
+import { SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../src/sdk/theme';
 import {
   GenerationMachine,
   type BuildOutcome,
@@ -379,14 +380,23 @@ function testTileColorExtraction(): void {
   eq('a short hex is dropped', manifestFor("  tileColor: '#abc',")?.tileColor, undefined);
   eq('a non-literal declaration is not extracted', manifestFor('  tileColor: someHue,')?.tileColor, undefined);
 
-  // Reserved hues: the three status meanings, the accent and `yours` — case-insensitively.
-  eq('the broken hue is dropped', manifestFor("  tileColor: '#b91c1c',")?.tileColor, undefined);
-  eq('the working hue is dropped', manifestFor("  tileColor: '#0d9488',")?.tileColor, undefined);
-  eq('the waiting hue is dropped', manifestFor("  tileColor: '#c9c3b8',")?.tileColor, undefined);
-  eq('the accent is dropped', manifestFor("  tileColor: '#3F3D8F',")?.tileColor, undefined);
-  eq('the yours brown is dropped', manifestFor("  tileColor: '#a15c07',")?.tileColor, undefined);
+  // Reserved hues: the three status meanings (both backgrounds), the accent and `yours` — read
+  // from the SDK's own token module (as check.ts's RESERVED_HUES does), never re-typed as a
+  // literal palette here, so a token edit can never leave this test pinned to a stale one.
+  const reservedHues = [
+    ...Object.values(STATUS_COLORS),
+    ...Object.values(STATUS_COLORS_ON_INK),
+    SHELL_COLORS.accent,
+    SHELL_COLORS.yours,
+    SHELL_COLORS.yoursOnDark,
+  ];
+  for (const hue of reservedHues) {
+    eq(`the reserved hue ${hue} is dropped`, manifestFor(`  tileColor: '${hue}',`)?.tileColor, undefined);
+    // Case-insensitively.
+    eq(`the reserved hue ${hue} is dropped uppercased`, manifestFor(`  tileColor: '${hue.toUpperCase()}',`)?.tileColor, undefined);
+  }
 
-  const dropped = manifestFor("  tileColor: '#b91c1c',");
+  const dropped = manifestFor(`  tileColor: '${reservedHues[0]}',`);
   check('dropping a colour leaves the rest of the manifest intact', Array.isArray(dropped?.capabilities));
 }
 

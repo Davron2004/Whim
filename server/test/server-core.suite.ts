@@ -10,10 +10,12 @@ import { createApp } from '../src/app';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
+import { createSlotController } from '../src/admission/slots';
 import { ScriptedModelClient } from './scripted-model';
+import { TIMED_OUT, waitFor, within } from './route-doubles';
 import type { ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
-import type { UsageAndCostTransport } from '../src/usage/resolve';
+import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
@@ -137,18 +139,36 @@ async function testSseFraming(): Promise<void> {
     eq('keepalive off → 0 skipped frames', skippedFrames, 0);
   }
 
-  // §4.3 — keepalive on against a deliberately delayed source → ≥1 keepalive
+  // §4.3 — keepalive on against a source that yields once and then holds → ≥1 keepalive
   {
-    // Each event is delayed 80 ms; keepalive fires every 20 ms → multiple per event gap
+    let releaseHold: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    const holdingPipeline: Pipeline = {
+      async *run(_request, signal) {
+        yield { type: 'stage', stage: 'plan', status: 'start' };
+        await hold;
+        if (signal?.aborted) return;
+        yield { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        yield { type: 'result', app: RACE_APP };
+      },
+    };
     const app = createApp({
-      pipeline: createStubPipeline(80),
+      pipeline: holdingPipeline,
       usageStore: new InMemoryUsageStore(),
-      keepaliveMs: 20,
+      keepaliveMs: 5,
     });
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
-    const { keepaliveCount, skippedFrames } = await readSseResponse(res);
-    check('keepalive on → ≥1 keepalive', keepaliveCount >= 1, `got ${keepaliveCount}`);
-    eq('keepalive on → 0 skipped frames', skippedFrames, 0);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const buffered = await within(readUntil(reader, decoder, (b) => b.includes(': keepalive')));
+    check(
+      'keepalive on → ≥1 keepalive while the source holds',
+      buffered !== TIMED_OUT && buffered.includes(': keepalive'),
+    );
+    releaseHold();
+    await reader.cancel();
   }
 
 }
@@ -343,10 +363,13 @@ async function testAbortDoubleCreditRace(): Promise<void> {
 
     const usageStore = new InMemoryUsageStore();
     const transport = makeFixedTransport(generationId, RACE_USAGE);
+    const tracker = new ResolveTracker();
+    const slots = createSlotController({ maxConcurrentGenerations: 3, maxConcurrentUnary: 3 });
     const app = createApp({
       pipeline,
       usageStore,
-      resolver: { transport, bounds: FAST_RECONCILE_BOUNDS },
+      slots,
+      resolver: { transport, tracker, bounds: FAST_RECONCILE_BOUNDS },
     });
 
     const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
@@ -358,7 +381,12 @@ async function testAbortDoubleCreditRace(): Promise<void> {
     // The client disconnects here: after usage was credited, before any terminal event.
     await reader.cancel();
     releaseGate();
-    await new Promise((r) => setTimeout(r, 50));
+
+    // The generation slot is released synchronously at the start of teardown, before the
+    // resolver's tracked promise is registered — waiting for it first (as routes-generate.suite.ts
+    // does) means the drain below is never racing a teardown that hasn't started yet.
+    check('the generation slot frees once teardown runs', await waitFor(() => slots.counts().generations === 0));
+    await tracker.drain(FAST_RECONCILE_BOUNDS.totalBudgetMs);
 
     check('a run that disconnects after usage never emits a terminal event', !terminalEmitted);
     const total = await usageStore.read(DEVICE_ID);

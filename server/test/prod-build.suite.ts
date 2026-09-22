@@ -22,8 +22,9 @@ import { createRequire, isBuiltin } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { check, eq, section } from './harness';
-import { TIMED_OUT, waitFor, within } from './routes-generate.suite';
-import { buildRuntimeTree, bundleServerEntry } from '../build.mjs';
+import { TIMED_OUT, waitFor, within } from './route-doubles';
+import { productionEntryInputs } from './build-fixtures';
+import { buildRuntimeTree } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
@@ -245,7 +246,7 @@ async function prepareTree(): Promise<Fixture> {
     ['chalk', 'left-pad', 'node:fs', 'zod'],
   );
 
-  const inputs = await bundleServerEntry({ entry: 'server/src/main.ts', outfile: path.join(scratch, 'probe', 'main.mjs'), write: false });
+  const inputs = await productionEntryInputs();
   check('@whim/contract is bundled into the entry', inputs.includes('contract/src/index.ts'), JSON.stringify(inputs.filter((i) => i.startsWith('contract'))));
   eq('no test module reaches the entry bundle', inputs.filter((input) => input.startsWith('server/test/')), []);
 
