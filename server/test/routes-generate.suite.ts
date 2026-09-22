@@ -26,19 +26,7 @@ import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
-import {
-  InMemoryUsageStore,
-  NodeSqliteUsageStore,
-  type AdmitParams,
-  type AdmitResult,
-  type CostState,
-  type CostSweepCandidate,
-  type CostSweepQuery,
-  type RequestOutcome,
-  type SummaryParams,
-  type UsageStore,
-  type UsageSummary,
-} from '../src/usage-store';
+import { NodeSqliteUsageStore, type RequestOutcome } from '../src/usage-store';
 import { NodeSqliteReportStore } from '../src/reports/store';
 import { createSlotController, type AcquireResult, type SlotController, type SlotKind } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
@@ -46,7 +34,7 @@ import { cachedPolicy, ModelContentPolicy, type ContentPolicy } from '../src/pol
 import { InFlightGenerations } from '../src/routes/generate';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { Clock, RunTrace } from '../src/generation/machine';
-import type { ModelClient, ModelDelta, ModelRequest, ModelRoster, ModelStream } from '../src/generation/model';
+import type { ModelClient, ModelRoster } from '../src/generation/model';
 import {
   ControlledModelClient,
   RecordingUsageStore,

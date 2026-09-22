@@ -116,3 +116,6 @@ demo/raw/
 # manifest, so a tracked copy would churn every commit). The skill (.agents/skills/graphify/)
 # and .graphifyignore ARE committed; rebuild anytime with `graphify extract . --code-only`.
 graphify-out/
+
+# Local critic reports
+/openspec/critic/
