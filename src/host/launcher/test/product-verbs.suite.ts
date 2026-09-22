@@ -15,6 +15,7 @@ const FORBIDDEN: RegExp[] = [
   /\bgit\b/i, /\bcommit\b/i, /\boid\b/i, /\bsha\b/i, /\bhash\b/i, /\bref\b/i, /\bblob\b/i,
   /\btree\b/i, /gitdir/i, /\bHEAD\b/, /\brealm\b/i, /generation/i, /dispatcher/i, /iframe/i,
   /webview/i, /\blineage\b/i, /\bsnapshot\b/i, /fork-\d/i, /[0-9a-f]{40}/i,
+  /\bschema\b/i, /\bdatabase\b/i, /\bstorage\b/i, /\bclone\b/i,
 ];
 
 export async function runProductVerbsTests(h: Harness): Promise<void> {

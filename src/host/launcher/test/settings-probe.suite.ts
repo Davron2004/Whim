@@ -1,44 +1,9 @@
 /** Debounce and stale-result tests use a manual timer and await the exact probe promise. */
-import { runSettingsScreenTests } from './settings-screen.suite';
 import { Harness } from './harness';
 import { DebouncedProbe } from '../settings-probe';
 import type { SettingsProbeState } from '../settings-probe';
-import type { TimerLike } from '../connectivity';
+import { FakeTimers } from './fake-timers';
 import type { ProbeResult } from '../server-probe';
-
-/** Mirrors `connectivity.suite.ts`'s `FakeTimers`: fire the one pending timer on demand, read
- *  back every delay `setTimeout` was called with. Never touches the real clock. */
-class FakeTimers implements TimerLike {
-  private nextId = 1;
-  private readonly pending = new Map<number, () => void>();
-  readonly delays: number[] = [];
-
-  setTimeout = (cb: () => void, ms: number): unknown => {
-    const id = this.nextId++;
-    this.pending.set(id, cb);
-    this.delays.push(ms);
-    return id;
-  };
-
-  clearTimeout = (handle: unknown): void => {
-    this.pending.delete(handle as number);
-  };
-
-  get pendingCount(): number {
-    return this.pending.size;
-  }
-
-  /** Fire the one pending timer. Throws if there isn't exactly one. */
-  fireOnly(): void {
-    const entries = [...this.pending.entries()];
-    if (entries.length !== 1) {
-      throw new Error(`expected exactly one pending timer, found ${entries.length}`);
-    }
-    const [id, cb] = entries[0];
-    this.pending.delete(id);
-    cb();
-  }
-}
 
 /** A controllable probe stub: `resolvers[i]` resolves the i-th call in call order. `promises[i]`
  *  is that SAME call's own promise — a suite awaits it directly (never a fixed microtask-flush
@@ -146,5 +111,4 @@ export async function runSettingsProbeTests(h: Harness): Promise<void> {
     h.eq(timers.pendingCount, 1, 'cancel() does not disable the instance — a later schedule() still runs a fresh cycle');
   });
 
-  await runSettingsScreenTests(h);
 }

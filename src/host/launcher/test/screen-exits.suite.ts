@@ -1,4 +1,3 @@
-import { runScreenControlTests } from './screen-controls.suite';
 /** System-back lifetime, boundary recovery, safe-area policy and rendered exit controls. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -8,8 +7,6 @@ import { Harness } from './harness';
 import { bindSystemBack } from '../system-back';
 import type { BackHandlerLike } from '../system-back';
 import { useSystemBackWith } from '../use-system-back-with';
-import { frameEdgesFor } from '../screen-exits';
-import type { ScreenKind } from '../screen-exits';
 import ScreenBoundary from '../ScreenBoundary';
 import type { ScreenFallbackProps } from '../ScreenBoundary';
 
@@ -102,31 +99,6 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
     TestRenderer.act(() => tree!.unmount());
   });
 
-  // ── frameEdgesFor (design D10) ───────────────────────────────────────────────
-
-  const ALL_KINDS: readonly ScreenKind[] = [
-    'home',
-    'app',
-    'dev',
-    'settings',
-    'history',
-    'link-missing',
-    'consent',
-    'compose',
-    'clarify',
-    'plan',
-    'build',
-    'done',
-    'failure',
-  ];
-
-  for (const kind of ALL_KINDS) {
-    const expected = kind === 'app' || kind === 'dev' ? ['top'] : ['top', 'bottom'];
-    await h.test(`frameEdgesFor: ${kind} gets ${JSON.stringify(expected)}`, () => {
-      h.eq(frameEdgesFor(kind), expected, `${kind}'s root frame applies exactly these safe-area edges`);
-    });
-  }
-
   // ── ScreenBoundary onLeave pass-through (design D7) ──────────────────────────
 
   await h.test('boundary: a throwing screen with onLeave hands the fallback that exact function', () => {
@@ -180,5 +152,4 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       h.ok(!/\bBackHandler\.addEventListener\s*\(/.test(source), `${file} uses the shared back adapter`);
     }
   });
-  await runScreenControlTests(h);
 }

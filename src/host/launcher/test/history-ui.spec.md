@@ -4,9 +4,9 @@ English-first spec for `HistoryScreen.tsx` + its RN-free decision logic (`histor
 Covers `openspec/changes/shell-redesign-v2/specs/version-history/spec.md` (all requirements,
 both `REMOVED` blocks) and `app-launcher/spec.md`'s tile-colour-resolution requirement, as
 implemented per `design.md` D11. Node-testable pieces (`history-logic.suite.ts`) drive a real
-MemoryFs-backed `VersionStore` through `StoreAccess`, exactly like `store-access.suite.ts`; a
-couple of UI-wiring assertions are static source checks (mirrors `dev-probe-back-button.suite.ts`'s
-idiom), since `HistoryScreen.tsx` itself is not rendered under Node.
+MemoryFs-backed `VersionStore` through `StoreAccess`, exactly like `store-access.suite.ts`; the
+screen itself is rendered over the same kind of store in `history-ui.suite.tsx` (loading state,
+expand-not-restore, confirm-gated restore and copy, reaching History from Home).
 
 ## History reads as the user's own prompts
 

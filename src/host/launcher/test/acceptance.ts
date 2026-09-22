@@ -1,14 +1,16 @@
-import { runLauncherInteractionTests } from './launcher-interactions.suite';
 /**
- * launcher Node acceptance (task 5.4) — the fast, device-free checkpoint for the launcher's
- * deterministic core: the back-policy state machine (2.2), the installed-apps index (5.1), and
- * the version-store access wrapper (5.2). Green here is the correctness gate; the pass is the
- * on-device walk (acceptance.spec.md / task 7.2).
+ * launcher Node acceptance — the fast, device-free checkpoint for the launcher: its pure modules
+ * and stores, and its screens and the whole `LauncherRoot` rendered under `react-test-renderer`
+ * over in-memory native shims (`native-host.tsx`, `native-storage.ts`). Every suite is run from
+ * here and nowhere else. The on-device walk is `acceptance.spec.md`.
  *
  *   npm run launcher:test
  */
 
 import { Harness } from './harness';
+import { runLauncherInteractionTests } from './launcher-interactions.suite';
+import { runScreenControlTests } from './screen-controls.suite';
+import { runSettingsScreenTests } from './settings-screen.suite';
 import { runBackPolicyTests } from './back-policy.suite';
 import { runAppIndexTests } from './app-index.suite';
 import { runStoreAccessTests } from './store-access.suite';
@@ -21,8 +23,6 @@ import { runDeliverTests } from './deliver.suite';
 import { runThemeTests } from './theme.suite';
 import { runHistoryLogicTests } from './history-logic.suite';
 import { runSharedStorageTests } from './shared-storage.suite';
-import { runLaunchFailureUiTests } from './launch-failure-ui.suite';
-import { runBundleErrorWatchdogTests } from './bundle-error-watchdog.suite';
 import { runPromptFlowScreensTests } from './prompt-flow-screens.suite';
 import { runGenerationClientTests } from './generation-client.suite';
 import { runServerProbeTests } from './server-probe.suite';
@@ -47,7 +47,6 @@ import { runRunSignalsTests } from './run-signals.suite';
 import { runRunTimelineTests } from './run-timeline.suite';
 import { runAppBusyTests } from './app-busy.suite';
 import { runBootStateTests } from './boot-state.suite';
-import { runRealmDeliveryTests } from './realm-delivery.suite';
 import { runHistoryWaitTests } from './history-wait.suite';
 import { runReleaseConfigTests } from './release-config.suite';
 import { runAiConsentTests } from './ai-consent.suite';
@@ -56,21 +55,25 @@ import { runTransportSharedTests } from './transport-shared.suite';
 import { runServiceRefusalTests } from './service-refusal.suite';
 import { runRefusalLandingTests } from './refusal-landing.suite';
 import { runReportPayloadTests } from './report-payload.suite';
-import { runSettingsSectionsTests } from './settings-sections.suite';
 import { runLinkRoutingTests } from './link-routing.suite';
 import { runAppLinkUiTests } from './app-link-ui.suite';
 import { runMiniAppDeliveryTests } from './mini-app-delivery.suite';
 import { runForkUiTests } from './fork-ui.suite';
 import { runConsentGateUiTests } from './consent-gate-ui.suite';
 import { runErrorReasonTests } from './error-reason.suite';
-import { runRefusalTargetTests } from './refusal-target.suite';
 import { runReportSendTests } from './report-send.suite';
 import { runScreenExitsTests } from './screen-exits.suite';
 import { runSchemeHostTests } from './scheme-host.suite';
+import { runPromptFlowUiTests } from './prompt-flow-ui.suite';
+import { runAttemptLifecycleUiTests } from './attempt-lifecycle-ui.suite';
+import { runMiniAppHostUiTests } from './mini-app-host-ui.suite';
+import { runHomeGridUiTests } from './home-grid-ui.suite';
+import { runFlowScreensUiTests } from './flow-screens-ui.suite';
+import { runHistoryUiTests } from './history-ui.suite';
 
 const h = new Harness();
 
-console.log('\nlauncher acceptance — back-policy + app-index + store-access + seed + product-verbs\n');
+console.log('\nlauncher acceptance\n');
 
 await runBackPolicyTests(h);
 await runAppIndexTests(h);
@@ -84,14 +87,13 @@ await runDeliverTests(h);
 await runThemeTests(h);
 await runHistoryLogicTests(h);
 await runSharedStorageTests(h);
-await runLaunchFailureUiTests(h);
-await runBundleErrorWatchdogTests(h);
 await runPromptFlowScreensTests(h);
 await runGenerationClientTests(h);
 await runServerProbeTests(h);
 await runConnectivityTests(h);
 await runConnectivityUxTests(h);
 await runSettingsProbeTests(h);
+await runSettingsScreenTests(h);
 await runPromptFlowWiringTests(h);
 await runGenerationRequestTests(h);
 await runXhrTransportTests(h);
@@ -110,7 +112,6 @@ await runRunSignalsTests(h);
 await runRunTimelineTests(h);
 await runAppBusyTests(h);
 await runBootStateTests(h);
-await runRealmDeliveryTests(h);
 await runHistoryWaitTests(h);
 await runReleaseConfigTests(h);
 await runAiConsentTests(h);
@@ -119,18 +120,23 @@ await runTransportSharedTests(h);
 await runServiceRefusalTests(h);
 await runRefusalLandingTests(h);
 await runReportPayloadTests(h);
-await runSettingsSectionsTests(h);
 await runLinkRoutingTests(h);
 await runAppLinkUiTests(h);
 await runMiniAppDeliveryTests(h);
 await runForkUiTests(h);
 await runConsentGateUiTests(h);
 await runErrorReasonTests(h);
-await runRefusalTargetTests(h);
 await runReportSendTests(h);
 await runScreenExitsTests(h);
+await runScreenControlTests(h);
 await runLauncherInteractionTests(h);
 await runSchemeHostTests(h);
+await runPromptFlowUiTests(h);
+await runAttemptLifecycleUiTests(h);
+await runMiniAppHostUiTests(h);
+await runHomeGridUiTests(h);
+await runFlowScreensUiTests(h);
+await runHistoryUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

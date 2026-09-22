@@ -1,16 +1,11 @@
 /**
  * History screen acceptance (`history-ui.spec.md`, shell-redesign-v2 chain-E) — drives a real
  * MemoryFs-backed `VersionStore` through `StoreAccess` + the RN-free `history-logic.ts` decision
- * logic (mirrors `store-access.suite.ts`'s idiom), plus a couple of static source-wiring checks
- * for the parts that can only be observed by reading `HistoryScreen.tsx`/`HomeScreen.tsx`/
- * `LauncherRoot.tsx` (this repo's precedent for RN-component wiring — see
- * `dev-probe-back-button.suite.ts`). Pin verbs are covered by `store-access.suite.ts` — the `4a`
+ * logic (mirrors `store-access.suite.ts`'s idiom); the rendered screen is in `history-ui.suite.tsx`. Pin verbs are covered by `store-access.suite.ts` — the `4a`
  * redesign withdraws the launcher's pin SURFACE, not the store's pin verbs (version-history
  * REMOVED "Named pins").
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { Harness } from './harness';
 import { createMemoryStore, MapKVBackend } from '../../version-store';
 import { AppIndex } from '../app-index';
@@ -262,24 +257,4 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.eq(formatRelativeTimestamp(now - 2 * 86_400_000, now), '2d ago', 'days');
   });
 
-  // ── Static wiring: HistoryScreen/HomeScreen/LauncherRoot ──────────────────
-  await h.test('history: HistoryScreen wires expand-not-restore, confirm-gated restore, and fork-from-version', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/HistoryScreen.tsx'), 'utf8');
-    h.ok(src.includes('onPress={onToggle}'), 'tapping a row toggles expansion, not a restore');
-    // Both calls now sit inside the confirm sheet's double-submit guard (`history-wait.ts`), so
-    // what is pinned is the call and its argument, not the `await` that used to precede it.
-    h.ok(src.includes('() => access.rollback(app, row.id)'), 'restore only happens from the confirm sheet, against the row\'s own version');
-    h.ok(src.includes('() => access.fork(app, row.id)'), 'fork-from-version calls StoreAccess.fork with the viewed snapshot id');
-  });
-
-  await h.test('history: History is reachable from the home action sheet and LauncherRoot switch', () => {
-    const homeSrc = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/HomeScreen.tsx'), 'utf8');
-    h.ok(homeSrc.includes('COPY.actionHistory') && homeSrc.includes('onHistory(a)'), 'HomeScreen sheet has a History row wired to onHistory');
-    const rootSrc = fs.readFileSync(path.join(process.cwd(), 'src/host/launcher/LauncherRoot.tsx'), 'utf8');
-    h.ok(rootSrc.includes("{ kind: 'history'; app: InstalledApp }"), "LauncherRoot's Screen union has the history variant");
-    h.ok(
-      /<HistoryScreen[\s\S]{0,160}app=\{screen\.app\}[\s\S]{0,160}access=\{access\}[\s\S]{0,160}onBack=\{goHome\}/.test(rootSrc),
-      'LauncherRoot renders HistoryScreen with the shared goHome (refreshes Home on return) — the existing props signature, unchanged apart from the additive onChangeIt group D wires',
-    );
-  });
 }

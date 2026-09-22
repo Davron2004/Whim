@@ -1,13 +1,14 @@
 /**
  * prompt-envelope Node suite (task 1.2 §24-26, `installed-apps.spec.md`) — `parsePromptEnvelope`
  * over the envelope versions a reader accepts, invalid JSON, and wrong-shape JSON, all falling
- * back to the raw string rather than throwing (History's "does not error" requirement). The v2
- * envelope's own round-trip (text plus the run's summary) lives in `prompt-flow-wiring.suite.ts`
- * with the delivery path that writes it.
+ * back to the raw string rather than throwing (History's "does not error" requirement), and the v2
+ * envelope's round-trip (text plus the run's summary).
  */
 
 import { Harness } from './harness';
-import { parsePromptEnvelope } from '../prompt-envelope';
+import { parsePromptEnvelope, promptEnvelope } from '../prompt-envelope';
+import { storedSummary } from '../history-logic';
+import type { RunSummary } from '@whim/contract';
 
 export async function runPromptEnvelopeTests(h: Harness): Promise<void> {
   // §24 every envelope version a reader may encounter parses to its text, with no migration
@@ -31,5 +32,19 @@ export async function runPromptEnvelopeTests(h: Harness): Promise<void> {
     h.eq(parsePromptEnvelope('42'), { text: '42' }, 'a bare JSON number falls back');
     h.eq(parsePromptEnvelope('[1,2,3]'), { text: '[1,2,3]' }, 'a JSON array falls back');
     h.eq(parsePromptEnvelope('null'), { text: 'null' }, 'JSON null falls back');
+  });
+
+  // The envelope a delivery writes: the verbatim prompt, with the run's summary beside it when the
+  // server sent one. History reads both back.
+  await h.test('prompt-envelope: a delivered prompt round-trips its text and the run summary, and a run with none reads none', () => {
+    const summary: RunSummary = { text: 'It saves every brew now.', kind: 'Added', touched: ['History'], marks: [{ cls: 'chg', start: 3, end: 8 }] };
+    const withSummary = promptEnvelope('a timer with my pour-over recipe', summary);
+    h.eq(parsePromptEnvelope(withSummary), { text: 'a timer with my pour-over recipe' }, 'the verbatim prompt reads back');
+    h.eq(storedSummary(withSummary), summary, 'and the summary rides beside it, unmodified');
+    const bare = promptEnvelope('a dice roller');
+    h.eq(parsePromptEnvelope(bare), { text: 'a dice roller' }, 'a run with no summary still reads its prompt');
+    h.ok(storedSummary(bare) === undefined, 'and finds no summary');
+    h.ok(storedSummary('{"v":1,"text":"make a tip splitter"}') === undefined, 'nor does a v1 envelope');
+    h.ok(storedSummary('Example: track water') === undefined, 'nor a raw legacy string');
   });
 }

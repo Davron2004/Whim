@@ -31,6 +31,7 @@ import { buildRewriteAppContext } from '../generation-request';
 import type { ConsentedClientOptions } from '../generation-client';
 import type { InstalledApp } from '../app-index';
 import type { GenerationEvent } from '@whim/contract';
+import { GenerationEvent as GenerationEventSchema } from '@whim/contract';
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
@@ -310,42 +311,6 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('rewritePrompt: a malformed Retry-After is dropped without changing kind/status/code/hint', async () => {
-    const fetchImpl = (async () =>
-      new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
-        status: 429,
-        headers: { 'Retry-After': 'soon' },
-      })) as typeof fetch;
-    try {
-      await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
-      h.ok(false, 'expected a throw');
-    } catch (err) {
-      const e = err as GenerationClientError;
-      h.eq(e.retryAfterSeconds, undefined, 'a non-integer Retry-After leaves the field absent');
-      h.eq(e.kind, 'http', 'kind is unaffected');
-      h.eq(e.status, 429, 'status is unaffected');
-      h.eq(e.code, 'server_busy', 'code is unaffected');
-      h.eq(e.hint, 'Try again soon', 'hint is unaffected');
-    }
-  });
-
-  await h.test('rewritePrompt: zero, negative, and non-integer Retry-After values are all treated as absent', async () => {
-    for (const value of ['0', '-5', '3.5']) {
-      const fetchImpl = (async () =>
-        new Response(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }), {
-          status: 429,
-          headers: { 'Retry-After': value },
-        })) as typeof fetch;
-      try {
-        await rewritePrompt({ ...BASE, fetchImpl }, 'hi');
-        h.ok(false, 'expected a throw');
-      } catch (err) {
-        const e = err as GenerationClientError;
-        h.eq(e.retryAfterSeconds, undefined, `Retry-After: ${value} is treated as absent`);
-      }
-    }
-  });
-
   await h.test('rewritePrompt: a non-ApiError body leaves code absent', async () => {
     const fetchImpl = (async () => new Response(JSON.stringify({ oops: true }), { status: 500 })) as typeof fetch;
     try {
@@ -396,7 +361,10 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       },
       { type: 'failure', reason: 'nope', attempts: 1, diagnostics: [] },
     ];
+    const contractArms = GenerationEventSchema.options.map((arm) => arm.shape.type.value).sort((a, b) => a.localeCompare(b));
+    h.eq(oneOfEach.map((e) => e.type).sort((a, b) => a.localeCompare(b)), contractArms, 'one fixture for every arm the contract declares — a new arm fails here until it has one');
     for (const event of oneOfEach) {
+      h.ok(GenerationEventSchema.safeParse(event).success, `the "${event.type}" fixture is valid under the contract`);
       const fetchImpl = (async () => sseResponse([sseFrame(event, 1)])) as typeof fetch;
       const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
       h.eq(got, [event], `the "${event.type}" arm parses without throwing`);

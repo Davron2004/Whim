@@ -41,3 +41,42 @@ npx esbuild .rec.ts --bundle --platform=node --format=esm --tsconfig-raw='{}' \
   --external:esbuild --external:playwright --external:typescript --outfile=.rec.tmp.mjs \
   && node .rec.tmp.mjs; rm -f .rec.ts .rec.tmp.mjs
 ```
+
+## Found by the batch 4 launcher rewrite (2026-09-21)
+
+The rendered LauncherRoot tests reached code paths the source greps never did. None of these is
+fixed in the cleanup; each was reproduced in the rendered suite unless marked otherwise.
+
+1. **Two runs at once lose the newer run's controls (real bug).** `LauncherRoot.tsx` `runAttempt`
+   sets `liveRef.current = { id: attemptId, … }` on every stage event (around L1239) and when
+   delivery starts (around L1297), without checking which attempt owns it. With two runs in
+   flight, the older run's stage or result takes `liveRef`, and its release then clears it. After
+   that the newer run's building ghost can't reattach ("no live run to reattach to"), and
+   cancelling it deletes the record without aborting the stream, so the run can still deliver.
+   The committed concurrency test uses a failing older run, so it doesn't encode the bug.
+2. **A detached run that fails takes the user off their screen.** `showStreamFailure` and the
+   throw path call `setScreen(failure)` even after "Leave it running"; delivery checks
+   `ctl.detached`, these paths don't. The spec says nothing either way.
+3. **No boot surface after Retry.** MiniAppView shows none between Retry and the new WebView's
+   `onLoadEnd`, because `paintMs` is reset only in `bind()`.
+4. **A corrupt run journal crashes the failure screen.** A terminal entry whose `diagnostics`
+   isn't a list throws in `run-timeline-view.ts` (`(failure.diagnostics ?? []).entries()`); the
+   screen boundary recovers it.
+5. **app-link's URL-independence test has scheme-host's old weakness.** Its throwing `URL` stub
+   doesn't catch a URL-with-fallback parser; scheme-host's stand-in now answers wrongly instead.
+6. **`useMiniAppHost` acts on `error` frames without checking `trusted`.** A frame the bundle
+   makes up could raise the fatal app-error surface. Not reproduced; check against the trust
+   model (CLAUDE.md: only nonce-authenticated frames are trusted).
+7. **Some negative checks settle for a fixed number of `setImmediate` rounds** (prompt-flow-ui,
+   "a late response cannot move the screen"). A slower path would make them pass vacuously rather
+   than flake.
+
+## Parked from batch 4
+
+- **native-network-deny checker body.** The mutation tests are now a table and the
+  exact-message rule is gone (7378d22), but the ~400-line Kotlin/ObjC lexer inside the test still
+  matches whole statements (`'wrapper.webView.settings.blockNetworkLoads = true'`) and still
+  checks `WhimTonePackage` registration, which has nothing to do with network deny. The rewrite to
+  invariant-bearing tokens was not attempted: it is the only automated guard for native network
+  deny, and there was no independent way to show a new lexer kept its coverage. An instrumented
+  Android test and an XCTest (tooling.md) would replace most of it.

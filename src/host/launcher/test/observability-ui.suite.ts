@@ -7,10 +7,8 @@
  * `react-test-renderer` (the launcher runner bundles the whole graph and cannot bundle React
  * Native): the throwing child, the report-before-render ordering, retry and the reset key are
  * behavioural checks, not source greps. The overlay's ordering/filtering/gate live in the equally
- * RN-free `dev-log-view.ts` and are exercised the same way; only the two `react-native` screens'
- * remaining properties (token-only styling, `copy.ts` strings, no third-party overlay package,
- * the gate being in the component itself) are asserted from source, the idiom
- * `launch-failure-ui.suite.ts` established.
+ * RN-free `dev-log-view.ts` and are exercised the same way. The error screen, the overlay and the
+ * launcher shell around a failing screen are rendered too.
  *
  * Nothing here awaits a promise that could fail to settle — a bare `await` on a pending promise
  * turns one failed check into a whole-suite hang with no test named.
@@ -23,6 +21,13 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import ScreenBoundary from '../ScreenBoundary';
+import ScreenErrorFallback from '../ScreenErrorFallback';
+import DevLogOverlay from '../DevLogOverlay';
+import HomeScreen from '../HomeScreen';
+import { PendingBuildStore } from '../pending-builds';
+import { JOURNAL_KEY } from '../run-journal';
+import { withLauncher } from './rendered-launcher';
+import { button, press, textOf } from './react-screen';
 import type { ScreenFallbackProps } from '../ScreenBoundary';
 import {
   ALL_CHANNELS_FILTER,
@@ -204,17 +209,30 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     TestRenderer.act(() => tree!.unmount());
   });
 
-  // ── the error screen's source properties ────────────────────────────────────
+  // ── the error screen, rendered ──────────────────────────────────────────────
 
-  await h.test('error screen: every string comes from copy.ts, and the thrown error never reaches the surface', () => {
-    const src = readSource('src/host/launcher/ScreenErrorFallback.tsx');
-    h.ok(/COPY\.screenErrorTitle/.test(src) && /COPY\.screenErrorBody/.test(src) && /COPY\.screenErrorRetry/.test(src), 'title, body and retry all read from COPY');
-    h.ok(!/\{\s*(error|String\(error\)|props\.error)\s*\}/.test(src), 'the thrown error is never rendered');
-    h.ok(/onPress=\{resetErrorBoundary\}/.test(src), 'the retry affordance calls the boundary reset');
+  await h.test('error screen: plain words and a retry, and the thrown error never reaches the surface', () => {
+    const control = { throws: true };
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    TestRenderer.act(() => {
+      tree = TestRenderer.create(
+        React.createElement(ScreenBoundary, { screen: 'sentinel-screen', FallbackComponent: ScreenErrorFallback },
+          React.createElement(function Child(): React.ReactElement {
+            if (control.throws) throw new TypeError('SENTINEL_BOOM at renderRow (HomeScreen.tsx:42)');
+            return React.createElement('ok');
+          })),
+      );
+    });
+    const shown = textOf(tree!.root);
+    h.ok(shown.includes(COPY.screenErrorTitle) && shown.includes(COPY.screenErrorBody), 'the fallback shows its plain-words title and body');
+    h.ok(!shown.includes('SENTINEL') && !shown.includes('HomeScreen.tsx'), 'the thrown message and its location never render');
     for (const text of [COPY.screenErrorTitle, COPY.screenErrorBody, COPY.screenErrorRetry]) {
-      h.ok(text.trim().length > 0, 'the copy is present');
       h.ok(!/\b(stack|exception|undefined|null|render)\b/i.test(text), `"${text}" stays plain English`);
     }
+    control.throws = false;
+    TestRenderer.act(() => { button(tree!, COPY.screenErrorRetry).props.onPress(); });
+    h.eq(tree!.root.findAll((n) => n.type === 'ok').length, 1, 'Retry remounts the screen');
+    TestRenderer.act(() => tree!.unmount());
   });
 
   // ── the overlay: what it lists, and what it filters ─────────────────────────
@@ -268,23 +286,39 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
     h.eq(devLogOverlayEnabled(false), false, 'the committed default is what an unqualified call gets');
   });
 
-  await h.test('overlay: the gate is in the component itself, and it is hand-rolled over stock primitives', () => {
-    const src = readSource('src/host/launcher/DevLogOverlay.tsx');
-    h.ok(/if \(!devLogOverlayEnabled\(__DEV__\)\) return null;/.test(src), 'the component renders nothing when both gates are off');
-    h.ok(/FlatList/.test(src) && /\bView\b/.test(src) && /\bText\b/.test(src), 'built from View/Text/FlatList');
-    h.ok(/visibleRecords\(/.test(src), 'the list it renders is the filtered, newest-first view');
+  await h.test('overlay: in a build with __DEV__ off and the flag off, the overlay renders nothing even when asked to open', () => {
+    const ring = new LogRing(10);
+    ring.push(record(1, 'error', CHANNELS.app, 'SENTINEL_LOG_LINE'));
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    TestRenderer.act(() => { tree = TestRenderer.create(React.createElement(DevLogOverlay, { visible: true, onClose: () => {}, buffer: ring })); });
+    h.ok(tree!.toJSON() === null, 'nothing is rendered');
+    TestRenderer.act(() => tree!.unmount());
+  });
 
-    // `@whim/contract` is exempt only because it is imported TYPE-ONLY (asserted here, and locked
-    // tree-wide in `logging.suite.ts`): the statement is erased, so no package reaches the bundle.
-    h.ok(
-      /import type \{[^}]*\} from '@whim\/contract';/.test(src),
-      'the wire types come in type-only, so the contract package never reaches the bundle',
-    );
-    const imports = [...src.matchAll(/from '([^']+)'/g)].map(m => m[1]);
-    const thirdParty = imports.filter(
-      spec => !spec.startsWith('.') && spec !== 'react' && spec !== 'react-native' && spec !== '@whim/contract',
-    );
-    h.eq(thirdParty, [], 'no third-party overlay package — react and react-native only');
+  await h.test('launcher: a screen that throws is replaced by the error screen inside the shell, whose way out returns Home; no log affordance ships', async () => {
+    // A failed build whose persisted journal is corrupt (a terminal entry whose hints are not a
+    // list): opening its ghost renders a failure screen that throws while drawing the timeline.
+    await withLauncher({
+      prepare: (kv) => {
+        const pending = new PendingBuildStore(kv);
+        pending.create({ id: 'broken', prompt: 'A tea timer', workingTitle: 'Tea timer' });
+        pending.setFailed('broken', { reason: 'It did not build.', diagnostics: '' });
+        kv.set(JOURNAL_KEY('broken'), JSON.stringify([{ t: 1, kind: 'terminal', failure: { reason: 'It did not build.', diagnostics: 5 } }]));
+      },
+      server: () => new Response('{}'),
+    }, async ({ tree }) => {
+      h.eq(tree.root.findAll((n) => n.props.accessibilityLabel === 'Logs').length, 0, 'the developer log affordance is not in a shipping shell');
+      h.eq(tree.root.findAllByType(DevLogOverlay).length, 0, 'nor is the overlay');
+      const ghost = tree.root.findByType(HomeScreen).props.pending[0];
+      await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpenPending(ghost));
+      const fallback = tree.root.findAllByType(ScreenErrorFallback);
+      h.eq(fallback.length, 1, 'the error screen replaces the failed screen');
+      const frame = tree.root.find((n) => n.type === 'SafeAreaView');
+      h.ok(frame.findAllByType(ScreenErrorFallback).length === 1, 'inside the shell’s safe-area frame, which survives');
+      await press(button(tree, COPY.screenErrorBack));
+      h.eq(tree.root.findAllByType(HomeScreen).length, 1, 'its way out returns Home');
+      h.eq(tree.root.findAllByType(ScreenErrorFallback).length, 0, 'and Home renders normally');
+    });
   });
 
   // ── review fix F9: no developer diagnostics surface is gated on __DEV__ alone ────────────────

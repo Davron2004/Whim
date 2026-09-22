@@ -457,30 +457,4 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     const runtimeExports = [...contractSrc.matchAll(/^export\s+(?!type\b|interface\b)(\w+)/gm)].map(m => m[1]);
     h.eq(runtimeExports, [], 'contract/src/dev-log.ts exports only types — a value export would let zod in');
   });
-
-  await h.test('the launcher wraps its screen switch in the boundary, below the shell frame', () => {
-    // `LauncherRoot.tsx` is RN and cannot be rendered under Node (the boundary's own behaviour is
-    // exercised in `observability-ui.suite.ts`), so the WIRING is asserted statically — the
-    // repo's established idiom for this file (`prompt-flow-wiring.suite.ts`).
-    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'host', 'launcher', 'LauncherRoot.tsx'), 'utf8');
-    h.ok(
-      /<ScreenBoundary\s+screen=\{screen\.kind\}\s+FallbackComponent=\{ScreenErrorFallback\}\s+onLeave=\{[^}]*\}\s*>/.test(
-        src,
-      ),
-      'the boundary is keyed by the active screen and given the launcher fallback and a way home explicitly',
-    );
-    const frame = src.slice(src.indexOf('<SafeAreaView'), src.indexOf('</SafeAreaView>'));
-    h.ok(frame.includes('<ScreenBoundary'), 'the boundary sits INSIDE the safe-area frame (design D1) — a screen failure keeps the shell');
-    h.ok(
-      src.indexOf('<ScreenBoundary') < src.indexOf('{content}'),
-      'and it wraps the screen switch’s content value',
-    );
-    const devTools = src.slice(src.indexOf('function DevLogTools'), src.indexOf('function LauncherShell'));
-    h.ok(src.includes('<DevLogTools '), 'the developer log surface is mounted in the shell');
-    h.ok(
-      devTools.includes('if (!devLogOverlayEnabled(__DEV__))') && devTools.includes('return null'),
-      'the affordance AND the overlay are gated on the same predicate the overlay gates itself on',
-    );
-    h.ok(devTools.includes('<DevLogOverlay'), 'and that gate is the only route to the overlay');
-  });
 }

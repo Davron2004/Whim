@@ -1,59 +1,71 @@
 /**
- * report-send Node suite (store-launch-compliance review fix M6c) — `ReportSheet`'s send-button
- * state machine and disabled predicate, pulled out RN-free (design D13/D14; spec
- * `content-reporting`): a reason is required before Send is enabled, a send in flight disables it,
- * the thanks state follows a successful send, and a `payload_too_large` refusal returns to a
- * resendable draft rather than getting stuck `sending`.
+ * report-send Node suite (store-launch-compliance review fix M6c; spec `content-reporting`, design
+ * D13/D14): the rendered `ReportSheet` against a scripted server. A reason is required before Send
+ * is enabled, a send in flight cannot be sent again, a refusal or failure returns to the same
+ * resendable draft, a success shows thanks, and each outcome is logged with its status. Plus
+ * `sendFailureOutcome`, which names the logged outcome of a failure.
  */
+import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { sendDisabled, sendFailureOutcome, settleSend } from '../report-send';
-import type { ReportRequest } from '@whim/contract';
+import { COPY } from '../copy';
+import ReportSheet from '../ReportSheet';
+import { sendFailureOutcome } from '../report-send';
+import type { InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
 import { GenerationClientError } from '../transport-shared';
+import { log } from '../../logging';
+import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
-const REQUEST: ReportRequest = { reason: 'broken' };
+const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+const ACCESS = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
 
-interface TestNotice {
-  readonly hint: string;
-}
+const json = (body: unknown, status: number) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+/** The last log record with this message, as the seam recorded it. */
+const lastLog = (message: string) => log.buffer.snapshot().filter((r) => r.message === message).at(-1)?.fields as Record<string, unknown> | undefined;
 
 export async function runReportSendTests(h: Harness): Promise<void> {
-  await h.test('sendDisabled: no reason chosen yet (request null) disables Send', () => {
-    h.eq(sendDisabled(null, 'draft', false), true, 'no reason chosen means Send is disabled');
-  });
+  await h.test('report sheet: Send needs a reason; a refused or failed send returns to the same draft; a sent one shows thanks', async () => {
+    const answers: (() => Promise<Response>)[] = [];
+    const bodies: unknown[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return answers.shift()!();
+    }) as typeof fetch;
+    let closed = 0;
+    const tree = await renderScreen(React.createElement(ReportSheet, {
+      app: APP, access: ACCESS, options: { baseUrl: 'https://server.test', deviceId: 'device', fetchImpl }, onClose: () => { closed++; },
+    }));
+    try {
+      await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
+      await h.throws(() => press(button(tree, COPY.reportSend)), 'Cannot press a disabled control', 'Send is disabled until a reason is chosen');
+      await press(button(tree, COPY.reportReasonBroken));
 
-  await h.test('sendDisabled: a reason with nothing else gating it enables Send', () => {
-    h.eq(sendDisabled(REQUEST, 'draft', false), false, 'a reason with nothing else gating it enables Send');
-  });
+      answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));
+      await press(button(tree, COPY.reportSend));
+      h.eq((bodies[0] as { reason?: string }).reason, 'broken', 'the chosen reason is sent');
+      h.ok(textOf(tree.root).includes('That report is too large to send.'), 'a refusal shows the server’s hint');
+      h.eq(lastLog('report refused')?.outcome, 'payload_too_large', 'and is logged with its refusal code');
 
-  await h.test('sendDisabled: a send already in flight disables Send', () => {
-    h.eq(sendDisabled(REQUEST, 'sending', false), true, 'a send already in flight disables Send');
-  });
+      answers.push(async () => json({ error: 'internal' }, 500));
+      await press(button(tree, COPY.reportSend));
+      h.ok(textOf(tree.root).includes(COPY.reportSendFailedGeneric), 'an unrecognised failure shows the generic notice');
+      h.eq(lastLog('report failed')?.outcome, '500', 'and is logged with the status the server answered');
 
-  await h.test('sendDisabled: a live retry-window gate disables Send even with a reason chosen', () => {
-    h.eq(sendDisabled(REQUEST, 'draft', true), true, 'a live retry-window gate disables Send');
-  });
-
-  await h.test('settleSend: a successful send moves to thanks with no notice', () => {
-    h.eq(
-      settleSend<TestNotice>({ kind: 'sent' }),
-      { phase: 'thanks', notice: null },
-      'a successful send moves to thanks with no notice',
-    );
-  });
-
-  await h.test('settleSend: a payload_too_large refusal returns to draft, carrying the notice — resendable right away', () => {
-    const notice: TestNotice = { hint: 'That report is too large to send.' };
-    const settled = settleSend<TestNotice>({ kind: 'refused', notice });
-    h.eq(settled.phase, 'draft', 'never stuck sending');
-    h.eq(settled.notice, notice, 'the refusal notice carries onto the draft');
-    h.eq(sendDisabled(REQUEST, settled.phase, false), false, 'the same draft is ready to resend immediately');
-  });
-
-  await h.test('settleSend: an unrecognised failure also returns to a resendable draft', () => {
-    const notice: TestNotice = { hint: 'Something went wrong. Please try again.' };
-    const settled = settleSend<TestNotice>({ kind: 'failed', notice });
-    h.eq(settled.phase, 'draft', 'an unrecognised failure also returns to draft');
-    h.eq(settled.notice, notice, 'the failure notice carries onto the draft');
+      let finish!: (response: Response) => void;
+      answers.push(() => new Promise<Response>((resolve) => { finish = resolve; }));
+      await press(button(tree, COPY.reportSend));
+      h.ok(textOf(tree.root).includes(COPY.reportSendBusy), 'while sending, the button says so');
+      await h.throws(() => press(button(tree, COPY.reportSendBusy)), 'Cannot press a disabled control', 'and cannot send again');
+      await TestRenderer.act(async () => { finish(json({ reportId: 'r-1' }, 202)); await new Promise((r) => setImmediate(r)); });
+      h.eq(bodies.length, 3, 'three sends, from the same draft, with no re-choosing of the reason');
+      h.ok(textOf(tree.root).includes(COPY.reportThanksTitle), 'a sent report shows thanks');
+      await press(button(tree, COPY.reportThanksDone));
+      h.eq(closed, 1, 'Done closes the sheet');
+    } finally {
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('sendFailureOutcome: an HTTP status the server answered with is logged verbatim, never as network', () => {

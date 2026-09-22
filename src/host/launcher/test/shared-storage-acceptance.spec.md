@@ -50,5 +50,6 @@ model depends on is genuinely pinned, not assumed.
 5. When `launchApp` refuses a launch (as in scenario 3), the launcher's product surface (not just
    the `__DEV__` probe screen) shows an honest, static failure message -- never the raw structured
    `{kind, hint}` -- and offers a way back to Home. The copy passes the product-verbs guard: no
-   "clone"/"link"/"storage"/"database"/"schema"/git vocabulary (static source + copy-table checks,
-   since `MiniAppView`/`useMiniAppHost` are not renderable under Node).
+   "clone"/"storage"/"database"/"schema"/git vocabulary. `mini-app-host-ui.suite.tsx` renders
+   `MiniAppView` over an app whose stored data conflicts with its schema and checks this screen;
+   `product-verbs.suite.ts` guards the copy.

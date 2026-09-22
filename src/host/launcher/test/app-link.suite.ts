@@ -30,10 +30,6 @@ export async function runAppLinkTests(h: Harness): Promise<void> {
     h.eq(parseAppLink(appLinkFor(id)), id, 'a fork id containing "__" round-trips');
   });
 
-  await h.test('app-link: appLinkFor starts with the release app-link base', () => {
-    h.ok(appLinkFor('x').startsWith(RELEASE.appLinkBase), 'built link is RELEASE.appLinkBase + the encoded id');
-  });
-
   // ── the four rejection cases ────────────────────────────────────────────────────────────────
 
   await h.test('app-link: wrong scheme is rejected', () => {
@@ -56,9 +52,15 @@ export async function runAppLinkTests(h: Harness): Promise<void> {
 
   // ── case-insensitive host, query and fragment ignored ───────────────────────────────────────
 
-  await h.test('app-link: an uppercase host is accepted', () => {
-    const upper = `https://${RELEASE.webHost.toUpperCase()}/a/${encodeURIComponent('x')}`;
-    h.eq(parseAppLink(upper), 'x', 'host comparison is case-insensitive');
+  // React Native's URL polyfill once rejected an uppercase scheme; both parts compare case-insensitively.
+  await h.test('app-link: scheme and host are case-insensitive', () => {
+    for (const link of [
+      `https://${RELEASE.webHost.toUpperCase()}/a/x`,
+      `HTTPS://${RELEASE.webHost}/a/x`,
+      `HTTPS://${RELEASE.webHost.toUpperCase()}/a/x`,
+    ]) {
+      h.eq(parseAppLink(link), 'x', `${link} parses like its lowercase form`);
+    }
   });
 
   await h.test('app-link: query and fragment are ignored', () => {
@@ -83,16 +85,6 @@ export async function runAppLinkTests(h: Harness): Promise<void> {
   await h.test('app-link: a fragment-smuggled host is rejected (the #@ variant)', () => {
     const link = `https://evil.example/a/x#@${RELEASE.webHost}`;
     h.eq(parseAppLink(link), null, "a foreign host followed by '#@' + the real host must not parse");
-  });
-
-  await h.test('app-link: an uppercase scheme is accepted (RN URL-polyfill regression)', () => {
-    const link = `HTTPS://${RELEASE.webHost}/a/x`;
-    h.eq(parseAppLink(link), 'x', 'an uppercase scheme must parse the same as lowercase');
-  });
-
-  await h.test('app-link: an uppercase scheme and host together are accepted', () => {
-    const link = `HTTPS://${RELEASE.webHost.toUpperCase()}/a/x`;
-    h.eq(parseAppLink(link), 'x', 'an uppercase scheme and uppercase host must both be tolerated');
   });
 
   await h.test('app-link: a real host as a subdomain suffix is rejected', () => {

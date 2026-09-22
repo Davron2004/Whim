@@ -2,13 +2,10 @@
  * tile-colour Node suite (shell-redesign-v2 chain-F, task F6). Exercises the one path every
  * surface resolves an app's tile colour through: `tiles.ts#tileColor` (declared-colour-wins with
  * a deterministic fallback) and `manifest-tile-color.ts#liftManifestTileColor` (the wire ->
- * host-record lift, no re-validation). `AppTile` itself is an RN component (not renderable under
- * Node, same idiom as `prompt-flow-screens.suite.ts`), so its geometry/monogram-placement
- * contract is checked against its production source text instead.
+ * host-record lift, no re-validation), and the home grid cell width. How a rendered tile paints its
+ * colour is in `home-grid-ui.suite.tsx`.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { Harness } from './harness';
 import { tileColor } from '../tiles';
 import { liftManifestTileColor } from '../manifest-tile-color';
@@ -22,28 +19,6 @@ import { appColor, STATUS_COLORS, STATUS_COLORS_ON_INK, SHELL_COLORS } from '../
 import { lexProse } from '../../ui/whim-prose/lex';
 import type { AppManifest } from '../../bridge/contract';
 
-function read(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
-}
-
-/** Source with its comments removed: a negative assertion is about what the code DOES, not about
- *  prose that happens to name the very thing being forbidden (the `prompt-flow-screens` idiom). */
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-}
-
-/** One named `StyleSheet.create` entry, brace-balanced (so a nested object value does not truncate
- *  it). Empty when the entry does not exist, which fails the assertion that wanted it. */
-function styleBlock(src: string, name: string): string {
-  const start = src.indexOf(`${name}: {`);
-  if (start < 0) return '';
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-  }
-  return '';
-}
 
 export async function runTileColourTests(h: Harness): Promise<void> {
   const VALID = '#2f6feb'; // a legible hex outside the reserved set, arbitrary for these checks
@@ -124,141 +99,6 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     const lifted = liftManifestTileColor({ tileColor: STATUS_COLORS.broken });
     h.eq(lifted, { tileColor: STATUS_COLORS.broken }, 'lift is a straight passthrough');
     h.eq(tileColor('Budget', lifted), appColor('Budget'), 'the resolution helper still falls back');
-  });
-
-  // ── AppTile — production source checks (RN component, not renderable under Node) ──
-  await h.test('AppTile: monogram twice, from the single tiles.ts path, at the declared geometry', async () => {
-    const src = read('app-tile.tsx');
-    h.ok(/import \{ monogram, tileColor \} from '\.\/tiles';/.test(src), 'imports the one colour/monogram path from tiles.ts');
-    h.ok(/APP_TILE_SIZE = 88/.test(src), 'exports the 88px tile size constant');
-    h.ok(/APP_TILE_RADIUS = RADIUS\.tile/.test(src), 'exports the tile-radius constant, from the shared token');
-    h.ok(/ghostMonogram/.test(src) && /foregroundMonogram/.test(src), 'renders both the ghost and foreground monogram');
-    h.ok(/rgba\(255,255,255,0\.16\)/.test(src), 'the bled monogram is 16% white');
-    h.ok(/rgba\(255,255,255,0\.3\)/.test(src), 'the inset border is 30% white');
-    h.ok(!/TILE_COLORS/.test(src), 'never restates a second name->colour mapping');
-  });
-
-  await h.test('AppTile: the grid tile stands at the design’s §2b geometry', async () => {
-    const src = read('app-tile.tsx');
-    h.ok(/padding: 9,/.test(styleBlock(src, 'tile')), 'the tile is padded 9 (design html:543)');
-    h.ok(/top: -13,/.test(styleBlock(src, 'ghostMonogram')), 'the bled monogram sits at top -13 (design html:543)');
-  });
-
-  await h.test('AppTile: the done variant is one optional prop, and every default render is untouched by it', async () => {
-    const src = read('app-tile.tsx');
-    h.ok(/\bsize\?: 'done';/.test(src), 'the variant is a single OPTIONAL prop on AppTileProps, not a second component');
-    h.ok(/const isDone = size === 'done';/.test(src), 'the variant is decided in one place');
-    // The load-bearing guarantee: a caller that passes no `size` (the home grid) can never reach a
-    // done-variant style. Each one is applied exactly once, always behind the same `isDone` gate.
-    for (const variant of ['rootDone', 'tileDone', 'ghostMonogramDone', 'foregroundMonogramDone']) {
-      const variantPattern = new RegExp(String.raw`styles\.${variant}`, 'g');
-      let variantCount = 0;
-      while (variantPattern.exec(src)) variantCount++;
-      h.eq(variantCount, 1, `styles.${variant} is applied in exactly one place`);
-      h.ok(src.includes(`isDone ? styles.${variant} : null`), `styles.${variant} is reachable only through the done variant`);
-    }
-    // The glow is the one done-only style that is NOT a `styles.*` entry — it is built at the call
-    // site because it carries the app's resolved colour — so it needs its own gate assertion.
-    h.ok(src.includes('const glow = isDone'), 'the glow is reachable only through the done variant');
-    h.ok(/\{!isDone && <Text style=\{styles\.name\}/.test(src), 'the name label renders for the grid tile and never for the done tile');
-  });
-
-  await h.test('AppTile: the done variant carries the design’s 2a celebration geometry and the app’s own hue', async () => {
-    const src = read('app-tile.tsx');
-    // design html:520-524
-    h.ok(/DONE_TILE_SIZE = 120/.test(src), 'the done tile is 120 wide');
-    const tileDone = styleBlock(src, 'tileDone');
-    h.ok(/width: DONE_TILE_SIZE,\s*height: DONE_TILE_SIZE,/.test(tileDone), 'and 120 tall, from the one constant');
-    h.ok(/borderRadius: 32,/.test(tileDone), 'radius 32');
-    h.ok(/padding: 14,/.test(tileDone), 'padded 14');
-    const ghostDone = styleBlock(src, 'ghostMonogramDone');
-    h.ok(/top: -20/.test(ghostDone) && /right: -12/.test(ghostDone) && /fontSize: 92/.test(ghostDone), 'the bled monogram is 92 at -20/-12');
-    h.ok(/fontSize: 26/.test(styleBlock(src, 'foregroundMonogramDone')), 'the foreground monogram is 26');
-    // The glow is `boxShadow`, the one shadow primitive Android honours (`shadowOffset`,
-    // `shadowOpacity` and `shadowRadius` are iOS-only, and `elevation` draws Android's own default
-    // profile rather than this one). Asserted as the offset/blur/alpha the design specifies.
-    h.ok(/GLOW_OFFSET_Y = 8;/.test(src) && /GLOW_BLUR = 22;/.test(src), 'the glow falls 8 down over a 22 blur');
-    h.ok(/GLOW_ALPHA_HEX = '4d';/.test(src), 'at 30% alpha (0.3 x 255, rounded to 0x4d)');
-    h.ok(/boxShadow: \[\{ offsetX: 0, offsetY: GLOW_OFFSET_Y, blurRadius: GLOW_BLUR/.test(src), 'delivered through boxShadow, which Android renders');
-    h.ok(!/shadowOpacity|shadowRadius|shadowOffset|elevation/.test(code(src)), 'never through the iOS-only shadow props or a default-profile elevation');
-    // Ruling R20: the celebration tile keeps the app's identity across two adjacent screens — its
-    // fill AND its glow are the app's own resolved colour, never a fixed status hue.
-    h.ok(/const bg = tileColor\(name, manifest\);/.test(src), 'one resolved colour per tile, from the one tiles.ts path');
-    h.ok(/color: `\$\{bg\}\$\{GLOW_ALPHA_HEX\}`/.test(src), 'the glow is the tile’s own resolved colour');
-    // The FILL half of the same ruling, positively pinned: `bg` is the tile's background, and it
-    // is applied AFTER `styles.tileDone` in the style array, so no done-variant entry can override
-    // it (RN resolves a style array last-wins).
-    const tileStyleArray = /<View style=\{\[(.*?)\]\}>/.exec(code(src))?.[1] ?? '';
-    h.ok(tileStyleArray.includes('{ backgroundColor: bg }'), 'the tile’s fill is the app’s own resolved colour');
-    h.ok(
-      tileStyleArray.indexOf('{ backgroundColor: bg }') > tileStyleArray.indexOf('styles.tileDone'),
-      'and it is applied after the done-variant style, which therefore cannot repaint it',
-    );
-    // The negative half, over the WHOLE component rather than one expression: `launcher-ghost-tiles`
-    // (design D6) legitimately uses the reserved "broken" hue for the ghost tile's alert accent, so
-    // a blanket "STATUS_COLORS never appears" is no longer true — but the exemption is exactly two
-    // style entries plus the import that feeds them. Anywhere else (the fill, the glow, `tileDone`,
-    // a monogram) a fixed status hue would be the regression R20 exists to forbid.
-    const outsideAlertAccents = ['tileGhostAlert', 'ghostCaptionAlert'].reduce(
-      (rest, entry) => rest.replace(styleBlock(rest, entry), ''),
-      code(src).replace(/^import .*$/gm, ''),
-    );
-    h.ok(
-      !/STATUS_COLORS/.test(outsideAlertAccents),
-      'no fixed status hue anywhere in AppTile outside the two ghost alert-accent style entries',
-    );
-    // The exempted pair is not equally harmless. `ghostCaptionAlert` is a `Text` style and cannot
-    // repaint anything, but `tileGhostAlert` is applied AFTER `{ backgroundColor: bg }` in the same
-    // last-wins style array — a `backgroundColor: STATUS_COLORS.broken` added there would repaint
-    // the ghost tile's fill with a fixed status hue and sail through the exemption above. The
-    // accent is a BORDER; keeping it one is what makes the exemption safe.
-    const alertBlock = styleBlock(code(src), 'tileGhostAlert');
-    h.ok(alertBlock.includes('borderColor'), 'sanity: the exempted entry exists and is an accent, so the check below is not vacuous');
-    h.ok(
-      !alertBlock.includes('backgroundColor'),
-      'the alert accent never paints a fill, so the exemption cannot hide a repainted ghost tile',
-    );
-    // The design's `rise` uses CSS `ease` = cubic-bezier(.25,.1,.25,1), which DECELERATES. RN's
-    // `Easing.ease` is bezier(.42,0,1,1) — CSS `ease-in`, the opposite shape — so the curve is
-    // spelled out rather than named, the same translation `Orb.tsx:58` makes for `sheetRise`.
-    h.ok(/RISE_EASING = Easing\.bezier\(0\.25, 0\.1, 0\.25, 1\);/.test(src), 'the rise decelerates on the design’s own curve');
-    h.ok(/easing: RISE_EASING,/.test(src), 'and that curve is the one the entrance actually runs on');
-  });
-
-  await h.test('DoneStep: both CTAs stand at one height, the design’s 52', async () => {
-    const src = read('DoneStep.tsx');
-    const height = (name: string): string => /height: ([\d.]+),/.exec(styleBlock(src, name))?.[1] ?? '';
-    const primary = height('primary');
-    const secondary = height('secondary');
-    h.eq(primary, secondary, 'the two stacked actions are never a mismatched pair');
-    h.eq(primary, '52', 'and both stand at the design’s 52 (html:527-528)');
-  });
-
-  // ── AppTile `width` — the grid dimension, orthogonal to the `done` variant (ruling R23) ──
-  await h.test('AppTile: `width` is optional, and omitting it keeps the default 88 geometry', async () => {
-    const src = read('app-tile.tsx');
-    h.ok(/\bwidth\?: number;/.test(src), '`width` is an OPTIONAL second prop, never a widening of `size`');
-    h.ok(!/size\?:[^;]*number/.test(code(src)), '`size` stays the variant selector and never also means "how wide"');
-    // The guarantee L2 owed every existing caller: pass no `width` and nothing moves. 88 is
-    // supplied by the default parameter, so `root`/`tile` resolve exactly what the removed
-    // `width: APP_TILE_SIZE` / `height: APP_TILE_SIZE` style entries used to.
-    // `launcher-ghost-tiles` adds one more destructured prop (`ghost`) after the default — the
-    // default itself, and every prop before it, are unchanged.
-    h.ok(/width = APP_TILE_SIZE(?:, \w+)* \}: Readonly<AppTileProps>/.test(src), 'the default is APP_TILE_SIZE, from the one exported constant');
-    h.ok(/const fluidRoot = isDone \? null : \{ width \};/.test(src), 'the root takes its width from the prop');
-    h.ok(/const fluidTile = isDone \? null : \{ width, height: width \};/.test(src), 'and the tile stays square at that width');
-    // Ruling R23's stated precedence: the done tile is a fixed 120x120 preset and IGNORES `width`.
-    // Both overrides are `null` there, so `rootDone`/`tileDone` remain its only geometry — the
-    // outcome is decided in the code, not by where the overrides sit in the style arrays.
-    h.ok(!/width: APP_TILE_SIZE/.test(code(src)), 'no style entry restates the size the prop now carries');
-  });
-
-  await h.test('HomeScreen: the grid asks for a cell width and hands the same value to the tile', async () => {
-    const src = read('HomeScreen.tsx');
-    h.ok(/homeGridCellWidth\(useWindowDimensions\(\)\.width, APP_TILE_SIZE\)/.test(src), 'the frame width drives the cell, falling back to the tile default');
-    h.ok(/style=\{\{ width: cellWidth \}\}/.test(src), 'the grid cell is that width');
-    h.ok(/<AppTile name=\{app\.name\} manifest=\{app\.record\.manifest\} width=\{cellWidth\}[ /]/.test(src), 'and the tile fills it — never an 88 tile left-aligned in a wider box');
-    h.ok(/paddingHorizontal: HOME_GRID_SIDE_PADDING/.test(src), 'the padding the derivation subtracts is the padding the style applies');
   });
 
   // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────

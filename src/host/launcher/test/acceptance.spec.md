@@ -9,9 +9,9 @@ Run on a fresh install (clear app data first, so the seed marker is virgin).
 
 ## The walk
 
-1. **Fresh install → seeded grid.** Launch the host. The home grid shows **Tip Splitter** and
-   **Water Counter**, both badged as examples, plus a prominent **"make your first app"**
-   create tile. No probe bar is the default surface anymore. *(spec: a fresh install is not
+1. **Fresh install → seeded grid.** Launch the host. The home grid shows the example apps
+   (**Tip Splitter**, **Water Counter**, **Style Gallery**), each badged "Example", under the
+   **"Describe an app…"** composer row. No probe bar is the default surface anymore. *(spec: a fresh install is not
    empty.)*
 
 2. **Launch water-counter from its record (by source, not baked name).** Tap Water Counter.
@@ -27,10 +27,11 @@ Run on a fresh install (clear app data first, so the seed marker is virgin).
 
 4. **System back exits.** With Water Counter running (it reports no nav depth), press Android
    system back **once** → the host returns to the home grid immediately (depth-0 exit). The
-   floating affordance, tapped instead, also exits.
+   orb's **Home** action, chosen instead, also exits.
 
-5. **Fork → the fork runs with its own data.** Long-press Water Counter → **Fork**. A new
-   entry appears carrying its provenance ("forked from Water Counter"). Open the fork: it runs
+5. **Fork → the fork runs with its own data.** Long-press Water Counter → **Fork** → **Start
+   fresh** (the other answer, **Use the same saved data**, is walked in
+   `shared-storage-acceptance.spec.md`). A new entry appears carrying its provenance ("forked from Water Counter"). Open the fork: it runs
    the same bundle as the original at fork time, but its glass count starts at 0 and is
    independent — increment it, then open the original; the original's count is unchanged, and
    vice versa. *(Load-bearing: the fork's engine appId is its new launcher id; version-store
@@ -47,9 +48,9 @@ Run on a fresh install (clear app data first, so the seed marker is virgin).
    examples do not reappear (seed marker honored), and no trace of the deleted apps remains.
    *(spec: delete removes record, data, and history; deleted examples stay deleted.)*
 
-8. **Containment 42/42 throughout.** The dev probe surface (reachable via the `__DEV__` entry —
-   long-press the launcher title) still drives the adversarial fixtures and reports the trusted
-   containment verdict; `npm run invariants` is 42/42 against the rebuilt runtime, and the diff
+8. **Containment holds throughout.** The dev probe surface (debug builds only: long-press the
+   launcher title) still drives the adversarial fixtures and reports the trusted containment
+   verdict; every `npm run invariants` check passes against the rebuilt runtime, and the diff
    shows **zero** changes to CSP, sandbox attributes, or the module allowlist.
 
 ## What "done" means

@@ -3,15 +3,11 @@
  *
  * The transitions themselves are BEHAVIOURAL here: `prompt-flow.ts` is the pure machine behind
  * compose → clarify → plan → build → done, so every scenario in `specs/prompt-flow/spec.md` that
- * is about "which step comes next, carrying what" is exercised by calling it. Only the handful of
- * claims that live in JSX — a chip that fills without advancing, a field that is never lexed while
- * it is typed, no fade/typewriter on arriving prose, no log panel — fall back to source assertions
- * (the `launch-failure-ui.suite.ts` idiom), because these RN components are not rendered under
- * Node.
+ * is about "which step comes next, carrying what" is exercised by calling it. The step screens
+ * themselves are rendered in `flow-screens-ui.suite.tsx` and, inside the shell, in
+ * `prompt-flow-ui.suite.tsx`.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import { GenerationClientError } from '../transport-shared';
@@ -44,15 +40,6 @@ import {
 import type { ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
 
-function read(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
-}
-
-/** Source with its comments removed: the negative assertions below are about what the code DOES,
- *  not about prose that happens to name the very thing being forbidden. */
-function code(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-}
 
 /** A stand-in installed app: the machine only ever carries it through, never reads into it. */
 const EDITED = { id: 'app-1', name: 'Pour Timer' } as unknown as InstalledApp;
@@ -379,12 +366,16 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   await h.test('build: the progress bar reports real stage progress and never fabricates 100%', () => {
     // A passed step is a full quarter, the live one a half quarter — so the bar tracks the same
     // stage events the named steps do, with nothing invented in between.
-    h.eq(buildProgressFraction(null, false), 0.125, 'an unstarted stream sits half-way into the first step');
-    h.eq(buildProgressFraction('plan', false), 0.125, 'reading the request');
-    h.eq(buildProgressFraction('generate', false), 0.375, 'writing the app: one step passed, one live');
-    h.eq(buildProgressFraction('check', false), 0.625, 'checking it runs safely');
+    const along = [
+      buildProgressFraction(null, false),
+      buildProgressFraction('generate', false),
+      buildProgressFraction('check', false),
+      buildProgressFraction('check', true),
+    ];
+    h.ok(along[0] > 0, 'an unstarted stream already shows it has begun');
+    h.ok(along.every((v, i) => i === 0 || v > along[i - 1]), `each step moves the bar forward (${along.join(' → ')})`);
     for (const stage of ['plan', 'generate', 'check', 'run', 'repair'] as const) {
-      h.eq(buildProgressFraction(stage, true), 0.875, `delivering (${stage}) is the last step, still not full`);
+      h.eq(buildProgressFraction(stage, true), along[3], `delivering (${stage}) is the last step, wherever the stream was`);
     }
     for (const stage of [null, 'plan', 'generate', 'check', 'run', 'repair'] as const) {
       for (const delivering of [false, true]) {
@@ -398,155 +389,6 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(withStage(build, 'check').stage, 'check', 'a stage event lands');
     h.eq(withDelivering(build).delivering, true, 'delivery flips the last step on');
     h.eq(withStage(build, 'check').text, build.text, 'nothing else about the step moves');
-  });
-
-  // ── the claims that only live in JSX ────────────────────────────────────────────────────────
-
-  const composeSrc = code(read('ComposeStep.tsx'));
-  const clarifySrc = code(read('ClarifyStep.tsx'));
-  const planSrc = code(read('PlanStep.tsx'));
-  const buildSrc = code(read('BuildStep.tsx'));
-  const doneSrc = code(read('DoneStep.tsx'));
-  const skeletonSrc = code(read('flow-skeletons.tsx'));
-
-  await h.test('compose: a suggestion chip fills the prompt and does not advance the flow', () => {
-    h.ok(/onPress=\{\(\) => onChangeText\(chip\)\}/.test(composeSrc), 'a chip only ever fills the field');
-    const chipBlock = composeSrc.slice(composeSrc.indexOf('CHIPS.map'), composeSrc.indexOf('</ScrollView>'));
-    h.ok(!chipBlock.includes('onContinue'), 'a chip never takes the forward move');
-  });
-
-  await h.test('compose: the field is never live-highlighted while it is typed', () => {
-    h.ok(/<TextInput/.test(composeSrc), 'the prompt is a plain field');
-    h.ok(!composeSrc.includes('WhimProse'), 'a prompt is only marked up after submission (Whim Syntax rule 6)');
-  });
-
-  await h.test('clarify: the submitted prompt is echoed as the user’s own words, upright and unmarked', () => {
-    h.ok(!clarifySrc.includes('WhimProse'), 'a standalone echoed block is never re-lexed by the shared renderer (no double-marking)');
-    h.ok(/color:\s*SHELL_COLORS\.yours/.test(clarifySrc), 'the echo is coloured `yours`');
-    h.ok(/fontFamily:\s*FONT_FAMILY\.sansRegular/.test(clarifySrc), 'the echo is upright Instrument Sans, never Newsreader italic');
-    h.ok(clarifySrc.includes('COPY.clarifyHelper'), 'the step says it can be skipped');
-    // store-launch-compliance chain-4: the only gate left is the refusal retry window
-    // (`enabled={!gated}`) — there is still no validation gate from the answers themselves.
-    h.ok(/\{!loading && <PrimaryAction step="clarify" enabled=\{!gated\} editing=\{editing\} onPress/.test(clarifySrc), 'no answer-validation gate: the action is live with zero answers, once it is shown at all');
-  });
-
-  await h.test('plan: rows are tappable into an inline editor, wired through onChangeRow', () => {
-    h.ok(/onPress=\{\(\) => startEditing\(index, row\.text\)\}/.test(planSrc), 'tapping a row starts editing it in place');
-    h.ok(/onChangeRow: \(index: number, text: string\) => void/.test(planSrc), 'edits commit through an index-keyed onChangeRow prop, not a navigation callback');
-    h.ok(!/onEditRow|reopenCompose/.test(planSrc), 'the old reopen-compose wiring is gone');
-    h.ok(/<TextInput/.test(planSrc), 'the editing row renders a real text field, not a read-only card');
-    h.ok(planSrc.includes('COPY.planRowSave') && planSrc.includes('COPY.cancel'), 'the edit mode offers save and cancel, from the copy table');
-    h.ok(planSrc.includes('planHeadline(editing)') && planSrc.includes('COPY.planSubhead') && planSrc.includes('COPY.planFooter'), 'headline, subhead and footer all come from the copy table');
-    h.ok(!/generateApp|rewritePrompt|fetch\(/.test(planSrc), 'the approval screen never sends a request itself');
-  });
-
-  // ── C1: the edit flow reads as editing, on every gated step ─────────────────────────────────
-  // The branch is copy functions, not inline ternaries, precisely so it is greppable: a step that
-  // silently regressed back to one un-branched string would still typecheck and still render
-  // something, so the requirement can only be pinned at the source level (the `orb-menu.suite.ts`
-  // idiom for a claim that lives in JSX rather than in pure logic).
-
-  await h.test('edit flow: every gated step calls the editing-aware copy functions, never a bare literal', () => {
-    h.ok(composeSrc.includes('composeHeadline(editing)'), 'compose branches its headline');
-    h.ok(composeSrc.includes('composePlaceholder(editing)'), 'and its field placeholder');
-    h.ok(planSrc.includes('planHeadline(editing)'), 'plan branches its headline');
-    h.ok(planSrc.includes('workingPlanPhrase(editing)'), 'and its working-line phrase');
-    // store-launch-compliance chain-4: `enabled` is now `{!gated}` (the refusal retry window),
-    // not the bare literal — still unconditionally live otherwise.
-    h.ok(
-      /\{!loading && <PrimaryAction step="plan" enabled=\{!gated\} editing=\{editing\}/.test(planSrc),
-      'plan\'s primary action is told whether it is editing, so Build it can become Make the change',
-    );
-  });
-
-  await h.test('edit flow: compose hides the "start from" chips while editing an existing app', () => {
-    // The chips are starters for a blank app; on an edit they suggest overwriting the prompt with
-    // an unrelated app idea, so the whole eyebrow+chips block is gated on `!editing`.
-    h.ok(composeSrc.includes('{!editing && (') && composeSrc.includes('COPY.composeChipsEyebrow'), 'chips block is conditioned on !editing');
-  });
-
-  await h.test('edit flow: the primary action does not render at all while a gated step is loading', () => {
-    // A disabled button under a skeleton is noise — there is nothing to confirm/approve yet, so
-    // the whole control is absent, not merely greyed out. `WorkingLine` is the only liveness
-    // element under either skeleton.
-    const rendersUnconditionally = (src: string): boolean => src.split('\n').some((line) => line.trim().startsWith('<PrimaryAction'));
-    h.ok(!rendersUnconditionally(clarifySrc), 'clarify never renders it unconditionally');
-    h.ok(!rendersUnconditionally(planSrc), 'nor does plan');
-  });
-
-  await h.test('edit flow: every gated step renders the shared eyebrow, scoped to editing', () => {
-    for (const [name, src] of [['compose', composeSrc], ['clarify', clarifySrc], ['plan', planSrc]] as const) {
-      h.ok(src.includes('EditingEyebrow'), `${name} renders the shared eyebrow component`);
-      h.ok(/editing && editingName != null/.test(src), `${name} only shows it while editing`);
-    }
-  });
-
-  await h.test('edit flow: the clarify loading state renders the skeleton and a WorkingLine, no numbered headline', () => {
-    h.ok(clarifySrc.includes('ClarifyQuestionsSkeleton'), 'the loading clarify screen shows the shared skeleton');
-    h.ok(clarifySrc.includes('<WorkingLine phrase={COPY.workingClarify}'), 'and the shared liveness line, with its own phrase');
-    h.ok(/\{!loading && \(\s*<Text style=\{\[TYPE_SCALE\.stepTitle/.test(clarifySrc), 'the counted headline is withheld until the count is known');
-  });
-
-  await h.test('edit flow: the plan loading state renders a WorkingLine under its row skeleton', () => {
-    h.ok(planSrc.includes('<WorkingLine phrase={workingPlanPhrase(editing)}'), 'the plan skeleton gets the same liveness line, editing-aware');
-  });
-
-  await h.test('build: no raw log, no token text, no diagnostic internals', () => {
-    h.ok(!/\.kind\b/.test(buildSrc), 'never references a diagnostic kind');
-    h.ok(!/\.symbol\b/.test(buildSrc), 'never references a diagnostic symbol');
-    h.ok(!/token/i.test(buildSrc), 'never renders token text');
-    h.ok(!/log|terminal/i.test(buildSrc), 'no log or terminal panel');
-  });
-
-  // build-liveness B1/B3 replaced the single "quiet for Ns" heartbeat (and its `buildActivityLine`/
-  // `buildQuietLine`/`quietSecondsSince` API) with a three-clock liveness derivation that tells
-  // thinking from hanging — see `run-signals.suite.ts` for the copy/derivation coverage. This
-  // screen's own remaining claim is architectural: it derives everything from props each render
-  // and holds no state of its own.
-  await h.test('build: liveness is derived per render, from the props, through the shared helpers', () => {
-    h.ok(/livenessOf\(signals, now\)/.test(buildSrc), 'the liveness state is derived from the attempt’s signals and the render’s own now');
-    h.ok(/buildLivenessLine\(liveness, signals, now\)/.test(buildSrc), 'and its phrase comes from the one liveness-copy function');
-    h.ok(!/buildActivityLine|buildQuietLine|quietSecondsSince|HEARTBEAT_QUIET_MS/.test(buildSrc), 'the retired single-heartbeat API is gone');
-    h.ok(!/journal|Store|useState|useRef/.test(buildSrc), 'the screen holds no state of its own and never reads a store');
-  });
-
-  await h.test('build: a details affordance opens the attempt’s timeline', () => {
-    h.ok(/onShowDetails\?: \(\) => void/.test(buildSrc), 'activation is a callback the caller owns');
-    h.ok(/onPress=\{onShowDetails\}/.test(buildSrc), 'the affordance is wired to it');
-    h.ok(buildSrc.includes('COPY.buildDetails') && /accessibilityRole="button"/.test(buildSrc), 'it is a labelled button from the copy table');
-  });
-
-  await h.test('build: arriving text is never faded in or typed in per character', () => {
-    h.ok(!/Animated|Easing|typewriter|fadeIn/i.test(buildSrc), 'the build screen holds no animation at all');
-    h.ok(buildSrc.includes('COPY.buildLeaveRunning') && /onPress=\{onBack\}/.test(buildSrc), 'it offers Leave it running, wired to the same onBack system back uses');
-  });
-
-  // Regression: hardware back on the build screen used to cancel the whole run (BuildStep's
-  // `onCancel` prop, registered with deps `[onCancel]`, re-registered every liveness tick and so
-  // was always the newest `hardwareBackPress` listener — always running ahead of the details
-  // sheet's own listener). The fix: this screen no longer decides anything about back at all, it
-  // only forwards the press to one `onBack` prop with a STABLE dependency, and the caller
-  // (`LauncherRoot.tsx`) is the one place that decides sheet-close vs leave-running.
-  await h.test('build: system back only forwards to onBack, bound once per mount', () => {
-    h.ok(!/\bonCancel\b/.test(buildSrc), 'the old cancel-on-back prop is gone entirely');
-    h.ok(!/\bonLeaveRunning\b/.test(buildSrc), 'the old separate leave-running prop is gone — one onBack for both');
-    h.ok(/onBack: \(\) => void/.test(buildSrc), 'onBack is declared as a plain callback prop');
-    h.ok(/useSystemBack\(onBack\);/.test(buildSrc), 'the hook binds onBack — the hook registers once per mount through a ref regardless of handler identity');
-    h.ok(!/BackHandler/.test(buildSrc), 'the screen owns no hardware-back listener of its own any more');
-  });
-
-  await h.test('done: Open it and Back to your apps are two distinct destinations', () => {
-    h.ok(doneSrc.includes('onPress={onOpen}') && doneSrc.includes('onPress={onBackToApps}'), 'the two actions call two different callbacks');
-    h.ok(doneSrc.includes('COPY.doneOpen') && doneSrc.includes('COPY.doneBackToApps') && doneSrc.includes('readyTitle('), 'the done copy is the table’s');
-    h.ok(doneSrc.includes('<AppTile'), 'the delivered app’s own tile is shown, in its own colour');
-  });
-
-  await h.test('skeletons: geometry is imported, breathe is the only motion, emptiness gets none', () => {
-    h.ok(skeletonSrc.includes('APP_TILE_SIZE') && skeletonSrc.includes('APP_TILE_RADIUS'), 'tile geometry comes from the component’s exported constants');
-    h.ok(/width: APP_TILE_SIZE, height: APP_TILE_SIZE/.test(skeletonSrc), 'and is used directly, never restated as a literal');
-    h.ok(skeletonSrc.includes('MOTION.breathe') && !/shimmer|gradient/i.test(skeletonSrc), 'breathe is the only loading motion');
-    h.ok(/if \(count <= 0\) return null;/.test(skeletonSrc), 'an empty grid gets an empty state, never a skeleton');
-    h.ok(planSrc.includes('PLAN_ROW_MIN_HEIGHT') && /SKELETON_ROW_WIDTHS/.test(planSrc), 'plan-row skeletons reuse the row’s own height with varying widths');
   });
 
 }

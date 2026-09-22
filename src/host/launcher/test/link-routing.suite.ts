@@ -1,9 +1,9 @@
 /**
  * link-routing Node suite (design D15; store-launch-compliance chain-6). Locks app-links spec
  * §§"opens the app", "pending build", "isn't on this phone", "leaves the current screen" and
- * "waits" — the RN-free half of app-link handling (`LauncherRoot.tsx`'s wiring is exercised as
- * source assertions in `app-link-ui.suite.ts`, the same idiom `launch-failure-ui.suite.ts`
- * established for a screen that cannot be rendered under Node).
+ * "waits" — the pure half of app-link handling. The rendered `LauncherRoot` taking these exits is
+ * in `app-link-ui.suite.tsx` and `attempt-lifecycle-ui.suite.tsx` (a link arriving on the build
+ * screen).
  */
 
 import { Harness } from './harness';
@@ -72,30 +72,17 @@ export async function runLinkRoutingTests(h: Harness): Promise<void> {
 
   // ── linkExitFor: "leaves the current screen through that screen's own safe exit" ───────────
 
-  await h.test('linkExitFor: an open sheet takes unconditional precedence over the screen behind it', () => {
-    h.eq(linkExitFor('sheet'), 'close-overlay', 'the sentinel input closes the overlay');
-  });
-
-  await h.test('linkExitFor: a running mini-app exits', () => {
-    h.eq(linkExitFor('app'), 'exit-app', 'app screen tears the realm down');
-  });
-
-  await h.test('linkExitFor: the build screen behaves as Leave it running', () => {
-    h.eq(linkExitFor('build'), 'leave-build', 'build screen leaves it running');
-  });
-
-  await h.test('linkExitFor: the failure screen takes its own non-destructive Back', () => {
-    h.eq(linkExitFor('failure'), 'leave-failure', 'failure screen leaves non-destructively');
-  });
-
-  await h.test('linkExitFor: the consent screen declines as Not now', () => {
-    h.eq(linkExitFor('consent'), 'decline-consent', 'consent screen declines');
-  });
-
-  await h.test('linkExitFor: every flow step and every other screen goes Home', () => {
-    for (const kind of ['home', 'dev', 'settings', 'history', 'done', 'compose', 'clarify', 'plan', 'link-missing']) {
-      h.eq(linkExitFor(kind), 'home', `${kind} goes Home`);
-    }
+  await h.test('linkExitFor: each screen leaves through its own safe exit', () => {
+    const cases: Array<[string, string, string]> = [
+      ['sheet', 'close-overlay', 'an open sheet takes precedence over the screen behind it'],
+      ['app', 'exit-app', 'a running mini-app exits'],
+      ['build', 'leave-build', 'the build screen behaves as Leave it running'],
+      ['failure', 'leave-failure', 'the failure screen takes its own non-destructive Back'],
+      ['consent', 'decline-consent', 'the consent screen declines as Not now'],
+      ...['home', 'dev', 'settings', 'history', 'done', 'compose', 'clarify', 'plan', 'link-missing']
+        .map((kind): [string, string, string] => [kind, 'home', `${kind} goes Home`]),
+    ];
+    for (const [kind, exit, why] of cases) h.eq(linkExitFor(kind), exit, why);
   });
 
   // ── PendingLinkHolder: "a link that arrives before the launcher is ready waits" ─────────────

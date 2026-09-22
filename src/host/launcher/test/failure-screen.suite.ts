@@ -2,16 +2,11 @@
  * The `3b` failure screen (obs-v1 chain-D; prompt-flow "Failure is shown honestly, never as a
  * crash", app-launcher "The mini-app container styles its failure state from tokens").
  *
- * `FailureScreen.tsx` imports `react-native`, which the launcher runner bundles rather than
- * externalizes, so it cannot be rendered here. Its decisions therefore live in `copy.ts` — an
- * RN-free module — and are exercised for real: which rows the checklist gets, which segments the
- * attempt row gets, and what the attempt label reads. Only the two properties that are genuinely
- * about the `.tsx` files (the attempt row being conditional, and both stylesheets carrying no
- * style literals) are asserted from source, the idiom `launch-failure-ui.suite.ts` established.
+ * The screen's copy decisions (checklist rows, attempt segments, the attempt label) are pure and
+ * run here directly; the screen itself is rendered for what it shows and what its exits do.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import React from 'react';
 import { Harness } from './harness';
 import {
   COPY,
@@ -20,14 +15,41 @@ import {
   attemptsUsedLabel,
   failureChecklistRows,
 } from '../copy';
+import FailureScreen, { type FailureScreenProps } from '../FailureScreen';
+import { runTimelineRows } from '../run-timeline-view';
+import type { RunJournalEntry } from '../run-journal';
 import { WEBVIEW_ERROR_MESSAGE, logWebViewError } from '../webview-error';
 import { createSeam } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 import { REDACTED } from '../../logging/redact';
+import { hardwareBack } from './native-host';
+import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
-function readSource(file: string): string {
-  return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
+/** Render the screen with spies on its three actions, run `body`, and unmount. */
+async function withFailureScreen(
+  props: Partial<FailureScreenProps>,
+  body: (shown: () => string, calls: { back: number; dismiss: number; rephrase: number }, tree: Awaited<ReturnType<typeof renderScreen>>) => Promise<void>,
+): Promise<void> {
+  const calls = { back: 0, dismiss: 0, rephrase: 0 };
+  const tree = await renderScreen(React.createElement(FailureScreen, {
+    reason: 'It did not build.',
+    diagnostics: [{ hint: 'Try fewer screens.' }],
+    onRephrase: () => { calls.rephrase++; },
+    onBack: () => { calls.back++; },
+    ...props,
+  }));
+  try {
+    await body(() => textOf(tree.root), calls, tree);
+  } finally {
+    await unmountScreen(tree);
+  }
 }
+
+const JOURNAL: RunJournalEntry[] = [
+  { t: 1_000, kind: 'stage', stage: 'generate' },
+  { t: 4_000, kind: 'stage', stage: 'check' },
+  { t: 6_000, kind: 'terminal', failure: { reason: 'It did not build.', diagnostics: [{ hint: 'Try fewer screens.' }] } },
+];
 
 export async function runFailureScreenTests(h: Harness): Promise<void> {
   // ── the attempt row: only what the device actually watched go past ──────────
@@ -52,71 +74,65 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(!/left|remaining|of \d/i.test(attemptsUsedLabel(2)), 'the label never counts down');
   });
 
-  await h.test('attempts: the row is rendered only when the caller reports observed attempts', () => {
-    const src = readSource('src/host/launcher/FailureScreen.tsx');
-    h.ok(/observedRepairAttempts\?: number/.test(src), 'the observed count is an optional prop');
-    h.ok(/observedRepairAttempts \?\? 0/.test(src), 'an absent count means zero, never a default of one');
-    h.ok(/\{attempts > 0 && \(/.test(src), 'the whole attempt row is behind a positive-count guard');
-    h.eq(
-      (src.match(/attemptSegments\(/g) ?? []).length,
-      1,
-      'the segments are computed in exactly one place — the guarded row',
-    );
+
+  await h.test('attempts: the row shows only when the caller reports observed repair attempts', async () => {
+    await withFailureScreen({}, async (shown) => {
+      h.ok(!shown().includes(attemptsUsedLabel(1)) && !/Tried/.test(shown()), 'no count given: no attempt row, never a default of one');
+    });
+    await withFailureScreen({ observedRepairAttempts: 0 }, async (shown) => {
+      h.ok(!/Tried/.test(shown()), 'zero observed attempts: no attempt row');
+    });
+    await withFailureScreen({ observedRepairAttempts: 2 }, async (shown) => {
+      h.ok(shown().includes(attemptsUsedLabel(2)), 'two observed attempts are shown');
+    });
   });
 
   // ── the two exits: one leaves, one deletes, and each says so ───────────────
 
-  await h.test('exits: the deleting action says it discards; the plain exit is the one that leaves', () => {
-    // `prompt-flow`: "The Discard action's label SHALL state that it discards the attempt; it MUST
-    // NOT be labeled as plain navigation."
-    h.eq(COPY.failureBack, 'Back to your apps', 'the non-destructive exit reads as plain navigation');
-    h.eq(COPY.failureDismiss, 'Discard this attempt', 'and the destructive one names what it does to the attempt');
-    h.ok(!/back to your apps/i.test(COPY.failureDismiss), 'the deleting action is never labelled as navigation');
-    h.ok(COPY.failureBack !== COPY.failureDismiss, 'the two exits cannot read identically');
-
-    const src = readSource('src/host/launcher/FailureScreen.tsx');
-    h.ok(/onBack: \(\) => void;/.test(src), 'the screen takes a non-destructive exit alongside the destructive one');
-    h.ok(
-      /onPress=\{onBack\}(?:(?!onPress=)[\s\S])*?COPY\.failureBack/.test(src),
-      'the Back button renders the Back copy',
-    );
-    h.ok(
-      /onPress=\{onDismiss\}(?:(?!onPress=)[\s\S])*?COPY\.failureDismiss/.test(src),
-      'and the Discard button the discard copy — the labels are not swapped',
-    );
-    h.ok(/color: p\.danger \}\]\}>\{COPY\.failureDismiss\}/.test(src), 'the discard label carries the danger hue');
+  await h.test('exits: Back leaves, Discard deletes, and system back is always Back', async () => {
+    let dismissed = 0;
+    await withFailureScreen({ onDismiss: () => { dismissed++; } }, async (_shown, calls, tree) => {
+      await press(button(tree, COPY.failureBack));
+      h.eq([calls.back, dismissed], [1, 0], 'the Back button only leaves');
+      await press(button(tree, COPY.failureDismiss));
+      h.eq([calls.back, dismissed], [1, 1], 'the Discard button deletes');
+      h.ok(!/back to your apps/i.test(COPY.failureDismiss) && COPY.failureDismiss !== COPY.failureBack, 'and is not labelled as navigation');
+      hardwareBack();
+      h.eq([calls.back, dismissed], [2, 1], 'system back performs Back, never Discard');
+    });
   });
 
-  await h.test('exits: system back leaves the attempt alone', () => {
-    // `prompt-flow`: "The hardware back gesture on the failure screen SHALL perform the
-    // non-destructive Back, never Discard."
-    const src = readSource('src/host/launcher/FailureScreen.tsx');
-    h.ok(/useSystemBack\(onBack\);/.test(src), 'system back is bound to the same non-destructive onBack the visible control uses');
-    h.ok(!/BackHandler/.test(src), 'the screen owns no hardware-back listener of its own any more');
-    h.ok(!/onDismiss\(\)/.test(src), 'nothing in the screen invokes the deletion imperatively either');
-    // Non-vacuity: the imperative-call scan does fire on the shape it is meant to catch.
-    h.ok(/onDismiss\(\)/.test('onDismiss();'), 'the scan matches an imperative call');
+  await h.test('exits: with nothing to discard there is no Discard button, and Back still leaves', async () => {
+    await withFailureScreen({}, async (shown, calls, tree) => {
+      h.ok(!shown().includes(COPY.failureDismiss), 'no Discard label is rendered');
+      await press(button(tree, COPY.failureBack));
+      h.eq(calls.back, 1, 'Back is always there');
+    });
   });
 
-  await h.test('exits: with no attempt to discard the button is absent, not a destructively-labelled no-op', () => {
-    // A clarify or rewrite failure fails before any pending-build record exists, so the caller
-    // passes no `onDismiss`. Offering "Discard this attempt" there would be the same dishonesty
-    // the other direction — a danger-styled control that only navigates.
-    const src = readSource('src/host/launcher/FailureScreen.tsx');
-    h.ok(/onDismiss\?: \(\) => void;/.test(src), 'the discard callback is optional — a caller may have nothing to discard');
-    const guard = src.indexOf('{onDismiss != null && (');
-    h.ok(guard >= 0, 'and the discard button is behind a presence guard');
-    h.eq(
-      (src.match(/\{COPY\.failureDismiss\}/g) ?? []).length,
-      1,
-      'the discard label is rendered in exactly one place, so nothing renders it outside the guard',
-    );
-    h.ok(src.indexOf('{COPY.failureDismiss}') > guard, 'that one place being inside the guard');
-    h.ok(src.indexOf('{COPY.failureBack}') < guard, 'while Back is rendered outside it — the leave exit always exists');
-    h.ok(
-      /onDismiss == null \? styles\.actionLast : null/.test(src),
-      'and takes the last action’s spacing when it IS the last one, so the guarded button leaves no gap',
-    );
+  // ── the what-happened section ──────────────────────────────────────────────
+
+  await h.test('what happened: absent for a failure that never started an attempt', async () => {
+    await withFailureScreen({ journal: null, attemptStarted: false }, async (shown) => {
+      h.ok(!shown().includes(COPY.timelineTitle), 'no heading');
+      h.ok(!shown().includes(COPY.timelineEmpty), 'and no empty note');
+    });
+  });
+
+  await h.test('what happened: an attempt with no readable journal shows the empty note, and the screen is otherwise unchanged', async () => {
+    await withFailureScreen({ journal: null, attemptStarted: true }, async (shown) => {
+      h.ok(shown().includes(COPY.timelineTitle) && shown().includes(COPY.timelineEmpty), 'the section falls back to its empty note');
+      h.ok(shown().includes('Try fewer screens.'), 'and the checklist still shows the hint');
+    });
+  });
+
+  await h.test('what happened: a journal renders its timeline in addition to the checklist', async () => {
+    await withFailureScreen({ journal: JOURNAL, attemptStarted: true }, async (shown) => {
+      const rows = runTimelineRows(JOURNAL).map((r) => r.text);
+      h.ok(rows.length > 0 && rows.every((row) => shown().includes(row)), 'every timeline row is shown');
+      const checklist = failureChecklistRows({ diagnostics: [{ hint: 'Try fewer screens.' }], hasWorkingVersion: false }).map((r) => r.text);
+      h.ok(checklist.every((row) => shown().includes(row)), 'and so is every checklist row');
+    });
   });
 
   // ── the checklist: hints and copy strings, nothing else ────────────────────
