@@ -94,3 +94,9 @@ Related, older material: `docs/demo/storyboard.md` (the 2:30 hero film plan),
   duplicate auth xcargs, binary privacy manifests). Next: screenshots → listing save → Play
   closed-testing release → Play signing fingerprint committed → phone on cellular, first
   generation (task 15.3).
+- 2026-09-22, evening: Play alpha release 381237 rolled out to closed testing and all 15 console
+  changes submitted for review (176 countries, China excluded; testers list `Whim beta`).
+  Screenshots re-captured at 1080x2160 (release check caps 2:1). Play signing fingerprint
+  committed; `deploy.sh --site-only` put both association files live (assetlinks 200, smoke
+  green). All of it is on branch `demo/stage-prep`, draft PR #43. Still open: Davron's Apple ID
+  in the TestFlight internal group, then the first generation from the phone on cellular.
