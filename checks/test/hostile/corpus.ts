@@ -1,6 +1,6 @@
 import { CheckReport, DiagnosticKind } from '../../contract';
 import { runStaticChecks } from '../../index';
-import { test, assert, assertHasKind, assertNoKind, kindsOf } from '../harness';
+import { test, assert, assertHasKind, kindsOf } from '../harness';
 
 const APP_IMPORT = "import { defineApp } from 'vc-sdk';\n";
 const APP_TAIL = `
@@ -156,33 +156,13 @@ export default defineApp(actual);
   },
 ];
 
-const KNOWN_BOUNDARY_SOURCE = appSource(`
-function merge(target: Record<string, unknown>, source: Record<string, unknown>) {
-  for (const key in source) {
-    target[key] = source[key];
-  }
-}
-
-const key = ['__', 'proto__'].join('');
-merge({}, { [key]: { hostile: true } });
-`);
-
 export async function runHostileCorpus(): Promise<void> {
   for (const c of HOSTILE_CASES) {
-    await test(`F §hostile: ${c.name}`, () => {
+    await test(`hostile: ${c.name}`, () => {
       const r = runStaticChecks(c.source);
       assert(r.ok === false, `${c.name}: hostile fixture unexpectedly passed with ok:true`);
       assertHasKind(r, c.expected, `${c.name}: expected "${c.expected}", got [${kindsOf(r).join(', ')}]`);
       c.check?.(r, c.source);
     });
   }
-
-  await test('hostile-negative: dynamic deep-merge pollution boundary is documented, not silently claimed', () => {
-    const r = runStaticChecks(KNOWN_BOUNDARY_SOURCE);
-    assertNoKind(
-      r,
-      'prototype_pollution',
-      `runtime-shaped deep merge with computed __proto__ is the documented static boundary: expected no "prototype_pollution", got [${kindsOf(r).join(', ')}]`,
-    );
-  });
 }

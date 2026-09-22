@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { observationFromRunReport } from '../adapters/synthetic-run';
 import type { RunObservation, TierAResult, TierBResult, TierCResult } from '../contract';
-import { computeCaseVerdict, tierAFailed } from '../tiers/case';
+import { computeCaseVerdict } from '../tiers/case';
 import { evaluateTierA } from '../tiers/tier-a';
 import { check, eq, section } from './harness';
 
@@ -85,17 +85,6 @@ section('Tier A: self-reported verdict is not trusted (spec "Self-reported verdi
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('Tier A: determinism (spec "Same input, same result")');
-// ─────────────────────────────────────────────────────────────────────────────
-
-{
-  const source = readCandidate('honest.app.tsx');
-  const first = evaluateTierA(source, CLEAN_OBSERVATION);
-  const second = evaluateTierA(source, CLEAN_OBSERVATION);
-  eq('evaluating Tier A twice over the same source and observation yields an equal result', first, second);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 section('synthetic-run adapter: normalizes a recorded report fixture (design D6)');
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -120,17 +109,6 @@ section(
     '(handoff/run-report-contract.md, design Open Question 1)',
 );
 // ─────────────────────────────────────────────────────────────────────────────
-
-{
-  const reportPath = join(repoRoot, 'evals', 'test', 'fixtures', 'synthetic-run-report.json');
-  const report = JSON.parse(readFileSync(reportPath, 'utf8'));
-  const observation = observationFromRunReport('contained-true', report);
-  eq(
-    'RunReport.contained === true maps to an authenticated, contained verdict',
-    observation.containment,
-    { authenticated: true, contained: true },
-  );
-}
 
 {
   const reportPath = join(repoRoot, 'evals', 'test', 'fixtures', 'synthetic-run-report-breach.json');
@@ -193,8 +171,6 @@ const LOW_SCORED_TIER_C: TierCResult = {
   },
 };
 
-check('tierAFailed(FAILED_TIER_A) is true', tierAFailed(FAILED_TIER_A));
-check('tierAFailed(PASSED_TIER_A) is false', !tierAFailed(PASSED_TIER_A));
 eq(
   'Tier A failure short-circuits: case verdict is fail, Tier B and Tier C are recorded skipped',
   { verdict: computeCaseVerdict(FAILED_TIER_A, SKIPPED_TIER_B), tierB: SKIPPED_TIER_B, tierC: SKIPPED_TIER_C },

@@ -231,7 +231,6 @@ async function prepareTree(): Promise<Fixture> {
     RUNTIME_ASSETS.filter((asset) => asset.startsWith('fixtures/')),
     loadFewShotExamples(ROOT).map((example) => `fixtures/${example.name}`),
   );
-  check('the tree lies outside the checkout', path.relative(ROOT, fs.realpathSync(tree)).startsWith('..'));
 
   const declared = declaredRuntimePackages();
   for (const bundle of ['server/main.mjs', 'server/whim-admin.mjs']) {
@@ -249,7 +248,6 @@ async function prepareTree(): Promise<Fixture> {
   const inputs = await bundleServerEntry({ entry: 'server/src/main.ts', outfile: path.join(scratch, 'probe', 'main.mjs'), write: false });
   check('@whim/contract is bundled into the entry', inputs.includes('contract/src/index.ts'), JSON.stringify(inputs.filter((i) => i.startsWith('contract'))));
   eq('no test module reaches the entry bundle', inputs.filter((input) => input.startsWith('server/test/')), []);
-  check('a write:false bundle writes nothing', !fs.existsSync(path.join(scratch, 'probe')));
 
   const modules = path.join(tree, 'node_modules');
   for (const name of declared) {

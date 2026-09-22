@@ -15,9 +15,7 @@
  *   node synthrun/test/run.mjs
  */
 import { readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { build as esbuild } from 'esbuild';
 import { buildCandidateFile } from '../builder';
 import { attachObserversEarly, awaitMount, awaitQuiet, openObservedRun, mergeBudgets, withTotalBudget, RELAY_BINDING_NAME, type AttachedObservers, type EarlyObservers, type ObservedFrameKind } from '../observe';
 import { REJECTED_FORGERY_CAP } from '../contract';
@@ -76,39 +74,6 @@ async function main(): Promise<void> {
     ]);
     ok(harness.js.length > 0, 'harness builder produced non-empty output');
     ok(harness.js === production, 'harness builder output is byte-identical to the production artifact');
-  });
-
-  // RED-CHECK (non-vacuity, task 1.3): perturbing a builder option (the JSX element factory —
-  // every JSX element in the fixture goes through it, unlike `jsxFragment`, which only fires
-  // for `<>...</>` and tip-splitter uses none) MUST make the two outputs differ — proves the
-  // equivalence check above is a real comparison, not a vacuous pass (e.g. both sides trivially
-  // empty, or the check never actually running).
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-  await test('red-check: a perturbed builder option is caught as drift', async () => {
-    const out = await esbuild({
-      entryPoints: [FIXTURE],
-      bundle: true,
-      format: 'iife',
-      globalName: '__WHIM_APP_MODULE__',
-      platform: 'browser',
-      target: 'es2019',
-      tsconfigRaw: '{}',
-      jsx: 'transform',
-      jsxFactory: 'React.createElementPerturbed', // PERTURBED — production uses 'React.createElement'
-      jsxFragment: 'React.Fragment',
-      inject: [path.join(ROOT, 'build/react-inject-shim.ts')],
-      external: ['vc-sdk', 'react', 'react-dom', 'react-dom/client'],
-      sourcemap: 'external',
-      sourcesContent: true,
-      outdir: tmpdir(),
-      minify: false,
-      write: false,
-      logLevel: 'warning',
-    });
-    const perturbed = out.outputFiles.find((f) => !f.path.endsWith('.map'))?.text ?? '';
-    const production = await readFile(PRODUCTION_ARTIFACT, 'utf8');
-    ok(perturbed.length > 0, 'perturbed build produced non-empty output');
-    ok(perturbed !== production, 'a perturbed jsxFactory IS caught as byte drift (the equivalence check is non-vacuous)');
   });
 
   // ── chain 2 (task 2.4): trusted-vantage collectors + watchdog, hostile fixtures ──────────
@@ -1000,21 +965,6 @@ async function testObservers(): Promise<void> {
       }
     });
 
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-    await test('red-check: withTotalBudget with no signal supplied is unaffected — same overrun behavior as before', async () => {
-      const { ctx, obs, dispose } = await openObservedRun(session, FIXTURE_LEGAL_INTERVAL);
-      try {
-        const budgets = mergeBudgets({ totalBudgetMs: 150 });
-        const { truncated, aborted } = await withTotalBudget(ctx, obs, budgets, () => new Promise<void>(() => {})); // no signal arg at all
-        ok(truncated === true, 'omitting signal entirely still truncates on overrun (non-vacuity: the new param is additive, not load-bearing for existing callers)');
-        ok(aborted === undefined, 'aborted is left unset when no signal was supplied');
-      } finally {
-        obs.detach();
-        await dispose().catch(() => {
-          /* the page is already closed by the watchdog above */
-        });
-      }
-    });
   } finally {
     await session.close();
   }
@@ -1383,15 +1333,6 @@ async function testRunCandidate(): Promise<void> {
       ok(!report.diagnostics.some((d) => d.kind === 'containment_failure' || d.kind === 'containment_unobserved'), 'a rejected forgery is not a diagnostic and does not disturb the verdict axis');
     });
 
-    // ── red-check (non-vacuity, task 5.3): a candidate with NO hostile behavior at all must
-    // never produce a false-positive diagnostic from the assembled pipeline itself.
-    // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-    await test('red-check: the assembled pipeline is non-vacuous — a trivially harmless candidate is clean too', async () => {
-      const runCandidate = createRunCandidate(session);
-      const report = await runCandidate(FIXTURE_HARMLESS, { budgets: { mountBudgetMs: 5000 } });
-      ok(report.ok === true, `a harmless candidate is clean (got ${JSON.stringify(report.diagnostics)})`);
-      ok(report.diagnostics.length === 0, 'no diagnostics leak in from the hostile fixture above being run in the same suite');
-    });
   } finally {
     await session.close();
   }

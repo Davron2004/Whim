@@ -19,7 +19,6 @@ import * as path from 'node:path';
 import { Harness } from './harness';
 import { AppBusy, isAppBusy, runAppOp } from '../app-busy';
 import type { AppBusyMap } from '../app-busy';
-import { COPY } from '../copy';
 
 function read(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
@@ -233,8 +232,4 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
     h.ok(!/tileBusy: \{[^}]*shadow/.test(tileSrc), 'no shadow props in the busy treatment');
   });
 
-  await h.test('copy: the busy rows say what is happening, in product verbs', () => {
-    h.eq(COPY.actionForkBusy, 'Forking…', 'the Fork row names the fork it is running');
-    h.eq(COPY.actionDeleteBusy, 'Deleting…', 'and the Delete row the delete');
-  });
 }

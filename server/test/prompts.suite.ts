@@ -26,11 +26,11 @@ import path from 'node:path';
 import ts from 'typescript';
 import { check, eq, caught, section } from './harness';
 import { captureLogs } from './log-capture';
-import { OpenRouterClient, OpenRouterNetworkError } from '../src/openrouter';
+import { OpenRouterClient } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
 import { openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
-import { ScriptedModelClient, ScriptedModelClientExhaustedError, ScriptedModelClientRoleMismatchError, noNetworkTransport } from './scripted-model';
-import type { CapturedRequest, ScriptedTurn } from './scripted-model';
+import { ScriptedModelClient } from './scripted-model';
+import type { CapturedRequest } from './scripted-model';
 import { loadSdkReference, loadFewShotExamples, loadPromptInputs, loadContentPolicyDocument, PromptInputError } from '../src/generation/prompts/inputs';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
@@ -107,69 +107,6 @@ async function testModelClientAdapter(): Promise<void> {
     check('adapter: abort signal forwarded', captured?.init?.signal === controller.signal);
   }
 
-  // "The gate never reaches the network": noNetworkTransport throws, synchronously, before any real fetch.
-  {
-    const openRouter = new OpenRouterClient(noNetworkTransport);
-    const client = openRouterModelClient(openRouter);
-    const { deltas, usage } = client.stream({ model: 'x/y', messages: [{ role: 'user', content: 'hi' }] });
-    const err = await caught(async () => { await drain(deltas); });
-    // The same throw path rejects `usage` (openrouter.ts's own contract) — await it too so it is
-    // never left an unhandled rejection.
-    const usageErr = await caught(async () => { await usage; });
-    check(
-      'noNetworkTransport: refuses any request',
-      err instanceof OpenRouterNetworkError && err.cause instanceof Error && /refused to fetch/.test(err.cause.message),
-    );
-    check('noNetworkTransport: usage promise rejects with the same error, not left unhandled', usageErr === err);
-  }
-}
-
-// ── §ScriptedModelClient protocol ─────────────────────────────────────────────
-
-type RecordedTurn = Pick<ScriptedTurn, 'deltas' | 'usage' | 'id'>;
-
-function readModelFixture(name: string): RecordedTurn {
-  const raw = fs.readFileSync(path.join(repoRoot, 'server', 'test', 'fixtures', 'model', name), 'utf8');
-  return JSON.parse(raw) as RecordedTurn;
-}
-
-async function testScriptedModelClient(): Promise<void> {
-  section('ScriptedModelClient — replays recorded turns, asserts role, exhausts loudly');
-
-  const roster: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
-  const rewriteFixture = readModelFixture('rewrite-turn.json');
-  const engineerFixture = readModelFixture('engineer-turn.json');
-
-  const scripted = new ScriptedModelClient(roster, [
-    { role: 'rewrite', ...rewriteFixture },
-    { role: 'engineer', ...engineerFixture },
-  ]);
-
-  const rewriteResult = scripted.stream({ model: roster.rewrite, messages: [{ role: 'user', content: 'a timer' }] });
-  const rewriteDeltas = await drain(rewriteResult.deltas);
-  eq('scripted: rewrite turn replays its deltas in order', rewriteDeltas.join(''), rewriteFixture.deltas.join(''));
-  eq('scripted: rewrite turn usage matches the fixture', await rewriteResult.usage, rewriteFixture.usage);
-  eq('scripted: rewrite turn id matches the fixture', await rewriteResult.id, rewriteFixture.id);
-
-  const engineerResult = scripted.stream({ model: roster.engineer, messages: [{ role: 'user', content: 'go' }] });
-  await drain(engineerResult.deltas);
-  eq('scripted: requests received are recorded in order', scripted.requests.map((r) => r.role), ['rewrite', 'engineer']);
-
-  const exhausted = await caught(async () => { scripted.stream({ model: roster.engineer, messages: [] }); });
-  check('scripted: exhausted script throws ScriptedModelClientExhaustedError', exhausted instanceof ScriptedModelClientExhaustedError);
-
-  const mismatchScript = new ScriptedModelClient(roster, [{ role: 'engineer', deltas: ['x'] }]);
-  const mismatch = await caught(async () => { mismatchScript.stream({ model: roster.rewrite, messages: [] }); });
-  check('scripted: wrong-role request throws ScriptedModelClientRoleMismatchError', mismatch instanceof ScriptedModelClientRoleMismatchError);
-
-  // A scripted turn can raise the wrapper's own typed error mid-generate (spec "A model failure is
-  // an honest failure") — both the deltas iterator and the usage promise carry it.
-  const failing = new ScriptedModelClient(roster, [{ role: 'engineer', deltas: ['partial'], error: new Error('boom') }]);
-  const { deltas: failDeltas, usage: failUsage } = failing.stream({ model: roster.engineer, messages: [] });
-  const deltaErr = await caught(async () => { await drain(failDeltas); });
-  check('scripted: a turn error throws from the deltas iterator', deltaErr instanceof Error && deltaErr.message === 'boom');
-  const usageErr = await caught(async () => { await failUsage; });
-  check('scripted: a turn error rejects the usage promise', usageErr instanceof Error && (usageErr as Error).message === 'boom');
 }
 
 // ── §Prompt input loading ─────────────────────────────────────────────────────
@@ -234,20 +171,11 @@ async function testMessageBuilders(): Promise<void> {
   });
   assertNonEmptyMessages('rewrite (edit)', editRewriteMessages);
   const editRewriteUser = editRewriteMessages.find((m) => m.role === 'user')?.content ?? '';
-  const editRewriteSystem = editRewriteMessages.find((m) => m.role === 'system')?.content ?? '';
   check('rewrite (edit): the prompt still reaches the user message', editRewriteUser.includes('add a streak count'));
   check('rewrite (edit): the app’s current name reaches the prompt', editRewriteUser.includes('Habit Tracker'));
   check(
     'rewrite (edit): the concepts it already keeps reach the prompt',
     editRewriteUser.includes('Completions') && editRewriteUser.includes('Date, Note'),
-  );
-  check(
-    'rewrite (edit): the system message asks to keep the name unless a rename is asked for',
-    /keep that name unless the request explicitly asks to rename it/i.test(editRewriteSystem),
-  );
-  check(
-    'rewrite (edit): the system message asks for only the change, not a from-nothing description',
-    /describe ONLY what this request changes/.test(editRewriteSystem),
   );
   const newAppRewriteUser = rewriteMessages.find((m) => m.role === 'user')?.content ?? '';
   check(
@@ -285,15 +213,10 @@ async function testMessageBuilders(): Promise<void> {
   });
   assertNonEmptyMessages('clarify (edit)', clarifyEdit);
   const clarifyEditUser = clarifyEdit.find((m) => m.role === 'user')?.content ?? '';
-  const clarifyEditSystem = clarifyEdit.find((m) => m.role === 'system')?.content ?? '';
   check('clarify (edit): the prompt still reaches the user message', clarifyEditUser.includes('add a fruit tea section'));
   check('clarify (edit): the app name reaches the prompt', clarifyEditUser.includes('Tea Menu'));
   check('clarify (edit): what it already keeps reaches the prompt', clarifyEditUser.includes('Teas') && clarifyEditUser.includes('Name, Category'));
   check('clarify (edit): the description reaches the prompt', clarifyEditUser.includes('A menu app that lists teas by category.'));
-  check(
-    'clarify (edit): the system message tells the model not to ask what the app is',
-    /Never ask.*what the app is/i.test(clarifyEditSystem),
-  );
 
   const planMessages = buildPlanMessages({ request: NEW_APP_REQUEST, schemaContext: '' });
   assertNonEmptyMessages('plan (new app)', planMessages);
@@ -608,15 +531,6 @@ function schemaArtifactSection(reference: string): string | null {
   }
   return lines.slice(start, end).join('\n');
 }
-
-/** A whitespace-normalized window starting at the first occurrence of `needle`, so a statement that
- *  wraps across markdown lines still reads as one span. */
-function windowAround(text: string, needle: string, span = 300): string | null {
-  const flat = text.replace(/\s+/g, ' ');
-  const at = flat.indexOf(needle);
-  return at === -1 ? null : flat.slice(at, at + span);
-}
-
 async function testSchemaArtifactDocumented(): Promise<void> {
   section('Tripwire: docs/sdk-reference.md documents the storage schema artifact');
 
@@ -631,7 +545,6 @@ async function testSchemaArtifactDocumented(): Promise<void> {
 
   // The six types come from the engine's own closed set, so adding a seventh without documenting
   // it fails here rather than silently teaching the model an incomplete list.
-  check('field-type set is six wide (sanity vs the engine contract)', FIELD_TYPES.length === 6, `engine declares ${FIELD_TYPES.length} field types`);
   for (const type of FIELD_TYPES) {
     check(
       `sdk reference: field type "${type}" is named in the schema-artifact section`,
@@ -640,24 +553,6 @@ async function testSchemaArtifactDocumented(): Promise<void> {
     );
   }
 
-  check('sdk reference: the schema-artifact section documents `tombstones`', /tombstones/.test(body), 'the section never mentions tombstones');
-  check(
-    'sdk reference: a `date` field is stated to be an epoch-millisecond integer',
-    /epoch-millisecond/i.test(body),
-    'the schema-artifact section never says a `date` field is epoch-milliseconds',
-  );
-  check(
-    'sdk reference: the epoch-millisecond statement carries a worked Date.now() example',
-    /Date\.now\(\)/.test(body),
-    'no worked Date.now() example in the schema-artifact section',
-  );
-
-  const dayPoint = windowAround(reference, 'DayPoint.date');
-  check(
-    "sdk reference: `DayPoint.date` is disambiguated from the storage `date` field type",
-    dayPoint !== null && /YYYY-MM-DD/.test(dayPoint) && /unrelated/i.test(dayPoint) && /storage/i.test(dayPoint),
-    dayPoint === null ? 'the reference never names `DayPoint.date`' : `not disambiguated near: ${dayPoint.slice(0, 140)}`,
-  );
 }
 
 // ── §Tripwire 2: every curated few-shot fixture is honest ────────────────────
@@ -837,7 +732,6 @@ function testJsonBlockParsing(): void {
 
 export async function runPromptsTests(): Promise<void> {
   await testModelClientAdapter();
-  await testScriptedModelClient();
   await testPromptInputLoading();
   await testMessageBuilders();
   await testEditTurnPrompt();

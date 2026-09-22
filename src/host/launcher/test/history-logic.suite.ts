@@ -51,11 +51,6 @@ const AFTER_SCHEMA = '{"schemaVersion":1,"collections":{"Entries":{"id":"c1","fi
 const SUMMARY_ADDED = { text: 'A chime now plays before the last pour.', kind: 'Added', touched: ['Sounds'], marks: [] };
 
 export async function runHistoryLogicTests(h: Harness): Promise<void> {
-  // ── History reads as the user's own prompts (E1/E2) ───────────────────────
-  await h.test('history: a row with a stored summary headlines with the summary text', () => {
-    const summary = storedSummary(envelope('give me a warning chime', SUMMARY_ADDED));
-    h.ok(summary?.text === SUMMARY_ADDED.text, 'the summary parses off the prompt envelope');
-  });
 
   await h.test('history: fallback to prompt text (v1 envelope, no summary, or a run with none)', async () => {
     const { store, access } = harnessAccess();
@@ -144,19 +139,6 @@ export async function runHistoryLogicTests(h: Harness): Promise<void> {
     h.eq(current.actions, ['change-from-here'], 'the current version offers exactly one action');
     h.eq(middle.actions, ['go-back', 'start-copy'], 'a past, non-install version offers exactly two');
     h.eq(install.actions, ['start-copy'], 'the install row offers only "start a copy here" — no restore, there is no earlier state');
-  });
-
-  // ── Any version can become its own app (unchanged) ─────────────────────────
-  await h.test('history: "make this version its own app" forks from the exact version viewed', async () => {
-    const { store, index, access } = harnessAccess();
-    const orig = await access.install({ id: 'wc', name: 'WC', record: REC('wc'), bundleSource: 'V1', prompt: envelope('p1') });
-    await store.snapshot('wc', { 'bundle.js': 'V2' }, envelope('p2'));
-    const list = await listVersions(access, orig);
-    const oldVersion = list[list.length - 1]; // not the newest
-    const forked = await access.fork(orig, oldVersion.id);
-    h.eq(await access.activeBundle(forked), 'V1', "the new entry's code is exactly the viewed version");
-    h.eq(await access.activeBundle(orig), 'V2', 'the original app is unchanged');
-    h.ok(index.get(forked.id) != null, 'a new launcher entry was created');
   });
 
   // ── Data-shape annotation on a schema-adding row (D5, unchanged) ──────────

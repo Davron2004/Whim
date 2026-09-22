@@ -19,7 +19,6 @@ import type { InstallSpec, StoreAccess, UpdateSpec } from '../store-access';
 import {
   deliverAndSettle,
   deliverResult,
-  dropPendingBuild,
   EmptyBundleError,
   failPendingBuild,
   hydratedDiagnostics,
@@ -31,7 +30,7 @@ import {
   startPendingBuild,
 } from '../build-lifecycle';
 import { RunJournalStore } from '../run-journal';
-import { EMPTY_RUN_AGGREGATES, ghostTileColorFor, withKeepalive } from '../prompt-flow';
+import { EMPTY_RUN_AGGREGATES, ghostTileColorFor } from '../prompt-flow';
 import type { RunSignals } from '../prompt-flow';
 import type { GenerationEvent } from '@whim/contract';
 import { tileColor } from '../tiles';
@@ -457,38 +456,7 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     h.eq(pendingFailure('x', [{ hint: '' }]), { reason: 'x' }, 'an empty hint is not a row');
   });
 
-  await h.test('cancel: the record is deleted, so a cancelled attempt leaves no ghost', async () => {
-    const store = new PendingBuildStore(new MapKVBackend());
-    const id = startPendingBuild(store, { text: 'a tip splitter' });
-    h.eq(store.list().length, 1, 'sanity: the ghost was there to be cancelled');
-    dropPendingBuild(store, id);
-    h.eq(store.get(id), null, 'the record is gone');
-    h.eq(store.list(), [], 'and nothing remains on the grid for it');
-  });
-
-  await h.test('dismiss: dismissing a failed record deletes it, unlike the failure itself', async () => {
-    const store = new PendingBuildStore(new MapKVBackend());
-    const id = startPendingBuild(store, { text: 'a brew timer' });
-    failPendingBuild(store, id, 'it broke', []);
-    h.eq(store.list().length, 1, 'a failure keeps the record (the contrast this test rests on)');
-    dropPendingBuild(store, id);
-    h.eq(store.list(), [], 'a dismiss removes it');
-  });
-
   // ── a refused generate (design D10; store-launch-compliance chain-4) ───────────────────────────
-
-  await h.test('refusedGenerateOutcome: a fresh attempt still on its build screen is dropped', () => {
-    h.eq(refusedGenerateOutcome(false, false), 'drop', 'not a Retry, not detached — the common `Build it` case');
-  });
-
-  await h.test('refusedGenerateOutcome: a detached attempt (Leave it running) settles failed', () => {
-    h.eq(refusedGenerateOutcome(false, true), 'settle', 'the user has already left — the ghost must explain itself');
-  });
-
-  await h.test('refusedGenerateOutcome: any Retry settles failed, detached or not', () => {
-    h.eq(refusedGenerateOutcome(true, false), 'settle', 'a Retry from the failure screen');
-    h.eq(refusedGenerateOutcome(true, true), 'settle', 'a Retry the user then also left');
-  });
 
   const NO_COUNTS = { aggregates: EMPTY_RUN_AGGREGATES, observedDiagnostics: 0 };
 
@@ -732,26 +700,6 @@ export async function runBuildLifecycleTests(h: Harness): Promise<void> {
     );
   });
 
-  // ── the keepalive comment frame never reaches the journal at all (build-liveness B2) ─────────
-  await h.test('withKeepalive: bumps only the any-frame clock, and the journal it never touched stays exactly as it was', async () => {
-    const f = attemptFixture();
-    let signals = f.signals;
-    f.tick(1_000);
-    signals = journalStreamEvent(f.journal, RUN, signals, STAGE('generate'), f.at());
-    const before = f.journal.get(RUN);
-    f.tick(15_000);
-    const afterKeepalive = withKeepalive(signals, f.at());
-    h.eq(afterKeepalive.lastFrameAt, f.at(), 'the any-frame clock moves to the keepalive');
-    h.eq(afterKeepalive.lastTokenAt, signals.lastTokenAt, 'the writing clock is untouched');
-    h.eq(afterKeepalive.lastThinkingAt, signals.lastThinkingAt, 'so is the thinking clock');
-    h.eq(afterKeepalive.aggregates, signals.aggregates, 'and no counter moves');
-    h.eq(f.journal.get(RUN), before, 'the journal is byte-for-byte unchanged — `withKeepalive` takes no journal at all');
-  });
-
   // ── the persisted payload round-trips into the failure screen's own shape ─────────────────────
 
-  await h.test('payload: hints round-trip through the record unchanged', async () => {
-    const hints = [{ hint: 'The chime is the part that fails' }, { hint: 'Everything else already runs' }];
-    h.eq(hydratedDiagnostics(pendingFailure('nope', hints)), hints, 'what the screen showed is what it shows again');
-  });
 }

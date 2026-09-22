@@ -16,10 +16,8 @@ import { Harness } from './harness';
 import { COPY } from '../copy';
 import { GenerationClientError } from '../transport-shared';
 import {
-  BUILD_STEPS,
   acceptClarifyQuestions,
   backFrom,
-  buildBackAction,
   buildProgressFraction,
   buildStep,
   buildStepStatuses,
@@ -30,7 +28,6 @@ import {
   currentActionSentence,
   doneStep,
   isClarifySkip,
-  planBackAction,
   planRowsFrom,
   planStep,
   primaryActionLabel,
@@ -141,11 +138,6 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     const plan = planStep(loading);
     h.eq(plan.kind, 'plan', 'the loading clarify screen can seed the plan step directly');
     h.eq(plan.questions, [], 'with no questions to carry');
-  });
-
-  await h.test('flow: zero questions skips the clarify step entirely', () => {
-    h.eq(stepAfterClarifyExchange([]), 'plan', 'nothing to ask means the plan step is next');
-    h.eq(stepAfterClarifyExchange(acceptClarifyQuestions(QUESTIONS)), 'clarify', 'questions mean the clarify step');
   });
 
   await h.test('flow: a clarify 502 means skip to the plan step, never a dead end', () => {
@@ -356,37 +348,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(backFrom(doneStep(buildStep(plannedFlow()), EDITED)), null, 'the done step is not backed out of');
   });
 
-  // Regression coverage for the reported bug: hardware back on the build screen used to cancel
-  // the whole generation regardless of whether the details sheet was open. `buildBackAction` is
-  // the pure decision the shell's build-screen `onBack` is built from — it never resolves to a
-  // cancel, only `close-sheet` or `leave` (the same, non-cancelling action as `Leave it running`).
-  await h.test('build back: closes the sheet when open, otherwise leaves the run running — never cancels', () => {
-    h.eq(buildBackAction(true), 'close-sheet', 'sheet open: back closes it');
-    h.eq(buildBackAction(false), 'leave', 'sheet closed: back leaves the run running');
-  });
-
-  // Regression coverage for mismatch 2 (research.md A): the plan step's hardware-back listener
-  // used to cancel an open row edit before calling `onBack`, while `FlowHeader`'s `Back` got the
-  // raw `onBack` and discarded the draft. `planBackAction` is the one decision `PlanStep` now
-  // builds `handleBack` from for both the hook and the header.
-  await h.test('plan back: cancels an open row edit, otherwise leaves the step — same for header Back and system back', () => {
-    h.eq(planBackAction(true), 'cancel-edit', 'a row is being edited: back cancels it and stays');
-    h.eq(planBackAction(false), 'leave', 'no row is being edited: back moves one step back');
-  });
-
   // ── the primary action ──────────────────────────────────────────────────────────────────────
-
-  await h.test('flow: the primary action’s words never depend on being busy — only editing branches them', () => {
-    // C2: the label is the same whether or not the step is busy — never a "One moment" placeholder
-    // (removed with `COPY.flowBusy`; the wait is the clarify screen's own loading state instead,
-    // `prompt-flow` "the clarify wait is a screen, not a grey button").
-    h.eq(primaryActionLabel('compose', false), COPY.flowContinue, 'compose reads Continue');
-    h.eq(primaryActionLabel('clarify', false), COPY.flowContinue, 'clarify reads Continue');
-    h.eq(primaryActionLabel('clarify', true), COPY.flowContinue, 'clarify is unbranched by editing too');
-    h.eq(primaryActionLabel('plan', false), COPY.planBuild, 'a new app’s plan reads Build it');
-    h.eq(primaryActionLabel('plan', true), COPY.planBuildEdit, 'an edit’s plan reads Make the change');
-    h.ok(!('flowBusy' in COPY), 'the grey-button placeholder label is gone entirely');
-  });
 
   await h.test('WorkingLine: no clock suffix under 5s, the phrase alone; a clock past it', () => {
     const startedAt = 1_000_000;
@@ -398,14 +360,6 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   });
 
   // ── the build step's four named steps ───────────────────────────────────────────────────────
-
-  await h.test('build: the four named steps are the design’s, in order', () => {
-    h.eq(
-      BUILD_STEPS,
-      [COPY.buildStepReading, COPY.buildStepWriting, COPY.buildStepChecking, COPY.buildStepInstalling],
-      'four steps, in order, from the copy table',
-    );
-  });
 
   await h.test('build: stage events drive the steps and passed steps stay passed', () => {
     h.eq(buildStepStatuses(null), ['active', 'todo', 'todo', 'todo'], 'an unstarted stream sits on the first step');
@@ -595,23 +549,4 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.ok(planSrc.includes('PLAN_ROW_MIN_HEIGHT') && /SKELETON_ROW_WIDTHS/.test(planSrc), 'plan-row skeletons reuse the row’s own height with varying widths');
   });
 
-  await h.test('flow screens: every string they show exists in the copy table', () => {
-    const keys = [
-      'flowContinue', 'composeHeadline', 'composeHeadlineEdit', 'composeHelper',
-      'composePlaceholderEdit', 'composeChipsEyebrow', 'composeChipTimer', 'composeChipTracker',
-      'composeChipDice', 'clarifyHelper', 'workingClarify', 'planHeadline', 'planHeadlineEdit',
-      'planSubhead', 'planFooter', 'planBuild', 'planBuildEdit', 'workingPlan', 'workingPlanEdit',
-      'buildTitle', 'buildTitleEdit', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
-      'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'buildDetails', 'doneBody',
-      'doneOpen', 'doneBackToApps', 'homeComposerPlaceholder', 'homeTitle', 'homeSubtitle',
-      // `promptServerUnconfigured`/`promptOpenSettings` retired (store-launch-compliance chain-3):
-      // compose opens only once AI-data consent is granted and a server address always exists, so
-      // the "set an address in Settings" notice they gated no longer has any way to happen.
-      'promptServerUnreachable', 'failureTitle', 'failureRephrase', 'failureBack',
-      'failureDismiss',
-    ] as const;
-    for (const key of keys) {
-      h.ok(typeof COPY[key] === 'string' && COPY[key].length > 0, `COPY.${key} must be a non-empty string`);
-    }
-  });
 }

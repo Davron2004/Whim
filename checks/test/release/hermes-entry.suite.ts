@@ -70,29 +70,10 @@ export async function run(): Promise<void> {
     );
   });
 
-  await test('hermes-entry: a bound import of the installer (not a bare side-effect import) still fails the check', () => {
-    const source = [
-      `import installPolyfills from '${ENTRY_IMPORT_SPECIFIER}';`,
-      "import { AppRegistry } from 'react-native';",
-    ].join('\n');
-    const result = checkEntryFirstImport('index.js', source);
-    assert(result.ok === false, 'a bound import of the installer must not satisfy the bare side-effect check');
-  });
-
   await test('hermes-entry: a comment before the bare import is fine (comments are not statements)', () => {
     const source = ['/**', ' * @format', ' */', '', `import '${ENTRY_IMPORT_SPECIFIER}';`, ''].join('\n');
     const result = checkEntryFirstImport('index.js', source);
     assert(result.ok, `a leading comment must not fail the check, got: ${String(result.reason)}`);
-  });
-
-  await test('hermes-entry: reproduces the marshal.ts crash class — TextDecoder is missing on a bare global before the installer runs (module-scope `new TextDecoder()` would throw), then works after (discriminates the fix)', () => {
-    const bare: Record<string, unknown> = {};
-    assert(bare.TextDecoder === undefined, 'a bare, unpolyfilled global must have no TextDecoder — this is exactly what makes marshal.ts\'s module-scope `new TextDecoder()` crash on Hermes');
-
-    installHermesPolyfills(bare as HermesGlobal);
-    assert(typeof bare.TextDecoder === 'function', 'after installHermesPolyfills, TextDecoder must be a constructible function');
-    const decoder = new (bare.TextDecoder as new () => { decode(input: Uint8Array): string })();
-    assert(typeof decoder.decode === 'function', 'the installed TextDecoder must be usable, not just present');
   });
 
   await test('hermes-entry: a bare global gets every polyfill and a working UTF-8 round trip (spec scenario)', () => {

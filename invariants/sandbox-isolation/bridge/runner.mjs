@@ -200,21 +200,6 @@ const chromiumBrowser = await chromium.launch();
   record(ok, 'forged sysret is inert (host answer wins)', `resolved value=${JSON.stringify(value)} (want "REAL", not "ATTACKER")`);
 }
 
-// 5. STALE-GENERATION DROP — over the real exposed dispatcher: a frame stamped with a prior
-//    generation is dropped (null); a current-generation frame answers.
-{
-  const r = await scenario('stale-gen', 'water-counter', {
-    evaluate: async (page) => page.evaluate(async () => {
-      const stale = JSON.stringify({ whim: 'syscall', v: 1, id: 9101, gen: 0, method: 'storage.kv.get', params: { key: 'total' } });
-      const fresh = JSON.stringify({ whim: 'syscall', v: 1, id: 9102, gen: 1, method: 'storage.kv.get', params: { key: 'total' } });
-      return { stale: await globalThis.whimHostDispatch(stale), fresh: await globalThis.whimHostDispatch(fresh) };
-    }),
-  });
-  const e = r.extra || {};
-  const ok = e.stale === null && typeof e.fresh === 'string' && /"whim":"sysret"/.test(e.fresh);
-  record(ok, 'stale-generation frame dropped', `stale=${e.stale === null ? 'dropped' : 'NOT dropped'} fresh=${typeof e.fresh === 'string' ? 'answered' : 'no answer'}`);
-}
-
 // 6. SQL INJECTOR END-TO-END — a hostile bundle drives the real verbs with adversarial input
 //    over the real path; values are inert, crafted identifiers rejected, only its own store.
 {

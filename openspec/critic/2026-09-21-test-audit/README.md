@@ -288,7 +288,8 @@ mentions as history.
    sysret robustness fix and the vacuous `INV-CUEGATE` sub-assertion, the WebView `injectJavaScript` shim, and the grep-only fork and consent paths.
    These need new tests, and each one must fail against the plausible weaker implementation.
 3. **Delete** the pure-DELETE items per slice, along with the dead production code they keep alive
-   (`reconcile.ts`, `InMemoryUsageStore`, `checkIosSceneLifecycleWiring`, `hasNonGrantingExit`).
+   (`reconcile.ts`, `checkIosSceneLifecycleWiring`, `hasNonGrantingExit`; `InMemoryUsageStore` was
+   overturned, see verification.md).
    The gate staying green is the check. Deleting a test needs no replacement test.
 4. **Rewrite** the source-grep families into rendered launcher tests, and turn the mutation families
    into tables.

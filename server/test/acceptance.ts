@@ -1,5 +1,5 @@
 /**
- * Harness server + contract acceptance suite (harness-server-skeleton). Implements server/test/SPEC.md.
+ * Harness server + contract acceptance suite (harness-server-skeleton).
  * Run via `npm run server:test` (server/test/run.mjs type-checks both workspaces, bundles this with
  * esbuild, and runs it under Node). Each area lives in its own *.test.ts module; this file sequences
  * them and reports. Sections are added as chains lead (contract → server core → metering → wrapper).

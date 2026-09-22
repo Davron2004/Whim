@@ -364,8 +364,6 @@ const PBXPROJ_PATH = 'ios/Whim.xcodeproj/project.pbxproj';
 const INFO_PLIST_PATH = `${IOS_DIR}/Info.plist`;
 const ENTITLEMENTS_PATH = `${IOS_DIR}/Whim.entitlements`;
 const PRIVACY_MANIFEST_PATH = `${IOS_DIR}/PrivacyInfo.xcprivacy`;
-const APP_DELEGATE_PATH = `${IOS_DIR}/AppDelegate.swift`;
-const SCENE_DELEGATE_PATH = `${IOS_DIR}/SceneDelegate.swift`;
 const CODE_SIGN_ENTITLEMENTS_VALUE = 'Whim/Whim.entitlements';
 const WHIM_RELEASE_XCCONFIG_SUFFIX = 'release/whim-release.xcconfig';
 const SCENE_DELEGATE_PROJECT_PATH = 'Whim/SceneDelegate.swift';
@@ -592,64 +590,4 @@ export function checkIosProject(repoRoot: string, config: NativeReleaseConfig): 
     ...checkEntitlements(repoRoot, config),
     ...checkPrivacyManifest(repoRoot),
   ];
-}
-
-/**
- * Checks the source-level scene lifecycle wiring. This is intentionally separate from
- * `checkIosProject`: the release-project check reads only plist, entitlement, privacy and Xcode
- * project files. These string-level checks can catch disconnected native callbacks in the portable
- * suite, but cannot prove UIKit invokes them or that an associated domain is configured on a device.
- */
-export function checkIosSceneLifecycleWiring(repoRoot: string): IosProjectFinding[] {
-  const findings: IosProjectFinding[] = [];
-  const appDelegate = readRepoFile(repoRoot, APP_DELEGATE_PATH);
-  const sceneDelegate = readRepoFile(repoRoot, SCENE_DELEGATE_PATH);
-  const sceneDelegateWithoutWhitespace = sceneDelegate.replace(/\s+/g, ' ').replace(/\(\s+/g, '(');
-  const appDelegateRequirements: ReadonlyArray<readonly [string, string]> = [
-    ['retain the React Native delegate', 'var reactNativeDelegate: ReactNativeDelegate?'],
-    ['retain the React Native factory', 'var reactNativeFactory: RCTReactNativeFactory?'],
-    ['reuse the retained React Native factory on scene reconnection', 'if let existingFactory = reactNativeFactory'],
-    ['start React Native from the scene window', 'factory.startReactNative('],
-    ['preserve the launch background', 'UIColor(named: "LaunchBackground")'],
-    ['preserve application-delegate user-activity forwarding', 'RCTLinkingManager.application(application, continue: userActivity'],
-    ['preserve application-delegate URL forwarding', 'RCTLinkingManager.application(app, open: url, options: options)'],
-  ];
-  for (const [description, fragment] of appDelegateRequirements) {
-    if (!appDelegate.includes(fragment)) {
-      findings.push({ file: APP_DELEGATE_PATH, message: `must ${description} (${JSON.stringify(fragment)})` });
-    }
-  }
-  if (appDelegate.includes('UIWindow(frame:')) {
-    findings.push({ file: APP_DELEGATE_PATH, message: 'must not create the application window outside the scene lifecycle' });
-  }
-
-  const sceneDelegateRequirements: ReadonlyArray<readonly [string, string]> = [
-    ['create a UIWindow from the connected UIWindowScene', 'UIWindow(windowScene: windowScene)'],
-    [
-      'pass the connection-options conversion result to React Native startup',
-      'let launchOptions = Self.launchOptions(from: connectionOptions) appDelegate.startReactNative(in: window, launchOptions: launchOptions)',
-    ],
-    [
-      'translate a cold URL context into the URL launch option',
-      'if let context = connectionOptions.urlContexts.first { return [UIApplication.LaunchOptionsKey.url: context.url] }',
-    ],
-    ['forward warm user activities', 'RCTLinkingManager.application(UIApplication.shared, continue: userActivity'],
-    ['forward warm URL contexts', 'RCTLinkingManager.application(UIApplication.shared, open: context.url, options:'],
-  ];
-  for (const [description, fragment] of sceneDelegateRequirements) {
-    if (!sceneDelegateWithoutWhitespace.includes(fragment)) {
-      findings.push({ file: SCENE_DELEGATE_PATH, message: `must ${description} (${JSON.stringify(fragment)})` });
-    }
-  }
-  const coldUserActivityLaunchOptions =
-    /if let userActivity = connectionOptions\.userActivities\.first\(where: \{.*?\}\s*\)\s*\{\s*return \[\s*UIApplication\.LaunchOptionsKey\.userActivityDictionary:\s*\[\s*UIApplication\.LaunchOptionsKey\.userActivityType: userActivity\.activityType,\s*"UIApplicationLaunchOptionsUserActivityKey": userActivity,/.test(
-      sceneDelegateWithoutWhitespace,
-    );
-  if (!coldUserActivityLaunchOptions) {
-    findings.push({
-      file: SCENE_DELEGATE_PATH,
-      message: 'must translate a cold browsing activity into the user-activity launch option passed to React Native',
-    });
-  }
-  return findings;
 }

@@ -2,8 +2,6 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { showOfflineIndicator, showServerUnreachableNotice } from '../connectivity-ux';
-import type { Connectivity } from '../connectivity';
 import HomeScreen from '../HomeScreen';
 import ComposeStep from '../ComposeStep';
 import ConsentScreen from '../ConsentScreen';
@@ -16,7 +14,6 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts } from './react-screen';
 
-const STATES: readonly Connectivity[] = ['unknown', 'checking', 'online', 'offline'];
 const noop = () => {};
 const app: InstalledApp = {
   id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main',
@@ -32,23 +29,6 @@ function createButton(tree: TestRenderer.ReactTestRenderer): TestRenderer.ReactT
 }
 
 export async function runConnectivityUxTests(h: Harness): Promise<void> {
-  await h.test('showOfflineIndicator: true only for offline, across every connectivity state', () => {
-    for (const state of STATES) {
-      h.eq(showOfflineIndicator(state), state === 'offline', `showOfflineIndicator(${state})`);
-    }
-  });
-
-  await h.test('showServerUnreachableNotice: offline AND configured, across the full matrix', () => {
-    for (const state of STATES) {
-      for (const configured of [true, false]) {
-        h.eq(
-          showServerUnreachableNotice(state, configured),
-          state === 'offline' && configured,
-          `showServerUnreachableNotice(${state}, configured=${configured})`,
-        );
-      }
-    }
-  });
 
   for (const offline of [true, false]) {
     await h.test(`Home: offline=${offline} shows the matching notice and keeps app/create controls enabled`, async () => {

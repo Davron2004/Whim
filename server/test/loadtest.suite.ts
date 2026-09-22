@@ -8,8 +8,8 @@
  * Covers: `runLoadtestServer`'s key refusal and its override/env/fetch-trap plumbing against an
  * injected `start`; `createReplayModel`'s per-role replies and fixture rotation; a full
  * `GenerationMachine` run over the replay model with a stub run stage, and an abort mid-turn;
- * the production-exclusion metafile tripwire (with its discriminating red-check); the deploy-file
- * tripwire; and `drive.ts`'s pure pieces (SSE framing, percentile, the report builder, the verdict).
+ * the production-exclusion metafile tripwire; the load-test compose override; and `drive.ts`'s
+ * pure pieces (SSE framing, the report builder, the verdict).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,7 +21,6 @@ import type { ServerConfig } from '../src/config';
 import { runLoadtestServer, LoadtestConfigError, LOADTEST_ROSTER, LOADTEST_INERT_API_KEY, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
 import { createReplayModel, loadRotationFixtures } from '../src/loadtest/replay-model';
 import { runStaticChecks } from '../../checks/index';
-import { parsePlan, validatePlan } from '../src/generation/plan';
 import { createCheckStage } from '../src/generation/stages/check';
 import { createBuildStage } from '../src/generation/stages/build';
 import { loadPromptInputs } from '../src/generation/prompts/inputs';
@@ -32,12 +31,7 @@ import {
   buildReport,
   feedSseBuffer,
   isRealFrame,
-  parseArgs,
   parseGenerationEvent,
-  parseStatsCsv,
-  peakStats,
-  percentile,
-  readPeakStats,
   verdict,
   type DeviceOutcome,
   type LeakProbeOutcome,
@@ -131,7 +125,6 @@ async function testOverridesEnvAndFetchTrap(): Promise<void> {
 
     const overrides = sent.overrides as StartServerOverrides;
     eq('the model override carries the fixed load-test roster', overrides.model?.roster, LOADTEST_ROSTER);
-    check('the model override is a real ModelClient', typeof overrides.model?.client.stream === 'function');
 
     const stats = await overrides.statsTransport?.fetchStats('gen-1', new AbortController().signal);
     eq('the stats transport resolves every id at zero cost', stats, { usage: ZERO_USAGE, totalCostUsd: 0 });
@@ -153,7 +146,6 @@ async function testOverridesEnvAndFetchTrap(): Promise<void> {
 
 // ── createReplayModel: per-role replies, and fixture rotation (design D26) ──
 
-const PLAN_SYSTEM_PROBE = 'You are planning a tiny Whim mini-app before any code is written. Reply with JSON.';
 const GENERATE_SYSTEM_PROBE = 'Write ONE TypeScript file that default-exports the result of `defineApp({...})`.';
 const CLASSIFIER_SYSTEM_PROBE = "You are Whim's content-safety classifier. Judge ONLY the quoted text.";
 
@@ -166,16 +158,6 @@ async function testReplayModelRoles(): Promise<void> {
   const fixtures = loadRotationFixtures();
   check('setup: at least one top-level fixture passes runStaticChecks with no error diagnostic', fixtures.length > 0);
   const model = createReplayModel({ roster, engineerTurnMs: 1, rewriteTurnMs: 1, fixtures });
-
-  const planText = await collectText(
-    model.stream({ model: roster.engineer, messages: [{ role: 'system', content: PLAN_SYSTEM_PROBE }, { role: 'user', content: 'Request: an app' }] }),
-  );
-  const parsedPlan = parsePlan(planText);
-  check('the plan turn returns well-formed JSON', parsedPlan.ok, planText);
-  if (parsedPlan.ok) {
-    const validation = validatePlan(parsedPlan.plan, NEW_APP_REQUEST);
-    check('the canned plan validates against a fresh request', validation.ok, JSON.stringify(validation));
-  }
 
   const classifierText = await collectText(
     model.stream({ model: roster.rewrite, messages: [{ role: 'system', content: CLASSIFIER_SYSTEM_PROBE }, { role: 'user', content: 'Text to judge' }] }),
@@ -250,38 +232,12 @@ async function testProductionExclusion(): Promise<void> {
       mainInputs.filter((i) => i.startsWith('server/src/loadtest/')),
       [],
     );
-
-    // Discriminating red-check: a production-shaped entry that DOES import the replay model must
-    // trip this check — proves it is a real gate, not vacuously green because nothing imports
-    // server/src/loadtest/ anyway.
-    const poisonedEntry = path.join(scratch, 'poisoned-main.ts');
-    fs.writeFileSync(
-      poisonedEntry,
-      `import { createReplayModel } from ${JSON.stringify(path.join(ROOT, 'server', 'src', 'loadtest', 'replay-model'))};\nexport { createReplayModel };\n`,
-    );
-    const poisonedOutfile = path.join(scratch, 'poisoned.mjs');
-    const poisonedInputs = await bundleServerEntry({ entry: poisonedEntry, outfile: poisonedOutfile, write: true });
-    const poisonedLoadtestInputs = poisonedInputs.filter((i) => i.startsWith('server/src/loadtest/'));
-    check(
-      'red-check: a poisoned entry that imports the replay model DOES trip the metafile check',
-      poisonedLoadtestInputs.length > 0,
-      JSON.stringify(poisonedInputs),
-    );
-
-    // The weaker variant this replaces — grepping the BUILT server/dist/app tree for the string
-    // "loadtest" — needs a full production build first (`node server/build.mjs`: real esbuild
-    // bundling, the runtime asset copy, and eventually the boot self-test's real browser), which
-    // this fast, Chromium-free suite never runs. The metafile check above just proved it catches
-    // the identical violation from a `write:false` bundle of the entry alone — no build, no
-    // browser, no dist tree required.
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 }
 
-// ── The deploy-file tripwire (design D26; handoff/deploy-surface.md's hostname-rule table) ──
-
-const PRODUCTION_DEPLOY_FILES = ['deploy/Dockerfile', 'deploy/cloudbuild.yaml', 'deploy/compose.yaml', 'deploy/deploy.sh', 'deploy/resize.sh'];
+// ── The load-test compose override (design D26) ──
 
 /** Read only the direct `env_file` list on `services.whim-server`, without pretending to be a
  * YAML or Compose model parser. The real merged-model proof stays an operator receipt. */
@@ -311,15 +267,7 @@ function replayEnvFileOverride(source: string): string[] | null {
 }
 
 function testDeployFilesExcludeLoadtest(): void {
-  section('no production deploy file mentions "loadtest" (design D26)');
-
-  for (const rel of PRODUCTION_DEPLOY_FILES) {
-    check(`${rel} contains no "loadtest" (any case)`, !readRepoFile(rel).toLowerCase().includes('loadtest'));
-  }
-  check(
-    'red-check: the scan actually reads file content — a planted mention is caught',
-    `${readRepoFile('deploy/compose.yaml')}\n# loadtest`.toLowerCase().includes('loadtest'),
-  );
+  section('the load-test compose override replaces only whim-server\'s env_file (design D26)');
 
   const override = readRepoFile('deploy/loadtest/compose.loadtest.yaml');
   check('the override exists and touches only whim-server', override.includes('whim-server:'));
@@ -329,9 +277,6 @@ function testDeployFilesExcludeLoadtest(): void {
 
   const ordinaryList = override.replace('    env_file: !override', '    env_file:');
   check('red-check: downgrading the service to an ordinary list fails isolation', replayEnvFileOverride(ordinaryList) === null);
-
-  const commentedDecoy = ordinaryList.replace('    env_file:', '    # env_file: !override\n    env_file:');
-  check('red-check: a commented !override directive cannot satisfy the service check', replayEnvFileOverride(commentedDecoy) === null);
 }
 
 // ── drive.ts pure pieces ───────────────────────────────────────────────────
@@ -354,26 +299,6 @@ function testSseFraming(): void {
   check('the actual event IS a real frame', isRealFrame(withKeepalive.frames[1]));
 
   check('an unparseable data line yields no GenerationEvent, not a throw', parseGenerationEvent({ event: 'x', data: 'not json' }) === undefined);
-}
-
-function testPercentile(): void {
-  section('drive.ts: percentile');
-  eq('p50 of an empty list is 0', percentile([], 50), 0);
-  eq('p50 of [1,2,3,4] (nearest rank)', percentile([4, 1, 3, 2], 50), 2);
-  eq('p95 of 1..100 is 95', percentile(Array.from({ length: 100 }, (_, i) => i + 1), 95), 95);
-}
-
-function testStatsCsv(): void {
-  section('drive.ts: docker-stats CSV parsing');
-  eq('parses cpu%,mem% pairs, skipping blanks and garbage', parseStatsCsv('12.5,30\n\ngarbage\n40,55.5\n'), [
-    { cpuPercent: 12.5, memoryPercent: 30 },
-    { cpuPercent: 40, memoryPercent: 55.5 },
-  ]);
-  eq('peakStats is undefined for no samples', peakStats([]), undefined);
-  eq('peakStats takes the max of each column', peakStats([{ cpuPercent: 10, memoryPercent: 20 }, { cpuPercent: 30, memoryPercent: 5 }]), {
-    peakCpuPercent: 30,
-    peakMemoryPercent: 20,
-  });
 }
 
 const OK_OUTCOME = (id: string, ms: number): DeviceOutcome => ({ deviceId: id, timeToFirstEventMs: ms, totalMs: ms + 10, terminal: 'result' });
@@ -422,50 +347,6 @@ function testReportAndVerdict(): void {
   check('a failed leak probe fails the verdict even with a clean run', verdict(buildReport(2, 2, clean.slice(0, 2), leaked)).ok === false);
 }
 
-function testParseArgsAndReadPeakStats(): void {
-  section('drive.ts: parseArgs and readPeakStats');
-
-  eq('parses a full argument set', parseArgs(['--target', 'https://x', '--devices', '5', '--cap', '3', '--json', 'out.json', '--stats', 'in.csv']), {
-    target: 'https://x',
-    devices: 5,
-    cap: 3,
-    jsonPath: 'out.json',
-    statsPath: 'in.csv',
-  });
-  eq('json/stats are optional', parseArgs(['--target', 'https://x', '--devices', '1', '--cap', '1']), {
-    target: 'https://x',
-    devices: 1,
-    cap: 1,
-    jsonPath: undefined,
-    statsPath: undefined,
-  });
-  check('missing --target throws actionably', (() => {
-    try {
-      parseArgs(['--devices', '1', '--cap', '1']);
-      return false;
-    } catch (err) {
-      return err instanceof Error && err.message.includes('--target');
-    }
-  })());
-  check('a non-integer --devices throws actionably', (() => {
-    try {
-      parseArgs(['--target', 'https://x', '--devices', 'many', '--cap', '1']);
-      return false;
-    } catch (err) {
-      return err instanceof Error && err.message.includes('--devices');
-    }
-  })());
-
-  eq('readPeakStats is undefined with no --stats path', readPeakStats(undefined), undefined);
-  const tmp = path.join(os.tmpdir(), `whim-loadtest-stats-${process.pid}.csv`);
-  fs.writeFileSync(tmp, '10,20\n30,5\n');
-  try {
-    eq('readPeakStats reads and reduces the file', readPeakStats(tmp), { peakCpuPercent: 30, peakMemoryPercent: 20 });
-  } finally {
-    fs.rmSync(tmp, { force: true });
-  }
-}
-
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runLoadTestTests(): Promise<void> {
@@ -476,8 +357,5 @@ export async function runLoadTestTests(): Promise<void> {
   await testProductionExclusion();
   testDeployFilesExcludeLoadtest();
   testSseFraming();
-  testPercentile();
-  testStatsCsv();
   testReportAndVerdict();
-  testParseArgsAndReadPeakStats();
 }

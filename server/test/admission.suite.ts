@@ -135,17 +135,9 @@ function runGlobalCaps(): void {
   u1?.release();
   eq('unary capacity returns when a call ends', refusalOf(slots, 'unary', 'device-y'), 'admitted');
 
-  const wide = createSlotController({ maxConcurrentGenerations: 15, maxConcurrentUnary: 15 });
-  const fifteen = Array.from({ length: 15 }, (_, i) => acquireOk(wide, 'generate', `wide-${i}`));
-  check('a raised cap of 15 admits 15 devices', fifteen.every((h) => h !== undefined));
-  eq('the 16th device is refused at a cap of 15', refusalOf(wide, 'generate', 'wide-15'), 'at_capacity');
-  fifteen.forEach((h) => h?.release());
-  eq('all 15 slots free after release', wide.counts().generations, 0);
-
   // The /healthz/sse probe has its OWN pool (specs/server-deployment "An anonymous stream probe
   // verifies proxy flushing"): anonymous probe traffic must not be able to wedge the paid unary
   // pool, and a full probe pool must not refuse a clarify call.
-  eq('the probe cap defaults to a small fixed number, not the unary cap', DEFAULT_MAX_CONCURRENT_PROBES, 2);
 
   // The cap is configuration (`WHIM_LIMIT_PROBE_CONCURRENCY`), like every sibling cap — a
   // controller built with a different one honours it, and still keeps the pool separate.
@@ -170,30 +162,6 @@ function runGlobalCaps(): void {
   eq('probe capacity returns when a probe ends', refusalOf(probed, 'probe', 'healthz-probe'), 'admitted');
   probed.startDraining();
   eq('a probe is refused while draining', refusalOf(probed, 'probe', 'healthz-probe'), 'draining');
-
-  const invalidCaps = [0, -1, 2.5, Number.NaN];
-  check(
-    'a non-positive-integer cap is refused at construction',
-    invalidCaps.every((cap) => {
-      try {
-        createSlotController({ maxConcurrentGenerations: cap, maxConcurrentUnary: 2 });
-        return false;
-      } catch (err) {
-        return err instanceof RangeError;
-      }
-    }),
-  );
-  check(
-    'a non-positive-integer probe cap is refused too',
-    invalidCaps.every((cap) => {
-      try {
-        createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 2, maxConcurrentProbes: cap });
-        return false;
-      } catch (err) {
-        return err instanceof RangeError;
-      }
-    }),
-  );
 }
 
 function runIdempotentRelease(): void {

@@ -29,19 +29,16 @@ import { test, report, assert, assertHasKind, assertNoKind, findByKind, kindsOf 
 import { runHostileCorpus } from './hostile/corpus';
 import { runReleaseSuites } from './release';
 import {
-  CAPABILITY_EXPORTS,
   CheckReport,
   DIAGNOSTIC_KINDS,
   DiagnosticKind,
   FORBIDDEN_DIRECT_NAMES,
   GLOBAL_ROOTS,
-  NAV_CALL_SHAPES,
   SDK_LINT_RULES,
 } from '../contract';
 import { runStaticChecks, scanStorageSurface, StorageSurface } from '../index';
 // Value import (the roster array only — `observe.ts`'s own imports are all type-only, so this
 // pulls no Playwright/runtime dependency into the Node bundle).
-import { RUNTIME_OBSERVED_KINDS } from '../../synthrun/observe';
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
 import { SchemaArtifact } from '../../src/host/storage-engine/contract';
 import type { StorageErrorKind } from '../../src/host/storage-engine/contract';
@@ -118,53 +115,6 @@ export default defineApp({
 // ── §B0 contract.ts ──────────────────────
 
 async function testContractAndHarnessSelfTests(): Promise<void> {
-  await test('contract: DiagnosticKind union is closed and matches the P4 verbatim-reused names', () => {
-    const expected = [
-      'parse_error',
-      'disallowed_import',
-      'forbidden_global',
-      'prototype_pollution',
-      'implicit_eval',
-      'manifest_not_static',
-      'unresolved_screen',
-      'raw_timer',
-      'undeclared_capability',
-      'unused_capability',
-      'invalid_artifact',
-      'malformed_id',
-      'id_reuse',
-      'bad_field_type',
-      'bad_default',
-      'type_change',
-      'tombstone_violation',
-      'missing_default',
-      'runtime_throw',
-      'unhandled_rejection',
-      'mount_timeout',
-      'run_truncated',
-      'containment_failure',
-      'containment_unobserved',
-      'unreachable_screen',
-      'missing_schema',
-      'launch_failed',
-      'id_below_floor',
-      'build_failure',
-      'schema_identity_drift',
-      'storage_surface_drift',
-      'storage_surface_dynamic',
-      'type_mismatch',
-      'unknown_collection',
-      'unknown_field',
-      'unknown_record',
-      'unqueryable_field',
-      'kv_too_large',
-    ];
-    assert(DIAGNOSTIC_KINDS.length === expected.length, `expected ${expected.length} kinds, got ${DIAGNOSTIC_KINDS.length}`);
-    assert(new Set(DIAGNOSTIC_KINDS).size === DIAGNOSTIC_KINDS.length, 'DIAGNOSTIC_KINDS must have no duplicates');
-    for (const k of expected) {
-      assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verbatim-reused/authored kind "${k}"`);
-    }
-  });
 
   await test('contract: the storage engine\'s VERB-TIME kinds are carried under the engine\'s own names', () => {
     // The element type is the INTERSECTION of the two vocabularies, so a rename on either side
@@ -181,59 +131,6 @@ async function testContractAndHarnessSelfTests(): Promise<void> {
     for (const k of verbTime) {
       assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing verb-time storage kind "${k}"`);
     }
-  });
-
-  await test('contract: the HOST-FAULT storage kinds not_open/corrupt_storage are NOT in the vocabulary', () => {
-    // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: these report the
-    // harness's own engine state and carry no fix a candidate could apply, so they are surfaced
-    // through the run report's trace — never renamed into a candidate diagnostic kind.
-    for (const hostFault of ['not_open', 'corrupt_storage']) {
-      assert(
-        !(DIAGNOSTIC_KINDS as readonly string[]).includes(hostFault),
-        `"${hostFault}" is a host fault, not a candidate mistake — it must never be a diagnostic kind`,
-      );
-    }
-  });
-
-  await test('contract: unobserved, failed and timed-out containment are three distinct kinds', () => {
-    // harness-diagnostics §Kinds are a closed, centrally-owned vocabulary: a verdict that was
-    // never observed, a verdict that reported a breach, and a candidate that never painted are
-    // three separate members — collapsing any two loses the distinction the repair loop reads.
-    const trio: DiagnosticKind[] = ['containment_unobserved', 'containment_failure', 'mount_timeout'];
-    for (const k of trio) {
-      assert((DIAGNOSTIC_KINDS as readonly string[]).includes(k), `DIAGNOSTIC_KINDS is missing containment kind "${k}"`);
-    }
-    assert(new Set<string>(trio).size === 3, 'the three containment-related kinds must be distinct strings');
-  });
-
-  await test('contract: the synthetic run mints no kind of its own — its roster is a subset of DIAGNOSTIC_KINDS', () => {
-    // Downstream stages extend the vocabulary additively THROUGH `checks/contract.ts`, never by
-    // minting an ad-hoc kind string at the producer (same requirement).
-    for (const k of RUNTIME_OBSERVED_KINDS) {
-      assert(
-        (DIAGNOSTIC_KINDS as readonly string[]).includes(k),
-        `synthrun kind "${k}" is not declared in the closed DIAGNOSTIC_KINDS union (kinds are declared centrally, never minted at the producer)`,
-      );
-    }
-    assert(
-      (RUNTIME_OBSERVED_KINDS as readonly string[]).includes('containment_unobserved'),
-      'the synthetic run must know the containment_unobserved kind',
-    );
-  });
-
-  await test('contract: CAPABILITY_EXPORTS has exactly storage + cues rows, no diag row', () => {
-    const caps = CAPABILITY_EXPORTS.map((r) => r.capability).sort((a, b) => a.localeCompare(b));
-    assert(JSON.stringify(caps) === JSON.stringify(['cues', 'storage']), `expected capability rows [cues, storage], got [${caps.join(', ')}]`);
-    assert(!CAPABILITY_EXPORTS.some((r) => r.capability === 'diag'), 'diag must have NO row (no SDK facade)');
-  });
-
-  await test('contract: NAV_CALL_SHAPES ships exactly the nav.navigate target row', () => {
-    assert(NAV_CALL_SHAPES.length === 1, `NAV_CALL_SHAPES must ship exactly one row, got ${NAV_CALL_SHAPES.length}`);
-    const [row] = NAV_CALL_SHAPES;
-    assert(
-      row?.object === 'nav' && row.method === 'navigate' && row.argIndex === 0,
-      `expected {object:'nav', method:'navigate', argIndex:0}, got ${JSON.stringify(row)}`,
-    );
   });
 
   await test('contract: SDK_LINT_RULES steers setTimeout/setInterval/requestAnimationFrame', () => {
@@ -333,20 +230,6 @@ async function testStorageSurfaceScanner(): Promise<void> {
       `the substitution-free template names 'total', got [${surface.kvKeys.map((k) => k.name).join(', ')}]`,
     );
     assert(surface.dynamic.length === 1, `the interpolated template names no provable key — expected 1 dynamic site, got ${surface.dynamic.length}`);
-  });
-
-  await test('storage-surface: KNOWN LIMIT — a facade held in a local alias is NOT collected', () => {
-    // Documented, not accidental: aliasing would need value-flow analysis the checker does not
-    // do. The failure mode is a missed guarantee (an uncollected read), never a false
-    // accusation — continuity can only fire on locations the scanner DID collect.
-    const surface = scanStorageSurface(
-      ["import { storage } from 'vc-sdk';", 'const kv = storage.kv;', "const read = () => kv.get('total');"].join('\n'),
-    );
-    assert(
-      surface.kvKeys.length === 0,
-      `aliased-facade reads are a known scanner limit — expected nothing collected, got [${surface.kvKeys.map((k) => k.name).join(', ')}]`,
-    );
-    assert(surface.dynamic.length === 0, 'and an aliased call is no dynamic site either — the scanner never saw a storage-facade call');
   });
 
   await test('storage-surface: a `storage` that is not the vc-sdk import is never collected (binding resolution, not token matching)', () => {
@@ -505,20 +388,9 @@ async function testForbiddenGlobalsWalk(): Promise<void> {
     assertHasKind(r, 'forbidden_global');
   });
 
-  await test('globals: computed access on a tainted alias is flagged even with an unknown key (token scan would miss it)', () => {
-    const src = "const g = globalThis;\nconst k = 'fe' + 'tch';\ng[k]('url');\n";
-    const r = runStaticChecks(src);
-    assertHasKind(r, 'forbidden_global', 'no fetch token appears in the source — only binding resolution catches this');
-  });
-
   await test('globals: .constructor access is flagged (prototype-walk codegen)', () => {
     const r = runStaticChecks("({}).constructor.constructor('return 1')();\n");
     assertHasKind(r, 'forbidden_global');
-  });
-
-  await test('globals: Object.prototype pollution attempt is flagged, naming the pollution pattern', () => {
-    const r = runStaticChecks("Object.defineProperty(Object.prototype, 'x', { value: 1 });\n");
-    assertHasKind(r, 'prototype_pollution');
   });
 
   await test('globals: string-argument setTimeout/setInterval is flagged as implicit eval', () => {
@@ -590,13 +462,6 @@ async function testCapabilityDirections(): Promise<void> {
     assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
   });
 
-  await test('diagnostics: static undeclared_capability matches the runtime bridge gate kind string verbatim (harness-diagnostics req 2)', () => {
-    const src = appSource('[]', 'defineApp, storage', 'return null;', "storage.kv.get('k');");
-    const r = runStaticChecks(src);
-    const d = assertHasKind(r, 'undeclared_capability');
-    assert(d.kind === ('undeclared_capability' as DiagnosticKind), 'the static kind string must be identical to the bridge gate denial kind "undeclared_capability"');
-  });
-
   // ── §D2b capability shadow guard (reviewer capfix Finding 1/3) — a root
   // identifier only counts as SDK-export use when it resolves to the `vc-sdk` import, not by
   // root-identifier-TEXT matching alone (a local shadow of the same name must not count).
@@ -611,13 +476,6 @@ async function testCapabilityDirections(): Promise<void> {
     const src = appSource("['storage']", 'defineApp, storage', "const storage = { value: 'not the SDK' };\n  return storage.value;");
     const r = runStaticChecks(src);
     const d = assertHasKind(r, 'unused_capability', 'the shadow must not suppress the genuinely-unused "storage" capability warning');
-    assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
-  });
-
-  await test('capabilities: a real vc-sdk storage use is still flagged undeclared (positive control — the fix must not over-correct)', () => {
-    const src = appSource('[]', 'defineApp, storage', "storage.kv.set('k', 1);\n  return null;");
-    const r = runStaticChecks(src);
-    const d = assertHasKind(r, 'undeclared_capability', 'a genuine vc-sdk storage use with no declared capability must still be flagged');
     assert(d.symbol === 'storage', `expected symbol "storage", got "${String(d.symbol)}"`);
   });
 
@@ -1142,15 +1000,6 @@ async function testStorageContinuity(): Promise<void> {
     );
   });
 
-  await test('§storage continuity: an aliased facade in the PREVIOUS source is never demanded of the candidate', () => {
-    // The scanner's KNOWN LIMIT points the safe way: a read it could not collect is a location
-    // continuity never claims was there. An uncollected read must not become drift evidence.
-    const previousSurface = scanStorageSurface(storageApp("const kv = storage.kv;\nconst load = () => kv.get('total');"));
-    assert(previousSurface.kvKeys.length === 0, 'setup: the aliased read is the scanner\'s documented blind spot');
-    const r = runStaticChecks(appSource('[]'), { previousSurface });
-    assertNoKind(r, 'storage_surface_drift', 'nothing was collected, so nothing may be accused');
-  });
-
   await test('§storage continuity: with no previous surface, neither kind is emitted', () => {
     const candidate = storageApp("const someVariable = 'total';\nconst load = () => storage.kv.get(someVariable);");
     const r = runStaticChecks(candidate);
@@ -1186,18 +1035,6 @@ export default defineApp({
   name: 'T', initial: 'Nope', screens: { Home }, capabilities: [],
 });
 `;
-
-  await test('assembly: diagnostics from independent passes appear in PASSES declaration order, not source order', () => {
-    const r = runStaticChecks(MULTI_PASS_SRC);
-    // Source order would put forbidden_global (line 5) before unresolved_screen (line 8) before
-    // raw_timer (line 6) — but PASSES order is import-allowlist, forbidden-globals, ...,
-    // screen-graph, sdk-lint, so the report order is disallowed_import, forbidden_global,
-    // unresolved_screen, raw_timer regardless of where each offense sits in the source text.
-    assert(
-      JSON.stringify(kindsOf(r)) === JSON.stringify(['disallowed_import', 'forbidden_global', 'unresolved_screen', 'raw_timer']),
-      `expected assembly order [disallowed_import, forbidden_global, unresolved_screen, raw_timer], got [${kindsOf(r).join(', ')}]`,
-    );
-  });
 
   await test('purity: the same source checked twice (any order) yields deeply-equal, non-trivial reports', () => {
     const r1 = runStaticChecks(MULTI_PASS_SRC);

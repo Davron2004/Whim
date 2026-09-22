@@ -14,7 +14,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { lexProse, CLASS_PRIORITY, STATE_VOCABULARY } from '../../ui/whim-prose/lex';
+import { lexProse, STATE_VOCABULARY } from '../../ui/whim-prose/lex';
 import {
   flattenProse,
   isOffering,
@@ -83,14 +83,6 @@ function everyCopyString(): string[] {
 
 export async function runWhimProseTests(h: Harness): Promise<void> {
   // ── the lexer: deterministic, four classes, nothing inferred ────────────────
-
-  await h.test('lexer: the same input lexes the same way, every run', () => {
-    const text = 'Pour Timer is working again after 2 tries, you said “go faster”.';
-    const once = lexProse(text, [POUR_TIMER], 'go faster');
-    const twice = lexProse(text, [POUR_TIMER], 'go faster');
-    h.eq(once, twice, 'two runs over the same input must produce identical spans');
-    h.ok(once.length > 0, 'the fixture must actually lex something (non-vacuous)');
-  });
 
   await h.test('lexer: `app` matches the installed list, whole-word, in that app’s own hue', () => {
     const text = 'Pour Timer got faster.';
@@ -223,15 +215,6 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
   });
 
   await h.test('renderer: overlapping spans resolve by priority, dropped whole', () => {
-    h.ok(
-      CLASS_PRIORITY.yours < CLASS_PRIORITY.app &&
-        CLASS_PRIORITY.app < CLASS_PRIORITY.chg &&
-        CLASS_PRIORITY.chg < CLASS_PRIORITY.state &&
-        CLASS_PRIORITY.state < CLASS_PRIORITY.measure &&
-        CLASS_PRIORITY.measure < CLASS_PRIORITY.hedge,
-      'the priority order is yours > app > chg > state > measure > hedge',
-    );
-
     const quotedApp = renderProse('You asked to “rename Pour Timer” today.', {
       apps: [POUR_TIMER],
       storedPrompt: 'rename Pour Timer',
@@ -327,31 +310,6 @@ export async function runWhimProseTests(h: Harness): Promise<void> {
         `"${text}" reads identically with every mark removed`,
       );
     }
-  });
-
-  await h.test('copy: the v2 screens have their strings — no screen chain needs to invent one', () => {
-    const required = [
-      'homeComposerPlaceholder', 'flowContinue', 'composeHeadline', 'composeHelper',
-      'composeChipsEyebrow', 'clarifyHelper', 'planHeadline', 'planSubhead', 'planFooter',
-      'planBuild', 'buildTitle', 'buildSubtitle', 'buildStepReading', 'buildStepWriting',
-      'buildStepChecking', 'buildStepInstalling', 'buildLeaveRunning', 'doneBody', 'doneOpen',
-      'doneBackToApps', 'historyTitleSuffix', 'historyOriginYouSaid', 'historyOriginUnprompted',
-      'historyCurrentMarker', 'historyTouchedEyebrow', 'historyChangeFromHere',
-      'historyGoBackToThis', 'historyStartCopyHere', 'historyFilterWhatItDoes', 'historyFilterLook',
-      'historyFilterFixes', 'historyRestoreConfirm', 'historyCopyConfirm', 'historyCopyToast',
-      'orbActionChangeIt', 'orbActionHome', 'orbActionVersions',
-    ] as const;
-    for (const key of required) {
-      h.ok(typeof COPY[key] === 'string' && COPY[key].length > 0, `COPY.${key} is seeded`);
-    }
-    // `flowBusy` ("One moment") is gone — the clarify wait is the clarify screen's own loading
-    // state now, never a relabelled compose button (C2, `prompt-flow-screens.suite.ts`).
-    h.ok(!('flowBusy' in COPY), 'the grey-button placeholder label was removed, not merely renamed');
-    h.eq(
-      [COPY.buildStepReading, COPY.buildStepWriting, COPY.buildStepChecking, COPY.buildStepInstalling],
-      ['Reading your plan', 'Writing the app', 'Checking it runs safely', 'Putting it on your home screen'],
-      'the four build steps are the design’s, in order',
-    );
   });
 
   // ── channels ────────────────────────────────────────────────────────────────

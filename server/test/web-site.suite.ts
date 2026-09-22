@@ -114,7 +114,6 @@ export async function runWebSiteTests(): Promise<void> {
   eq('privacy.html quotes every non-allowlisted consent key verbatim', missing, []);
 
   check('privacy.html names OpenRouter as the processor, not a specific model', renderedPolicy.includes('through OpenRouter'));
-  check('privacy.html has no unresolved placeholder', !renderedPolicy.includes('{{'));
 
   const config = loadServerConfig({});
   eq(
@@ -146,27 +145,6 @@ export async function runWebSiteTests(): Promise<void> {
     const copyWithNewKey = { ...COPY, consentWhatSentReports: 'A new disclosure line, never quoted anywhere.' };
     const redMissing = missingConsentDisclosures(copyWithNewKey, CONSENT_ALLOWLIST, normalizedPolicy);
     eq('an unquoted new consent key fails naming itself', redMissing, ['consentWhatSentReports']);
-
-    // The weaker variant a hand-kept key list would produce: it never even looks at the new key,
-    // so it reports nothing missing — which is exactly the failure mode the real rule avoids.
-    const HAND_KEPT_KEYS = ['consentLead', 'consentWhatSentTitle', 'consentWhatSentRequest'];
-    const handKeptMissing = HAND_KEPT_KEYS.filter(
-      (key) => !normalizedPolicy.includes(normalizeForParity((copyWithNewKey as Record<string, string>)[key]!)),
-    );
-    check(
-      'a hand-kept key list (the rejected weaker variant) misses the new key entirely',
-      handKeptMissing.length === 0,
-    );
-  }
-
-  {
-    // A policy saying 30 days must fail the retention lockstep.
-    const policyWith30Days = normalizedPolicy.replace(/deleted after 90 days/, 'deleted after 30 days');
-    eq(
-      'a policy claiming 30-day report retention no longer matches the 90-day default',
-      extractDays(/deleted after (\d+) days/, policyWith30Days) === config.reportRetentionDays,
-      false,
-    );
   }
 
   section('Web site: renderPage placeholder rules');

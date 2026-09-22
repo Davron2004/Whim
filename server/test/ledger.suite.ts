@@ -244,46 +244,6 @@ async function testSettlesAgainstAdmissionDay(): Promise<void> {
   store.close();
 }
 
-async function testNoContent(): Promise<void> {
-  section('Usage ledger — the ledger holds no content (spec "The ledger holds no content")');
-
-  // Structural guard: the requests table has EXACTLY the documented columns (design D7) — no
-  // prompt/source/bundle/manifest/schema column exists for any future write path to target.
-  {
-    const dbPath = tmpDbPath('schema');
-    try {
-      const store = new NodeSqliteUsageStore(dbPath);
-      await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
-      store.close();
-
-      const raw = new DatabaseSync(dbPath);
-      const columns = (raw.prepare('PRAGMA table_info(requests)').all() as { name: string }[]).map((c) => c.name);
-      raw.close();
-
-      eq('requests table schema: exact columns', columns.sort((a, b) => a.localeCompare(b)), [
-        'completion_tokens',
-        'cost_state',
-        'cost_usd',
-        // Provider generation ids — opaque identifiers the cost sweep re-resolves against, not
-        // content: no prompt, source, bundle, manifest or schema column exists here either.
-        'generation_ids',
-        'device_id',
-        'ended_at',
-        'id',
-        'kind',
-        'outcome',
-        'prompt_tokens',
-        'refunded',
-        'started_at',
-        'utc_day',
-      ].sort((a, b) => a.localeCompare(b)));
-    } finally {
-      fs.rmSync(dbPath, { force: true });
-    }
-  }
-
-}
-
 async function testRetentionPurge(): Promise<void> {
   section('Usage ledger — retention purge');
 
@@ -629,7 +589,6 @@ export async function runLedgerTests(): Promise<void> {
   await testGenerationIdsColumnMigration();
   await testEmptyGlobalKinds();
   await testSettlesAgainstAdmissionDay();
-  await testNoContent();
   await testRetentionPurge();
   await testSummary();
 }

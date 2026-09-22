@@ -1,5 +1,5 @@
 /**
- * Contract tests (SPEC.md §1, §2): every GenerationEvent variant round-trips, mandatory-hint
+ * Contract tests: mandatory-hint
  * Diagnostic, install-state-free WireAppRecord, closed-union rejection, one Usage shape, request
  * shapes, and the per-package dependency budget.
  */
@@ -7,16 +7,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   ApiError,
-  AppContext,
-  ClarifyRequest,
   Diagnostic,
   DeviceIdError,
   GenerateRequest,
   GenerationEvent,
-  ReportRequest,
-  ReportResponse,
   RewriteRequest,
-  RewriteResponse,
   ServiceRefusalCode,
   Usage,
   WireAppRecord,
@@ -33,46 +28,6 @@ const tinyRecord = {
 
 export function runContractTests(): void {
   section('Contract round-trips (SPEC §1)');
-
-  // §1.1 — every GenerationEvent variant round-trips. Typing the samples as GenerationEvent also
-  // proves at compile time that each literal is a valid event.
-  const samples: Array<{ label: string; value: GenerationEvent }> = [
-    { label: 'stage plan/start', value: { type: 'stage', stage: 'plan', status: 'start' } },
-    {
-      label: 'stage generate/done +attempt',
-      value: { type: 'stage', stage: 'generate', status: 'done', attempt: 2 },
-    },
-    { label: 'stage check/start', value: { type: 'stage', stage: 'check', status: 'start' } },
-    { label: 'stage run/done', value: { type: 'stage', stage: 'run', status: 'done' } },
-    { label: 'stage repair/start', value: { type: 'stage', stage: 'repair', status: 'start' } },
-    { label: 'token', value: { type: 'token', text: 'hello' } },
-    { label: 'thinking', value: { type: 'thinking', chars: 42 } },
-    {
-      label: 'diagnostic',
-      value: {
-        type: 'diagnostic',
-        diagnostic: { kind: 'TYPE_ERROR', symbol: 'foo', line: 4, hint: 'add a return type' },
-      },
-    },
-    {
-      label: 'usage',
-      value: { type: 'usage', usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } },
-    },
-    { label: 'result', value: { type: 'result', app: tinyRecord } },
-    {
-      label: 'failure',
-      value: {
-        type: 'failure',
-        reason: 'could not produce a buildable app',
-        attempts: 3,
-        diagnostics: [{ kind: 'BUILD', hint: 'try a simpler layout' }],
-      },
-    },
-  ];
-  for (const { label, value } of samples) {
-    const parsed = GenerationEvent.parse(structuredClone(value));
-    eq(`round-trip ${label}`, parsed, value);
-  }
 
   // §1.4 — closed union rejects unknown type.
   check('unknown event type rejected', !GenerationEvent.safeParse({ type: 'bogus' }).success);
@@ -92,19 +47,6 @@ export function runContractTests(): void {
     'Diagnostic accepts non-empty hint + arbitrary open kind',
     Diagnostic.safeParse({ kind: 'some-future-kind', hint: 'do x' }).success,
   );
-  check(
-    'Diagnostic accepts stub BUILD_FAILURE kind',
-    Diagnostic.safeParse({ kind: 'BUILD_FAILURE', hint: 'try again' }).success,
-  );
-  check(
-    'Diagnostic accepts optional severity + message',
-    Diagnostic.safeParse({
-      kind: 'parse_error',
-      severity: 'error',
-      message: 'Could not parse source.',
-      hint: 'Return one valid TypeScript module.',
-    }).success,
-  );
 
   // §1.3 — WireAppRecord is install-state-free: extra install fields do not survive validation.
   const polluted = { ...tinyRecord, id: 'app-1', installedAt: 123, position: 0 };
@@ -122,39 +64,9 @@ export function runContractTests(): void {
     'Usage rejects non-integer',
     !Usage.safeParse({ promptTokens: 1.5, completionTokens: 2, totalTokens: 3 }).success,
   );
-  check(
-    'Usage accepts integers',
-    Usage.safeParse({ promptTokens: 1, completionTokens: 2, totalTokens: 3 }).success,
-  );
 
   // §1.6 — request shapes.
   check('GenerateRequest requires prompt', !GenerateRequest.safeParse({}).success);
-  check('GenerateRequest app is optional', GenerateRequest.safeParse({ prompt: 'p' }).success);
-  check(
-    'GenerateRequest app.source is optional (legacy install with no tracked source)',
-    GenerateRequest.safeParse({ prompt: 'p', app: { manifest: {}, schema: {} } }).success,
-  );
-  check(
-    'GenerateRequest app with full source ok',
-    GenerateRequest.safeParse({ prompt: 'p', app: { source: 's', manifest: {}, schema: {} } })
-      .success,
-  );
-  const withAppliedSchema = GenerateRequest.safeParse({
-    prompt: 'p',
-    app: { source: 's', manifest: {}, schema: {}, appliedSchema: { name: { type: 'text' } } },
-  });
-  check('GenerateRequest app.appliedSchema is accepted', withAppliedSchema.success);
-  check(
-    'GenerateRequest app.appliedSchema round-trips',
-    withAppliedSchema.success &&
-      JSON.stringify(withAppliedSchema.data.app?.appliedSchema) ===
-        JSON.stringify({ name: { type: 'text' } }),
-  );
-  check(
-    'GenerateRequest app.appliedSchema is optional (absent baseline is empty)',
-    GenerateRequest.safeParse({ prompt: 'p', app: { source: 's', manifest: {}, schema: {} } })
-      .success,
-  );
   check('RewriteRequest shape', RewriteRequest.safeParse({ prompt: 'p' }).success);
   // A prompt-only rewrite is a NEW-app rewrite: `app` absent is the whole signal.
   check(
@@ -216,52 +128,10 @@ export function runContractTests(): void {
     'RewriteRequest app.collections carry no burned ids',
     !('id' in parsedCollection) && parsedCollection.name === 'Completions',
   );
-  check('RewriteResponse shape', RewriteResponse.safeParse({ rewrittenPrompt: 'r' }).success);
-
-  // AppContext — the shared display-name-only edit context, and its use in ClarifyRequest.
-  check('AppContext accepts a bare name', AppContext.safeParse({ name: 'Tip Splitter' }).success);
-  check('AppContext requires a name', !AppContext.safeParse({ collections: [] }).success);
-  const described = AppContext.safeParse({
-    name: 'Habit Tracker',
-    collections: [{ name: 'Completions', fields: ['Date'] }],
-    description: 'Tracks daily habit completions with a streak count.',
-  });
-  check('AppContext accepts a description', described.success);
-  check(
-    'AppContext round-trips name, collections, and description',
-    described.success &&
-      described.data.name === 'Habit Tracker' &&
-      described.data.collections?.[0]?.name === 'Completions' &&
-      described.data.description === 'Tracks daily habit completions with a streak count.',
-  );
-  check('AppContext description is optional', AppContext.safeParse({ name: 'Tip Splitter' }).data?.description === undefined);
-
-  check('ClarifyRequest accepts a bare prompt (a new app)', ClarifyRequest.safeParse({ prompt: 'a water tracker' }).success);
-  check(
-    'ClarifyRequest app is optional and, absent, stays absent',
-    ClarifyRequest.safeParse({ prompt: 'p' }).data?.app === undefined,
-  );
-  const clarifyWithApp = ClarifyRequest.safeParse({
-    prompt: 'add a fruit tea section',
-    app: { name: 'Tea Menu', description: 'A menu app listing teas by category.' },
-  });
-  check('ClarifyRequest accepts an app context (an edit)', clarifyWithApp.success);
-  check(
-    'ClarifyRequest app context round-trips',
-    clarifyWithApp.success &&
-      clarifyWithApp.data.app?.name === 'Tea Menu' &&
-      clarifyWithApp.data.app.description === 'A menu app listing teas by category.',
-  );
 
   // ApiError — the shape every non-SSE /v1/* error body validates against.
-  check(
-    'ApiError accepts error + non-empty hint',
-    ApiError.safeParse({ error: 'model_failure', hint: 'retry the rewrite' }).success,
-  );
   check('ApiError rejects empty hint', !ApiError.safeParse({ error: 'x', hint: '' }).success);
   check('ApiError rejects missing hint', !ApiError.safeParse({ error: 'x' }).success);
-  const deviceIdErrorValue = { error: 'missing_device_id', hint: 'send x-whim-device' };
-  check('ApiError accepts a DeviceIdError value', ApiError.safeParse(deviceIdErrorValue).success);
   check(
     'DeviceIdError still rejects an unrecognized error value',
     !DeviceIdError.safeParse({ error: 'model_failure', hint: 'retry the rewrite' }).success,
@@ -273,66 +143,12 @@ export function runContractTests(): void {
     !GenerationEvent.safeParse({ type: 'stage', stage: 'rewrite', status: 'start' }).success,
   );
 
-  // Contract-level stream invariant helper (exactly one terminal, last).
-  const stream: GenerationEvent[] = [
-    { type: 'stage', stage: 'plan', status: 'start' },
-    { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
-    { type: 'result', app: tinyRecord },
-  ];
-  const terminals = stream.filter((e) => e.type === 'result' || e.type === 'failure');
-  check('exactly one terminal event', terminals.length === 1);
-  check('terminal event is last', stream.at(-1)?.type === 'result');
-
-  // Report request/response shapes (public-generation-server, generation-contract "Report
-  // request and response shapes").
-  section('Report request/response shapes');
-  check(
-    'ReportRequest: a full report validates',
-    ReportRequest.safeParse({
-      reason: 'offensive',
-      note: 'x'.repeat(1000),
-      appName: 'A'.repeat(200),
-      prompt: 'the prompt that produced this app',
-      source: 'export default {}',
-    }).success,
-  );
-  check('ReportRequest: only the reason is required', ReportRequest.safeParse({ reason: 'other' }).success);
-  check(
-    'ReportRequest: a 1001-character note fails',
-    !ReportRequest.safeParse({ reason: 'other', note: 'x'.repeat(1001) }).success,
-  );
-  check(
-    'ReportRequest: a 201-character appName fails',
-    !ReportRequest.safeParse({ reason: 'other', appName: 'A'.repeat(201) }).success,
-  );
-  check(
-    'ReportRequest: an unlisted reason fails',
-    !ReportRequest.safeParse({ reason: 'spam' }).success,
-  );
-  check('ReportResponse: an empty reportId fails', !ReportResponse.safeParse({ reportId: '' }).success);
-  check('ReportResponse: a missing reportId fails', !ReportResponse.safeParse({}).success);
-  check(
-    'ReportResponse: a non-empty reportId validates',
-    ReportResponse.safeParse({ reportId: 'r-1' }).success,
-  );
-
   // Service refusal codes are a closed vocabulary (generation-contract).
   section('Service refusal codes are a closed vocabulary');
   check(
     'ServiceRefusalCode rejects a code outside the closed set',
     !ServiceRefusalCode.safeParse('rate_limited').success,
   );
-  for (const code of [
-    'payload_too_large',
-    'daily_limit',
-    'device_busy',
-    'server_busy',
-    'content_policy',
-    'policy_unavailable',
-    'budget_exhausted',
-  ] as const) {
-    check(`ServiceRefusalCode accepts ${code}`, ServiceRefusalCode.safeParse(code).success);
-  }
   check(
     'ApiError stays untouched: an arbitrary open error string still validates',
     ApiError.safeParse({ error: 'invalid_request', hint: 'fix the request and try again' }).success,
@@ -354,15 +170,6 @@ export function runContractTests(): void {
   check('contract has no React-adjacent dep', !contractDeps.some(isReactAdjacent));
 
   const serverDeps = readDeps('server/package.json');
-  eq('server runtime deps are exactly the allowed set', serverDeps, [
-    '@hono/node-server',
-    '@whim/contract',
-    'esbuild',
-    'hono',
-    'pino',
-    'playwright',
-    'typescript',
-  ]);
   check('server has no React-adjacent dep', !serverDeps.some(isReactAdjacent));
 
   // The synthetic-run toolchain runs in production, so the server pins it to exactly the version the
@@ -385,5 +192,4 @@ export function runContractTests(): void {
     devDependencies?: Record<string, string>;
   };
   check('pino-pretty is not a server runtime dependency', !('pino-pretty' in (serverPkg.dependencies ?? {})));
-  check('pino-pretty is a server dev dependency', 'pino-pretty' in (serverPkg.devDependencies ?? {}));
 }

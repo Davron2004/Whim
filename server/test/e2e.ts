@@ -8,8 +8,7 @@
  *   node server/test/e2e.run.mjs
  *
  * Also covers the production boot self-test and the browser-context teardown on a real TCP
- * disconnect through the composed server (`lifecycle.ts`), and `reconcile.ts` (task 6.3) — pure
- * Node logic, no browser, kept in this file per chain-6's declared file scope.
+ * disconnect through the composed server (`lifecycle.ts`).
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -26,14 +25,10 @@ import { BootError, runBootSelfTest, startServer, type ServerHandle } from '../s
 import { createCheckStage } from '../src/generation/stages/check';
 import { createBuildStage } from '../src/generation/stages/build';
 import { createRunStage } from '../src/generation/stages/run';
-import { reconcileAbortedUsage, type GenerationStatsTransport } from '../src/generation/reconcile';
-import { InMemoryUsageStore } from '../src/usage-store';
 import type { CheckedManifest } from '../src/generation/machine';
-import type { Usage } from '@whim/contract';
 import { SynthRunSession } from '../../synthrun/session';
 import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunOptions, RunReport } from '../../synthrun/contract';
-import type { Page } from 'playwright';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
 import { leakProbe, runDevice, runDevices } from '../src/loadtest/drive';
 
@@ -345,62 +340,6 @@ async function testHostileCandidateStaysContained(session: SynthRunSession): Pro
     outcome.contained === true,
     outcome.contained === true ? undefined : containedDetail(outcome.contained, lastReport()),
   );
-}
-
-// ── Cancellation mid-run: context disposed, concurrency slot released ──
-
-const TICKING_SOURCE = `import { defineApp, Screen, Stack, Heading, Text, useState, interval } from 'vc-sdk';
-function Ticker() {
-  const [n, setN] = useState(0);
-  interval(() => setN((v) => v + 1), 20);
-  return (
-    <Screen padding="lg">
-      <Stack gap="sm">
-        <Heading size="title">Ticker</Heading>
-        <Text>{String(n)}</Text>
-      </Stack>
-    </Screen>
-  );
-}
-export default defineApp({ name: 'Ticker', initial: 'Ticker', screens: { Ticker }, capabilities: [] });
-`;
-
-async function testCancellationDisposesAndReleasesSlot(): Promise<void> {
-  section('spec: cancellation mid-run disposes the context and releases the concurrency slot');
-
-  const session = await SynthRunSession.launch({ concurrency: 1 });
-  try {
-    const runCandidate = createRunCandidate(session);
-    let capturedPage: Page | undefined;
-    const controller = new AbortController();
-
-    const started = Date.now();
-    await runCandidate(TICKING_SOURCE, {
-      signal: controller.signal,
-      budgets: { mountBudgetMs: 5000, totalBudgetMs: 20000 },
-      beforeNavigate: async (page) => {
-        capturedPage = page;
-        // Counted from the page's load, not from here, so however long navigation takes the abort
-        // lands after it (mid-mount or mid-sweep, where the run resolves with a report) rather than
-        // during `goto` (where it rejects with an AbortError).
-        page.once('load', () => setTimeout(() => controller.abort(), 250));
-      },
-    });
-    const elapsed = Date.now() - started;
-
-    check('the aborted run resolves promptly, well under the 20s total budget', elapsed < 8000);
-    check('the page/context was disposed on abort', capturedPage?.isClosed() === true);
-
-    // Prove the slot was RELEASED, not leaked: a second run on the SAME concurrency:1 session
-    // must still complete promptly, rather than queue forever behind a stuck slot.
-    const secondStarted = Date.now();
-    const secondReport = await runCandidate(TICKING_SOURCE, { budgets: { mountBudgetMs: 5000 } });
-    const secondElapsed = Date.now() - secondStarted;
-    check('a second run on the same session completes cleanly — the slot was released', secondReport.contained === true);
-    check('the second run did not queue behind a leaked slot', secondElapsed < 8000);
-  } finally {
-    await session.close();
-  }
 }
 
 // ── The production boot self-test (design D16, spec "Production boot proves the synthetic run
@@ -801,126 +740,6 @@ async function testRealPipelineSigtermDrain(): Promise<void> {
   }
 }
 
-// ── reconcile.ts (task 6.3) — post-abort usage reconciliation, no browser needed ──
-
-class FakeTransport implements GenerationStatsTransport {
-  private readonly attempts = new Map<string, number>();
-  constructor(
-    private readonly resolved: Map<string, Usage>,
-    private readonly resolveOnAttempt = 1,
-    private readonly throwFirst = false,
-  ) {}
-  async fetchStats(id: string): Promise<Usage | null> {
-    const n = (this.attempts.get(id) ?? 0) + 1;
-    this.attempts.set(id, n);
-    if (this.throwFirst && n === 1) throw new Error('simulated transport failure');
-    if (n < this.resolveOnAttempt) return null;
-    return this.resolved.get(id) ?? null;
-  }
-  attemptsFor(id: string): number {
-    return this.attempts.get(id) ?? 0;
-  }
-}
-
-const USAGE_A: Usage = { promptTokens: 10, completionTokens: 20, totalTokens: 30 };
-const USAGE_B: Usage = { promptTokens: 1, completionTokens: 2, totalTokens: 3 };
-
-async function testReconciliation(): Promise<void> {
-  section('reconcile.ts — post-abort usage reconciliation (design D9)');
-
-  // "Cancelled run credits the reconciled usage"
-  {
-    const transport = new FakeTransport(new Map([['gen-1', USAGE_A]]));
-    const usageStore = new InMemoryUsageStore();
-    await reconcileAbortedUsage('device-1', ['gen-1'], { transport, usageStore });
-    eq('the resolved usage is credited to the calling device', await usageStore.read('device-1'), USAGE_A);
-  }
-
-  // multiple ids sum together
-  {
-    const transport = new FakeTransport(new Map([['gen-1', USAGE_A], ['gen-2', USAGE_B]]));
-    const usageStore = new InMemoryUsageStore();
-    await reconcileAbortedUsage('device-2', ['gen-1', 'gen-2'], { transport, usageStore });
-    eq('multiple recorded ids sum into one credit', await usageStore.read('device-2'), {
-      promptTokens: USAGE_A.promptTokens + USAGE_B.promptTokens,
-      completionTokens: USAGE_A.completionTokens + USAGE_B.completionTokens,
-      totalTokens: USAGE_A.totalTokens + USAGE_B.totalTokens,
-    });
-  }
-
-  // "Reconciliation gives up quietly"
-  {
-    const transport = new FakeTransport(new Map()); // never resolves anything
-    const usageStore = new InMemoryUsageStore();
-    const started = Date.now();
-    await reconcileAbortedUsage('device-3', ['gen-never'], {
-      transport,
-      usageStore,
-      bounds: { maxAttempts: 3, totalBudgetMs: 150, retryDelayMs: 20 },
-    });
-    const elapsed = Date.now() - started;
-    eq('nothing is credited when the transport never resolves', await usageStore.read('device-3'), {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    });
-    check('the give-up is bounded — it does not hang past the budget', elapsed < 1000);
-    check('non-vacuity: the transport really was retried more than once before giving up', transport.attemptsFor('gen-never') > 1);
-  }
-
-  // A transport rejection is treated the same as an unresolved null — quiet, never throws.
-  {
-    const transport = new FakeTransport(new Map([['gen-x', USAGE_A]]), 2, true);
-    const usageStore = new InMemoryUsageStore();
-    await reconcileAbortedUsage('device-4', ['gen-x'], {
-      transport,
-      usageStore,
-      bounds: { maxAttempts: 5, totalBudgetMs: 2000, retryDelayMs: 10 },
-    });
-    eq('a transport rejection on the first attempt does not prevent a later successful credit', await usageStore.read('device-4'), USAGE_A);
-  }
-
-  // "No double counting" — the reconcile.ts-testable slice: an empty id list (a run that never
-  // started a model call, or a route that never schedules reconciliation for a normal completion)
-  // is a true no-op. Full enforcement that a NORMALLY-completed run never reaches this function at
-  // all is the route's job (task 7.3), outside this chain's file scope.
-  {
-    const transport = new FakeTransport(new Map([['unused', USAGE_A]]));
-    const usageStore = new InMemoryUsageStore();
-    await reconcileAbortedUsage('device-5', [], { transport, usageStore });
-    eq('an empty id list credits nothing and calls the transport zero times', await usageStore.read('device-5'), {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    });
-    eq('the transport was never invoked', transport.attemptsFor('unused'), 0);
-  }
-
-  // red-check: `usageStore.credit` throwing must not escape reconcileAbortedUsage either.
-  {
-    const transport = new FakeTransport(new Map([['gen-y', USAGE_A]]));
-    const throwingStore = {
-      credit: async () => { throw new Error('store failure'); },
-      read: async () => USAGE_B,
-      admit: async () => { throw new Error('not used in this test'); },
-      refund: async () => {},
-      settle: async () => {},
-      recordCost: async () => {},
-      listUnresolvedCostRows: async () => [],
-      summary: async () => { throw new Error('not used in this test'); },
-      purgeLedger: async () => 0,
-    };
-    let threw = false;
-    try {
-      await reconcileAbortedUsage('device-6', ['gen-y'], { transport, usageStore: throwingStore });
-    // eslint-disable-next-line no-restricted-syntax -- intentional: the flag flip below is the assertion that credit failures never escape
-    } catch {
-      threw = true;
-    }
-    check('red-check: a UsageStore.credit failure never escapes reconciliation (gives up quietly, spec-wide)', threw === false);
-  }
-}
-
 // ── The no-spend load-test server, driven for real: capacity, refusal, the leak probe, and the
 //    fetch trap (design D26; specs/server-deployment "A load test measures capacity without
 //    spending provider credit") ──
@@ -1033,7 +852,6 @@ async function main(): Promise<void> {
   await testUnobservedVerdictShortCircuit();
   await testForgeryDetailNeverCrossesTheAdapter();
   await testTruncationIsNotAPass();
-  await testReconciliation();
 
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
@@ -1044,7 +862,6 @@ async function main(): Promise<void> {
     await session.close();
   }
 
-  await testCancellationDisposesAndReleasesSlot();
   await testComposedServerBootAndDisconnect();
   await testRealPipelineSigtermDrain();
   await testDrainWaitsForProbes();

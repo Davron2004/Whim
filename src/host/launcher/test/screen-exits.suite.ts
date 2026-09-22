@@ -76,14 +76,6 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
     h.eq(fake.fire(), false, 'system back falls through to the platform default when current() is null');
   });
 
-  await h.test('bindSystemBack: the returned unsubscribe removes the listener', () => {
-    const fake = fakeBackHandler();
-    const unsubscribe = bindSystemBack(fake.api, () => null);
-    h.ok(!fake.removed(), 'not removed before unsubscribe is called');
-    unsubscribe();
-    h.ok(fake.removed(), 'unsubscribe removes the underlying listener');
-  });
-
   // ── useSystemBackWith (design D9): the real once-per-mount / latest-handler contract, REALLY
   // rendered — the `[]` deps of its `useEffect` are what `use-system-back.ts` relies on, and no
   // fixed-count of a local variable reassignment can exercise a React re-render at all. ──────────
@@ -177,61 +169,6 @@ export async function runScreenExitsTests(h: Harness): Promise<void> {
       );
     });
     h.eq(seen, undefined, 'with no onLeave prop given, the fallback gets none — Home stays Try again only');
-    TestRenderer.act(() => tree!.unmount());
-  });
-
-  await h.test('boundary: invoking the passed-through onLeave calls the spy exactly once', () => {
-    let calls = 0;
-    const onLeave = () => {
-      calls++;
-    };
-    let received: (() => void) | undefined;
-    const Fallback = (props: Readonly<ScreenFallbackProps>) => {
-      received = props.onLeave;
-      return React.createElement('fallback');
-    };
-
-    let tree: TestRenderer.ReactTestRenderer | undefined;
-    TestRenderer.act(() => {
-      tree = TestRenderer.create(
-        React.createElement(
-          ScreenBoundary,
-          { screen: 'onleave-invoked', FallbackComponent: Fallback, onLeave },
-          React.createElement(controlledChild({ throws: true })),
-        ),
-      );
-    });
-    TestRenderer.act(() => received!());
-    h.eq(calls, 1, 'the fallback’s call to onLeave reaches the exact function the boundary was given, once');
-    TestRenderer.act(() => tree!.unmount());
-  });
-
-  await h.test('boundary: a changed screen still resets the boundary with onLeave given', () => {
-    const onLeave = () => {};
-    const Fallback = () => React.createElement('fallback');
-
-    let tree: TestRenderer.ReactTestRenderer | undefined;
-    TestRenderer.act(() => {
-      tree = TestRenderer.create(
-        React.createElement(
-          ScreenBoundary,
-          { screen: 'screen-a', FallbackComponent: Fallback, onLeave },
-          React.createElement(controlledChild({ throws: true })),
-        ),
-      );
-    });
-    h.eq((tree!.toJSON() as { type: string }).type, 'fallback', 'screen-a is in its error state');
-
-    TestRenderer.act(() => {
-      tree!.update(
-        React.createElement(
-          ScreenBoundary,
-          { screen: 'screen-b', FallbackComponent: Fallback, onLeave },
-          React.createElement('ok'),
-        ),
-      );
-    });
-    h.eq((tree!.toJSON() as { type: string }).type, 'ok', 'the changed reset key still clears the error state with onLeave given');
     TestRenderer.act(() => tree!.unmount());
   });
 

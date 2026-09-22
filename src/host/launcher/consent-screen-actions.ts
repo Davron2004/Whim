@@ -44,11 +44,3 @@ export function consentScreenActions(mode: ConsentScreenMode): readonly ConsentA
     { action: 'decline', kind: 'plain', grants: false },
   ];
 }
-
-/** Every mode SHALL offer at least one exit that leaves without granting anything. Hardware back
- *  calls the very same non-granting rows' handler (`onClose`), but hardware back does not exist on
- *  iOS — so a mode with no `grants: false` row here would strand an iOS user who declines with no
- *  way off the screen except agreeing. */
-export function hasNonGrantingExit(mode: ConsentScreenMode): boolean {
-  return consentScreenActions(mode).some((row) => !row.grants);
-}

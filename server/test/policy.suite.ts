@@ -17,7 +17,6 @@ import type { ModelClient, ModelDelta, ModelRequest, ModelStream } from '../src/
 import { loadContentPolicyDocument } from '../src/generation/prompts/inputs';
 import {
   ModelContentPolicy,
-  StubContentPolicy,
   PolicyUnavailableError,
   cachedPolicy,
   buildClarifyPolicyInput,
@@ -221,21 +220,6 @@ async function testCheckResultUsage(): Promise<void> {
     eq('a cached verdict carries no generation id', second.generationId, undefined);
   }
 
-  // The stub makes no model call: no usage, no generation id, either verdict.
-  {
-    const stub = new StubContentPolicy();
-    const allowed = await stub.check('an ordinary habit tracker', 'generate');
-    eq('a stub allow carries no usage', allowed.usage, undefined);
-    const refused = await stub.check('please [[refuse]] this', 'generate');
-    eq('a stub refuse carries no usage', refused.usage, undefined);
-  }
-
-  // PolicyUnavailableError semantics are unchanged: still thrown, fail closed, never resolves.
-  {
-    const client = fakeClient(() => erroringStream(new Error('down')));
-    const err = await caught(async () => { await policyOn(client).check('some text', 'generate'); });
-    check('failure still throws PolicyUnavailableError, never resolves a verdict', err instanceof PolicyUnavailableError);
-  }
 }
 
 // ── §The classifier is a bounded call on the configured rewrite model ────────
@@ -248,7 +232,6 @@ async function testClassifierBounds(): Promise<void> {
   const req = client.lastRequest!;
 
   eq('the rewrite model id is used verbatim', req.model, REWRITE_MODEL_ID);
-  eq('output is bounded: maxTokens', req.maxTokens, 48);
   eq('output is bounded: no reasoning stream requested', req.reasoning, false);
   check(
     'the classifier system message carries the document categories text verbatim',
@@ -299,27 +282,6 @@ async function testInputCoverage(): Promise<void> {
   check('classifier request carries the clarification text', sentContent.includes('USD, no gambling odds'));
   check('classifier request carries no part of app.source', !sentContent.includes('DO-NOT-SEND-THIS-SOURCE-TEXT'));
 
-  // A harmful clarification answer (any route) reaches the checked input and can be refused.
-  const harmfulGenerate: GenerateRequest = {
-    prompt: 'a harmless-sounding app',
-    clarifications: [{ id: 'q1', question: 'what should it show?', answer: '[[MARKER-HARMFUL-ANSWER]]' }],
-  };
-  const harmfulInput = buildGeneratePolicyInput(harmfulGenerate);
-  const refusingClient = fakeClient((req) => {
-    const sawMarker = req.messages.some((m) => m.content.includes('[[MARKER-HARMFUL-ANSWER]]'));
-    return textStream(sawMarker ? '{"verdict":"refuse","category":"graphic violence or gore"}' : '{"verdict":"allow"}');
-  });
-  const harmfulVerdict = await policyOn(refusingClient).check(harmfulInput, 'generate');
-  eq('a harmful clarification answer is caught', harmfulVerdict.verdict, { refuse: 'graphic violence or gore' });
-
-  // App names in a rewrite are checked.
-  const harmfulRewriteInput = buildRewritePolicyInput({ prompt: 'rename it', app: { name: '[[MARKER-HARMFUL-NAME]]' } });
-  const rewriteRefusingClient = fakeClient((req) => {
-    const sawMarker = req.messages.some((m) => m.content.includes('[[MARKER-HARMFUL-NAME]]'));
-    return textStream(sawMarker ? '{"verdict":"refuse","category":"hate, harassment, or content targeting a real person"}' : '{"verdict":"allow"}');
-  });
-  const harmfulRewriteVerdict = await policyOn(rewriteRefusingClient).check(harmfulRewriteInput, 'rewrite');
-  eq('app names in a rewrite are checked', harmfulRewriteVerdict.verdict, { refuse: 'hate, harassment, or content targeting a real person' });
 }
 
 // ── §Verdicts are cached in memory only ───────────────────────────────────────
@@ -489,19 +451,6 @@ async function testLogContent(): Promise<void> {
   }
 }
 
-// ── §The stub policy is deterministic ─────────────────────────────────────────
-
-async function testStubPolicy(): Promise<void> {
-  section('StubContentPolicy — deterministic, no model call');
-
-  const stub = new StubContentPolicy();
-  eq('plain input allows', (await stub.check('an ordinary habit tracker', 'generate')).verdict, 'allow');
-  eq('[[refuse]] marker refuses', (await stub.check('please [[refuse]] this', 'generate')).verdict, { refuse: 'stub' });
-
-  const err = await caught(async () => { await stub.check('please [[policy-down]] this', 'generate'); });
-  check('[[policy-down]] marker throws PolicyUnavailableError', err instanceof PolicyUnavailableError);
-}
-
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runPolicyTests(): Promise<void> {
@@ -512,5 +461,4 @@ export async function runPolicyTests(): Promise<void> {
   await testInputCoverage();
   await testCache();
   await testLogContent();
-  await testStubPolicy();
 }

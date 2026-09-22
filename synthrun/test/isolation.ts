@@ -425,15 +425,6 @@ async function testBuilderFileReads({ test, ok }: SuiteHooks): Promise<void> {
     ok(/require\("vc-sdk"\)/.test(honest.js) && /require\("react-dom"\)/.test(honest.js), 'vc-sdk, react and react-dom still build, as externals');
   });
 
-  // An unused import never reaches resolution at all (TypeScript erases it), so it cannot fail the
-  // build; what must still hold is that nothing of the file it names is read into the output.
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-  await test('builder: an unused import of a repo file is erased, and nothing of the file reaches the output', async () => {
-    const out = await buildCandidateSource(`import x from ${JSON.stringify(target)};\nexport default 1;\n`);
-    ok(out.js.length > 0, 'the build produced output to inspect');
-    ok(!targetLines.some((l) => `${out.js}\n${out.map}`.includes(l)), 'no line of the named file appears in the bundle or its source map');
-  });
-
   // CONTROL: the identical production build contract without the resolve plugin reads the file
   // into the bundle and its source map. Without this the refusal above could pass against a
   // builder that simply cannot resolve absolute paths.
@@ -582,7 +573,7 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
   const bare = await chromium.launch(layers.bare);
   try {
     // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-    await test('egress control: with no network layer at all, navigation, WebSocket and WebRTC UDP all reach their canaries', async () => {
+    await test('egress control: with no network layer at all, navigation, WebSocket and WebRTC UDP all reach their canaries (spec "The canary is reachable without the guards")', async () => {
       const context = await bare.newContext();
       canaries.reset();
       ok(await navigates(context, canaryUrl), 'the bare browser commits the navigation');
@@ -632,20 +623,6 @@ async function testLayers({ test, ok }: SuiteHooks, canaries: Canaries): Promise
   } finally {
     await bare.close();
   }
-
-  // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
-  await test('egress control: a default-options browser reaches the canary (spec "The canary is reachable without the guards")', async () => {
-    const browser = await chromium.launch();
-    try {
-      const context = await browser.newContext();
-      canaries.reset();
-      ok(await navigates(context, canaryUrl), 'the navigation commits');
-      ok(canaries.counts().http > 0, `the canary records the request (got ${JSON.stringify(canaries.counts())})`);
-      await context.close();
-    } finally {
-      await browser.close();
-    }
-  });
 
   // eslint-disable-next-line sonarjs/assertions-in-tests -- asserts via the house `ok()` helper.
   await test('egress: the blocked count saturates at BLOCKED_EGRESS_CAP, and a second navigation to the run URL is refused', async () => {

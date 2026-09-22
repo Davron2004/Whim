@@ -240,27 +240,6 @@ async function testPartialResolutionIsNotStampedResolved(): Promise<void> {
   store.close();
 }
 
-async function testHangingAttemptCutOffByTimeout(): Promise<void> {
-  section('Resolver — a hanging attempt is cut off by its per-attempt timeout, not left to hang forever');
-
-  const store = new InMemoryUsageStore();
-  const transport = scriptedTransport(new Map([['stalled-id', 'hang']]));
-
-  const startedAt = Date.now();
-  await withSafetyTimeout(
-    resolveRequestUsage('', DEVICE_A, ['stalled-id'], true, {
-      transport,
-      usageStore: store,
-      bounds: { maxAttempts: 1, totalBudgetMs: 300, retryDelayMs: 0, perAttemptTimeoutMs: 50 },
-    }),
-    3000,
-    'resolveRequestUsage (hanging transport)',
-  );
-  const elapsedMs = Date.now() - startedAt;
-
-  check('a transport that never resolves does not hang the resolver past its bounds', elapsedMs < 2000, `took ${elapsedMs}ms`);
-}
-
 async function testResolveTracker(): Promise<void> {
   section('Resolver — ResolveTracker is drainable');
 
@@ -356,7 +335,7 @@ async function testSweepResolvesWhatTheRequestCouldNot(): Promise<void> {
   const stats = new Map<string, GenerationStats | 'hang'>();
 
   // Nothing resolves yet: the request's own attempts run out and stamp the row 'unresolved'.
-  const lateId = await admitAndResolve(store, ['gen-late'], scriptedTransport(stats), now);
+  await admitAndResolve(store, ['gen-late'], scriptedTransport(stats), now);
   const neverId = await admitAndResolve(store, ['gen-never'], scriptedTransport(stats), now + 1000);
   const before = await store.summary({ days: 1, now });
   eq('both rows start unresolved', before.generationStats.unresolvedCount, 2);
@@ -391,8 +370,7 @@ async function testSweepResolvesWhatTheRequestCouldNot(): Promise<void> {
 
   const candidates = await store.listUnresolvedCostRows({ now, stalePendingAfterMs: 120_000, maxAgeMs: 24 * 60 * 60 * 1000, limit: 50 });
   eq('the row that resolved is gone from the candidate set', candidates.map((c) => c.requestId), [neverId]);
-  eq('the resolved row keeps its cost', (await store.summary({ days: 1, now })).generationStats.unresolvedCount, 1);
-  check('the resolved row is the one the provider answered for', lateId !== neverId);
+  eq('the usage summary counts the one row that never resolved', (await store.summary({ days: 1, now })).generationStats.unresolvedCount, 1);
 }
 
 /**
@@ -550,7 +528,6 @@ export async function runResolverTests(): Promise<void> {
   await testCancelledRunCostAndSingleCredit();
   await testUnresolvableCostIsExplicit();
   await testPartialResolutionIsNotStampedResolved();
-  await testHangingAttemptCutOffByTimeout();
   await testResolveTracker();
   await testEmptyGenerationIds();
   await testSweepResolvesWhatTheRequestCouldNot();

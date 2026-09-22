@@ -237,14 +237,6 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.eq(t.store.get('a')![1].t, 200, 'and is stamped at the instant the stream ended');
   });
 
-  await h.test('run-journal: a success terminal entry carries no failure field', async () => {
-    const t = makeStore();
-    t.store.appendTerminal('a');
-    const entry = t.store.get('a')![0];
-    h.eq(entry.kind, 'terminal', 'kind is terminal');
-    h.ok(entry.failure === undefined, 'no failure field on a result terminal');
-  });
-
   await h.test('run-journal: a failure terminal entry keeps reason + hints and drops kind/symbol/message', async () => {
     const t = makeStore();
     // A caller handing over richer diagnostic objects must not be able to leak their internals.
@@ -459,15 +451,6 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.eq(t.store.getLastRun('app-1'), null, 'deleting a report that was never there is a tolerated no-op');
   });
 
-  // ── failure survival + delete ───────────────────────────────────────────────
-  await h.test('run-journal: a failed run’s journal stays readable at journal:<launcherId>', async () => {
-    const t = makeStore();
-    t.store.create('ghost-1');
-    t.store.appendStage('ghost-1', 'check');
-    t.store.appendTerminal('ghost-1', { failure: { reason: 'it did not run' } });
-    h.eq(kinds(t.store.get('ghost-1')), ['stage', 'terminal'], 'the journal survives the failure for the failure screen');
-  });
-
   await h.test('run-journal: delete removes the journal; deleting an absent one is a tolerated no-op', async () => {
     const t = makeStore();
     t.store.create('ghost-1');
@@ -477,14 +460,6 @@ export async function runRunJournalTests(h: Harness): Promise<void> {
     h.ok(!t.map.has('journal:ghost-1'), 'the key itself is gone');
     t.store.delete('ghost-1'); // must not throw
     h.eq(t.store.get('ghost-1'), null, 'deleting again changes nothing');
-  });
-
-  await h.test('run-journal: journals of different attempts are independent', async () => {
-    const t = makeStore();
-    t.store.appendStage('a', 'plan');
-    t.store.appendStage('b', 'generate');
-    t.store.delete('a');
-    h.eq(t.store.get('b')!.map((e) => e.stage), ['generate'], 'one attempt’s delete never touches another’s journal');
   });
 
   await h.test('run-journal: a store re-instantiated mid-attempt keeps appending to the same journal', async () => {

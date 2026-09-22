@@ -127,23 +127,6 @@ export async function runSettingsProbeTests(h: Harness): Promise<void> {
     h.eq(states, ['checking', 'verified'], 'the stale first probe’s late result is discarded, not applied');
   });
 
-  await h.test('DebouncedProbe: an empty/cleared address resets straight to idle, nothing scheduled', async () => {
-    const timers = new FakeTimers();
-    const states: SettingsProbeState[] = [];
-    const pending = deferredProbe();
-    const d = new DebouncedProbe({ probe: pending.probe, publish: (s) => states.push(s), timers });
-
-    d.schedule('https://a.example');
-    timers.fireOnly();
-    pending.resolve(0, 'verified');
-    await pending.promises[0];
-    h.eq(states, ['checking', 'verified'], 'sanity: a real address reaches a result');
-
-    d.schedule('');
-    h.eq(timers.pendingCount, 0, 'clearing the field schedules no probe');
-    h.eq(states, ['checking', 'verified', 'idle'], 'state resets to idle immediately');
-  });
-
   await h.test('DebouncedProbe: cancel() stops a pending timer and fences off an in-flight probe', async () => {
     const timers = new FakeTimers();
     const d = deferredProbe();

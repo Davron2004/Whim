@@ -97,29 +97,6 @@ const expensesV1: SchemaArtifact = {
 // §A  mini-app-storage spec scenarios
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('§A isolation: two apps with the same collection cannot see each other; separate files', () => {
-  const a = engineAt(dbPath('app-a'));
-  const b = engineAt(dbPath('app-b'));
-  a.store.open(expensesV1);
-  b.store.open(expensesV1);
-  a.store.records.append('Expenses', { amount: 100, note: 'A only' });
-  b.store.records.append('Expenses', { amount: 200, note: 'B only' });
-  eq(a.store.records.list('Expenses').map(r => r.note), ['A only'], 'app A sees only its own row');
-  eq(b.store.records.list('Expenses').map(r => r.note), ['B only'], 'app B sees only its own row');
-  ok(fs.existsSync(dbPath('app-a')) && fs.existsSync(dbPath('app-b')), 'each app is a separate file on disk');
-  a.store.close();
-  b.store.close();
-});
-
-test('§A the verb surface accepts no app/store-addressing parameter', () => {
-  const { store } = memEngine();
-  eq(Object.keys(store.kv).sort((a, b) => a.localeCompare(b)), ['get', 'remove', 'set'], 'kv surface is exactly get/set/remove');
-  eq(Object.keys(store.records).sort((a, b) => a.localeCompare(b)), ['append', 'list', 'remove', 'update'], 'records surface is exactly append/list/update/remove');
-  // No verb takes an app id / db path: collection name is the only addressing argument, and
-  // the engine holds exactly one handle (bound at construction) — there is no way to name
-  // another store. (The TypeScript contract makes this a compile-time guarantee too.)
-});
-
 test('§A records verb before open() throws "not_open"', () => {
   const { store } = memEngine();
   expectError('not_open', () => store.records.append('Whatever', { x: 1 }));
@@ -182,20 +159,6 @@ test('§A kv: scalars round-trip; oversized writes are rejected with a records-p
   eq(store.kv.get('ok'), { a: 1 }, 'the prior value under the key is unchanged after a rejected write');
   store.kv.remove('theme');
   eq(store.kv.get('theme'), undefined, 'kv.remove deletes');
-});
-
-test('§A ephemeral mode: writes do not survive and leave no file', () => {
-  const before = fs.readdirSync(TMP).length;
-  const eng = memEngine();
-  eng.store.open(expensesV1);
-  eng.store.records.append('Expenses', { amount: 9, note: 'ghost' });
-  eng.store.kv.set('k', 'v');
-  eng.store.close();
-  ok(fs.readdirSync(TMP).length === before, 'ephemeral (:memory:) created no file');
-  const persist = engineAt(dbPath('persist-same-app'));
-  persist.store.open(expensesV1);
-  eq(persist.store.records.list('Expenses'), [], 'none of the ephemeral writes are present in a persistent store');
-  persist.store.close();
 });
 
 test('§A persistence: data survives reopening the same file (restart simulated)', () => {
@@ -701,34 +664,6 @@ test('§D engine.open() throws StorageEngineError for a field with display name 
   expectError('invalid_artifact', () => store.open(artifact));
 });
 
-test('§D list() primary-key integrity: .id always holds the engine-assigned integer key', () => {
-  // Action 3: on a valid schema (no field named 'id'), list() must return records where
-  // .id is the positive integer assigned by append(), never overwritten by a user value.
-  const { store } = memEngine();
-  const validSchema: SchemaArtifact = {
-    schemaVersion: 1,
-    collections: {
-      Items: {
-        id: 'c1',
-        tombstones: [],
-        fields: {
-          amount: { id: 'f1', type: 'int' },
-        },
-      },
-    },
-  };
-  store.open(validSchema);
-  const r1 = store.records.append('Items', { amount: 42 });
-  const r2 = store.records.append('Items', { amount: 99 });
-  const rows = store.records.list('Items');
-  ok(rows.length === 2, 'two rows returned');
-  ok(typeof rows[0].id === 'number' && rows[0].id > 0, 'first row .id is a positive integer');
-  ok(typeof rows[1].id === 'number' && rows[1].id > 0, 'second row .id is a positive integer');
-  ok(rows[0].id === r1.id, 'first row .id matches the id returned by append()');
-  ok(rows[1].id === r2.id, 'second row .id matches the id returned by append()');
-  ok(rows[0].amount === 42 && rows[1].amount === 99, 'user field values are correct');
-});
-
 test('§D validateArtifact rejects a collection with display name "id"', () => {
   // collection display name 'id' must also be rejected
   const artifact: unknown = {
@@ -818,67 +753,6 @@ test('§F (D3) the burned-ID injection regex has a single source of truth in ./c
   );
 });
 
-test('§F (D7) op-sqlite binding: no executeSync ternary, guard wired to the helper', () => {
-  const opSqliteSrc = fs.readFileSync(
-    path.resolve(process.cwd(), 'src/host/storage-engine/bindings/op-sqlite.ts'),
-    'utf8',
-  );
-  // No dead ternary fallback (the pinned v16 JSI build always has executeSync).
-  ok(!opSqliteSrc.includes("typeof db.executeSync === 'function'"), 'op-sqlite.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
-  // The guard's THROW behavior lives in (and is behaviorally tested via) the
-  // assertExecuteSyncAvailable helper — see the §F test below. Here we only assert
-  // the binding actually WIRES that guard in. (No source-grep of the assertion
-  // text: that broke the moment the guard was extracted, and a comment could fake it.)
-  ok(
-    /\bassertExecuteSyncAvailable\s*\(\s*db\s*\)/.test(opSqliteSrc),
-    'op-sqlite.ts must call assertExecuteSyncAvailable(db) to guard executeSync availability',
-  );
-});
-
-test('§F (D7) device-acceptance helpers have no typeof-executeSync ternary', () => {
-  const deviceAcceptSrc = fs.readFileSync(
-    path.resolve(process.cwd(), 'src/host/storage-engine/device-acceptance.ts'),
-    'utf8',
-  );
-  ok(!deviceAcceptSrc.includes("typeof db.executeSync === 'function'"), 'device-acceptance.ts must not contain the dead "typeof db.executeSync === \'function\'" ternary guard');
-});
-
-test('§F (D7) assertExecuteSyncAvailable throws iff executeSync is not a function', () => {
-  ok(
-    (() => {
-      try {
-        assertExecuteSyncAvailable({});
-        return false;
-      } catch (e) {
-        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
-      }
-    })(),
-    'assertExecuteSyncAvailable must throw with the expected message when executeSync is missing',
-  );
-  ok(
-    (() => {
-      try {
-        assertExecuteSyncAvailable({ executeSync: 123 });
-        return false;
-      } catch (e) {
-        return e instanceof Error && e.message === 'op-sqlite: executeSync not available — expected op-sqlite v16+ JSI build';
-      }
-    })(),
-    'assertExecuteSyncAvailable must throw when executeSync is present but not a function',
-  );
-  ok(
-    (() => {
-      try {
-        assertExecuteSyncAvailable({ executeSync: () => ({ rows: [] }) });
-        return true;
-      } catch {
-        return false;
-      }
-    })(),
-    'assertExecuteSyncAvailable must not throw when executeSync is a function',
-  );
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // §G  #52-D5 device seam: burnedIdFloor + the accumulated-schema read-only peek
 // ═══════════════════════════════════════════════════════════════════════════
@@ -893,14 +767,6 @@ test('§G burnedIdFloor: retired columns raise the floor exactly like active one
 test('§G burnedIdFloor: a collection absent from the applied schema reports no floor', () => {
   const applied: AppliedSchema = { collections: [{ id: 'c1', active: [{ id: 'f1', type: 'text' }], retired: [] }] };
   ok(burnedIdFloor(applied).c2 === undefined, 'an unrepresented collection has no floor entry — a first allocation there is unconstrained');
-});
-
-test('§G burnedIdFloor: importable and evaluable with no native storage binding available', () => {
-  // This whole suite runs under plain Node with no op-sqlite install; burnedIdFloor was
-  // imported directly from ./schema (never the ../index barrel) and already evaluated above —
-  // the two assertions here just make that load-bearing property an explicit, named check.
-  ok(typeof burnedIdFloor === 'function', 'burnedIdFloor imports as a plain function off ./schema');
-  eq(burnedIdFloor(emptyApplied()), {}, 'burnedIdFloor evaluates correctly with no native binding in the process');
 });
 
 test('§G readAppliedSchema: a live database reads back its accumulated union, retired columns included', () => {

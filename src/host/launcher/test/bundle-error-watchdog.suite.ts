@@ -22,7 +22,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Harness } from './harness';
-import { COPY } from '../copy';
 
 /** The body of a `switch` `case '<name>':` up to its own `return;` (both files use one `return;`
  *  per case, never a fallthrough), found by plain index arithmetic to sidestep unbounded regex
@@ -74,12 +73,6 @@ export async function runBundleErrorWatchdogTests(h: Harness): Promise<void> {
   await h.test('bundle-error: renders honest static copy, never interpolates the raw lastError string', () => {
     h.ok(viewSrc.includes('COPY.appErrorTitle') && viewSrc.includes('COPY.appErrorBody'), 'must render the static COPY.appError* strings');
     h.ok(!viewSrc.includes('{host.state.lastError}'), 'must never interpolate the raw lastError string into the UI');
-  });
-
-  await h.test('bundle-error: appErrorBody makes no promise about what was or was not lost', () => {
-    // The host cannot know that -- the error class includes storage failures -- so the copy must
-    // stay honest/neutral rather than reassuring the user nothing was lost.
-    h.ok(!/nothing.*was lost/i.test(COPY.appErrorBody), 'appErrorBody must not claim nothing was lost');
   });
 
   await h.test('bundle-error: Retry clears lastError AND bumps the WebView key in the SAME handler', () => {

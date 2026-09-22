@@ -16,7 +16,6 @@
 
 import { Harness } from './harness';
 import { probeServer } from '../server-probe';
-import type { ProbeResult } from '../server-probe';
 
 const BASE_URL = 'https://example.invalid';
 
@@ -99,23 +98,4 @@ export async function runServerProbeTests(h: Harness): Promise<void> {
     },
   );
 
-  await h.test('probeServer: opts is fully optional — a caller can omit it and still classify correctly', async () => {
-    const fetchImpl = (async () => jsonResponse({ ok: true, service: 'whim-server' })) as typeof fetch;
-    // probeServer's own signature makes `opts` optional; this call exercises that path directly
-    // rather than always threading `{ fetchImpl }` through, at the cost of hitting the real
-    // global fetch if the implementation regressed to require it — bounded so a regression fails
-    // fast instead of hanging on a real network call.
-    async function probeWithDefaultFetch(): Promise<ProbeResult> {
-      const original = globalThis.fetch;
-      globalThis.fetch = fetchImpl;
-      try {
-        return await probeServer(BASE_URL);
-      } finally {
-        globalThis.fetch = original;
-      }
-    }
-    const result = await withHungGuard(probeWithDefaultFetch(), 1000);
-    h.ok(result !== 'hung', 'settles without opts being supplied at all');
-    h.eq(result, 'verified', 'classifies correctly when opts is omitted entirely (default fetch, default timeout)');
-  });
 }

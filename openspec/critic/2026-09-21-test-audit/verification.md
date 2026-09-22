@@ -75,6 +75,20 @@ In auto mode, a mutation that disables a security guard needs an explicit human 
 | `server/test/stages.suite.ts:130-166` (`testRecordAssembly`) | DELETE (tautology) | **KEEP, trimmed** | The "prosy" case checks that a model-claimed name and capabilities in a comment are never used, and that the record takes the extracted manifest. That's the CLAUDE.md bridge rule "manifests are extracted at build time, no second source of truth". Trim the six-field restatement, keep L150-157 |
 | `invariants/sandbox-isolation/bridge/runner.mjs:179-198` (forged sysret, owner-only) | REWRITE (vacuous) | **KEEP-FIX** | Mutation run 1. It works, but only while the fixture has made fewer than ~7 syscalls. Forge across a wide id range |
 
+## Overturned while carrying out the audit (2026-09-21)
+
+| Where | Was | Now | Evidence |
+|---|---|---|---|
+| `server/src/usage-store.ts` `InMemoryUsageStore` (README "dead production code") | DELETE | **KEEP** | Not kept alive by DELETE tests: admin, e2e, ledger, logging, resolver, routes-generate, routes-unary, server-core and wire-v2 use it as their store fake in tests the audit keeps, and it shares five private helpers and `LedgerRow` with the SQLite store |
+| `deploy-config.suite.ts` "standard must not override server limits" (inside L699-709) | DELETE | **KEEP** | A rule about the profile, not a pinned value. The machine-type and 15/6/32 pins were deleted |
+| `web-site.suite.ts:116` "privacy.html names OpenRouter" | DELETE | **REWRITE** | A weak phrase pin, not impossible to fail; the processor disclosure has no other check |
+| `resolver.suite.ts:394` | DELETE | **KEEP, relabelled** | It asserts the summary's unresolved count, a real fact under a wrong name; only L395 was a tautology |
+| `domain-lockstep.suite.ts:25-35, 44-65` | DELETE | **KEEP one per checker** | Without a mismatch case, a checker that never reports passes the real-repo tests |
+| `prompt-flow-wiring.suite.ts:809-812` (highlighting provider) | DELETE | **REWRITE** | The only check that the settings switch reaches the launcher tree; no rendered cover exists |
+| `xhr-transport.suite.ts:511-520` | DELETE (inside "L493-520") | **KEEP** | "A non-ApiError body leaves code absent" is not a Retry-After case; the range overshot |
+
+Proven before deleting: the ledger and metering column pins (`ledger.suite.ts:247-285`, `metering.suite.ts:96-121`). With the generate route writing its prompt into `usage.db`, the kept data-directory marker scan in `routes-generate.suite.ts` fails ("the usage database holds no generate marker").
+
 ## Conditional deletes
 
 These are safe only after something else lands. They're marked inline in `launcher.md`.

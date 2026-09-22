@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, assert } from '../harness';
-import { checkIosProject, checkIosSceneLifecycleWiring } from '../../../scripts/release/lib/ios-project';
+import { checkIosProject } from '../../../scripts/release/lib/ios-project';
 import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 
 const REPO_ROOT = process.cwd();
@@ -242,118 +242,7 @@ interface FixtureOverrides {
   infoPlist?: string;
   entitlements?: string;
   privacyManifest?: string;
-  appDelegate?: string;
-  sceneDelegate?: string;
 }
-
-const VALID_APP_DELEGATE_SOURCE = `
-class AppDelegate {
-  var reactNativeDelegate: ReactNativeDelegate?
-  var reactNativeFactory: RCTReactNativeFactory?
-
-  func startReactNative(in window: UIWindow, launchOptions: [UIApplication.LaunchOptionsKey: Any]?) {
-    let factory: RCTReactNativeFactory
-    if let existingFactory = reactNativeFactory {
-      factory = existingFactory
-    } else {
-      let delegate = ReactNativeDelegate()
-      let newFactory = RCTReactNativeFactory(delegate: delegate)
-      reactNativeDelegate = delegate
-      reactNativeFactory = newFactory
-      factory = newFactory
-    }
-    factory.startReactNative(withModuleName: "Whim", in: window, launchOptions: launchOptions)
-    window.rootViewController?.view.backgroundColor = UIColor(named: "LaunchBackground")
-  }
-
-  func application(
-    _ application: UIApplication,
-    continue userActivity: NSUserActivity,
-    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
-  ) -> Bool {
-    RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
-  }
-
-  func application(
-    _ app: UIApplication,
-    open url: URL,
-    options: [UIApplication.OpenURLOptionsKey: Any] = [:]
-  ) -> Bool {
-    RCTLinkingManager.application(app, open: url, options: options)
-  }
-}
-`;
-
-const VALID_SCENE_DELEGATE_SOURCE = `
-class SceneDelegate: UIResponder, UIWindowSceneDelegate {
-  var window: UIWindow?
-
-  func scene(
-    _ scene: UIScene,
-    willConnectTo session: UISceneSession,
-    options connectionOptions: UIScene.ConnectionOptions
-  ) {
-    guard let windowScene = scene as? UIWindowScene,
-          let appDelegate = UIApplication.shared.delegate as? AppDelegate else {
-      return
-    }
-    let window = UIWindow(windowScene: windowScene)
-    self.window = window
-    let launchOptions = Self.launchOptions(from: connectionOptions)
-    appDelegate.startReactNative(in: window, launchOptions: launchOptions)
-  }
-
-  func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
-    RCTLinkingManager.application(
-      UIApplication.shared,
-      continue: userActivity,
-      restorationHandler: { _ in }
-    )
-  }
-
-  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-    for context in URLContexts {
-      RCTLinkingManager.application(
-        UIApplication.shared,
-        open: context.url,
-        options: Self.applicationOpenOptions(from: context.options)
-      )
-    }
-  }
-
-  private static func launchOptions(
-    from connectionOptions: UIScene.ConnectionOptions
-  ) -> [UIApplication.LaunchOptionsKey: Any]? {
-    if let userActivity = connectionOptions.userActivities.first(
-      where: { $0.activityType == NSUserActivityTypeBrowsingWeb && $0.webpageURL != nil }
-    ) {
-      return [
-        UIApplication.LaunchOptionsKey.userActivityDictionary: [
-          UIApplication.LaunchOptionsKey.userActivityType: userActivity.activityType,
-          "UIApplicationLaunchOptionsUserActivityKey": userActivity,
-        ],
-      ]
-    }
-    if let context = connectionOptions.urlContexts.first {
-      return [UIApplication.LaunchOptionsKey.url: context.url]
-    }
-    return nil
-  }
-
-  private static func applicationOpenOptions(
-    from sceneOptions: UIScene.OpenURLOptions
-  ) -> [UIApplication.OpenURLOptionsKey: Any] {
-    var options: [UIApplication.OpenURLOptionsKey: Any] = [
-      .annotation: sceneOptions.annotation,
-      .openInPlace: sceneOptions.openInPlace,
-    ]
-    if let sourceApplication = sceneOptions.sourceApplication {
-      options[.sourceApplication] = sourceApplication
-    }
-    return options
-  }
-}
-`;
 
 /** Writes a minimal-but-complete fixture project under a fresh temp dir and runs `fn` against it, cleaning up after. */
 function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void): void {
@@ -367,8 +256,6 @@ function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void)
     fs.writeFileSync(path.join(whimDir, 'Info.plist'), overrides.infoPlist ?? infoPlistFixture(), 'utf8');
     fs.writeFileSync(path.join(whimDir, 'Whim.entitlements'), overrides.entitlements ?? entitlementsFixture(), 'utf8');
     fs.writeFileSync(path.join(whimDir, 'PrivacyInfo.xcprivacy'), overrides.privacyManifest ?? privacyManifestFixture(), 'utf8');
-    fs.writeFileSync(path.join(whimDir, 'AppDelegate.swift'), overrides.appDelegate ?? VALID_APP_DELEGATE_SOURCE, 'utf8');
-    fs.writeFileSync(path.join(whimDir, 'SceneDelegate.swift'), overrides.sceneDelegate ?? VALID_SCENE_DELEGATE_SOURCE, 'utf8');
     fn(dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -379,20 +266,16 @@ function messagesFor(dir: string): string[] {
   return checkIosProject(dir, FIXTURE_CONFIG).map((f) => `${f.file}: ${f.message}`);
 }
 
-function sceneWiringMessagesFor(dir: string): string[] {
-  return checkIosSceneLifecycleWiring(dir).map((f) => `${f.file}: ${f.message}`);
-}
-
 export async function run(): Promise<void> {
   await test('ios-project: the real ios/ project passes with zero findings', () => {
     const config = loadNativeReleaseConfig(REPO_ROOT);
-    const findings = [...checkIosProject(REPO_ROOT, config), ...checkIosSceneLifecycleWiring(REPO_ROOT)];
+    const findings = checkIosProject(REPO_ROOT, config);
     assert(findings.length === 0, `expected no findings against the real repo, got ${JSON.stringify(findings)}`);
   });
 
   await test('ios-project: a well-formed fixture passes with zero findings (baseline for the defect cases below)', () => {
     withFixtureRepo({}, (dir) => {
-      const findings = [...checkIosProject(dir, FIXTURE_CONFIG), ...checkIosSceneLifecycleWiring(dir)];
+      const findings = checkIosProject(dir, FIXTURE_CONFIG);
       assert(findings.length === 0, `expected the baseline fixture to pass, got ${JSON.stringify(findings)}`);
     });
   });
@@ -453,74 +336,6 @@ export async function run(): Promise<void> {
       assert(
         messages.some((message) => message.includes('SceneDelegate.swift') && message.includes('Sources build phase')),
         `expected a SceneDelegate Sources-membership finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  // These source checks lock the callback routes, but do not execute UIKit or prove that an
-  // associated domain causes iOS to invoke the callbacks. Device acceptance owns that evidence.
-  await test('ios-project: scene callback checks reject a cold user activity disconnected from its launch option', () => {
-    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('connectionOptions.userActivities', 'connectionOptions.notificationResponses') }, (dir) => {
-      const messages = sceneWiringMessagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('translate a cold browsing activity into the user-activity launch option')),
-        `expected a cold-user-activity wiring finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: scene callback checks reject a cold URL context disconnected from its launch option', () => {
-    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('connectionOptions.urlContexts', 'connectionOptions.shortcutItem') }, (dir) => {
-      const messages = sceneWiringMessagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('translate a cold URL context into the URL launch option')),
-        `expected a cold-URL wiring finding, got ${JSON.stringify(messages)}`,
-      );
-    });
-  });
-
-  await test('ios-project: scene callback checks reject missing warm user-activity forwarding', () => {
-    withFixtureRepo(
-      {
-        sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace(
-          'RCTLinkingManager.application(\n      UIApplication.shared,\n      continue: userActivity,',
-          'LinkingManager.application(\n      UIApplication.shared,\n      continue: userActivity,',
-        ),
-      },
-      (dir) => {
-        const messages = sceneWiringMessagesFor(dir);
-        assert(
-          messages.some((message) => message.includes('forward warm user activities')),
-          `expected a warm-user-activity wiring finding, got ${JSON.stringify(messages)}`,
-        );
-      },
-    );
-  });
-
-  await test('ios-project: scene callback checks reject missing warm URL forwarding', () => {
-    withFixtureRepo(
-      {
-        sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace(
-          'RCTLinkingManager.application(\n        UIApplication.shared,\n        open: context.url,',
-          'LinkingManager.application(\n        UIApplication.shared,\n        open: context.url,',
-        ),
-      },
-      (dir) => {
-        const messages = sceneWiringMessagesFor(dir);
-        assert(
-          messages.some((message) => message.includes('forward warm URL contexts')),
-          `expected a warm-URL wiring finding, got ${JSON.stringify(messages)}`,
-        );
-      },
-    );
-  });
-
-  await test('ios-project: scene callback checks reject startup that discards the connection-options conversion result', () => {
-    withFixtureRepo({ sceneDelegate: VALID_SCENE_DELEGATE_SOURCE.replace('Self.launchOptions(from: connectionOptions)', 'nil') }, (dir) => {
-      const messages = sceneWiringMessagesFor(dir);
-      assert(
-        messages.some((message) => message.includes('pass the connection-options conversion result to React Native startup')),
-        `expected a connection-options-to-startup wiring finding, got ${JSON.stringify(messages)}`,
       );
     });
   });

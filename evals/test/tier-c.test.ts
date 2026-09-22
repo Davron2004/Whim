@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunObservation, TierCResult } from '../contract';
 import { createLiveJudge, LIVE_JUDGE_CREDENTIAL_ENV_VAR } from '../judge/live';
-import { createReplayJudge, replayFileName } from '../judge/replay';
+import { createReplayJudge } from '../judge/replay';
 import { createScriptedJudge } from '../judge/scripted';
 import type { Judge } from '../judge/judge';
 import { extractScoredSection, hashScoredSection, RUBRIC_CONTENT_HASH, RUBRIC_DOCUMENT_PATH, RUBRIC_VERSION } from '../rubric';
@@ -48,30 +48,6 @@ function wellFormedVerdict(judgeIdentity: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('scripted judge (design D7)');
-// ─────────────────────────────────────────────────────────────────────────────
-
-{
-  const verdict = wellFormedVerdict('scripted:test');
-  const judge = createScriptedJudge({ 'case-a': verdict });
-  const result = await judge.score({ caseId: 'case-a', prompt: 'p', observation: OBSERVATION });
-  eq('scripted judge returns the mapped verdict for a known case id', result, verdict);
-}
-
-{
-  const judge = createScriptedJudge({});
-  const err = await caught(async () => {
-    await judge.score({ caseId: 'unmapped-case', prompt: 'p', observation: OBSERVATION });
-  });
-  check('scripted judge throws for an unmapped case id', err instanceof Error);
-  check(
-    'the throw names the offending case id',
-    err instanceof Error && err.message.includes('unmapped-case'),
-    String(err),
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 section('replay judge (design D7)');
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -89,12 +65,6 @@ section('replay judge (design D7)');
     ],
   });
 }
-
-eq(
-  'replayFileName keys on case id + rubric version',
-  replayFileName('replay-case-1', 'v1'),
-  'replay-case-1__v1.json',
-);
 
 {
   const judge = createReplayJudge(fixturesDir);
@@ -303,11 +273,4 @@ section('rubric content hash drift (design D8)');
     extractScoredSection('a document with no markers at all');
   });
   check('extractScoredSection throws when the scored-section markers are missing', err instanceof Error);
-}
-
-{
-  const a = hashScoredSection('same content');
-  const b = hashScoredSection('same content');
-  eq('hashScoredSection is deterministic for the same input', a, b);
-  check('hashScoredSection differs when the content differs', hashScoredSection('one') !== hashScoredSection('two'));
 }

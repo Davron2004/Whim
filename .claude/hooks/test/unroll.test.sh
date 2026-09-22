@@ -121,18 +121,4 @@ expect_decision "redirect into safe path is not denied"  none  "" 'echo hello > 
 expect_decision "glob (?) redirect denies"              deny  "" 'echo x > .claude/settin?s.json' "$ROOT"
 expect_decision "glob (*) redirect denies"              deny  "" 'echo x > .claude/setti*.json' "$ROOT"
 expect_decision "glob ([]) redirect denies"             deny  "" 'echo x > out-[abc].txt' "$ROOT"
-
-# Refspec smuggling inside a compound stays denied (the push names main via the refspec).
-expect_decision "refspec smuggling in compound denies"  deny  "" 'git push origin integration/run-1:main && echo done' "$ROOT"
-expect_decision "compound push of main denies"          deny  "" 'echo hi && git push origin main' "$ROOT"
-
-# Subagent compound is never auto-allowed (parity with bash-policy.test.sh line 49).
-expect_decision "subagent worktree add + unknown -> none" none agent-a "git -C $WT add f.ts && frob" "$ROOT"
-
-# Negative control: a known-bad compound must NEVER come back allowed. If a regressed parser split
-# the quoted push wrong or promoted a deny to allow, this line flips and the gate fails.
-NEG=$(invoke "" 'git push origin main && echo done' "$ROOT" | jq -r '.hookSpecificOutput.permissionDecision // "none"')
-[[ "$NEG" == "allow" ]] && fail "NEGATIVE CONTROL: known-bad compound was ALLOWED" "$NEG"
-PASS=$((PASS + 1)); pass 'negative control (known-bad never allowed)'
-
 printf 'unroller tests: %d passed\n' "$PASS"

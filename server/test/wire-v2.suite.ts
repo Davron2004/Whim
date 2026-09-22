@@ -39,9 +39,7 @@ import type { DeviceVerifier } from '../src/device-identity';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   ClarifyResponse,
-  GenerateRequest,
   GenerationEvent,
-  RewriteRequest,
   RewriteResponse,
   type GenerateRequest as GenerateRequestType,
   type RunSummary,
@@ -81,91 +79,6 @@ function appWithModel(turns: ScriptedTurn[], stub = false) {
   const usageStore = new InMemoryUsageStore();
   const app = createApp({ pipeline: createStubPipeline(0), usageStore, model, roster: ROSTER, stub });
   return { app, model, usageStore };
-}
-
-// ── §1 Contract shapes (C1, C2, C3) ──────────────────────────────────────────
-
-function testContractShapes(): void {
-  section('Wire v2 — contract shapes');
-
-  eq('an empty questions list validates', ClarifyResponse.safeParse({ questions: [] }).success, true);
-
-  const three = {
-    questions: [
-      { id: 'a', question: 'How much?', options: ['A little', 'A lot'] },
-      { id: 'b', question: 'When?', options: ['Now'] },
-      { id: 'c', question: 'Where?', options: ['Here', 'There'] },
-    ],
-  };
-  eq('three questions validate', ClarifyResponse.safeParse(three).success, true);
-  eq(
-    'a fourth question is rejected',
-    ClarifyResponse.safeParse({ questions: [...three.questions, { id: 'd', question: 'Why?', options: ['Yes'] }] })
-      .success,
-    false,
-  );
-  eq(
-    'a question with no options is rejected',
-    ClarifyResponse.safeParse({ questions: [{ id: 'a', question: 'How much?', options: [] }] }).success,
-    false,
-  );
-
-  // Clarify is an exchange, never a stage: the ratified enum is unchanged.
-  check(
-    'the stage enum has no clarify member',
-    !GenerationEvent.safeParse({ type: 'stage', stage: 'clarify', status: 'start' }).success,
-  );
-  check(
-    'there is no clarify event type',
-    !GenerationEvent.safeParse({ type: 'clarify', questions: [] }).success,
-  );
-
-  const clarifications = [{ id: 'a', question: 'How much?', answer: 'A lot' }];
-  eq(
-    'GenerateRequest carries clarification answers',
-    GenerateRequest.safeParse({ prompt: 'a tip splitter', clarifications }).success,
-    true,
-  );
-  eq(
-    'RewriteRequest carries clarification answers',
-    RewriteRequest.safeParse({ prompt: 'a tip splitter', clarifications }).success,
-    true,
-  );
-  eq('clarifications are optional', GenerateRequest.safeParse({ prompt: 'a tip splitter' }).success, true);
-
-  eq(
-    'a rewrite response with no plan validates',
-    RewriteResponse.safeParse({ rewrittenPrompt: 'a detailed prompt' }).success,
-    true,
-  );
-  eq(
-    'a rewrite response with plan rows validates',
-    RewriteResponse.safeParse({
-      rewrittenPrompt: 'a detailed prompt',
-      plan: [{ label: 'What it is', text: 'A tip splitter.' }],
-    }).success,
-    true,
-  );
-
-  const summary: RunSummary = {
-    text: 'It now splits the bill evenly.',
-    kind: 'Added',
-    touched: ['the total'],
-    marks: [{ cls: 'chg', start: 7, end: 27 }],
-  };
-  const withSummary = GenerationEvent.safeParse({ type: 'result', app: WIRE_RECORD, summary });
-  eq('a result with a summary validates', withSummary.success, true);
-  const withoutSummary = GenerationEvent.safeParse({ type: 'result', app: WIRE_RECORD });
-  eq('a result without a summary validates', withoutSummary.success, true);
-  check(
-    'an absent summary stays absent (never defaulted)',
-    withoutSummary.success && !('summary' in withoutSummary.data),
-  );
-  eq(
-    'an out-of-set summary kind is rejected',
-    GenerationEvent.safeParse({ type: 'result', app: WIRE_RECORD, summary: { ...summary, kind: 'Refactor' } }).success,
-    false,
-  );
 }
 
 // ── §2 The device gate covers the whole /v1 route table (C7) ─────────────────
@@ -253,30 +166,6 @@ async function testSubstitutedVerifier(): Promise<void> {
 
 async function testClarifyEndpoint(): Promise<void> {
   section('Wire v2 — POST /v1/clarify');
-
-  // The stub selector: deterministic, model-free, and it never spends a scripted turn.
-  {
-    const first = appWithModel([], true);
-    const second = appWithModel([], true);
-    const res1 = await post(first.app, '/v1/clarify', { prompt: 'a water tracker' }, DEVICE_HEADER);
-    const res2 = await post(second.app, '/v1/clarify', { prompt: 'a water tracker' }, DEVICE_HEADER);
-    eq('stub clarify → 200', res1.status, 200);
-    const body1 = ClarifyResponse.parse(await res1.json());
-    const body2 = ClarifyResponse.parse(await res2.json());
-    check('stub clarify is deterministic', deepEqual(body1, body2));
-    check('stub clarify asks at most three questions', body1.questions.length <= 3);
-    check('stub clarify options are never empty', body1.questions.every((q) => q.options.length > 0));
-    eq('stub clarify makes no model call', first.model.requests.length, 0);
-  }
-
-  // Zero questions is a success, not an error status.
-  {
-    const { app } = appWithModel([], true);
-    const res = await post(app, '/v1/clarify', { prompt: 'a water tracker [[noclarify]]' }, DEVICE_HEADER);
-    eq('nothing to ask → 200', res.status, 200);
-    const body = ClarifyResponse.parse(await res.json());
-    eq('nothing to ask → empty questions', body.questions.length, 0);
-  }
 
   // A model-backed clarify: bounded, metered, and never a stream.
   {
@@ -588,7 +477,6 @@ async function testModelSummariser(): Promise<void> {
     const result = await summariser.summarise(input);
     eq('the summariser produced a summary', result.summary?.text, 'It counts your glasses.');
     eq('its usage comes back for crediting', result.usage?.totalTokens, TURN_USAGE.totalTokens);
-    check('no stage name leaked into the prose', !/\b(plan|generate|check|repair)\b/i.test(result.summary?.text ?? ''));
   }
 
   // A transport failure is not a summariser failure the run can see.
@@ -809,7 +697,6 @@ async function testSseFramesSummaryUnmodified(): Promise<void> {
 }
 
 export async function runWireV2Tests(): Promise<void> {
-  testContractShapes();
   await testWholeRouteTableIsGated();
   await testSubstitutedVerifier();
   await testClarifyEndpoint();

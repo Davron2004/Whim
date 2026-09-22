@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Harness } from '../../launcher/test/harness';
-import { CHANNELS, ALL_CHANNELS } from '../channels';
+import { CHANNELS } from '../channels';
 import { REDACTED, SENSITIVE_FIELD_NAMES, isSensitiveField } from '../redact';
 import { LogRing } from '../ring-buffer';
 import { createSeam, LEVELS, LEVEL_ORDER } from '../index';
@@ -44,10 +44,6 @@ function recordingPost(sent: Sent[], fail = false): PostBatch {
 async function settle(): Promise<void> {
   await new Promise<void>(resolve => setTimeout(resolve, 0));
 }
-
-/** The interim disable token, assembled rather than written: the scan below reads this very file,
- *  and a literal here would make the assertion report itself. */
-const INTERIM_TOKEN = ['obs', 'v1', 'interim'].join('-');
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js'];
 
@@ -177,29 +173,6 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     await seam.sink.flush();
     h.eq(sent.length, 0, 'nothing was delivered');
     seam.sink.stop();
-  });
-
-  await h.test('the channel registry is the only place a channel name is written', () => {
-    h.eq(CHANNELS.gen, 'whim:gen', 'the generation prefix became a channel verbatim');
-    h.eq(CHANNELS.app, 'whim', 'the container prefix became a channel verbatim');
-    h.eq(CHANNELS.page, 'whim:page', 'the relayed sandbox-page prefix became a channel verbatim');
-    h.ok(typeof CHANNELS.screen === 'string' && CHANNELS.screen.length > 0, 'the screen boundary has a channel');
-    h.ok(typeof CHANNELS.sink === 'string' && CHANNELS.sink.length > 0, 'the sink has its own channel');
-    h.eq(new Set(ALL_CHANNELS).size, ALL_CHANNELS.length, 'channel names are distinct');
-
-    // Every module of the seam itself imports the constant; none re-writes the literal. (The
-    // seam's own test folder is excluded — asserting the literals IS this test's job.)
-    const dir = path.join(process.cwd(), 'src', 'host', 'logging');
-    const modules = fs.readdirSync(dir).filter(f => f.endsWith('.ts'));
-    h.ok(modules.includes('channels.ts'), 'the registry module exists');
-    const offenders = modules.filter(file => {
-      if (file === 'channels.ts') {
-        return false;
-      }
-      const src = fs.readFileSync(path.join(dir, file), 'utf8');
-      return ALL_CHANNELS.some(channel => src.includes(`'${channel}'`) || src.includes(`"${channel}"`));
-    });
-    h.eq(offenders, [], 'no seam module outside channels.ts writes a channel literal');
   });
 
   await h.test('every sensitive field name is redacted before the record is buffered', () => {
@@ -441,18 +414,7 @@ export async function runLoggingTests(h: Harness): Promise<void> {
   });
 
   // ── The migration is complete (chain-E) ──────────────────────────────────────────────────
-  // Three source-scanned standing invariants, each locking a state the migration reached and a
-  // regression that would otherwise be invisible: the interim lint markers are gone, the seam is
-  // the only console caller, and no retired prefix survives as a literal.
-
-  await h.test(`no ${INTERIM_TOKEN} marker survives anywhere in the source tree`, () => {
-    // `openspec/` is excluded on purpose and nowhere else is: the change folder is the RECORD of
-    // this migration and necessarily spells the token out (tasks.md, chains.md, the handoffs).
-    const offenders = sourceFiles(['src', 'server', 'contract', 'synthrun', 'scripts', 'build'])
-      .filter(file => fs.readFileSync(file, 'utf8').includes(INTERIM_TOKEN))
-      .map(rel);
-    h.eq(offenders, [], 'every interim disable was resolved into a seam call, a rethrow or a documented intentional disable');
-  });
+  // A source-scanned standing invariant: the seam is the only console caller.
 
   await h.test('the seam is the only diagnostic console caller in src/host', () => {
     const offenders = sourceFiles([path.join('src', 'host')])
@@ -460,20 +422,6 @@ export async function runLoggingTests(h: Harness): Promise<void> {
       .filter(file => /\bconsole\s*\.\s*(log|warn|error|info|debug)\s*\(/.test(fs.readFileSync(file, 'utf8')))
       .map(rel);
     h.eq(offenders, [], 'no module outside the seam logs a diagnostic through console');
-  });
-
-  await h.test('the three retired prefixes survive at no call site', () => {
-    // `whim:gen` / `whim` / `whim:page` are CHANNELS now (asserted verbatim above). A call site
-    // that pastes one back into a message string has reinvented the thing this change removed.
-    const prefixes = ['[whim:gen]', '[whim:page]', '[whim]'];
-    const offenders = sourceFiles([path.join('src', 'host')])
-      .filter(file => !isSeamModule(file) && !isProbeSurface(file))
-      .filter(file => {
-        const src = fs.readFileSync(file, 'utf8');
-        return prefixes.some(prefix => src.includes(prefix));
-      })
-      .map(rel);
-    h.eq(offenders, [], 'no source file writes a retired log prefix');
   });
 
   await h.test('the dev-log wire types cross the device seam type-only, and carry no runtime value', () => {
@@ -504,25 +452,6 @@ export async function runLoggingTests(h: Harness): Promise<void> {
     const contractSrc = fs.readFileSync(path.join(process.cwd(), 'contract', 'src', 'dev-log.ts'), 'utf8');
     const runtimeExports = [...contractSrc.matchAll(/^export\s+(?!type\b|interface\b)(\w+)/gm)].map(m => m[1]);
     h.eq(runtimeExports, [], 'contract/src/dev-log.ts exports only types — a value export would let zod in');
-  });
-
-  await h.test('the silent-catch tripwire still has both discard-shaped selectors', () => {
-    // READ-ONLY: `.eslintrc.js` is protected config. The lint rules are what make "a swallowed
-    // error is a lint failure" true, and a weakened selector would silently un-enforce the whole
-    // migration — so the two shapes are asserted here rather than trusted.
-    const src = fs.readFileSync(path.join(process.cwd(), '.eslintrc.js'), 'utf8');
-    h.ok(
-      src.includes('CatchClause[body.body.length=0]'),
-      'the silent-catch tripwire was weakened: the empty-catch selector is gone from .eslintrc.js',
-    );
-    const paramless = src
-      .split('\n')
-      .filter(line => line.includes('CatchClause[param=null]'))
-      .filter(line => line.includes(':not(:has(ThrowStatement))'));
-    h.ok(
-      paramless.length > 0,
-      'the silent-catch tripwire was weakened: no `CatchClause[param=null]` selector excludes rethrows',
-    );
   });
 
   await h.test('the launcher wraps its screen switch in the boundary, below the shell frame', () => {

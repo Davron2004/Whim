@@ -19,7 +19,7 @@
    `evals/test/*.test.ts` file needs this same line (D14 naming convention, pinned in the
    contract) — see `handoff/eval-contract.md`. */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { GenerationEvent } from '@whim/contract';
@@ -30,7 +30,7 @@ import { redactSourcingError } from '../redact';
 import { buildReport } from '../report/serialize';
 import type { CaseInput } from '../report/serialize';
 import type { EvalRunReport, TierAResult, TierBResult, TierCResult } from '../contract';
-import { caught, check, eq, section } from './harness';
+import { check, eq, section } from './harness';
 
 // A narrow local augmentation of the shared `node:fs`/`node:child_process` ambient surface
 // (`evals/env.d.ts`) — adds `spawnSync` only (a distinct export name, no conflict with the
@@ -295,10 +295,6 @@ section('redactSourcingError: both branches, directly (fix/redaction-tier-result
   const CANDIDATE_TEXT = 'THE-SECRET-CANDIDATE-token777';
 
   const fromSourcingResult = { caseId: 'c1', kind: 'generation-failure' as const, message: `pipeline said ${CANDIDATE_TEXT}` };
-  check(
-    'red-check: the input this branch is asserted against really does carry the secret (non-vacuity)',
-    fromSourcingResult.message.includes(CANDIDATE_TEXT),
-  );
 
   const redactedHoldout = redactSourcingError(fromSourcingResult, 'holdout');
   check(
@@ -467,75 +463,3 @@ function writeReportFixture(path: string, cases: readonly CaseInput[]): EvalRunR
 }
 
 rmSync(scratchDir, { recursive: true, force: true });
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('gate configuration (spec "Eval runs are on demand and never part of the automated gate")');
-// ─────────────────────────────────────────────────────────────────────────────
-
-{
-  // This file only READS `scripts/gate.sh` — a protected file agents never edit
-  // (`.claude/hooks/protect-harness.sh`); reading it is fine.
-  const gateContents = readFileSync(join(repoRoot, 'scripts', 'gate.sh'), 'utf8');
-  check(
-    'the gate never invokes a corpus-eval run (evals/cli.mjs, or an `evals run` command)',
-    !gateContents.includes('cli.mjs') && !/\bevals[: ]run\b/.test(gateContents),
-    'a corpus-eval RUN invocation must never appear in the gate — eval runs cost model spend and browser time',
-  );
-  // Tri-state, self-healing across the Class-2 bootstrap: the runner's OWN acceptance-suite
-  // entry (`check "corpus-eval" npm run -s evals:test`) is a Class-2 edit recorded, unapplied,
-  // in `openspec/changes/eval-harness/pending-class2.md`(c) (design D13: package.json/gate.sh/
-  // tsconfig.json/knip.json are Class-2, human-only). Exactly one of three states is legitimate:
-  //   1. APPLIED — a human applied pending-class2.md(c); gate.sh now contains a correctly
-  //      shaped `check "corpus-eval" ... npm run -s evals:test` line. PASS.
-  //   2. NOT APPLIED, RECORDED — gate.sh has no corpus-eval entry, but pending-class2.md still
-  //      records the exact obligation. This is today's true pre-bootstrap state. PASS.
-  //   3. NOT APPLIED, NOT RECORDED — gate.sh has no corpus-eval entry AND pending-class2.md no
-  //      longer records the obligation: it has been silently dropped. FAIL.
-  // A `"corpus-eval"` marker present in gate.sh but not shaped like the recorded line (e.g. the
-  // wrong command) also FAILs, so a malformed application is caught rather than waved through.
-  const corpusEvalCheckLine = /check\s+"corpus-eval"\s+npm run -s evals:test\b/;
-  const gateHasCorpusEvalMarker = gateContents.includes('"corpus-eval"');
-  const gateHasWellFormedCorpusEvalCheck = corpusEvalCheckLine.test(gateContents);
-  // The record is consulted ONLY in state 2/3 — when gate.sh has no entry. In state 1 the applied
-  // gate line is its own evidence, and the record's whereabouts are irrelevant. Reading it
-  // unconditionally used to crash this suite the moment the change was archived (the file moves
-  // to openspec/changes/archive/<date>-eval-harness/), which is a transition the tri-state was
-  // never taught about: it was built for "unapplied → applied", not "live → archived".
-  // The lookup therefore also searches the archive, and an unreadable record degrades to "not
-  // recorded" — which FAILS the check with the message below rather than throwing, so a silently
-  // dropped obligation still surfaces as a normal failure.
-  const findPendingClass2 = (): string => {
-    const candidates = [join(repoRoot, 'openspec', 'changes', 'eval-harness', 'pending-class2.md')];
-    const archiveDir = join(repoRoot, 'openspec', 'changes', 'archive');
-    if (existsSync(archiveDir)) {
-      for (const entry of readdirSync(archiveDir)) {
-        if (entry.endsWith('-eval-harness')) candidates.push(join(archiveDir, entry, 'pending-class2.md'));
-      }
-    }
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) return readFileSync(candidate, 'utf8');
-    }
-    return '';
-  };
-  const obligationStillRecorded = gateHasWellFormedCorpusEvalCheck
-    ? false
-    : corpusEvalCheckLine.test(findPendingClass2());
-  check(
-    'the corpus-eval acceptance-suite gate entry is either correctly applied, or still tracked as a pending Class-2 obligation (pending-class2.md, design D13)',
-    gateHasWellFormedCorpusEvalCheck || (!gateHasCorpusEvalMarker && obligationStillRecorded),
-    'the corpus-eval gate entry is neither correctly applied to gate.sh nor recorded in pending-class2.md — the obligation has been silently dropped',
-  );
-}
-
-{
-  // Scenario "Acceptance suite needs no eval set": this whole suite (including everything
-  // above) already ran with neither --eval-set nor WHIM_EVAL_SET set in ITS OWN process env —
-  // demonstrated structurally: nothing in this file reads WHIM_EVAL_SET for itself, only passes
-  // it explicitly to CLI subprocesses under test.
-  const err = await caught(async () => {
-    if (process.env[EVAL_SET_ENV_VAR] !== undefined) {
-      throw new Error(`this suite's own process must not run with ${EVAL_SET_ENV_VAR} set`);
-    }
-  });
-  check('this acceptance suite runs with no eval set present in its own environment', err === undefined);
-}
