@@ -22,10 +22,6 @@ export async function run(): Promise<void> {
     assert(finding === undefined, finding ?? '');
   });
 
-  await test('domainLockstepFinding: matching domains return no finding', () => {
-    assert(domainLockstepFinding('anycognition.ca', 'anycognition.ca') === undefined, 'expected no finding for matching domains');
-  });
-
   await test('domainLockstepFinding: a mismatch fails and names both values (discriminating: a same-length-only check would miss this)', () => {
     const finding = domainLockstepFinding('drifted-native.example', 'drifted-launcher.example');
     assert(
@@ -41,26 +37,12 @@ export async function run(): Promise<void> {
     assert(findings.length === 0, `expected deploy/defaults.env to match, got ${JSON.stringify(findings)}`);
   });
 
-  await test('deployHostLockstepFindings: matching hosts return no findings', () => {
-    const deploy: DeployDefaults = { WHIM_API_HOST: 'api.whim.anycognition.ca', WHIM_WEB_HOST: 'whim.anycognition.ca' };
-    assert(deployHostLockstepFindings('anycognition.ca', deploy).length === 0, 'expected no findings for matching hosts');
-  });
-
   await test('deployHostLockstepFindings: a mismatched API host fails, naming both', () => {
     const deploy: DeployDefaults = { WHIM_API_HOST: 'api.whim.wrong.example', WHIM_WEB_HOST: 'whim.anycognition.ca' };
     const findings = deployHostLockstepFindings('anycognition.ca', deploy);
     assert(
       findings.some((f) => f.includes('api.whim.wrong.example') && f.includes('api.whim.anycognition.ca')),
       `expected an API host finding naming both, got ${JSON.stringify(findings)}`,
-    );
-  });
-
-  await test('deployHostLockstepFindings: a mismatched web host fails, naming both', () => {
-    const deploy: DeployDefaults = { WHIM_API_HOST: 'api.whim.anycognition.ca', WHIM_WEB_HOST: 'whim.wrong.example' };
-    const findings = deployHostLockstepFindings('anycognition.ca', deploy);
-    assert(
-      findings.some((f) => f.includes('whim.wrong.example') && f.includes('whim.anycognition.ca')),
-      `expected a web host finding naming both, got ${JSON.stringify(findings)}`,
     );
   });
 }

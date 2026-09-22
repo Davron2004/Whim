@@ -4,7 +4,9 @@
  * member/computed access through a global root or a tainted alias (including a
  * statically-unknown computed key), `.constructor` access, `__proto__`/shared-prototype
  * mutation, and string-argument `setTimeout`/`setInterval`. Honest shadowing (task 4.3) is
- * never flagged — `resolveBinding` returning `'local'` is always skipped.
+ * never flagged — `resolveBinding` returning `'local'` is always skipped. Known boundary: a deep
+ * merge that writes a key computed at run time (`['__', 'proto__'].join('')`) is not detected as
+ * `prototype_pollution`.
  */
 
 import ts from 'typescript';

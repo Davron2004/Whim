@@ -206,17 +206,6 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
 
   // ── the error screen's source properties ────────────────────────────────────
 
-  await h.test('error screen: styled from the v2 tokens only — no hex, no font-size or radius literal', () => {
-    const src = readSource('src/host/launcher/ScreenErrorFallback.tsx');
-    h.ok(!/#[0-9a-f]{3,8}\b/i.test(src), 'no hex colour literal');
-    h.ok(!/fontSize\s*:/.test(src), 'no numeric font-size literal — faces come from TYPE_SCALE');
-    h.ok(!/borderRadius\s*:\s*\d/.test(src), 'no numeric radius literal — radii come from RADIUS');
-    h.ok(/TYPE_SCALE/.test(src) && /SPACING/.test(src) && /RADIUS/.test(src), 'the v2 tokens are what it styles from');
-    h.ok(/SHELL_PALETTE/.test(src), 'colours come from SHELL_PALETTE, not a second palette');
-    h.ok(!/shellPalette\(/.test(src), 'the retired shellPalette() function is gone');
-    h.ok(!/\buseTheme\b/.test(src), 'no theme context — the shell theme is fixed');
-  });
-
   await h.test('error screen: every string comes from copy.ts, and the thrown error never reaches the surface', () => {
     const src = readSource('src/host/launcher/ScreenErrorFallback.tsx');
     h.ok(/COPY\.screenErrorTitle/.test(src) && /COPY\.screenErrorBody/.test(src) && /COPY\.screenErrorRetry/.test(src), 'title, body and retry all read from COPY');

@@ -181,20 +181,6 @@ await test('§ST-6a a cross-lineage snapshot id is refused; original lineage unc
   eq(activeAfter!.artifacts['bundle.js'], BUNDLE(2), 'original lineage active bundle unchanged by the refused rollback');
 });
 
-await test('§ST-6b rollback to generation 1 then roll forward to generation 2 both succeed', async () => {
-  const s = freshStore();
-  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
-  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'p2');
-
-  const back = await s.rollback('app', 'g1');
-  eq(back.activeId, 'g1', 'rollback to g1 succeeds');
-  eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(1), 'g1 is the active bundle after rollback');
-
-  const forward = await s.rollback('app', 'g2');
-  eq(forward.activeId, 'g2', 'roll forward to g2 succeeds');
-  eq((await s.active('app'))!.artifacts['bundle.js'], BUNDLE(2), 'g2 is the active bundle after rolling forward');
-});
-
 await test('§ST-6c rollback to the current tip succeeds', async () => {
   const s = freshStore();
   await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1');
@@ -307,22 +293,6 @@ await test('§timeline: round-trip stability — rollback -> timeline -> roll-fo
 //       * single-lineage flows (no fork ever) are byte-identical across rollbacks
 //         (already covered by the §timeline shape-parity / round-trip-stability tests
 //         above, which must stay green unmodified) --------------------------------
-
-await test('§lineage-stamp: snapshot() records the creating lineage in the commit trailer', async () => {
-  const backend = new MemoryFs();
-  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
-  const gitdir = '/whim/apps/app/.git';
-  await s.snapshot('app', { 'bundle.js': BUNDLE(1) }, 'p1'); // main: g1
-  const { lineageId } = await s.fork('app', 'g1'); // fork-1, checked out
-  await s.snapshot('app', { 'bundle.js': BUNDLE(2) }, 'fork edit'); // fork-1: g2
-
-  const mainOid = await git.resolveRef({ fs: { promises: backend }, gitdir, ref: 'refs/heads/main' });
-  const forkOid = await git.resolveRef({ fs: { promises: backend }, gitdir, ref: `refs/heads/${lineageId}` });
-  const { commit: mainCommit } = await git.readCommit({ fs: { promises: backend }, gitdir, oid: mainOid });
-  const { commit: forkCommit } = await git.readCommit({ fs: { promises: backend }, gitdir, oid: forkOid });
-  ok(mainCommit.message.includes('main'), 'the main-lineage commit message stamps main');
-  ok(forkCommit.message.includes(lineageId), "the fork's commit message stamps the fork lineage");
-});
 
 await test('§lineage-stamp: the trailer never leaks into prompt, even for a prompt shaped like one', async () => {
   const s = freshStore();

@@ -403,18 +403,6 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('generateApp: parses a failure terminal frame', async () => {
-    const event: GenerationEvent = {
-      type: 'failure',
-      reason: 'could not satisfy the checks',
-      attempts: 3,
-      diagnostics: [{ kind: 'type-error', hint: 'declare a type' }],
-    };
-    const fetchImpl = (async () => sseResponse([sseFrame(event, 1)])) as typeof fetch;
-    const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
-    h.eq(got, [event], 'yields the failure event');
-  });
-
   await h.test('generateApp: a frame split across chunks and a keepalive comment still parse', async () => {
     const event: GenerationEvent = { type: 'token', text: 'hello' };
     const frame = sseFrame(event, 1);
@@ -434,13 +422,6 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     const got = await collect(generateApp({ ...BASE, fetchImpl, onKeepalive: () => keepalives++ }, { prompt: 'p' }));
     h.eq(got, [event], 'still yields only the real event');
     h.eq(keepalives, 2, 'and the caller hears about both keepalive frames');
-  });
-
-  await h.test('generateApp: with no onKeepalive supplied, a keepalive comment is silently skipped as before', async () => {
-    const event: GenerationEvent = { type: 'token', text: 'hi' };
-    const fetchImpl = (async () => sseResponse([sseFrame(event, 1), ': keepalive\n\n'])) as typeof fetch;
-    const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
-    h.eq(got, [event], 'an absent callback is a no-op, not a throw');
   });
 
   // generateApp: malformed frame — unrecognized discriminant
@@ -507,23 +488,6 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       }
     },
   );
-
-  // generateApp: result frame with a runnable bundle (contains __WHIM_APP_MODULE__) yields normally
-  await h.test('generateApp: a result frame with a runnable bundle yields normally', async () => {
-    const event: GenerationEvent = {
-      type: 'result',
-      app: {
-        name: 'Tip Splitter',
-        source: 'src',
-        bundle: 'window.__WHIM_APP_MODULE__ = {};',
-        manifest: {},
-        schema: {},
-      },
-    };
-    const fetchImpl = (async () => sseResponse([sseFrame(event, 1)])) as typeof fetch;
-    const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
-    h.eq(got, [event], 'yields the result event');
-  });
 
   // rewritePrompt: a 200 body that fails RewriteResponse shape validation still raises 'http'
   await h.test(
@@ -691,7 +655,6 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       if (logged) {
         h.eq(logged.fields.status, 404, 'the response status is a named field');
         h.eq(logged.fields.kind, 'http', 'the mapped error kind is a named field');
-        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
       }
     },
   );

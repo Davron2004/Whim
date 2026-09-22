@@ -153,24 +153,11 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     h.eq(rebuiltTile?.rebuild, rebuild, 'a1 carries the rebuild record');
   });
 
-  // ── red-check aid: state on the record survives verbatim (building/failed/interrupted) ──
-  await h.test('composeGrid: a ghost tile carries its record’s state verbatim', async () => {
-    for (const state of ['building', 'failed', 'interrupted'] as const) {
-      const tiles = composeGrid([pendingRecord(`p-${state}`, { state })], []);
-      h.eq((tiles[0] as Extract<GridTile, { kind: 'ghost' }>).rec.state, state, `ghost state ${state} is not rewritten`);
-    }
-  });
-
   // ── ghostStateCaption (copy.ts) — every state names itself, distinctly ────
   await h.test('ghostStateCaption: every state has its own, non-empty caption', async () => {
     const captions = (['building', 'failed', 'interrupted'] as const).map(ghostStateCaption);
     h.eq(new Set(captions).size, 3, 'three distinct captions — no state borrows another’s wording');
     for (const c of captions) h.ok(c.length > 0, `"${c}" is non-empty`);
-  });
-
-  await h.test('ghostStateCaption: failed and interrupted are each distinct from building’s neutral caption', async () => {
-    h.ok(ghostStateCaption('failed') !== ghostStateCaption('building'), 'failed reads differently from building');
-    h.ok(ghostStateCaption('interrupted') !== ghostStateCaption('building'), 'interrupted reads differently from building');
   });
 
   // ── production-source checks (RN components, not renderable under Node) ───

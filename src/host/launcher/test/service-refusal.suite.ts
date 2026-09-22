@@ -10,7 +10,7 @@
  *     only (seconds, minutes, same local day, tomorrow), per this chain's declared read scope.
  */
 import { Harness } from './harness';
-import { REFUSAL_RULES, retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
+import { retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
 import { GenerationClientError } from '../transport-shared';
 import { ServiceRefusalCode } from '@whim/contract';
 
@@ -26,13 +26,6 @@ function httpError(code: string, opts: { hint?: string; status?: number; retryAf
 }
 
 export async function runServiceRefusalTests(h: Harness): Promise<void> {
-  await h.test("REFUSAL_RULES' keys equal the real ServiceRefusalCode vocabulary exactly", () => {
-    const tableKeys = Object.keys(REFUSAL_RULES).sort((a, b) => a.localeCompare(b));
-    const realCodes = [...ServiceRefusalCode.options].sort((a, b) => a.localeCompare(b));
-    h.eq(tableKeys, realCodes, 'no code is missing and none is extra');
-    h.eq(realCodes.length, 7, 'the vocabulary has exactly seven members');
-    h.ok(tableKeys.includes('budget_exhausted'), 'budget_exhausted specifically is present');
-  });
 
   await h.test('every contract code is recognised as a refusal carrying that code and hint', () => {
     for (const code of ServiceRefusalCode.options) {

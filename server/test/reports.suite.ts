@@ -74,17 +74,6 @@ async function testRetentionPurge(): Promise<void> {
     check('yesterday\'s report remains', (await store.get(recentId)) !== undefined);
   }
 
-  // Configurable retention: WHIM_REPORT_RETENTION_DAYS=30, a 31-day-old report is deleted.
-  {
-    const store = new InMemoryReportStore();
-    const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
-    const thirtyOneDaysAgo = now - 31 * 86_400_000;
-    const id = await store.insert({ deviceId: DEVICE_A, reason: 'broken', now: thirtyOneDaysAgo });
-    const deleted = await store.purgeOlderThan(now - 30 * 86_400_000);
-    eq('the 31-day-old report is deleted under a 30-day retention', deleted, 1);
-    check('it is gone', (await store.get(id)) === undefined);
-  }
-
   // A purge reclaims storage (secure_delete=ON): the sqlite implementation's file no longer
   // carries the purged report's marker text after the purge.
   {

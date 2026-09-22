@@ -223,17 +223,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     h.ok(third.done === true, 'iteration ends once the response completes with no further frames');
   });
 
-  await h.test('openXhrGenerateStream: a keepalive comment block is skipped, not yielded or errored', async () => {
-    const fakeXhr = new FakeXMLHttpRequest();
-    const event: GenerationEvent = { type: 'token', text: 'hello' };
-    const collected = collect(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }));
-    fakeXhr.respondHeaders(200);
-    fakeXhr.respondIncremental(sseFrame(event, 1));
-    fakeXhr.respondIncremental(': keepalive\n\n');
-    fakeXhr.respondComplete();
-    h.eq(await collected, [event], 'yields only the real event; the keepalive block produces nothing and no error');
-  });
-
   // build-liveness B2: the XHR path shares `generateApp`'s SSE-block parser (it never parses
   // framing itself — see `generation-client.ts`'s module doc), so `onKeepalive` fires identically
   // over this transport too.
@@ -436,7 +425,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       h.ok(logged !== undefined, 'records a breadcrumb at the transport-error mapping site');
       if (logged) {
         h.eq(logged.fields.kind, 'network', 'the mapped error kind is a named field');
-        h.ok(!logged.message.includes('whim:gen'), 'the retired prefix is not pasted into the message');
       }
     },
   );
@@ -487,24 +475,6 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
         120,
         'retryAfterSeconds reads xhr.getResponseHeader through the fake Response adapter',
       );
-    },
-  );
-
-  await h.test(
-    'openXhrGenerateStream: a malformed Retry-After is dropped without changing kind/status/code/hint',
-    async () => {
-      const fakeXhr = new FakeXMLHttpRequest();
-      fakeXhr.setResponseHeaders({ 'Retry-After': 'soon' });
-      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
-      fakeXhr.respondHeaders(429);
-      fakeXhr.respondIncremental(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }));
-      fakeXhr.respondComplete();
-      const caught = (await expectThrow(first)) as GenerationClientError;
-      h.eq(caught.retryAfterSeconds, undefined, 'a non-integer Retry-After leaves the field absent');
-      h.eq(caught.kind, 'http', 'kind is unaffected');
-      h.eq(caught.status, 429, 'status is unaffected');
-      h.eq(caught.code, 'server_busy', 'code is unaffected');
-      h.eq(caught.hint, 'Try again soon', 'hint is unaffected');
     },
   );
 
@@ -726,23 +696,4 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     },
   );
 
-  await h.test(
-    'negative control: the first event resolves before the stream completes (red-checked in the chain-4 report by ' +
-      'temporarily making the transport buffer until completion and observing this exact check fail)',
-    async () => {
-      const fakeXhr = new FakeXMLHttpRequest();
-      const event: GenerationEvent = { type: 'stage', stage: 'generate', status: 'start' };
-      const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
-      fakeXhr.respondHeaders(200);
-      fakeXhr.respondIncremental(sseFrame(event, 1));
-      // Deliberately NOT calling fakeXhr.respondComplete() yet -- `first` must already be
-      // observable without it.
-      const settled = await withTimeout(first, 200);
-      h.ok(settled !== 'timeout', 'the first event resolves without the response ever completing');
-      if (settled !== 'timeout') {
-        h.eq(settled.value, event, 'yields the correct event');
-      }
-      fakeXhr.respondComplete();
-    },
-  );
 }

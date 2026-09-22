@@ -2,12 +2,9 @@
  * server/test/scripted-model.ts — `ScriptedModelClient`, the deterministic `ModelClient` test
  * double every generation-pipeline suite replays turns through (design D3, spec "the deterministic
  * test suites SHALL run a scripted client that replays recorded turns"). No suite that uses this
- * file makes a live request: pair it with `noNetworkTransport` (below) as the injected `FetchFn` of
- * any real `OpenRouterClient` a test happens to construct, so a stray real call fails loudly
- * instead of hanging or hitting the network.
+ * file makes a live request.
  */
 import type { ModelClient, ModelDelta, ModelRequest, ModelRole, ModelRoster, ModelStream } from '../src/generation/model';
-import type { FetchFn } from '../src/openrouter';
 import type { Usage } from '@whim/contract';
 
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -122,15 +119,3 @@ export class ScriptedModelClient implements ModelClient {
     return scriptedStream(turn);
   }
 }
-
-/**
- * A `FetchFn` that throws on any request to the provider host — installed as the transport of any
- * real `OpenRouterClient` a deterministic suite constructs, so a stray live call fails loudly (and
- * synchronously, before touching the network) instead of hanging or leaking a request.
- */
-export const noNetworkTransport: FetchFn = async (input: Parameters<FetchFn>[0]) => {
-  throw new Error(
-    `noNetworkTransport: refused to fetch "${String(input)}" — the deterministic suite must never reach ` +
-      `the network. Use ScriptedModelClient instead of a live model call.`,
-  );
-};

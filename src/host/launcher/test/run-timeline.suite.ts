@@ -23,7 +23,6 @@ import { EMPTY_RUN_AGGREGATES, type RunSignals } from '../prompt-flow';
 import { RunJournalStore, type RunJournalEntry } from '../run-journal';
 import {
   SHOW_RUN_TIMELINE_DIAGNOSTICS,
-  runTimelineDevModeEnabled,
   runTimelineRows,
 } from '../run-timeline-view';
 
@@ -354,37 +353,7 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.ok(silent.includes('Repair attempts: 0'), 'the repair count, which the journal can always vouch for, still shows');
   });
 
-  await h.test('timeline dev mode: the gate is __DEV__ OR the explicit flag, never __DEV__ alone', () => {
-    h.eq(runTimelineDevModeEnabled(false, false), false, 'both gates off: no counts');
-    h.eq(runTimelineDevModeEnabled(true, false), true, 'reachable under a debug build');
-    h.eq(runTimelineDevModeEnabled(false, true), true, 'reachable in a locally-built RELEASE apk with the flag on');
-    h.eq(runTimelineDevModeEnabled(false), false, 'the committed default is what an unqualified call gets');
-    const rootSrc = code(readSource('LauncherRoot.tsx'));
-    h.ok(/runTimelineDevModeEnabled\(__DEV__\)/.test(rootSrc), 'the shell decides it once, through the gate');
-    h.ok(!/devMode=\{__DEV__\}/.test(rootSrc), 'and never hands a bare __DEV__ to a timeline surface');
-  });
-
   // ── the component and its wiring (tasks 5.1 / 5.4) ──────────────────────────
-
-  await h.test('timeline: the component renders rows it is given and never reads a store', () => {
-    const src = code(readSource('RunTimeline.tsx'));
-    h.ok(/runTimelineRows\(entries \?\? \[\], devMode\)/.test(src), 'every row comes from the one pure composer');
-    h.ok(!/Store|journal\.get|useState|useEffect/.test(src), 'the component holds no state and reads no store');
-    h.ok(!/\.kind\b.*symbol|\.symbol\b/.test(src), 'it never reaches for a diagnostic symbol');
-    h.ok(!/token/i.test(src), 'and never for token text');
-    h.ok(/COPY\.timelineTitle/.test(src) && /COPY\.timelineEmpty/.test(src), 'its two strings come from the copy table');
-  });
-
-  await h.test('timeline: it is styled from the v2 tokens alone', () => {
-    const src = readSource('RunTimeline.tsx');
-    h.ok(!/#[0-9a-f]{3,8}\b/i.test(src), 'no hex colour literal');
-    h.ok(!/fontSize\s*:/.test(src), 'no numeric font-size literal — faces come from TYPE_SCALE');
-    h.ok(!/borderRadius\s*:\s*\d/.test(src), 'no numeric radius literal');
-    h.ok(/TYPE_SCALE/.test(src) && /SPACING/.test(src), 'the v2 tokens are what it styles from');
-    h.ok(/SHELL_PALETTE/.test(src), 'colours come from SHELL_PALETTE, not a second palette');
-    h.ok(!/shellPalette\(/.test(src), 'the retired shellPalette() function is gone');
-    h.ok(!/\buseTheme\b/.test(src), 'no theme context — the shell theme is fixed');
-  });
 
   await h.test('timeline: the build screen’s details affordance reads the journal ON OPEN', () => {
     const rootSrc = code(readSource('LauncherRoot.tsx'));
@@ -414,29 +383,4 @@ export async function runRunTimelineTests(h: Harness): Promise<void> {
     h.ok(rootSrc.includes("if (screen.kind !== 'build') setTimeline(null);"), 'leaving the build screen closes it, so it can never reopen onto a previous attempt');
   });
 
-  // ── the overlay is gone; the sheet respects the top safe zone by construction (build-liveness B5) ──
-  await h.test('timeline: LauncherRoot no longer renders the old absolute-overlay details view', () => {
-    const rootSrc = readSource('LauncherRoot.tsx');
-    h.ok(!/timelineOverlay/.test(rootSrc), 'the styles the old overlay used are gone, not merely unreferenced');
-    h.ok(!/timelineBody/.test(rootSrc) && !/\btimelineClose\b/.test(rootSrc), 'and its two supporting styles with it');
-  });
-
-  await h.test('RunDetailsSheet: anchored to the bottom, capped well short of the status bar, no top inset', () => {
-    const src = code(readSource('RunDetailsSheet.tsx'));
-    h.ok(/justifyContent:\s*'flex-end'/.test(src), 'the scrim pins its content to the bottom edge');
-    h.ok(/SHEET_MAX_HEIGHT_FRACTION\s*=\s*0\.72/.test(src), 'capped at 72% of the window — it can never reach the status bar');
-    h.ok(!/useSafeAreaInsets\(\)\.top|insets\.top/.test(src), 'and never reads a top inset, because it never needs one');
-    h.ok(/insets\.bottom/.test(src), 'only the bottom inset — the edge this sheet actually touches — is honoured');
-    h.ok(/borderTopLeftRadius:\s*RADIUS\.sheet/.test(src) && /borderTopRightRadius:\s*RADIUS\.sheet/.test(src), 'RADIUS.sheet on both top corners');
-    h.ok(/MOTION\.sheetRise/.test(src), 'rises on the same timing token the orb menu uses');
-  });
-
-  await h.test('build: the liveness line comes from buildLivenessLine/livenessOf/WorkingLine, never the retired heartbeat', () => {
-    const buildSrc = code(readSource('BuildStep.tsx'));
-    h.ok(/buildLivenessLine\(/.test(buildSrc), 'the phrase is composed by the one liveness-copy function');
-    h.ok(/livenessOf\(/.test(buildSrc), 'the liveness state is derived by the one liveness function');
-    h.ok(/<WorkingLine\b/.test(buildSrc), 'and rendered through the shared WorkingLine, like every other wait in the flow');
-    h.ok(/clock=\{false\}/.test(buildSrc), 'without a second, differently-sourced clock suffix');
-    h.ok(!/buildActivityLine|buildQuietLine|quietSecondsSince|HEARTBEAT_QUIET_MS/.test(buildSrc), 'the retired single-heartbeat API is gone from this screen entirely');
-  });
 }

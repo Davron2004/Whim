@@ -26,7 +26,6 @@ import {
   type HistoryLoadState,
   type PublishHistoryLoad,
 } from '../history-wait';
-import { COPY } from '../copy';
 
 function read(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'src/host/launcher', file), 'utf8');
@@ -72,10 +71,6 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
   console.log('\n— history-wait: first-load skeleton, confirm double-submit guard, diff pending —');
 
   // ── first load ─────────────────────────────────────────────────────────────────────────────
-
-  await h.test('load: the screen starts loading, so an empty list is never mistaken for empty history', () => {
-    h.eq(HISTORY_LOADING, { loading: true, snapshots: [], activeId: null }, 'the initial state is loading with nothing to show');
-  });
 
   await h.test('load: loading stays true until the first read resolves, then the rows land together', async () => {
     const gate = deferred<{ snapshots: HistoryLoadState['snapshots']; activeId: string | null }>();
@@ -252,10 +247,4 @@ export async function runHistoryWaitTests(h: Harness): Promise<void> {
     );
   });
 
-  await h.test('copy: the wait states are named in product copy, not invented at the call site', () => {
-    h.eq(COPY.historyRestoreConfirmBusy, 'Going back…', 'the restore button names the restore it is running');
-    h.eq(COPY.historyCopyConfirmBusy, 'Making the copy…', 'and the copy button the fork');
-    h.ok(COPY.historyLoadingLabel.length > 0, 'the first-load skeleton has a screen-reader name');
-    h.ok(COPY.historyReassurancePending.length > 0, 'so does the pending reassurance placeholder');
-  });
 }

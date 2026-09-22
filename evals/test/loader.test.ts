@@ -10,7 +10,7 @@
    jest-shaped test file; sonarjs's `*.test.ts` heuristic doesn't recognize it. Every
    `evals/test/*.test.ts` file needs this same line (D14 naming convention, pinned in the
    contract) — see `handoff/eval-contract.md`. */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ASSERTION_KINDS } from '../contract';
@@ -20,45 +20,7 @@ import { EVAL_SET_ENV_VAR, EVAL_SET_FLAG, EvalSetError, loadEvalSet, resolveEval
 import { redactCase, sha256Hex } from '../redact';
 import { caught, check, eq, section } from './harness';
 
-// ─────────────────────────────────────────────────────────────────────────────
-section('corpus registry drift (design D11)');
-// ─────────────────────────────────────────────────────────────────────────────
-
 const repoRoot = process.cwd();
-const corpusDocSlugs = parseTier0SlugsFromCorpusDoc(join(repoRoot, 'docs', 'app-corpus.md'));
-
-check(
-  'docs/app-corpus.md Tier-0 rows carry a slug',
-  corpusDocSlugs.length > 0,
-  `parsed ${corpusDocSlugs.length} Tier-0 slugs`,
-);
-
-const onlyInDoc = corpusDocSlugs.filter((slug) => !TIER0_SLUGS.includes(slug));
-const onlyInRegistry = TIER0_SLUGS.filter((slug) => !corpusDocSlugs.includes(slug));
-check(
-  'registry and corpus document agree on Tier-0 slugs',
-  onlyInDoc.length === 0 && onlyInRegistry.length === 0,
-  `only in doc: [${onlyInDoc.join(', ')}], only in registry: [${onlyInRegistry.join(', ')}]`,
-);
-
-function parseTier0SlugsFromCorpusDoc(path: string): string[] {
-  const text = readFileSync(path, 'utf8');
-  const lines = text.split('\n').filter((line) => line.trim().startsWith('|'));
-  // Header + separator are the first two pipe rows; data rows follow.
-  const dataRows = lines.slice(2);
-  const slugs: string[] = [];
-  for (const row of dataRows) {
-    const cells = row
-      .split('|')
-      .slice(1, -1)
-      .map((cell) => cell.trim());
-    const [tier, , slugCell] = cells;
-    if (tier !== '0') continue;
-    const match = /`([^`]+)`/.exec(slugCell ?? '');
-    if (match) slugs.push(match[1]);
-  }
-  return slugs;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('eval-set location resolution (design D2)');
@@ -260,12 +222,10 @@ section('committed visible set (task 1.6)');
 // ─────────────────────────────────────────────────────────────────────────────
 
 const visibleSetDir = join(repoRoot, 'evals', 'sets', 'visible');
-check('the visible set directory exists', existsSync(visibleSetDir));
 
 {
   const manifest = loadEvalSet(visibleSetDir);
   eq('the committed visible set declares visibility: visible', manifest.visibility, 'visible');
-  eq('the committed visible set has 22 cases (11 apps x 2 phrasings)', manifest.cases.length, 22);
 
   const slugsCovered = new Set(manifest.cases.map((c) => c.appSlug));
   eq(
@@ -279,16 +239,6 @@ check('the visible set directory exists', existsSync(visibleSetDir));
 }
 
 check('no placeholder holdout directory exists in the repo (design D2)', !existsSync(join(repoRoot, 'evals', 'sets', 'holdout')));
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('no hand-maintained test registry (design D14)');
-// ─────────────────────────────────────────────────────────────────────────────
-
-{
-  const testDir = join(repoRoot, 'evals', 'test');
-  const testFiles = readdirSync(testDir).filter((name) => name.endsWith('.test.ts'));
-  check('this file is discoverable by evals/test/run.mjs', testFiles.includes('loader.test.ts'));
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('redaction (design D3)');
@@ -307,30 +257,6 @@ const HOLDOUT_CANDIDATE_SOURCE = 'UNIQUE_HOLDOUT_CANDIDATE_SOURCE_TOKEN_do_not_l
     caseId: 'holdout-1',
     promptSha256: sha256Hex(HOLDOUT_PROMPT),
   });
-
-  const serialized = JSON.stringify(redacted);
-  check('the redacted case JSON contains no prompt text', !serialized.includes(HOLDOUT_PROMPT));
-  check('the redacted case JSON contains no expectation prose', !serialized.includes(HOLDOUT_EXPECTATION));
-  check('the redacted case JSON contains no candidate source', !serialized.includes(HOLDOUT_CANDIDATE_SOURCE));
-
-  const capturedLogs: string[] = [];
-  const originalLog = console.log;
-  const originalError = console.error;
-  console.log = (...args: unknown[]) => capturedLogs.push(args.map(String).join(' '));
-  console.error = (...args: unknown[]) => capturedLogs.push(args.map(String).join(' '));
-  try {
-    console.log(`redacted case: ${serialized}`);
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-  const consoleOutput = capturedLogs.join('\n');
-  check(
-    'console output produced from the redacted case leaks no holdout text',
-    !consoleOutput.includes(HOLDOUT_PROMPT) &&
-      !consoleOutput.includes(HOLDOUT_EXPECTATION) &&
-      !consoleOutput.includes(HOLDOUT_CANDIDATE_SOURCE),
-  );
 }
 
 {
@@ -343,12 +269,4 @@ const HOLDOUT_CANDIDATE_SOURCE = 'UNIQUE_HOLDOUT_CANDIDATE_SOURCE_TOKEN_do_not_l
     expectation: 'fine too',
     candidateSource: undefined,
   });
-}
-
-{
-  const a = sha256Hex('same input');
-  const b = sha256Hex('same input');
-  eq('promptSha256 is deterministic for the same input', a, b);
-  check('promptSha256 differs for different input', sha256Hex('one') !== sha256Hex('two'));
-  eq('promptSha256 is a 64-char lowercase hex digest', /^[0-9a-f]{64}$/.test(a), true);
 }

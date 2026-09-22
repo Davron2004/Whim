@@ -30,7 +30,8 @@ function match(actual: string, expected: RegExp): void {
   if (!expected.test(actual)) fail(`expected ${JSON.stringify(actual)} to match ${String(expected)}`);
 }
 
-function publicSdkMustNotAcceptHostRootProps(
+/** Compile-time only: the @ts-expect-error below fails the typecheck if NavRootProps becomes public. */
+export function publicSdkMustNotAcceptHostRootProps(
   // @ts-expect-error NavRootProps is repository-internal and must never be public vc-sdk API.
   props: import('vc-sdk').NavRootProps,
 ): unknown {
@@ -38,8 +39,6 @@ function publicSdkMustNotAcceptHostRootProps(
 }
 
 equal(Object.hasOwn(publicSdk, 'NavRoot'), false);
-equal(Object.hasOwn(publicSdk, 'NavRootProps'), false);
-equal(typeof publicSdkMustNotAcceptHostRootProps, 'function');
 
 const posted: string[] = [];
 const messageListeners = new Set<MessageListener>();

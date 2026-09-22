@@ -1,6 +1,6 @@
 /**
  * server/test/source-block.suite.ts — unit tests for `unwrapSourceFence`
- * (../src/generation/source-block.ts). Implements server/test/SPEC.md's engineer-turn fence
+ * (../src/generation/source-block.ts). Covers the engineer-turn fence
  * tolerance. Machine-level "no repair spent on a fenced reply" coverage lives in
  * machine.suite.ts's testGenerateReplyFencedIsUnwrappedNoRepair.
  */

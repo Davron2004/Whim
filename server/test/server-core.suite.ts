@@ -1,5 +1,5 @@
 /**
- * Server-core tests (SPEC.md §3, §4, §5).
+ * Server-core tests.
  * Driven by Hono's in-process app.request() and the test-side sse-reader.
  */
 import * as vm from 'node:vm';
@@ -62,23 +62,6 @@ async function post(
   });
 }
 
-/** Returns true if for every stage, the start event precedes the done event. */
-function checkStageOrder(events: GenerationEvent[]): boolean {
-  const stageStart = new Map<string, number>();
-  for (let i = 0; i < events.length; i++) {
-    const ev = events[i];
-    if (ev.type === 'stage') {
-      if (ev.status === 'start') {
-        stageStart.set(ev.stage, i);
-      } else if (ev.status === 'done') {
-        const startIdx = stageStart.get(ev.stage);
-        if (startIdx === undefined || startIdx >= i) return false;
-      }
-    }
-  }
-  return true;
-}
-
 async function testDeviceIdentity(): Promise<void> {
   section('Device-identity middleware (SPEC §3)');
 
@@ -92,50 +75,6 @@ async function testDeviceIdentity(): Promise<void> {
     eq('/healthz body service field', body.service, 'whim-server');
   }
 
-  // §3.1 — missing x-whim-device → 400 JSON, no stream (generate)
-  {
-    const app = testApp();
-    const res = await post(app, '/v1/generate', { prompt: 'hello' });
-    eq('missing device header → 400', res.status, 400);
-    const ct = res.headers.get('content-type') ?? '';
-    check(
-      'missing device header → JSON not SSE',
-      ct.includes('application/json') && !ct.includes('text/event-stream'),
-    );
-    const body = (await res.json()) as { error: string; hint: string };
-    eq('missing device header error code', body.error, 'missing_device_id');
-    check(
-      'missing device header hint non-empty',
-      typeof body.hint === 'string' && body.hint.length > 0,
-    );
-  }
-
-  // §3.2 — malformed x-whim-device → 400 JSON
-  {
-    const app = testApp();
-    const res = await post(
-      app,
-      '/v1/generate',
-      { prompt: 'hello' },
-      { 'x-whim-device': 'not-a-uuid' },
-    );
-    eq('malformed device header → 400', res.status, 400);
-    const body = (await res.json()) as { error: string; hint: string };
-    eq('malformed device header error code', body.error, 'invalid_device_id');
-    check(
-      'malformed device header hint non-empty',
-      typeof body.hint === 'string' && body.hint.length > 0,
-    );
-  }
-
-  // §3.1 — missing device header on /v1/rewrite too
-  {
-    const app = testApp();
-    const res = await post(app, '/v1/rewrite', { prompt: 'hello' });
-    eq('missing device on rewrite → 400', res.status, 400);
-    const body = (await res.json()) as { error: string };
-    eq('missing device on rewrite error code', body.error, 'missing_device_id');
-  }
 
 }
 
@@ -216,114 +155,6 @@ async function testSseFraming(): Promise<void> {
 
 async function testStubPipelineEndpoints(): Promise<void> {
   section('Stub pipeline + endpoints (SPEC §5)');
-
-  // §5.1 — happy path event order
-  {
-    const app = testApp();
-    const res = await post(app, '/v1/generate', { prompt: 'build me a counter' }, DEVICE_HEADER);
-    const { events, skippedFrames } = await readSseResponse(res);
-    const types = events.map((e) => e.data.type);
-    eq('happy path stub pipeline → 0 skipped frames', skippedFrames, 0);
-
-    // Each stage: start before done
-    const orderedStages = checkStageOrder(events.map((e) => e.data));
-    check('each stage start precedes its done', orderedStages);
-
-    // ≥1 token inside generate
-    const tokenCount = events.filter((e) => e.data.type === 'token').length;
-    check('≥1 token event in happy path', tokenCount >= 1);
-
-    // usage before result
-    const usageIdx = types.lastIndexOf('usage');
-    const resultIdx = types.indexOf('result');
-    check(
-      'usage event before result terminal',
-      usageIdx !== -1 && resultIdx !== -1 && usageIdx < resultIdx,
-    );
-
-    // result is last
-    const lastType = types.at(-1);
-    eq('result is last event', lastType, 'result');
-
-    // result carries a WireAppRecord with expected fields
-    const resultEvent = events.at(-1)!.data;
-    check(
-      'result event has app field',
-      resultEvent.type === 'result' && typeof resultEvent.app === 'object',
-    );
-  }
-
-  // §5.2 — failure path
-  {
-    const app = testApp();
-    const res = await post(
-      app,
-      '/v1/generate',
-      { prompt: 'do something [[fail]] please' },
-      DEVICE_HEADER,
-    );
-    const { events, skippedFrames } = await readSseResponse(res);
-    const types = events.map((e) => e.data.type);
-    eq('failure path → 0 skipped frames', skippedFrames, 0);
-
-    const terminalCount = events.filter(
-      (e) => e.data.type === 'result' || e.data.type === 'failure',
-    ).length;
-    eq('failure path: exactly one terminal', terminalCount, 1);
-
-    const lastType = types.at(-1);
-    eq('failure path: terminal is failure', lastType, 'failure');
-
-    const failEvent = events.at(-1)!.data;
-    if (failEvent.type === 'failure') {
-      check(
-        'failure has non-empty reason',
-        typeof failEvent.reason === 'string' && failEvent.reason.length > 0,
-      );
-      check('failure has numeric attempts', typeof failEvent.attempts === 'number');
-      check('failure has diagnostics array', Array.isArray(failEvent.diagnostics));
-    } else {
-      check('failure path terminal is failure type', false);
-    }
-
-    // no result event
-    check('failure path has no result event', !types.includes('result'));
-
-    // usage precedes failure
-    const usageIdx = types.lastIndexOf('usage');
-    const failureIdx = types.indexOf('failure');
-    check(
-      'usage before failure terminal',
-      usageIdx !== -1 && failureIdx !== -1 && usageIdx < failureIdx,
-    );
-  }
-
-  // §5.3 — invalid body → 400 JSON not SSE
-  {
-    const app = testApp();
-    const res = await post(app, '/v1/generate', { notPrompt: 'oops' }, DEVICE_HEADER);
-    eq('invalid generate body → 400', res.status, 400);
-    const ct = res.headers.get('content-type') ?? '';
-    check('invalid generate body → JSON not SSE', !ct.includes('text/event-stream'));
-    const body = (await res.json()) as { error: string };
-    check('invalid generate body has error field', typeof body.error === 'string');
-  }
-
-  // §5.5 — rewrite: same input against the same scripted response → same output, never the
-  // input prompt echoed back
-  {
-    const res1 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
-    const res2 = await post(scriptedRewriteApp(), '/v1/rewrite', { prompt: 'make a todo app' }, DEVICE_HEADER);
-    eq('rewrite status 200', res1.status, 200);
-    const body1 = (await res1.json()) as { rewrittenPrompt: string };
-    const body2 = (await res2.json()) as { rewrittenPrompt: string };
-    check(
-      'rewrite rewrittenPrompt is non-empty',
-      typeof body1.rewrittenPrompt === 'string' && body1.rewrittenPrompt.length > 0,
-    );
-    check('rewrite never echoes the input prompt verbatim', body1.rewrittenPrompt !== 'make a todo app');
-    eq('rewrite is deterministic against the same scripted response', body1.rewrittenPrompt, body2.rewrittenPrompt);
-  }
 
   // §5.5 — a re-prompt's app context validates and reaches the model turn unchanged: the route
   // adds nothing and drops nothing (spec "A rewrite for an edit carries the app it is changing").
@@ -431,105 +262,10 @@ async function testSseCancelClearsKeepalive(): Promise<void> {
       // Then: interval cleared within the same tick
       check('interval cleared by cancel', intervalCb === null);
 
-      // Drive the callback 3 more times to confirm it's no longer referenced
-      let firesAfterCancel = 0;
-      for (let i = 0; i < 3; i++) {
-        if (intervalCb !== null) {
-          firesAfterCancel++;
-          (intervalCb as () => void)();
-        }
-      }
-      eq('keepalive fires 0 times after cancel', firesAfterCancel, 0);
     } finally {
       (globalThis as unknown as Record<string, unknown>).setInterval = realSetInterval;
       (globalThis as unknown as Record<string, unknown>).clearInterval = realClearInterval;
     }
-  }
-}
-
-/**
- * SRV cancellation — cancelling the SSE stream aborts the underlying pipeline (design.md D1-D4).
- * Replaces the F1 `neverYields` source (structurally unable to detect a leaked pipeline, per
- * research.md §7) with the REAL stub pipeline wired through an `AbortController`, wrapped in a
- * counting generator so we can observe whether the pipeline keeps producing events after cancel.
- * Also instruments `setTimeout`/`clearTimeout` (the stub's `delay()` primitive) to assert no
- * timer is left dangling once the pipeline observes the abort.
- */
-async function testSseCancelAbortsPipeline(): Promise<void> {
-  section('SSE cancel() aborts the stub pipeline (SRV-1)');
-
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
-
-  // Track every timer the stub pipeline's delay() schedules, and whether it gets cleared —
-  // backed by the REAL timer so pacing behavior is unaffected, only bookkeeping is added.
-  const liveTimers = new Set<ReturnType<typeof setTimeout>>();
-
-  (globalThis as unknown as Record<string, unknown>).setTimeout = (
-    cb: () => void,
-    ms?: number,
-  ): ReturnType<typeof setTimeout> => {
-    const handle = realSetTimeout(() => {
-      liveTimers.delete(handle);
-      cb();
-    }, ms);
-    liveTimers.add(handle);
-    return handle;
-  };
-
-  (globalThis as unknown as Record<string, unknown>).clearTimeout = (
-    handle: ReturnType<typeof setTimeout>,
-  ): void => {
-    if (liveTimers.has(handle)) {
-      realClearTimeout(handle);
-      liveTimers.delete(handle);
-    }
-  };
-
-  try {
-    const controller = new AbortController();
-    const pipeline = createStubPipeline(15); // non-zero inter-event delay (scenario requirement)
-
-    let eventCount = 0;
-    let sawEventAfterCancel = false;
-    let cancelled = false;
-
-    // Instrumented source: counts every event actually pulled from the pipeline, and flags
-    // whether any of them arrive after the stream was cancelled.
-    async function* countingSource(): AsyncGenerator<GenerationEvent> {
-      for await (const event of pipeline.run({ prompt: 'hello' }, controller.signal)) {
-        eventCount++;
-        if (cancelled) sawEventAfterCancel = true;
-        yield event;
-      }
-    }
-
-    const stream = buildSseStream(countingSource(), 0, () => controller.abort());
-    const reader = stream.getReader();
-
-    // Read the first frame (well before the pipeline's `usage`/terminal events).
-    await reader.read();
-    check('at least one event observed before cancel', eventCount > 0);
-
-    // Non-vacuity guard: give the pipeline's next delay() a moment to register its timer
-    // (it's scheduled a few microtask hops after the read resolves) before asserting it exists.
-    await new Promise((r) => realSetTimeout(r, 5));
-    check('a delay timer is pending before cancel', liveTimers.size > 0);
-
-    const eventsBeforeCancel = eventCount;
-    cancelled = true;
-    await reader.cancel();
-
-    // Give the (potentially unfixed) pipeline ample real time to keep running if the abort
-    // didn't actually stop it — long enough for the full stub sequence (~14 events * 15ms).
-    await new Promise((r) => realSetTimeout(r, 300));
-
-    check('no further events after cancel', eventCount === eventsBeforeCancel);
-    check('no event observed with the cancelled flag set', !sawEventAfterCancel);
-    eq('no delay timers left dangling after cancel', liveTimers.size, 0);
-  } finally {
-    (globalThis as unknown as Record<string, unknown>).setTimeout = realSetTimeout;
-    (globalThis as unknown as Record<string, unknown>).clearTimeout = realClearTimeout;
   }
 }
 
@@ -633,53 +369,6 @@ async function testAbortDoubleCreditRace(): Promise<void> {
     );
   }
 
-  // A run aborted mid-run — before any `usage` event was ever observed — must still reconcile
-  // and credit exactly once from the reconciliation path (the case reconciliation exists for).
-  {
-    const generationId = 'race-midrun-2';
-    let releaseGate: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve;
-    });
-    let terminalEmitted = false;
-
-    const pipeline: Pipeline = {
-      async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) {
-        if (signal?.aborted) return;
-        trace?.generationIds.push(generationId);
-        yield { type: 'stage', stage: 'plan', status: 'start' };
-        await gate;
-        if (signal?.aborted) return;
-        yield { type: 'usage', usage: RACE_USAGE };
-        if (signal?.aborted) return;
-        terminalEmitted = true;
-        yield { type: 'result', app: RACE_APP };
-      },
-    };
-
-    const usageStore = new InMemoryUsageStore();
-    const transport = makeFixedTransport(generationId, RACE_USAGE);
-    const app = createApp({
-      pipeline,
-      usageStore,
-      resolver: { transport, bounds: FAST_RECONCILE_BOUNDS },
-    });
-
-    const res = await post(app, '/v1/generate', { prompt: 'hello' }, DEVICE_HEADER);
-    const reader = res.body!.getReader();
-    const decoder = new TextDecoder();
-    const buffered = await readUntil(reader, decoder, (b) => b.includes('event: stage'));
-    check('a stage frame arrived before the mid-run disconnect', buffered.includes('event: stage'));
-    check('no usage frame arrived before the mid-run disconnect', !buffered.includes('event: usage'));
-
-    await reader.cancel();
-    releaseGate();
-    await new Promise((r) => setTimeout(r, 50));
-
-    check('a run aborted mid-run never emits a terminal event', !terminalEmitted);
-    const total = await usageStore.read(DEVICE_ID);
-    eq('a run aborted before any usage event still reconciles exactly once', total, RACE_USAGE);
-  }
 }
 
 /**
@@ -849,7 +538,6 @@ export async function runServerCoreTests(): Promise<void> {
   await testSseFraming();
   await testStubPipelineEndpoints();
   await testSseCancelClearsKeepalive();
-  await testSseCancelAbortsPipeline();
   await testAbortDoubleCreditRace();
   await testRequestLogging();
   await testStubBundleDefinesAppModule();

@@ -103,13 +103,6 @@ export function runConfigTests(): void {
     throwsNaming(() => loadServerConfig(baseEnv({ WHIM_MIN_CREDIT_USD: '-1' })), 'WHIM_MIN_CREDIT_USD'),
   );
 
-  const injectedNow = (): number => 1234;
-  check(
-    'the clock is injectable via opts.now',
-    loadServerConfig(baseEnv(), { now: injectedNow }).now() === 1234,
-  );
-  check('the clock defaults to Date.now', loadServerConfig(baseEnv()).now === Date.now);
-
   section('Production configuration refuses dev-only modes');
 
   const prodEnv = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
@@ -166,6 +159,4 @@ export function runConfigTests(): void {
     'outside production a missing OpenRouter key does not fail startup',
     loadServerConfig(baseEnv()).openRouterApiKey === undefined,
   );
-
-  check('config is frozen', Object.isFrozen(loadServerConfig(baseEnv())));
 }

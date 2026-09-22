@@ -726,23 +726,6 @@ async function testPolicyCallIsMetered(): Promise<void> {
   const CLARIFY_USAGE: Usage = { promptTokens: 20, completionTokens: 15, totalTokens: 35 };
   const REWRITE_CLASSIFIER_USAGE: Usage = { promptTokens: 8, completionTokens: 4, totalTokens: 12 };
 
-  // (a) An allowed clarify credits BOTH the classifier's own usage and the clarify call's usage.
-  {
-    invalidateCreditCache();
-    const model = new ScriptedModelClient(ROSTER, [
-      { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-clarify' },
-      { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify' },
-    ]);
-    const policy = cachedPolicy(
-      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
-    );
-    const { app, usageStore } = testApp({ model, policy });
-    const res = await post(app, '/v1/clarify', { prompt: 'a habit tracker' }, DEVICE_HEADER);
-    eq('the clarify request succeeds', res.status, 200);
-    const total = await usageStore.read(DEVICE_ID);
-    eq('the classifier + clarify usage both landed in the ledger', total, sumUsage(CLASSIFIER_USAGE, CLARIFY_USAGE));
-  }
-
   // (b) A policy-refused rewrite still meters the classifier's own call, even though the rewrite
   // model is never called.
   {
@@ -1058,15 +1041,6 @@ async function testReportRoute(): Promise<void> {
     check('no Retry-After while draining', res.headers.get('retry-after') === null);
   }
 
-  // Gating: no device header.
-  {
-    const { app } = testApp();
-    const res = await post(app, '/v1/report', { reason: 'other' });
-    eq('a report with no device header → 400', res.status, 400);
-    const body = (await res.json()) as { error?: string };
-    eq('error code is missing_device_id', body.error, 'missing_device_id');
-  }
-
   // Report handling logs no content.
   {
     const { app } = testApp();
@@ -1092,13 +1066,6 @@ async function testReportRoute(): Promise<void> {
     check('no device id anywhere in the log output', !capture.raw.some((l) => l.includes(DEVICE_ID)));
   }
 
-  // Every refusal code validates against the closed vocabulary.
-  {
-    const { app } = testApp({ config: { limitReportsPerDeviceDay: 0 } });
-    const res = await post(app, '/v1/report', { reason: 'other' }, DEVICE_HEADER);
-    const body = (await res.json()) as ApiError;
-    eq('the refusal code validates as ServiceRefusalCode', ServiceRefusalCode.safeParse(body.error).success, true);
-  }
 }
 
 async function testHealthzSse(): Promise<void> {

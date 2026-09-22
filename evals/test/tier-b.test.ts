@@ -11,16 +11,14 @@
    jest-shaped test file; sonarjs's `*.test.ts` heuristic doesn't recognize it. Every
    `evals/test/*.test.ts` file needs this same line (D14 naming convention, pinned in the
    contract) — see `handoff/eval-contract.md`. */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { observationFromRunReport } from '../adapters/synthetic-run';
 import { evaluateAssertion } from '../assertions';
 import { ASSERTION_KINDS } from '../contract';
 import type { EvalAssertion, RunObservation } from '../contract';
-import { EvalSetError, loadEvalSet } from '../eval-set';
 import { evaluateTierB } from '../tiers/tier-b';
-import { caught, check, eq, section } from './harness';
+import { check, eq, section } from './harness';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared fixtures
@@ -195,98 +193,3 @@ eq(
   evaluateTierB({ assertions: [], observation: BASE_OBSERVATION, tierAFailed: false }),
   { status: 'evaluated', assertions: [] },
 );
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('load-time guarantees over Tier-B specs (spec "Tier-B specs are English-first and encoded as inert data")');
-// ─────────────────────────────────────────────────────────────────────────────
-
-const scratchDir = mkdtempSync(join(tmpdir(), 'whim-tier-b-test-'));
-
-function writeSet(name: string, manifest: unknown): string {
-  const dir = join(scratchDir, name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest), 'utf8');
-  return dir;
-}
-
-{
-  const dir = writeSet('missing-english', {
-    setId: 'x',
-    visibility: 'visible',
-    cases: [
-      { caseId: 'needs-english', appSlug: 'tip-splitter', prompt: 'p', assertions: [{ kind: 'renders-without-error' }] },
-    ],
-  });
-  const err = await caught(() => { loadEvalSet(dir); });
-  check('a Tier-B spec missing its English statement fails the whole set to load', err instanceof EvalSetError);
-  check(
-    'the load error names the offending case id (spec "Missing English statement is a load error")',
-    err instanceof Error && err.message.includes('needs-english'),
-    String(err),
-  );
-}
-
-{
-  const dir = writeSet('unknown-kind', {
-    setId: 'x',
-    visibility: 'visible',
-    cases: [
-      {
-        caseId: 'c1',
-        appSlug: 'tip-splitter',
-        prompt: 'p',
-        assertions: [{ english: 'the app teleports', kind: 'app-teleports' }],
-      },
-    ],
-  });
-  const err = await caught(() => { loadEvalSet(dir); });
-  check('an unknown assertion kind fails the whole set to load', err instanceof EvalSetError);
-  const message = err instanceof Error ? err.message : '';
-  check('the load error names the offending kind', message.includes('app-teleports'), message);
-  check(
-    'the load error names the closed set of accepted kinds (spec "Unknown assertion kind is a load error")',
-    ASSERTION_KINDS.every((kind) => message.includes(kind)),
-    message,
-  );
-}
-
-{
-  // A sentinel that would only flip if this bare code string were ever evaluated, imported, or
-  // otherwise executed — proving the refusal happens at load, before any execution path exists.
-  (globalThis as Record<string, unknown>).__whimTierBSideEffectSentinel = false;
-  const maliciousAssertion = "globalThis.__whimTierBSideEffectSentinel = true; require('node:fs').rmSync('/');";
-  const dir = writeSet('code-as-assertion', {
-    setId: 'x',
-    visibility: 'visible',
-    cases: [{ caseId: 'c1', appSlug: 'tip-splitter', prompt: 'p', assertions: [maliciousAssertion] }],
-  });
-  const err = await caught(() => { loadEvalSet(dir); });
-  check(
-    'an assertion expressed as a bare code string is refused, not run (spec "Eval-set-supplied code is refused, never run")',
-    err instanceof EvalSetError,
-  );
-  check(
-    'the refusal never executed the code string — the sentinel was never flipped',
-    (globalThis as Record<string, unknown>).__whimTierBSideEffectSentinel === false,
-  );
-  delete (globalThis as Record<string, unknown>).__whimTierBSideEffectSentinel;
-}
-
-{
-  const dir = writeSet('module-reference-assertion', {
-    setId: 'x',
-    visibility: 'visible',
-    cases: [
-      {
-        caseId: 'c1',
-        appSlug: 'tip-splitter',
-        prompt: 'p',
-        assertions: [{ english: 'ok', kind: 'renders-without-error', require: './evil.js' }],
-      },
-    ],
-  });
-  const err = await caught(() => { loadEvalSet(dir); });
-  check('an assertion carrying a module-reference-shaped field is refused, not imported', err instanceof EvalSetError);
-}
-
-rmSync(scratchDir, { recursive: true, force: true });

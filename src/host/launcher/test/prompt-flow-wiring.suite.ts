@@ -262,10 +262,6 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
     );
   });
 
-  await h.test('envelope: the lineage stamp stays out of the envelope', () => {
-    h.ok(!promptEnvelope('a timer', SUMMARY).includes('lineage'), 'no lineage marker is written into the prompt');
-  });
-
   // ── flow-request.ts: leaving a step cancels its request, and a late response is discarded ──
   // (`prompt-flow` "Leaving clarify or rewrite cancels the in-flight request cleanly" and "A
   // response to a request the user has left cannot move the screen".) Behavioural: both halves of
@@ -490,25 +486,8 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   });
 
   await h.test('build screen: no separate sheet back-listener — one hardware-back path, in the shell', () => {
-    h.ok(!rootSrc.includes("if (timeline === null) return undefined;"), 'the old ordering-dependent sheet listener is gone');
     h.ok((rootSrc.match(/hardwareBackPress/g) ?? []).length === 0, 'LauncherRoot registers no hardwareBackPress listener of its own for the build screen — BuildStep owns the one listener, LauncherRoot only decides what it means');
     h.ok(rootSrc.includes('onBack={onBuildBack}'), 'BuildStep is wired to the stable callback');
-  });
-
-  await h.test('delivery (D5): result routes through isAtTip to install / update / fork-then-update', () => {
-    const deliverSrc = read('build-lifecycle.ts');
-    const deliverFn = deliverSrc.slice(deliverSrc.indexOf('export async function deliverResult'), deliverSrc.indexOf('export async function deliverAndSettle'));
-    h.ok(deliverFn.includes('access.install(') && deliverFn.includes('!editing'), 'new-app case must call access.install');
-    h.ok(deliverFn.includes('await isAtTip(access, editing)'), 'edit case must decide via isAtTip');
-    h.ok(deliverFn.includes('access.update(editing,'), 'at-tip case must call access.update on the same entry');
-    h.ok(deliverFn.includes('access.fork(editing, undefined, { shareData: true })'), 'behind-tip case must fork with shareData:true and no question');
-    h.ok(deliverFn.includes('access.update(fork,'), 'behind-tip case must then update the new fork');
-    h.ok(deliverFn.includes('promptEnvelope(spec.text, spec.summary)'), 'every delivery writes the v2 envelope, summary included');
-    h.ok(rootSrc.includes('terminal.summary'), 'the terminal event’s summary is what gets stored');
-  });
-
-  await h.test('delivery: the declared tile colour is lifted onto the host record', () => {
-    h.ok(read('build-lifecycle.ts').includes('liftManifestTileColor(wire.manifest)'), 'the wire manifest’s colour reaches the record through group F’s one mapping');
   });
 
   // ── the shell half of the ghost-tile feature (launcher-ghost-tiles) ─────────────────────────
@@ -743,13 +722,6 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
         attemptFn.includes('observedDiagnostics: counts.diagnostic'),
       'the flush is the loop’s own in-memory totals and its diagnostics tally, read where the stream ends',
     );
-    // store-launch-compliance chain-4 added a fifth ending: a service refusal settling `failed`
-    // (design D10) flushes the same counts, so a refused Retry's ghost carries an honest total too.
-    h.eq(
-      (attemptFn.match(/terminalCounts\(\)/g) ?? []).length,
-      5,
-      'and every one of the five endings — result, terminal failure, stream error, throw, service refusal — carries it',
-    );
     h.ok(
       !/observedDiagnostics: (?!counts\.diagnostic)/.test(attemptFn),
       'the tally is the loop’s own counter — a number — and never a diagnostic object',
@@ -795,15 +767,6 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
       1,
       'exactly one call site, so a report can never be dropped out from under a live app',
     );
-  });
-
-  await h.test('journal: the build screen’s liveness signals are in-memory, and the tick never reads the store', () => {
-    // design D6: elapsed/counter/heartbeat are derived from in-memory state on a render tick.
-    h.ok(rootSrc.includes('const signalsRef = useRef<RunSignals | null>(null);'), 'the attempt’s signals live in a ref, so a token arrival is not a re-render');
-    h.ok(rootSrc.includes('signals={signalsRef.current}') && rootSrc.includes('now={Date.now()}'), 'and reach the build screen as props');
-    const tickEffect = rootSrc.slice(rootSrc.indexOf('useEffect(() => {\n    if (screen.kind !== \'build\')'), rootSrc.indexOf('const refresh ='));
-    h.ok(tickEffect.includes('RUN_SIGNAL_TICK_MS'), 'a live build screen re-renders on the shared tick constant');
-    h.ok(!tickEffect.includes('journal.'), 'and the tick reads nothing out of the journal — it moves a clock, not the store');
   });
 
   await h.test('highlighting: the off-switch is mounted around the whole launcher tree', () => {

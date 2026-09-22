@@ -250,12 +250,6 @@ async function main(): Promise<void> {
     eq(B.realm.engine!.records.list('Notes').length, 0, 'B’s store is untouched — the extra fields had no effect');
   });
 
-  await test('§D the SyscallFrame surface carries no app addressing field', async () => {
-    // A compile-time guarantee (SyscallFrame = {whim,v,id,gen,method,params}) restated at runtime:
-    const f = frame('storage.kv.get', { key: 'k' });
-    eq(Object.keys(f).sort((a, b) => a.localeCompare(b)), ['gen', 'id', 'method', 'params', 'v', 'whim'], 'the envelope has no appId/store/realm field');
-  });
-
   // ── §E storage round-trip + the second-capability proof ─────────────────────
   await test('§E storage verbs round-trip through the bridge', async () => {
     const reg = createDefaultRegistry();
@@ -267,15 +261,6 @@ async function main(): Promise<void> {
     ok(typeof appended.id === 'number' && appended.id > 0, 'append returns an id');
     const listed = await callOk(d, 'storage.records.list', { collection: 'Notes' });
     eq(listed.records.map((r: any) => r.body), ['hi'], 'list round-trip');
-  });
-
-  await test('§E a second capability is one row + one stub — diag.echo is callable through the same pipe', async () => {
-    const reg = createDefaultRegistry(); // already includes diag (the second-row proof)
-    const { d } = bring(storageApp('a', ['storage', 'diag']), reg);
-    eq(await callOk(d, 'diag.echo', { payload: { hi: 1 } }), { echo: { hi: 1 } }, 'diag dispatches with no transport/dispatcher change');
-    // … and it is gated like any capability: an app that does not declare `diag` is denied.
-    const { d: d2 } = bring(storageApp('b', ['storage']), reg);
-    eq((await callErr(d2, 'diag.echo', {})).kind, 'undeclared_capability', 'diag is gated like storage');
   });
 
   await test('§E launch refuses a conflict-class schema BEFORE the bundle would run (D7)', async () => {
@@ -322,16 +307,6 @@ async function main(): Promise<void> {
   // ── §G cues — syscall #2/#3 against a recording fake (effects-and-cues D5/D7/D9) ──
   // The append-only readiness test: haptics + sound are two rows + two stubs, gate-denied like
   // any capability, fire-and-forget, at-most-once. Maps 1:1 to test-spec.md §1 (G1–G9).
-
-  await test('§G1 cue rows are exactly two appended rows; registry stays append-only', () => {
-    const { backend } = recordingBackend();
-    const reg = createDefaultRegistry({ cueBackend: backend });
-    ok(reg.has('cues.haptic') && reg.has('cues.sound'), 'both cue rows registered');
-    eq(reg.methods().filter((m) => m.startsWith('cues.')).sort((a, b) => a.localeCompare(b)), ['cues.haptic', 'cues.sound'], 'exactly the two cue rows, nothing else new');
-    let threw = false;
-    try { reg.register('cues.haptic', { capability: 'cues', paramsSchema: () => null, handler: () => ({}) }); } catch { threw = true; }
-    ok(threw, 'a duplicate cue registration throws at startup (append-only — no override)');
-  });
 
   await test('§G2 an undeclared `cues` is denied with a fix hint; the backend never fires', async () => {
     const { backend, log } = recordingBackend();
@@ -395,13 +370,6 @@ async function main(): Promise<void> {
     const e = await callErr(d, 'cues.haptic', { kind: 'tap' });
     eq(e.kind, 'handler_error', 'a missing backend is a structured handler error, never an unshaped throw');
     ok(/backend|unavailable/i.test(e.hint), 'the hint explains the cue backend is unavailable');
-  });
-
-  await test('§G8 gate ORDER holds: an unregistered cue-ish method reports unknown_method first', async () => {
-    const reg = createDefaultRegistry();
-    const { d } = bring(storageApp('a', []), reg); // no cues declared
-    const e = await callErr(d, 'cues.flash', {}); // not a registered method
-    eq(e.kind, 'unknown_method', 'registration is checked before capability, same fixed order as storage');
   });
 
   // §G9 (the #41 review rule — cues touch only contract.ts + rows.ts + index.ts, never

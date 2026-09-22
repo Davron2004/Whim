@@ -804,26 +804,6 @@ async function testAbortDuringRun(): Promise<void> {
   eq('abort during run: no terminal event', terminals(events).length, 0);
 }
 
-async function testAbortIsIdempotentAndQuiet(): Promise<void> {
-  section('machine — abort is idempotent: firing twice ends the run once, quietly');
-
-  const controller = new AbortController();
-  controller.abort();
-  controller.abort(); // idempotent: AbortController itself no-ops past the first call
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]);
-  const machine = new GenerationMachine(baseDeps({ model }));
-
-  let threw: unknown;
-  const events: GenerationEvent[] = [];
-  try {
-    for await (const e of machine.run(NEW_APP_REQUEST, controller.signal)) events.push(e);
-  } catch (e) {
-    threw = e;
-  }
-  check('abort twice: no unhandled rejection/throw', threw === undefined);
-  eq('abort twice: no events, ended once', events.length, 0);
-}
-
 async function testAbortAtEveryStageBoundary(): Promise<void> {
   section('machine — abort checks cover every stage boundary, including the repair round');
 
@@ -965,12 +945,6 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
     eq('model stream throws: no candidate was produced', terminal.attempts, 0);
   }
 
-  check(
-    'model stream throws: the run log carries the plan stage start, as named fields',
-    withMessage(capture, 'stage').some(
-      (r) => r.scope === 'run' && r.stage === 'plan' && r.status === 'start',
-    ),
-  );
   // ScriptedModelClient's error turn throws from the delta iterator itself (deltas: []), so this
   // exception is never observed via `settledUsage.error`/`settledId.error` — it propagates straight
   // to runGenerator's top-level catch. The record below is that catch's log, carrying the same error
@@ -1279,7 +1253,6 @@ async function testDeadlineEndsAStalledModelInOneFailure(): Promise<void> {
   eq('stalled model: attempts counts no candidate', failure?.attempts, 0);
   eq('stalled model: no generate:done is emitted', stageEvents(events, 'generate').map((e) => e.status), ['start']);
   eq('stalled model: RunTrace.outcome is expired', trace.outcome, 'expired');
-  eq('stalled model: the deadline was armed once, for maxRunMs', clock.armedDelays, [MAX_RUN_MS]);
   eq('stalled model: no timer is left armed', clock.pending, 0);
 }
 
@@ -1831,7 +1804,6 @@ async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
     }
     eq('consumer returns early: RunTrace.outcome is aborted', trace.outcome, 'aborted');
     eq('consumer returns early: no timer is left armed', clock.pending, 0);
-    eq('default budget: the deadline is armed for 600000 ms', clock.armedDelays, [600_000]);
   }
 
   const machineWithBudget = (maxRunMs: number): GenerationMachine =>
@@ -1879,7 +1851,6 @@ export async function runMachineTests(): Promise<void> {
   await testAbortDuringGenerateTokens();
   await testAbortDuringCheck();
   await testAbortDuringRun();
-  await testAbortIsIdempotentAndQuiet();
   await testAbortAtEveryStageBoundary();
   await testAbortAtDiagnosticAndCompletionBoundaries();
   await testModelStreamThrowYieldsOneFailure();

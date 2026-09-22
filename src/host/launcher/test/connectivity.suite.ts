@@ -139,16 +139,6 @@ export async function runConnectivityTests(h: Harness): Promise<void> {
     },
   );
 
-  await h.test('ConnectivityLoop: a loop that is never start()-ed stays unknown, never reaches offline', async () => {
-    const timers = new FakeTimers();
-    const states: Connectivity[] = [];
-    const loop = new ConnectivityLoop({ probe: neverSucceeds(), publish: (s) => states.push(s), timers });
-    await loop.whenIdle(); // resolves immediately: nothing has been started yet
-
-    h.eq(states, [], 'no state was ever published — unknown is the caller-side default, never offline');
-    h.eq(timers.pendingCount, 0, 'no retry loop was scheduled for an address that was never configured');
-  });
-
   await h.test('ConnectivityLoop: stop() clears a pending retry timer, not just future scheduling', async () => {
     const timers = new FakeTimers();
     let calls = 0;

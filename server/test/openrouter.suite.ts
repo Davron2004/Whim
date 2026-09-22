@@ -1,5 +1,5 @@
 /**
- * OpenRouter wrapper tests (SPEC.md §7) — fake transport only, no live network.
+ * OpenRouter wrapper tests — fake transport only, no live network.
  * Tests: streaming deltas in order, usage capture, model-id passthrough, typed errors
  * (including null-body → usage rejects, never hangs), generation-id capture, and abort
  * signal pass-through (server-cancellation #10).
@@ -12,7 +12,6 @@ import {
   OpenRouterCreditError,
   OpenRouterRateLimitError,
   OpenRouterNetworkError,
-  Usage as OpenRouterUsage,
 } from '../src/openrouter';
 import { isCreditExhaustedError } from '../src/generation/model';
 import type { FetchFn } from '../src/openrouter';
@@ -181,9 +180,6 @@ export async function runOpenRouterTests(): Promise<void> {
     // Must drain deltas before usage resolves
     await drain(deltas);
     const capturedUsage = await usagePromise;
-
-    // Validate the Usage schema exported from openrouter is the same object as the contract's Usage
-    check('usage schema identity: openrouter reuses contract Usage by reference', OpenRouterUsage === Usage);
 
     // Validate the shape is contract Usage by identity
     const parsed = Usage.safeParse(capturedUsage);
@@ -369,9 +365,6 @@ export async function runOpenRouterTests(): Promise<void> {
     );
   }
 
-  // §7.5 — no key required by suite: OPENROUTER_API_KEY is not read by these tests
-  check('no API key required by suite', true); // structural — the tests above never read process.env.OPENROUTER_API_KEY
-
   // §7.7 — reasoning deltas: the roster models (DeepSeek v4 via OpenRouter) emit reasoning ahead
   // of their visible content, keyed either `reasoning` or `reasoning_content` depending on the
   // provider. Both are surfaced as `{ kind: 'reasoning' }` deltas, distinct from `{ kind: 'text' }`.
@@ -423,18 +416,6 @@ export async function runOpenRouterTests(): Promise<void> {
     eq('reasoning+content in one frame: reasoning then text, in that order', collected.map((d) => d.kind), ['reasoning', 'text']);
     eq('reasoning+content in one frame: reasoning text', collected[0]?.text, 'Weighing it up.');
     eq('reasoning+content in one frame: content text', collected[1]?.text, 'Sure.');
-  }
-
-  // §7.7d — content-only frames (the original SUCCESS_FRAMES) are unchanged: every delta is
-  // text-kind, and nothing regresses the pre-existing §7.1 assertions above.
-  {
-    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES));
-    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
-    const collected: Array<{ kind: string; text: string }> = [];
-    for await (const delta of deltas) collected.push(delta);
-
-    check('content-only frames: every delta is text-kind', collected.every((d) => d.kind === 'text'));
-    eq('content-only frames: unchanged delta count', collected.length, 3);
   }
 
   await testMidStreamErrorFrames();

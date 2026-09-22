@@ -107,7 +107,7 @@ This is the only automated guard for D17's native network refusal, a containment
 
 ### checks/test/release/domain-lockstep.suite.ts (66 lines, NEW) — KEEP-FIX
 
-- [TAUTOLOGY / RED-GREEN-ARTIFACT] `domainLockstepFinding: …` and `deployHostLockstepFindings: …` pure-function tests (domain-lockstep.suite.ts:L25-35, L44-65) — DELETE. They exercise `native === launcher` and two template-string equalities. "Discriminating: a same-length-only check would miss this" guards against code nobody writes. Keep the two real-repo lockstep tests (L19-23, L37-42); they are the point of the file.
+- [TAUTOLOGY / RED-GREEN-ARTIFACT] `domainLockstepFinding: …` and `deployHostLockstepFindings: …` pure-function tests (domain-lockstep.suite.ts:L25-35, L44-65) — DELETE (**one mismatch case per checker kept: overturned 2026-09-21, see verification.md**). They exercise `native === launcher` and two template-string equalities. "Discriminating: a same-length-only check would miss this" guards against code nobody writes. Keep the two real-repo lockstep tests (L19-23, L37-42); they are the point of the file.
 
 ### checks/test/release/hermes-entry.suite.ts (147 lines, NEW) — KEEP-FIX
 

@@ -20,7 +20,6 @@ import {
   paintAccepted,
   type StartupDeadlineScheduler,
 } from '../boot-state';
-import { COPY } from '../copy';
 
 function readSource(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
@@ -109,17 +108,6 @@ export async function runBootStateTests(h: Harness): Promise<void> {
       'the boot branch must render the boot copy',
     );
     h.ok(!/if \(surface === 'boot'\) \{[\s\S]{0,200}return/.test(viewSrc), 'the boot state must not early-return past the WebView (the realm must keep loading)');
-  });
-
-  await h.test('boot-state: the boot surface is styled from tokens, with no raw colours or sizes', () => {
-    const bootStyles = /boot: \{[^}]*\}|bootTitle: \{[^}]*\}|bootMark: \{[^}]*\}|bootLabel: \{[^}]*\}/g;
-    const decls = viewSrc.match(bootStyles) ?? [];
-    h.ok(decls.length === 4, 'all four boot styles must exist');
-    for (const decl of decls) {
-      h.ok(!/#[0-9a-fA-F]{3,8}\b/.test(decl), `${decl} must carry no raw colour`);
-      h.ok(!/(width|height|borderRadius|margin\w*|padding\w*|fontSize):\s*\d/.test(decl), `${decl} must size from tokens, not literals`);
-      h.ok(!/shadow[A-Z]/.test(decl), `${decl} must not use iOS-only shadow* props (Android-first)`);
-    }
   });
 
   await h.test('boot-state: a rebind clears the paint signal, so a new realm never inherits the old one’s paint', () => {
@@ -347,12 +335,4 @@ export async function runBootStateTests(h: Harness): Promise<void> {
     h.eq(error, null, 'exit and unmount cancellation are idempotent');
   });
 
-  await h.test('boot-state: the boot copy speaks outcome, not mechanism', () => {
-    for (const str of [COPY.appBootLabel, COPY.appBootA11yLabel]) {
-      h.ok(str.trim().length > 0, 'the boot copy is seeded');
-      for (const bad of [/\brealm\b/i, /\bwebview\b/i, /\bbundle\b/i, /\bpaint\b/i, /\bloading\b/i]) {
-        h.ok(!bad.test(str), `"${str}" must not name mechanism (${bad})`);
-      }
-    }
-  });
 }

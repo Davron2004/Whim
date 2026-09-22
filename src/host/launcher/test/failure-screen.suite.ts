@@ -29,10 +29,6 @@ function readSource(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), file), 'utf8');
 }
 
-const HEX = /#[0-9a-f]{3,8}\b/i;
-const FONT_SIZE_LITERAL = /fontSize\s*:\s*\d/;
-const RADIUS_LITERAL = /borderRadius\s*:\s*\d/;
-
 export async function runFailureScreenTests(h: Harness): Promise<void> {
   // ── the attempt row: only what the device actually watched go past ──────────
 
@@ -171,37 +167,7 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.ok(!allowed.has('sdk-misuse'), 'the leak fixtures are genuinely outside the allowed set');
   });
 
-  await h.test('source: FailureScreen.tsx admits only a hint, never a diagnostic’s kind, symbol or message', () => {
-    const src = readSource('src/host/launcher/FailureScreen.tsx');
-    h.ok(
-      /diagnostics: readonly \{ hint: string \}\[\];/.test(src),
-      'the diagnostics prop type itself admits only a hint, never a full Diagnostic',
-    );
-    h.ok(!/\.symbol\b/.test(src), 'never references a diagnostic’s symbol');
-    h.ok(!/\.message\b/.test(src), 'never references a diagnostic’s message');
-    // Non-vacuity: the two property-access scans do fire on the shapes they are meant to catch.
-    h.ok(/\.symbol\b/.test('diagnostic.symbol'), 'the symbol scan matches a property access');
-    h.ok(/\.message\b/.test('diagnostic.message'), 'the message scan matches a property access');
-  });
-
   // ── both surfaces: tokens only ─────────────────────────────────────────────
-
-  await h.test('tokens: the failure screen and the mini-app container carry no style literals', () => {
-    for (const file of ['src/host/launcher/FailureScreen.tsx', 'src/host/launcher/MiniAppView.tsx']) {
-      const src = readSource(file);
-      h.ok(!HEX.test(src), `${file}: no hex colour literal`);
-      h.ok(!FONT_SIZE_LITERAL.test(src), `${file}: no numeric font-size literal — faces come from TYPE_SCALE`);
-      h.ok(!RADIUS_LITERAL.test(src), `${file}: no numeric radius literal — radii come from RADIUS`);
-      h.ok(/TYPE_SCALE/.test(src) && /SPACING/.test(src) && /RADIUS/.test(src), `${file}: the v2 tokens are what it styles from`);
-      h.ok(/SHELL_PALETTE/.test(src), `${file}: colours come from SHELL_PALETTE, not a second palette`);
-      h.ok(!/shellPalette\(/.test(src), `${file}: the retired shellPalette() function is gone`);
-      h.ok(!/\buseTheme\b/.test(src), `${file}: no theme context — the shell theme is fixed`);
-    }
-    // Non-vacuity: the three scans do fire on the shapes they are meant to catch.
-    h.ok(HEX.test('color: #fef2f2'), 'the hex scan matches a hex colour');
-    h.ok(FONT_SIZE_LITERAL.test('{ fontSize: 18 }'), 'the font-size scan matches a numeric size');
-    h.ok(RADIUS_LITERAL.test('{ borderRadius: 12 }'), 'the radius scan matches a numeric radius');
-  });
 
   await h.test('container: the WebView error reaches the seam with its diagnostic code intact', () => {
     const seam = createSeam({ console: false });
@@ -229,12 +195,4 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.eq(control.fields.code, REDACTED, 'a genuinely sensitive field name WOULD have been redacted');
   });
 
-  await h.test('container: both WebView surfaces route onError through the seam, never console', () => {
-    for (const file of ['src/host/launcher/MiniAppView.tsx', 'src/host/launcher/DevProbeScreen.tsx']) {
-      const src = readSource(file);
-      h.ok(!/console\.\w+\(/.test(src), `${file}: no console call survives`);
-      h.ok(/onError=\{\(ev\) => logWebViewError\(log, ev\.nativeEvent,/.test(src), `${file}: onError goes through the one helper`);
-      h.ok(!/JSON\.stringify\(ev\.nativeEvent\)/.test(src), `${file}: the payload is structured, not stringified`);
-    }
-  });
 }

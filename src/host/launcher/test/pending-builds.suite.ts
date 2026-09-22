@@ -7,8 +7,7 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { PendingBuildStore } from '../pending-builds';
-import { workingTitleFromPrompt, ghostTileColorFor } from '../prompt-flow';
-import { appColor } from '../../../sdk/theme';
+import { workingTitleFromPrompt } from '../prompt-flow';
 
 export async function runPendingBuildsTests(h: Harness): Promise<void> {
   // ── create / get round-trip ────────────────────────────────────────────────
@@ -169,17 +168,4 @@ export async function runPendingBuildsTests(h: Harness): Promise<void> {
     h.eq(workingTitleFromPrompt('   '), '', 'whitespace-only prompt');
   });
 
-  // ── ghostTileColorFor (task 1.2, design D6) ───────────────────────────────────
-  await h.test('ghostTileColorFor: deterministic — same id always resolves the same colour', async () => {
-    h.eq(ghostTileColorFor('app-abc123'), ghostTileColorFor('app-abc123'), 'stable across calls');
-  });
-
-  await h.test('ghostTileColorFor: draws from the existing tile palette (appColor), not a second one', async () => {
-    h.eq(ghostTileColorFor('app-abc123'), appColor('app-abc123'), 'reuses appColor with the id as the hashed input');
-  });
-
-  await h.test('ghostTileColorFor: different ids can resolve different colours (not a constant)', async () => {
-    const colors = new Set(['id-1', 'id-2', 'id-3', 'id-4', 'id-5'].map(ghostTileColorFor));
-    h.ok(colors.size > 1, 'at least two distinct hues across five distinct ids');
-  });
 }

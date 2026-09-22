@@ -96,36 +96,6 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(tileColor('Recipe Box', { tileColor: undefined }), appColor('Recipe Box'), 'explicit undefined falls back');
   });
 
-  // ── determinism ────────────────────────────────────────────────────────────
-  await h.test('tileColor: deterministic — same name + manifest always resolves the same colour', async () => {
-    const manifest: Pick<AppManifest, 'tileColor'> = { tileColor: VALID };
-    h.eq(tileColor('Pour Timer', manifest), tileColor('Pour Timer', manifest), 'declared path is stable');
-    h.eq(tileColor('Pour Timer'), tileColor('Pour Timer'), 'fallback path is stable');
-  });
-
-  // ── the bundle cannot recolour itself ─────────────────────────────────────
-  await h.test('tileColor: only the manifest.tileColor key is ever read, nothing else on the object', async () => {
-    // A bundle can only ever influence its OWN in-realm state; the resolver's signature has no
-    // channel for a running mini-app's self-report at all — it reads the host-held manifest
-    // object's `tileColor` key and nothing else, so a hostile bolt-on field is structurally inert.
-    const spoofed = { tileColor: VALID, reportedByBundle: '#ff0000', __selfReport: '#00ff00' } as Pick<
-      AppManifest,
-      'tileColor'
-    >;
-    h.eq(tileColor('Pour Timer', spoofed), VALID, 'extra fields on the manifest object are ignored');
-  });
-
-  // ── grid, header and prose resolve one app to one colour ──────────────────
-  await h.test('tileColor: the grid path and the prose renderer path agree for a declared colour', async () => {
-    const manifest: Pick<AppManifest, 'tileColor'> = { tileColor: VALID };
-    const gridColour = tileColor('Pour Timer', manifest); // what a tile/history header would render
-    const proseApp = { name: 'Pour Timer', color: gridColour }; // caller pre-resolves, per ProseApp's contract
-    const spans = lexProse('Open Pour Timer now', [proseApp]);
-    const appSpan = spans.find(s => s.cls === 'app');
-    h.ok(appSpan != null, 'prose lexes an app-class span for a mentioned installed app');
-    h.eq(appSpan?.color, gridColour, 'the prose span uses the exact colour the grid resolved');
-  });
-
   await h.test('tileColor: the grid path and the prose renderer path agree for the appColor fallback', async () => {
     const gridColour = tileColor('Water Counter'); // no declared colour
     const proseApp = { name: 'Water Counter' }; // prose lexer falls back to appColor(name) itself

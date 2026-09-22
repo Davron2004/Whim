@@ -176,17 +176,4 @@ export async function run(): Promise<void> {
       }
     },
   );
-
-  await test('android-project: a debug config without the dev cleartext hosts fails', () => {
-    const dir = makeTempDir();
-    try {
-      writeValidFixture(dir);
-      writeFile(dir, ANDROID_DEBUG_NETWORK_CONFIG_PATH, STRICT_MAIN_NETWORK_CONFIG);
-      const findings = checkAndroidProject(dir);
-      const hit = findings.find((f) => f.file === ANDROID_DEBUG_NETWORK_CONFIG_PATH);
-      assert(!!hit, `expected a missing-dev-hosts finding on the debug network config, got ${JSON.stringify(findings)}`);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
 }

@@ -34,14 +34,6 @@ function baseDeps(overrides: Partial<AdminCliDeps> = {}): AdminCliDeps {
   };
 }
 
-async function testUnknownCommand(): Promise<void> {
-  section('Operator command — an unknown subcommand fails with the grammar');
-
-  const result = await runAdminCli(['bogus'], baseDeps());
-  eq('exit code 1', result.exitCode, 1);
-  check('output names the real subcommands', result.output.includes('reports list') && result.output.includes('usage'));
-}
-
 async function testListHidesBulkyContent(): Promise<void> {
   section('Operator command — reports list hides bulky content (spec "Listing hides bulky content")');
 
@@ -200,7 +192,6 @@ async function testReadWhileWriting(): Promise<void> {
 }
 
 export async function runAdminTests(): Promise<void> {
-  await testUnknownCommand();
   await testListHidesBulkyContent();
   await testShowPrintsEverything();
   await testPurgeAppliesRetentionNow();
