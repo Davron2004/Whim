@@ -1,6 +1,6 @@
 /**
  * ReportSheet — the report sheet three entry points share (design D13/D14; spec
- * `content-reporting`). Reason pills, an optional note, the include-prompt/include-code switches,
+ * `content-reporting`). Reason pills, an optional note, the include-prompt switch,
  * a preview rendered from the SAME `ReportRequest` value Send posts, the AnyCognition/anonymous-id
  * line plus a privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
  * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`.
@@ -32,12 +32,14 @@ import { COPY, reportCodeSizeLabel } from './copy';
 import { RELEASE } from './release-config';
 import { SHELL_PALETTE } from './theme';
 
-const REASONS: readonly ReportReason[] = ['offensive', 'harmful', 'broken', 'other'];
+const REASONS: readonly ReportReason[] = ['broken', 'wrong_result', 'hard_to_use', 'harmful', 'offensive', 'other'];
 
 const REASON_LABEL: Record<ReportReason, string> = {
   offensive: COPY.reportReasonOffensive,
   harmful: COPY.reportReasonHarmful,
   broken: COPY.reportReasonBroken,
+  wrong_result: COPY.reportReasonWrongResult,
+  hard_to_use: COPY.reportReasonHardToUse,
   other: COPY.reportReasonOther,
 };
 
@@ -62,7 +64,7 @@ interface ReportNotice {
 function reportNoticeFrom(refusal: ServiceRefusal): ReportNotice {
   const retryAt = retryAtOf(refusal, Date.now());
   return {
-    hint: refusal.hint,
+    hint: refusal.code === 'payload_too_large' ? COPY.reportTooLarge : refusal.hint,
     tone: REFUSAL_RULES[refusal.code].tone,
     ...(retryAt !== undefined ? { retryAt } : {}),
   };
@@ -168,7 +170,7 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
         </View>
       )}
       {draft && phase !== 'thanks' && (
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView style={styles.scroller} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.reportSheetTitle}</Text>
 
           <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.reportReasonEyebrow}</Text>
@@ -206,34 +208,34 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
               onChange={(v) => setDraft({ ...draft, promptIncluded: v })}
             />
           )}
-          {draft.source !== undefined && (
-            <SwitchRow
-              label={COPY.reportIncludeSource}
-              value={draft.sourceIncluded}
-              onChange={(v) => setDraft({ ...draft, sourceIncluded: v })}
-            />
-          )}
+          <Text style={[TYPE_SCALE.caption, styles.disclosure, { color: p.textMuted }]}>
+            {draft.source === undefined ? COPY.reportNoCodeDisclosure : COPY.reportCodeDisclosure}
+          </Text>
 
-          <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.reportPreviewTitle}</Text>
-          <View style={[styles.previewCard, { borderColor: p.cardBorder }]}>
-            {rows.map((row) => {
-              const expandable = expandableRow(row.field, promptExpanded, sourceExpanded, setPromptExpanded, setSourceExpanded);
-              return (
-                <PreviewRow
-                  key={row.field}
-                  label={PREVIEW_LABEL[row.field]}
-                  // The reason row previews the PILL's label ("Doesn't work", not "broken") — the
-                  // enum value itself is only what `reportPreview`/`buildReportRequest` transmit,
-                  // never what the user reads.
-                  value={row.field === 'reason' ? REASON_LABEL[row.value as ReportReason] : row.value}
-                  mono={row.field === 'source'}
-                  collapsedToSize={row.field === 'source'}
-                  expanded={expandable?.expanded ?? false}
-                  onToggle={expandable?.onToggle}
-                />
-              );
-            })}
-          </View>
+          {request && (
+            <>
+              <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.reportPreviewTitle}</Text>
+              <View style={[styles.previewCard, { borderColor: p.cardBorder }]}>
+                {rows.map((row) => {
+                  const expandable = expandableRow(row.field, promptExpanded, sourceExpanded, setPromptExpanded, setSourceExpanded);
+                  return (
+                    <PreviewRow
+                      key={row.field}
+                      label={PREVIEW_LABEL[row.field]}
+                      // The reason row previews the PILL's label ("Doesn't work", not "broken") — the
+                      // enum value itself is only what `reportPreview`/`buildReportRequest` transmit,
+                      // never what the user reads.
+                      value={row.field === 'reason' ? REASON_LABEL[row.value as ReportReason] : row.value}
+                      mono={row.field === 'source'}
+                      collapsedToSize={row.field === 'source'}
+                      expanded={expandable?.expanded ?? false}
+                      onToggle={expandable?.onToggle}
+                    />
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           <Text style={[TYPE_SCALE.caption, styles.anonLine, { color: p.textMuted }]}>{COPY.reportAnonIdLine}</Text>
           <TouchableOpacity onPress={() => Linking.openURL(RELEASE.privacyPolicyUrl)} hitSlop={10} style={styles.privacyLink}>
@@ -330,6 +332,7 @@ function PreviewRow({
 }
 
 const styles = StyleSheet.create({
+  scroller: { flexShrink: 1 },
   content: { paddingBottom: SPACING.lg },
   eyebrow: { marginTop: SPACING.md, marginBottom: SPACING.xs },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
@@ -343,6 +346,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.sm },
+  disclosure: { marginTop: SPACING.md },
   previewCard: { borderWidth: 1, borderRadius: RADIUS.card, padding: SPACING.md, gap: SPACING.sm },
   previewRow: { gap: 2 },
   previewRowHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

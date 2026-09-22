@@ -190,7 +190,7 @@ export const RewriteResponse = z.object({
 export type RewriteResponse = z.infer<typeof RewriteResponse>;
 
 /** The closed set of reasons a device can attach to a content report. */
-export const ReportReason = z.enum(['offensive', 'harmful', 'broken', 'other']);
+export const ReportReason = z.enum(['broken', 'wrong_result', 'hard_to_use', 'harmful', 'offensive', 'other']);
 export type ReportReason = z.infer<typeof ReportReason>;
 
 /** `POST /v1/report` request. Only `reason` is mandatory. `note` and `appName` are shape-bounded

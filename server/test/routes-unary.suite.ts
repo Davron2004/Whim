@@ -1138,7 +1138,7 @@ async function testReportRoute(): Promise<void> {
     const res = await post(
       app,
       '/v1/report',
-      { reason: 'offensive', note: 'rude jokes', appName: 'Joke Box', prompt: 'a prompt', source: 'a source' },
+      { reason: 'wrong_result', note: 'wrong total', appName: 'Dice Roller', prompt: 'a prompt', source: 'a source' },
       DEVICE_HEADER,
     );
     eq('a full report → 202', res.status, 202);
@@ -1146,13 +1146,13 @@ async function testReportRoute(): Promise<void> {
     check('the response carries a reportId', typeof body.reportId === 'string' && body.reportId.length > 0);
     const row = await reportStore.get(body.reportId);
     check('the row exists', row !== undefined);
-    eq('the row holds exactly what was sent', row?.note, 'rude jokes');
+    eq('the row holds the new reason and note', [row?.reason, row?.note], ['wrong_result', 'wrong total']);
   }
 
   // A minimal report is accepted.
   {
     const { app } = testApp();
-    const res = await post(app, '/v1/report', { reason: 'broken' }, DEVICE_HEADER);
+    const res = await post(app, '/v1/report', { reason: 'hard_to_use' }, DEVICE_HEADER);
     eq('a minimal report → 202', res.status, 202);
   }
 

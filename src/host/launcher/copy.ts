@@ -180,9 +180,11 @@ export const COPY = {
   /** The history header's entry point — reports the version the user is currently on. */
   historyReportAction: 'Report',
   reportReasonEyebrow: 'What went wrong?',
-  reportReasonOffensive: 'Offensive',
-  reportReasonHarmful: 'Harmful',
   reportReasonBroken: 'Doesn’t work',
+  reportReasonWrongResult: 'Wrong result',
+  reportReasonHardToUse: 'Hard to use',
+  reportReasonHarmful: 'Unsafe',
+  reportReasonOffensive: 'Offensive',
   reportReasonOther: 'Something else',
   reportNotePlaceholder: 'Add a note (optional)',
   reportPreviewTitle: 'What gets sent',
@@ -191,8 +193,9 @@ export const COPY = {
   reportFieldAppName: 'App',
   reportFieldPrompt: 'The prompt',
   reportFieldSource: 'The code',
-  reportIncludePrompt: 'Include the prompt',
-  reportIncludeSource: 'Include the code',
+  reportIncludePrompt: 'Include the prompt for this version',
+  reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
+  reportNoCodeDisclosure: 'This version has no saved code to include.',
   reportAnonIdLine: 'An anonymous ID for this phone travels with this report, which goes to AnyCognition.',
   reportSend: 'Send report',
   reportSendBusy: 'One moment',
@@ -201,6 +204,7 @@ export const COPY = {
   reportThanksTitle: 'Thanks. The Whim team reads every report.',
   reportThanksDone: 'Done',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
+  reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
 
   // ── mini-app boot state (`app-launcher` "The mini-app container shows a boot state before
   //    first paint") ──────────────────────────────────────────────────────────
