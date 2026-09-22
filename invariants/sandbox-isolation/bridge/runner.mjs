@@ -8,7 +8,7 @@
 // the bridge is real, the engine is real; only "RN host" is stood in for by "Node host".
 //
 // Scenarios: storage-reachable round-trip · undeclared-capability denial · stub-authority probe
-// · forged-sysret inertness · stale-generation drop · sql-injector end-to-end · + a NEGATIVE
+// · forged-sysret inertness · sql-injector end-to-end · trusted paint forwarding · + a NEGATIVE
 // CONTROL (a deliberately misconfigured gate that grants undeclared capabilities MUST be flagged
 // red — proving the suite is not vacuously green).
 //
@@ -60,6 +60,23 @@ async function iframeText(page) {
   return '';
 }
 
+/** Waits until the app has rendered and the host has answered no new syscall for 250 ms (or
+ *  `until(text)` holds), bounded by `budgetMs`. Replaces a fixed settle sleep. */
+async function settled(page, host, budgetMs, until) {
+  const deadline = Date.now() + budgetMs;
+  let seen = -1;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    if (host.sysrets.length !== seen) {
+      seen = host.sysrets.length;
+      quietSince = Date.now();
+    }
+    const text = await iframeText(page);
+    if (until ? until(text) : text.length > 0 && Date.now() - quietSince >= 250) return;
+    await page.waitForTimeout(50);
+  }
+}
+
 /** Build a fresh page + Node host for one app, deliver it (syscalls routed to the exposed host),
  *  let it settle, optionally drive/evaluate, and return what was observed. */
 async function scenario(name, appName, opts = {}) {
@@ -69,16 +86,32 @@ async function scenario(name, appName, opts = {}) {
   const page = await chromiumBrowser.newPage();
   const console_ = [];
   page.on('console', (m) => console_.push(m.text()));
-  await page.exposeFunction('whimHostDispatch', host.dispatch);
+  // Record what the outer page forwards to the RN host, as the WebView would receive it.
+  await page.addInitScript(() => {
+    globalThis.__rnFrames = [];
+    globalThis.ReactNativeWebView = { postMessage: (s) => globalThis.__rnFrames.push(s) };
+  });
+  // `exposeBinding`, never `exposeFunction` (synthrun/observe.ts, the same hole): the binding is
+  // installed in every frame, the sandbox realm included, so only calls from the outer page — the
+  // relay that checks `ev.source` first — may reach the host.
+  let foreignCalls = 0;
+  await page.exposeBinding('whimHostDispatch', (source, raw) => {
+    if (source.frame !== page.mainFrame()) {
+      foreignCalls++;
+      return null;
+    }
+    return host.dispatch(raw);
+  });
   const html = buildOuterHtml({ srcdoc: srcdocB, bundles: { [appName]: bundles[appName] }, initial: appName, channel: 'b', syscallSink: 'exposed' });
   const file = await writePage(name, html);
   await page.goto(pathToFileURL(file).href, { waitUntil: 'load', timeout: 20000 });
-  await page.waitForTimeout(opts.settle ?? 900); // let the bundle mount + run its useEffect syscalls
-  if (opts.drive) await opts.drive(page);
+  await settled(page, host, opts.settle ?? 5000, opts.until);
+  if (opts.drive) await opts.drive(page, host);
   const text = await iframeText(page);
   const extra = opts.evaluate ? await opts.evaluate(page) : null;
+  const rnFrames = await page.evaluate(() => globalThis.__rnFrames.map((s) => JSON.parse(s)));
   await page.close();
-  return { text, console: console_, extra, host };
+  return { text, console: console_, extra, host, rnFrames, foreignCalls };
 }
 
 console.log('Whim capability-bridge invariant suite — headless Chromium + Node host shim\n');
@@ -87,25 +120,29 @@ const chromiumBrowser = await chromium.launch();
 // 1. STORAGE REACHABLE ONLY AS SYSCALLS — water-counter round-trips a tap through the bridge.
 {
   const r = await scenario('wc-roundtrip', 'water-counter', {
-    drive: async (page) => {
+    drive: async (page, host) => {
+      const before = host.sysrets.length;
       for (const f of page.frames()) { try { const b = await f.$('button'); if (b) { await b.click(); break; } } catch {} }
-      await page.waitForTimeout(500);
+      await settled(page, host, 5000, () => host.sysrets.length >= before + 2);
     },
   });
-  const loaded = /loaded from storage|saved/.test(r.text);
-  const saved = /saved/.test(r.text);
-  const noFail = !/load failed|save failed/.test(r.text);
+  // Judged on the host side: what the engine holds after the tap, and that every syscall was
+  // answered ok. The rendered count only shows the answers made it back into the realm.
+  const engine = r.host.realm.engine;
+  const stored = engine ? engine.kv.get('total') : undefined;
+  const drinks = engine ? engine.records.list('Drinks').length : -1;
+  const allOk = r.host.sysrets.length > 0 && r.host.sysrets.every((s) => s.ok);
   const counted = /Glasses[\s\S]*\b1\b/.test(r.text);
-  const ok = loaded && saved && noFail && counted;
-  record(ok, 'storage reachable as syscalls (water-counter)', `loaded=${loaded} saved=${saved} count→1=${counted} noFail=${noFail}`);
+  const ok = stored === 1 && drinks === 1 && allOk && counted;
+  record(ok, 'storage reachable as syscalls (water-counter)', `engine total=${JSON.stringify(stored)} drinks=${drinks} sysrets=${r.host.sysrets.length} allOk=${allOk} rendered count→1=${counted}`);
 }
 
 // 2. UNDECLARED-CAPABILITY DENIAL — cap-intruder (declares nothing) is refused, structured.
 {
   const r = await scenario('cap-denial', 'cap-intruder');
-  const denied = /undeclared_capability/.test(r.text);
-  const notWritten = !/NOT DENIED/.test(r.text);
-  record(denied && notWritten, 'undeclared-capability denial (structured)', `kind-shown=${denied} notWritten=${notWritten}`);
+  const denied = r.host.sysrets.some((s) => s.error?.kind === 'undeclared_capability');
+  const granted = r.host.sysrets.filter((s) => s.ok && s.method?.startsWith('storage.')).length;
+  record(denied && granted === 0, 'undeclared-capability denial (structured)', `host answered undeclared_capability=${denied} storage calls granted=${granted} (must be 0)`);
 }
 
 // 3. STUB-AUTHORITY PROBE — nothing reachable from the storage facade / __whimSyscall grants
@@ -124,29 +161,36 @@ const chromiumBrowser = await chromium.launch();
         // Walk own-property closure of the facade + the transport; flag anything that smells
         // like an escalation (an engine handle, a host object, a native bridge, a raw window).
         const SUSPECT = /engine|^host$|native|sqlite|ReactNativeWebView|contentWindow|require|process/i;
-        const seen = new Set();
-        let leak = null;
-        (function walk(obj, path, depth) {
-          if (leak || obj === null || depth > 4) return;
-          const t = typeof obj;
-          if (t !== 'object' && t !== 'function') return;
-          if (seen.has(obj)) return;
-          seen.add(obj);
-          for (const k of Object.getOwnPropertyNames(obj)) {
-            if (SUSPECT.test(k)) { leak = path + '.' + k; return; }
-            let v;
-            try { v = obj[k]; } catch { continue; }
-            if (v === globalThis || v === globalThis.parent || v === globalThis.top) { leak = path + '.' + k + ' (window ref)'; return; }
-            walk(v, path + '.' + k, depth + 1);
-          }
-        })(storage, 'storage', 0);
+        const findLeak = (root, rootPath) => {
+          const seen = new Set();
+          let leak = null;
+          (function walk(obj, path, depth) {
+            if (leak || obj === null || depth > 4) return;
+            const t = typeof obj;
+            if (t !== 'object' && t !== 'function') return;
+            if (seen.has(obj)) return;
+            seen.add(obj);
+            for (const k of Object.getOwnPropertyNames(obj)) {
+              if (SUSPECT.test(k)) { leak = path + '.' + k; return; }
+              let v;
+              try { v = obj[k]; } catch { continue; }
+              if (v === globalThis || v === globalThis.parent || v === globalThis.top) { leak = path + '.' + k + ' (window ref)'; return; }
+              walk(v, path + '.' + k, depth + 1);
+            }
+          })(root, rootPath, 0);
+          return leak;
+        };
+        const leak = findLeak(storage, 'storage');
+        // Negative control: the same walk over the facade with an engine handle planted two levels
+        // down must find it, or a clean result above proves nothing.
+        const planted = findLeak({ ...storage, kv: { ...storage.kv, _h: { engine: {} } } }, 'planted');
         const verbsAreFns = typeof storage.kv.get === 'function' && typeof storage.records.append === 'function';
-        return { storageType: typeof storage, syscallKeys: Object.keys(sys).sort((a, b) => a.localeCompare(b)), verbsAreFns, leak };
+        return { storageType: typeof storage, syscallKeys: Object.keys(sys).sort((a, b) => a.localeCompare(b)), verbsAreFns, leak, planted };
       }) : null;
     },
   });
   const e = r.extra || {};
-  const ok = e.storageType === 'object' && JSON.stringify(e.syscallKeys) === '["call"]' && e.verbsAreFns === true && !e.leak;
+  const ok = e.storageType === 'object' && JSON.stringify(e.syscallKeys) === '["call"]' && e.verbsAreFns === true && !e.leak && e.planted === 'planted.kv._h.engine';
   record(ok, 'stub-authority (no escalation beyond the transport)', JSON.stringify(e));
 }
 
@@ -203,12 +247,21 @@ const chromiumBrowser = await chromium.launch();
 // 6. SQL INJECTOR END-TO-END — a hostile bundle drives the real verbs with adversarial input
 //    over the real path; values are inert, crafted identifiers rejected, only its own store.
 {
-  const r = await scenario('sql-injector', 'sql-injector', { settle: 1500 });
-  const zero = /INJECTIONS LANDED: 0/.test(r.text);
-  const collRejected = /crafted collection: rejected: unknown_collection/.test(r.text);
-  const fieldRejected = /crafted (append|where|orderBy) field: rejected: unknown_field/.test(r.text);
-  const ok = zero && collRejected && fieldRejected;
-  record(ok, 'sql-injector end-to-end (values inert, identifiers rejected)', `landed0=${zero} collRej=${collRejected} fieldRej=${fieldRejected}`);
+  const r = await scenario('sql-injector', 'sql-injector', { until: (text) => /INJECTIONS LANDED/.test(text) });
+  // Judged on the host side (the bundle's own summary line is a self-report, finding F4): the
+  // tables the fixture must not be able to drop are still there, no table name carries injected
+  // text, every value round-trip was answered ok and then removed, and the crafted identifiers
+  // were refused by the engine.
+  const tables = r.host.tables();
+  const tablesIntact = tables.includes('c1') && tables.includes('kv');
+  const namesClean = tables.every((t) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(t));
+  const kinds = r.host.sysrets.filter((s) => !s.ok).map((s) => s.error?.kind);
+  const appends = r.host.sysrets.filter((s) => s.ok && s.method === 'storage.records.append').length;
+  const rowsLeft = r.host.realm.engine ? r.host.realm.engine.records.list('Notes').length : -1;
+  const collRejected = kinds.includes('unknown_collection');
+  const fieldRejected = kinds.includes('unknown_field');
+  const ok = tablesIntact && namesClean && appends === 5 && rowsLeft === 0 && collRejected && fieldRejected;
+  record(ok, 'sql-injector end-to-end (values inert, identifiers rejected)', `tables=${JSON.stringify(tables)} appends ok=${appends} (want 5) rows left=${rowsLeft} (want 0) refused kinds=${JSON.stringify([...new Set(kinds)])}`);
 }
 
 // 7. NEGATIVE CONTROL — a deliberately MISCONFIGURED gate (host-held manifest grants `storage`
@@ -220,6 +273,17 @@ const chromiumBrowser = await chromium.launch();
   record(breachObserved, 'negative control (broken gate must be flagged)', breachObserved
     ? 'correctly FLAGGED: a misconfigured gate let an undeclared capability through'
     : 'did NOT observe the breach (the suite would be vacuous!)');
+}
+
+// 7b. PAINT IS FORWARDED AS TRUSTED — the launcher's boot state ends on a `paint` frame the RN host
+//     receives with `trusted: true` (boot-state.ts accepts only trusted paints). The outer page
+//     marks a frame trusted only after its nonce check, so this is the end-to-end half of that
+//     fence; the forged-frame half is the F4 checks in run-against-build.mjs.
+{
+  const r = await scenario('paint-forwarded', 'water-counter');
+  const paints = r.rnFrames.filter((f) => f.kind === 'paint');
+  const ok = paints.length > 0 && paints.every((f) => f.trusted === true) && r.foreignCalls === 0;
+  record(ok, 'paint reaches the RN host as a trusted frame', `paint frames=${paints.length} all trusted=${paints.every((f) => f.trusted === true)} host calls from inside the sandbox=${r.foreignCalls}`);
 }
 
 // 8. INV-CUEGATE (effects-and-cues task 7.2) — a hostile bundle cannot cue past the gate. The

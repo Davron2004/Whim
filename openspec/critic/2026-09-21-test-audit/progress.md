@@ -22,13 +22,13 @@ Fast gate after batch 1: PASSED.
 
 | Item | Status | Commit | Note |
 |---|---|---|---|
-| Forbidden globals: behavioural tests (`checks` acceptance) | done, red-check pending | c7fac29 | Every name bare and through every root, every root read directly, a shadowing parameter per name. Expected names written in the test. Red-check against weaker checkers needs your permission (security guard) |
-| synthrun forged verdict forges `false` | done, red-check pending | 7645e27 | Verdict must stay contained; tally exactly clean-baseline + 1. Red-check needs the outer page's nonce check disabled (permission) |
-| Forged-sysret check robust to fixture history | done, red-check pending | 71269e1 | `get` issued first, forgeries for ids 1..1000. Red-check needs the `ev.source` guard removed (permission) |
+| Forbidden globals: behavioural tests (`checks` acceptance) | done | c7fac29 | Every name bare and through every root, every root read directly, a shadowing parameter per name. Red-checked (with permission): `Worker` dropped, `frames` dropped, and token matching each fail it; the old table test would have passed the first |
+| synthrun forged verdict forges `false` | done | 7645e27 | Red-checked (with permission): outer page tallies the forgery but falls through to process it (missing `return`) → "the forged breach verdict was not adopted (state.contained = false)" |
+| Forged-sysret check robust to fixture history | done | 71269e1 | Red-checked (with permission): guard removed + 20 syscalls before the probe → new check fails (`ATTACKER`), old check passes and the suite exits 0 |
 | `INV-CUEGATE` forged-sysret sub-assertion | done | 71269e1 | Dropped: it matched the fixture's own "posted to self" text (audit mutation run 1) |
 | WebView shim exposing `injectJavaScript` + delivery test | done | a4f7c7d | Red-checked: a host that never injects fails it; the existing rendered tests stayed green under that mutant |
 | Fork `shareData` (build-lifecycle fake + rendered fork question) | done | 5f4c35b | Red-checked against three weaker variants: Home sends true for "Start fresh", root drops the options, rebuild forks fresh |
-| Rendered consent gate for every entry point | done, red-check pending | f6d2fd7 | 5 entry points x {no grant, outdated grant} + device header after agreeing + decline from a running app. Red-check needs each entry point bypassing the gate (permission) |
+| Rendered consent gate for every entry point | done | f6d2fd7 | Red-checked (with permission): each of the 5 entry points calling its continuation without the gate fails the suite |
 
 Fast gate after batch 2: PASSED.
 
@@ -52,9 +52,23 @@ Fast gate after batch 2: PASSED.
 | xhr-transport "non-ApiError body leaves code absent" (inside L493-520) | kept | - | Not a Retry-After case; the audit range overshot |
 | run-timeline "details reads the journal on open" / "back closes the sheet" | kept for batch 4 | - | Replaced in the same commit as their rendered versions |
 | Conditional: prompt-flow-wiring delivery routing (L498-512) | done | e9253cf | shareData moved in 5f4c35b |
-| Conditional: prompt-flow-wiring consent grep + retired flow (L857-884) | waiting | - | Rendered consent tests landed (f6d2fd7); deleting after their red-check |
+| Conditional: prompt-flow-wiring consent grep + retired flow (L857-884) | done | e518419 | After the consent red-checks. Same commit removes consent-flow, consent-options and fork-question-ui suites and the entry-point greps (coverage moved in batch 2) |
 
 Fast gate after batch 3: PASSED.
+
+## Batch 4: rewrites and merges
+
+Fanned out to three agents in worktrees (launcher on Opus 5; server and tooling+core on Sonnet 5); their items are recorded below as they merge. Done in the main tree:
+
+| Item | Status | Commit | Note |
+|---|---|---|---|
+| Bridge runner: water-counter, undeclared-capability, sql-injector judged host-side | done | 75e317a | Host shim records sysrets and lists tables |
+| Bridge runner: stub-authority negative control | done | 75e317a | A planted `kv._h.engine` must be found |
+| Bridge runner: `exposeBinding` + main-frame guard; bounded settle | done | 75e317a | |
+| Boot-state: built outer page forwards paint as trusted (launcher.md, owner item) | done | 75e317a | New bridge check |
+| run-against-build: T4 probes line only; A1 waits on the generation | done | 999f9fa | |
+| run-against-build: T7 same-realm re-injection | done (removed) | 999f9fa | A strict version is impossible: probes run once per realm, so there is no gen-2 verdict |
+| bash-policy.test.sh smuggling rows merged; L40 named | done | 63763b6 | 15 rows removed, 63 pass |
 
 ## Not in any batch (README "Bugs and gaps")
 
