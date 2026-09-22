@@ -35,13 +35,13 @@ import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import type { Server as NetServer, Socket } from 'node:net';
 import { buildCandidateSource } from '../../synthrun/builder';
-import { canaryAppSource, NAVIGATION_VARIANTS } from './variants';
+import { canaryAppSource, LEAK_REQUIRED_VARIANTS, NAVIGATION_VARIANTS } from './variants';
 import type { NavigationVariant } from './variants';
 
 /** The variants `--expect leak` requires a hit for, plus the TLS port. `host-top-frame` has no
  *  mini-app source (it's injected by the probe screen into the outer page), but the canary counts
  *  its hit the same way as every other path. */
-const LEAK_REQUIRED: readonly string[] = ['loc-href', 'loc-assign', 'meta-refresh', 'anchor-click', 'host-top-frame'];
+const LEAK_REQUIRED: readonly string[] = LEAK_REQUIRED_VARIANTS;
 
 interface Options {
   bind: string;

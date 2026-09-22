@@ -3,7 +3,7 @@
 // Framework-free, house idiom: assert + a pass counter, exit non-zero on the first failure.
 import assert from 'node:assert/strict';
 import {
-  ingest, assertVisible, fetchOpenIssues, formatFindings, normalizeIssue, AuthVisibilityError,
+  ingest, assertVisible, fetchOpenIssues, normalizeIssue, AuthVisibilityError,
 } from '../sonar-pr-issues.mjs';
 
 let pass = 0;
@@ -91,24 +91,6 @@ await test('normalizeIssue strips the projectKey: prefix from component', () => 
   assert.equal(n.severity, 'CRITICAL');
 });
 
-await test('formatFindings shape: header verdict line + one section per issue', () => {
-  const findings = formatFindings({ pr: '7', project, gate: 'ERROR', issues: [
-    { rule: 'sonarjs:cognitive-complexity', message: 'too complex', component: `${project}:src/x.ts`, line: 12, severity: 'MAJOR' },
-  ] });
-  assert.match(findings, /^# Sonar findings — PR #7/m);
-  assert.match(findings, /- gate: ERROR/);
-  assert.match(findings, /- issues: 1/);
-  assert.match(findings, /## S1 — src\/x\.ts:12 — sonarjs:cognitive-complexity \(MAJOR\)/);
-  assert.match(findings, /too complex/);
-});
-
-await test('formatFindings: missing line renders as ?', () => {
-  const findings = formatFindings({ pr: '7', project, gate: 'OK', issues: [
-    { rule: 'r', message: 'file-level', component: `${project}:src/x.ts`, severity: 'INFO' },
-  ] });
-  assert.match(findings, /## S1 — src\/x\.ts:\? — r \(INFO\)/);
-});
-
 // --- clean gate + red gate end-to-end ----------------------------------------------------------
 await test('clean gate: visible, gate OK, zero issues -> empty findings list, gate OK', async () => {
   const fetchImpl = mockFetch([
@@ -126,14 +108,22 @@ await test('clean gate: visible, gate OK, zero issues -> empty findings list, ga
 await test('red gate: visible, gate ERROR, issues present -> findings carry them, gate ERROR', async () => {
   const fetchImpl = mockFetch([
     { path: '/components/show', data: { component: { key: project } } },
-    { path: '/issues/search', data: { total: 1, p: 1, ps: 500, issues: [
+    { path: '/issues/search', data: { total: 2, p: 1, ps: 500, issues: [
       { rule: 'sonarjs:no-nested', message: 'nested ternary', component: `${project}:src/y.ts`, line: 9, severity: 'MAJOR' },
+      // No line: a file-level issue. Its rendering (`:?`) is exercised here, not by a dedicated
+      // formatFindings unit test — the ingest→findings path is the same code either way.
+      { rule: 'r', message: 'file-level', component: `${project}:src/x.ts`, severity: 'INFO' },
     ] } },
     { path: '/qualitygates/project_status', data: { projectStatus: { status: 'ERROR' } } },
   ]);
   const { gate, findings } = await ingest({ fetchImpl, base, token, project, pr: '7' });
   assert.equal(gate, 'ERROR');
+  assert.match(findings, /^# Sonar findings — PR #7/m);
+  assert.match(findings, /- gate: ERROR/);
+  assert.match(findings, /- issues: 2/);
   assert.match(findings, /## S1 — src\/y\.ts:9 — sonarjs:no-nested \(MAJOR\)/);
+  assert.match(findings, /nested ternary/);
+  assert.match(findings, /## S2 — src\/x\.ts:\? — r \(INFO\)/);
 });
 
 console.log(`\nsonar-pr-issues tests: ${pass} passed`);

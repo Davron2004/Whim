@@ -273,13 +273,18 @@ const SECRET_CANDIDATE_SOURCE = 'const THE_SECRET_SOURCE_TOKEN = 42;';
 }
 
 {
-  // Prove the redaction test above is non-vacuous: deliberately construct an UNREDACTED case the
-  // way `buildCaseResult` is forbidden from doing, and confirm the same assertion style WOULD
-  // catch it — i.e. the check genuinely inspects content, it isn't trivially true.
-  const unredactedLeak = JSON.stringify({ case: { caseId: 'x', prompt: SECRET_PROMPT } });
+  // Prove the redaction test above is non-vacuous: run the SAME prompt through a `visible`
+  // report (never redacted) over the SAME real serializeReport surface the holdout check
+  // inspects, and confirm the prompt DOES appear there. That shows serializeReport is a surface
+  // that actually carries prompt text — so its absence of it for a holdout report is a real
+  // finding, not an artifact of a surface that never carries prompts in the first place.
+  // (renderSummary never carries prompt/expectation/candidate-source text for ANY visibility —
+  // design D3's summary contract — so it can't serve this negative control.)
+  const visibleCase = caseInput({ caseId: 'visible-negative-control', prompt: SECRET_PROMPT, tierC: scoredTierC(3) });
+  const visibleReport = report([visibleCase], { visibility: 'visible' });
   check(
-    'the leak-detection check itself fires on a deliberately unredacted object (negative control)',
-    unredactedLeak.includes(SECRET_PROMPT),
+    'the leak-detection check on serializeReport genuinely carries prompt text for a visible report (negative control)',
+    serializeReport(visibleReport).includes(SECRET_PROMPT),
   );
 }
 
