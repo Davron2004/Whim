@@ -81,4 +81,16 @@ Related, older material: `docs/demo/storyboard.md` (the 2:30 hero film plan),
 - 2026-09-18: repo recon on generation survival, limits, failure states; findings folded into
   Constraints above.
 - 2026-09-22: Apple API key + app record created; Android upload keystore created; this folder
-  started. Next: merge PR 35, deploy, first TestFlight + Play uploads, first phone generation.
+  started.
+- 2026-09-22, afternoon: PR 35 merged to main (`780923c`); backend deployed from that commit,
+  smoke green. iOS build 381237 uploaded, processed and distributed to TestFlight internal
+  testers; tagged `release/1.0.0+381237`. Android AAB 381237 built and verified
+  (`~/Downloads/whim-1.0.0-381237.aab`), awaiting the hand upload to the alpha track. Play
+  Console: all ten app-content declarations done (IARC came out Everyone/PEGI 3; target
+  audience 13+), store listing text + icon + feature graphic saved as draft; phone screenshots
+  in progress from the emulator. Signing needed an Admin-role App Store Connect key
+  (`34LSB2S98U`); App Manager keys can't create the distribution certificate. Four latent
+  release-tooling bugs fixed on branch `demo/stage-prep` (JDK detection, spaceship key hash,
+  duplicate auth xcargs, binary privacy manifests). Next: screenshots → listing save → Play
+  closed-testing release → Play signing fingerprint committed → phone on cellular, first
+  generation (task 15.3).
