@@ -140,15 +140,16 @@ platform :ios do
     sh_at_root("npm", "run", "build")
     sh("cd #{root('ios').shellescape} && bundle exec pod install")
 
-    auth_xcargs = asc_auth_xcargs
+    # gym appends xcargs to the -exportArchive command as well as the archive, so the auth
+    # flags go in once here; an export_xcargs copy makes xcodebuild refuse the duplicate
+    # -authenticationKeyPath (measured on fastlane 2.237.0 / Xcode 27).
     build_app(
       workspace: root("ios/Whim.xcworkspace"),
       scheme: "Whim",
       configuration: "Release",
       export_method: "app-store",
       output_directory: root("ios/build/release"),
-      xcargs: "WHIM_BUILD_NUMBER=#{build_number} #{auth_xcargs}",
-      export_xcargs: auth_xcargs
+      xcargs: "WHIM_BUILD_NUMBER=#{build_number} #{asc_auth_xcargs}"
     )
 
     archive_path = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
