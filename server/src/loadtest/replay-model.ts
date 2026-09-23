@@ -6,8 +6,9 @@
  *
  * The role is read from `req.model` against the load-test roster (`server.ts`'s `LOADTEST_ROSTER`),
  * never guessed from message content, and paces the reply: plan turns default to the roster's plan
- * model, generate/repair turns to its engineer model, and classifier/rewrite/clarify/summary turns
- * to their respective roster models. Plan and engineer turns wait `engineerTurnMs`; the other turns
+ * model, generate and repair turns to their respective engineer-family models, and
+ * classifier/rewrite/clarify/summary turns to their respective roster models. Plan, generate and
+ * repair turns wait `engineerTurnMs`; the other turns
  * wait `rewriteTurnMs`. Within a role, WHICH canned reply is returned is read from the turn's own system
  * message, which is stable, distinctive prompt text owned by `generation/prompts/index.ts` and
  * `policy/policy.ts` (not re-exported — matched as substrings; a rewording there is a class-A
@@ -89,7 +90,7 @@ export function loadRotationFixtures(cwd: string = process.cwd()): string[] {
 }
 
 function roleFor(roster: ModelRoster, model: string): 'engineer' | 'rewrite' | undefined {
-  if (model === roster.engineer.model) return 'engineer';
+  if (model === roster.engineer.model || model === roster.repair.model) return 'engineer';
   if (model === roster.rewrite.model) return 'rewrite';
   return undefined;
 }

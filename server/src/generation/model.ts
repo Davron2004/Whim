@@ -27,9 +27,8 @@ export interface ModelMessage {
 export type ReasoningSetting = 'off' | 'on' | 'low' | 'medium' | 'high' | 'default';
 
 /** Attributes a model call for the per-call `model call` log line (design D4) and for test
- *  assertions. Distinct from `ModelRole` (the roster's own keys): `engineer` turns split into
- *  `generate`/`repair` labels at their call sites, and the content-policy classifier labels itself
- *  `policy` while still resolving its model from the roster's `rewrite` role. */
+ *  assertions. Distinct from `ModelRole` (the roster's own keys): the content-policy classifier
+ *  labels itself `policy` while still resolving its model from the roster's `rewrite` role. */
 export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair';
 
 export interface ModelRequest {
@@ -80,7 +79,7 @@ export function isCreditExhaustedError(err: unknown): boolean {
 /** The roster's own roles (design D2) — the keys of `ModelRoster`. The content-policy classifier
  *  is deliberately NOT one of these: it resolves its model from the `rewrite` role and always
  *  states `reasoning: 'off'` directly (spec content-policy "adds no new model role or model id"). */
-export type ModelRole = 'clarify' | 'rewrite' | 'summary' | 'plan' | 'engineer';
+export type ModelRole = 'clarify' | 'rewrite' | 'summary' | 'plan' | 'engineer' | 'repair';
 
 export interface RoleSetting {
   model: string;
@@ -94,6 +93,7 @@ const ENGINEER_MODEL_ENV = 'WHIM_ENGINEER_MODEL';
 const CLARIFY_MODEL_ENV = 'WHIM_CLARIFY_MODEL';
 const SUMMARY_MODEL_ENV = 'WHIM_SUMMARY_MODEL';
 const PLAN_MODEL_ENV = 'WHIM_PLAN_MODEL';
+const REPAIR_MODEL_ENV = 'WHIM_REPAIR_MODEL';
 
 /** `WHIM_<ROLE>_REASONING` per roster role, and each one's default (design D2's table). */
 const REASONING_ENV: Record<ModelRole, string> = {
@@ -102,6 +102,7 @@ const REASONING_ENV: Record<ModelRole, string> = {
   summary: 'WHIM_SUMMARY_REASONING',
   plan: 'WHIM_PLAN_REASONING',
   engineer: 'WHIM_ENGINEER_REASONING',
+  repair: 'WHIM_REPAIR_REASONING',
 };
 
 const REASONING_DEFAULTS: Record<ModelRole, ReasoningSetting> = {
@@ -110,6 +111,7 @@ const REASONING_DEFAULTS: Record<ModelRole, ReasoningSetting> = {
   summary: 'off',
   plan: 'on',
   engineer: 'on',
+  repair: 'on',
 };
 
 const REASONING_SETTINGS: readonly ReasoningSetting[] = ['off', 'on', 'low', 'medium', 'high', 'default'];
@@ -147,10 +149,10 @@ function readModelOverride(env: NodeJS.ProcessEnv, name: string): string | undef
   return raw && raw.trim().length > 0 ? raw : undefined;
 }
 
-function readReasoning(env: NodeJS.ProcessEnv, role: ModelRole): ReasoningSetting {
+function readReasoning(env: NodeJS.ProcessEnv, role: ModelRole, fallback = REASONING_DEFAULTS[role]): ReasoningSetting {
   const name = REASONING_ENV[role];
   const raw = env[name];
-  if (raw === undefined || raw === '') return REASONING_DEFAULTS[role];
+  if (raw === undefined || raw === '') return fallback;
   if (!(REASONING_SETTINGS as readonly string[]).includes(raw)) {
     throw new ModelRosterReasoningError(name, raw);
   }
@@ -158,8 +160,8 @@ function readReasoning(env: NodeJS.ProcessEnv, role: ModelRole): ReasoningSettin
 }
 
 /** Read the per-role model roster from the environment (design D2): the two required models
- *  (`WHIM_REWRITE_MODEL`, `WHIM_ENGINEER_MODEL`), the three optional per-role overrides (each
- *  falling back to its family's required model), and the five `WHIM_<ROLE>_REASONING` settings.
+ *  (`WHIM_REWRITE_MODEL`, `WHIM_ENGINEER_MODEL`), the four optional per-role overrides (each
+ *  falling back to its family's required model), and the six `WHIM_<ROLE>_REASONING` settings.
  *  Throws `ModelRosterEnvError` naming every missing required variable, or `ModelRosterReasoningError`
  *  naming the first invalid reasoning value — never falls back to a hard-coded id. */
 export function modelRosterFromEnv(env: NodeJS.ProcessEnv = process.env): ModelRoster {
@@ -174,13 +176,16 @@ export function modelRosterFromEnv(env: NodeJS.ProcessEnv = process.env): ModelR
   const clarify = readModelOverride(env, CLARIFY_MODEL_ENV) ?? rewrite;
   const summary = readModelOverride(env, SUMMARY_MODEL_ENV) ?? rewrite;
   const plan = readModelOverride(env, PLAN_MODEL_ENV) ?? engineer;
+  const repair = readModelOverride(env, REPAIR_MODEL_ENV) ?? engineer;
+  const engineerReasoning = readReasoning(env, 'engineer');
 
   return {
     clarify: { model: clarify, reasoning: readReasoning(env, 'clarify') },
     rewrite: { model: rewrite, reasoning: readReasoning(env, 'rewrite') },
     summary: { model: summary, reasoning: readReasoning(env, 'summary') },
     plan: { model: plan, reasoning: readReasoning(env, 'plan') },
-    engineer: { model: engineer, reasoning: readReasoning(env, 'engineer') },
+    engineer: { model: engineer, reasoning: engineerReasoning },
+    repair: { model: repair, reasoning: readReasoning(env, 'repair', engineerReasoning) },
   };
 }
 
@@ -194,6 +199,7 @@ export function defaultModelRoster(rewriteModel: string, engineerModel: string):
     summary: { model: rewriteModel, reasoning: REASONING_DEFAULTS.summary },
     plan: { model: engineerModel, reasoning: REASONING_DEFAULTS.plan },
     engineer: { model: engineerModel, reasoning: REASONING_DEFAULTS.engineer },
+    repair: { model: engineerModel, reasoning: REASONING_DEFAULTS.repair },
   };
 }
 

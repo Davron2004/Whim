@@ -20,3 +20,8 @@
 - [x] 3.3 Flow benchmark exit codes at the process level: spawn `server/flowbench.mjs` against the fake server for a run whose generate ends in `failure` (exit `1`) and with a missing or manifest-less `--eval-set` (exit `2`, zero requests received).
 - [x] 3.4 `server/src/loadtest/replay-model.ts` module comment: describe the roles by which roster model they default to, not as fixed aliases of `roster.engineer`/`roster.rewrite`.
 
+## 4. Repair role
+
+- [x] 4.1 Roster and machine: add a `repair` role (`WHIM_REPAIR_MODEL` → `WHIM_ENGINEER_MODEL`; `WHIM_REPAIR_REASONING` → the engineer's effective setting; empty = unset; invalid value fails boot in every pipeline mode) and use it for repair turns in `server/src/generation/machine.ts`. Tests: with neither set, repair requests carry exactly the engineer's model and reasoning (including when `WHIM_ENGINEER_REASONING` is overridden); each override changes only repair requests; an invalid `WHIM_REPAIR_REASONING` fails boot naming it.
+- [x] 4.2 Deploy plumbing: `WHIM_REPAIR_MODEL` and `WHIM_REPAIR_REASONING` join `WHIM_VALUE_KEYS`, preflight validation and the staged `config.env` exactly like the other per-role knobs (design D6); tests in `server/test/deploy-config.suite.ts`; `docs/deploy.md` env reference.
+

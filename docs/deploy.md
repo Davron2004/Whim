@@ -78,8 +78,8 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 |---|---|---|
 | `WHIM_SUPPORT_EMAIL` | yes | rendered on the privacy and support pages |
 | `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | yes | the model pair the server runs with (not rendered on the pages) |
-| `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL` | no | optional per-role model overrides; see the roster table below |
-| `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
+| `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL`, `WHIM_REPAIR_MODEL` | no | optional per-role model overrides; see the roster table below |
+| `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
@@ -87,7 +87,7 @@ Loaded after the committed `deploy/defaults.env` and before the process environm
 
 ## Model roster, reasoning and provider routing (design D1–D3)
 
-Five roles, each with its own model and reasoning setting (`server/src/generation/model.ts`'s
+Six roles, each with its own model and reasoning setting (`server/src/generation/model.ts`'s
 `modelRosterFromEnv`):
 
 | role (call sites) | model var (fallback) | reasoning var (default) |
@@ -96,7 +96,8 @@ Five roles, each with its own model and reasoning setting (`server/src/generatio
 | rewrite | `WHIM_REWRITE_MODEL` (required) | `WHIM_REWRITE_REASONING` (`off`) |
 | summary | `WHIM_SUMMARY_MODEL` (→ `WHIM_REWRITE_MODEL`) | `WHIM_SUMMARY_REASONING` (`off`) |
 | plan | `WHIM_PLAN_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_PLAN_REASONING` (`on`) |
-| engineer (generate, repair) | `WHIM_ENGINEER_MODEL` (required) | `WHIM_ENGINEER_REASONING` (`on`) |
+| engineer (generate) | `WHIM_ENGINEER_MODEL` (required) | `WHIM_ENGINEER_REASONING` (`on`) |
+| repair | `WHIM_REPAIR_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_REPAIR_REASONING` (→ engineer's effective setting) |
 | content-policy classifier | the rewrite role's model (no variable of its own) | always `off` |
 
 Each role's reasoning variable takes one of `off`, `on`, `low`, `medium`, `high`, `default`; an

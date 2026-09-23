@@ -35,7 +35,7 @@ import {
   type RunStage,
   type RunTrace,
 } from '../src/generation/machine';
-import { defaultModelRoster, openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
+import { defaultModelRoster, modelRosterFromEnv, openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
 import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
@@ -93,6 +93,10 @@ const DANGLING_INITIAL_PLAN_JSON = JSON.stringify({
 
 function engineerTurn(deltas: string[]): ScriptedTurn {
   return { role: 'engineer', deltas, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+}
+
+function repairTurn(deltas: string[]): ScriptedTurn {
+  return { role: 'repair', deltas, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
 }
 
 /** The plan turn specifically — same shape as `engineerTurn`, distinct roster role (design D2):
@@ -391,7 +395,7 @@ async function testRepairThenSuccess(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -418,15 +422,73 @@ async function testRepairThenSuccess(): Promise<void> {
   check('repair-then-success: terminal is a result', events[events.length - 1].type === 'result');
 }
 
+async function testRepairRoleSettings(): Promise<void> {
+  section('machine — repair requests use their own roster role and inherit engineer defaults');
+
+  const runOneRepair = async (env: NodeJS.ProcessEnv): Promise<ScriptedModelClient> => {
+    const roster = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      ...env,
+    });
+    const model = new ScriptedModelClient(roster, [
+      planTurn([VALID_PLAN_JSON]),
+      engineerTurn(['export default {}; // first draft']),
+      { role: 'repair', deltas: ['export default {}; // repair draft'], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+    ]);
+    const machine = new GenerationMachine(baseDeps({
+      model,
+      roster,
+      bounds: { repairAttempts: 1 },
+      check: scriptedCheck([
+        { diagnostics: [ERROR_DIAG], manifest: MANIFEST },
+        { diagnostics: [ERROR_DIAG], manifest: MANIFEST },
+      ]),
+    }));
+    await collect(machine.run(NEW_APP_REQUEST));
+    return model;
+  };
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'low' });
+    eq('without repair overrides, generate and repair use the engineer model', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/engineer-1',
+    ]);
+    eq('without repair overrides, repair inherits the engineer reasoning override', model.requests.map((r) => r.request.reasoning), [
+      'on', 'low', 'low',
+    ]);
+  }
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'low', WHIM_REPAIR_MODEL: 'vendor/repair-only' });
+    eq('a repair model override changes only the repair request', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/repair-only',
+    ]);
+    eq('a repair model override leaves inherited reasoning unchanged', model.requests.map((r) => r.request.reasoning), [
+      'on', 'low', 'low',
+    ]);
+  }
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'on', WHIM_REPAIR_REASONING: 'off' });
+    eq('a repair reasoning override leaves the engineer model unchanged', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/engineer-1',
+    ]);
+    eq('a repair reasoning override changes only the repair request', model.requests.map((r) => r.request.reasoning), [
+      'on', 'on', 'off',
+    ]);
+  }
+}
+
 async function testRepairCapExhaustion(): Promise<void> {
   section('machine — repair-cap exhaustion: 3 repair pairs, 4 candidates, attempts:4');
 
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    engineerTurn(['candidate-2']),
-    engineerTurn(['candidate-3']),
-    engineerTurn(['candidate-4']),
+    repairTurn(['candidate-2']),
+    repairTurn(['candidate-3']),
+    repairTurn(['candidate-4']),
   ]);
   const diag = (n: number): Diagnostic => ({ ...ERROR_DIAG, message: `candidate ${n} still broken` });
   const deps = baseDeps({
@@ -490,7 +552,7 @@ async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -517,8 +579,8 @@ async function testRepairPromptGetsWholeCurrentRoundErrorsFirst(): Promise<void>
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    engineerTurn(['candidate-2']),
-    engineerTurn(['candidate-3']),
+    repairTurn(['candidate-2']),
+    repairTurn(['candidate-3']),
   ]);
   const deps = baseDeps({
     model,
@@ -566,7 +628,7 @@ async function testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord(): Pro
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-writes-a-date-string']),
-    engineerTurn(['candidate-writes-epoch-ms']),
+    repairTurn(['candidate-writes-epoch-ms']),
   ]);
   const REFUSED_RECORD = { ...WIRE_RECORD, name: 'candidate-with-a-refused-write' };
   const deps = baseDeps({
@@ -832,7 +894,7 @@ async function testAbortAtEveryStageBoundary(): Promise<void> {
     const model = new ScriptedModelClient(ROSTER, [
       planTurn([VALID_PLAN_JSON]),
       engineerTurn(['candidate-1']),
-      engineerTurn(['candidate-2']),
+      repairTurn(['candidate-2']),
     ]);
     const machine = new GenerationMachine(baseDeps({
       model,
@@ -1044,7 +1106,7 @@ async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -1543,7 +1605,7 @@ async function testCreditExhaustedDuringRepair(): Promise<void> {
   const model = new ScriptedModelClient(ROSTER, [
     planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    { role: 'engineer', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+    { role: 'repair', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
   ]);
   const trace: RunTrace = { generationIds: [] };
   const events = await collect(new GenerationMachine(baseDeps({
@@ -1844,6 +1906,7 @@ export async function runMachineTests(): Promise<void> {
   await testThinkingEvents();
   await testGenerateReplyFencedIsUnwrappedNoRepair();
   await testRepairThenSuccess();
+  await testRepairRoleSettings();
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();
   await testWarningsOnlyOneRepairThenDeliver();

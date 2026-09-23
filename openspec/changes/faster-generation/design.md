@@ -43,10 +43,11 @@ Why, from direct replays of the same requests against OpenRouter:
 | rewrite | `WHIM_REWRITE_MODEL` (required) | `WHIM_REWRITE_REASONING` (`off`) |
 | summary | `WHIM_SUMMARY_MODEL` (→ `WHIM_REWRITE_MODEL`) | `WHIM_SUMMARY_REASONING` (`off`) |
 | plan | `WHIM_PLAN_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_PLAN_REASONING` (`on`) |
-| engineer (generate, repair) | `WHIM_ENGINEER_MODEL` (required) | `WHIM_ENGINEER_REASONING` (`on`) |
+| engineer (generate) | `WHIM_ENGINEER_MODEL` (required) | `WHIM_ENGINEER_REASONING` (`on`) |
+| repair (added after the quality judge, chain-4) | `WHIM_REPAIR_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_REPAIR_REASONING` (→ the engineer's effective setting) |
 | content-policy classifier | the rewrite role's model (fixed by the content-policy spec) | always `off` (fixed by the same spec) |
 
-An empty value counts as unset. A reasoning value outside the set fails configuration loading, naming the variable and the allowed values, the same fail-fast path every other `WHIM_*` error takes. There is no `WHIM_POLICY_MODEL`: moving the classifier off the rewrite model is a policy decision this change does not make. Generate and repair share one role because nothing yet argues for splitting them.
+An empty value counts as unset. A reasoning value outside the set fails configuration loading, naming the variable and the allowed values, the same fail-fast path every other `WHIM_*` error takes. There is no `WHIM_POLICY_MODEL`: moving the classifier off the rewrite model is a policy decision this change does not make. Repair started as part of the engineer role. The blind quality judge (bench/judge-round2.json) showed first-draft thinking is worth ~2.4 points of app quality, while repairs with thinking on took a median 49 s against ~12 s without. A repair only fixes the diagnostics it is handed, so it got its own role (chain-4). Unset, it follows the engineer exactly, so existing configs behave as before.
 
 **D3 — One provider-routing knob.** `WHIM_PROVIDER_SORT` ∈ {`price`, `throughput`, `latency`}; when set, every request carries `provider: { sort }`. It is global, not per role, because short calls showed no latency-vs-throughput difference and long engineer turns want throughput. Unset keeps today's behavior. *Alternative:* the `:nitro` model-id suffix gives throughput sorting with zero code, but it hides a routing choice inside a model id and can't express `latency`.
 

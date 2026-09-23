@@ -395,7 +395,7 @@ async function testEditTurnThreading(): Promise<void> {
   const scripted = new ScriptedModelClient(EDIT_ROSTER, [
     { role: 'plan', deltas: [EDIT_PLAN_JSON] },
     { role: 'engineer', deltas: ['// candidate 1'] },
-    { role: 'engineer', deltas: ['// candidate 2'] },
+    { role: 'repair', deltas: ['// candidate 2'] },
   ]);
 
   // Every candidate fails its check, so the run is plan → generate → repair → failure: two check

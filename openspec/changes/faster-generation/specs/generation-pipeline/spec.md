@@ -8,7 +8,7 @@ one adapter behind that interface, and the deterministic test suites SHALL run a
 replays recorded turns. No test in any gate SHALL make a live API call: the suites SHALL install a
 transport that fails loudly if any request to the provider host is attempted, and SHALL pass with
 `OPENROUTER_API_KEY` absent from the environment. Model ids SHALL be caller parameters read from the
-environment per role (the rewrite and engineer models, plus the optional clarify, summary and plan
+environment per role (the rewrite and engineer models, plus the optional clarify, summary, plan and repair
 overrides that fall back to them) and SHALL NOT be hard-coded into any call site.
 
 #### Scenario: The gate never reaches the network
@@ -35,12 +35,12 @@ overrides that fall back to them) and SHALL NOT be hard-coded into any call site
 
 Every model call SHALL carry an explicit reasoning setting — `off`, `on`, `low`, `medium`, `high`, or
 `default` — taken from its role's roster entry and never left to the provider's default by omission. The
-role defaults SHALL be: clarify `off`, rewrite `off`, summary `off`, plan `on`, engineer (generate and
-repair) `on`, each overridable through `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`,
-`WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING` and `WHIM_ENGINEER_REASONING`. The content-policy
-classifier SHALL always use `off`, whatever the rewrite role's setting. A value outside the allowed set
-SHALL fail configuration loading with an error naming the variable and the allowed values. Every model
-call SHALL also carry its role label (`policy`, `clarify`, `rewrite`, `summary`, `plan`, `generate` or
+role defaults SHALL be: clarify `off`, rewrite `off`, summary `off`, plan `on`, engineer (generate) `on`, and
+repair the engineer's effective setting, each overridable through `WHIM_CLARIFY_REASONING`,
+`WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING` and
+`WHIM_REPAIR_REASONING`. The content-policy classifier SHALL always use `off`, whatever the rewrite role's
+setting. A value outside the allowed set SHALL fail configuration loading with an error naming the variable
+and the allowed values. Every model call SHALL also carry its role label (`policy`, `clarify`, `rewrite`, `summary`, `plan`, `generate` or
 `repair`).
 
 #### Scenario: Latency-critical calls default to reasoning off
@@ -54,6 +54,12 @@ call SHALL also carry its role label (`policy`, `clarify`, `rewrite`, `summary`,
 - **WHEN** a generation runs under the default roster
 - **THEN** the plan, generate and repair requests carry the `on` setting, and reasoning deltas still
   surface as `thinking` events
+
+#### Scenario: Repair can think less than the first draft
+
+- **WHEN** `WHIM_ENGINEER_REASONING` is `on` and `WHIM_REPAIR_REASONING` is `off`
+- **THEN** generate requests carry `on`, repair requests carry `off`, and with `WHIM_REPAIR_REASONING`
+  unset repair requests carry whatever the engineer's setting is
 
 #### Scenario: A role override is honored and stays local
 
@@ -73,9 +79,9 @@ call SHALL also carry its role label (`policy`, `clarify`, `rewrite`, `summary`,
 
 ### Requirement: Per-role model overrides fall back to the two roster models
 
-Clarify, summary and plan SHALL each read an optional model id from `WHIM_CLARIFY_MODEL`,
-`WHIM_SUMMARY_MODEL` and `WHIM_PLAN_MODEL`. When unset or empty, clarify and summary SHALL use
-`WHIM_REWRITE_MODEL` and plan SHALL use `WHIM_ENGINEER_MODEL`. `WHIM_REWRITE_MODEL` and
+Clarify, summary, plan and repair SHALL each read an optional model id from `WHIM_CLARIFY_MODEL`,
+`WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL` and `WHIM_REPAIR_MODEL`. When unset or empty, clarify and summary
+SHALL use `WHIM_REWRITE_MODEL`, and plan and repair SHALL use `WHIM_ENGINEER_MODEL`. `WHIM_REWRITE_MODEL` and
 `WHIM_ENGINEER_MODEL` SHALL remain required, and the content-policy classifier SHALL keep using the rewrite
 model.
 

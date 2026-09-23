@@ -193,11 +193,42 @@ export function runConfigTests(): void {
   section('modelRosterFromEnv (design D2) — the roster of per-role models and reasoning settings');
 
   // The two-variable case behaves exactly as `defaultModelRoster` describes it: clarify/summary
-  // fall back to rewrite, plan falls back to engineer, and every role gets its own default
-  // reasoning setting (clarify/rewrite/summary off, plan/engineer on).
+  // fall back to rewrite, plan/engineer/repair fall back to engineer, and repair inherits the
+  // engineer's effective reasoning setting.
   {
     const roster = modelRosterFromEnv({ WHIM_REWRITE_MODEL: 'vendor/rewrite-1', WHIM_ENGINEER_MODEL: 'vendor/engineer-1' });
     eq('two-variable roster matches the default-roster helper', roster, defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1'));
+  }
+
+  {
+    const roster = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_ENGINEER_REASONING: 'low',
+    });
+    eq('repair model defaults to the engineer model', roster.repair.model, roster.engineer.model);
+    eq('repair reasoning defaults to the engineer effective reasoning', roster.repair.reasoning, 'low');
+  }
+  {
+    const roster = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_ENGINEER_REASONING: 'on',
+      WHIM_REPAIR_MODEL: '',
+      WHIM_REPAIR_REASONING: '',
+    });
+    eq('empty repair model and reasoning values count as unset', roster.repair, roster.engineer);
+  }
+  {
+    const roster = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_ENGINEER_REASONING: 'on',
+      WHIM_REPAIR_MODEL: 'vendor/repair-only',
+      WHIM_REPAIR_REASONING: 'off',
+    });
+    eq('repair overrides affect only the repair roster entry', roster.repair, { model: 'vendor/repair-only', reasoning: 'off' });
+    eq('repair overrides leave engineer roster entry untouched', roster.engineer, { model: 'vendor/engineer-1', reasoning: 'on' });
   }
 
   // A missing required variable is still named, exactly as before.
@@ -287,6 +318,21 @@ export function runConfigTests(): void {
       for (const allowed of ['off', 'on', 'low', 'medium', 'high', 'default']) {
         check(`the message names the allowed value "${allowed}"`, err.message.includes(allowed));
       }
+    }
+  }
+  {
+    const err = (() => {
+      try {
+        modelRosterFromEnv({ WHIM_REWRITE_MODEL: 'vendor/rewrite-1', WHIM_ENGINEER_MODEL: 'vendor/engineer-1', WHIM_REPAIR_REASONING: 'fast' });
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    check('invalid repair reasoning throws ModelRosterReasoningError', err instanceof ModelRosterReasoningError);
+    if (err instanceof ModelRosterReasoningError) {
+      eq('invalid repair reasoning names its variable', err.variable, 'WHIM_REPAIR_REASONING');
+      check('invalid repair reasoning lists allowed settings', ['off', 'on', 'low', 'medium', 'high', 'default'].every((value) => err.message.includes(value)));
     }
   }
 }

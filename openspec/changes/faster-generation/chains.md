@@ -28,3 +28,12 @@ other reads: the flow benchmark reaches the server over HTTP only.
 - writes-contract: none
 - file scope: `server/src/lifecycle.ts`, `server/src/config.ts`, `server/src/loadtest/replay-model.ts`, `deploy/lib.sh`, `deploy/deploy.sh`, `server/test/*` (not `acceptance.ts`), `docs/deploy.md`
 
+## chain-4: server-repair-role
+
+- tasks: 4.1–4.2
+- rationale: the quality judge made thinking worth keeping on the first draft; repairs can think less. One small vertical slice through roster, machine and deploy.
+- reads: design.md D2 (repair row), D6; specs/generation-pipeline/spec.md §"Every model call states its reasoning mode" (scenario "Repair can think less than the first draft"), §"Per-role model overrides fall back to the two roster models"; handoff: none
+- after: chain-3
+- writes-contract: none
+- file scope: `server/src/generation/model.ts`, `server/src/generation/machine.ts`, `server/src/lifecycle.ts`, `server/src/loadtest/replay-model.ts`, `deploy/lib.sh`, `deploy/deploy.sh`, `server/test/*` (not `acceptance.ts`), `docs/deploy.md`
+

@@ -10,7 +10,7 @@ import type { Usage } from '@whim/contract';
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
 /** Maps a request's attribution label (`ModelRequest.role`, design D4) onto the roster role it
- *  must have been resolved from: `generate`/`repair` both read the `engineer` role, and `policy`
+ *  must have been resolved from: `generate` reads `engineer`, `repair` reads `repair`, and `policy`
  *  reads the `rewrite` role's model (spec content-policy "adds no new model role or model id"). */
 const ROSTER_ROLE_OF: Record<ModelCallLabel, ModelRole> = {
   policy: 'rewrite',
@@ -19,7 +19,7 @@ const ROSTER_ROLE_OF: Record<ModelCallLabel, ModelRole> = {
   summary: 'summary',
   plan: 'plan',
   generate: 'engineer',
-  repair: 'engineer',
+  repair: 'repair',
 };
 
 /** One recorded turn: which roster role it must be requested for (see `ROSTER_ROLE_OF` — a

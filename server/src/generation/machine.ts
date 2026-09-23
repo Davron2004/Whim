@@ -806,7 +806,7 @@ export class GenerationMachine {
       },
       this.deps.promptInputs,
     );
-    const turn = yield* this.runModelTurn(messages, this.deps.roster.engineer, 'repair', signal, trace, state, true);
+    const turn = yield* this.runModelTurn(messages, this.deps.roster.repair, 'repair', signal, trace, state, true);
     if (turn.aborted) return undefined;
 
     logStage('repair', 'done', roundAttempt);

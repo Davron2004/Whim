@@ -317,6 +317,12 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { WHIM_PIPELINE: 'stub', WHIM_PLAN_REASONING: 'fast', WHIM_DATA_DIR: fixture.dataDir('bad-reasoning') },
     'WHIM_PLAN_REASONING',
   );
+  await expectBootRefusal(
+    'a malformed repair reasoning setting in stub mode',
+    fixture.tree,
+    { WHIM_PIPELINE: 'stub', WHIM_REPAIR_REASONING: 'fast', WHIM_DATA_DIR: fixture.dataDir('bad-repair-reasoning') },
+    'WHIM_REPAIR_REASONING',
+  );
 
   const missingAsset = fixture.copy('missing-asset');
   fs.rmSync(path.join(missingAsset, 'docs', 'sdk-reference.md'));
