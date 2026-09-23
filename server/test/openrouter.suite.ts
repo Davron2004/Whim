@@ -288,7 +288,7 @@ export async function runOpenRouterTests(): Promise<void> {
   }
 
   // §7.3c — provider routing preference (design D3): set → every request carries `provider.sort`;
-  // unset → no `provider` field at all.
+  // unset → no sort. Either way every request denies data collection.
   {
     let capturedCall: CapturedCall | undefined;
     const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }), 'throughput');
@@ -296,7 +296,7 @@ export async function runOpenRouterTests(): Promise<void> {
     await drain(deltas);
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
     const sort: ProviderSort = 'throughput';
-    eq('provider sort set: request carries provider.sort', body.provider, { sort });
+    eq('provider sort set: request carries provider.sort and denies data collection', body.provider, { data_collection: 'deny', sort });
   }
   {
     let capturedCall: CapturedCall | undefined;
@@ -304,7 +304,7 @@ export async function runOpenRouterTests(): Promise<void> {
     const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
     await drain(deltas);
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
-    check('provider sort unset: no provider field on the wire', !('provider' in body));
+    eq('provider sort unset: request only denies data collection', body.provider, { data_collection: 'deny' });
   }
 
   await testPreStreamHttpErrors();
