@@ -25,7 +25,7 @@ import { createCheckStage } from '../src/generation/stages/check';
 import { createBuildStage } from '../src/generation/stages/build';
 import { loadPromptInputs } from '../src/generation/prompts/inputs';
 import { GenerationMachine, type CheckedManifest, type RunStage } from '../src/generation/machine';
-import type { ModelRoster, ModelStream } from '../src/generation/model';
+import { defaultModelRoster, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 import {
   buildReport,
@@ -119,7 +119,7 @@ async function testOverridesEnvAndFetchTrap(): Promise<void> {
     eq(
       'the roster env vars are the fixed load-test ids',
       [sent.env.WHIM_ENGINEER_MODEL, sent.env.WHIM_REWRITE_MODEL],
-      [LOADTEST_ROSTER.engineer, LOADTEST_ROSTER.rewrite],
+      [LOADTEST_ROSTER.engineer.model, LOADTEST_ROSTER.rewrite.model],
     );
     eq('the caller env passes through otherwise', sent.env.WHIM_DATA_DIR, fakeDataDir);
 
@@ -154,20 +154,30 @@ const NEW_APP_REQUEST: GenerateRequest = { prompt: 'a tip splitter' };
 async function testReplayModelRoles(): Promise<void> {
   section('createReplayModel answers every role deterministically and rotates the clean fixtures (design D26)');
 
-  const roster: ModelRoster = { engineer: 'lt/engineer', rewrite: 'lt/rewrite' };
+  const roster: ModelRoster = defaultModelRoster('lt/rewrite', 'lt/engineer');
   const fixtures = loadRotationFixtures();
   check('setup: at least one top-level fixture passes runStaticChecks with no error diagnostic', fixtures.length > 0);
   const model = createReplayModel({ roster, engineerTurnMs: 1, rewriteTurnMs: 1, fixtures });
 
   const classifierText = await collectText(
-    model.stream({ model: roster.rewrite, messages: [{ role: 'system', content: CLASSIFIER_SYSTEM_PROBE }, { role: 'user', content: 'Text to judge' }] }),
+    model.stream({
+      model: roster.rewrite.model,
+      messages: [{ role: 'system', content: CLASSIFIER_SYSTEM_PROBE }, { role: 'user', content: 'Text to judge' }],
+      reasoning: 'off',
+      role: 'policy',
+    }),
   );
   eq('the classifier always allows', JSON.parse(classifierText), { verdict: 'allow' });
 
   const seen = new Set<string>();
   for (let i = 0; i < fixtures.length * 2; i++) {
     const text = await collectText(
-      model.stream({ model: roster.engineer, messages: [{ role: 'system', content: GENERATE_SYSTEM_PROBE }, { role: 'user', content: 'Request: an app' }] }),
+      model.stream({
+        model: roster.engineer.model,
+        messages: [{ role: 'system', content: GENERATE_SYSTEM_PROBE }, { role: 'user', content: 'Request: an app' }],
+        reasoning: 'on',
+        role: 'generate',
+      }),
     );
     check(
       `generate call ${i}: the rotated reply passes runStaticChecks with no error diagnostic`,
@@ -178,7 +188,7 @@ async function testReplayModelRoles(): Promise<void> {
   eq('every clean fixture is seen across two full rotations', seen.size, fixtures.length);
 
   const unknownModelErr = await caught(() => {
-    model.stream({ model: 'not-a-roster-id', messages: [{ role: 'system', content: 'x' }] });
+    model.stream({ model: 'not-a-roster-id', messages: [{ role: 'system', content: 'x' }], reasoning: 'off', role: 'rewrite' });
   });
   check('an unrecognized model id throws rather than replaying silently', unknownModelErr instanceof Error, String(unknownModelErr));
 }

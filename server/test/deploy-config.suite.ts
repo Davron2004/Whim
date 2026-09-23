@@ -823,11 +823,14 @@ function withSandbox(body: (sandbox: Sandbox) => void): void {
   }
 }
 
-function writeOperatorFile(sandbox: Sandbox): void {
+function writeOperatorFile(sandbox: Sandbox, values: Readonly<Record<string, string>> = {}): void {
   fs.mkdirSync(path.join(sandbox.home, '.config', 'whim'), { recursive: true });
+  const optionalValues = Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n');
   fs.writeFileSync(
     path.join(sandbox.home, '.config', 'whim', 'deploy.env'),
-    'WHIM_SUPPORT_EMAIL=ops@example.test\nWHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\n',
+    ['WHIM_SUPPORT_EMAIL=ops@example.test', 'WHIM_ENGINEER_MODEL=vendor/engineer-1', 'WHIM_REWRITE_MODEL=vendor/rewrite-1', optionalValues]
+      .filter((line) => line !== '')
+      .join('\n') + '\n',
   );
 }
 
@@ -926,6 +929,20 @@ function deployPreflightTests(): void {
   });
 
   withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_PLAN_REASONING: 'fast' });
+    const run = runScript(sandbox, 'deploy.sh', []);
+    check('deploy.sh refuses an invalid reasoning setting and names its variable', run.status === 1 && run.stderr.includes('WHIM_PLAN_REASONING') && run.stderr.includes('default'), run.stderr);
+    eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_REPAIR_REASONING: 'fast' });
+    const run = runScript(sandbox, 'deploy.sh', []);
+    check('deploy.sh refuses invalid repair reasoning and names its variable', run.status === 1 && run.stderr.includes('WHIM_REPAIR_REASONING') && run.stderr.includes('default'), run.stderr);
+    eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+  });
+
+  withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     const run = runScript(sandbox, 'deploy.sh', [], { STUB_NODE_VERSION: '24.1.0' });
     check('deploy.sh refuses Node 24, naming the Node 22 requirement', run.status === 1 && run.stderr.includes('Node 24.1.0') && run.stderr.includes('Node 22'), run.stderr);
@@ -1014,7 +1031,11 @@ function headOf(sandbox: Sandbox): string {
 function deployFullTests(): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox);
+    writeOperatorFile(sandbox, {
+      WHIM_PLAN_REASONING: 'low',
+      WHIM_REPAIR_MODEL: 'vendor/repair-1',
+      WHIM_REPAIR_REASONING: 'off',
+    });
     fullDeployRules(sandbox, false);
     fs.writeFileSync(path.join(sandbox.stubs, 'machine-type'), 'e2-standard-8');
     const run = runScript(sandbox, 'deploy.sh', []);
@@ -1028,7 +1049,11 @@ function deployFullTests(): void {
       'WHIM_MAX_CONCURRENT_UNARY=32',
       'WHIM_ENGINEER_MODEL=vendor/engineer-1',
       'WHIM_REWRITE_MODEL=vendor/rewrite-1',
+      'WHIM_REPAIR_MODEL=vendor/repair-1',
+      'WHIM_PLAN_REASONING=low',
+      'WHIM_REPAIR_REASONING=off',
     ]);
+    check('  ... omitting an unset role override from config.env', !stubFile(sandbox, 'upload/config.env').includes('WHIM_SUMMARY_MODEL='));
     const eventProfile = Object.fromEntries(envEntries(fs.readFileSync(path.join(ROOT, 'deploy', 'profiles', 'event.env'), 'utf8')));
     eq('  ... and the image, hosts and event container sizes to the compose .env', stubFile(sandbox, 'upload/compose.env').split('\n').filter((line) => line !== ''), [
       `WHIM_IMAGE=northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${head}`,

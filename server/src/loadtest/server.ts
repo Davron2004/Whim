@@ -32,7 +32,7 @@ import type { Servable, ServerHandle, StartServerOptions, StartServerOverrides }
 import { createReplayModel, DEFAULT_ENGINEER_TURN_MS, DEFAULT_REWRITE_TURN_MS } from './replay-model';
 import type { CreditTransport } from '../admission/credit';
 import type { UsageAndCostTransport } from '../usage/resolve';
-import type { ModelRoster } from '../generation/model';
+import { defaultModelRoster, type ModelRoster } from '../generation/model';
 
 /** A minimal, `lifecycle.ts`-free stand-in for `BootError` (see the module doc for why this file
  *  never imports that class): `reason` mirrors `BootFailureReason`'s `'config'` member, so a
@@ -51,7 +51,7 @@ const REWRITE_TURN_MS_ENV = 'WHIM_LOADTEST_REWRITE_TURN_MS';
 
 /** Fixed and never env-selectable (design D26: "adds no new model role or model id" applies here
  *  too — these are the load test's own roster, never the operator's real one). */
-export const LOADTEST_ROSTER: ModelRoster = { engineer: 'loadtest/engineer', rewrite: 'loadtest/rewrite' };
+export const LOADTEST_ROSTER: ModelRoster = defaultModelRoster('loadtest/rewrite', 'loadtest/engineer');
 
 /** The only key-shaped value that ever reaches `loadServerConfig` here — inert, and OpenRouter
  *  would reject it (design D26's third no-spend guarantee). */
@@ -144,8 +144,8 @@ export async function runLoadtestServer(options: RunLoadtestServerOptions): Prom
     ...options.env,
     NODE_ENV: 'production',
     OPENROUTER_API_KEY: LOADTEST_INERT_API_KEY,
-    WHIM_ENGINEER_MODEL: LOADTEST_ROSTER.engineer,
-    WHIM_REWRITE_MODEL: LOADTEST_ROSTER.rewrite,
+    WHIM_ENGINEER_MODEL: LOADTEST_ROSTER.engineer.model,
+    WHIM_REWRITE_MODEL: LOADTEST_ROSTER.rewrite.model,
   };
 
   const trap = installFetchTrap();

@@ -19,6 +19,18 @@ export interface ModelMessage {
   content: string;
 }
 
+/** Every model call's explicit reasoning mode (design D1, spec "Every model call states its
+ *  reasoning mode"). `off`/`on` map to the provider's `reasoning.enabled`; `low`/`medium`/`high` to
+ *  `reasoning.effort`; `default` sends no `reasoning` field at all (today's implicit behavior,
+ *  restorable per role without a redeploy). The wire mapping lives in ONE place —
+ *  `../openrouter.ts`'s `requestBody`. */
+export type ReasoningSetting = 'off' | 'on' | 'low' | 'medium' | 'high' | 'default';
+
+/** Attributes a model call for the per-call `model call` log line (design D4) and for test
+ *  assertions. Distinct from `ModelRole` (the roster's own keys): the content-policy classifier
+ *  labels itself `policy` while still resolving its model from the roster's `rewrite` role. */
+export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair';
+
 export interface ModelRequest {
   /** The resolved model id for this turn — the caller picks it via a `ModelRoster`; a
    *  `ModelClient`/adapter NEVER resolves a role to an id itself. */
@@ -26,13 +38,12 @@ export interface ModelRequest {
   messages: ModelMessage[];
   maxTokens?: number;
   temperature?: number;
-  /** Ask the provider to surface its reasoning stream (`ModelDelta`'s `'reasoning'` kind) rather
-   *  than emitting only visible text. OpenRouter hides a roster model's reasoning by default; the
-   *  generation machine sets this `true` for every engineer turn (plan/generate/repair) so the
-   *  device can show "thinking" instead of going quiet while the model works. The rewrite and
-   *  clarify routes leave it unset — their replies are unary JSON, not a stream a device watches,
-   *  so there is nothing to surface reasoning INTO. */
-  reasoning?: boolean;
+  /** REQUIRED (design D1): the type checker rejects a call site that forgets to decide. A roster
+   *  role's own setting (`RoleSetting.reasoning`) is the usual source; the content-policy classifier
+   *  is the one call site that always states `'off'` directly, never through the roster. */
+  reasoning: ReasoningSetting;
+  /** Required so every call is attributable (design D4) — see `ModelCallLabel`'s doc comment. */
+  role: ModelCallLabel;
 }
 
 /** One streamed unit from a model turn: either visible completion text (`'text'`) or reasoning the
@@ -63,20 +74,50 @@ export function isCreditExhaustedError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 402;
 }
 
-// ─── Roster: per-role model ids, read from the environment ─────────────────
+// ─── Roster: per-role model ids and reasoning settings, read from the environment ──
 
-export type ModelRole = 'rewrite' | 'engineer';
+/** The roster's own roles (design D2) — the keys of `ModelRoster`. The content-policy classifier
+ *  is deliberately NOT one of these: it resolves its model from the `rewrite` role and always
+ *  states `reasoning: 'off'` directly (spec content-policy "adds no new model role or model id"). */
+export type ModelRole = 'clarify' | 'rewrite' | 'summary' | 'plan' | 'engineer' | 'repair';
 
-export interface ModelRoster {
-  rewrite: string;
-  engineer: string;
+export interface RoleSetting {
+  model: string;
+  reasoning: ReasoningSetting;
 }
+
+export type ModelRoster = Record<ModelRole, RoleSetting>;
 
 const REWRITE_MODEL_ENV = 'WHIM_REWRITE_MODEL';
 const ENGINEER_MODEL_ENV = 'WHIM_ENGINEER_MODEL';
+const CLARIFY_MODEL_ENV = 'WHIM_CLARIFY_MODEL';
+const SUMMARY_MODEL_ENV = 'WHIM_SUMMARY_MODEL';
+const PLAN_MODEL_ENV = 'WHIM_PLAN_MODEL';
+const REPAIR_MODEL_ENV = 'WHIM_REPAIR_MODEL';
 
-/** Thrown by `modelRosterFromEnv` when one or both roster variables are unset. Actionable: names
- *  every missing variable so a caller can fix its environment in one read. */
+/** `WHIM_<ROLE>_REASONING` per roster role, and each one's default (design D2's table). */
+const REASONING_ENV: Record<ModelRole, string> = {
+  clarify: 'WHIM_CLARIFY_REASONING',
+  rewrite: 'WHIM_REWRITE_REASONING',
+  summary: 'WHIM_SUMMARY_REASONING',
+  plan: 'WHIM_PLAN_REASONING',
+  engineer: 'WHIM_ENGINEER_REASONING',
+  repair: 'WHIM_REPAIR_REASONING',
+};
+
+const REASONING_DEFAULTS: Record<ModelRole, ReasoningSetting> = {
+  clarify: 'off',
+  rewrite: 'off',
+  summary: 'off',
+  plan: 'on',
+  engineer: 'on',
+  repair: 'on',
+};
+
+const REASONING_SETTINGS: readonly ReasoningSetting[] = ['off', 'on', 'low', 'medium', 'high', 'default'];
+
+/** Thrown by `modelRosterFromEnv` when one or both REQUIRED roster variables are unset. Actionable:
+ *  names every missing variable so a caller can fix its environment in one read. */
 export class ModelRosterEnvError extends Error {
   constructor(public readonly missing: readonly string[]) {
     super(
@@ -88,17 +129,78 @@ export class ModelRosterEnvError extends Error {
   }
 }
 
-/** Read the per-role model roster from the environment. Throws `ModelRosterEnvError` naming every
- *  missing variable — never falls back to a hard-coded id. */
+/** Thrown by `modelRosterFromEnv` when a `WHIM_<ROLE>_REASONING` variable is set to a value outside
+ *  `ReasoningSetting`'s set. Actionable: names the exact variable and the allowed values, the same
+ *  fail-fast shape every other `WHIM_*` configuration error takes (`ServerConfigError`,
+ *  `../config.ts`) — surfaced the same way, through configuration loading at boot. */
+export class ModelRosterReasoningError extends Error {
+  constructor(
+    public readonly variable: string,
+    public readonly value: string,
+  ) {
+    super(`${variable} must be one of ${REASONING_SETTINGS.join(', ')}, got ${JSON.stringify(value)}.`);
+    this.name = 'ModelRosterReasoningError';
+  }
+}
+
+/** Empty counts as unset (design D2). */
+function readModelOverride(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const raw = env[name];
+  return raw && raw.trim().length > 0 ? raw : undefined;
+}
+
+function readReasoning(env: NodeJS.ProcessEnv, role: ModelRole, fallback = REASONING_DEFAULTS[role]): ReasoningSetting {
+  const name = REASONING_ENV[role];
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (!(REASONING_SETTINGS as readonly string[]).includes(raw)) {
+    throw new ModelRosterReasoningError(name, raw);
+  }
+  return raw as ReasoningSetting;
+}
+
+/** Read the per-role model roster from the environment (design D2): the two required models
+ *  (`WHIM_REWRITE_MODEL`, `WHIM_ENGINEER_MODEL`), the four optional per-role overrides (each
+ *  falling back to its family's required model), and the six `WHIM_<ROLE>_REASONING` settings.
+ *  Throws `ModelRosterEnvError` naming every missing required variable, or `ModelRosterReasoningError`
+ *  naming the first invalid reasoning value — never falls back to a hard-coded id. */
 export function modelRosterFromEnv(env: NodeJS.ProcessEnv = process.env): ModelRoster {
-  const rewrite = env[REWRITE_MODEL_ENV];
-  const engineer = env[ENGINEER_MODEL_ENV];
+  const rewrite = readModelOverride(env, REWRITE_MODEL_ENV);
+  const engineer = readModelOverride(env, ENGINEER_MODEL_ENV);
   const missing = [
     ...(rewrite ? [] : [REWRITE_MODEL_ENV]),
     ...(engineer ? [] : [ENGINEER_MODEL_ENV]),
   ];
   if (missing.length > 0 || !rewrite || !engineer) throw new ModelRosterEnvError(missing);
-  return { rewrite, engineer };
+
+  const clarify = readModelOverride(env, CLARIFY_MODEL_ENV) ?? rewrite;
+  const summary = readModelOverride(env, SUMMARY_MODEL_ENV) ?? rewrite;
+  const plan = readModelOverride(env, PLAN_MODEL_ENV) ?? engineer;
+  const repair = readModelOverride(env, REPAIR_MODEL_ENV) ?? engineer;
+  const engineerReasoning = readReasoning(env, 'engineer');
+
+  return {
+    clarify: { model: clarify, reasoning: readReasoning(env, 'clarify') },
+    rewrite: { model: rewrite, reasoning: readReasoning(env, 'rewrite') },
+    summary: { model: summary, reasoning: readReasoning(env, 'summary') },
+    plan: { model: plan, reasoning: readReasoning(env, 'plan') },
+    engineer: { model: engineer, reasoning: engineerReasoning },
+    repair: { model: repair, reasoning: readReasoning(env, 'repair', engineerReasoning) },
+  };
+}
+
+/** Test helper: the full roster — every role's default reasoning setting, no overrides — built
+ *  from just the two required model ids. The shape `modelRosterFromEnv` produces when only
+ *  `WHIM_REWRITE_MODEL`/`WHIM_ENGINEER_MODEL` are set. */
+export function defaultModelRoster(rewriteModel: string, engineerModel: string): ModelRoster {
+  return {
+    clarify: { model: rewriteModel, reasoning: REASONING_DEFAULTS.clarify },
+    rewrite: { model: rewriteModel, reasoning: REASONING_DEFAULTS.rewrite },
+    summary: { model: rewriteModel, reasoning: REASONING_DEFAULTS.summary },
+    plan: { model: engineerModel, reasoning: REASONING_DEFAULTS.plan },
+    engineer: { model: engineerModel, reasoning: REASONING_DEFAULTS.engineer },
+    repair: { model: engineerModel, reasoning: REASONING_DEFAULTS.repair },
+  };
 }
 
 // ─── The OpenRouter adapter ──────────────────────────────────────────────────
@@ -118,6 +220,7 @@ export function openRouterModelClient(client: OpenRouterClient): ModelClient {
         maxTokens: req.maxTokens,
         temperature: req.temperature,
         reasoning: req.reasoning,
+        role: req.role,
         signal,
       });
     },

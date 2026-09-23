@@ -35,7 +35,7 @@ import {
   type RunStage,
   type RunTrace,
 } from '../src/generation/machine';
-import { openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
+import { defaultModelRoster, modelRosterFromEnv, openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
 import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
@@ -45,7 +45,7 @@ import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
 
-const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const FAKE_INPUTS: PromptInputs = { sdkReference: 'fake sdk reference', fewShotExamples: [] };
 const FAKE_CLOCK: Clock = { now: () => 0 };
 const ZERO_USAGE = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -93,6 +93,16 @@ const DANGLING_INITIAL_PLAN_JSON = JSON.stringify({
 
 function engineerTurn(deltas: string[]): ScriptedTurn {
   return { role: 'engineer', deltas, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+}
+
+function repairTurn(deltas: string[]): ScriptedTurn {
+  return { role: 'repair', deltas, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+}
+
+/** The plan turn specifically — same shape as `engineerTurn`, distinct roster role (design D2):
+ *  every script's FIRST turn (or, for a plan re-ask, its first N turns) is a plan call. */
+function planTurn(deltas: string[]): ScriptedTurn {
+  return { role: 'plan', deltas, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
 }
 
 function scriptedCheck(reports: CheckReport[]): CheckStage {
@@ -258,7 +268,7 @@ async function testHappyPath(): Promise<void> {
   section('machine — happy path: plan, generate, check, run → result');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export ', 'default {}; // v1']),
   ]);
   const deps = baseDeps({
@@ -298,7 +308,7 @@ async function testThinkingEvents(): Promise<void> {
   const planReasoning = 'weighing which screens this needs';
   const generateReasoning = 'working out how to write the code';
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'engineer', deltas: [{ reasoning: planReasoning }, VALID_PLAN_JSON], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+    { role: 'plan', deltas: [{ reasoning: planReasoning }, VALID_PLAN_JSON], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
     { role: 'engineer', deltas: [{ reasoning: generateReasoning }, 'export default {}; // v1'], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
   ]);
   const deps = baseDeps({
@@ -342,8 +352,8 @@ async function testThinkingEvents(): Promise<void> {
   check('thinking: usage still immediately precedes the terminal', events.at(-2)?.type === 'usage' && events.at(-1)?.type === 'result');
 
   // Every pipeline turn (plan and generate alike) asks for reasoning — the thinking events above
-  // only exist because `reasoning: true` is set on the request, not because the model volunteered it.
-  check('thinking: every model request set reasoning: true', model.requests.every((r) => r.request.reasoning === true));
+  // only exist because both roles default to `reasoning: 'on'`, not because the model volunteered it.
+  check("thinking: every model request set reasoning: 'on'", model.requests.every((r) => r.request.reasoning === 'on'));
 }
 
 async function testGenerateReplyFencedIsUnwrappedNoRepair(): Promise<void> {
@@ -353,7 +363,7 @@ async function testGenerateReplyFencedIsUnwrappedNoRepair(): Promise<void> {
   const expectedSource = 'export default {}; // v1';
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn([fencedSource]),
   ]);
   const capturedSources: string[] = [];
@@ -383,9 +393,9 @@ async function testRepairThenSuccess(): Promise<void> {
   section('machine — repair-then-success: one repair pair, then result');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -412,15 +422,73 @@ async function testRepairThenSuccess(): Promise<void> {
   check('repair-then-success: terminal is a result', events[events.length - 1].type === 'result');
 }
 
+async function testRepairRoleSettings(): Promise<void> {
+  section('machine — repair requests use their own roster role and inherit engineer defaults');
+
+  const runOneRepair = async (env: NodeJS.ProcessEnv): Promise<ScriptedModelClient> => {
+    const roster = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      ...env,
+    });
+    const model = new ScriptedModelClient(roster, [
+      planTurn([VALID_PLAN_JSON]),
+      engineerTurn(['export default {}; // first draft']),
+      { role: 'repair', deltas: ['export default {}; // repair draft'], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+    ]);
+    const machine = new GenerationMachine(baseDeps({
+      model,
+      roster,
+      bounds: { repairAttempts: 1 },
+      check: scriptedCheck([
+        { diagnostics: [ERROR_DIAG], manifest: MANIFEST },
+        { diagnostics: [ERROR_DIAG], manifest: MANIFEST },
+      ]),
+    }));
+    await collect(machine.run(NEW_APP_REQUEST));
+    return model;
+  };
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'low' });
+    eq('without repair overrides, generate and repair use the engineer model', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/engineer-1',
+    ]);
+    eq('without repair overrides, repair inherits the engineer reasoning override', model.requests.map((r) => r.request.reasoning), [
+      'on', 'low', 'low',
+    ]);
+  }
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'low', WHIM_REPAIR_MODEL: 'vendor/repair-only' });
+    eq('a repair model override changes only the repair request', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/repair-only',
+    ]);
+    eq('a repair model override leaves inherited reasoning unchanged', model.requests.map((r) => r.request.reasoning), [
+      'on', 'low', 'low',
+    ]);
+  }
+
+  {
+    const model = await runOneRepair({ WHIM_ENGINEER_REASONING: 'on', WHIM_REPAIR_REASONING: 'off' });
+    eq('a repair reasoning override leaves the engineer model unchanged', model.requests.map((r) => r.request.model), [
+      'vendor/engineer-1', 'vendor/engineer-1', 'vendor/engineer-1',
+    ]);
+    eq('a repair reasoning override changes only the repair request', model.requests.map((r) => r.request.reasoning), [
+      'on', 'on', 'off',
+    ]);
+  }
+}
+
 async function testRepairCapExhaustion(): Promise<void> {
   section('machine — repair-cap exhaustion: 3 repair pairs, 4 candidates, attempts:4');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    engineerTurn(['candidate-2']),
-    engineerTurn(['candidate-3']),
-    engineerTurn(['candidate-4']),
+    repairTurn(['candidate-2']),
+    repairTurn(['candidate-3']),
+    repairTurn(['candidate-4']),
   ]);
   const diag = (n: number): Diagnostic => ({ ...ERROR_DIAG, message: `candidate ${n} still broken` });
   const deps = baseDeps({
@@ -458,8 +526,8 @@ async function testPlanReaskThenFailure(): Promise<void> {
   section('machine — plan re-ask is bounded: two plan pairs, no generate, one failure');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([DANGLING_INITIAL_PLAN_JSON]),
-    engineerTurn([DANGLING_INITIAL_PLAN_JSON]),
+    planTurn([DANGLING_INITIAL_PLAN_JSON]),
+    planTurn([DANGLING_INITIAL_PLAN_JSON]),
   ]);
   const deps = baseDeps({ model });
   const machine = new GenerationMachine(deps);
@@ -482,9 +550,9 @@ async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
   section('machine — warnings-only: at most one repair, then delivered with residual warnings');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -509,10 +577,10 @@ async function testRepairPromptGetsWholeCurrentRoundErrorsFirst(): Promise<void>
   section('machine — repair context: CHECK + RUN diagnostics from one round, errors first');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    engineerTurn(['candidate-2']),
-    engineerTurn(['candidate-3']),
+    repairTurn(['candidate-2']),
+    repairTurn(['candidate-3']),
   ]);
   const deps = baseDeps({
     model,
@@ -558,9 +626,9 @@ async function testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord(): Pro
   // delivered (synthetic-run §"An error run diagnostic reaches repair"): the machine, not the
   // stage, decides delivery, and an error diagnostic in the round means repair.
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-writes-a-date-string']),
-    engineerTurn(['candidate-writes-epoch-ms']),
+    repairTurn(['candidate-writes-epoch-ms']),
   ]);
   const REFUSED_RECORD = { ...WIRE_RECORD, name: 'candidate-with-a-refused-write' };
   const deps = baseDeps({
@@ -610,7 +678,7 @@ async function testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord(): Pro
 async function testContainmentFailureShortCircuit(): Promise<void> {
   section('machine — containment failure is terminal, no repair consumed (D7)');
 
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
   const deps = baseDeps({
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
@@ -640,7 +708,7 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
 
   // Two scripted turns only — plan and generate. A repair round would ask the model for a third
   // and blow up, so "no repair attempt is consumed" is enforced structurally as well as asserted.
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
   const deps = baseDeps({
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
@@ -684,7 +752,7 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
 async function testStageThrowYieldsOneFailure(): Promise<void> {
   section('machine — a stage throwing still yields exactly one failure');
 
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
   const throwingCheck: CheckStage = {
     check: () => {
       throw new Error('unexpected transport error with a secret token XYZ123');
@@ -709,7 +777,7 @@ async function testAbortBeforeStart(): Promise<void> {
 
   const controller = new AbortController();
   controller.abort();
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON])]);
   const machine = new GenerationMachine(baseDeps({ model }));
   const events = await collect(machine.run(NEW_APP_REQUEST, controller.signal));
 
@@ -765,7 +833,7 @@ async function testAbortDuringCheck(): Promise<void> {
   section('machine — abort during check produces no check:done and no terminal event');
 
   const controller = new AbortController();
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
   const abortingCheck: CheckStage = {
     check: () => {
       controller.abort();
@@ -783,7 +851,7 @@ async function testAbortDuringRun(): Promise<void> {
   section('machine — abort during run releases the harness with no terminal event');
 
   const controller = new AbortController();
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
   const abortingRun: RunStage = {
     run: () => {
       controller.abort();
@@ -824,9 +892,9 @@ async function testAbortAtEveryStageBoundary(): Promise<void> {
   for (const boundary of boundaries) {
     const controller = new AbortController();
     const model = new ScriptedModelClient(ROSTER, [
-      engineerTurn([VALID_PLAN_JSON]),
+      planTurn([VALID_PLAN_JSON]),
       engineerTurn(['candidate-1']),
-      engineerTurn(['candidate-2']),
+      repairTurn(['candidate-2']),
     ]);
     const machine = new GenerationMachine(baseDeps({
       model,
@@ -872,7 +940,7 @@ async function testAbortAtDiagnosticAndCompletionBoundaries(): Promise<void> {
 
   const diagnosticController = new AbortController();
   const diagnosticModel = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
   ]);
   const diagnosticMachine = new GenerationMachine(baseDeps({
@@ -893,7 +961,7 @@ async function testAbortAtDiagnosticAndCompletionBoundaries(): Promise<void> {
     {
       label: 'success',
       machine: new GenerationMachine(baseDeps({
-        model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['candidate-1'])]),
+        model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['candidate-1'])]),
         check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
         build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
         run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
@@ -902,7 +970,7 @@ async function testAbortAtDiagnosticAndCompletionBoundaries(): Promise<void> {
     {
       label: 'failure',
       machine: new GenerationMachine(baseDeps({
-        model: new ScriptedModelClient(ROSTER, [engineerTurn([DANGLING_INITIAL_PLAN_JSON])]),
+        model: new ScriptedModelClient(ROSTER, [planTurn([DANGLING_INITIAL_PLAN_JSON])]),
         bounds: { planAttempts: 1 },
       })),
     },
@@ -925,7 +993,7 @@ async function testModelStreamThrowYieldsOneFailure(): Promise<void> {
   section('machine — a model stream throw and rejected usage become one safe failure');
 
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'engineer', deltas: [], error: new Error('provider secret MODEL-LEAK') },
+    { role: 'plan', deltas: [], error: new Error('provider secret MODEL-LEAK') },
   ]);
 
   const capture = captureLogs();
@@ -1001,7 +1069,7 @@ async function testUsageRejectionAfterDeltasLogsAtThrowSite(): Promise<void> {
 async function testRepairBudgetsAreConstructorInjectable(): Promise<void> {
   section('machine — planAttempts/repairAttempts/warningRepairAttempts are constructor parameters');
 
-  const model = new ScriptedModelClient(ROSTER, [engineerTurn([DANGLING_INITIAL_PLAN_JSON])]);
+  const model = new ScriptedModelClient(ROSTER, [planTurn([DANGLING_INITIAL_PLAN_JSON])]);
   const deps = baseDeps({ model, bounds: { planAttempts: 1, repairAttempts: 0, warningRepairAttempts: 0 } });
   const machine = new GenerationMachine(deps);
   const events = await collect(machine.run(NEW_APP_REQUEST));
@@ -1016,7 +1084,7 @@ async function testRunTraceCollectsGenerationIds(): Promise<void> {
   section('machine — RunTrace collects every model call\'s provider generation id (D9)');
 
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'engineer', deltas: [VALID_PLAN_JSON], id: 'gen-plan-1' },
+    { role: 'plan', deltas: [VALID_PLAN_JSON], id: 'gen-plan-1' },
     { role: 'engineer', deltas: ['export default {};'], id: 'gen-generate-1' },
   ]);
   const deps = baseDeps({
@@ -1036,9 +1104,9 @@ async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void
   section('machine — a build failure maps to build_failure and is repaired like a check error');
 
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['export default {}; // v1']),
-    engineerTurn(['export default {}; // v2']),
+    repairTurn(['export default {}; // v2']),
   ]);
   const deps = baseDeps({
     model,
@@ -1284,7 +1352,7 @@ async function testClientAbortBeforeDeadlineEndsSilently(): Promise<void> {
   const idleController = new AbortController();
   const idleTrace: RunTrace = { generationIds: [] };
   const iterator = new GenerationMachine(baseDeps({
-    model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]),
+    model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON])]),
     clock: idleClock,
     maxRunMs: MAX_RUN_MS,
   })).run(NEW_APP_REQUEST, idleController.signal, idleTrace)[Symbol.asyncIterator]();
@@ -1340,7 +1408,7 @@ async function testDeadlineAfterTheCompletionEnvelopeStartsIsInert(): Promise<vo
     {
       label: 'delivering run',
       deps: (clock) => baseDeps({
-        model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+        model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
         check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
         build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
         run: scriptedRun([{ contained: true, diagnostics: [], record: WIRE_RECORD }]),
@@ -1353,7 +1421,7 @@ async function testDeadlineAfterTheCompletionEnvelopeStartsIsInert(): Promise<vo
     {
       label: 'failing run',
       deps: (clock) => baseDeps({
-        model: new ScriptedModelClient(ROSTER, [engineerTurn([DANGLING_INITIAL_PLAN_JSON])]),
+        model: new ScriptedModelClient(ROSTER, [planTurn([DANGLING_INITIAL_PLAN_JSON])]),
         bounds: { planAttempts: 1 },
         clock,
         maxRunMs: MAX_RUN_MS,
@@ -1430,7 +1498,7 @@ async function testDeadlineAbortsTheSyntheticRun(): Promise<void> {
   };
   const trace: RunTrace = { generationIds: [] };
   const machine = new GenerationMachine(baseDeps({
-    model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+    model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
     run: hangingRun,
@@ -1513,7 +1581,7 @@ async function testCreditExhaustedMidGenerate(): Promise<void> {
   invalidateCreditCache();
   // Two turns only: a repair would ask for a third and throw, so "no repair" is structural too.
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     { role: 'engineer', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
   ]);
   const trace: RunTrace = { generationIds: [] };
@@ -1535,9 +1603,9 @@ async function testCreditExhaustedDuringRepair(): Promise<void> {
 
   invalidateCreditCache();
   const model = new ScriptedModelClient(ROSTER, [
-    engineerTurn([VALID_PLAN_JSON]),
+    planTurn([VALID_PLAN_JSON]),
     engineerTurn(['candidate-1']),
-    { role: 'engineer', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+    { role: 'repair', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
   ]);
   const trace: RunTrace = { generationIds: [] };
   const events = await collect(new GenerationMachine(baseDeps({
@@ -1568,7 +1636,7 @@ async function testCreditExhaustedInvalidatesTheCreditCache(): Promise<void> {
     const credit = creditOptions([10, 0]);
     eq(`credit cache (${c.label}): the primed check admits`, await checkCredit(credit.options), { ok: true });
 
-    const model = new ScriptedModelClient(ROSTER, [{ role: 'engineer', deltas: [], error: c.error }]);
+    const model = new ScriptedModelClient(ROSTER, [{ role: 'plan', deltas: [], error: c.error }]);
     const events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST));
     assertCompletedEnvelope(`credit cache (${c.label})`, events);
 
@@ -1687,7 +1755,7 @@ async function testSummariserCreditErrorStillInvalidatesTheCache(): Promise<void
   const rejectingSummariser: Summariser = {
     summarise: (): Promise<SummariseResult> => Promise.reject(new OpenRouterCreditError('OpenRouter: payment required (402)')),
   };
-  const modelTurns = (): ScriptedTurn[] => [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])];
+  const modelTurns = (): ScriptedTurn[] => [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])];
 
   const cases: { label: string; summariser: (model: ScriptedModelClient) => Summariser; turns: ScriptedTurn[] }[] = [
     {
@@ -1695,7 +1763,7 @@ async function testSummariserCreditErrorStillInvalidatesTheCache(): Promise<void
       summariser: (model) => createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 }),
       turns: [
         ...modelTurns(),
-        { role: 'rewrite', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+        { role: 'summary', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
       ],
     },
     {
@@ -1778,7 +1846,7 @@ async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
     controller.abort();
     const trace: RunTrace = { generationIds: [] };
     const events = await collect(new GenerationMachine(baseDeps({
-      model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON])]),
+      model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON])]),
       clock,
     })).run(NEW_APP_REQUEST, controller.signal, trace));
     eq('aborted before start: no events', events.length, 0);
@@ -1790,7 +1858,7 @@ async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
     const clock = new ManualClock();
     const trace: RunTrace = { generationIds: [] };
     const machine = new GenerationMachine(baseDeps({
-      model: new ScriptedModelClient(ROSTER, [engineerTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
+      model: new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]),
       clock,
     }));
     for await (const event of machine.run(NEW_APP_REQUEST, undefined, trace)) {
@@ -1838,6 +1906,7 @@ export async function runMachineTests(): Promise<void> {
   await testThinkingEvents();
   await testGenerateReplyFencedIsUnwrappedNoRepair();
   await testRepairThenSuccess();
+  await testRepairRoleSettings();
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();
   await testWarningsOnlyOneRepairThenDeliver();

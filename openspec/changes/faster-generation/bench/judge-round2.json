@@ -1,0 +1,413 @@
+{
+ "method": "blind: per-case shuffled letters, judge never saw judge-key.json; sonnet general-purpose subagent; rubric coverage/correctness/ux 0-5, overall 0-10",
+ "round": "r2 (inputs from r2-A-v41-on: same clarify answers and rewritten prompt for every config)",
+ "cases": [
+  {
+   "caseId": "water-counter-p1",
+   "ranking": [
+    "r2-A-v41-on",
+    "r2-B-v41-off",
+    "r2-E-0731-low",
+    "r2-F-q27b-off",
+    "r2-H-q35flash-off"
+   ],
+   "scores": {
+    "r2-F-q27b-off": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 4,
+     "overall": 6,
+     "missing": [],
+     "bugs": [
+      "Day boundary uses toISOString().slice(0,10) (UTC) instead of local date, so the daily reset can land several hours off the user's actual local midnight",
+      "Log button isn't disabled while the initial load is in flight \u2014 an early tap can have the load's 'fresh day' branch overwrite the just-logged count back to 0 in storage",
+      "If storage.kv.set succeeds but the following storage.records.append throws, the catch rolls the UI back to total-1 even though storage already holds the new total",
+      "Bottom caption shows raw internal state ('loading\u2026', 'started new day', 'load failed') instead of user-facing copy"
+     ]
+    },
+    "r2-H-q35flash-off": {
+     "coverage": 3,
+     "correctness": 2,
+     "ux": 3,
+     "overall": 4,
+     "missing": [
+      "No automatic daily reset \u2014 'Today's Intake' is actually an all-time running total that only zeroes when the user manually taps 'Reset Day'"
+     ],
+     "bugs": [
+      "Count carries over across days silently since there's no date tracking at all, contradicting the requested 'today's total vs goal'",
+      "Button isn't gated on the initial load \u2014 an early tap's optimistic increment can be silently overwritten once the load resolves with the old stored total"
+     ]
+    },
+    "r2-E-0731-low": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 4,
+     "overall": 7,
+     "missing": [],
+     "bugs": [
+      "Log button isn't gated on the initial load \u2014 a very early tap can be reverted to 0 by the load effect's stale-day branch even though storage already holds the new count",
+      "logGlass fires storage.kv.set without awaiting or catching it, so a failed save is silent and can leave storage and the displayed count disagreeing",
+      "No undo or reset control \u2014 an accidental tap on 'Log a glass' can't be corrected"
+     ]
+    },
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r2-B-v41-off": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "Bottom caption surfaces raw internal status strings ('loaded', 'ready', 'saved') instead of user-facing copy"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "tip-splitter-p1",
+   "ranking": [
+    "r2-A-v41-on",
+    "r2-E-0731-low",
+    "r2-B-v41-off",
+    "r2-F-q27b-off",
+    "r2-H-q35flash-off"
+   ],
+   "scores": {
+    "r2-H-q35flash-off": {
+     "coverage": 4,
+     "correctness": 1,
+     "ux": 3,
+     "overall": 2,
+     "missing": [
+      "No arbitrary/custom tip percentage \u2014 locked to 5 presets (10/15/18/20/25%)"
+     ],
+     "bugs": [
+      "handleBillChange/handleTipChange/handleFriendsChange call setState then saveState() in the same tick, but saveState reads the pre-update value via a stale closure \u2014 every field edit persists the value from before that edit (e.g. typing a bill of 123 can end up persisting 12), and since ResultScreen rebuilds its numbers purely by re-reading those storage keys, the calculated split shown to the user is very often stale relative to what was just entered on Input",
+      "The 'About' Modal is never opened by any control \u2014 no button ever calls setModalOpen(true), so it's dead, unreachable UI"
+     ]
+    },
+    "r2-E-0731-low": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 8,
+     "missing": [
+      "No arbitrary/custom tip percentage \u2014 locked to 4 presets (10/15/20/25%)"
+     ],
+     "bugs": []
+    },
+    "r2-F-q27b-off": {
+     "coverage": 4,
+     "correctness": 4,
+     "ux": 3,
+     "overall": 6,
+     "missing": [
+      "No arbitrary/custom tip percentage \u2014 locked to 4 presets (10/15/20/25%)"
+     ],
+     "bugs": [
+      "Friends count isn't clamped to a minimum of 1 \u2014 typing 0 or a negative number silently yields a $0.00 per-person share with no validation message",
+      "Bill amount isn't clamped to >= 0 either, so a negative bill can flow straight into the total/share display unexplained"
+     ]
+    },
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r2-B-v41-off": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 4,
+     "overall": 7,
+     "missing": [],
+     "bugs": [
+      "Friends/Bill NumberInputs display the raw typed value (including 0 or negative) while the calculation silently substitutes a clamped value (min 1 / min 0) \u2014 the number shown in the field and the number actually used can disagree with no explanation",
+      "The breakdown has two separate rows both labeled just 'Tip' (one the dollar amount, one the percentage badge) \u2014 an ambiguous duplicate label"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "habit-tracker-p1",
+   "ranking": [
+    "r2-A-v41-on",
+    "r2-E-0731-low",
+    "r2-B-v41-off",
+    "r2-F-q27b-off"
+   ],
+   "scores": {
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r2-F-q27b-off": {
+     "coverage": 2,
+     "correctness": 1,
+     "ux": 2,
+     "overall": 2,
+     "missing": [
+      "Tapping a day is supposed to be read-only ('just shows whether I did it or not') but here it's the only way to mark any day \u2014 there's no separate 'mark today done' action distinct from the calendar tap itself"
+     ],
+     "bugs": [
+      "cell() toggles the tapped day's completion (adds/removes it) instead of only displaying its status \u2014 directly contradicts the explicit answer 'Just whether I did it or not' and lets an inspect-tap silently corrupt streak history",
+      "The key written on tap (unpadded day, e.g. '2026-9-5') doesn't match the zero-padded key used for calendar coloring and streak calculation (e.g. '2026-09-05') for days 1-9 of any month \u2014 toggling those days silently fails to show as done and never counts toward the streak",
+      "Renders the calendar with raw HTML <div>/onClick/inline style (hardcoded pixel values, undocumented var(--primary)-style CSS variables) instead of SDK components and color/space tokens, bypassing the token/theming system",
+      "'Today' is computed via toISOString().slice(0,10) (UTC), so the day boundary can land several hours off the user's actual local midnight"
+     ]
+    },
+    "r2-E-0731-low": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [
+      "No longest/best-streak stat shown anywhere (only the current streak), despite the streak-centric framing of the request"
+     ],
+     "bugs": [
+      "Status caption mixes user-facing messages with implementation-y text ('ready', 'Saving\u2026') rather than consistently user-friendly copy"
+     ]
+    },
+    "r2-B-v41-off": {
+     "coverage": 3,
+     "correctness": 5,
+     "ux": 2,
+     "overall": 5,
+     "missing": [
+      "Calendar day cells have no tap handler at all (plain Text, not Button/Card/ListItem with onPress) \u2014 you can never tap an arbitrary day to inspect it; the spec's central interaction ('tap a day to see whether you did it') is unimplemented for the actual calendar"
+     ],
+     "bugs": [
+      "The 'Day detail' card and its 'Mark as done/missed' button are only ever reachable for today (selectedDate is never set to anything else \u2014 the calendar can't set it, and 'Jump to today' always selects today), so the per-day inspector the spec asks for effectively only ever shows today"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "flashcards-p2",
+   "ranking": [
+    "r2-A-v41-on",
+    "r2-B-v41-off",
+    "r2-F-q27b-off",
+    "r2-E-0731-low",
+    "r2-H-q35flash-off"
+   ],
+   "scores": {
+    "r2-E-0731-low": {
+     "coverage": 4,
+     "correctness": 1,
+     "ux": 3,
+     "overall": 3,
+     "missing": [
+      "No way to edit an existing card's front/back text once added \u2014 only add or remove."
+     ],
+     "bugs": [
+      "Reviewing and grading a card before ever adding/removing one wipes the whole deck: grade() reads storage.kv.get('flashcards') fresh (still unset since Home never persisted the seeded deck), falls back to an empty array, and writes that empty array back, permanently losing the seeded cards.",
+      "The Due/All SegmentedControl options are capitalized ('Due'/'All') but bound to lowercase state ('due'/'all'): no segment shows selected on load, and after the first tap `scope` becomes 'Due'/'All', which never again matches the `scope === 'due'` checks \u2014 the Due-only filter is permanently broken after one tap."
+     ]
+    },
+    "r2-B-v41-off": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 4,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "A brand-new card's first-ever correct answer and first-ever wrong answer both schedule it for 'tomorrow' (reps===0 always yields interval=1), so 'wrong comes back sooner' isn't distinguishable until a card's second review."
+     ]
+    },
+    "r2-F-q27b-off": {
+     "coverage": 3,
+     "correctness": 4,
+     "ux": 2,
+     "overall": 5,
+     "missing": [
+      "No way to edit or delete an existing card \u2014 a typo or unwanted card is permanent.",
+      "No overview of the deck \u2014 cards are only ever seen one at a time during study, with no list/browse view.",
+      "No due-date concept \u2014 every card is always reviewable, so there's no sense of what's actually due today."
+     ],
+     "bugs": [
+      "The progress bar (currentIdx+1)/cards.length isn't a real progress indicator \u2014 currentIdx keeps resetting/jumping after each grade because the deck re-sorts by priority, so the bar doesn't track meaningful session progress."
+     ]
+    },
+    "r2-H-q35flash-off": {
+     "coverage": 1,
+     "correctness": 1,
+     "ux": 1,
+     "overall": 1,
+     "missing": [
+      "No way to add a flashcard anywhere in the app \u2014 TextInput isn't imported and no code path ever calls storage.records.append('Flashcards', ...), so the deck can never contain any cards.",
+      "No way to edit or delete a card either.",
+      "The empty state tells the user to 'Add some in your collection!' but no such add/collection screen exists \u2014 a dead end."
+     ],
+     "bugs": [
+      "ReviewQueueScreen shows 'Interval: 0.0d' for level-1 and level-2 cards even though calculateNextReview actually schedules them about a day out \u2014 the displayed interval doesn't match the real next-review date.",
+      "The revealed-answer Stack uses a raw `style={{marginTop, borderTopWidth, borderTopColor:'var(--border)', paddingTop}}` prop, but Stack only supports a `gap` prop per the SDK \u2014 the style is silently dropped, so the intended divider between question and answer never renders."
+     ]
+    },
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    }
+   }
+  },
+  {
+   "caseId": "chore-rotation-p2",
+   "ranking": [
+    "r2-E-0731-low",
+    "r2-A-v41-on",
+    "r2-B-v41-off",
+    "r2-H-q35flash-off",
+    "r2-F-q27b-off"
+   ],
+   "scores": {
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 4,
+     "overall": 7,
+     "missing": [],
+     "bugs": [
+      "The reminder is only a local haptic+sound on whichever phone has the app open, but the UI states 'All roommates were pinged' / 'Everyone notified' \u2014 the SDK has no way to reach other people's devices, so this overstates what actually happened."
+     ]
+    },
+    "r2-H-q35flash-off": {
+     "coverage": 1,
+     "correctness": 1,
+     "ux": 1,
+     "overall": 2,
+     "missing": [
+      "Dashboard and History are effectively unreachable \u2014 Home's `step` state (useState('setup')) decides which of the three views renders, but `setStep` is never called anywhere in the file, so after 'Start Rotating' the user is stuck on the Setup screen forever with no visible assignments, progress, or history."
+     ],
+     "bugs": [
+      "`step` never changes from 'setup', so nav.navigate('Dashboard'/'History') pushes those screen keys but the visible content never switches away from the setup form.",
+      "Tapping 'Start Rotating' again (since nothing visibly happens) re-runs generateAssignments with existing=[] hardcoded, appending duplicate week-0 assignment records on top of the real ones instead of replacing them.",
+      "ListItem's `trailing` is documented as text-only, but several rows pass a `<Button>` or `<Badge>` element instead (roommate/chore remove controls, completion badges) \u2014 outside the SDK's documented contract, so these rows aren't guaranteed to render or behave as intended."
+     ]
+    },
+    "r2-B-v41-off": {
+     "coverage": 3,
+     "correctness": 3,
+     "ux": 4,
+     "overall": 5,
+     "missing": [
+      "Rotation only advances via a manual 'Rotate to next week' tap \u2014 there's no automatic weekly advance even when the app is reopened after the week has elapsed (only a static 'New week ready' badge).",
+      "The reminder lead-time setting (Same day / Day before / Two days before) is stored and shown but never actually read by any check \u2014 changing it has zero effect on if or when a reminder fires."
+     ],
+     "bugs": [
+      "Adding or removing a roommate immediately recomputes and reshuffles ALL of this week's chore assignments (assignFor derives purely from the current roommate list every render), silently changing an in-progress week's assignments with no explicit rotation action."
+     ]
+    },
+    "r2-F-q27b-off": {
+     "coverage": 1,
+     "correctness": 1,
+     "ux": 2,
+     "overall": 1,
+     "missing": [
+      "No way to add, rename, or remove roommates or chores anywhere in the app \u2014 TextInput isn't imported and the roster/chore list are hardcoded to DEFAULT (Alex/Sam/Jordan; Kitchen/Laundry/Dishes/Trash) forever.",
+      "No history screen \u2014 the declared 'Chores' storage.records schema is never actually written to or read.",
+      "No reminder toggle or settings UI at all, despite a `notif` field existing in the data model."
+     ],
+     "bugs": [
+      "The rotation algorithm can assign the same chore to two different roommates in one week while leaving other chores unassigned: calc()'s hardcoded special case for a chore literally named 'Kitchen' re-triggers for every roommate whose last chore wasn't Kitchen without checking if it was already claimed that round \u2014 reproducible with the app's own default data (Sam and Jordan both end up with Kitchen; Dishes and Trash get nobody).",
+      "An extra 'Root' screen forces a pointless first tap ('Go to Chore Wheel') before anything useful is shown."
+     ]
+    },
+    "r2-E-0731-low": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    }
+   }
+  },
+  {
+   "caseId": "workout-log-p2",
+   "ranking": [
+    "r2-A-v41-on",
+    "r2-E-0731-low",
+    "r2-B-v41-off",
+    "r2-H-q35flash-off",
+    "r2-F-q27b-off"
+   ],
+   "scores": {
+    "r2-F-q27b-off": {
+     "coverage": 2,
+     "correctness": 3,
+     "ux": 2,
+     "overall": 3,
+     "missing": [
+      "No per-exercise 'last time' \u2014 fetchLast() always returns the single globally-most-recent record regardless of which exercise is being logged, so switching exercises doesn't show that exercise's own history.",
+      "No history or list of past workouts at all \u2014 only the single latest entry is ever viewable.",
+      "Doesn't capture individual sets \u2014 logs one aggregate (sets count, reps count, weight) rather than each set's own reps/weight."
+     ],
+     "bugs": [
+      "The Login form pre-fills from the globally-last-logged exercise even when a different exercise is being entered (e.g. typing 'Squat' still shows Bench Press's old weight/sets/reps), misrepresenting unrelated data as 'last time' for the current exercise.",
+      "Tapping 'Save Workout' with an empty exercise name silently does nothing, with no error or feedback."
+     ]
+    },
+    "r2-E-0731-low": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 7,
+     "missing": [
+      "Doesn't capture individual sets \u2014 logs one aggregate (sets, reps, weight) per entry rather than letting each set's reps/weight be typed individually."
+     ],
+     "bugs": []
+    },
+    "r2-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r2-B-v41-off": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 3,
+     "overall": 5,
+     "missing": [],
+     "bugs": [
+      "The exercise picker's SegmentedControl ('Push A' / 'Pull A' / 'Legs' / 'Custom') is bound to the same state as the actual exercise-name field, and the field defaults to 'Push A' \u2014 a workout-split label, not an exercise \u2014 so sets can be logged under the meaningless exercise name 'Push A' unless the user notices and overtypes it.",
+      "If saveWorkout()'s per-set save loop fails partway through, draftSets isn't cleared, so retrying re-submits (duplicates) the sets that had already saved successfully."
+     ]
+    },
+    "r2-H-q35flash-off": {
+     "coverage": 2,
+     "correctness": 3,
+     "ux": 3,
+     "overall": 4,
+     "missing": [
+      "No per-exercise 'last time' \u2014 last_session_data is a single global slot holding whatever was most recently logged for any exercise, so it shows the wrong exercise's numbers as soon as you switch exercises.",
+      "Doesn't capture individual sets \u2014 one aggregate (sets, reps, weight) per entry rather than each set typed individually.",
+      "History is a flat chronological list with no per-exercise grouping or filtering."
+     ],
+     "bugs": [
+      "The 'Last workout' banner shown while logging a new exercise can display a completely different exercise's numbers (a single global last-entry slot, not scoped to the exercise currently being typed) \u2014 actively misleading given the request specifically asked to see what was lifted last time for that exercise."
+     ]
+    }
+   }
+  }
+ ]
+}

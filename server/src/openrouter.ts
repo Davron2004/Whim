@@ -6,11 +6,19 @@
  * The transport (fetch) is injectable for testing against recorded frames.
  * OPENROUTER_API_KEY is read from process.env only, and only when invoked.
  *
- * No route imports this module in this change (#8); it is wired in #11.
+ * Reasoning (design D1) and provider routing (design D3) are mapped onto the wire in ONE place,
+ * `requestBody`; a per-call timing line (design D4) is logged by `stream` whenever its stream
+ * settles — completed, failed, or aborted — with no message content.
  */
 import { Usage } from '@whim/contract';
-import type { ModelDelta } from './generation/model';
+import type { ModelCallLabel, ModelDelta, ReasoningSetting } from './generation/model';
+import { log } from './logger';
 export { Usage };
+
+const routerLog = log.child({ scope: 'openrouter' });
+
+/** `WHIM_PROVIDER_SORT` (design D3) — global, not per role; `undefined` sends no `provider` field. */
+export type ProviderSort = 'price' | 'throughput' | 'latency';
 
 // ─── Typed error classes ─────────────────────────────────────────────────────
 
@@ -67,10 +75,15 @@ export interface OpenRouterOptions {
   maxTokens?: number;
   /** Temperature (0–1). */
   temperature?: number;
-  /** Ask OpenRouter to include the model's reasoning stream (`{ reasoning: { enabled: true } }` on
-   *  the wire) rather than hiding it, as it does by default. See `ModelRequest.reasoning`'s doc
-   *  comment (`../generation/model.ts`) for why a caller sets this. */
-  reasoning?: boolean;
+  /** The wire mapping (design D1): `off`→`{enabled:false}`, `on`→`{enabled:true}`,
+   *  `low`/`medium`/`high`→`{effort}`, `default` or unset → no `reasoning` field at all (today's
+   *  provider-default behavior). `../generation/model.ts`'s `ModelRequest.reasoning` is the required
+   *  field every pipeline call site actually decides; this one stays optional so a caller exercising
+   *  the wrapper directly (most of this file's own tests) need not restate it. */
+  reasoning?: ReasoningSetting;
+  /** Attributes this call for the per-call `model call` log line (design D4) — never sent on the
+   *  wire. Omitted from the log line when absent. */
+  role?: ModelCallLabel;
   /** Optional abort signal, forwarded to the injected transport's request-init. */
   signal?: AbortSignal;
 }
@@ -103,9 +116,16 @@ interface SseErrorPayload {
   message?: string;
 }
 
+interface TokenDetails {
+  reasoningTokens?: number;
+  cachedTokens?: number;
+}
+
 interface ParsedSseFrame {
   id?: string;
+  provider?: string;
   usage?: Usage;
+  tokenDetails?: TokenDetails;
   content?: string;
   reasoning?: string;
   error?: SseErrorPayload;
@@ -113,19 +133,33 @@ interface ParsedSseFrame {
 
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-// OpenRouter hides a model's reasoning stream by default — the roster models (DeepSeek v4) emit
-// nothing under `delta.reasoning` unless a request opts in. We ask for it (`{ enabled: true }`,
-// confirmed live against WHIM_ENGINEER_MODEL) purely so the device can show "thinking" instead of
-// silence while the model works; no `effort` budget is set, so the model keeps its own default
-// reasoning behavior — this only unhides a stream that already happens, it doesn't change it.
-function requestBody(options: OpenRouterOptions): string {
+/** The ONE wire mapping for `ReasoningSetting` (design D1) — every request states its reasoning
+ *  mode explicitly rather than relying on the provider's default by omission. */
+function reasoningField(setting: ReasoningSetting | undefined): Record<string, unknown> {
+  switch (setting) {
+    case 'off':
+      return { reasoning: { enabled: false } };
+    case 'on':
+      return { reasoning: { enabled: true } };
+    case 'low':
+    case 'medium':
+    case 'high':
+      return { reasoning: { effort: setting } };
+    case 'default':
+    case undefined:
+      return {};
+  }
+}
+
+function requestBody(options: OpenRouterOptions, providerSort: ProviderSort | undefined): string {
   return JSON.stringify({
     model: options.model,
     messages: options.messages,
     stream: true,
     ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-    ...(options.reasoning ? { reasoning: { enabled: true } } : {}),
+    ...reasoningField(options.reasoning),
+    ...(providerSort ? { provider: { sort: providerSort } } : {}),
     stream_options: { include_usage: true },
   });
 }
@@ -174,8 +208,34 @@ function usageFrom(parsed: Record<string, unknown>): Usage | undefined {
   };
 }
 
+/** A nested numeric field two levels down (`usage.completion_tokens_details.reasoning_tokens`,
+ *  `usage.prompt_tokens_details.cached_tokens`) — absent unless the provider reports it. */
+function nestedNumber(container: Record<string, unknown>, outer: string, inner: string): number | undefined {
+  const details = container[outer];
+  if (!details || typeof details !== 'object') return undefined;
+  const value = (details as Record<string, unknown>)[inner];
+  return typeof value === 'number' ? value : undefined;
+}
+
+/** The final usage chunk's reasoning/cached token counts (design D4), when the provider reports
+ *  them — carried alongside `usage` rather than inside it, since `Usage` is the wire contract type
+ *  and does not grow new fields for this. */
+function tokenDetailsFrom(parsed: Record<string, unknown>): TokenDetails | undefined {
+  if (!parsed.usage || typeof parsed.usage !== 'object') return undefined;
+  const u = parsed.usage as Record<string, unknown>;
+  const reasoningTokens = nestedNumber(u, 'completion_tokens_details', 'reasoning_tokens');
+  const cachedTokens = nestedNumber(u, 'prompt_tokens_details', 'cached_tokens');
+  if (reasoningTokens === undefined && cachedTokens === undefined) return undefined;
+  return { reasoningTokens, cachedTokens };
+}
+
 function idFrom(parsed: Record<string, unknown>): string | undefined {
   return typeof parsed.id === 'string' ? parsed.id : undefined;
+}
+
+/** OpenRouter carries the routed provider's name as a top-level string on each SSE chunk. */
+function providerFrom(parsed: Record<string, unknown>): string | undefined {
+  return typeof parsed.provider === 'string' ? parsed.provider : undefined;
 }
 
 function deltaOf(parsed: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -230,7 +290,9 @@ function parseSseLine(line: string): ParsedSseFrame | null {
     const parsed = JSON.parse(payload) as Record<string, unknown>;
     return {
       id: idFrom(parsed),
+      provider: providerFrom(parsed),
       usage: usageFrom(parsed),
+      tokenDetails: tokenDetailsFrom(parsed),
       content: contentFrom(parsed),
       reasoning: reasoningFrom(parsed),
       error: errorFrom(parsed),
@@ -247,9 +309,11 @@ function decodeChunk(decoder: TextDecoder, chunk: Uint8Array | ArrayBufferLike):
 
 export class OpenRouterClient {
   private readonly fetchFn: FetchFn;
+  private readonly providerSort: ProviderSort | undefined;
 
-  constructor(fetchFn: FetchFn = globalThis.fetch) {
+  constructor(fetchFn: FetchFn = globalThis.fetch, providerSort?: ProviderSort) {
     this.fetchFn = fetchFn;
+    this.providerSort = providerSort;
   }
 
   /**
@@ -269,10 +333,19 @@ export class OpenRouterClient {
    *   OpenRouterNetworkError  on fetch throw or other transport failures
    * A failure the provider delivers mid-stream (`data: {"error":{"code":...}}`) raises the SAME
    * typed error its HTTP status would, so a credit exhaustion is never mistaken for a short reply.
+   *
+   * Whenever the stream settles — completed, failed, or aborted — logs exactly one `model call`
+   * info line (design D4): `role`/`model`, `provider` and token-detail fields when present,
+   * `ttftMs`/`durationMs`, prompt/completion tokens, `generationId`, `outcome`. No message content.
    */
   stream(options: OpenRouterOptions): StreamResult {
-    const { fetchFn } = this;
+    const { fetchFn, providerSort } = this;
     const apiKey = process.env.OPENROUTER_API_KEY ?? '';
+    const startedAt = Date.now();
+    let firstDeltaAt: number | undefined;
+    let capturedProvider: string | undefined;
+    let capturedTokenDetails: TokenDetails | undefined;
+    let capturedGenerationId: string | undefined;
 
     let resolveUsage!: (usage: Usage) => void;
     let rejectUsage!: (err: unknown) => void;
@@ -290,7 +363,33 @@ export class OpenRouterClient {
     function captureId(id: string | undefined): void {
       if (idCaptured) return;
       idCaptured = true;
+      capturedGenerationId = id;
       resolveId(id);
+    }
+
+    /** The ONE `model call` log emission point (design D4) — called from every settle path below,
+     *  never from inside the delta-emission loop itself. `outcomeFor` distinguishes a failure the
+     *  caller's own signal already asked for (`'aborted'`) from any other failure (`'failed'`). */
+    function outcomeFor(): 'failed' | 'aborted' {
+      return options.signal?.aborted === true ? 'aborted' : 'failed';
+    }
+    function logSettle(outcome: 'completed' | 'failed' | 'aborted', usage: Usage | undefined): void {
+      routerLog.info(
+        {
+          ...(options.role !== undefined ? { role: options.role } : {}),
+          model: options.model,
+          ...(capturedProvider !== undefined ? { provider: capturedProvider } : {}),
+          ...(firstDeltaAt !== undefined ? { ttftMs: firstDeltaAt - startedAt } : {}),
+          durationMs: Date.now() - startedAt,
+          promptTokens: usage?.promptTokens ?? 0,
+          completionTokens: usage?.completionTokens ?? 0,
+          ...(capturedTokenDetails?.reasoningTokens !== undefined ? { reasoningTokens: capturedTokenDetails.reasoningTokens } : {}),
+          ...(capturedTokenDetails?.cachedTokens !== undefined ? { cachedTokens: capturedTokenDetails.cachedTokens } : {}),
+          ...(capturedGenerationId !== undefined ? { generationId: capturedGenerationId } : {}),
+          outcome,
+        },
+        'model call',
+      );
     }
 
     async function* makeDeltas(): AsyncIterable<ModelDelta> {
@@ -302,12 +401,13 @@ export class OpenRouterClient {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
           },
-          body: requestBody(options),
+          body: requestBody(options, providerSort),
           signal: options.signal,
         });
       } catch (err) {
         const netErr = new OpenRouterNetworkError('fetch failed', err);
         captureId(undefined);
+        logSettle(outcomeFor(), undefined);
         rejectUsage(netErr);
         throw netErr;
       }
@@ -315,6 +415,7 @@ export class OpenRouterClient {
       const validationError = responseError(response);
       if (validationError) {
         captureId(undefined);
+        logSettle(outcomeFor(), undefined);
         rejectUsage(validationError);
         throw validationError;
       }
@@ -326,6 +427,7 @@ export class OpenRouterClient {
       if (!body) {
         const netErr = new OpenRouterNetworkError('OpenRouter: response body is null');
         captureId(undefined);
+        logSettle(outcomeFor(), undefined);
         rejectUsage(netErr);
         throw netErr;
       }
@@ -334,20 +436,28 @@ export class OpenRouterClient {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      // Apply one parsed SSE frame: capture the generation id, remember usage, emit any
-      // reasoning delta then any content delta (reasoning precedes the content it led to within
-      // one frame). Shared by the per-line loop and the trailing-buffer flush so the two paths
-      // cannot drift — a new field (tool calls) is handled once.
+      // Apply one parsed SSE frame: capture the generation id and provider, remember usage and
+      // token details, emit any reasoning delta then any content delta (reasoning precedes the
+      // content it led to within one frame). Shared by the per-line loop and the trailing-buffer
+      // flush so the two paths cannot drift — a new field (tool calls) is handled once.
       function* emitFrame(rawLine: string): Generator<ModelDelta> {
         const frame = parseSseLine(rawLine);
         if (frame) captureId(frame.id);
+        if (frame?.provider) capturedProvider = frame.provider;
         if (frame?.usage) capturedUsage = frame.usage;
+        if (frame?.tokenDetails) capturedTokenDetails = frame.tokenDetails;
         // A mid-stream failure frame ends the stream as a failure rather than as a short, complete
         // reply: dropping it would hand the caller a truncated candidate and hide a `402` from
         // `isCreditExhaustedError`. The catch below preserves this typed error as-is.
         if (frame?.error) throw streamFrameError(frame.error);
-        if (frame?.reasoning) yield { kind: 'reasoning', text: frame.reasoning };
-        if (frame?.content) yield { kind: 'text', text: frame.content };
+        if (frame?.reasoning) {
+          firstDeltaAt ??= Date.now();
+          yield { kind: 'reasoning', text: frame.reasoning };
+        }
+        if (frame?.content) {
+          firstDeltaAt ??= Date.now();
+          yield { kind: 'text', text: frame.content };
+        }
       }
 
       try {
@@ -363,12 +473,15 @@ export class OpenRouterClient {
         yield* emitFrame(buffer);
 
         captureId(undefined);
-        resolveUsage(capturedUsage ?? ZERO_USAGE);
+        const finalUsage = capturedUsage ?? ZERO_USAGE;
+        logSettle('completed', finalUsage);
+        resolveUsage(finalUsage);
       } catch (streamErr) {
         // A typed error raised by `emitFrame` (a mid-stream failure frame) keeps its own class and
         // status; anything else (a genuine read failure) is wrapped as a transport error.
         const err = isTypedOpenRouterError(streamErr) ? streamErr : new OpenRouterNetworkError('stream read failed', streamErr);
         captureId(undefined);
+        logSettle(outcomeFor(), capturedUsage);
         rejectUsage(err);
         throw err;
       }

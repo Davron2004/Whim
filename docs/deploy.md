@@ -78,9 +78,42 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 |---|---|---|
 | `WHIM_SUPPORT_EMAIL` | yes | rendered on the privacy and support pages |
 | `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | yes | the model pair the server runs with (not rendered on the pages) |
+| `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL`, `WHIM_REPAIR_MODEL` | no | optional per-role model overrides; see the roster table below |
+| `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
+| `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).
+
+## Model roster, reasoning and provider routing (design D1–D3)
+
+Six roles, each with its own model and reasoning setting (`server/src/generation/model.ts`'s
+`modelRosterFromEnv`):
+
+| role (call sites) | model var (fallback) | reasoning var (default) |
+|---|---|---|
+| clarify | `WHIM_CLARIFY_MODEL` (→ `WHIM_REWRITE_MODEL`) | `WHIM_CLARIFY_REASONING` (`off`) |
+| rewrite | `WHIM_REWRITE_MODEL` (required) | `WHIM_REWRITE_REASONING` (`off`) |
+| summary | `WHIM_SUMMARY_MODEL` (→ `WHIM_REWRITE_MODEL`) | `WHIM_SUMMARY_REASONING` (`off`) |
+| plan | `WHIM_PLAN_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_PLAN_REASONING` (`on`) |
+| engineer (generate) | `WHIM_ENGINEER_MODEL` (required) | `WHIM_ENGINEER_REASONING` (`on`) |
+| repair | `WHIM_REPAIR_MODEL` (→ `WHIM_ENGINEER_MODEL`) | `WHIM_REPAIR_REASONING` (→ engineer's effective setting) |
+| content-policy classifier | the rewrite role's model (no variable of its own) | always `off` |
+
+Each role's reasoning variable takes one of `off`, `on`, `low`, `medium`, `high`, `default`; an
+empty or unset model-override variable falls back as the table shows. `default` restores the exact
+pre-D1 wire behavior for that role (no `reasoning` field sent, the provider's own default). An
+invalid reasoning value fails server boot, naming the variable and the allowed values.
+
+**The rewrite-side model MUST accept `reasoning: { enabled: false }`** — every content-policy
+classifier call rides on it (spec content-policy "adds no new model role or model id"), and a model
+that rejects the field fails every classifier call closed (`503 policy_unavailable`), which fails
+every clarify, rewrite and generate request behind it. Measured refusers (`400 Reasoning is
+mandatory for this endpoint and cannot be disabled`): `z-ai/glm-5.3-flash`, `stepfun/step-3.5-flash`.
+Rule out a candidate `WHIM_REWRITE_MODEL` against this before deploying it.
+
+`WHIM_PROVIDER_SORT` (optional) is `price`, `throughput`, or `latency`; when set, every request
+asks OpenRouter to route by it. Unset (default) sends no provider preference.
 
 ## First deploy
 

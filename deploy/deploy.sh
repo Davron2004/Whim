@@ -64,6 +64,21 @@ preflight_values() {
   for key in WHIM_ENGINEER_MODEL WHIM_REWRITE_MODEL; do
     [[ "${!key}" =~ ^[A-Za-z0-9._:/-]+$ ]] || whim_fail "$key is not a model id: ${!key}"
   done
+  for key in WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL; do
+    [[ -z "${!key}" ]] || [[ "${!key}" =~ ^[A-Za-z0-9._:/-]+$ ]] || whim_fail "$key is not a model id: ${!key}"
+  done
+  for key in WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING; do
+    [[ -z "${!key}" ]] || case "${!key}" in
+      off|on|low|medium|high|default) ;;
+      *) whim_fail "$key must be one of off, on, low, medium, high, default: ${!key}" ;;
+    esac
+  done
+  if [[ -n "$WHIM_PROVIDER_SORT" ]]; then
+    case "$WHIM_PROVIDER_SORT" in
+      price|throughput|latency) ;;
+      *) whim_fail "WHIM_PROVIDER_SORT must be one of price, throughput, latency: $WHIM_PROVIDER_SORT" ;;
+    esac
+  fi
 }
 
 preflight_node() {
@@ -155,6 +170,10 @@ stage_server_files() {
   : >"$upload/config.env"
   whim_read_env_lines "$profile_file" append_server_key
   printf 'WHIM_ENGINEER_MODEL=%s\nWHIM_REWRITE_MODEL=%s\n' "$WHIM_ENGINEER_MODEL" "$WHIM_REWRITE_MODEL" >>"$upload/config.env"
+  local key
+  for key in WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT; do
+    [[ -z "${!key}" ]] || append_server_key "$key" "${!key}"
+  done
   local mem_limit shm_size
   whim_profile_lookup "$profile_file" WHIM_SERVER_MEM_LIMIT
   mem_limit="$WHIM_PROFILE_FOUND_VALUE"

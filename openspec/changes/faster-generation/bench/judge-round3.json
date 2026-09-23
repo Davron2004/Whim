@@ -1,0 +1,444 @@
+{
+ "method": "blind, shuffled per case; sonnet general-purpose judge; rubric coverage/correctness/ux 0-5, overall 0-10",
+ "round": "r3 (inputs from r3-B2-v41-planon)",
+ "cases": [
+  {
+   "caseId": "score-keeper-p2",
+   "ranking": [
+    "r3-B-v41-off",
+    "r3-F-q27b-off",
+    "r3-A-v41-on",
+    "r3-B2-v41-planon"
+   ],
+   "scores": {
+    "r3-F-q27b-off": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 5,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "persist() swallows storage.kv.set failures silently while the status text still claims 'saved', so a failed save is never surfaced"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [],
+     "bugs": []
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 4,
+     "overall": 7,
+     "missing": [],
+     "bugs": [
+      "declares a History collection with a date field in the schema but never calls storage.records.append/list for it \u2014 dead, unused schema",
+      "'Max score today' label implies a tracked historical high but is just max(current p1, current p2, 1) recomputed every render, not stored or actually 'today' \u2014 misleading"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 7,
+     "missing": [
+      "no persistence \u2014 scores reset on app relaunch/regeneration, unlike the other three candidates ('keep score' can reasonably be read as wanting the score retained during play)"
+     ],
+     "bugs": []
+    }
+   }
+  },
+  {
+   "caseId": "tip-splitter-p2",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-B2-v41-planon",
+    "r3-F-q27b-off",
+    "r3-B-v41-off"
+   ],
+   "scores": {
+    "r3-B2-v41-planon": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 5,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "the 'Tip vs bill' progress bar is bound to bill/total (the bill's share of the total), not the tip's share, so raising the tip percentage actually shrinks the bar \u2014 inverted from what the label implies"
+     ]
+    },
+    "r3-F-q27b-off": {
+     "coverage": 4,
+     "correctness": 4,
+     "ux": 3,
+     "overall": 6,
+     "missing": [
+      "no way to enter a custom/arbitrary tip percent \u2014 locked to 5 fixed values (0/10/15/20/25%) via the segmented control only"
+     ],
+     "bugs": [
+      "no guard against a negative or non-finite bill amount (unlike the other three candidates' explicit checks), so a negative entry produces a negative total and a negative per-person amount"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 3,
+     "overall": 6,
+     "missing": [],
+     "bugs": [
+      "dragging the custom tip Slider updates tipPct but not tipPreset, so the segmented control keeps showing the last-tapped preset (e.g. '20%') highlighted even after the real tip has changed to something else \u2014 a stale, incorrect selected state",
+      "cues.haptic('tap') uses a kind value the SDK reference doesn't enumerate, so it's unverified against the real HapticKind type",
+      "the Results screen re-reads bill/tip/people from storage rather than using the values just shown on Bill; since navigation isn't gated on the fire-and-forget storage.kv.set calls resolving, a very fast tap could show stale numbers"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "spending-tracker-p1",
+   "ranking": [
+    "r3-B-v41-off",
+    "r3-A-v41-on",
+    "r3-B2-v41-planon",
+    "r3-F-q27b-off"
+   ],
+   "scores": {
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 5,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "AddExpense's draft persistence clears draftNote after a save but not draftAmount/draftDate, so the next 'Add Expense' visit pre-fills the previous (possibly backdated) date, risking a new expense getting silently logged under the wrong day"
+     ]
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 2,
+     "correctness": 2,
+     "ux": 2,
+     "overall": 3,
+     "missing": [
+      "never renders an actual line graph \u2014 the 'Weekly Line Graph' screen's ChartLine is a hand-rolled component that just lists day/amount as text rows; the SDK's real Chart component is never imported or used, despite the user explicitly asking for a line graph"
+     ],
+     "bugs": [
+      "a malformed date typed into the free-text date field silently falls back to today's date with no error shown, unlike other candidates which validate and surface an error",
+      "invents an unrequested $40/day budget with no way to view or change it anywhere in the UI, yet shows alarming 'Over budget'/danger-toned badges based on that invisible, arbitrary number",
+      "dayIndexInWeek helper is defined but never called (dead code)"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [
+      "adding an expense only offers 4 fixed day presets (Today/Yesterday/2 days ago/3 days ago) \u2014 no way to log anything older or pick an arbitrary date",
+      "no way to edit an existing expense's amount or note \u2014 the detail modal only offers Delete or Close, so fixing a typo means delete-and-re-add"
+     ],
+     "bugs": []
+    },
+    "r3-F-q27b-off": {
+     "coverage": 2,
+     "correctness": 1,
+     "ux": 2,
+     "overall": 2,
+     "missing": [
+      "expense amounts are restricted to whole dollars only \u2014 schema field amount is typed 'int', the input is labeled 'Amount (whole units)' with step 1 \u2014 a $4.99 coffee can't be logged accurately"
+     ],
+     "bugs": [
+      "the Dashboard (home) screen loads its expense list once on mount and never refreshes; Add has no callback or shared state to notify it, so after adding an expense and tapping 'Back to dashboard' the chart and total still show the pre-add data",
+      "the 7-day loop's own comment claims 'i=0 oldest, i=6 newest' but the arithmetic (dayRange(i + (6 - start))) actually makes i=0 today and i=6 the oldest day, so the line graph plots newest-to-oldest left-to-right, reversed from normal reading order",
+      "'Busiest day' just reads data[6] (the last array slot) instead of computing a maximum, so \u2014 compounded by the ordering bug \u2014 it labels the oldest day in the window as 'busiest' regardless of actual spending",
+      "the 'Yesterday' and 'Today' range-selector options produce day windows that don't match their labels (selecting 'Yesterday' shows a window spanning 5\u201311 days ago, not yesterday)"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "habit-tracker-p2",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-F-q27b-off",
+    "r3-B2-v41-planon",
+    "r3-B-v41-off"
+   ],
+   "scores": {
+    "r3-F-q27b-off": {
+     "coverage": 2,
+     "correctness": 2,
+     "ux": 3,
+     "overall": 4,
+     "missing": [
+      "daily reminders don't actually fire on their own \u2014 interval is never imported/used, so the seconds-pace presets and the 'Next nudge in' countdown are decorative; only the manual 'Send a test nudge' button does anything"
+     ],
+     "bugs": [
+      "the Settings screen presents a live-looking 'Next nudge in 2:00' countdown and pace presets that never trigger anything automatically \u2014 controls that imply a working timer when none exists",
+      "per-habit progress (goal amounts like '8 glasses/day') is computed and persisted but never shown anywhere in the UI \u2014 dead state"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": [
+      "the reminder ticker only runs while the Today or Reminders screen is mounted, not while viewing Streaks, so a reminder due while parked on Streaks won't fire until you navigate away"
+     ]
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 1,
+     "correctness": 2,
+     "ux": 3,
+     "overall": 3,
+     "missing": [
+      "daily reminders have no delivery mechanism at all \u2014 cues isn't even imported, there's no interval, and there isn't even a manual test button; toggling the reminder on only writes a preference to storage"
+     ],
+     "bugs": [
+      "the Reminders screen states 'you'll get one nudge a day' when enabled, but no code path anywhere ever fires a nudge \u2014 a concrete false claim in the UI copy"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 2,
+     "correctness": 1,
+     "ux": 2,
+     "overall": 2,
+     "missing": [
+      "daily reminders don't fire on their own \u2014 interval is never imported/used; only the manual 'Send test reminder' button produces a cue",
+      "reminder time is a free-text 'HH:MM' field with no format validation at all"
+     ],
+     "bugs": [
+      "the main Habit Tracker screen's streak counts are maintained by patching a cached number +1/-1 on each toggle tap instead of recomputing from the actual check-in history, so a missed day with no toggle interaction never decrements it \u2014 directly violating the 'any missed day breaks the streak' rule on the screen the user sees first",
+      "this produces two different streak numbers for the same habit depending on screen: the main screen's patched value vs. the Streaks screen's correctly-recomputed value"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "packing-checklist-p1",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-B-v41-off",
+    "r3-F-q27b-off"
+   ],
+   "scores": {
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": []
+    },
+    "r3-F-q27b-off": {
+     "coverage": 5,
+     "correctness": 2,
+     "ux": 4,
+     "overall": 5,
+     "missing": [],
+     "bugs": [
+      "Editing an existing template (the 'Edit' button) doesn't update it \u2014 Save() always calls storage.records.append with no id tracked, so it creates a duplicate template and leaves the original unchanged",
+      "Deleting a trip is immediate with no confirmation step"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 3,
+     "overall": 6,
+     "missing": [],
+     "bugs": [
+      "Templates and trips are also written to storage.records collections declared in the schema, but nothing ever reads them back \u2014 all UI is actually driven by storage.kv, so the records writes are dead data",
+      "In the trip checklist, the main item list deletes an item on tap (labelled 'Tap to remove', no undo) while a second, separate list further down shows the exact same items just to toggle them packed \u2014 confusing duplicate listing with different tap behavior in each"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "tic-tac-toe-p2",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-B2-v41-planon",
+    "r3-F-q27b-off",
+    "r3-B-v41-off"
+   ],
+   "scores": {
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 9,
+     "missing": [],
+     "bugs": [
+      "Board cells never visually disable when filled or after the game ends, so tapped-out cells still look tappable even though play() silently ignores the tap",
+      "Switching the first-move segmented control immediately discards the round in progress, not just the next one"
+     ]
+    },
+    "r3-F-q27b-off": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "No visual highlight of which line won, so after a win it's not obvious at a glance which three squares did it"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 3,
+     "overall": 6,
+     "missing": [],
+     "bugs": [
+      "'View scoreboard' navigates to a Scoreboard screen that doesn't show the actual win counts \u2014 it just says to go look at the game screen, i.e. the one screen whose whole purpose is the score shows no score",
+      "Board cells (Card, not Button) never show a disabled/dimmed state when tapped again or after the game ends"
+     ]
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 8,
+     "missing": [],
+     "bugs": [
+      "Switching 'Who starts the next round' immediately discards a game in progress with no warning that it takes effect right away",
+      "Board cells never visually disable when filled or after the game ends"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "recipe-box-p2",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-F-q27b-off",
+    "r3-B2-v41-planon",
+    "r3-B-v41-off"
+   ],
+   "scores": {
+    "r3-F-q27b-off": {
+     "coverage": 4,
+     "correctness": 5,
+     "ux": 3,
+     "overall": 7,
+     "missing": [
+      "No way to edit or delete a saved recipe once created"
+     ],
+     "bugs": [
+      "New recipes default to being tagged 'quick' (the toggle starts on) regardless of whether they actually are \u2014 easy to save a slow recipe as quick without noticing the default"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 3,
+     "correctness": 2,
+     "ux": 3,
+     "overall": 4,
+     "missing": [
+      "No detail/view screen \u2014 once saved, a recipe's ingredients and steps can never be seen again; the list row only shows title, tags, and ingredients crammed into the trailing label",
+      "No way to edit an existing recipe"
+     ],
+     "bugs": [
+      "The 'steps' field is captured and saved for every recipe but is never read or displayed anywhere \u2014 write-only data",
+      "The tag pills shown above the list (Badge components) look like filter buttons but have no onPress handler \u2014 tapping them does nothing; filtering only works by typing the tag name into the text field",
+      "Tapping a recipe row opens a delete-confirmation dialog ('Delete this recipe for good?') instead of showing the recipe"
+     ]
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 3,
+     "correctness": 3,
+     "ux": 3,
+     "overall": 6,
+     "missing": [
+      "Tag filter is a fixed list of 5 presets (All/quick/dinner/breakfast/snack) \u2014 a tag typed on a new recipe (e.g. 'vegan') can never be used to filter, since the filter options don't derive from the recipes' actual tags",
+      "No way to edit or delete a saved recipe"
+     ],
+     "bugs": [
+      "Declares a structured schema (int/json-typed fields for minutes/servings/tags/ingredients/steps) but never actually calls storage.records \u2014 all data is read/written as one JSON blob via storage.kv, so the declared schema is entirely unused",
+      "'Open first recipe' button in the not-found fallback only reassigns a module variable with no state update or navigation call, so tapping it produces no visible change",
+      "The 'Prep scale' slider and the 'Minutes' number input are two differently-labeled controls bound to the exact same value \u2014 confusing redundancy",
+      "New-recipe tag field defaults to the text 'quick' pre-filled, nudging every recipe toward being tagged quick"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 5,
+     "ux": 4,
+     "overall": 9,
+     "missing": [],
+     "bugs": [
+      "Delete is immediate with no confirmation step"
+     ]
+    }
+   }
+  },
+  {
+   "caseId": "chore-rotation-p1",
+   "ranking": [
+    "r3-A-v41-on",
+    "r3-B2-v41-planon",
+    "r3-B-v41-off",
+    "r3-F-q27b-off"
+   ],
+   "scores": {
+    "r3-F-q27b-off": {
+     "coverage": 5,
+     "correctness": 2,
+     "ux": 3,
+     "overall": 5,
+     "missing": [],
+     "bugs": [
+      "The Household/Roommates/Kids segmented control on the Manage screen has no effect anywhere in the app \u2014 fully decorative",
+      "Reordering or removing someone in Manage List doesn't adjust the saved turn index, so whose turn it is can silently become a different person than intended (or briefly show '\u2014' if the index runs past the shortened list)",
+      "Every completion is appended to the ChoreLogs collection but nothing ever reads or displays it; there's also an unused 'log' state variable that's never populated or rendered",
+      "No way to manually correct whose turn it is if the rotation gets out of sync \u2014 you'd have to tap through extra people to work around it"
+     ]
+    },
+    "r3-B-v41-off": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 4,
+     "overall": 6,
+     "missing": [],
+     "bugs": [
+      "Reordering or removing someone in People doesn't adjust the saved turn index, so whose turn it is can silently reassign to a different person than the one who actually held the turn (modulo-wrapping avoids a crash or blank state, but the wrong person can still end up shown as current)",
+      "Rotation-order list rows in People aren't interactive (tap does nothing) \u2014 reordering/removal only works via separate buttons below, a bit redundant"
+     ]
+    },
+    "r3-B2-v41-planon": {
+     "coverage": 5,
+     "correctness": 3,
+     "ux": 4,
+     "overall": 7,
+     "missing": [],
+     "bugs": [
+      "Removing someone before the current turn-holder doesn't shift the saved index down, so the turn can silently jump to the wrong person (reordering via Up/Down is handled correctly, and a manual 'Current turn' picker lets you fix any drift by hand)",
+      "Completions are appended to storage on every mark-done but the collection is never listed or shown \u2014 only the single most-recent completion is visible, not a fuller history"
+     ]
+    },
+    "r3-A-v41-on": {
+     "coverage": 5,
+     "correctness": 4,
+     "ux": 5,
+     "overall": 9,
+     "missing": [],
+     "bugs": [
+      "History's per-person filter matches by the person's name rather than their stable id, so two people who happen to share a name would have their completion history merged together under one filter option"
+     ]
+    }
+   }
+  }
+ ]
+}

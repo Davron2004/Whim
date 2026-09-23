@@ -14,6 +14,13 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ## Open
 
+### [info] Generation speed and model choice, measured 2026-09-22
+- **Where:** `docs/research/generation-speed-2026-09.md`; raw verdicts, inputs and the step ledger in `openspec/changes/faster-generation/` (`bench/`, `progress.md`, `review-*.md`).
+- **What:** why clarify and plan writing took ~30 s (hidden default reasoning, also the cause of #51), the before/after timings, the blind quality judge that kept thinking on for first drafts, the 13-model screen for the short calls, and the Qwen 3.8 27B verdict.
+- **Why it matters:** the next model change should rerun `server/flowbench.mjs` and the judge instead of going by feel (decision #69).
+- **Suggested approach:** the follow-ups found along the way are filed as GitHub issues and listed at the end of the report.
+- **Source:** the `faster-generation` change.
+
 ### [high] Act on the 2026-09-21 test audit
 - [ ] open
 - **Where:** `openspec/critic/2026-09-21-test-audit/` (`README.md` for the summary, one report per slice).

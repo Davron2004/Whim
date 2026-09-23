@@ -4,12 +4,12 @@
  * provider credit"). It imports no transport and no `fetch` — every turn is a canned, deterministic
  * reply produced from a timer alone.
  *
- * The role is read from `req.model` against the load-test roster (`loadtest/engineer` /
- * `loadtest/rewrite`, `server.ts`'s `LOADTEST_ROSTER`), never guessed from message content, and
- * paces the reply: engineer-role turns (plan/generate/repair, all called with `roster.engineer`,
- * see `machine.ts#runModelTurn`) wait `engineerTurnMs`; rewrite-role turns (the content-policy
- * classifier, `/v1/rewrite`, `/v1/clarify`, the summariser — all called with `roster.rewrite`) wait
- * `rewriteTurnMs`. Within a role, WHICH canned reply is returned is read from the turn's own system
+ * The role is read from `req.model` against the load-test roster (`server.ts`'s `LOADTEST_ROSTER`),
+ * never guessed from message content, and paces the reply: plan turns default to the roster's plan
+ * model, generate and repair turns to their respective engineer-family models, and
+ * classifier/rewrite/clarify/summary turns to their respective roster models. Plan, generate and
+ * repair turns wait `engineerTurnMs`; the other turns
+ * wait `rewriteTurnMs`. Within a role, WHICH canned reply is returned is read from the turn's own system
  * message, which is stable, distinctive prompt text owned by `generation/prompts/index.ts` and
  * `policy/policy.ts` (not re-exported — matched as substrings; a rewording there is a class-A
  * follow-up here, not a contract break, since a class-B fallback — the raw text reply the shapers
@@ -90,8 +90,8 @@ export function loadRotationFixtures(cwd: string = process.cwd()): string[] {
 }
 
 function roleFor(roster: ModelRoster, model: string): 'engineer' | 'rewrite' | undefined {
-  if (model === roster.engineer) return 'engineer';
-  if (model === roster.rewrite) return 'rewrite';
+  if (model === roster.engineer.model || model === roster.repair.model) return 'engineer';
+  if (model === roster.rewrite.model) return 'rewrite';
   return undefined;
 }
 
@@ -158,7 +158,7 @@ export function createReplayModel(options: ReplayModelOptions): ModelClient {
       const role = roleFor(roster, req.model);
       if (role === undefined) {
         throw new Error(
-          `createReplayModel: request named an unknown model "${req.model}" — expected the load-test roster (${roster.engineer} / ${roster.rewrite}).`,
+          `createReplayModel: request named an unknown model "${req.model}" — expected the load-test roster (${roster.engineer.model} / ${roster.rewrite.model}).`,
         );
       }
       const waitMs = role === 'engineer' ? engineerTurnMs : rewriteTurnMs;

@@ -28,6 +28,7 @@ import { runRoutesGenerateTests } from './routes-generate.suite';
 import { runDisconnectTests } from './disconnect.suite';
 import { runProdBuildTests } from './prod-build.suite';
 import { runDeployConfigTests } from './deploy-config.suite';
+import { runFlowbenchTests } from './flowbench.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -52,5 +53,6 @@ await runRoutesGenerateTests();
 await runDisconnectTests();
 await runProdBuildTests();
 await runDeployConfigTests();
+await runFlowbenchTests();
 
 report();

@@ -4,15 +4,29 @@
  * test suites SHALL run a scripted client that replays recorded turns"). No suite that uses this
  * file makes a live request.
  */
-import type { ModelClient, ModelDelta, ModelRequest, ModelRole, ModelRoster, ModelStream } from '../src/generation/model';
+import type { ModelCallLabel, ModelClient, ModelDelta, ModelRequest, ModelRole, ModelRoster, ModelStream } from '../src/generation/model';
 import type { Usage } from '@whim/contract';
 
 const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-/** One recorded turn: which role it must be requested for, the deltas to replay, and (optionally)
- *  a captured id/usage or a terminal error to raise after the deltas (§"A model failure is an
- *  honest failure" — lets a test simulate the wrapper's typed errors, e.g. `OpenRouterAuthError`,
- *  without ever touching the network).
+/** Maps a request's attribution label (`ModelRequest.role`, design D4) onto the roster role it
+ *  must have been resolved from: `generate` reads `engineer`, `repair` reads `repair`, and `policy`
+ *  reads the `rewrite` role's model (spec content-policy "adds no new model role or model id"). */
+const ROSTER_ROLE_OF: Record<ModelCallLabel, ModelRole> = {
+  policy: 'rewrite',
+  clarify: 'clarify',
+  rewrite: 'rewrite',
+  summary: 'summary',
+  plan: 'plan',
+  generate: 'engineer',
+  repair: 'repair',
+};
+
+/** One recorded turn: which roster role it must be requested for (see `ROSTER_ROLE_OF` — a
+ *  request's own `role` label is mapped onto this), the deltas to replay, and (optionally) a
+ *  captured id/usage or a terminal error to raise after the deltas (§"A model failure is an honest
+ *  failure" — lets a test simulate the wrapper's typed errors, e.g. `OpenRouterAuthError`, without
+ *  ever touching the network).
  *
  *  `deltas` keeps the ergonomics of a plain string list even though a real turn's deltas are
  *  `ModelDelta`s: a bare `string` element replays as a text delta (`{ kind: 'text', text }`), and
@@ -29,7 +43,7 @@ export interface ScriptedTurn {
   error?: unknown;
 }
 
-/** A request `ScriptedModelClient` received, tagged with the role it resolved to. */
+/** A request `ScriptedModelClient` received, tagged with the roster role it resolved to. */
 export interface CapturedRequest {
   role: ModelRole;
   request: ModelRequest;
@@ -44,22 +58,17 @@ export class ScriptedModelClientExhaustedError extends Error {
   }
 }
 
-/** Thrown when a turn is requested for a different role than the script expects — catches a test
- *  (or a pipeline bug) that calls the wrong model instead of silently consuming the wrong fixture. */
+/** Thrown when a turn is requested for a different role or a different model than the script
+ *  expects — catches a test (or a pipeline bug) that calls the wrong model, or labels a call with
+ *  the wrong `ModelRequest.role`, instead of silently consuming the wrong fixture. */
 export class ScriptedModelClientRoleMismatchError extends Error {
-  constructor(index: number, expected: ModelRole, expectedModel: string, gotModel: string) {
+  constructor(index: number, expectedRole: ModelRole, expectedModel: string, gotLabel: ModelCallLabel, gotModel: string) {
     super(
-      `ScriptedModelClient turn ${index}: expected a "${expected}" request (model "${expectedModel}"), ` +
-        `got model "${gotModel}".`,
+      `ScriptedModelClient turn ${index}: expected a "${expectedRole}"-roster request (model "${expectedModel}"), ` +
+        `got role "${gotLabel}" with model "${gotModel}".`,
     );
     this.name = 'ScriptedModelClientRoleMismatchError';
   }
-}
-
-function roleOf(roster: ModelRoster, model: string): ModelRole | undefined {
-  if (model === roster.engineer) return 'engineer';
-  if (model === roster.rewrite) return 'rewrite';
-  return undefined;
 }
 
 function scriptedStream(turn: ScriptedTurn): ModelStream {
@@ -87,8 +96,9 @@ function scriptedStream(turn: ScriptedTurn): ModelStream {
 
 /**
  * Replays `turns` in order. Each `stream()` call consumes the next scripted turn, asserts it was
- * requested for the role the script expects (by comparing `req.model` against `roster`), and
- * records the request so a test can assert on exactly what the pipeline sent.
+ * requested for the roster role the script expects (`req.role` mapped through `ROSTER_ROLE_OF`,
+ * cross-checked against `req.model`), and records the request so a test can assert on exactly what
+ * the pipeline sent.
  */
 export class ScriptedModelClient implements ModelClient {
   private cursor = 0;
@@ -109,9 +119,9 @@ export class ScriptedModelClient implements ModelClient {
     const turn = this.turns[index];
     if (!turn) throw new ScriptedModelClientExhaustedError(index, this.turns.length);
 
-    const actualRole = roleOf(this.roster, req.model);
-    if (actualRole !== turn.role) {
-      throw new ScriptedModelClientRoleMismatchError(index, turn.role, this.roster[turn.role], req.model);
+    const expected = this.roster[turn.role];
+    if (ROSTER_ROLE_OF[req.role] !== turn.role || req.model !== expected.model) {
+      throw new ScriptedModelClientRoleMismatchError(index, turn.role, expected.model, req.role, req.model);
     }
 
     this.cursor += 1;

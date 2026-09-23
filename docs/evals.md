@@ -101,20 +101,33 @@ report file is missing or unreadable.
 
 ## The model-bakeoff protocol
 
-To choose between candidate models (roadmap #12's "model bakeoff", resolving #25's open model
-choice): run the **same** eval set once per candidate model, holding everything else fixed
-(prompt, eval set, SDK version):
+The flow benchmark measures the same clarify → rewrite → generate path the device uses. Run the
+same eval set once for each candidate roster, keeping the prompts, set, SDK version and server
+configuration fixed apart from the roster.
 
-```sh
-node evals/cli.mjs run --eval-set evals/sets/visible --generate --candidate-label model-a --out /tmp/bakeoff-a
-node evals/cli.mjs run --eval-set evals/sets/visible --generate --candidate-label model-b --out /tmp/bakeoff-b
-node evals/cli.mjs diff /tmp/bakeoff-a/visible-dev-v1.json /tmp/bakeoff-b/visible-dev-v1.json
-```
+For each candidate:
 
-(`--candidate-label` records which candidate produced the report — it travels into
-`EvalRunReport.candidateLabel`, so a report is always self-describing about what generated it.)
-Read the diff's per-case Tier-A/B results and the two reports' pass rates
-(`evals/report/summary.ts`'s Tier A/B/overall rates, printed in each run's Markdown summary) side
-by side; Tier C's rubric scores are additional signal, never gating. Once a candidate is chosen,
-**record the decision in `docs/decisions.md`** (append-only, numbered) — the eval reports
-themselves are not the record; the decision log is.
+1. Start the server with that candidate's roster, for example with the relevant `WHIM_*_MODEL`
+   variables in its environment.
+2. Run the benchmark and save both the JSON report and delivered TypeScript sources:
+
+   ```sh
+   node server/flowbench.mjs \
+     --url http://127.0.0.1:8799 \
+     --eval-set evals/sets/visible \
+     --save-sources /tmp/flowbench-model-a \
+     --json /tmp/flowbench-model-a.json
+   ```
+
+3. Score exactly those delivered sources with the corpus-eval runner:
+
+   ```sh
+   node evals/cli.mjs run \
+     --eval-set evals/sets/visible \
+     --source-dir /tmp/flowbench-model-a
+   ```
+
+Repeat the two commands for every roster, then compare the benchmark timings and the scorer's
+per-case Tier-A/B results. `run --generate` remains the corpus-eval harness's stub-only path; it
+does not replace the flow benchmark for a roster bakeoff. Record the chosen roster in the
+append-only decision log rather than treating temporary reports as the decision record.

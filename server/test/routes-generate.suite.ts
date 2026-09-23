@@ -34,7 +34,7 @@ import { cachedPolicy, ModelContentPolicy, type ContentPolicy } from '../src/pol
 import { InFlightGenerations } from '../src/routes/generate';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { Clock, RunTrace } from '../src/generation/machine';
-import type { ModelClient, ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
 import {
   ControlledModelClient,
   RecordingUsageStore,
@@ -55,7 +55,7 @@ import {
 
 const DEVICE_A = 'a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0';
 const DEVICE_B = 'b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0';
-const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-g', engineer: 'vendor/engineer-g' };
+const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-g', 'vendor/engineer-g');
 /** 22:00:00 UTC — two hours to the reset, so every knowable `Retry-After` is exactly 7200. */
 const AT_2200_UTC = Date.UTC(2026, 0, 15, 22, 0, 0);
 const PROMPT = { prompt: 'a tip splitter' };
@@ -201,7 +201,7 @@ function statsTransport(records: Readonly<Record<string, GenerationStats>>): { t
 }
 
 function modelPolicy(modelClient: ModelClient, timeoutMs = 5000): ContentPolicy {
-  return cachedPolicy(new ModelContentPolicy({ modelClient, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs }));
+  return cachedPolicy(new ModelContentPolicy({ modelClient, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs }));
 }
 
 
@@ -818,7 +818,7 @@ async function testMidRunCreditExhaustion(): Promise<void> {
   invalidateCreditCache();
   const credit = sequencedCreditTransport([10, 0.1]);
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'engineer', deltas: [], error: new FakeProviderCreditError('insufficient credit') },
+    { role: 'plan', deltas: [], error: new FakeProviderCreditError('insufficient credit') },
   ]);
   const h = harness({ pipeline: machinePipeline(model, new ManualTimerClock(), ROSTER), config: { minCreditUsd: 0.5 }, creditTransport: credit.transport });
 

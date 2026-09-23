@@ -5,6 +5,7 @@
  * signal pass-through (server-cancellation #10).
  */
 import { check, eq, caught, section } from './harness';
+import { captureLogs, withMessage } from './log-capture';
 import { Usage } from '@whim/contract';
 import {
   OpenRouterClient,
@@ -13,8 +14,8 @@ import {
   OpenRouterRateLimitError,
   OpenRouterNetworkError,
 } from '../src/openrouter';
-import { isCreditExhaustedError } from '../src/generation/model';
-import type { FetchFn } from '../src/openrouter';
+import { isCreditExhaustedError, type ReasoningSetting } from '../src/generation/model';
+import type { FetchFn, ProviderSort } from '../src/openrouter';
 
 // ─── Fake fetch helpers ───────────────────────────────────────────────────────
 
@@ -257,38 +258,53 @@ export async function runOpenRouterTests(): Promise<void> {
     }
   }
 
-  // §7.3b — `reasoning: true` asks OpenRouter to surface its reasoning stream; omitted, the
-  // request carries no `reasoning` field at all (the provider's own default, unopened).
+  // §7.3b — the ONE reasoning wire mapping (design D1): each `ReasoningSetting` maps to exactly
+  // one wire shape, and `default`/unset send no `reasoning` field at all (the provider's own
+  // default, unopened).
+  {
+    const REASONING_CASES: { label: string; setting: ReasoningSetting | undefined; wire: Record<string, unknown> | undefined }[] = [
+      { label: 'off', setting: 'off', wire: { enabled: false } },
+      { label: 'on', setting: 'on', wire: { enabled: true } },
+      { label: 'low', setting: 'low', wire: { effort: 'low' } },
+      { label: 'medium', setting: 'medium', wire: { effort: 'medium' } },
+      { label: 'high', setting: 'high', wire: { effort: 'high' } },
+      { label: 'default', setting: 'default', wire: undefined },
+      { label: 'unset', setting: undefined, wire: undefined },
+    ];
+    for (const c of REASONING_CASES) {
+      let capturedCall: CapturedCall | undefined;
+      const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }));
+      const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }], reasoning: c.setting });
+      await drain(deltas);
+
+      check(`reasoning ${c.label}: request captured`, capturedCall !== undefined);
+      const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
+      if (c.wire) {
+        eq(`reasoning ${c.label}: wire body`, body.reasoning, c.wire);
+      } else {
+        check(`reasoning ${c.label}: no reasoning field on the wire`, !('reasoning' in body));
+      }
+    }
+  }
+
+  // §7.3c — provider routing preference (design D3): set → every request carries `provider.sort`;
+  // unset → no `provider` field at all.
   {
     let capturedCall: CapturedCall | undefined;
-    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }));
-    const { deltas } = client.stream({
-      model: MODEL_ID,
-      messages: [{ role: 'user', content: 'hi' }],
-      reasoning: true,
-    });
+    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }), 'throughput');
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
     await drain(deltas);
-
-    check('reasoning option: request captured', capturedCall !== undefined);
-    if (capturedCall) {
-      const body = JSON.parse(capturedCall.init?.body as string) as Record<string, unknown>;
-      eq('reasoning option set: request body asks to enable it, no effort budget', body.reasoning, { enabled: true });
-    }
+    const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
+    const sort: ProviderSort = 'throughput';
+    eq('provider sort set: request carries provider.sort', body.provider, { sort });
   }
   {
     let capturedCall: CapturedCall | undefined;
     const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }));
-    const { deltas } = client.stream({
-      model: MODEL_ID,
-      messages: [{ role: 'user', content: 'hi' }],
-    });
+    const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
     await drain(deltas);
-
-    check('reasoning option unset: request captured', capturedCall !== undefined);
-    if (capturedCall) {
-      const body = JSON.parse(capturedCall.init?.body as string) as Record<string, unknown>;
-      check('reasoning option unset: no reasoning field on the wire', !('reasoning' in body));
-    }
+    const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
+    check('provider sort unset: no provider field on the wire', !('provider' in body));
   }
 
   await testPreStreamHttpErrors();
@@ -425,6 +441,137 @@ export async function runOpenRouterTests(): Promise<void> {
   }
 
   await testMidStreamErrorFrames();
+  await testModelCallLogLine();
+}
+
+/** A fetch double whose response body's read loop REJECTS once `signal` aborts — the shape a real
+ *  fetch's `ReadableStream` reader takes under an aborted signal. Distinct from
+ *  `makeAbortableSseFetch` above (which ends the stream CLEANLY on abort, for "iteration stops
+ *  promptly" — no throw, so it never reaches the wrapper's failure/abort log path). */
+function makeRejectingOnAbortSseFetch(frames: string[]): FetchFn {
+  return async (_input, init) => {
+    const signal = init?.signal ?? undefined;
+    const encoder = new TextEncoder();
+    let stopped = false;
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const onAbort = (): void => {
+          stopped = true;
+          controller.error(new Error('aborted'));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+        for (const frame of frames) {
+          if (stopped) return;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          if (stopped) return;
+          controller.enqueue(encoder.encode(frame));
+        }
+        signal?.removeEventListener('abort', onAbort);
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+}
+
+/**
+ * §D4 — exactly one `model call` log line per completion, whatever its outcome, with no message
+ * content. Covers all three settle shapes: completed (provider/tokens/generationId present),
+ * failed (a pre-stream HTTP error), and aborted (the caller's own signal fires mid-stream).
+ */
+async function testModelCallLogLine(): Promise<void> {
+  section('OpenRouter wrapper §D4 — one "model call" log line per completion, no message content');
+
+  const PROMPT_MARKER = 'DISTINCTIVE-OPENROUTER-LOG-PROMPT-9f2c';
+
+  // Completed: role/model/provider/token-detail/generationId/outcome all present.
+  {
+    const frames = [
+      'data: {"id":"gen-log-1","provider":"vendor-x","choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n',
+      'data: {"id":"gen-log-1","choices":[{"delta":{}}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7,' +
+        '"completion_tokens_details":{"reasoning_tokens":3},"prompt_tokens_details":{"cached_tokens":1}}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const client = new OpenRouterClient(makeSseFetch(frames));
+      const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: PROMPT_MARKER }], role: 'generate' });
+      await drain(deltas);
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    eq('completed: exactly one model call log line', records.length, 1);
+    const r = records[0]!;
+    eq('completed: role', r.role, 'generate');
+    eq('completed: model', r.model, MODEL_ID);
+    eq('completed: provider', r.provider, 'vendor-x');
+    eq('completed: promptTokens', r.promptTokens, 5);
+    eq('completed: completionTokens', r.completionTokens, 2);
+    eq('completed: reasoningTokens', r.reasoningTokens, 3);
+    eq('completed: cachedTokens', r.cachedTokens, 1);
+    eq('completed: generationId', r.generationId, 'gen-log-1');
+    eq('completed: outcome', r.outcome, 'completed');
+    check('completed: carries a numeric durationMs', typeof r.durationMs === 'number');
+    check('completed: carries a numeric ttftMs', typeof r.ttftMs === 'number');
+    check('the log carries no message content anywhere', capture.raw.every((line) => !line.includes(PROMPT_MARKER)));
+  }
+
+  // Failed: a pre-stream HTTP error still logs one line, outcome failed, still role-attributed.
+  {
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const client = new OpenRouterClient(makeSseFetch([], 401));
+      const { deltas, usage } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: PROMPT_MARKER }], role: 'rewrite' });
+      usage.catch(() => undefined);
+      await caught(async () => { await drain(deltas); });
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    eq('failed: exactly one model call log line', records.length, 1);
+    eq('failed: role', records[0]?.role, 'rewrite');
+    eq('failed: outcome', records[0]?.outcome, 'failed');
+    check('failed: no generationId (the stream never produced a chunk)', records[0]?.generationId === undefined);
+    check('the log carries no message content anywhere', capture.raw.every((line) => !line.includes(PROMPT_MARKER)));
+  }
+
+  // Aborted: the caller's own signal fires mid-stream and the transport's read rejects.
+  {
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const controller = new AbortController();
+      const client = new OpenRouterClient(makeRejectingOnAbortSseFetch(SUCCESS_FRAMES));
+      const { deltas, usage } = client.stream({
+        model: MODEL_ID,
+        messages: [{ role: 'user', content: PROMPT_MARKER }],
+        role: 'plan',
+        signal: controller.signal,
+      });
+      usage.catch(() => undefined);
+      const iterator = deltas[Symbol.asyncIterator]();
+      const err = await caught(async () => {
+        await iterator.next(); // the first delta arrives normally
+        controller.abort();
+        await iterator.next(); // the next pull observes the abort and rejects
+      });
+      check('setup: aborting mid-stream threw', err !== undefined, String(err));
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    eq('aborted: exactly one model call log line', records.length, 1);
+    eq('aborted: role', records[0]?.role, 'plan');
+    eq('aborted: outcome', records[0]?.outcome, 'aborted');
+    check('the log carries no message content anywhere', capture.raw.every((line) => !line.includes(PROMPT_MARKER)));
+  }
 }
 
 /**
