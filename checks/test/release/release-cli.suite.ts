@@ -14,6 +14,7 @@ import nodeAssert from 'node:assert';
 import { test, assert } from '../harness';
 import {
   evaluatePreflight,
+  parseJdkMajorVersion,
   ANDROID_UPLOAD_VALUE_NAMES,
   type PreflightSnapshot,
 } from '../../../scripts/release/lib/preflight';
@@ -111,6 +112,19 @@ export async function run(): Promise<void> {
       );
     });
   }
+
+  await test('preflight: the JDK major version is read from the stderr banner java -version actually prints', () => {
+    // Taken from a real `java -version` run of the pinned Temurin/Homebrew JDK 21 on 2026-09-22;
+    // the whole banner arrives on stderr, stdout is empty.
+    const banner = [
+      'openjdk version "21.0.12" 2026-07-21',
+      'OpenJDK Runtime Environment Homebrew (build 21.0.12)',
+      'OpenJDK 64-Bit Server VM Homebrew (build 21.0.12, mixed mode, sharing)',
+    ].join('\n');
+    nodeAssert.strictEqual(parseJdkMajorVersion(`\n${banner}`), 21);
+    nodeAssert.strictEqual(parseJdkMajorVersion('openjdk version "24.0.1" 2026-04-15'), 24);
+    nodeAssert.strictEqual(parseJdkMajorVersion(''), undefined, 'an empty stdout-only read must not pass as a JDK');
+  });
 
   await test('preflight: the placeholder domain refuses, naming that no server is reachable', () => {
     const snapshot = baseSnapshot({ config: { ...FIXTURE_CONFIG, WHIM_DOMAIN: 'example.com' } });

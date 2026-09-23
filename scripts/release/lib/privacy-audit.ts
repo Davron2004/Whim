@@ -155,9 +155,21 @@ export function auditFindings(binaries: readonly AuditBinaryFacts[], manifests: 
 
 // ── Impure gathering: Mach-O enumeration + xcrun shell-outs (never called by the suite) ─────
 
+/**
+ * The manifest as XML. Xcode compiles every plist inside an archived .app to the binary format
+ * (`bplist00` magic), so the built manifest is converted through plutil first; a source-tree
+ * or simulator manifest is already XML and is returned as read.
+ */
+function readManifestXml(manifestPath: string): string {
+  const text = fs.readFileSync(manifestPath, 'utf8');
+  if (!text.startsWith('bplist')) return text;
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- intentional: same macOS toolchain assumption as the xcrun calls below
+  return execFileSync('plutil', ['-convert', 'xml1', '-o', '-', manifestPath], { encoding: 'utf8' });
+}
+
 function readManifestCategories(manifestPath: string): readonly RequiredReasonCategory[] {
   if (!fs.existsSync(manifestPath)) return [];
-  const plist = parseXmlPlist(fs.readFileSync(manifestPath, 'utf8'));
+  const plist = parseXmlPlist(readManifestXml(manifestPath));
   const types = typeof plist === 'object' && plist !== null && !Array.isArray(plist) ? plist.NSPrivacyAccessedAPITypes : undefined;
   if (!Array.isArray(types)) return [];
   const raw = types

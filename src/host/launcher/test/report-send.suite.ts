@@ -40,12 +40,19 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
       await h.throws(() => press(button(tree, COPY.reportSend)), 'Cannot press a disabled control', 'Send is disabled until a reason is chosen');
+      h.ok(!textOf(tree.root).includes(COPY.reportPreviewTitle), 'the empty preview stays hidden before a reason is chosen');
+      h.ok(textOf(tree.root).includes(COPY.reportCodeDisclosure), 'the code disclosure is visible before sending');
+      h.ok(!textOf(tree.root).includes('Include the code'), 'code has no opt-out');
       await press(button(tree, COPY.reportReasonBroken));
+      h.ok(textOf(tree.root).includes(COPY.reportPreviewTitle), 'choosing a reason reveals the preview');
+      await TestRenderer.act(async () => tree.root.findByType('Switch').props.onValueChange(false));
 
       answers.push(async () => json({ error: 'payload_too_large', hint: 'That report is too large to send.' }, 413));
       await press(button(tree, COPY.reportSend));
       h.eq((bodies[0] as { reason?: string }).reason, 'broken', 'the chosen reason is sent');
-      h.ok(textOf(tree.root).includes('That report is too large to send.'), 'a refusal shows the server’s hint');
+      h.ok(!('prompt' in (bodies[0] as object)), 'the prompt switch removes only the prompt');
+      h.eq((bodies[0] as { source?: string }).source, 'export default {}', 'the active version’s code is sent');
+      h.ok(textOf(tree.root).includes(COPY.reportTooLarge), 'a size refusal offers the remaining prompt option');
       h.eq(lastLog('report refused')?.outcome, 'payload_too_large', 'and is logged with its refusal code');
 
       answers.push(async () => json({ error: 'internal' }, 500));

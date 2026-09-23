@@ -6,7 +6,7 @@
  *   - "The report sheet collects a reason and an optional note" — the note's 1000-character and
  *     the app name's 200-character bounds.
  *   - "The sheet previews exactly the body that Send transmits" — preview rows equal the built
- *     request's own fields; a switched-off or absent prompt/source is omitted from both.
+ *     request's own fields; a switched-off prompt or absent source is omitted from both.
  *   - "Report content never reaches device logs" — `reportLogFields` carries no note, prompt,
  *     source, or app name text.
  *
@@ -30,7 +30,6 @@ const FULL_DRAFT: ReportDraft = {
   prompt: 'a habit tracker that nags me nicely',
   promptIncluded: true,
   source: 'export default function App() {}',
-  sourceIncluded: true,
 };
 
 export async function runReportPayloadTests(h: Harness): Promise<void> {
@@ -76,14 +75,14 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('buildReportRequest: a switched-off prompt or source is omitted from the request', () => {
-    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false, sourceIncluded: false });
+  await h.test('buildReportRequest: the prompt can be omitted while saved code is always sent', () => {
+    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false });
     h.ok(request !== null, 'builds');
     h.ok(request !== null && !('prompt' in request), 'prompt is dropped when its switch is off');
-    h.ok(request !== null && !('source' in request), 'source is dropped when its switch is off');
+    h.eq(request?.source, FULL_DRAFT.source, 'the active version’s original source is included');
   });
 
-  await h.test('buildReportRequest: an absent prompt or source is omitted even with the switch on', () => {
+  await h.test('buildReportRequest: an absent prompt or source is omitted', () => {
     const request = buildReportRequest({ ...FULL_DRAFT, prompt: undefined, source: undefined });
     h.ok(request !== null, 'builds');
     h.ok(request !== null && !('prompt' in request), 'no prompt to include means no prompt key');
@@ -105,7 +104,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
   });
 
   await h.test('reportPreview: an omitted field produces no row, matching the omitted request key', () => {
-    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false, sourceIncluded: false, note: '' });
+    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false, source: undefined, note: '' });
     h.ok(request !== null, 'builds');
     if (request) {
       const fields = reportPreview(request).map(r => r.field);
@@ -136,7 +135,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
   });
 
   await h.test('reportLogFields: omits promptBytes/sourceBytes when the request carries neither field', () => {
-    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false, sourceIncluded: false });
+    const request = buildReportRequest({ ...FULL_DRAFT, promptIncluded: false, source: undefined });
     h.ok(request !== null, 'builds');
     if (request) {
       const fields = reportLogFields(request, 'content_policy');
@@ -159,7 +158,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     return { access };
   }
 
-  await h.test('reportDraftFor: an app with stored source starts with both switches on and both fields present', async () => {
+  await h.test('reportDraftFor: an app with stored source starts with its prompt and code present', async () => {
     const { access } = harnessAccess();
     const entry = await access.install({
       id: 'habit-tracker',
@@ -176,7 +175,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     h.eq(draft.prompt, 'a habit tracker that nags me nicely', 'prompt reads the active description');
     h.eq(draft.source, 'export default function App() {}', 'source reads the active source.ts artifact');
     h.ok(draft.promptIncluded, 'promptIncluded starts true');
-    h.ok(draft.sourceIncluded, 'sourceIncluded starts true');
+    h.ok(!('sourceIncluded' in draft), 'there is no code opt-out');
   });
 
   await h.test('reportDraftFor: a legacy app with no stored source has no source field at all', async () => {
@@ -190,7 +189,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     });
     const draft = await reportDraftFor(entry, access);
     h.eq(draft.source, undefined, 'no source.ts was ever written, so the draft carries none');
-    h.ok(draft.sourceIncluded, 'the switch still starts true — buildReportRequest is what omits an absent field');
+    h.ok(!('sourceIncluded' in draft), 'there is no code switch for a legacy app');
     const request = buildReportRequest({ ...draft, reason: 'broken' });
     h.ok(request !== null && !('source' in request), 'an absent source never reaches the built request, reason chosen or not');
   });

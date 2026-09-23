@@ -21,6 +21,12 @@ declare module 'node:path' {
 }
 declare module 'node:child_process' {
   export function execFileSync(file: string, args: string[], options: { cwd?: string; encoding: 'utf8' }): string;
+  // Used where the tool's output arrives on stderr (java -version); execFileSync returns stdout only.
+  export function spawnSync(
+    file: string,
+    args: string[],
+    options: { cwd?: string; encoding: 'utf8' },
+  ): { readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly error?: Error };
 }
 
 declare global {

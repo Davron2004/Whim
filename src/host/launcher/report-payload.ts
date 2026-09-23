@@ -19,7 +19,7 @@ const MAX_APP_NAME_LENGTH = 200;
 /** Everything the report sheet holds before Send: a reason (`null` until chosen), the note as
  *  typed (unbounded here — the sheet's `maxLength` stops it at input time, task 5.2), the app's
  *  display name, and the prompt/source pulled from the version store alongside each field's
- *  include-switch state (on by default, design D14). `prompt`/`source` are `undefined` exactly
+ *  prompt include-switch state (on by default). `prompt`/`source` are `undefined` exactly
  *  when the entry has none to offer — never a placeholder string. */
 export interface ReportDraft {
   readonly reason: ReportReason | null;
@@ -28,13 +28,11 @@ export interface ReportDraft {
   readonly prompt?: string;
   readonly promptIncluded: boolean;
   readonly source?: string;
-  readonly sourceIncluded: boolean;
 }
 
 /** Build the exact `ReportRequest` Send posts, or `null` when no reason is chosen (design D14).
  *  The note is trimmed and omitted when empty, then cut to `MAX_NOTE_LENGTH`; `appName` is cut to
- *  `MAX_APP_NAME_LENGTH`; `prompt`/`source` are dropped when their switch is off OR the field is
- *  absent — switched-off and absent collapse to the same "omit the key" outcome. */
+ *  `MAX_APP_NAME_LENGTH`; source is always included when the active version has it. */
 export function buildReportRequest(draft: ReportDraft): ReportRequest | null {
   if (draft.reason === null) {
     return null;
@@ -42,7 +40,7 @@ export function buildReportRequest(draft: ReportDraft): ReportRequest | null {
   const trimmedNote = draft.note.trim();
   const note = trimmedNote.length > 0 ? trimmedNote.slice(0, MAX_NOTE_LENGTH) : undefined;
   const prompt = draft.promptIncluded && draft.prompt !== undefined ? draft.prompt : undefined;
-  const source = draft.sourceIncluded && draft.source !== undefined ? draft.source : undefined;
+  const source = draft.source;
   return {
     reason: draft.reason,
     ...(note !== undefined ? { note } : {}),
@@ -106,7 +104,7 @@ export function reportLogFields(request: ReportRequest, outcome: string): Report
 
 /** The draft every report entry point starts from (design D13): the app's display name
  *  (`InstalledApp.name`), the prompt behind its current version (`StoreAccess.activeDescription`),
- *  and its stored original source (`StoreAccess.activeSource`) — both switches on by default, no
+ *  and its stored original source (`StoreAccess.activeSource`) — prompt included by default, no
  *  reason chosen yet. Opening the sheet sends nothing: this only reads. */
 export async function reportDraftFor(entry: InstalledApp, access: StoreAccess): Promise<ReportDraft> {
   const [prompt, source] = await Promise.all([access.activeDescription(entry), access.activeSource(entry)]);
@@ -117,6 +115,5 @@ export async function reportDraftFor(entry: InstalledApp, access: StoreAccess): 
     prompt,
     promptIncluded: true,
     source,
-    sourceIncluded: true,
   };
 }

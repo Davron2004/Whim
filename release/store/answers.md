@@ -62,9 +62,11 @@ store-content.md` for the schemas the sibling JSON files follow.
 
 ## Reports (source: `openspec/changes/store-launch-compliance/specs/content-reporting/spec.md`)
 
-- A report a user sends about a mini-app carries a reason, an optional note, and — each with its
-  own on/off switch, on by default — the app name, the prompt that made the reported version, and
-  its code. Reports are stored server-side for 90 days and are not otherwise shared.
+- A report is sent only when the user taps `Send report`, even if AI features are off. It carries
+  the selected reason, an optional note, the app name, and the anonymous device ID. The active
+  version's original code is included when stored; there is no code switch. The user can turn off
+  inclusion of the prompt that made that version. Older apps may have no saved code or prompt.
+  Reports go to AnyCognition, not to AI model providers, and are deleted after 90 days.
 
 ## Server persistence otherwise (source: generation-server / usage-ledger spec)
 
