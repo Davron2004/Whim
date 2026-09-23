@@ -18,3 +18,13 @@ other reads: the flow benchmark reaches the server over HTTP only.
 - reads: specs/flow-benchmark/spec.md (whole); design.md D5; `server/loadtest.mjs` + `server/src/loadtest/drive.ts` (the run-time bundling pattern to mirror); `contract/src/index.ts` (`ClarifyRequest`/`ClarifyResponse`/`RewriteRequest`/`RewriteResponse`/`GenerateRequest`/`GenerationEvent`/`ApiError`); `evals/sets/visible/manifest.json` (case shape); handoff: none
 - writes-contract: none
 - file scope: `server/src/flowbench/**`, `server/flowbench.mjs`, `server/test/flowbench.suite.ts`, `server/test/acceptance.ts` (one import + one call), `docs/evals.md`
+
+## chain-3: server-review-fixes
+
+- tasks: 3.1–3.4
+- rationale: the whole-change reviewer's four findings plus the deploy gap they exposed; small, same subsystem, run after chains 1, 2 and 2b merged.
+- reads: design.md D2, D5, D6; specs/generation-pipeline/spec.md §"Every model call states its reasoning mode" (scenario "A misspelled setting fails at boot"); specs/flow-benchmark/spec.md §"The flow benchmark drives the device's flow end to end" (exit codes); `deploy/lib.sh`, `deploy/deploy.sh` (`preflight_values`, `stage_server_files`); handoff: none
+- after: chain-1, chain-2, chain-2b
+- writes-contract: none
+- file scope: `server/src/lifecycle.ts`, `server/src/config.ts`, `server/src/loadtest/replay-model.ts`, `deploy/lib.sh`, `deploy/deploy.sh`, `server/test/*` (not `acceptance.ts`), `docs/deploy.md`
+

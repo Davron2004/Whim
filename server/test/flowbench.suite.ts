@@ -223,7 +223,7 @@ async function runFlowbenchEntry(args: string[], timeoutMs: number): Promise<{ e
 }
 
 async function testFlowbenchEntry(): Promise<void> {
-  section('flowbench entry writes its report and exits successfully for delivered cases');
+  section('flowbench entry maps delivered, failed, and unreadable runs to process exit codes');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-entry-'));
   const caseId = 'entry-delivered';
   const evalSet = manifestFile(root, [{ caseId, appSlug: 'entry-delivered', prompt: 'make one', assertions: [] }]);
@@ -239,6 +239,29 @@ async function testFlowbenchEntry(): Promise<void> {
     eq('the CLI exits zero when every case is delivered', result.exitCode, 0);
     check('the CLI prints the case id in its Markdown table', result.stdout.includes(`| ${caseId} |`));
     eq('the CLI JSON report has no failures', JSON.parse(fs.readFileSync(jsonPath, 'utf8')).summary.failures, 0);
+
+    const failureSet = manifestFile(root, [{ caseId: 'entry-failed', appSlug: 'entry-failed', prompt: 'fail one', assertions: [] }]);
+    const failureServer = await listenFake((request, res) => {
+      if (request.path === '/v1/clarify') response(res, 200, { questions: [] });
+      else if (request.path === '/v1/rewrite') response(res, 200, { rewrittenPrompt: 'fail one' });
+      else if (request.path === '/v1/generate') sse(res, [{ type: 'failure', reason: 'check_failed', attempts: 1, diagnostics: [] }]);
+      else response(res, 404, { error: 'not_found', hint: 'unknown test route' });
+    });
+    try {
+      const failure = await runFlowbenchEntry(['--url', failureServer.url, '--eval-set', failureSet], 30_000);
+      eq('the CLI exits one when generate ends in failure', failure.exitCode, 1);
+      check('the CLI report prints the failed outcome', failure.stdout.includes('failure'));
+
+      const noManifest = path.join(root, 'no-manifest');
+      fs.mkdirSync(noManifest);
+      const requestsBeforeBadSet = failureServer.requests.length;
+      const unreadable = await runFlowbenchEntry(['--url', failureServer.url, '--eval-set', noManifest], 30_000);
+      eq('the CLI exits two for an eval set without a manifest', unreadable.exitCode, 2);
+      check('the CLI names the unreadable manifest', unreadable.stderr.includes('manifest.json'));
+      eq('an unreadable eval set sends no server requests', failureServer.requests.length, requestsBeforeBadSet);
+    } finally {
+      await failureServer.close();
+    }
   } finally {
     await fake.close();
     fs.rmSync(root, { recursive: true, force: true });

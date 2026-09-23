@@ -78,6 +78,9 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 |---|---|---|
 | `WHIM_SUPPORT_EMAIL` | yes | rendered on the privacy and support pages |
 | `WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL` | yes | the model pair the server runs with (not rendered on the pages) |
+| `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL` | no | optional per-role model overrides; see the roster table below |
+| `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
+| `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).

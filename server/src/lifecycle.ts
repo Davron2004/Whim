@@ -29,8 +29,8 @@ import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
 import { NodeSqliteUsageStore } from './usage-store';
 import { NodeSqliteReportStore, schedulePurge, type PurgeSchedule } from './reports/store';
-import { buildModelDepsFromEnv, createGenerationPipeline } from './generation';
-import type { ModelClient, ModelRoster } from './generation/model';
+import { buildModelDepsFromEnv, createGenerationPipeline, MissingApiKeyError } from './generation';
+import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRoster } from './generation/model';
 import { loadContentPolicyDocument } from './generation/prompts/inputs';
 import { createSlotController, type SlotController } from './admission/slots';
 import { createOpenRouterCreditTransport, type CreditTransport } from './admission/credit';
@@ -349,7 +349,14 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       const deps = buildModelDepsFromEnv(options.env, { providerSort: config.providerSort });
       return { client: deps.model, roster: deps.roster };
     } catch (err) {
-      if (!useStub) throw err;
+      if (!useStub || (!(err instanceof ModelRosterEnvError) && !(err instanceof MissingApiKeyError))) throw err;
+      if (err instanceof ModelRosterEnvError) {
+        modelRosterFromEnv({
+          ...options.env,
+          WHIM_REWRITE_MODEL: options.env.WHIM_REWRITE_MODEL || 'stub/unconfigured',
+          WHIM_ENGINEER_MODEL: options.env.WHIM_ENGINEER_MODEL || 'stub/unconfigured',
+        });
+      }
       bootLog.warn({ detail: messageOf(err), hint: '/v1/rewrite will respond 502 until configured.' }, 'starting in WHIM_PIPELINE=stub mode without a usable model client');
       return undefined;
     }
