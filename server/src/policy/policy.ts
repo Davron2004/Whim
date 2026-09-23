@@ -124,7 +124,8 @@ export class ModelContentPolicy implements ContentPolicy {
         { role: 'user', content: classifierUserMessage(input) },
       ],
       maxTokens: MAX_TOKENS,
-      reasoning: false,
+      reasoning: 'off',
+      role: 'policy',
     };
 
     let text = '';

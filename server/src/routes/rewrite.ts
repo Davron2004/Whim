@@ -180,7 +180,10 @@ async function runRewriteAttempt(
   messages: ModelMessage[],
   signal: AbortSignal,
 ): Promise<RewriteAttempt> {
-  const stream = model.stream({ model: roster.rewrite, messages }, signal);
+  const stream = model.stream(
+    { model: roster.rewrite.model, messages, reasoning: roster.rewrite.reasoning, role: 'rewrite' },
+    signal,
+  );
   // See `../routes/clarify.ts`'s identical guard: a throw from `deltas` rejects `usage` too
   // without anyone awaiting it — discarded here so it never surfaces as an unhandled rejection.
   stream.usage.catch(() => {});

@@ -481,8 +481,16 @@ async function runClarifyWork(
   const timeoutSignal = AbortSignal.timeout(config.unaryModelTimeoutMs);
   const combined = requestSignal ? AbortSignal.any([requestSignal, timeoutSignal]) : timeoutSignal;
 
-  // The small/fast model — clarify asks two short questions, it does not write code.
-  const stream = model.stream({ model: roster.rewrite, messages: buildClarifyMessages({ request: parsed }) }, combined);
+  // The clarify role's model — clarify asks two short questions, it does not write code.
+  const stream = model.stream(
+    {
+      model: roster.clarify.model,
+      messages: buildClarifyMessages({ request: parsed }),
+      reasoning: roster.clarify.reasoning,
+      role: 'clarify',
+    },
+    combined,
+  );
   // A throw from the `deltas` iterator (below) rejects `usage` too without anyone ever awaiting
   // it — observed-but-discarded here so that never surfaces as an unhandled rejection, mirroring
   // `ModelContentPolicy.check`'s identical guard (`../policy/policy.ts`).

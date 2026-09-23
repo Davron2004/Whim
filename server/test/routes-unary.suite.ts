@@ -28,7 +28,7 @@ import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createSlotController, DEFAULT_MAX_CONCURRENT_PROBES, type SlotController } from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { CLASSIFIER_SYSTEM_MARKER, cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
-import type { ModelClient, ModelDelta, ModelRoster, ModelStream } from '../src/generation/model';
+import { defaultModelRoster, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import { ScriptedModelClient } from './scripted-model';
 import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
@@ -36,7 +36,7 @@ import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
 const DEVICE_ID = '99999999-9999-4999-8999-999999999999';
 const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
 const OTHER_DEVICE_HEADER = { 'x-whim-device': '88888888-8888-4888-8888-888888888888' };
-const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const FIXED_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 /** Whole seconds from `FIXED_NOW` (noon UTC) to the next 00:00 UTC — every ceiling refusal's
  *  `Retry-After`. */
@@ -49,6 +49,9 @@ function makeConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
 interface TestAppOpts {
   config?: Partial<ServerConfig>;
   model?: ModelClient;
+  /** Defaults to the module's `ROSTER` when `model` is set — override to exercise a roster whose
+   *  per-role reasoning settings differ from the defaults (e.g. `WHIM_REWRITE_REASONING=on`). */
+  roster?: ModelRoster;
   policy?: ContentPolicy;
   creditTransport?: CreditTransport;
   slots?: SlotController;
@@ -67,7 +70,7 @@ function testApp(opts: TestAppOpts = {}) {
     pipeline: createStubPipeline(0),
     usageStore,
     model: opts.model,
-    roster: opts.model ? ROSTER : undefined,
+    roster: opts.model ? (opts.roster ?? ROSTER) : undefined,
     config,
     slots: opts.slots,
     policy: opts.policy,
@@ -636,9 +639,10 @@ async function testUnaryFailureRecovery(recoveryCase: RecoveryCase): Promise<voi
       rewrittenPrompt: 'A counter', plan: [{ label: 'Count', text: 'Show the count' }],
     };
     const usage = { promptTokens: 1, completionTokens: 2, totalTokens: 3 };
+    const turnRole = kind === 'clarify' ? 'clarify' : 'rewrite';
     const model = new ScriptedModelClient(ROSTER, [
-      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
-      { role: 'rewrite', deltas: [JSON.stringify(reply)], usage },
+      { role: turnRole, deltas: [JSON.stringify(reply)], usage },
+      { role: turnRole, deltas: [JSON.stringify(reply)], usage },
     ]);
     const stream = model.stream.bind(model);
     if (failure === 'model') model.stream = () => { throw new Error(STORE_BLIP_MESSAGE); };
@@ -821,7 +825,7 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
     { role: 'rewrite', deltas: ['{"verdict":"refuse","category":"test"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-rewrite' },
   ]);
   const policy = cachedPolicy(
-    new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
   );
   const { app, usageStore } = testApp({ model, policy });
   const res = await post(app, '/v1/rewrite', { prompt: 'something bad' }, DEVICE_HEADER);
@@ -831,6 +835,40 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   eq('exactly one model call recorded (the classifier)', model.requests.length, 1);
   const total = await usageStore.read(DEVICE_ID);
   eq('a refused request still meters the classifier', total, CLASSIFIER_USAGE);
+}
+
+/**
+ * spec generation-pipeline "The content-policy classifier SHALL always use off, whatever the
+ * rewrite role's setting" (design D2): the classifier's own call stays `reasoning: 'off'` even
+ * when the roster's `rewrite` role itself is configured `on` (the shape `WHIM_REWRITE_REASONING=on`
+ * produces) — the classifier never reads the roster's reasoning field at all.
+ */
+async function testClassifierReasoningIsIndependentOfRewriteRole(): Promise<void> {
+  section('design D2 "The classifier cannot be switched to reasoning" — an on-reasoning rewrite role leaves it off');
+
+  invalidateCreditCache();
+  const rosterWithRewriteReasoningOn: ModelRoster = { ...ROSTER, rewrite: { ...ROSTER.rewrite, reasoning: 'on' } };
+  const model = new ScriptedModelClient(rosterWithRewriteReasoningOn, [
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+    { role: 'rewrite', deltas: [JSON.stringify({ rewrittenPrompt: 'a plan', plan: [{ label: 'What', text: 'A plan.' }] })] },
+  ]);
+  const policy = cachedPolicy(
+    new ModelContentPolicy({
+      modelClient: model,
+      rewriteModelId: rosterWithRewriteReasoningOn.rewrite.model,
+      categories: 'test category',
+      timeoutMs: 5000,
+    }),
+  );
+  const { app } = testApp({ model, roster: rosterWithRewriteReasoningOn, policy });
+  const res = await post(app, '/v1/rewrite', { prompt: 'a habit tracker' }, DEVICE_HEADER);
+
+  eq('rewrite still succeeds under an on-reasoning rewrite role', res.status, 200);
+  eq('exactly two model calls: the classifier then the rewrite turn', model.requests.length, 2);
+  eq('the classifier call stays off regardless of the rewrite role\'s setting', model.requests[0]?.request.reasoning, 'off');
+  eq('the classifier call is labeled policy', model.requests[0]?.request.role, 'policy');
+  eq('the rewrite call honors the roster\'s on setting', model.requests[1]?.request.reasoning, 'on');
+  eq('the rewrite call is labeled rewrite', model.requests[1]?.request.role, 'rewrite');
 }
 
 function sumUsage(a: Usage, b: Usage): Usage {
@@ -851,11 +889,11 @@ async function testCachedVerdictAddsNoClassifierUsage(): Promise<void> {
   invalidateCreditCache();
   const model = new ScriptedModelClient(ROSTER, [
     { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: 'gen-policy-cache' },
-    { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-1' },
-    { role: 'rewrite', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-2' },
+    { role: 'clarify', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-1' },
+    { role: 'clarify', deltas: ['{"questions":[]}'], usage: CLARIFY_USAGE, id: 'gen-clarify-2' },
   ]);
   const policy = cachedPolicy(
-    new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+    new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
   );
   const { app, usageStore } = testApp({ model, policy });
   const SAME_PROMPT = { prompt: 'the exact same prompt text' };
@@ -893,7 +931,7 @@ async function testMalformedClassifierVerdictKeepsAccounting(): Promise<void> {
       { role: 'rewrite', deltas: ['{"verdict":"maybe"}'], usage: classifierUsage, id: classifierId },
     ]);
     const policy = cachedPolicy(
-      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
     );
     const { app } = testApp({
       model,
@@ -928,7 +966,7 @@ async function testFailedClassifierUsageStillResolvesById(): Promise<void> {
       { role: 'rewrite', deltas: [], error: new Error('classifier connection reset'), id: classifierId },
     ]);
     const policy = cachedPolicy(
-      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
     );
     const { app } = testApp({
       model,
@@ -993,6 +1031,7 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
 
   for (const route of ['clarify', 'rewrite'] as const) {
     const okDelta = route === 'clarify' ? '{"questions":[]}' : JSON.stringify({ rewrittenPrompt: 'a plan', plan: [{ label: 'What', text: 'A plan.' }] });
+    const turnRole = route;
 
     // (a) success — both calls credit in-stream; the resolver only ever adds cost.
     {
@@ -1001,10 +1040,10 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
       const tracker = new ResolveTracker();
       const model = new ScriptedModelClient(ROSTER, [
         { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
-        { role: 'rewrite', deltas: [okDelta], usage: MODEL_USAGE, id: MODEL_ID },
+        { role: turnRole, deltas: [okDelta], usage: MODEL_USAGE, id: MODEL_ID },
       ]);
       const policy = cachedPolicy(
-        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
       );
       const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
       const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
@@ -1020,10 +1059,10 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
       const tracker = new ResolveTracker();
       const model = new ScriptedModelClient(ROSTER, [
         { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
-        { role: 'rewrite', deltas: [], error: new Error('model boom'), id: MODEL_ID },
+        { role: turnRole, deltas: [], error: new Error('model boom'), id: MODEL_ID },
       ]);
       const policy = cachedPolicy(
-        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
       );
       const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
       const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
@@ -1041,7 +1080,7 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
         { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
       ]);
       const policy = cachedPolicy(
-        new ModelContentPolicy({ modelClient: classifierModel, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+        new ModelContentPolicy({ modelClient: classifierModel, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
       );
       const observed = { aborted: false };
       const routeModel = stallingModelClient(observed);
@@ -1065,10 +1104,10 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
       const tracker = new ResolveTracker();
       const model = new ScriptedModelClient(ROSTER, [
         { role: 'rewrite', deltas: ['{"verdict":"allow"}'], usage: CLASSIFIER_USAGE, id: CLASSIFIER_ID },
-        { role: 'rewrite', deltas: [], error: new FakeProviderCreditError('insufficient credit'), id: MODEL_ID },
+        { role: turnRole, deltas: [], error: new FakeProviderCreditError('insufficient credit'), id: MODEL_ID },
       ]);
       const policy = cachedPolicy(
-        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite, categories: 'test category', timeoutMs: 5000 }),
+        new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
       );
       const { app } = testApp({ model, policy, usageStore, resolver: { transport: FULL_TRANSPORT, tracker } });
       const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
@@ -1097,7 +1136,7 @@ async function testBudgetExhaustedMidCall(): Promise<void> {
     // A second request, same TTL window, healthy model this time — the cache must have been
     // invalidated by the 402 above, so the credit endpoint is queried again (the admitted/refused
     // outcome alone would look identical either way, since 10 is above the floor regardless).
-    const healthyModel = new ScriptedModelClient(ROSTER, [{ role: 'rewrite', deltas: ['{"questions":[]}'] }]);
+    const healthyModel = new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: ['{"questions":[]}'] }]);
     const { app: app2 } = testApp({ model: healthyModel, creditTransport: credit.transport });
     const res2 = await post(app2, '/v1/clarify', { prompt: 'hi' }, OTHER_DEVICE_HEADER);
     eq('a follow-up clarify after the 402 succeeds', res2.status, 200);
@@ -1336,6 +1375,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
+  await testClassifierReasoningIsIndependentOfRewriteRole();
   await testCachedVerdictAddsNoClassifierUsage();
   await testMalformedClassifierVerdictKeepsAccounting();
   await testFailedClassifierUsageStillResolvesById();

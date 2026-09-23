@@ -35,7 +35,8 @@ import {
   type Summariser,
   type SummariserInput,
 } from '../src/generation/summarise';
-import type { ModelDelta, ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
+import { OpenRouterClient, type FetchFn } from '../src/openrouter';
 import type { DeviceVerifier } from '../src/device-identity';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
@@ -51,7 +52,7 @@ import {
 
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
 const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
-const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const TURN_USAGE = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
 
 const WIRE_RECORD: WireAppRecord = {
@@ -179,7 +180,7 @@ async function testClarifyEndpoint(): Promise<void> {
       ],
     };
     const { app, model, usageStore } = appWithModel([
-      { role: 'rewrite', deltas: ['```json\n', JSON.stringify(over), '\n```'], usage: TURN_USAGE },
+      { role: 'clarify', deltas: ['```json\n', JSON.stringify(over), '\n```'], usage: TURN_USAGE },
     ]);
     const res = await post(app, '/v1/clarify', { prompt: 'a water tracker' }, DEVICE_HEADER);
     eq('model clarify → 200', res.status, 200);
@@ -187,7 +188,7 @@ async function testClarifyEndpoint(): Promise<void> {
     const parsed = ClarifyResponse.safeParse(await res.json());
     eq('model clarify body validates as ClarifyResponse', parsed.success, true);
     eq('a fourth question is dropped, not returned', parsed.success ? parsed.data.questions.length : -1, 3);
-    eq('clarify used the small/fast model', model.requests[0]?.request.model, ROSTER.rewrite);
+    eq('clarify used the clarify role\'s model', model.requests[0]?.request.model, ROSTER.clarify.model);
     const usage = await usageStore.read(DEVICE_ID);
     eq('clarify is metered to the calling device', usage.totalTokens, TURN_USAGE.totalTokens);
   }
@@ -204,7 +205,7 @@ async function testClarifyEndpoint(): Promise<void> {
 
   // An unusable model answer is honest, never zero-questions-as-a-degraded-mode.
   {
-    const { app } = appWithModel([{ role: 'rewrite', deltas: ['I am afraid I cannot do that.'], usage: TURN_USAGE }]);
+    const { app } = appWithModel([{ role: 'clarify', deltas: ['I am afraid I cannot do that.'], usage: TURN_USAGE }]);
     const res = await post(app, '/v1/clarify', { prompt: 'a water tracker' }, DEVICE_HEADER);
     eq('unusable clarify answer → 502', res.status, 502);
   }
@@ -463,6 +464,50 @@ function testSummaryShaping(): void {
   );
 }
 
+/** One SSE `data:` line built from a frame object — avoids hand-escaping nested JSON. */
+function sseFrame(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+/** A fetch double that answers one summary reply over a real SSE stream and captures the outgoing
+ *  request body — the wire the summariser's call actually reaches, through the REAL
+ *  `OpenRouterClient` rather than `ScriptedModelClient`. */
+function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+  return (async (_input, init) => {
+    captured.body = JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>;
+    const summaryJson = JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: [] });
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseFrame({ id: 'gen-summary-wire', choices: [{ index: 0, delta: { content: summaryJson } }] })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as FetchFn;
+}
+
+/**
+ * Red-check target (design D1): the summariser's wire request explicitly disables reasoning by
+ * default, through the REAL `OpenRouterClient` rather than `ScriptedModelClient`. Fails against the
+ * pre-change wire mapping `...(options.reasoning ? { reasoning: { enabled: true } } : {})`, because
+ * `'off'` is a non-empty (truthy) string: that mapping would send `{enabled:true}` instead.
+ */
+async function testSummariserWireReasoningIsExplicitlyOff(): Promise<void> {
+  section("Wire v2 — the summariser's OWN wire request explicitly disables reasoning by default (design D1)");
+
+  const input: SummariserInput = { prompt: 'a water tracker', isEdit: false, appName: 'demo', capabilities: [], attempts: 1, diagnostics: [] };
+  const captured: { body?: Record<string, unknown> } = {};
+  const model = openRouterModelClient(new OpenRouterClient(summaryWireFetch(captured)));
+  const summariser = createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 });
+  const result = await summariser.summarise(input);
+
+  eq('the summariser call still resolves normally', result.summary?.text, 'It counts your glasses.');
+  check('setup: the outgoing wire body was captured', captured.body !== undefined);
+  eq('the wire body explicitly disables reasoning', captured.body?.reasoning, { enabled: false });
+}
+
 async function testModelSummariser(): Promise<void> {
   section('Wire v2 — the model-backed summariser');
 
@@ -478,7 +523,7 @@ async function testModelSummariser(): Promise<void> {
   {
     const model = new ScriptedModelClient(ROSTER, [
       {
-        role: 'rewrite',
+        role: 'summary',
         deltas: [JSON.stringify({ text: 'It counts your glasses.', kind: 'Start', touched: ['the count'], chg: 'counts your glasses' })],
         usage: TURN_USAGE,
       },
@@ -487,12 +532,14 @@ async function testModelSummariser(): Promise<void> {
     const result = await summariser.summarise(input);
     eq('the summariser produced a summary', result.summary?.text, 'It counts your glasses.');
     eq('its usage comes back for crediting', result.usage?.totalTokens, TURN_USAGE.totalTokens);
+    eq('the summary role defaults to reasoning off', model.requests[0]?.request.reasoning, 'off');
+    eq('the summariser call is labeled summary', model.requests[0]?.request.role, 'summary');
   }
 
   // A transport failure is not a summariser failure the run can see.
   {
     const model = new ScriptedModelClient(ROSTER, [
-      { role: 'rewrite', deltas: [], usage: TURN_USAGE, error: new Error('transport exploded') },
+      { role: 'summary', deltas: [], usage: TURN_USAGE, error: new Error('transport exploded') },
     ]);
     const summariser = createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 });
     const result = await summariser.summarise(input);
@@ -540,7 +587,7 @@ function onceStage<T>(value: T): () => T {
 
 function deliveringDeps(summariser: Summariser | undefined): GenerationPipelineDeps {
   const model = new ScriptedModelClient(ROSTER, [
-    { role: 'engineer', deltas: [VALID_PLAN_JSON], usage: TURN_USAGE },
+    { role: 'plan', deltas: [VALID_PLAN_JSON], usage: TURN_USAGE },
     { role: 'engineer', deltas: ['export default defineApp({});'], usage: TURN_USAGE },
   ]);
   const checkReport: CheckReport = { diagnostics: [], manifest: CHECKED };
@@ -637,8 +684,8 @@ async function testSummaryOnTerminalEvent(): Promise<void> {
   // summary describes a delivered app and nothing was delivered.
   {
     const model = new ScriptedModelClient(ROSTER, [
-      { role: 'engineer', deltas: ['not a plan at all'], usage: TURN_USAGE },
-      { role: 'engineer', deltas: ['still not a plan'], usage: TURN_USAGE },
+      { role: 'plan', deltas: ['not a plan at all'], usage: TURN_USAGE },
+      { role: 'plan', deltas: ['still not a plan'], usage: TURN_USAGE },
     ]);
     const deps: GenerationPipelineDeps = {
       ...deliveringDeps({ summarise: async (): Promise<SummariseResult> => ({ summary: SUMMARY }) }),
@@ -715,6 +762,7 @@ export async function runWireV2Tests(): Promise<void> {
   testTileColorExtraction();
   testSummaryShaping();
   await testModelSummariser();
+  await testSummariserWireReasoningIsExplicitlyOff();
   await testSummaryOnTerminalEvent();
   await testSseFramesSummaryUnmodified();
 }

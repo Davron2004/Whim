@@ -90,8 +90,8 @@ export function loadRotationFixtures(cwd: string = process.cwd()): string[] {
 }
 
 function roleFor(roster: ModelRoster, model: string): 'engineer' | 'rewrite' | undefined {
-  if (model === roster.engineer) return 'engineer';
-  if (model === roster.rewrite) return 'rewrite';
+  if (model === roster.engineer.model) return 'engineer';
+  if (model === roster.rewrite.model) return 'rewrite';
   return undefined;
 }
 
@@ -158,7 +158,7 @@ export function createReplayModel(options: ReplayModelOptions): ModelClient {
       const role = roleFor(roster, req.model);
       if (role === undefined) {
         throw new Error(
-          `createReplayModel: request named an unknown model "${req.model}" — expected the load-test roster (${roster.engineer} / ${roster.rewrite}).`,
+          `createReplayModel: request named an unknown model "${req.model}" — expected the load-test roster (${roster.engineer.model} / ${roster.rewrite.model}).`,
         );
       }
       const waitMs = role === 'engineer' ? engineerTurnMs : rewriteTurnMs;

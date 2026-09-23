@@ -23,7 +23,7 @@ import { scanStorageSurface } from '../../../checks/index';
 import type { StorageSurface } from '../../../checks/index';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
-import { isCreditExhaustedError, type ModelClient, type ModelMessage, type ModelRoster } from './model';
+import { isCreditExhaustedError, type ModelCallLabel, type ModelClient, type ModelMessage, type ModelRoster, type RoleSetting } from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
@@ -645,22 +645,27 @@ export class GenerationMachine {
     yield terminal;
   }
 
-  /** Calls the engineer model, accumulating usage/trace, and — when `emitTokens` — streaming
-   *  `token` events (spec: only `generate` and a `repair` stream tokens; `plan` does not).
-   *  Reasoning deltas surface as `thinking` events (length only, never the reasoning text) in
-   *  EVERY turn regardless of `emitTokens`: the device needs to know the model is working during
+  /** Calls the model for one turn (plan, generate, or a repair round), accumulating usage/trace,
+   *  and — when `emitTokens` — streaming `token` events (spec: only `generate` and a `repair`
+   *  stream tokens; `plan` does not). `roleSetting` is the caller's own roster entry (`roster.plan`
+   *  or `roster.engineer`) and `label` attributes the call (design D4) — every call site decides
+   *  both, never this shared helper. Reasoning deltas surface as `thinking` events (length only,
+   *  never the reasoning text) in EVERY turn regardless of `emitTokens`, whenever the role's own
+   *  reasoning setting actually streams one: the device needs to know the model is working during
    *  the plan turn just as much as during generate/repair — it is the silent one otherwise. */
   private async *runModelTurn(
     messages: ModelMessage[],
+    roleSetting: RoleSetting,
+    label: ModelCallLabel,
     signal: AbortSignal | undefined,
     trace: RunTrace | undefined,
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
-    // `reasoning: true` on every turn (plan/generate/repair all route through here) — see
-    // `ModelRequest.reasoning`'s doc comment for why: without it the device sees only silence
-    // while the model thinks.
-    const stream = this.deps.model.stream({ model: this.deps.roster.engineer, messages, reasoning: true }, signal);
+    const stream = this.deps.model.stream(
+      { model: roleSetting.model, messages, reasoning: roleSetting.reasoning, role: label },
+      signal,
+    );
     const usageResult = settle(stream.usage);
     const idResult = settle(stream.id).then((result) => {
       // Start observing the id immediately, rather than after the delta stream completes. The id
@@ -720,7 +725,7 @@ export class GenerationMachine {
         storageSurface: edit.storageSurface,
         priorFailureReason,
       });
-      const turn = yield* this.runModelTurn(messages, signal, trace, state, false);
+      const turn = yield* this.runModelTurn(messages, this.deps.roster.plan, 'plan', signal, trace, state, false);
       if (turn.aborted) return undefined;
 
       const { plan, failureReason } = this.resolvePlan(turn.text, request);
@@ -762,7 +767,7 @@ export class GenerationMachine {
       { request, plan, schemaContext: edit.schemaContext, storageSurface: edit.storageSurface },
       this.deps.promptInputs,
     );
-    const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
+    const turn = yield* this.runModelTurn(messages, this.deps.roster.engineer, 'generate', signal, trace, state, true);
     if (turn.aborted) return undefined;
 
     logStage('generate', 'done');
@@ -801,7 +806,7 @@ export class GenerationMachine {
       },
       this.deps.promptInputs,
     );
-    const turn = yield* this.runModelTurn(messages, signal, trace, state, true);
+    const turn = yield* this.runModelTurn(messages, this.deps.roster.engineer, 'repair', signal, trace, state, true);
     if (turn.aborted) return undefined;
 
     logStage('repair', 'done', roundAttempt);

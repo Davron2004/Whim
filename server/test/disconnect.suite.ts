@@ -28,11 +28,11 @@ import { createSlotController } from '../src/admission/slots';
 import { InFlightGenerations } from '../src/routes/generate';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { RunTrace } from '../src/generation/machine';
-import type { ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { GenerateRequest, GenerationEvent } from '@whim/contract';
 
 const DEVICE_ID = 'd1d1d1d1-d1d1-41d1-81d1-d1d1d1d1d1d1';
-const ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-tcp', engineer: 'vendor/engineer-tcp' };
+const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-tcp', 'vendor/engineer-tcp');
 const DISCONNECT_BOUND_MS = 5000;
 const FAST_RESOLVE_BOUNDS = { maxAttempts: 1, totalBudgetMs: 2000, retryDelayMs: 0, perAttemptTimeoutMs: 500 };
 const STATS: GenerationStats = { usage: { promptTokens: 13, completionTokens: 17, totalTokens: 30 }, totalCostUsd: 0.021 };

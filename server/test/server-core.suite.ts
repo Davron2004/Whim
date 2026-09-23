@@ -13,7 +13,7 @@ import { buildSseStream } from '../src/sse';
 import { createSlotController } from '../src/admission/slots';
 import { ScriptedModelClient } from './scripted-model';
 import { TIMED_OUT, waitFor, within } from './route-doubles';
-import type { ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
@@ -25,7 +25,7 @@ import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@wh
 // The route re-asks once when a reply has no `plan` (a prose reply parses with `rewrittenPrompt`
 // set but no structured rows), so a prose-only fixture must script TWO identical turns — the
 // second is the one the route actually keeps.
-const REWRITE_TEST_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-test', engineer: 'vendor/engineer-test' };
+const REWRITE_TEST_ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-test', 'vendor/engineer-test');
 function scriptedRewriteApp() {
   const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
     { role: 'rewrite', deltas: ['Build a todo list app with add, complete, and delete actions.'] },

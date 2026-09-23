@@ -5,7 +5,7 @@
  * (`../pipeline.ts` — untouched, design D1: it keeps its own `Pipeline` interface and
  * `createStubPipeline` verbatim). `machine.ts` itself depends on nothing concrete (design D2).
  */
-import { OpenRouterClient } from '../openrouter';
+import { OpenRouterClient, type ProviderSort } from '../openrouter';
 import type { Pipeline } from '../pipeline';
 import type { GenerateRequest, GenerationEvent } from '@whim/contract';
 import {
@@ -53,12 +53,19 @@ export interface ModelDeps {
  * environment at construction, with a typed actionable error naming the variable when the key is
  * absent"). Never falls back to a hard-coded model id or a silently-empty key. Throws
  * `ModelRosterEnvError` (naming every missing roster variable) or `MissingApiKeyError`.
+ *
+ * `opts.providerSort` (design D3) is the composition root's already-validated `WHIM_PROVIDER_SORT`
+ * (`../config.ts`), forwarded verbatim to the constructed client — this function never reads or
+ * validates it itself.
  */
-export function buildModelDepsFromEnv(env: NodeJS.ProcessEnv = process.env): ModelDeps {
+export function buildModelDepsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  opts?: { providerSort?: ProviderSort },
+): ModelDeps {
   const roster = modelRosterFromEnv(env);
   const apiKey = env[API_KEY_ENV];
   if (!apiKey) throw new MissingApiKeyError();
-  return { model: openRouterModelClient(new OpenRouterClient()), roster, apiKey };
+  return { model: openRouterModelClient(new OpenRouterClient(undefined, opts?.providerSort)), roster, apiKey };
 }
 
 export interface CreatePipelineOptions {

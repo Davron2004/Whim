@@ -5,6 +5,12 @@
  * dev-only modes".
  */
 import { loadServerConfig, ServerConfigError, type ServerConfig } from '../src/config';
+import {
+  defaultModelRoster,
+  modelRosterFromEnv,
+  ModelRosterEnvError,
+  ModelRosterReasoningError,
+} from '../src/generation/model';
 import { check, eq, section } from './harness';
 
 function baseEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -172,4 +178,115 @@ export function runConfigTests(): void {
     'outside production a missing OpenRouter key does not fail startup',
     loadServerConfig(baseEnv()).openRouterApiKey === undefined,
   );
+
+  section('WHIM_PROVIDER_SORT (design D3)');
+
+  check('unset: no provider preference', loadServerConfig(baseEnv()).providerSort === undefined);
+  for (const sort of ['price', 'throughput', 'latency'] as const) {
+    eq(`"${sort}" reaches ServerConfig.providerSort`, loadServerConfig(baseEnv({ WHIM_PROVIDER_SORT: sort })).providerSort, sort);
+  }
+  check(
+    'an unrecognized value fails startup naming the variable',
+    throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PROVIDER_SORT: 'cheapest' })), 'WHIM_PROVIDER_SORT'),
+  );
+
+  section('modelRosterFromEnv (design D2) — the roster of per-role models and reasoning settings');
+
+  // The two-variable case behaves exactly as `defaultModelRoster` describes it: clarify/summary
+  // fall back to rewrite, plan falls back to engineer, and every role gets its own default
+  // reasoning setting (clarify/rewrite/summary off, plan/engineer on).
+  {
+    const roster = modelRosterFromEnv({ WHIM_REWRITE_MODEL: 'vendor/rewrite-1', WHIM_ENGINEER_MODEL: 'vendor/engineer-1' });
+    eq('two-variable roster matches the default-roster helper', roster, defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1'));
+  }
+
+  // A missing required variable is still named, exactly as before.
+  {
+    const err = (() => {
+      try {
+        modelRosterFromEnv({});
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    check('both required vars missing: throws ModelRosterEnvError', err instanceof ModelRosterEnvError);
+    eq(
+      'both required vars missing: names both',
+      err instanceof ModelRosterEnvError ? [...err.missing].sort((a, b) => a.localeCompare(b)) : [],
+      ['WHIM_ENGINEER_MODEL', 'WHIM_REWRITE_MODEL'],
+    );
+  }
+
+  // An override routes ONLY its own role — every other role stays on the default it would have had.
+  {
+    const withClarifyOverride = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_CLARIFY_MODEL: 'vendor/clarify-only',
+    });
+    eq('clarify override reaches only the clarify role', withClarifyOverride.clarify.model, 'vendor/clarify-only');
+    eq('rewrite is untouched by the clarify override', withClarifyOverride.rewrite.model, 'vendor/rewrite-1');
+    eq('summary is untouched by the clarify override', withClarifyOverride.summary.model, 'vendor/rewrite-1');
+    eq('plan is untouched by the clarify override', withClarifyOverride.plan.model, 'vendor/engineer-1');
+  }
+  {
+    const withSummaryOverride = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_SUMMARY_MODEL: 'vendor/summary-only',
+    });
+    eq('summary override reaches only the summary role', withSummaryOverride.summary.model, 'vendor/summary-only');
+    eq('clarify is untouched by the summary override', withSummaryOverride.clarify.model, 'vendor/rewrite-1');
+  }
+  {
+    const withPlanOverride = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_PLAN_MODEL: 'vendor/plan-only',
+    });
+    eq('plan override reaches only the plan role', withPlanOverride.plan.model, 'vendor/plan-only');
+    eq('engineer is untouched by the plan override', withPlanOverride.engineer.model, 'vendor/engineer-1');
+  }
+
+  // An empty override counts as unset — falls back exactly as if the variable were absent.
+  {
+    const withEmptyOverride = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_CLARIFY_MODEL: '',
+    });
+    eq('an empty override falls back to the family model, same as unset', withEmptyOverride.clarify.model, 'vendor/rewrite-1');
+  }
+
+  // Each role's reasoning setting is independently overridable, defaulting per design D2's table.
+  {
+    const withReasoningOverride = modelRosterFromEnv({
+      WHIM_REWRITE_MODEL: 'vendor/rewrite-1',
+      WHIM_ENGINEER_MODEL: 'vendor/engineer-1',
+      WHIM_CLARIFY_REASONING: 'low',
+    });
+    eq('a role reasoning override reaches only its own role', withReasoningOverride.clarify.reasoning, 'low');
+    eq('rewrite keeps its own default (off), untouched by the clarify override', withReasoningOverride.rewrite.reasoning, 'off');
+    eq('plan keeps its own default (on)', withReasoningOverride.plan.reasoning, 'on');
+  }
+
+  // A value outside the closed set fails configuration loading, naming the variable.
+  {
+    const err = (() => {
+      try {
+        modelRosterFromEnv({ WHIM_REWRITE_MODEL: 'vendor/rewrite-1', WHIM_ENGINEER_MODEL: 'vendor/engineer-1', WHIM_PLAN_REASONING: 'fast' });
+        return undefined;
+      } catch (e) {
+        return e;
+      }
+    })();
+    check('an invalid reasoning value throws ModelRosterReasoningError', err instanceof ModelRosterReasoningError);
+    if (err instanceof ModelRosterReasoningError) {
+      eq('it names the exact variable', err.variable, 'WHIM_PLAN_REASONING');
+      for (const allowed of ['off', 'on', 'low', 'medium', 'high', 'default']) {
+        check(`the message names the allowed value "${allowed}"`, err.message.includes(allowed));
+      }
+    }
+  }
 }

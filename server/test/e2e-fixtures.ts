@@ -4,10 +4,10 @@
  * plan names one screen, and the candidate wedges its renderer before the first paint, so the
  * generation's synthetic run is held in its mount wait until something aborts it.
  */
-import type { ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { ScriptedTurn } from './scripted-model';
 
-export const E2E_ROSTER: ModelRoster = { rewrite: 'e2e/rewrite', engineer: 'e2e/engineer' };
+export const E2E_ROSTER: ModelRoster = defaultModelRoster('e2e/rewrite', 'e2e/engineer');
 
 /** Wedges the renderer before the first paint and never returns, so the run sits in its mount wait. */
 export const MOUNT_HANG = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
@@ -28,7 +28,7 @@ const SLOW_PLAN = JSON.stringify({
 export function heldRunTurns(): ScriptedTurn[] {
   return [
     { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
-    { role: 'engineer', deltas: [SLOW_PLAN] },
+    { role: 'plan', deltas: [SLOW_PLAN] },
     { role: 'engineer', deltas: [MOUNT_HANG] },
   ];
 }

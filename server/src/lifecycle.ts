@@ -346,7 +346,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const model = atStep('model', () => {
     if (overrides.model) return overrides.model;
     try {
-      const deps = buildModelDepsFromEnv(options.env);
+      const deps = buildModelDepsFromEnv(options.env, { providerSort: config.providerSort });
       return { client: deps.model, roster: deps.roster };
     } catch (err) {
       if (!useStub) throw err;
@@ -386,7 +386,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       });
       basePolicy = new ModelContentPolicy({
         modelClient: model.client,
-        rewriteModelId: model.roster.rewrite,
+        rewriteModelId: model.roster.rewrite.model,
         categories: loadContentPolicyDocument().categories,
         timeoutMs: config.policyTimeoutMs,
       });

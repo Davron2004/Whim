@@ -11,6 +11,7 @@
  * UTC-day arithmetic admission and the ledger need (spec: "The time source used for UTC-day
  * arithmetic SHALL be injectable") — it does not affect parsing.
  */
+import type { ProviderSort } from './openrouter';
 
 export interface ServerConfig {
   readonly nodeEnv: string;
@@ -27,6 +28,21 @@ export interface ServerConfig {
   readonly openRouterApiKey: string | undefined;
   readonly rewriteModel: string | undefined;
   readonly engineerModel: string | undefined;
+  /** `WHIM_PROVIDER_SORT` (design D3) — unset means no `provider` field on any request. */
+  readonly providerSort: ProviderSort | undefined;
+  /** The per-role model/reasoning overrides (design D2) — read here, raw and unvalidated, ONLY so
+   *  their names are accepted by the deploy runbook's documented-variable check
+   *  (`keysReadByLoadServerConfig`, `deploy-config.suite.ts`), mirroring `rewriteModel`/
+   *  `engineerModel` above. `modelRosterFromEnv` (`./generation/model.ts`) is the actual reading,
+   *  falling-back and validating owner of the roster — this module never re-derives it. */
+  readonly clarifyModel: string | undefined;
+  readonly summaryModel: string | undefined;
+  readonly planModel: string | undefined;
+  readonly clarifyReasoning: string | undefined;
+  readonly rewriteReasoning: string | undefined;
+  readonly summaryReasoning: string | undefined;
+  readonly planReasoning: string | undefined;
+  readonly engineerReasoning: string | undefined;
 
   readonly limitGenerationsPerDeviceDay: number;
   readonly limitGenerationsPerDay: number;
@@ -104,6 +120,19 @@ function readString(env: NodeJS.ProcessEnv, name: string, fallback: string): str
   return env[name] ?? fallback;
 }
 
+const PROVIDER_SORTS: readonly ProviderSort[] = ['price', 'throughput', 'latency'];
+
+/** `WHIM_PROVIDER_SORT` (design D3): unset (or empty) means no provider preference; any other
+ *  value fails configuration loading naming the variable and the allowed values. */
+function readProviderSort(env: NodeJS.ProcessEnv, name: string): ProviderSort | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return undefined;
+  if (!(PROVIDER_SORTS as readonly string[]).includes(raw)) {
+    throw new ServerConfigError(name, `${name} must be one of ${PROVIDER_SORTS.join(', ')}, got ${JSON.stringify(raw)}.`);
+  }
+  return raw as ProviderSort;
+}
+
 export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => number }): ServerConfig {
   const nodeEnv = readString(env, 'NODE_ENV', 'development');
   const pipeline: ServerConfig['pipeline'] = env.WHIM_PIPELINE === 'stub' ? 'stub' : 'real';
@@ -111,6 +140,14 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
   const openRouterApiKey = env.OPENROUTER_API_KEY;
   const rewriteModel = env.WHIM_REWRITE_MODEL;
   const engineerModel = env.WHIM_ENGINEER_MODEL;
+  const clarifyModel = env.WHIM_CLARIFY_MODEL;
+  const summaryModel = env.WHIM_SUMMARY_MODEL;
+  const planModel = env.WHIM_PLAN_MODEL;
+  const clarifyReasoning = env.WHIM_CLARIFY_REASONING;
+  const rewriteReasoning = env.WHIM_REWRITE_REASONING;
+  const summaryReasoning = env.WHIM_SUMMARY_REASONING;
+  const planReasoning = env.WHIM_PLAN_REASONING;
+  const engineerReasoning = env.WHIM_ENGINEER_REASONING;
 
   const generationMaxMs = readPositiveInt(env, 'WHIM_GENERATION_MAX_MS', 600_000);
 
@@ -127,6 +164,15 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     openRouterApiKey,
     rewriteModel,
     engineerModel,
+    providerSort: readProviderSort(env, 'WHIM_PROVIDER_SORT'),
+    clarifyModel,
+    summaryModel,
+    planModel,
+    clarifyReasoning,
+    rewriteReasoning,
+    summaryReasoning,
+    planReasoning,
+    engineerReasoning,
 
     limitGenerationsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DEVICE_DAY', 15),
     limitGenerationsPerDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DAY', 400),

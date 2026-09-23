@@ -13,7 +13,8 @@ import path from 'node:path';
 import { check, eq, caught, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import type { GenerateRequest, RewriteRequest, Usage } from '@whim/contract';
-import type { ModelClient, ModelDelta, ModelRequest, ModelStream } from '../src/generation/model';
+import { openRouterModelClient, type ModelClient, type ModelDelta, type ModelRequest, type ModelStream } from '../src/generation/model';
+import { OpenRouterClient, type FetchFn } from '../src/openrouter';
 import { loadContentPolicyDocument } from '../src/generation/prompts/inputs';
 import {
   ModelContentPolicy,
@@ -253,7 +254,8 @@ async function testClassifierBounds(): Promise<void> {
   const req = client.lastRequest!;
 
   eq('the rewrite model id is used verbatim', req.model, REWRITE_MODEL_ID);
-  eq('output is bounded: no reasoning stream requested', req.reasoning, false);
+  eq('output is bounded: no reasoning stream requested', req.reasoning, 'off');
+  eq('the call is labeled policy (design D4)', req.role, 'policy');
   check(
     'the classifier system message carries the document categories text verbatim',
     req.messages.some((m) => m.role === 'system' && m.content.includes(CATEGORIES)),
@@ -262,6 +264,45 @@ async function testClassifierBounds(): Promise<void> {
     'the classified text reaches the user message, framed as data',
     req.messages.some((m) => m.role === 'user' && m.content.includes('hello there')),
   );
+}
+
+/** A fetch double that answers an allow verdict over a real SSE stream and captures the outgoing
+ *  request body — the wire the classifier's call actually reaches, through the REAL
+ *  `OpenRouterClient` rather than `ModelContentPolicy`'s injected fake. */
+function allowVerdictWireFetch(captured: { body?: Record<string, unknown> }): FetchFn {
+  return (async (_input, init) => {
+    captured.body = JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('data: {"id":"gen-classifier-wire","choices":[{"index":0,"delta":{"content":"{\\"verdict\\":\\"allow\\"}"}}]}\n\n'),
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as FetchFn;
+}
+
+/**
+ * Red-check target (design D1): the classifier's wire request explicitly disables reasoning
+ * through the REAL `OpenRouterClient`, never `ModelContentPolicy`'s injected fake. Fails against
+ * the pre-change wire mapping `...(options.reasoning ? { reasoning: { enabled: true } } : {})`,
+ * because `'off'` is a non-empty (truthy) string: that mapping would send `{enabled:true}` instead.
+ */
+async function testClassifierWireReasoningIsExplicitlyOff(): Promise<void> {
+  section("ModelContentPolicy — the classifier's OWN wire request explicitly disables reasoning (design D1)");
+
+  const captured: { body?: Record<string, unknown> } = {};
+  const client = openRouterModelClient(new OpenRouterClient(allowVerdictWireFetch(captured)));
+  const policy = new ModelContentPolicy({ modelClient: client, rewriteModelId: REWRITE_MODEL_ID, categories: CATEGORIES, timeoutMs: 5000 });
+  const result = await policy.check('hello there', 'generate');
+
+  eq('the classifier call still resolves normally', result.verdict, 'allow');
+  check('setup: the outgoing wire body was captured', captured.body !== undefined);
+  eq('the wire body explicitly disables reasoning', captured.body?.reasoning, { enabled: false });
 }
 
 // ── §The check covers all user-authored text in the request; source is excluded ──
@@ -479,6 +520,7 @@ export async function runPolicyTests(): Promise<void> {
   await testFailClosed();
   await testCheckResultUsage();
   await testClassifierBounds();
+  await testClassifierWireReasoningIsExplicitlyOff();
   await testInputCoverage();
   await testCache();
   await testLogContent();

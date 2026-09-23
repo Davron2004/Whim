@@ -28,7 +28,7 @@ import { check, eq, caught, section } from './harness';
 import { captureLogs } from './log-capture';
 import { OpenRouterClient } from '../src/openrouter';
 import type { FetchFn } from '../src/openrouter';
-import { openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
+import { defaultModelRoster, openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
 import { ScriptedModelClient } from './scripted-model';
 import type { CapturedRequest } from './scripted-model';
 import { loadSdkReference, loadFewShotExamples, loadPromptInputs, loadContentPolicyDocument, PromptInputError } from '../src/generation/prompts/inputs';
@@ -101,7 +101,8 @@ async function testModelClientAdapter(): Promise<void> {
         model: 'test-vendor/engineer-model',
         messages: [{ role: 'user', content: 'hi' }],
         maxTokens: 4096,
-        reasoning: true,
+        reasoning: 'on',
+        role: 'generate',
       },
       controller.signal,
     );
@@ -111,19 +112,20 @@ async function testModelClientAdapter(): Promise<void> {
     const body = JSON.parse((captured?.init?.body as string) ?? '{}') as Record<string, unknown>;
     eq('adapter: model id passthrough is verbatim', body.model, 'test-vendor/engineer-model');
     eq('adapter: maxTokens reaches the wire as max_tokens', body.max_tokens, 4096);
-    eq('adapter: reasoning:true reaches the wire as {enabled:true}', body.reasoning, { enabled: true });
+    eq('adapter: reasoning:\'on\' reaches the wire as {enabled:true}', body.reasoning, { enabled: true });
     check('adapter: abort signal forwarded by identity', captured?.init?.signal === controller.signal);
+    check('adapter: the role label never reaches the wire body', !('role' in body));
   }
 
-  // The negative of the reasoning case: unset (the rewrite/clarify shape) never asks for it.
+  // The negative of the reasoning case: `default` (the rewrite/clarify shape) never asks for it.
   {
     let captured: { url: string; init?: RequestInit } | undefined;
     const openRouter = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, (call) => { captured = call; }));
     const client = openRouterModelClient(openRouter);
-    const { deltas } = client.stream({ model: 'x/y', messages: [{ role: 'user', content: 'hi' }] });
+    const { deltas } = client.stream({ model: 'x/y', messages: [{ role: 'user', content: 'hi' }], reasoning: 'default', role: 'rewrite' });
     await drain(deltas);
     const body = JSON.parse((captured?.init?.body as string) ?? '{}') as Record<string, unknown>;
-    check('adapter: reasoning unset never asks the provider for it', !('reasoning' in body));
+    check('adapter: reasoning:\'default\' never asks the provider for it', !('reasoning' in body));
     check('adapter: maxTokens unset is never sent', !('max_tokens' in body));
   }
 }
@@ -370,7 +372,7 @@ async function testEditTurnPrompt(): Promise<void> {
 
 // ── §Schema context and the one-scan threading, through a real machine run ───
 
-const EDIT_ROSTER: ModelRoster = { rewrite: 'vendor/rewrite-1', engineer: 'vendor/engineer-1' };
+const EDIT_ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const FAKE_PROMPT_INPUTS: PromptInputs = { sdkReference: 'fake sdk reference', fewShotExamples: [] };
 
 const EDIT_PLAN_JSON = JSON.stringify({
@@ -391,7 +393,7 @@ async function testEditTurnThreading(): Promise<void> {
   section('Edit context — one scan per run, fed to both the prompts and the check stage');
 
   const scripted = new ScriptedModelClient(EDIT_ROSTER, [
-    { role: 'engineer', deltas: [EDIT_PLAN_JSON] },
+    { role: 'plan', deltas: [EDIT_PLAN_JSON] },
     { role: 'engineer', deltas: ['// candidate 1'] },
     { role: 'engineer', deltas: ['// candidate 2'] },
   ]);

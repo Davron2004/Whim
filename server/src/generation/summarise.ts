@@ -196,9 +196,9 @@ function timeoutAfter(ms: number): { promise: Promise<undefined>; cancel: () => 
 }
 
 /**
- * The production `Summariser`: one turn on the roster's small/fast model (the same role `/v1/rewrite`
- * uses — the summariser writes one sentence of product prose, not code, and adding a fourth roster
- * role would mean a new required environment variable for a step that must never fail a run).
+ * The production `Summariser`: one turn on the roster's `summary` role (design D2) — defaults to
+ * the rewrite model and reasoning off, independently overridable (`WHIM_SUMMARY_MODEL`,
+ * `WHIM_SUMMARY_REASONING`), since the summariser writes one sentence of product prose, not code.
  */
 export function createModelSummariser(options: ModelSummariserOptions): Summariser {
   const { model, roster } = options;
@@ -214,7 +214,12 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
       try {
         const turn = (async (): Promise<SummariseResult> => {
           const stream = model.stream(
-            { model: roster.rewrite, messages: buildSummaryMessages(input) },
+            {
+              model: roster.summary.model,
+              messages: buildSummaryMessages(input),
+              reasoning: roster.summary.reasoning,
+              role: 'summary',
+            },
             controller.signal,
           );
           // Attach the rejection handler the moment the stream exists: a provider rejects `usage`
