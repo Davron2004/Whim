@@ -14,6 +14,19 @@ Convention per item: `### [severity] title` · **Where** · **What** · **Why it
 
 ## Open
 
+### [med] Developer observability: crashes and failures are invisible off-device
+- [ ] open
+- **Where:** app: `src/host/logging/` (ring buffer + dev-only `/dev/logs` sink), `src/host/launcher/ScreenBoundary.tsx`, `src/host/launcher/webview-error.ts`. Server: `server/src/logger.ts`, `deploy/compose.yaml` (`json-file` log driver), `server/src/admin/cli.ts`.
+- **What:** audit of 2026-09-23. Reports work: stored in `reports.db` on the VM, read with `whim-admin reports list/show` (commands in `docs/deploy.md` → Operating). Everything else has a gap:
+  - No crash reporting in the app (no Sentry/Crashlytics, no `ErrorUtils.setGlobalHandler`). JS errors caught by `ScreenBoundary`, WebView failures, and client-side generation errors go only to the on-device ring buffer. A production build ships none of it anywhere. Native crashes show up only in Play Console → Android vitals and App Store Connect → TestFlight → Crashes.
+  - Server logs live only on the VM as Docker `json-file` (10 MB × 5 rotation, so ~50 MB of history). They aren't in Cloud Logging, so they're lost when the VM is recreated and there's nothing to search or alert on.
+  - A generation failure logs only `{reason}` (`server/src/generation/machine.ts:641`), with no request id tying it to the usage-ledger row or the device. The ledger stores `outcome` with no reason.
+  - Nobody is told when a report arrives, the API goes down, or GCP spend spikes. There's no uptime check and no budget alert (only the OpenRouter credit cap).
+  - `docs/capabilities.md` points at `openspec/specs/{content-reports,server-deployment,server-admission-control,content-policy}/spec.md`, and none of those files exist. `openspec/changes/public-generation-server` was never archived.
+- **Why it matters:** once real users arrive, crashes and failed generations can't be seen unless someone reports them by hand.
+- **Suggested approach:** proposed as `openspec/changes/developer-observability/`; its disclosure chain waits for GitHub #63 (rewrite of the consent, policy and store text). The owner chose to route device errors through Whim's own server instead of a third-party SDK. Archive `public-generation-server` separately.
+- **Source:** observability audit, 2026-09-23.
+
 ### [info] Generation speed and model choice, measured 2026-09-22
 - **Where:** `docs/research/generation-speed-2026-09.md`; raw verdicts, inputs and the step ledger in `openspec/changes/faster-generation/` (`bench/`, `progress.md`, `review-*.md`).
 - **What:** why clarify and plan writing took ~30 s (hidden default reasoning, also the cause of #51), the before/after timings, the blind quality judge that kept thinking on for first drafts, the 13-model screen for the short calls, and the Qwen 3.8 27B verdict.
