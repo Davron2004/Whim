@@ -40,6 +40,7 @@
 - [ ] 6.1 Commit the alert definitions under `deploy/monitoring/`: email channel, uptime check on `https://<api>/healthz` (5 min, 3+ regions, alert after 2 failures), log-based alerts for `report accepted` (5-minute rate limit, id and reason only), `budget_exhausted` refusals (1 h) and `scope="device"` at `ERROR`+ (1 h), and a log-based metric plus threshold policy for more than 5 `terminal failure` lines per hour.
 - [ ] 6.2 Extend `deploy/provision.sh` to apply them by display name (create if missing, update otherwise), create the billing budget on `WHIM_BILLING_ACCOUNT` at 50/90/100 % of `WHIM_MONTHLY_BUDGET_USD`, and create the private source-map bucket. Register `WHIM_ALERT_EMAIL`, `WHIM_BILLING_ACCOUNT` and `WHIM_MONTHLY_BUDGET_USD` wherever the deploy-config suite requires documented variables to be accepted, plus `deploy/operator.env.example`. Suite test: a second run is planned as no changes.
 - [ ] 6.3 Document the alerts in `docs/deploy.md` (what each means, the first command to run when it fires — for a report, `whim-admin reports show <id>`).
+- [ ] 6.4 Add a daily snapshot schedule for the `whim-data` persistent disk: a `gcloud compute resource-policies create snapshot-schedule` policy (daily, keep 14) created by display name in `deploy/provision.sh` and attached to the disk, rerun-safe. Replace the runbook's "snapshots must be scheduled manually" note with the restore steps.
 
 ## 7. Source maps and symbolication
 

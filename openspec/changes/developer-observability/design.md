@@ -122,6 +122,7 @@ The Ops Agent's logging receiver tails `/var/lib/docker/containers/*/*-json.log`
 | Generation failures | log-based metric on `terminal failure`, > 5 in 1 h | 1 per hour |
 | Credit exhausted | log match on a `budget_exhausted` refusal | 1 per hour |
 | Device error | log match `scope="device" severity>=ERROR` | 1 per hour |
+| (not an alert) Disk snapshots | daily schedule on `whim-data`, keep 14 | — |
 | GCP spend | billing budget on `WHIM_BILLING_ACCOUNT`, 50/90/100 % of `WHIM_MONTHLY_BUDGET_USD` | — |
 
 The report alert sends only what is already in the logs: id and reason. Content stays in `reports.db`, and the email tells the owner to run `whim-admin reports show <id>`.

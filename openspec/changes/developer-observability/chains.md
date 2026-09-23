@@ -56,7 +56,7 @@ chain-7, and both are also blocked outside this change until GitHub #63's rewrit
 
 ## chain-6: alerts
 
-- tasks: 6.1–6.3
+- tasks: 6.1–6.4
 - rationale: the committed Cloud Monitoring definitions, `provision.sh` applying them (plus the budget and source-map bucket), and the runbook entry for each alert.
 - reads: specs/server-observability/spec.md §"The owner is alerted by email"; design.md D10; handoff: handoff/log-shipping.md (field paths the log-based alerts filter on)
 - writes-contract: none
