@@ -451,11 +451,11 @@ export class OpenRouterClient {
         // `isCreditExhaustedError`. The catch below preserves this typed error as-is.
         if (frame?.error) throw streamFrameError(frame.error);
         if (frame?.reasoning) {
-          if (firstDeltaAt === undefined) firstDeltaAt = Date.now();
+          firstDeltaAt ??= Date.now();
           yield { kind: 'reasoning', text: frame.reasoning };
         }
         if (frame?.content) {
-          if (firstDeltaAt === undefined) firstDeltaAt = Date.now();
+          firstDeltaAt ??= Date.now();
           yield { kind: 'text', text: frame.content };
         }
       }

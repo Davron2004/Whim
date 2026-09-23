@@ -51,7 +51,7 @@ function valueForFlag(argv: readonly string[]): Map<string, string> {
   const known = new Set(['url', 'eval-set', 'cases', 'parallel', 'retries', 'save-sources', 'json']);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    if (flag === undefined || !flag.startsWith('--')) throw new Error(`unexpected argument: ${flag ?? ''}`);
+    if (!flag?.startsWith('--')) throw new Error(`unexpected argument: ${flag ?? ''}`);
     const name = flag.slice(2);
     if (!known.has(name)) throw new Error(`unknown argument: ${flag}`);
     const value = argv[index + 1];
@@ -379,7 +379,7 @@ function selectedCases(evalSet: EvalSet, wanted: readonly string[] | undefined):
   if (wanted === undefined) return [...evalSet.cases];
   const byId = new Map(evalSet.cases.map((item) => [item.caseId, item]));
   const selected = wanted.map((caseId) => byId.get(caseId));
-  if (selected.some((item) => item === undefined)) throw new Error(`--cases contains an id not present in the eval set`);
+  if (selected.includes(undefined)) throw new Error(`--cases contains an id not present in the eval set`);
   return selected as EvalCase[];
 }
 

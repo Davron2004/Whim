@@ -1236,3 +1236,30 @@ Caddy. One line of why each load-bearing piece:
   turns any missed override into a loud failure — three independent reasons it can't reach the
   provider, plus a production-bundle metafile check that it can't reach production either
   (design.md D26).
+
+### 69. Every model call states its reasoning; the engineer keeps thinking on first drafts `[DECIDED — openspec: faster-generation; answers #25's open model choice for now]`
+
+The clarify and plan-writing waits (#55) and the intermittent `policy_unavailable` refusals (#51) had
+one cause. The server treated a request without a `reasoning` field as a request without reasoning, and
+DeepSeek V4 reasons by default. The measurements and the blind quality judge behind every point below
+are in `docs/research/generation-speed-2026-09.md`.
+
+- **Reasoning is explicit on every call.** Each role states `off`, `on`, an effort level or `default`,
+  and the type checker rejects a call site that doesn't decide. Clarify, plan writing, the post-build
+  summary and the content-policy classifier default to `off`; the classifier can't be switched on.
+  That took clarify from ~30 s to ~2 s, plan writing from 17–35 s to ~2 s, and the classifier from
+  4-in-15 unparseable verdicts to none.
+- **The engineer keeps thinking on the first draft.** On 14 cases judged blind, the same model scored
+  8.6/10 with thinking and 6.0 without; thinking only in the plan stage scored 6.0 too. Repairs get
+  their own role and skip thinking in production (`WHIM_REPAIR_REASONING=off`): they fix flagged
+  diagnostics, and took ~10 s instead of ~37 s.
+- **Keep both models.** `deepseek/deepseek-v4-flash-0731` stays on the short calls and
+  `deepseek/deepseek-v4.1-flash` on the engineer. Of 13 cheap models on the real clarify and rewrite
+  prompts, the current one asked the most useful questions. As engineers, Qwen 3.8 27B scored 4.9/10
+  without thinking and lost two builds to a flaky provider with it; the other cheap Chinese candidates
+  scored lower still.
+- **Ask OpenRouter for fast providers.** `WHIM_PROVIDER_SORT=throughput`; default routing sent the same
+  model to providers streaming anywhere from 26 to 390 tokens a second.
+- **Model choice is re-made by measurement, not by feel.** `server/flowbench.mjs` drives the phone's
+  flow against any roster and saves the apps for `evals/cli.mjs`; the judge method is in the change's
+  `bench/` folder. Rerun both before changing a model.
