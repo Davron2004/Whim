@@ -136,6 +136,9 @@ What this change owns:
 
 The current policy and store text are an unreviewed AI draft, so none of their specifics (including "no crash-reporting SDKs") constrain this change.
 
+### D13. `/healthz` names the running commit
+`deploy/cloudbuild.yaml` already tags each image with the full commit SHA, and `deploy.sh` refuses a dirty or unpushed tree. So the SHA is trustworthy. It is passed as a Docker build arg into an `ENV`, so the value describes the image's bytes. A value set at deploy time would only describe what the deploy script believed. A rollback therefore reports the right commit with no extra step. The repo is public, so publishing the SHA reveals nothing an attacker couldn't already read. Smoke compares it with the deployed tag, which catches the "deploy said OK, old container still serving" case, and the boot log line carries it, so every Cloud Logging entry after a restart can be dated to a commit.
+
 ### D12. Source maps per release build, symbolicated on demand
 - **Producing them.** The release scripts (`android:release`, the iOS archive lane) already produce a Hermes bundle; they also emit the composed Hermes source map.
 - **Storing them.** Maps are uploaded to a private bucket `gs://anycognition-whim-sourcemaps/<platform>/<version>+<build>.map`, which `provision.sh` creates. They aren't committed to git (several MB each).
