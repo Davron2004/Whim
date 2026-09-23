@@ -39,7 +39,7 @@ Timings come from two places: the stage events the client sees, and a new `model
 
 Quality came from two sources. The corpus-eval harness (`evals/cli.mjs run --source-dir`) checked every delivered app, and every app passed Tier A (static checks and containment) and rendered without errors. Its Tier B can't compare models, though. The visible set asserts a screen literally named `Home`, while generated apps name their first screen `Dashboard` or `Today`. It also asserts a storage write that the scripted tap-through rarely triggers. The real quality signal came from a blind judge instead. For each case, a Sonnet subagent read the request, the answers and every configuration's source under shuffled letters, then scored coverage, correctness and UX and ranked them. It never saw which model wrote what. Two independent rounds covered 6 and 8 cases.
 
-The whole investigation spent $1.64 of the $2 OpenRouter budget (the key's usage went from $2.66 to $4.30) across about 100 full generations and a few hundred short probe calls. Generation itself is cheap. Every configuration I tested cost about a cent or less per delivered app.
+The whole investigation spent $1.65 of the $2 OpenRouter budget (the key's usage went from $2.66 to $4.31) across about 100 full generations and a few hundred short probe calls. Generation itself is cheap. Every configuration I tested cost about a cent or less per delivered app.
 
 ## Before and after, same prompts, same models
 
