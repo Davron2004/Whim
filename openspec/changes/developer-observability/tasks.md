@@ -1,0 +1,52 @@
+## 1. Server logs into Cloud Logging
+
+- [ ] 1.1 On the real VM, before building anything else, install the Ops Agent with a logging receiver that tails `/var/lib/docker/containers/*/*-json.log`, parses the Docker envelope and then pino's JSON in `log`. Confirm in Logs Explorer that a server line arrives with its pino fields under `jsonPayload` and the right severity, and that the boot self-test and `deploy/smoke.sh` still pass (container can't reach the metadata server). Also try the Docker `gcplogs` driver on the same VM and record whether it produces structured `jsonPayload` fields. Write the results and the chosen path into `progress.md` (design D8).
+- [ ] 1.2 Add a pino `formatters.level` in `server/src/logger.ts` that emits `severity` (`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`) next to the numeric level, with a server-suite test that an `error` call serializes `severity: "ERROR"` and that redaction is unchanged (spec server-observability §"Server logs reach Google Cloud Logging").
+- [ ] 1.3 Commit the agent config chosen in 1.1 as `deploy/vm/ops-agent.yaml` and install and apply it from `deploy/vm/bootstrap.sh`, rerun-safe like the rest of the script. Extend the deploy-config suite to check the config is present and that `compose.yaml` still uses `json-file`.
+- [ ] 1.4 Rewrite `docs/deploy.md` §Operating around Logs Explorer: saved queries for one request by `requestId`, terminal failures by `reason`, device errors (`jsonPayload.scope="device"`) and accepted reports; keep the on-VM `docker compose logs` form as the fallback.
+
+## 2. Request id, failure reason and the diagnostics route
+
+- [ ] 2.1 In `@whim/contract`, add the `WHIM_REQUEST_ID_HEADER = 'x-whim-request-id'` constant and the `.strict()` zod `DiagnosticsBatch` schema (envelope `platform`, `osVersion`, `appVersion`, `buildNumber`; records with the allowlisted fields and length caps from spec device-diagnostics §"Only an allowlisted projection"), with contract tests that an unknown key and an over-long string are rejected.
+- [ ] 2.2 Add request-id middleware to `createApp` for `/v1/*`, mounted before device identity: mint a UUID, set the response header on every `/v1` response (refusals and SSE opens included), and bind a child logger carrying `requestId` into the Hono context; route handlers log through it. Test a `429` refusal and a streamed generate both carry the header and matching log lines.
+- [ ] 2.3 Make `usageStore.admit` take the request id instead of minting one, and pass it through `RunTrace`/the pipeline so `emitCompletion`'s `terminal failure` line carries `requestId`. Test that the header, the ledger row id and the terminal line agree for one failed generation.
+- [ ] 2.4 Add the nullable `failure_reason` column with the existing additive `ALTER TABLE` pattern; settle it from the terminal reason or refusal code, reject any value outside those closed sets, and have `whim-admin usage` print counts per reason. Tests: a repair-exhausted row holds its code; a free-text reason is refused; an old database opens and gains the column.
+- [ ] 2.5 Add `POST /v1/diagnostics`: 32 KB body cap, 50-record batch cap, `DiagnosticsBatch` validation (`400` on unknown keys), in-memory per-device daily allowance and global daily ceiling (`429`, reset at UTC midnight), one `scope: "device"` log line per record at its level with the envelope fields, `204` on success, no database or file writes. Tests cover each status and assert `usage.db`/`reports.db` gain no rows.
+
+## 3. Mini-app errors reach the host seam
+
+- [ ] 3.1 With a throwaway scratch script against the built runtime (not committed, not under `invariants/`), check whether an uncaught React 19 render error, an event-handler throw and an unhandled rejection inside the realm fire `error`/`unhandledrejection` on the realm's `window`. Record the result in `progress.md`. If render errors don't, add the SDK-root error boundary that posts the same frame to this chain (design D6, open question 2).
+- [ ] 3.2 In `src/runtime/web/loader.js`, listen for `error` and `unhandledrejection` on the realm window and post the existing nonce-authenticated `error` frame with `where: 'runtime' | 'rejection'` and the error's `name`. No new frame kind, global, capability or CSP change. Rebuild; `npm run invariants` and `npm run bridge:invariants` stay green.
+- [ ] 3.3 In `useMiniAppHost.ts`, have the fatal `handleErrorFrame` branch (bundle, mount, deliver), the paint-watchdog timeout and launch failures emit `log.error(page, 'mini-app failed', {where, errorClass, appId})` alongside setting `lastError`; non-fatal `runtime`/`rejection` frames emit `log.error` too. Test with frames shaped like the loader's real output.
+- [ ] 3.4 HUMAN-BOOTSTRAP (owner-authored `invariants/`): add bridge-invariant cases that a post-paint handler throw and an unhandled rejection arrive as trusted `error` frames with `where` of `runtime`/`rejection` and no message text, and that a nonce-less forged `error` frame is still rejected; commit before chain 3 gates.
+
+## 4. Device diagnostics upload
+
+- [ ] 4.1 Write `toDiagnostic(record)` in a non-RN module under `src/host/logging/`: project a redacted `DevLogRecord` onto the allowlist, drop the first stack line, cap strings, reduce URLs to paths, strip stack and message from mini-app records. Node-suite tests use each scenario of spec device-diagnostics §"Only an allowlisted projection", including the "Alice owes 40" case end to end through the seam.
+- [ ] 4.2 Add `diagnosticsTransport` to `createSeam`: error level only, dedup by `(channel, message, errorClass, where)` with count deltas across flushes, 50 distinct per session, flush at 20 / 30 s / app background, one POST attempt, failure recorded on `whim:sink` without recursion, and no request unless a current AI-data consent grant exists (records discarded, not queued). Tests for each scenario of §"Error-level records are uploaded…" and §"Uploads require a current AI-data consent grant".
+- [ ] 4.3 In `index.js`, install `ErrorUtils.setGlobalHandler` (chaining to the previous handler) and the Hermes unhandled-rejection hook, both logging through the seam. On `isFatal`, write the projected record to MMKV under one fixed key; on launch, upload it once consent allows and delete it. Test the slot's write/read/delete logic in a Node suite with an injected store.
+- [ ] 4.4 Read `x-whim-request-id` in the generation transport (XHR `getResponseHeader`) and attach `requestId` to every error record about that request (`logMappedError`, LauncherRoot's `generation step failed` / `failure screen shown`). Add a static check that the device's header literal equals the contract constant.
+- [ ] 4.5 Add a `checks/` pass that fails if any device module outside the two sink transports sends a log record over the network (spec host-observability §"No third path out of the seam"), red-checked against a planted third path.
+
+## 5. Disclosure coverage (after #63 lands)
+
+- [ ] 5.1 Check #63's consent screen, privacy policy, Play Data safety, iOS privacy manifest and App Store privacy answers against D11's facts (collected, not shared, not linked, 30 days, service providers acting for Whim) and D9's ledger failure code. Record the result in `progress.md`. If any declaration doesn't cover diagnostics, add it in #63's style and bump the consent version (the one re-ask), recording why.
+- [ ] 5.2 Teach the release checks to fail when a build contains the diagnostics transport and any declaration omits crash logs and diagnostics, or when the declarations disagree. Red-check by removing the diagnostics entry from the iOS privacy manifest.
+- [ ] 5.3 Settle the Play purpose (App functionality or Analytics) against Google's current definitions if #63 left it open, and record the choice in `progress.md`.
+
+## 6. Alerts
+
+- [ ] 6.1 Commit the alert definitions under `deploy/monitoring/`: email channel, uptime check on `https://<api>/healthz` (5 min, 3+ regions, alert after 2 failures), log-based alerts for `report accepted` (5-minute rate limit, id and reason only), `budget_exhausted` refusals (1 h) and `scope="device"` at `ERROR`+ (1 h), and a log-based metric plus threshold policy for more than 5 `terminal failure` lines per hour.
+- [ ] 6.2 Extend `deploy/provision.sh` to apply them by display name (create if missing, update otherwise), create the billing budget on `WHIM_BILLING_ACCOUNT` at 50/90/100 % of `WHIM_MONTHLY_BUDGET_USD`, and create the private source-map bucket. Register `WHIM_ALERT_EMAIL`, `WHIM_BILLING_ACCOUNT` and `WHIM_MONTHLY_BUDGET_USD` wherever the deploy-config suite requires documented variables to be accepted, plus `deploy/operator.env.example`. Suite test: a second run is planned as no changes.
+- [ ] 6.3 Document the alerts in `docs/deploy.md` (what each means, the first command to run when it fires — for a report, `whim-admin reports show <id>`).
+
+## 7. Source maps and symbolication
+
+- [ ] 7.1 HUMAN-BOOTSTRAP: add `metro-symbolicate` (the version React Native 0.85.3 already resolves) to `package.json` devDependencies and commit it before this chain gates.
+- [ ] 7.2 Make the release flows upload the Hermes source map (Android: the React Native Gradle plugin's `generated/sourcemaps/react/release/index.android.bundle.map`; iOS: `SOURCEMAP_FILE` in the bundle phase) to `gs://anycognition-whim-sourcemaps/<platform>/<version>+<build>.map`, failing the release if the upload fails.
+- [ ] 7.3 Write `scripts/symbolicate.mjs <platform> <version> <build>`: read a stack on stdin, fetch the map, print source frames; exit non-zero naming the key when the map is missing. Test with a real release build's map and a stack from it.
+
+## 8. Live verification (attended)
+
+- [ ] 8.1 Deploy the server, rerun `bootstrap.sh` and `provision.sh`. Confirm one generation's lines are queryable by `requestId` in Logs Explorer, a hand-sent report produces an email with only id and reason, stopping the server container produces the uptime email, and a second `provision.sh` run changes nothing. Record in `progress.md`.
+- [ ] 8.2 On a real Android and iOS device with the new build: an existing consent grant is not re-asked (unless 5.1 needed the fallback); a mini-app that throws in a button handler produces a `scope="device"` entry with `where: "runtime"` and no message text; a forced fatal JS error is uploaded on the next launch; one of those stacks symbolicates to `src/` lines. Record in `progress.md`.
