@@ -159,7 +159,10 @@ function requestBody(options: OpenRouterOptions, providerSort: ProviderSort | un
     ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     ...reasoningField(options.reasoning),
-    ...(providerSort ? { provider: { sort: providerSort } } : {}),
+    // `data_collection: 'deny'` keeps prompts away from providers that train on or keep them.
+    // Measured 2026-09-23: 25 of 26 providers for the engineer model still qualify (only DeepSeek's
+    // own API drops out), and the routed pick and price didn't change.
+    provider: { data_collection: 'deny', ...(providerSort ? { sort: providerSort } : {}) },
     stream_options: { include_usage: true },
   });
 }
