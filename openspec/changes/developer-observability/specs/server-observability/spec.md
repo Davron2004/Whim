@@ -80,3 +80,23 @@ the report id and reason.
 #### Scenario: Rerunning provisioning is a no-op
 - **WHEN** `provision.sh` runs twice with the same configuration
 - **THEN** the second run creates no duplicate channel, check, policy or budget
+
+### Requirement: The server reports which commit it is running
+`GET /healthz` SHALL include `commit`: the full 40-character git SHA the running image was built
+from, baked into the image at build time from the same SHA that tags it, never read from anything
+the deploy step sets at run time. An image not built by the release pipeline SHALL report
+`"unknown"`. The boot log line SHALL carry the same `commit`. The smoke checks SHALL accept any
+40-character SHA when run standalone, and when run by a deploy or rollback they SHALL fail unless
+`commit` equals the SHA that deploy just rolled out.
+
+#### Scenario: A deploy that didn't take is caught
+- **WHEN** a deploy of commit B finishes but the container still runs the image for commit A
+- **THEN** the smoke checks fail, naming both SHAs
+
+#### Scenario: A rollback reports the old commit
+- **WHEN** `deploy.sh --tag <A>` rolls back to commit A's image
+- **THEN** `/healthz` reports commit A without any separate setting being changed
+
+#### Scenario: A local build says so
+- **WHEN** the server runs outside the release image
+- **THEN** `/healthz` reports `"commit": "unknown"`

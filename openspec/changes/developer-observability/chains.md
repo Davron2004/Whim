@@ -26,9 +26,9 @@ chain-7, and both are also blocked outside this change until GitHub #63's rewrit
 
 ## chain-2: server-request-id-and-diagnostics-route
 
-- tasks: 2.1–2.5
+- tasks: 2.1–2.6
 - rationale: one server layer. The contract additions, request-id middleware, ledger id and `failure_reason`, and the new route all go through `app.ts`, `usage-store.ts` and `@whim/contract`.
-- reads: specs/server-observability/spec.md §"One request id follows a /v1 request everywhere", §"The ledger records a closed failure code"; specs/device-diagnostics/spec.md §"Only an allowlisted projection…" (field list and caps only), §"The diagnostics route validates, bounds and logs without storing"; design.md D2, D7, D9; handoff: none
+- reads: specs/server-observability/spec.md §"One request id follows a /v1 request everywhere", §"The ledger records a closed failure code"; specs/device-diagnostics/spec.md §"Only an allowlisted projection…" (field list and caps only), §"The diagnostics route validates, bounds and logs without storing"; design.md D2, D7, D9, D13; specs/server-observability/spec.md §"The server reports which commit it is running"; handoff: none
 - writes-contract: handoff/server-diagnostics.md (`WHIM_REQUEST_ID_HEADER` value, the `DiagnosticsBatch` type verbatim, the route's status codes and caps, the `scope: "device"` log line shape)
 
 ## chain-3: sandbox-error-capture
