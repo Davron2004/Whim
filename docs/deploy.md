@@ -176,11 +176,18 @@ below matter, the app side must already point at this domain: `WHIM_DOMAIN` in
 
 ## Operating
 
-- **Logs** — `docker compose -f /opt/whim/compose.yaml logs -f whim-server` (structured JSON via
-  `pino`; no request content, ever).
-- **Reports** — `docker compose exec whim-server node server/whim-admin.mjs reports list [--since N] [--limit N] [--json]`,
+Every command below runs on the VM, from a laptop as
+`gcloud compute ssh whim-vm --tunnel-through-iap --command '<command>'`. Compose needs `sudo` and
+the project directory: `/opt/whim/.env` is root-only (`0600`), and without it compose can't
+interpolate `compose.yaml`. `$C` below stands for
+`sudo -H docker compose --project-directory /opt/whim --file /opt/whim/compose.yaml` (the same
+string the deploy scripts use, from `deploy/lib.sh`).
+
+- **Logs** — `$C logs --since 24h whim-server` (or `logs -f`). Structured JSON via `pino`; no
+  request content, ever.
+- **Reports** — `$C exec -T whim-server node server/whim-admin.mjs reports list [--since N] [--limit N] [--json]`,
   `reports show <id> [--json]`, `reports purge`.
-- **Usage and cost** — `docker compose exec whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
+- **Usage and cost** — `$C exec -T whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
   — cost per generation, per device and per day, from the ledger.
 - **Tuning limits** — a capacity profile (below) is the only deploy-time lever, and it never carries
   a daily limit, a retention period or `NODE_ENV` by construction. Changing a daily/global limit

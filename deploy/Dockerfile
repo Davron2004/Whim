@@ -42,8 +42,9 @@ WORKDIR /app
 COPY --from=deps /deps/node_modules ./node_modules
 COPY --from=build /src/server/dist/app ./
 # The root filesystem is read-only on the VM (deploy/compose.yaml), so $HOME points at the /tmp tmpfs
-# for Chromium's and fontconfig's per-user state.
-ENV NODE_ENV=production HOME=/tmp
+# for Chromium's and fontconfig's per-user state. NODE_OPTIONS drops node:sqlite's ExperimentalWarning,
+# which would otherwise land as plain text in the server's JSON log and in every whim-admin output.
+ENV NODE_ENV=production HOME=/tmp NODE_OPTIONS=--disable-warning=ExperimentalWarning
 USER 10001:10001
 EXPOSE 8787
 CMD ["node", "--enable-source-maps", "server/main.mjs"]
