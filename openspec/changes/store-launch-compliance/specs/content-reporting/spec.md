@@ -22,7 +22,7 @@ No history row SHALL gain an action for this. Opening the sheet SHALL send nothi
 - **THEN** the report sheet opens for the version the user is on, and no row's action set has changed
 
 ### Requirement: The report sheet collects a reason and an optional note
-The report sheet SHALL offer four reasons as single-select pills mapping to the contract's `ReportReason`: offensive, harmful, doesn't work (`broken`), and something else (`other`). The send action SHALL stay disabled until a reason is chosen. The sheet SHALL offer an optional note whose input stops at 1000 characters. The app name sent SHALL be the app's display name cut to at most 200 characters.
+The report sheet SHALL offer six reasons as single-select pills mapping to the contract's `ReportReason`, with common functional problems first: doesn't work (`broken`), wrong result (`wrong_result`), hard to use (`hard_to_use`), unsafe (`harmful`), offensive (`offensive`), and something else (`other`). The send action SHALL stay disabled until a reason is chosen. The sheet SHALL offer an optional note whose input stops at 1000 characters. The app name sent SHALL be the app's display name cut to at most 200 characters.
 
 #### Scenario: A reason is required
 - **WHEN** the sheet opens and no reason is selected
@@ -32,18 +32,26 @@ The report sheet SHALL offer four reasons as single-select pills mapping to the 
 - **WHEN** the user types or pastes more than 1000 characters into the note
 - **THEN** the field holds exactly the first 1000 characters
 
-### Requirement: The sheet previews exactly the body that Send transmits
-The sheet SHALL render its "what gets sent" preview from the same `ReportRequest` value that the send action posts, so the two cannot differ. The preview SHALL list the reason, the note when present, the app name, the prompt that made the version being reported (full text, expandable), and the app's code (its size, with the full text expandable), and SHALL state that an anonymous ID for this phone travels with the report and that the report goes to AnyCognition, with a privacy policy link.
+#### Scenario: The keyboard leaves the sheet usable
+- **WHEN** the note keyboard reduces the available height
+- **THEN** the sheet stops below the top safe area, its top stays in place while the user scrolls its contents, and the send and cancel actions remain reachable
 
-The prompt and the code SHALL each have an include switch, on by default. Switching one off SHALL remove that field from both the preview and the body. When the app has no stored source, the code row SHALL be absent and `source` SHALL be omitted.
+### Requirement: The sheet previews exactly the body that Send transmits
+The sheet SHALL hide the "what gets sent" heading and preview until a reason is selected. It SHALL then render the preview from the same `ReportRequest` value that the send action posts, so the two cannot differ. The preview SHALL list the reason, the note when present, the app name, the prompt that made the version being reported (full text, expandable), and the app's code (its size, with the full text expandable), and SHALL state that an anonymous ID for this phone travels with the report and that the report goes to AnyCognition, with a privacy policy link.
+
+The active version's original source SHALL always be included when stored. The sheet SHALL explain in plain language that the code is included to investigate the report. The prompt for the active version SHALL have an include switch, on by default. Switching it off SHALL remove the prompt from both the preview and the body. When the app has no stored source, the sheet SHALL say so, the code row SHALL be absent, and `source` SHALL be omitted.
 
 #### Scenario: Preview and body agree
 - **WHEN** the user chooses a reason, writes a note, and sends
 - **THEN** the posted body's `reason`, `note`, `appName`, `prompt`, and `source` are exactly the values the preview showed
 
-#### Scenario: Leaving the code out
-- **WHEN** the user switches off the app's code and sends
-- **THEN** the preview no longer lists the code and the posted body has no `source` key
+#### Scenario: Code is part of a report
+- **WHEN** the active version has stored original source and the user sends a report
+- **THEN** the preview lists the code, the posted body includes that source, and no code opt-out is offered
+
+#### Scenario: No reason chosen yet
+- **WHEN** the report sheet opens without a chosen reason
+- **THEN** neither the "what gets sent" heading nor its preview card is shown
 
 #### Scenario: A legacy app without stored source
 - **WHEN** the reported version has no stored source
@@ -61,11 +69,11 @@ The send action SHALL post the body to `POST /v1/report` on the effective server
 - **THEN** the report is posted, and no consent screen appears
 
 ### Requirement: A report that doesn't go through keeps the draft and says why
-When sending fails, the sheet SHALL keep the reason, note, and include switches as they were, and SHALL say why inline. A service refusal SHALL show the server's hint and follow `service-refusals`' `Retry-After` rule for the send action. A `payload_too_large` refusal SHALL leave the include switches available so the user can send a smaller report. Any other failure SHALL show one copy-table sentence. No status code, error identifier, or transport message SHALL be rendered.
+When sending fails, the sheet SHALL keep the reason, note, and prompt switch as they were, and SHALL say why inline. A service refusal SHALL show the server's hint and follow `service-refusals`' `Retry-After` rule for the send action, except that a `payload_too_large` refusal SHALL use report-specific copy that does not suggest excluding the code. The prompt switch remains available. Any other failure SHALL show one copy-table sentence. No status code, error identifier, or transport message SHALL be rendered.
 
 #### Scenario: Too large
 - **WHEN** the server refuses the report with `payload_too_large`
-- **THEN** the sheet shows the hint, keeps the draft, and sending again with the code switched off posts a body without `source`
+- **THEN** the sheet shows the report-specific size hint, keeps the draft, and the prompt can still be excluded for another attempt
 
 #### Scenario: Offline
 - **WHEN** the report request fails at the network level

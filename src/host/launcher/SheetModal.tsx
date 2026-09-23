@@ -22,7 +22,7 @@
  * Android — an explicit `behavior` there would fight the OS resize instead of complementing it.
  */
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet } from 'react-native';
+import { Animated, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MOTION, RADIUS, SPACING } from '../../sdk/theme';
 import { inkAlpha } from './theme';
@@ -63,7 +63,8 @@ export default function SheetModal({ visible, onClose, children }: Readonly<Shee
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Pressable style={[styles.scrim, { backgroundColor: inkAlpha(0.5) }]} onPress={onClose} accessibilityRole="none">
+        <View style={[styles.scrim, { paddingTop: insets.top + SPACING.md }]}>
+          <Pressable style={[styles.scrimFill, { backgroundColor: inkAlpha(0.5) }]} onPress={onClose} accessibilityRole="none" />
           <Animated.View
             style={[
               styles.sheet,
@@ -76,12 +77,10 @@ export default function SheetModal({ visible, onClose, children }: Readonly<Shee
                 ],
               },
             ]}
-            // Swallows the scrim's own Pressable so a tap ON the sheet never closes it.
-            onStartShouldSetResponder={() => true}
           >
             {children}
           </Animated.View>
-        </Pressable>
+        </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -90,7 +89,9 @@ export default function SheetModal({ visible, onClose, children }: Readonly<Shee
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   scrim: { flex: 1, justifyContent: 'flex-end' },
+  scrimFill: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   sheet: {
+    maxHeight: '100%',
     borderTopLeftRadius: RADIUS.sheet,
     borderTopRightRadius: RADIUS.sheet,
     paddingTop: SPACING.md,
