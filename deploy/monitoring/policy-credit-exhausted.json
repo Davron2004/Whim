@@ -3,15 +3,9 @@
   "combiner": "OR",
   "conditions": [
     {
-      "displayName": "A budget_exhausted refusal was logged",
+      "displayName": "A budget_exhausted refusal or a mid-generation provider credit exhaustion was logged",
       "conditionMatchedLog": {
-        "filter": "log_id(\"docker\") AND jsonPayload.msg=\"request\" AND jsonPayload.error=\"budget_exhausted\""
-      }
-    },
-    {
-      "displayName": "A mid-generation provider 402 exhausted the operator's credit",
-      "conditionMatchedLog": {
-        "filter": "log_id(\"docker\") AND jsonPayload.scope=\"run\" AND jsonPayload.msg=\"provider credit exhausted\""
+        "filter": "log_id(\"docker\") AND ((jsonPayload.msg=\"request\" AND jsonPayload.error=\"budget_exhausted\") OR (jsonPayload.scope=\"run\" AND jsonPayload.msg=\"provider credit exhausted\"))"
       }
     }
   ],
