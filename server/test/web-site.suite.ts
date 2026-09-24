@@ -137,13 +137,13 @@ export async function runWebSiteTests(): Promise<void> {
   section('Web site: discriminating red-checks');
 
   {
-    // A policy missing consentWhatSentDevice's text must fail.
+    // A policy missing consentSentDevice's text must fail.
     const policyWithoutDeviceLine = normalizedPolicy.replace(
-      normalizeForParity(COPY.consentWhatSentDevice),
+      normalizeForParity(COPY.consentSentDevice),
       '',
     );
     const redMissing = missingConsentDisclosures(COPY, CONSENT_ALLOWLIST, policyWithoutDeviceLine);
-    eq('dropping the anonymous-ID line fails naming consentWhatSentDevice', redMissing, ['consentWhatSentDevice']);
+    eq('dropping the phone-ID line fails naming consentSentDevice', redMissing, ['consentSentDevice']);
   }
 
   {

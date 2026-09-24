@@ -56,7 +56,7 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
   });
 
   await h.test('consentedClientOptions: outdated consent yields null', () => {
-    const status: ConsentStatus = { kind: 'outdated' };
+    const status: ConsentStatus = { kind: 'outdated', version: 1 };
     h.eq(consentedClientOptions(status, 'https://example.invalid', 'device-1', testAppInfo), null, 'a stale grant is no grant');
   });
 

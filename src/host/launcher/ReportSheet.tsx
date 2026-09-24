@@ -1,7 +1,7 @@
 /**
  * ReportSheet — the report sheet three entry points share (design D13/D14; spec
  * `content-reporting`). Reason pills, an optional note, the include-prompt switch,
- * a preview rendered from the SAME `ReportRequest` value Send posts, the AnyCognition/anonymous-id
+ * a preview rendered from the SAME `ReportRequest` value Send posts, the phone-ID-and-AnyCognition
  * line plus a privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
  * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`.
  *
@@ -29,7 +29,7 @@ import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } f
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
 import { COPY, reportCodeSizeLabel } from './copy';
-import { RELEASE } from './release-config';
+import { activeLegalLanguage, privacyPolicyUrl } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 
 const REASONS: readonly ReportReason[] = ['broken', 'wrong_result', 'hard_to_use', 'harmful', 'offensive', 'other'];
@@ -244,8 +244,8 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             </>
           )}
 
-          <Text style={[TYPE_SCALE.caption, styles.anonLine, { color: p.textMuted }]}>{COPY.reportAnonIdLine}</Text>
-          <TouchableOpacity onPress={() => Linking.openURL(RELEASE.privacyPolicyUrl)} hitSlop={10} style={styles.privacyLink}>
+          <Text style={[TYPE_SCALE.caption, styles.deviceIdLine, { color: p.textMuted }]}>{COPY.reportDeviceIdLine}</Text>
+          <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(activeLegalLanguage()))} hitSlop={10} style={styles.privacyLink}>
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>
 
@@ -360,7 +360,7 @@ const styles = StyleSheet.create({
   // No TYPE_SCALE role exists for an expanded code preview (a one-off on this screen); the family
   // is still the reserved mono token, only the size/line-height are a cited literal.
   previewMono: { fontFamily: FONT_FAMILY.monoRegular, fontSize: 12, lineHeight: 16 },
-  anonLine: { marginTop: SPACING.md },
+  deviceIdLine: { marginTop: SPACING.md },
   privacyLink: { marginTop: SPACING.xs },
   primary: { height: 52, borderRadius: RADIUS.card, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
   primaryDisabled: { opacity: 0.5 },

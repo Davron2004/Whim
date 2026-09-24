@@ -30,6 +30,7 @@ import { runHostileCorpus } from './hostile/corpus';
 import { runReleaseSuites } from './release';
 import { run as runSourceScans } from './repo/source-scans.suite';
 import { run as runHeaderLockstep } from './repo/header-lockstep.suite';
+import { run as runConsentCoverage } from './repo/consent-coverage.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1204,6 +1205,7 @@ async function main(): Promise<void> {
   await runReleaseSuites();
   await runSourceScans();
   await runHeaderLockstep();
+  await runConsentCoverage();
 }
 
 main()

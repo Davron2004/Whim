@@ -116,7 +116,7 @@ import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
 import { installedAppInfo } from './installed-app-info';
 import ReportSheet from './ReportSheet';
-import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
+import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
@@ -156,7 +156,8 @@ type Screen =
   // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
   // from Settings' AI features row and shows the identical disclosure.
   // `refused`: a `consent_required` refusal opened it (request-envelope), not an entry point.
-  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdated: boolean; refused?: boolean }
+  // `outdatedFrom`: the stored grant's version when that grant is outdated.
+  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdatedFrom?: number; refused?: boolean }
   | { kind: 'consent'; mode: 'review' }
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
@@ -403,7 +404,7 @@ function ConsentScreenForShell({
     return (
       <ConsentScreen
         mode="ask"
-        outdated={screen.outdated}
+        outdatedFrom={screen.outdatedFrom}
         refused={screen.refused}
         onAgree={() => onAskAgree(screen.continuation)}
         onClose={() => onAskDecline(screen.returnTo)}
@@ -878,7 +879,7 @@ function LauncherShell({
       mode: 'ask',
       continuation: decision.continuation,
       returnTo: screen,
-      outdated: status.kind === 'outdated',
+      outdatedFrom: outdatedGrantVersion(status),
     });
   };
 
@@ -903,7 +904,7 @@ function LauncherShell({
       mode: 'ask',
       continuation: resume,
       returnTo: back,
-      outdated: consentStatus(kv).kind === 'outdated',
+      outdatedFrom: outdatedGrantVersion(consentStatus(kv)),
       refused: true,
     };
   };
