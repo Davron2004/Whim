@@ -28,8 +28,8 @@ class MainApplication : Application(), ReactApplication {
           check(replacedWebViewPackages == 1) {
             "react-native-webview autolinking must provide exactly one RNCWebViewPackage; found $replacedWebViewPackages"
           }
-          // In-app TurboModule (not autolinked — it lives in this app, not node_modules):
-          // the WhimTone audio-cue module (effects-and-cues D6).
+          // In-app TurboModules (not autolinked — they live in this app, not node_modules):
+          // WhimTone audio cues (effects-and-cues D6) and WhimAppInfo (request-envelope D2).
           add(com.whim.tone.WhimTonePackage())
         },
     )
