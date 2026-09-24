@@ -328,8 +328,13 @@
       "namedOnScreen": true
     },
     {
-      "id": "service-providers",
-      "description": "Companies acting only for AnyCognition, such as hosting, AI, logging and email, some outside Canada. They may keep data briefly for their own security and legal duties, but never train AI on it or use it for their own products",
+      "id": "ai-providers",
+      "description": "Companies whose AI models write and change the code and run the safety check, acting only for AnyCognition, some outside Canada. They may keep data briefly for their own security and legal duties, but never train AI on it or use it for their own products",
+      "namedOnScreen": true
+    },
+    {
+      "id": "hosting-providers",
+      "description": "Companies that host, log and email for AnyCognition and act only for it, some outside Canada. They may keep data briefly for their own security and legal duties, but never use it for their own products",
       "namedOnScreen": true
     },
     {
@@ -375,7 +380,8 @@
       "category": "request-material",
       "roles": [
         "anycognition",
-        "service-providers"
+        "ai-providers",
+        "hosting-providers"
       ],
       "purposes": [
         "build",
@@ -405,7 +411,7 @@
       "category": "phone-id",
       "roles": [
         "anycognition",
-        "service-providers"
+        "hosting-providers"
       ],
       "purposes": [
         "operate",
@@ -436,7 +442,7 @@
       "category": "usage-records",
       "roles": [
         "anycognition",
-        "service-providers"
+        "hosting-providers"
       ],
       "purposes": [
         "operate"
@@ -465,7 +471,7 @@
       "category": "connection-logs",
       "roles": [
         "anycognition",
-        "service-providers"
+        "hosting-providers"
       ],
       "purposes": [
         "operate",
@@ -496,7 +502,7 @@
       "category": "reports",
       "roles": [
         "anycognition",
-        "service-providers"
+        "hosting-providers"
       ],
       "purposes": [
         "safety"
@@ -525,7 +531,7 @@
       "category": "app-integrity",
       "roles": [
         "anycognition",
-        "service-providers",
+        "hosting-providers",
         "platform"
       ],
       "purposes": [
@@ -555,7 +561,7 @@
       "category": "error-details",
       "roles": [
         "anycognition",
-        "service-providers"
+        "hosting-providers"
       ],
       "purposes": [
         "operate"

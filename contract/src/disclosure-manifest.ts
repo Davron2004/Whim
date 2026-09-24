@@ -146,12 +146,15 @@ const NO_STORE_TYPE: StoreMapping = { apple: [], play: [] };
 // ── Version 1: the v1 disclosure (consent screen, privacy page and store answers until v2) ────
 //
 // Only what v1 disclosed. Its text named no authorities, no successor and no legal-obligation
-// purpose; its service providers were the AI companies, which got request material and nothing
-// else; it used requests only to make the app; and it said server logs exist on AnyCognition's
-// server but not why (a use with no purpose). Version 2 widening any of these is named in its
-// what's-new line. Its store mapping is what v1 declared, "not linked" included.
+// purpose; the only other companies it named were the AI companies (`ai-providers`), which got
+// request material and nothing else; it used requests only to make the app; and it said the usage
+// ledger and server logs exist on AnyCognition's server but not why (uses with no purpose).
+// Version 2 widening any of these is named in its what's-new line. Its store mapping is what v1
+// declared, "not linked" included.
 
 const OPERATE_ONLY = ['operate'] as const;
+/** Everyone who holds what reaches Whim's server: AnyCognition and the companies hosting it. */
+const SERVER_HOLDERS = ['anycognition', 'hosting-providers'] as const;
 
 const MANIFEST_V1: DisclosureManifest<CategoryId> = {
   categories: [
@@ -230,16 +233,17 @@ const MANIFEST_V1: DisclosureManifest<CategoryId> = {
   ],
   roles: [
     { id: 'anycognition', description: 'AnyCognition’s server', namedOnScreen: true },
-    { id: 'service-providers', description: 'Other companies whose AI models write the app, which may process requests outside Canada', namedOnScreen: true },  ],
+    { id: 'ai-providers', description: 'Other companies whose AI models write the app, which may process requests outside Canada', namedOnScreen: true },
+  ],
   purposes: [
     { id: 'build', description: 'Make or change an app', advertisingOrTracking: false },
     { id: 'operate', description: 'Daily limits', advertisingOrTracking: false },
     { id: 'safety', description: 'Investigate what a report says went wrong', advertisingOrTracking: false },
   ],
   uses: [
-    { category: 'request-material', roles: ['anycognition', 'service-providers'], purposes: ['build'] },
+    { category: 'request-material', roles: ['anycognition', 'ai-providers'], purposes: ['build'] },
     { category: 'phone-id', roles: ['anycognition'], purposes: ['operate', 'safety'] },
-    { category: 'usage-records', roles: ['anycognition'], purposes: OPERATE_ONLY },
+    { category: 'usage-records', roles: ['anycognition'], purposes: [] },
     { category: 'connection-logs', roles: ['anycognition'], purposes: [] },
     { category: 'reports', roles: ['anycognition'], purposes: ['safety'] },
   ],
@@ -407,9 +411,15 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
   roles: [
     { id: 'anycognition', description: 'AnyCognition, the company that makes Whim', namedOnScreen: true },
     {
-      id: 'service-providers',
+      id: 'ai-providers',
       description:
-        'Companies acting only for AnyCognition, such as hosting, AI, logging and email, some outside Canada. They may keep data briefly for their own security and legal duties, but never train AI on it or use it for their own products',
+        'Companies whose AI models write and change the code and run the safety check, acting only for AnyCognition, some outside Canada. They may keep data briefly for their own security and legal duties, but never train AI on it or use it for their own products',
+      namedOnScreen: true,
+    },
+    {
+      id: 'hosting-providers',
+      description:
+        'Companies that host, log and email for AnyCognition and act only for it, some outside Canada. They may keep data briefly for their own security and legal duties, but never use it for their own products',
       namedOnScreen: true,
     },
     {
@@ -431,25 +441,25 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     { id: 'legal', description: 'Meet legal obligations', advertisingOrTracking: false },
   ],
   uses: [
-    { category: 'request-material', roles: ['anycognition', 'service-providers'], purposes: ['build', 'operate'] },
+    { category: 'request-material', roles: ['anycognition', 'ai-providers', 'hosting-providers'], purposes: ['build', 'operate'] },
     { category: 'request-material', roles: ['authorities'], purposes: ['legal'] },
     { category: 'request-material', roles: ['successor'], purposes: ['build', 'operate'] },
-    { category: 'phone-id', roles: ['anycognition', 'service-providers'], purposes: ['operate', 'safety'] },
+    { category: 'phone-id', roles: SERVER_HOLDERS, purposes: ['operate', 'safety'] },
     { category: 'phone-id', roles: ['authorities'], purposes: ['legal', 'safety'] },
     { category: 'phone-id', roles: ['successor'], purposes: ['operate', 'safety'] },
-    { category: 'usage-records', roles: ['anycognition', 'service-providers'], purposes: OPERATE_ONLY },
+    { category: 'usage-records', roles: SERVER_HOLDERS, purposes: OPERATE_ONLY },
     { category: 'usage-records', roles: ['authorities'], purposes: ['legal', 'safety'] },
     { category: 'usage-records', roles: ['successor'], purposes: OPERATE_ONLY },
-    { category: 'connection-logs', roles: ['anycognition', 'service-providers'], purposes: ['operate', 'safety'] },
+    { category: 'connection-logs', roles: SERVER_HOLDERS, purposes: ['operate', 'safety'] },
     { category: 'connection-logs', roles: ['authorities'], purposes: ['legal', 'safety'] },
     { category: 'connection-logs', roles: ['successor'], purposes: ['operate', 'safety'] },
-    { category: 'reports', roles: ['anycognition', 'service-providers'], purposes: ['safety'] },
+    { category: 'reports', roles: SERVER_HOLDERS, purposes: ['safety'] },
     { category: 'reports', roles: ['authorities'], purposes: ['legal', 'safety'] },
     { category: 'reports', roles: ['successor'], purposes: ['safety'] },
-    { category: 'app-integrity', roles: ['anycognition', 'service-providers', 'platform'], purposes: OPERATE_ONLY },
+    { category: 'app-integrity', roles: [...SERVER_HOLDERS, 'platform'], purposes: OPERATE_ONLY },
     { category: 'app-integrity', roles: ['authorities'], purposes: ['legal', 'safety'] },
     { category: 'app-integrity', roles: ['successor'], purposes: OPERATE_ONLY },
-    { category: 'error-details', roles: ['anycognition', 'service-providers'], purposes: OPERATE_ONLY },
+    { category: 'error-details', roles: SERVER_HOLDERS, purposes: OPERATE_ONLY },
     { category: 'error-details', roles: ['authorities'], purposes: ['legal'] },
     { category: 'error-details', roles: ['successor'], purposes: OPERATE_ONLY },
   ],
@@ -526,11 +536,11 @@ function sharedCategoryWidenings(from: DisclosureManifest, to: DisclosureManifes
   if (keepWidened(from, to, before.keep, after.keep, id)) found.push(`keep:${id}`);
   if (before.consent !== 'main' && after.consent === 'main') found.push(`consent:${id}`);
   else if (before.consent === after.consent && before.toggle === 'default-off' && after.toggle !== 'default-off') found.push(`default:${id}`);
-  const oldRoles = new Set(from.roles.map((r) => r.id));
   const roles = pairsOf(from, id, 'roles');
   for (const role of pairsOf(to, id, 'roles')) {
-    // A new role's pairs are covered by its own `role:` widening.
-    if (!roles.has(role) && oldRoles.has(role)) found.push(`recipient:${id}:${role}`);
+    // A new role's pairs are named too: `role:` says a new kind of company exists, and each
+    // `recipient:` says what it gets, so a category added to a new role is its own widening.
+    if (!roles.has(role)) found.push(`recipient:${id}:${role}`);
   }
   const purposes = pairsOf(from, id, 'purposes');
   for (const purpose of pairsOf(to, id, 'purposes')) {
@@ -561,7 +571,8 @@ function promiseHolds(id: string, manifest: DisclosureManifest): boolean {
 }
 
 /** Every widening from `from` to `to`, per spec ai-data-consent's widening list, sorted. A new
- *  category's (or role's) own pairs are covered by its `category:` (`role:`) id. */
+ *  category's own pairs are covered by its `category:` id; a new role gets its `role:` id and a
+ *  `recipient:` id for each existing category it receives. */
 export function diffManifests(from: DisclosureManifest, to: DisclosureManifest): WideningId[] {
   const found = new Set<WideningId>([...categoryWidenings(from, to), ...roleAndPromiseWidenings(from, to)]);
   return [...found].sort((a, b) => a.localeCompare(b));
@@ -625,7 +636,7 @@ function categoryFindings(manifest: DisclosureManifest, category: DisclosureCate
 }
 
 /** Structural problems that would make `diffManifests` read a manifest wrongly. */
-export function manifestShapeFindings(manifest: DisclosureManifest): string[] {
+function manifestShapeFindings(manifest: DisclosureManifest): string[] {
   return [
     ...duplicateIds('category', manifest.categories.map((c) => c.id)),
     ...duplicateIds('role', manifest.roles.map((r) => r.id)),
@@ -640,10 +651,12 @@ export function manifestShapeFindings(manifest: DisclosureManifest): string[] {
 
 // ── The release check (design D3/D4) ──────────────────────────────────────────────────────────
 
-/** One authored what's-new line (design D4): `covers` must equal the widenings it names. */
+/** One authored what's-new line (design D4). `covers` maps each widening the line names to the
+ *  phrase of `text` that names it: its ids must equal the widenings, and each phrase must occur in
+ *  `text`, so a translation that drops one is caught in that language. */
 export interface WhatsNewLine {
   readonly text: string;
-  readonly covers: readonly string[];
+  readonly covers: Readonly<Record<string, string>>;
 }
 
 export interface DisclosureReleaseInput {
@@ -706,11 +719,16 @@ function bumpFindings(input: ResolvedReleaseInput, versions: readonly number[]):
 function coverFindings(language: string, version: number, line: WhatsNewLine, expected: readonly string[]): string[] {
   const where = `what's-new (${language}) for version ${version}`;
   if (line.text.trim() === '') return [`${where} has no text`];
-  const missing = expected.filter((id) => !line.covers.includes(id));
-  const extra = line.covers.filter((id) => !expected.includes(id));
+  const covered = Object.keys(line.covers);
+  const missing = expected.filter((id) => !covered.includes(id));
+  const extra = covered.filter((id) => !expected.includes(id));
   const findings: string[] = [];
   if (missing.length > 0) findings.push(`${where} does not cover ${missing.join(', ')}`);
   if (extra.length > 0) findings.push(`${where} covers ${extra.join(', ')}, which did not widen`);
+  for (const [id, phrase] of Object.entries(line.covers)) {
+    if (phrase.trim() === '') findings.push(`${where} gives no phrase for ${id}`);
+    else if (!line.text.includes(phrase)) findings.push(`${where} does not say ${JSON.stringify(phrase)}, its phrase for ${id}`);
+  }
   return findings;
 }
 

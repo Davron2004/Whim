@@ -1,120 +1,102 @@
-# handoff/legal-copy.md — chain-3; read by chains 4, 5, 6, 7
+# handoff/legal-copy.md — chain-3, rewritten after chain-6 and fix-A; read by any chain touching legal copy
 
 ## Language seam: `src/host/launcher/legal-language.ts` (non-RN)
 
 ```ts
-export type LegalLanguage = 'en';                                // chain-6 widens to 'en' | 'fr'
-export function activeLegalLanguage(): LegalLanguage;            // returns 'en' until task 6.1
-export function privacyPolicyUrl(language: LegalLanguage): string; // PRIVACY_POLICY_URLS[language], from RELEASE
+export type LegalLanguage = 'en' | 'fr';
+export function intlLocale(): string | undefined;                                   // Intl's default locale, or undefined
+export function preferredLocale(intl: string | undefined, platform: string | undefined): string | undefined;
+export function activeLegalLanguage(kv: KVBackend, deviceLocale: string | undefined): LegalLanguage;
+export function chooseLegalLanguage(kv: KVBackend, language: LegalLanguage): void;   // persists the user's choice
+export function otherLegalLanguage(language: LegalLanguage): LegalLanguage;         // what the one-tap switch offers
+export function privacyPolicyUrl(language: LegalLanguage): string;                  // en RELEASE.privacyPolicyUrl, fr …Fr
+export function termsUrl(language: LegalLanguage): string;                          // en RELEASE.termsUrl, fr …Fr
 ```
-Called by `ConsentScreen.tsx` (copy table + privacy link), `ReportSheet.tsx` and `SettingsScreen.tsx` (privacy links).
-Legal surfaces read `LEGAL_COPY[activeLegalLanguage()]` and `privacyPolicyUrl(language)`, never `RELEASE.privacyPolicyUrl`;
-the URL map is module-private, and a new language adds its entry there.
+- Key `whim.legal-language:v1` (module-private) in the `whim.launcher` KV. A stored `'en'`/`'fr'` wins; otherwise
+  any `fr` language subtag of `deviceLocale` (`fr-CA`, `fr_FR`, `fr`) gives French, anything else English.
+- `deviceLocale` comes from the RN seam `device-locale.ts#deviceLocale()`, passed to `LauncherRoot` as the
+  `deviceLocale?: () => string | undefined` prop.
+- Resolved ONCE in `LauncherShell` (`useState(() => activeLegalLanguage(kv, deviceLocale()))`); a switch tap calls
+  `chooseLegalLanguage` then sets the state. Every legal surface takes the language as a prop, never reads the KV:
+  `ConsentScreen`, `TermsScreen`, `AgeScreen`: `language: LegalLanguage; onLanguageChange(language)`;
+  `ReportSheet`, `SettingsScreen`: `legalLanguage: LegalLanguage` (their privacy/terms links only).
+- `LegalLanguageSwitch.tsx`: `{ language, onChange }`, label `LEGAL_COPY[language].legalLanguageSwitch` (names the
+  OTHER language, in that language).
 
 ## Copy tables: `src/host/launcher/copy.ts`
 
 ```ts
-type LegalCopyKey =            // module-private union; a new legal screen's keys join it
-  | 'consentTitle' | 'consentLead' | 'consentWhyTitle' | 'consentWhy' | 'consentAskFirst' | 'consentFootnote'
-  | 'consentSentTitle' | 'consentSentRequest' | 'consentSentEdit' | 'consentSentDevice' | 'consentSentErrors'
-  | 'consentWhoTitle' | 'consentWho' | 'consentWhoPlatform' | 'consentWhoAuthorities' | 'consentOutdatedLine'
-  | 'consentStaysTitle' | 'consentStays' | 'consentNeverTitle' | 'consentNever'
-  | 'consentAgree' | 'consentDecline' | 'consentReviewKeepOn' | 'consentReviewTurnOff' | 'consentReviewTurnOn'
-  | 'permissionRequiredLine' | 'privacyPolicyLabel';
+export const LEGAL_COPY_KEYS: readonly [ /* every key the age, terms and consent screens read */ ];
+type LegalCopyKey = (typeof LEGAL_COPY_KEYS)[number];                 // module-private
 export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
-export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY };  // English IS `COPY`
+export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>>; // { en: COPY, fr: FRENCH }
 export const CONSENT_SCREEN_COVERAGE: {
-  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;   // manifest category id → keys
-  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;        // manifest role id → keys
+  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>; // manifest category id → keys
+  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;      // manifest role id → keys
 };
-// categories: request-material → [consentSentRequest, consentSentEdit], phone-id → [consentSentDevice], error-details
-// → [consentSentErrors]; roles: anycognition, service-providers → [consentWho]; platform → [consentWhoPlatform];
-// authorities → [consentWhoAuthorities]
+export function consentWhatsNewText(language: LegalLanguage, grantVersion: number): string | undefined;
 ```
-A new language table (`fr`) is a plain object typed `LegalCopyTable`: every key above. The compiler enforces presence;
-the coverage check enforces non-empty. Report-sheet keys (`reportDeviceIdLine`, `reportThanksTitle`, …) are
-English-only `COPY` keys. The v1 keys `consentWhatSent*`, `consentWhatNeverSent*` and `reportAnonIdLine` are gone.
-"Who gets it" renders as one paragraph, `` `${consentWho} ${consentWhoPlatform} ${consentWhoAuthorities}` `` (one key
-per screen-named role, so a dropped role is detectable).
+- `LEGAL_COPY_KEYS`: `terms{Title,Lead,UpdatedLine,Label,Accept,Decline}`, `age{BlockedTitle,BlockedBody,Back}` (owned by
+  the age chain), `consent{Title,Lead,SentTitle,SentRequest,SentEdit,SentDevice,SentErrors,WhyTitle,Why,WhoTitle,Who,
+  WhoPlatform,WhoAuthorities,StaysTitle,Stays,NeverTitle,Never,AskFirst,Footnote,OutdatedLine,Agree,Decline,
+  ReviewKeepOn,ReviewTurnOff,ReviewTurnOn}`, `permissionRequiredLine`, `privacyPolicyLabel`, `legalLanguageSwitch`.
+  English is `COPY` itself; `FRENCH` (module-private) is a `LegalCopyTable`: Canadian French, "vous", a
+  non-breaking space (` `) before `:` and `;`.
+- Coverage: categories `request-material` → `[consentSentRequest, consentSentEdit]`, `phone-id` → `[consentSentDevice]`,
+  `error-details` → `[consentSentErrors]`; roles `anycognition`, `ai-providers`, `hosting-providers` → `[consentWho]`,
+  `platform` → `[consentWhoPlatform]`, `authorities` → `[consentWhoAuthorities]`. A new on-screen category or
+  screen-named role needs an entry here.
+- Report-sheet and Settings keys stay English-only `COPY` keys, outside `LEGAL_COPY_KEYS`.
+- `consentStays` says what Whim does with saved data ("Whim doesn’t send it anywhere"), not where it can go; "It stays
+  on your phone" may return once platform-release-readiness 13.6/13.7 pass (task 11.8). Wording only: no bump.
 
-## What's-new: how the screen reads `CONSENT_WHATS_NEW`
+## What's-new lines
 
-Shape unchanged from chain-1: `Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>>`, language → grant
-version → `{ text, covers }`. Read only through:
 ```ts
-export function consentWhatsNewText(language: LegalLanguage, grantVersion: number): string | undefined; // copy.ts
+export interface ConsentWhatsNewLine {
+  readonly text: string;
+  readonly covers: Readonly<Record<string, string>>;   // widening id → the phrase of `text` that names it
+}
+export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>>;
+// language → the grant's consent version → line. Today: { en: { 1 }, fr: { 1 } }.
 ```
-`undefined` (no line for that version, e.g. a grant from a newer build) → the screen shows the outdated line alone.
-Plumbing (`ai-consent.ts`, `ConsentScreen.tsx`, `LauncherRoot.tsx`):
-```ts
-export type ConsentStatus =
-  | { kind: 'granted'; version: number; grantedAt: string } | { kind: 'absent' } | { kind: 'outdated'; version: number };
-export function outdatedGrantVersion(status: ConsentStatus): number | undefined;   // the outdated grant's version
-// ConsentScreenProps.outdatedFrom?: number  (replaces `outdated?: boolean`; ask mode only)
-// Screen { kind: 'consent'; mode: 'ask'; …; outdatedFrom?: number; refused?: boolean }
-```
-Ask mode with `outdatedFrom` renders, above the title: `consentOutdatedLine` (danger), then the what's-new text as a
-plain body paragraph (no `numberOfLines`, never routed through `render.ts`). `refused` without `outdatedFrom` shows
-`permissionRequiredLine` instead. Screen order after that: title, lead, "What gets sent" (four bullets), why, who,
-stays, never, ask-first, footnote, privacy link, then the action buttons.
+- Every language has its OWN `covers` (no shared list): ids = `diffManifests(MANIFESTS[v], MANIFESTS[current])`, and each
+  phrase must occur verbatim in that language's `text`. Several ids may share one phrase (`naming(phrase, ids)`,
+  module-private).
+- Checked by `disclosureReleaseFindings` (contract): a missing or extra id, a blank phrase, or a phrase the text doesn't
+  say fails, naming the language, the version and the id (`what's-new (fr) for version 1 does not say "…", its phrase
+  for keep:reports`).
+- v1 → v2 ids (33): `category:{app-integrity,error-details}`, `keep:{reports,usage-records}`,
+  `purpose:connection-logs:{legal,operate,safety}`, `purpose:{phone-id,reports}:legal`,
+  `purpose:request-material:{legal,operate}`, `purpose:usage-records:{legal,operate,safety}`,
+  `recipient:<c>:{authorities,hosting-providers,successor}` for each c of `connection-logs`, `phone-id`, `reports`,
+  `request-material`, `usage-records`, and `role:{authorities,hosting-providers,platform,successor}`.
+- The screen reads only `consentWhatsNewText(language, version)`; `undefined` → the outdated line alone.
+  Ask mode with `outdatedFrom` renders `consentOutdatedLine` (danger), then the text as a plain paragraph (never through
+  `render.ts`), above the title.
 
-## Coverage check (gate)
+## Coverage check (gate): `checks/test/repo/consent-coverage.suite.ts`
 
-Entry: `checks/test/repo/consent-coverage.suite.ts` → `run()`, called from `main()` in `checks/test/acceptance.ts`
-(after `runHeaderLockstep()`). Pure core:
 ```ts
 export function consentCoverageFindings(input: ConsentCoverageInput): string[];   // [] = covered
 export interface ConsentCoverageInput {
-  readonly manifest: DisclosureManifest;           // live: MANIFESTS[latestVersion()]
-  readonly olderVersions: readonly number[];       // live: every manifest version below the latest
-  readonly coverage: { readonly categories: Readonly<Record<string, readonly string[]>>; readonly roles: Readonly<Record<string, readonly string[]>> }; // live: CONSENT_SCREEN_COVERAGE
-  readonly tables: Readonly<Record<string, Readonly<Record<string, string>>>>;     // live: LEGAL_COPY
-  readonly whatsNew: Readonly<Record<string, Readonly<Record<number, { readonly text: string }>>>>; // CONSENT_WHATS_NEW
+  readonly manifest: DisclosureManifest; readonly olderVersions: readonly number[];
+  readonly coverage: { readonly categories: …; readonly roles: … };      // CONSENT_SCREEN_COVERAGE
+  readonly tables: Readonly<Record<string, Readonly<Record<string, string>>>>;  // LEGAL_COPY
+  readonly legalKeys: readonly string[];                                  // LEGAL_COPY_KEYS
+  readonly whatsNew: Readonly<Record<string, Readonly<Record<number, { readonly text: string }>>>>;
 }
 ```
-Refuses: an on-screen category or screen-named role with no `CONSENT_SCREEN_COVERAGE` entry; a covered key missing or
-blank in any `LEGAL_COPY` table; a `LEGAL_COPY` language with no non-blank `CONSENT_WHATS_NEW[lang][v]` for every
-older version `v`; any key matching `/^(consent|report)/` in any table, or any what's-new line, matching
-`/open\s*router/i` or `/anonym/i` (the latter also catches French "anonyme"). A new language table must therefore
-supply: every `LegalCopyKey`, and a what's-new line for every older version (same `covers`, which chain-1's release
-check verifies per language). Chain-6's "every legal key in both tables" check (6.3) extends this suite. The launcher
-UI suite (`consent-gate-ui.suite.tsx`) holds the other half: the rendered screen shows every covered key, in spec order.
+Refuses: an on-screen category or screen-named role with no coverage entry; a covered key, a `LEGAL_COPY_KEYS` key, or
+any `consent*` key of any table blank in some table; a table with no non-blank what's-new line for an older version;
+any `consent*`/`report*` string or what's-new line matching `/open\s*router/i` or `/anonym/i`.
 
-## Disclosure strings `deploy/site/privacy.html` must quote word for word (chain-7)
+## The privacy pages quote the screen (`server/test/web-site.suite.ts`)
 
-`server/test/web-site.suite.ts` requires every `COPY` key starting with `consent`, except its allowlist, to appear in
-the rendered page after normalization (tags stripped, `&amp; &lt; &gt; &quot; &#39;` decoded, whitespace collapsed,
-’ and ' compared equal; case-sensitive). Allowlist (unchanged): `consentTitle`, `consentOutdatedLine`, `consentAgree`,
-`consentDecline`, `consentReviewKeepOn`, `consentReviewTurnOff`, `consentReviewTurnOn`. Section titles are NOT
-allowlisted: "What we never do" and "What you save in your apps" carry the meaning of the sentence under them.
-
-| key | text |
-|---|---|
-| consentLead | To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code. |
-| consentSentTitle | What gets sent |
-| consentSentRequest | What you ask for: your description, your answers and the plan you approve |
-| consentSentEdit | When you change an app: its name, code and description, and the layout of its data, never the data itself |
-| consentSentDevice | An ID Whim makes for this phone, used for daily limits and usage totals. |
-| consentSentErrors | Error details when something goes wrong. They’re technical only, not what you typed or saved. |
-| consentWhyTitle | Why |
-| consentWhy | To build your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems. |
-| consentWhoTitle | Who gets it |
-| consentWho | AnyCognition, the company that makes Whim, and companies that do work for us, like cloud hosting and AI providers. Some of them are outside Canada. They can’t train AI on it or use it for their own products, though some may keep it for a short time for security and legal reasons. |
-| consentWhoPlatform | Apple or Google may also check that requests come from the real Whim app. |
-| consentWhoAuthorities | We give information to authorities when the law requires it. |
-| consentStaysTitle | What you save in your apps |
-| consentStays | Nobody at Whim can read it. It stays on your phone, and anything Whim ever syncs or backs up for you is encrypted on your phone with a key Whim never has. |
-| consentNeverTitle | What we never do |
-| consentNever | Show ads, sell your data or share it for advertising, or track you across other apps and websites. |
-| consentAskFirst | If we ever want to collect a new kind of information, use it for a new purpose, keep it longer, or give it to a new kind of company, we’ll ask you first. |
-| consentFootnote | You can turn AI features and error details off in Settings. Apps you already have keep working either way. |
-
-## What chain-3 changed in the web-site suite and page
-
-- `server/test/web-site.suite.ts`: only the first red-check, re-pointed from the deleted `consentWhatSentDevice` to
-  `consentSentDevice` ("dropping the phone-ID line fails naming consentSentDevice"). Allowlist and rule untouched.
-- `deploy/site/privacy.html` (interim, so the gate stays green until chain-7): the v1 screen quotes under "What leaves
-  your phone" … the Settings line were replaced by the table above, verbatim, as `<h2>`/`<p>`/`<li>`. Everything else on
-  the page is still v1. Chain-7 replaces the file; the suite's other live constraints on the page stay: it must name
-  OpenRouter, name no model vendor, and match `/deleted after (\d+) days/` and `/kept for (\d+) days/` to
-  `loadServerConfig({})`'s report and ledger retention defaults.
+- `/privacy` quotes every `COPY` key starting `consent`, and `/fr/privacy` every such `LEGAL_COPY.fr` key, verbatim after
+  normalization (tags stripped, entities decoded, whitespace collapsed, ’ = '). Allowlist: `consentTitle`,
+  `consentOutdatedLine`, `consentAgree`, `consentDecline`, `consentReviewKeepOn`, `consentReviewTurnOff`,
+  `consentReviewTurnOn`. So a changed `consent*` string changes both pages in the same commit.
+- Neither page names OpenRouter outside `<section id="providers">`, names a model vendor, or says "anonym".
+- While `src/native/NativeWhimAgeSignal.ts` exists, each policy carries `<p id="age-signal">` stating the re-ask period
+  the built `age-check.ts` uses (`30 days` / `30 jours`) and that nothing about age leaves the phone.

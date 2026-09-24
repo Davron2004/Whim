@@ -74,50 +74,109 @@ function withoutDay(rows: readonly Row[]): Row[] {
   return rows.map(({ last_credited_day: _day, ...rest }) => rest);
 }
 
+/** The pre-change database: its schema statements and rows, replayed into a WAL file at `dbPath`
+ *  as that store opened it. */
+function writePreChangeDatabase(dbPath: string): void {
+  const preChange = new DatabaseSync(dbPath);
+  preChange.exec('PRAGMA journal_mode = WAL');
+  preChange.exec(fs.readFileSync(path.join(process.cwd(), 'server/test/fixtures/usage-db-before-last-credited-day.sql'), 'utf8'));
+  preChange.close();
+}
+
+/** Version 1's published rule for usage records made before this change: deleted within 90 days. */
+const PRE_CHANGE_KEEP_DAYS = 90;
+
 async function testMigrationOnPreChangeDatabase(): Promise<void> {
   section('spec: the migration is safe to rerun on a database the pre-change store wrote');
 
+  const { usageIdleDays } = loadServerConfig({});
+  /** The day a backfilled row gets on a start at `at`: the one the idle purge deletes it 90 days after. */
+  const backfilledDay = (at: number): string => dayOf(at - (usageIdleDays - PRE_CHANGE_KEEP_DAYS) * DAY_MS);
   const dir = tmpDir('migration');
   const dbPath = path.join(dir, 'usage.db');
   try {
-    // The database exactly as the pre-change store left it: its schema statements and rows,
-    // replayed into a WAL file as that store opened it.
-    const preChange = new DatabaseSync(dbPath);
-    preChange.exec('PRAGMA journal_mode = WAL');
-    preChange.exec(fs.readFileSync(path.join(process.cwd(), 'server/test/fixtures/usage-db-before-last-credited-day.sql'), 'utf8'));
-    preChange.close();
+    writePreChangeDatabase(dbPath);
     const before = snapshot(dbPath);
     check('setup: the fixture has lifetime rows and ledger rows, and no last_credited_day', before.usage.length === 3 && before.requests.length === 6 && before.usageColumns.every((c) => c.name !== 'last_credited_day'), JSON.stringify(before.usageColumns));
+    check('setup: the default idle period is longer than the pre-change rule', usageIdleDays > PRE_CHANGE_KEEP_DAYS, String(usageIdleDays));
 
-    const first = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT });
+    let refused: unknown;
+    try {
+      new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT }).close();
+    } catch (err) {
+      refused = err;
+    }
+    check('a start that doesn\'t say its idle period refuses to date the pre-change rows', refused instanceof Error && refused.message.includes('usageIdleDays'), String(refused));
+    eq('  ... and leaves the database exactly as it was', snapshot(dbPath), before);
+
+    const first = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT, usageIdleDays });
     first.close();
     const migrated = snapshot(dbPath);
     eq('first start: the column is added once, after the existing columns, which are unchanged', migrated.usageColumns.map((c) => c.name), [...before.usageColumns.map((c) => c.name), 'last_credited_day']);
     eq('  ... every existing column keeps its type, NOT NULL, default and key', migrated.usageColumns.slice(0, before.usageColumns.length), before.usageColumns);
-    eq('  ... every pre-existing row has the day the migration ran', migrated.usage.map((r) => r.last_credited_day), before.usage.map(() => RUN_DAY));
+    eq(
+      `  ... every pre-existing row is dated ${usageIdleDays - PRE_CHANGE_KEEP_DAYS} days back, so the idle purge deletes it ${PRE_CHANGE_KEEP_DAYS} days after the run`,
+      migrated.usage.map((r) => r.last_credited_day),
+      before.usage.map(() => backfilledDay(RUN_AT)),
+    );
     eq('  ... no lifetime total changed', withoutDay(migrated.usage), before.usage);
     eq('  ... the ledger is untouched', migrated.requests, before.requests);
 
     // A second boot, days later: nothing changes, and the backfilled day does NOT move to the
     // second boot's day (moving it would keep an idle phone's totals forever).
-    const second = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT + 3 * DAY_MS });
+    const second = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT + 3 * DAY_MS, usageIdleDays });
     eq('second start: the lifetime totals still read back as before', await second.read(FIXTURE_DEVICE), { promptTokens: 2000, completionTokens: 4000, totalTokens: 6000 });
     second.close();
     eq('  ... the database is byte-for-byte what the first start left: schema, lifetime rows, ledger', snapshot(dbPath), migrated);
 
     // A pre-change build credits a new phone after a rollback: its insert names only the old
-    // columns. The next start gives that row its day and leaves every other row alone.
+    // columns. The next start dates that row the same way and leaves every other row alone.
     const rolledBack = new DatabaseSync(dbPath);
     rolledBack.prepare('INSERT INTO usage (device_id, prompt_tokens, completion_tokens, total_tokens) VALUES (?, 1, 2, 3)').run(DEVICE);
     rolledBack.close();
-    const third = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT + 5 * DAY_MS });
+    const third = new NodeSqliteUsageStore(dbPath, { now: () => RUN_AT + 5 * DAY_MS, usageIdleDays });
     const afterRollback = await third.deviceRecords(DEVICE);
     const kept = await third.deviceRecords(FIXTURE_DEVICE);
     third.close();
-    eq('after a rollback: a row a pre-change build wrote gets the next start\'s day', afterRollback.usage?.lastCreditedDay, dayOf(RUN_AT + 5 * DAY_MS));
-    eq('  ... and a migrated row keeps its own day', kept.usage?.lastCreditedDay, RUN_DAY);
+    eq('after a rollback: a row a pre-change build wrote is dated from the next start', afterRollback.usage?.lastCreditedDay, backfilledDay(RUN_AT + 5 * DAY_MS));
+    eq('  ... and a migrated row keeps its own day', kept.usage?.lastCreditedDay, backfilledDay(RUN_AT));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function testPreChangeTotalsFollowTheOldRule(): Promise<void> {
+  section('spec: pre-change totals go within 90 days of the migration unless the phone comes back');
+
+  const { usageIdleDays } = loadServerConfig({});
+  const dir = tmpDir('pre-change-purge');
+  const dbPath = path.join(dir, 'usage.db');
+  const RETURNING = '0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b';
+  let clock = RUN_AT;
+  try {
+    writePreChangeDatabase(dbPath);
+    const store = new NodeSqliteUsageStore(dbPath, { now: () => clock, usageIdleDays });
+    clock = RUN_AT + 10 * DAY_MS;
+    await store.credit(RETURNING, { promptTokens: 1, completionTokens: 1, totalTokens: 2 });
+    const purgeOn = async (day: number): Promise<number> => store.purgeIdleUsage(dayOf(RUN_AT + day * DAY_MS - usageIdleDays * DAY_MS));
+    eq(`${PRE_CHANGE_KEEP_DAYS} days after the migration, the idle purge still keeps every pre-change row`, await purgeOn(PRE_CHANGE_KEEP_DAYS), 0);
+    eq(`${PRE_CHANGE_KEEP_DAYS + 1} days after, it deletes the two phones that never came back`, await purgeOn(PRE_CHANGE_KEEP_DAYS + 1), 2);
+    eq('  ... gone: a phone that never came back', (await store.deviceRecords(FIXTURE_DEVICE)).usage, null);
+    eq('  ... kept: a phone that came back, with its pre-change totals added to', await store.read(RETURNING), { promptTokens: 52, completionTokens: 8, totalTokens: 60 });
+    store.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const shortDir = tmpDir('short-idle');
+  const shortPath = path.join(shortDir, 'usage.db');
+  try {
+    writePreChangeDatabase(shortPath);
+    const store = new NodeSqliteUsageStore(shortPath, { now: () => RUN_AT, usageIdleDays: 30 });
+    eq('an idle period shorter than 90 days dates pre-change rows on the run day, never a future day', (await store.deviceRecords(FIXTURE_DEVICE)).usage?.lastCreditedDay, RUN_DAY);
+    store.close();
+  } finally {
+    fs.rmSync(shortDir, { recursive: true, force: true });
   }
 }
 
@@ -338,6 +397,7 @@ async function testDeviceExportAndDelete(): Promise<void> {
 
 export async function runDeviceRecordsTests(): Promise<void> {
   await testMigrationOnPreChangeDatabase();
+  await testPreChangeTotalsFollowTheOldRule();
   await testCreditStampsTheDay();
   await testIdlePurge();
   await testPurgeFailureIsReported();

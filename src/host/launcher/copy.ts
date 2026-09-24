@@ -276,8 +276,11 @@ export const COPY = {
   consentWhoPlatform: 'Apple or Google may also check that requests come from the real Whim app.',
   consentWhoAuthorities: 'We give information to authorities when the law requires it.',
   consentStaysTitle: 'What you save in your apps',
+  // Says what Whim does with saved data, not where it can go: "It stays on your phone" may return
+  // once platform-release-readiness 13.6/13.7 (the network-deny device runs, legal-surface-v2 task
+  // 11.8) pass. Wording only: the consent version doesn't move.
   consentStays:
-    'Nobody at Whim can read it. It stays on your phone, and anything Whim ever syncs or backs up for you is encrypted on your phone with a key Whim never has.',
+    'Nobody at Whim can read it. Whim doesn’t send it anywhere, and anything Whim ever syncs or backs up for you is encrypted on your phone with a key Whim never has.',
   consentNeverTitle: 'What we never do',
   consentNever: 'Show ads, sell your data or share it for advertising, or track you across other apps and websites.',
   consentAskFirst:
@@ -384,52 +387,75 @@ export const COPY = {
 } as const;
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
- *  stored grant is from an older consent version. `covers` must equal the disclosure manifest's
- *  widenings from that version to the current one; the disclosure release check fails otherwise. */
+ *  stored grant is from an older consent version. `covers` maps every widening from that version to
+ *  the current one to the phrase of `text` that names it; the disclosure release check fails unless
+ *  the ids equal the manifest's widenings and every phrase occurs in `text`. */
 export interface ConsentWhatsNewLine {
   readonly text: string;
-  readonly covers: readonly WideningId[];
+  readonly covers: Readonly<Record<string, string>>;
 }
 
-/** What a version-1 grant has not agreed to: the widenings from consent version 1 to the current
- *  one. Every language's version-1 line covers exactly these. */
-const WIDENED_SINCE_V1: readonly WideningId[] = [
-  'category:app-integrity',
-  'category:error-details',
-  'keep:reports',
-  'keep:usage-records',
-  'purpose:connection-logs:legal',
-  'purpose:connection-logs:operate',
-  'purpose:connection-logs:safety',
-  'purpose:phone-id:legal',
-  'purpose:reports:legal',
-  'purpose:request-material:legal',
-  'purpose:request-material:operate',
-  'purpose:usage-records:legal',
-  'purpose:usage-records:safety',
-  'recipient:connection-logs:service-providers',
-  'recipient:phone-id:service-providers',
-  'recipient:reports:service-providers',
-  'recipient:usage-records:service-providers',
-  'role:authorities',
-  'role:platform',
-  'role:successor',
-];
+/** `phrase` as the covering phrase of every id in `ids`: one sentence often names several widenings. */
+function naming(phrase: string, ids: readonly WideningId[]): Readonly<Record<string, string>> {
+  return Object.fromEntries(ids.map((id) => [id, phrase]));
+}
+
+/** Widenings since consent version 1 that repeat per category: for each of the five categories
+ *  version 1 already sent, version 2 adds a legal purpose, the authorities, a new owner and the
+ *  companies that run Whim's servers, logs and email. */
+const V1_CATEGORIES = ['connection-logs', 'phone-id', 'reports', 'request-material', 'usage-records'] as const;
+const LEGAL_SINCE_V1 = V1_CATEGORIES.map((c): WideningId => `purpose:${c}:legal`);
+const AUTHORITIES_SINCE_V1: readonly WideningId[] = ['role:authorities', ...V1_CATEGORIES.map((c): WideningId => `recipient:${c}:authorities`)];
+const SUCCESSOR_SINCE_V1: readonly WideningId[] = ['role:successor', ...V1_CATEGORIES.map((c): WideningId => `recipient:${c}:successor`)];
+const HOSTING_SINCE_V1: readonly WideningId[] = ['role:hosting-providers', ...V1_CATEGORIES.map((c): WideningId => `recipient:${c}:hosting-providers`)];
 
 /** Language → the consent version a grant was given under → its what's-new line. Kept beside
- *  `COPY` rather than in it: every `COPY` value is a string its readers iterate as one. A
- *  translation is wording: it covers what its English line covers. */
+ *  `COPY` rather than in it: every `COPY` value is a string its readers iterate as one. Each
+ *  language names every widening in its own words, so each has its own `covers` phrases. */
 export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>> = {
   en: {
     1: {
-      text: 'New: error details when something goes wrong, and checks by Apple or Google that requests come from the real Whim app. We may keep reports and usage records for up to 12 months instead of 90 days. We now also say that companies working for us, like cloud hosting providers, handle your phone ID, usage records, connection logs and reports; that we use your requests to run Whim and your connection logs to run it and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
-      covers: WIDENED_SINCE_V1,
+      text: 'New: error details when something goes wrong, and checks by Apple or Google that requests come from the real Whim app. We may keep reports for up to 12 months, and usage records for up to 12 months after last use, instead of 90 days. We now also say that companies that run our servers, logs and email handle your requests, your phone ID, usage records, connection logs and reports; that we use your requests, usage records and connection logs to run Whim and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
+      covers: {
+        'category:error-details': 'error details when something goes wrong',
+        'category:app-integrity': 'checks by Apple or Google that requests come from the real Whim app',
+        'role:platform': 'checks by Apple or Google',
+        'keep:reports': 'keep reports for up to 12 months',
+        'keep:usage-records': 'usage records for up to 12 months after last use',
+        ...naming('companies that run our servers, logs and email handle your requests, your phone ID, usage records, connection logs and reports', HOSTING_SINCE_V1),
+        'purpose:request-material:operate': 'we use your requests',
+        'purpose:usage-records:operate': 'usage records and connection logs to run Whim',
+        'purpose:usage-records:safety': 'usage records and connection logs to run Whim and keep it safe',
+        'purpose:connection-logs:operate': 'connection logs to run Whim',
+        'purpose:connection-logs:safety': 'connection logs to run Whim and keep it safe',
+        ...naming('share data with authorities', AUTHORITIES_SINCE_V1),
+        ...naming('because the law requires it', LEGAL_SINCE_V1),
+        ...naming('with a new owner if Whim changes hands', SUCCESSOR_SINCE_V1),
+      },
     },
   },
   fr: {
     1: {
-      text: 'Nouveau\u00a0: les détails d’erreur quand quelque chose ne va pas, et les vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim. Nous pouvons conserver les signalements et les registres d’utilisation jusqu’à 12 mois au lieu de 90 jours. Nous précisons aussi maintenant que des entreprises qui travaillent pour nous, comme des hébergeurs infonuagiques, traitent l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements\u00a0; que nous utilisons vos demandes pour faire fonctionner Whim, et vos données de connexion pour le faire fonctionner et le garder sûr\u00a0; et dans quels cas nous communiquerions des renseignements aux autorités, parce que la loi l’exige ou pour des problèmes de fraude, de sécurité ou de sûreté, ou à un nouveau propriétaire si Whim change de mains.',
-      covers: WIDENED_SINCE_V1,
+      text: 'Nouveau\u00a0: les détails d’erreur quand quelque chose ne va pas, et les vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim. Nous pouvons conserver les signalements jusqu’à 12 mois, et les registres d’utilisation jusqu’à 12 mois après la dernière utilisation, au lieu de 90 jours. Nous précisons aussi maintenant que des entreprises qui exploitent nos serveurs, nos journaux et nos courriels traitent vos demandes, l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements\u00a0; que nous utilisons vos demandes, les registres d’utilisation et les données de connexion pour faire fonctionner Whim et le garder sûr\u00a0; et dans quels cas nous communiquerions des renseignements aux autorités, parce que la loi l’exige ou pour des problèmes de fraude, de sécurité ou de sûreté, ou à un nouveau propriétaire si Whim change de mains.',
+      covers: {
+        'category:error-details': 'détails d’erreur quand quelque chose ne va pas',
+        'category:app-integrity': 'vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim',
+        'role:platform': 'vérifications par Apple ou Google',
+        'keep:reports': 'conserver les signalements jusqu’à 12 mois',
+        'keep:usage-records': 'registres d’utilisation jusqu’à 12 mois après la dernière utilisation',
+        ...naming(
+          'des entreprises qui exploitent nos serveurs, nos journaux et nos courriels traitent vos demandes, l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements',
+          HOSTING_SINCE_V1,
+        ),
+        'purpose:request-material:operate': 'nous utilisons vos demandes',
+        'purpose:usage-records:operate': 'registres d’utilisation et les données de connexion pour faire fonctionner Whim',
+        'purpose:usage-records:safety': 'registres d’utilisation et les données de connexion pour faire fonctionner Whim et le garder sûr',
+        'purpose:connection-logs:operate': 'données de connexion pour faire fonctionner Whim',
+        'purpose:connection-logs:safety': 'données de connexion pour faire fonctionner Whim et le garder sûr',
+        ...naming('communiquerions des renseignements aux autorités', AUTHORITIES_SINCE_V1),
+        ...naming('parce que la loi l’exige', LEGAL_SINCE_V1),
+        ...naming('à un nouveau propriétaire si Whim change de mains', SUCCESSOR_SINCE_V1),
+      },
     },
   },
 };
@@ -521,7 +547,7 @@ const FRENCH: LegalCopyTable = {
   consentWhoAuthorities: 'Nous communiquons des renseignements aux autorités lorsque la loi l’exige.',
   consentStaysTitle: 'Ce que vous enregistrez dans vos apps',
   consentStays:
-    'Personne chez Whim ne peut le lire. Cela reste sur votre téléphone, et tout ce que Whim pourrait un jour synchroniser ou sauvegarder pour vous est chiffré sur votre téléphone avec une clé que Whim n’a jamais.',
+    'Personne chez Whim ne peut le lire. Whim ne l’envoie nulle part, et tout ce que Whim pourrait un jour synchroniser ou sauvegarder pour vous est chiffré sur votre téléphone avec une clé que Whim n’a jamais.',
   consentNeverTitle: 'Ce que nous ne faisons jamais',
   consentNever:
     'Afficher des publicités, vendre vos données ou les communiquer à des fins publicitaires, ou vous suivre dans d’autres apps et sites Web.',
@@ -561,7 +587,8 @@ export const CONSENT_SCREEN_COVERAGE: {
   },
   roles: {
     anycognition: ['consentWho'],
-    'service-providers': ['consentWho'],
+    'ai-providers': ['consentWho'],
+    'hosting-providers': ['consentWho'],
     platform: ['consentWhoPlatform'],
     authorities: ['consentWhoAuthorities'],
   },

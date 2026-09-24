@@ -9,9 +9,9 @@
     "fr": "responsable de la protection des renseignements personnels"
   },
   "effectiveDates": {
-    "privacy": "2026-09-24",
-    "terms": "2026-09-24",
-    "providerList": "2026-09-24"
+    "privacy": "2026-09-27",
+    "terms": "2026-09-27",
+    "providerList": "2026-09-27"
   },
   "representatives": {
     "eu": "",
@@ -20,7 +20,7 @@
   "providers": [
     {
       "name": "Google Cloud (Google LLC)",
-      "contact": "",
+      "contact": "https://cloud.google.com/terms/cloud-privacy-notice",
       "role": {
         "en": "Hosts our server and logs",
         "fr": "Héberge notre serveur et nos journaux",
@@ -44,11 +44,11 @@
     },
     {
       "name": "OpenRouter, Inc.",
-      "contact": "",
+      "contact": "https://openrouter.ai/privacy",
       "role": {
-        "en": "Passes each AI request to a model provider",
-        "fr": "Transmet chaque requête d’IA à un fournisseur de modèles",
-        "ko": "앱을 만들고 바꾸기 위한 각 AI 요청을 AI 모델 제공업체에 전달"
+        "en": "Passes each AI request, including the automated safety check, to an AI model provider",
+        "fr": "Transmet chaque requête d’IA, y compris la vérification de sécurité automatisée, à un fournisseur de modèles d’IA",
+        "ko": "자동 안전 검사를 포함해 앱을 만들고 바꾸기 위한 각 AI 요청을 AI 모델 제공업체에 전달"
       },
       "receives": {
         "en": "Your request and app material",
@@ -64,6 +64,58 @@
         "en": "Only while each request is handled; the model provider it goes to may keep it for a limited time under its own published retention period",
         "fr": "Seulement pendant le traitement de chaque demande; le fournisseur de modèles qui la reçoit peut la conserver pendant une durée limitée, selon sa propre durée de conservation publiée",
         "ko": "각 요청을 처리하는 동안만 보관. 요청을 받은 AI 모델 제공업체는 자체 공개한 보관 기간에 따라 일정 기간 보관할 수 있음"
+      }
+    },
+    {
+      "name": {
+        "en": "The AI model providers OpenRouter picks",
+        "fr": "Les fournisseurs de modèles d’IA choisis par OpenRouter",
+        "ko": "OpenRouter가 선택하는 AI 모델 제공업체"
+      },
+      "contact": "https://openrouter.ai/docs/features/privacy-and-logging",
+      "role": {
+        "en": "Run the AI model that writes or changes the code, and the one that runs the automated safety check. OpenRouter picks one provider for each request, only among providers that don’t train AI on what they’re sent",
+        "fr": "Exécutent le modèle d’IA qui écrit ou modifie le code, et celui qui effectue la vérification de sécurité automatisée. OpenRouter choisit un fournisseur pour chaque demande, seulement parmi ceux qui n’entraînent pas de modèles d’IA sur ce qu’ils reçoivent",
+        "ko": "코드를 작성하거나 바꾸는 AI 모델과 자동 안전 검사를 하는 AI 모델을 실행. OpenRouter는 요청마다 받은 정보로 AI를 학습시키지 않는 제공업체 중 하나를 선택"
+      },
+      "receives": {
+        "en": "Your request and app material",
+        "fr": "Votre demande et le matériel de l’app",
+        "ko": "요청 내용(설명, 질문에 대한 답변, 승인한 계획)과 앱 자료(앱 이름, 코드, 설명, 데이터 구조)"
+      },
+      "country": {
+        "en": "Depends on the provider picked: most are in the United States, some in other countries",
+        "fr": "Selon le fournisseur choisi : la plupart aux États-Unis, certains dans d’autres pays",
+        "ko": "선택된 제공업체에 따라 다름: 대부분 미국, 일부는 다른 국가"
+      },
+      "retention": {
+        "en": "Only while each request is handled, except that some keep it for a limited time to check for abuse and meet legal duties, under their own published retention periods",
+        "fr": "Seulement pendant le traitement de chaque demande, sauf que certains la conservent pendant une durée limitée pour détecter les abus et respecter leurs obligations légales, selon leurs propres durées de conservation publiées",
+        "ko": "각 요청을 처리하는 동안만 보관. 다만 일부 제공업체는 남용 확인과 법적 의무를 위해 자체 공개한 보관 기간에 따라 일정 기간 보관할 수 있음"
+      }
+    },
+    {
+      "name": "Zoho Corporation",
+      "contact": "https://www.zoho.com/privacy.html",
+      "role": {
+        "en": "Hosts our support@ mailbox",
+        "fr": "Héberge notre boîte courriel support@",
+        "ko": "support@ 메일함 호스팅"
+      },
+      "receives": {
+        "en": "What you write to us by email, and anything you include, such as your phone ID",
+        "fr": "Ce que vous nous écrivez par courriel, et tout ce que vous y joignez, comme l’identifiant de votre téléphone",
+        "ko": "이메일로 보낸 내용과 함께 보낸 정보(예: 휴대폰 ID)"
+      },
+      "country": {
+        "en": "United States",
+        "fr": "États-Unis",
+        "ko": "미국"
+      },
+      "retention": {
+        "en": "As long as we keep each email, which is only as long as we need it to answer you or meet a legal duty",
+        "fr": "Aussi longtemps que nous conservons chaque courriel, c’est-à-dire seulement le temps nécessaire pour vous répondre ou respecter une obligation légale",
+        "ko": "각 이메일을 보관하는 동안. 답변하거나 법적 의무를 지키는 데 필요한 기간만 보관"
       }
     }
   ]

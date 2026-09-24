@@ -349,7 +349,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const opened = new Opened();
   try {
     const { usageStore, reportStore } = atStep('stores', () => {
-      const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'), { now: config.now });
+      const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'), { now: config.now, usageIdleDays: config.usageIdleDays });
       opened.usageStore = usage;
       const reports = new NodeSqliteReportStore(path.join(dataDir, 'reports.db'));
       opened.reportStore = reports;

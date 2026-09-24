@@ -55,7 +55,7 @@ The code allows two approaches: establish age with enough certainty for the risk
 | 12. Profiling | No profiling for content, recommendations or ads. Usage records per phone ID serve daily limits, abuse checks and cost (README verification item 23: the operator report lists top devices by cost). | Keep usage records to those purposes. |
 | 13. Nudge techniques | On the consent screen nothing is pre-selected, and back or "Not now" grants nothing; the examples keep working (draft-copy §1). | Check the "Agree and continue" and "Not now" buttons don't differ in weight in a way that pushes one. |
 | 14. Connected toys and devices | Not applicable | None |
-| 15. Online tools | In-app report sheet. Settings switches for AI features and error details. The phone ID is shown in Settings, with "Make a new ID" (B4). Rights requests go to `privacy@anycognition.ca`. | Rights requests need an email. An in-app request tool would be easier for a teen; not planned. |
+| 15. Online tools | In-app report sheet. Settings switches for AI features and error details. The phone ID is shown in Settings, with "Make a new ID" (B4). Rights requests go to `support@anycognition.ca`. | Rights requests need an email. An in-app request tool would be easier for a teen; not planned. |
 
 ## 5. Error details on by default
 

@@ -30,7 +30,9 @@ export type PracticeCategory = CategoryId;
 
 export type PracticeTable = Readonly<Record<number, ReadonlySet<PracticeCategory>>>;
 
-/** Consent version → the category ids that version's manifest lists. */
+/** Consent version → the category ids that version's manifest lists. Exported for the
+ *  request-edge suite, which derives a table from a forged manifest set to show a new category
+ *  needs no edit here; the server itself reads only `PRACTICES`. */
 export function practicesFrom(manifests: Readonly<Record<number, DisclosureManifest<PracticeCategory>>>): PracticeTable {
   return Object.freeze(
     Object.fromEntries(Object.entries(manifests).map(([version, manifest]) => [Number(version), new Set(manifest.categories.map((c) => c.id))])),

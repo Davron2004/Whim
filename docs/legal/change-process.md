@@ -101,9 +101,17 @@ Removing a provider needs steps 5, 6 and 9 only.
 
 While Texas's App Store Accountability Act applies, a developer must give each app store notice before making any significant change to the terms of service or the privacy policy (Texas Bus. & Com. Code §121.053(a); fact-check.md, claim 1; README summary 9). This is a standing step, not a one-time task. Utah, Louisiana and California follow in 2027 (README "Later, when triggered"); check whether their laws add similar duties.
 
-Neither "significant" nor how a store takes the notice is settled (README "Where the research is thin", Texas mechanics; lawyer item 7).
+What counts as "significant" isn't settled (README "Where the research is thin", Texas mechanics; lawyer item 7).
 
-TODO(owner): find out how Apple and Google each take a §121.053 notice, and write the channel here: Apple ______; Google ______.
+How each store takes the notice:
+
+- **Google Play:** Play Console → the app → **Age signals** → **Significant changes** → **Submit a significant change**. No new release is needed.
+  - The description is at most 200 characters per language. Write each language as its own block on its own lines, such as `<en-US>…</en-US>` and `<fr-CA>…</fr-CA>`.
+  - The effective date is at least today + 3 days. Play prompts the parents of supervised users 2 days before it.
+  - Up to 3 changes can be scheduled at once, up to 90 days ahead and more than 2 days apart. Each can be cancelled until 2 days before its effective date.
+- **Apple:** there's no App Store Connect form. The channel is PermissionKit's Significant Change API, which the app itself calls (issue #86). Until the app calls it, Apple gets no notice.
+
+**File the notice before publishing, and set the pages' effective date to the notice's effective date or later** (`deploy/site/legal-identity.json`, `effectiveDates`). A page may go live early with a future effective date; what it says applies from that date.
 
 Until a lawyer answers, the draft's rule is:
 
@@ -114,7 +122,8 @@ Send it before the changed page goes live, and log it:
 
 | Date sent | Store | Change | Channel | Reference |
 |---|---|---|---|---|
-| | | | | |
+| 2026-09-24 | Google Play | Privacy policy and terms v2 (consent version 2), effective 2026-09-27 | Play Console → Age signals → Significant changes | en-US and fr-CA descriptions (`openspec/changes/legal-surface-v2/progress.md`, 11.10) |
+| | Apple | Same change | PermissionKit Significant Change API | Not sent: the app doesn't call it yet (issue #86) |
 
 ## 9. Other triggers
 

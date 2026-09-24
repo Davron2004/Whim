@@ -17,6 +17,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { Usage } from '@whim/contract';
+import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
 
 export interface UsageStore {
   /** Add usage to the running total for a device. */
@@ -107,6 +108,10 @@ export interface UsageStoreOptions {
   /** Injected clock (ms since epoch) for the UTC day `credit` stamps on the lifetime row and the day
    *  the `last_credited_day` migration backfills. Defaults to `Date.now`. */
   now?: () => number;
+  /** The idle period the purge applies (`WHIM_USAGE_IDLE_DAYS`), which the `last_credited_day`
+   *  migration dates pre-existing rows against. Opening a file that still holds such rows without
+   *  it throws, so no caller can backfill a day that keeps them past their published rule. */
+  usageIdleDays?: number;
 }
 
 /** The four request kinds the ledger and daily-unit accounting distinguish. */
@@ -233,6 +238,10 @@ function parseGenerationIds(raw: string | null): readonly string[] {
 }
 
 const DAY_MS = 86_400_000;
+
+/** How long version 1's disclosure keeps usage records (days after collection): the rule the
+ *  totals a pre-`last_credited_day` build wrote were made under. */
+const PRE_LAST_CREDITED_KEEP_DAYS = keepLimit(MANIFESTS[1], 'usage-records')?.days ?? 0;
 
 /** Returns the request's UTC calendar day as `'YYYY-MM-DD'`. */
 function utcDayString(ms: number): string {
@@ -570,21 +579,24 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       CREATE INDEX IF NOT EXISTS idx_requests_day_kind_device
       ON requests (utc_day, kind, device_id)
     `);
-    this.migrateLastCreditedDay();
+    this.migrateLastCreditedDay(options.usageIdleDays);
   }
 
   /**
    * Additive, idempotent migration for a database written before `usage.last_credited_day` existed
-   * (legal-surface-v2 D9), run on every open. Only rows with no day are touched: they get the day
-   * this runs, which keeps every pre-existing phone's totals for a full idle period from here. A row
-   * a pre-change build credited since (a rollback) is caught by the same backfill.
+   * (legal-surface-v2 D9), run on every open. Only rows with no day are touched. Their totals were
+   * made under version 1's rule, which deletes them within 90 days, so they get the day that makes
+   * the idle purge delete them 90 days after this run: `usageIdleDays - 90` days back (never a
+   * future day). A phone that comes back is credited again and keeps them; one that never does
+   * loses them within 90 days. A row a pre-change build credited since (a rollback) is caught by
+   * the same backfill.
    *
    * With nothing to do (an already-migrated file) it only reads, so reopening never waits on a
    * writer and changes nothing. Otherwise the column check and the `ALTER` are repeated inside one
    * immediate transaction, so the server and a `whim-admin` opening the same file at once can't
    * both add the column.
    */
-  private migrateLastCreditedDay(): void {
+  private migrateLastCreditedDay(usageIdleDays: number | undefined): void {
     if (this.hasLastCreditedDayColumn() && this.db.prepare('SELECT 1 FROM usage WHERE last_credited_day IS NULL LIMIT 1').get() === undefined) {
       return;
     }
@@ -593,7 +605,13 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       if (!this.hasLastCreditedDayColumn()) {
         this.db.exec('ALTER TABLE usage ADD COLUMN last_credited_day TEXT');
       }
-      this.db.prepare('UPDATE usage SET last_credited_day = ? WHERE last_credited_day IS NULL').run(utcDayString(this.now()));
+      if (this.db.prepare('SELECT 1 FROM usage WHERE last_credited_day IS NULL LIMIT 1').get() !== undefined) {
+        if (usageIdleDays === undefined) {
+          throw new Error('usage.db holds lifetime rows with no last_credited_day; open it with usageIdleDays so the migration can date them');
+        }
+        const backdate = Math.max(0, usageIdleDays - PRE_LAST_CREDITED_KEEP_DAYS);
+        this.db.prepare('UPDATE usage SET last_credited_day = ? WHERE last_credited_day IS NULL').run(utcDayString(this.now() - backdate * DAY_MS));
+      }
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');

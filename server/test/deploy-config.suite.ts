@@ -487,6 +487,7 @@ const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'
 const ASSOCIATION_ROUTES = ['/.well-known/apple-app-site-association', '/.well-known/assetlinks.json'];
 const PAGE_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ['/privacy', 'privacy.html'],
+  ['/privacy/v1', 'privacy-v1.html'],
   ['/terms', 'terms.html'],
   ['/fr/privacy', 'fr/privacy.html'],
   ['/fr/terms', 'fr/terms.html'],
@@ -834,6 +835,12 @@ function makeSandbox(): Sandbox {
   return sandbox;
 }
 
+/** Commits and pushes every change in the sandbox checkout, so deploy.sh's clean-tree check passes. */
+function commitAndPush(sandbox: Sandbox, message: string): void {
+  git(sandbox.repo, sandbox.home, ['commit', '-q', '-am', message]);
+  git(sandbox.repo, sandbox.home, ['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+}
+
 function withSandbox(body: (sandbox: Sandbox) => void): void {
   const sandbox = makeSandbox();
   try {
@@ -908,6 +915,7 @@ const DNS_READY: readonly StubRule[] = [
 const HTML = 'text/html; charset=utf-8';
 const PAGES_UP: readonly StubRule[] = [
   [`*https://${WEB_HOST}/privacy`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/privacy/v1`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/terms`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/fr/privacy`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/fr/terms`, 0, `200|${HTML}|`, '<html>'],
@@ -1013,6 +1021,36 @@ function deployPreflightTests(): void {
       run.stderr,
     );
     eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+  });
+
+  // A profile's server lines reach config.env too, so the same boot parse covers them: every
+  // profile, since a resize can move the VM to any of them (legal-surface-v2 review L4).
+  for (const variable of KEEP_PERIOD_VARIABLES) {
+    const tooLong = '4000';
+    check(`setup: server boot refuses ${variable}=${tooLong}`, configRefuses({ [variable]: tooLong }, variable));
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox);
+      fs.appendFileSync(path.join(sandbox.repo, 'deploy', 'profiles', 'event.env'), `${variable}=${tooLong}\n`);
+      commitAndPush(sandbox, 'profile keep-period');
+      const run = runScript(sandbox, 'deploy.sh', []);
+      check(
+        `deploy.sh refuses ${variable}=${tooLong} set by a machine profile, naming it and the profile`,
+        run.status === 1 && run.stderr.includes(variable) && run.stderr.includes('would refuse these values at boot') && run.stderr.includes('profile event'),
+        run.stderr,
+      );
+      eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+    });
+  }
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    fs.appendFileSync(path.join(sandbox.repo, 'deploy', 'profiles', 'standard.env'), 'WHIM_USAGE_IDLE_DAYS=180\n');
+    commitAndPush(sandbox, 'profile keep-period');
+    const run = runScript(sandbox, 'deploy.sh', []);
+    check(
+      'deploy.sh accepts a keep-period within the maximum set by a machine profile, and goes on to gcloud',
+      !run.stderr.includes('would refuse these values at boot') && toolLog(sandbox, 'gcloud').length > 0,
+      run.stderr,
+    );
   });
 
   withSandbox((sandbox) => {

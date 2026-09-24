@@ -117,8 +117,12 @@ export type BuildSiteResult =
   | { readonly ok: true; readonly associationState: 'absent'; readonly missingPath: string }
   | { readonly ok: false; readonly reason: string };
 
-/** The pages rendered from deploy values alone; the legal pages come from `renderLegalSite`. */
-const DEPLOY_VALUE_PAGES = ['support.html', 'app-link.html', 'not-found.html'] as const;
+/** The pages rendered from deploy values alone; the legal pages come from `renderLegalSite`.
+ *  `privacy-v1.html` is the version-1 policy exactly as it was published, kept readable at
+ *  `/privacy/v1` until the version-2 policy takes effect. It is deliberately not a `LEGAL_PAGES`
+ *  entry: it predates the identity file, and the legal-pages deploy check describes the current
+ *  manifest, which it never did. */
+const DEPLOY_VALUE_PAGES = ['support.html', 'app-link.html', 'not-found.html', 'privacy-v1.html'] as const;
 
 function siteSource(repoRoot: string, file: string): string {
   return fs.readFileSync(path.join(repoRoot, 'deploy', 'site', file), 'utf8');

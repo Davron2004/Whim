@@ -27,7 +27,9 @@ type ListLanguage = (typeof LIST_LANGUAGES)[number];
 type Translated<L extends string> = { readonly [K in L]: string };
 
 interface ProviderRow {
-  readonly name: string;
+  /** One name for every language, unless the file gives it per language (a row that names a kind
+   *  of company rather than one company). */
+  readonly name: Translated<ListLanguage>;
   readonly contact: string;
   readonly role: Translated<ListLanguage>;
   readonly receives: Translated<ListLanguage>;
@@ -101,11 +103,19 @@ class IdentityReader {
     return Object.fromEntries(languages.map((language) => [language, this.text(fields, field, language)])) as Translated<L>;
   }
 
+  /** A string for every language, or an object with one per language. */
+  textOrTranslated<L extends string>(from: Fields, parent: string, key: string, languages: readonly L[]): Translated<L> {
+    const value = from[key];
+    if (typeof value === 'object' && value !== null) return this.translated(from, parent, key, languages);
+    const text = this.text(from, parent, key);
+    return Object.fromEntries(languages.map((language) => [language, text])) as Translated<L>;
+  }
+
   provider(value: unknown, index: number): ProviderRow {
     const field = `providers[${index}]`;
     const fields = this.fields(value, field, PROVIDER_KEYS);
     return {
-      name: this.text(fields, field, 'name'),
+      name: this.textOrTranslated(fields, field, 'name', LIST_LANGUAGES),
       contact: this.text(fields, field, 'contact'),
       role: this.translated(fields, field, 'role', LIST_LANGUAGES),
       receives: this.translated(fields, field, 'receives', LIST_LANGUAGES),
@@ -187,7 +197,7 @@ const IDENTITY_SLOTS: Readonly<Record<string, Slot<LegalIdentity, PageLanguage>>
 
 /** The row values inside `<!--EACH:PROVIDERS:<language>-->`. */
 const PROVIDER_SLOTS: Readonly<Record<string, Slot<ProviderRow, ListLanguage>>> = {
-  PROVIDER_NAME: (row) => ['name', row.name],
+  PROVIDER_NAME: (row, language) => [new Set(Object.values(row.name)).size === 1 ? 'name' : `name.${language}`, row.name[language]],
   PROVIDER_CONTACT: (row) => ['contact', row.contact],
   PROVIDER_ROLE: (row, language) => [`role.${language}`, row.role[language]],
   PROVIDER_RECEIVES: (row, language) => [`receives.${language}`, row.receives[language]],

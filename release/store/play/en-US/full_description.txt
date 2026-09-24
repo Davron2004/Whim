@@ -2,7 +2,7 @@ Whim turns a spoken or typed description into a small app that lives on your pho
 
 Tell Whim what you want. It asks a question or two, shows you a plan, and builds the app once you approve it. Each app runs in a sandboxed browser view on your device, with no access to your camera, location, contacts, or files.
 
-To build or change an app, Whim sends what you describe to its server, and AI companies working for Whim write the code. Nobody at Whim can read what you save inside your apps; it stays on your phone. The privacy policy has the details.
+To build or change an app, Whim sends what you describe to its server, and AI companies working for Whim write the code. Nobody at Whim can read what you save inside your apps, and Whim doesn’t send it anywhere. The privacy policy has the details.
 
 Whim has no accounts, no login and no ads. A few examples are included and work without an internet connection; building or changing an app needs one.
 
