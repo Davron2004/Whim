@@ -45,6 +45,9 @@ export interface ConsentScreenProps {
   /** Ask mode only: the stored grant was for an earlier consent version (spec "A policy change
    *  asks again") — shown as one line above the disclosure. */
   outdated?: boolean;
+  /** Ask mode only: a `consent_required` refusal opened this screen (request-envelope) — shown as
+   *  one line above the disclosure, unless the outdated line already explains it. */
+  refused?: boolean;
   /** Review mode only: whether a current grant exists right now — decides which action set
    *  renders (spec "Settings shows consent and can review or turn it off"). */
   consentOn?: boolean;
@@ -63,6 +66,7 @@ export interface ConsentScreenProps {
 export default function ConsentScreen({
   mode,
   outdated = false,
+  refused = false,
   consentOn = false,
   onAgree,
   onTurnOff,
@@ -88,8 +92,10 @@ export default function ConsentScreen({
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <ScrollView contentContainerStyle={styles.content}>
-        {mode === 'ask' && outdated && (
-          <Text style={[TYPE_SCALE.body, styles.outdated, { color: p.danger }]}>{COPY.consentOutdatedLine}</Text>
+        {mode === 'ask' && (outdated || refused) && (
+          <Text style={[TYPE_SCALE.body, styles.outdated, { color: p.danger }]}>
+            {outdated ? COPY.consentOutdatedLine : COPY.permissionRequiredLine}
+          </Text>
         )}
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.consentTitle}</Text>
         <Text style={[TYPE_SCALE.body, styles.lead, { color: p.text }]}>{COPY.consentLead}</Text>

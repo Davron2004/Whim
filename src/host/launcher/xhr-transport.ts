@@ -29,6 +29,7 @@ import {
   httpErrorFrom,
   logMappedError,
   requestHeaders,
+  requestIdOf,
   type ClientOptions,
 } from './transport-shared';
 
@@ -87,6 +88,8 @@ export async function openXhrGenerateStream(
   if (signal?.aborted) {
     return 'aborted';
   }
+  // Built before the XHR exists: a request that cannot be built leaves no listener or timer behind.
+  const headers = requestHeaders(opts, '/v1/generate');
 
   return new Promise<ResponseBodyReader | 'aborted'>((resolveOpen, rejectOpen) => {
     const xhr = createXhr();
@@ -129,7 +132,9 @@ export async function openXhrGenerateStream(
       queue.push(outcome);
     }
 
-    const reader: ResponseBodyReader = {
+    // `requestId` is filled in by `decide()`, from the response headers, before the reader is
+    // handed back.
+    const reader: { read: ResponseBodyReader['read']; requestId?: string } = {
       read(): Promise<{ done: boolean; value?: Uint8Array }> {
         const next = queue.shift();
         if (next) {
@@ -180,7 +185,8 @@ export async function openXhrGenerateStream(
     }
 
     /** Decide ok/not-ok exactly once, as soon as `status` is known. On a 2xx status, hands the
-     *  reader back immediately — before any body bytes arrive. */
+     *  reader back immediately — before any body bytes arrive — carrying the response's
+     *  `x-whim-request-id`, which is readable from `HEADERS_RECEIVED` on. */
     function decide(): void {
       if (decided || xhr.status === 0) {
         return;
@@ -188,6 +194,7 @@ export async function openXhrGenerateStream(
       decided = true;
       ok = xhr.status >= 200 && xhr.status < 300;
       if (ok) {
+        reader.requestId = requestIdOf({ get: (name) => xhr.getResponseHeader(name) });
         opened = true;
         resolveOpen(reader);
       }
@@ -269,7 +276,7 @@ export async function openXhrGenerateStream(
     }
 
     xhr.open('POST', `${opts.baseUrl}/v1/generate`, true);
-    for (const [name, value] of Object.entries(requestHeaders(opts))) {
+    for (const [name, value] of Object.entries(headers)) {
       xhr.setRequestHeader(name, value);
     }
 

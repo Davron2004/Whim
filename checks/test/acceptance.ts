@@ -29,6 +29,7 @@ import { test, report, assert, assertHasKind, assertNoKind, findByKind } from '.
 import { runHostileCorpus } from './hostile/corpus';
 import { runReleaseSuites } from './release';
 import { run as runSourceScans } from './repo/source-scans.suite';
+import { run as runHeaderLockstep } from './repo/header-lockstep.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1202,6 +1203,7 @@ async function main(): Promise<void> {
   await runHostileCorpus();
   await runReleaseSuites();
   await runSourceScans();
+  await runHeaderLockstep();
 }
 
 main()

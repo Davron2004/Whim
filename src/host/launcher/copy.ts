@@ -268,6 +268,14 @@ export const COPY = {
   consentOutdatedLine: 'What Whim sends has changed since you last agreed.',
   consentAgree: 'Agree and continue',
   consentDecline: 'Not now',
+  // ── refusals about this phone itself (request-envelope; design D5/D7) ──────
+  // What the phone says for these two refusals in place of the server's hint
+  // (`service-refusal.ts#REFUSAL_RULES`). The permission line also heads the consent screen a
+  // `consent_required` refusal opens, so the user knows why it is back. It is screen chrome, not
+  // disclosure, so its key stays off the `consent` prefix the privacy page must quote verbatim
+  // (`server/test/web-site.suite.ts`).
+  updateRequiredLine: 'Update Whim to keep making and changing apps.',
+  permissionRequiredLine: 'Whim needs your permission again before it can send this.',
   // Review mode's action set (spec "Settings shows consent and can review or turn it off"): the
   // large button is always the safe one — keeping AI features on, or turning them on from off.
   consentReviewKeepOn: 'Keep AI features on',

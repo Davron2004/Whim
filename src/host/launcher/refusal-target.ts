@@ -19,16 +19,18 @@ import type { RefusalSentFrom } from './refusal-landing';
 export type { RefusalSentFrom };
 
 /** Builds the landing screen fresh from the plan's OWN text/answers/editing scope — never
- *  `prev`'s — since a plan-started rewrite can itself follow either step. */
+ *  `prev`'s — since a plan-started rewrite can itself follow either step. With no `notice` it is
+ *  the plain step to go back to (a refusal that opens a screen of its own, request-envelope). */
 export function rewriteRefusalTarget(
   sentFrom: RefusalSentFrom,
   plan: PlanScreen,
   refusal: ServiceRefusal,
-  notice: FlowNotice,
+  notice?: FlowNotice,
 ): ComposeScreen | ClarifyScreen {
   const editing = plan.editing ? { editing: plan.editing } : {};
+  const landed = notice ? { notice } : {};
   if (refusalLanding('rewrite', sentFrom, refusal.code) === 'clarify') {
-    return { kind: 'clarify', ...editing, text: plan.text, questions: plan.questions, answers: plan.answers, loading: false, notice };
+    return { kind: 'clarify', ...editing, text: plan.text, questions: plan.questions, answers: plan.answers, loading: false, ...landed };
   }
-  return { kind: 'compose', ...editing, text: plan.text, notice };
+  return { kind: 'compose', ...editing, text: plan.text, ...landed };
 }

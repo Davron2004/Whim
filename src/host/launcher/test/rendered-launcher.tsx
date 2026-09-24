@@ -14,8 +14,10 @@ import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { SEED_VERSION } from '../seed';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
+import type { AppInfo } from '../app-info';
 import { resetNativeStorage } from './native-storage';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
+import { testAppInfo } from './client-fixtures';
 
 export type Tree = TestRenderer.ReactTestRenderer;
 
@@ -23,6 +25,7 @@ export interface SentRequest {
   path: string;
   body: Record<string, unknown> | null;
   signal: AbortSignal | undefined;
+  headers: Headers;
 }
 
 export interface LauncherSetup {
@@ -32,6 +35,8 @@ export interface LauncherSetup {
   consent?: boolean;
   /** Any other persisted state the shell should find at launch. */
   prepare?: (kv: KVBackend) => void;
+  /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
+  appInfo?: () => AppInfo;
   /** Answers every request except `/healthz` (which always answers healthy). */
   server: (request: SentRequest) => Response | Promise<Response>;
 }
@@ -40,6 +45,8 @@ export interface Launcher {
   tree: Tree;
   kv: KVBackend;
   sent: SentRequest[];
+  /** The headers of every `/healthz` probe, in order. */
+  probes: Headers[];
   paths: () => string[];
   /** Every `setTimeout` is held here instead of scheduled (connect timeouts, probe retries). */
   clock: ReturnType<typeof captureTimeouts>;
@@ -108,21 +115,26 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   const clock = captureTimeouts();
   const originalFetch = globalThis.fetch;
   const sent: SentRequest[] = [];
+  const probes: Headers[] = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const path = new URL(String(url)).pathname;
-    if (path === '/healthz') return json({ service: 'whim-server' });
+    if (path === '/healthz') {
+      probes.push(new Headers(init?.headers));
+      return json({ service: 'whim-server' });
+    }
     const request: SentRequest = {
       path,
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
       signal: init?.signal ?? undefined,
+      headers: new Headers(init?.headers),
     };
     sent.push(request);
     return setup.server(request);
   }) as typeof fetch;
   let tree: Tree | undefined;
   try {
-    tree = await renderScreen(<LauncherRoot />);
-    await body({ tree, kv, sent, paths: () => sent.map((r) => r.path), clock });
+    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} />);
+    await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);
     globalThis.fetch = originalFetch;

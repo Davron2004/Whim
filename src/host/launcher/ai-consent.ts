@@ -13,8 +13,10 @@ import { AI_CONSENT_VERSION } from './release-config';
 
 const CONSENT_KEY = 'whim.ai-consent:v1';
 
+/** `granted` carries the grant's own version: the consent version a request made under it is sent
+ *  under (`x-whim-consent`, request-envelope). */
 export type ConsentStatus =
-  | { kind: 'granted'; grantedAt: string }
+  | { kind: 'granted'; version: number; grantedAt: string }
   | { kind: 'absent' }
   | { kind: 'outdated' };
 
@@ -53,7 +55,7 @@ export function consentStatus(kv: KVBackend): ConsentStatus {
   const stored = readStoredGrant(kv);
   if (stored == null) return { kind: 'absent' };
   if (stored.version !== AI_CONSENT_VERSION) return { kind: 'outdated' };
-  return { kind: 'granted', grantedAt: stored.grantedAt };
+  return { kind: 'granted', version: stored.version, grantedAt: stored.grantedAt };
 }
 
 /**

@@ -15,6 +15,7 @@ import { grantConsent } from '../ai-consent';
 import { saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
 import { renderScreen, unmountScreen, captureTimeouts } from './react-screen';
+import { testAppInfo } from './client-fixtures';
 
 export async function runLauncherInteractionTests(h: Harness): Promise<void> {
   for (const change of ['server', 'consent', 'same'] as const) {
@@ -37,7 +38,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('A timer'));
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onContinue());
@@ -98,7 +99,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
       h.eq(tree.root.findByType(HomeScreen).props.offline, true, 'startup probe reports offline');
       await TestRenderer.act(async () => clock.fire(2000));
       h.eq(probes, 2, 'retry probe is now in flight');

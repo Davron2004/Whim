@@ -9,6 +9,7 @@
 import type { ServiceRefusalCode } from '@whim/contract';
 import { GenerationClientError, isNonEmptyString } from './transport-shared';
 import {
+  COPY,
   retryLineElapsed,
   retryLineHoursFallback,
   retryLineMinutes,
@@ -18,10 +19,19 @@ import {
 } from './copy';
 
 /** Where a refusal's primary text lands (design D9) and what tone its notice takes. Deliberately
- *  NOT keyed by status or hint text — matching is by the contract identifier alone. */
+ *  NOT keyed by status or hint text — matching is by the contract identifier alone.
+ *
+ *  `opens` names the screen a refusal about the phone itself opens instead of a notice
+ *  (request-envelope D5/D7): `consent` — the consent the request was sent under doesn't cover it;
+ *  `update` — this build is below its platform's minimum. `landing` still names the step the user
+ *  goes back to from there. `text` is what the phone says for the refusal wherever it shows it as
+ *  text (a notice, a settled build's reason) in place of the server's hint; without it the hint is
+ *  shown verbatim. */
 export interface RefusalRule {
   readonly landing: 'text' | 'sender';
   readonly tone: 'danger' | 'neutral';
+  readonly opens?: 'consent' | 'update';
+  readonly text?: string;
 }
 
 /** A mapped type over the CLOSED `ServiceRefusalCode` set: a member added to the contract without
@@ -34,8 +44,8 @@ export const REFUSAL_RULES: { readonly [K in ServiceRefusalCode]: RefusalRule } 
   daily_limit: { landing: 'sender', tone: 'neutral' },
   device_busy: { landing: 'sender', tone: 'neutral' },
   server_busy: { landing: 'sender', tone: 'neutral' },
-  update_required: { landing: 'sender', tone: 'neutral' },
-  consent_required: { landing: 'sender', tone: 'neutral' },
+  update_required: { landing: 'sender', tone: 'neutral', opens: 'update', text: COPY.updateRequiredLine },
+  consent_required: { landing: 'sender', tone: 'neutral', opens: 'consent', text: COPY.permissionRequiredLine },
 };
 
 /** What `serviceRefusalOf` returns for a recognised refusal: the closed code, the server's own
@@ -68,6 +78,11 @@ export function serviceRefusalOf(err: unknown): ServiceRefusal | undefined {
     status: err.status,
     retryAfterSeconds: err.retryAfterSeconds,
   };
+}
+
+/** What the phone shows for `refusal` as text: its rule's own `text`, or the server's hint. */
+export function refusalText(refusal: ServiceRefusal): string {
+  return REFUSAL_RULES[refusal.code].text ?? refusal.hint;
 }
 
 /** The moment (epoch ms) the landing screen's primary action re-enables, or `undefined` when the

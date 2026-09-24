@@ -17,7 +17,7 @@ import { isClarifySkip } from '../prompt-flow';
 import { FlowRequests, onlyOnStep } from '../flow-request';
 import { loadHighlighting, saveHighlighting } from '../highlighting';
 import type { StoreAccess } from '../store-access';
-
+import { grantedOptions } from './client-fixtures';
 
 interface CapturedRequest {
   url: string;
@@ -38,8 +38,7 @@ function stubFetch(status: number, body: unknown, captured: CapturedRequest[]): 
 
 const OPTS = (fetchImpl: typeof fetch): ConsentedClientOptions =>
   ({
-    baseUrl: 'http://server.test',
-    deviceId: '11111111-1111-4111-8111-111111111111',
+    ...grantedOptions('http://server.test', '11111111-1111-4111-8111-111111111111'),
     fetchImpl,
   }) as ConsentedClientOptions;
 

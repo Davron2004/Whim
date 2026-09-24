@@ -69,6 +69,7 @@ import { runHomeGridUiTests } from './home-grid-ui.suite';
 import { runFlowScreensUiTests } from './flow-screens-ui.suite';
 import { runHistoryUiTests } from './history-ui.suite';
 import { runAppInfoTests } from './app-info.suite';
+import { runRequestEnvelopeUiTests } from './request-envelope-ui.suite';
 
 const h = new Harness();
 
@@ -135,6 +136,7 @@ await runHomeGridUiTests(h);
 await runFlowScreensUiTests(h);
 await runHistoryUiTests(h);
 await runAppInfoTests(h);
+await runRequestEnvelopeUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

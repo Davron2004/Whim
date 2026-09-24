@@ -50,6 +50,7 @@ import {
   isRecord,
   logMappedError,
   requestHeaders,
+  requestIdOf,
 } from './transport-shared';
 import type { ClientOptions, ConsentedClientOptions } from './transport-shared';
 
@@ -58,6 +59,15 @@ import type { ClientOptions, ConsentedClientOptions } from './transport-shared';
  *  with `xhr-transport.ts` without either transport module importing the other. */
 export { GenerationClientError, consentedClientOptions };
 export type { ClientOptions, ConsentedClientOptions };
+
+/** A unary call's parsed response plus the `x-whim-request-id` it came with (request-envelope D6).
+ *  The key is present only when the response carried the header. */
+export type WithRequestId<T> = T & { readonly requestId?: string };
+
+function withRequestId<T extends object>(body: T, response: Response): WithRequestId<T> {
+  const requestId = requestIdOf(response.headers);
+  return requestId === undefined ? body : { ...body, requestId };
+}
 
 /**
  * Hand-rolled structural guards standing in for `@whim/contract`'s zod schemas
@@ -201,13 +211,14 @@ export async function clarifyPrompt(
   prompt: string,
   app?: ClarifyRequest['app'],
   signal?: AbortSignal,
-): Promise<ClarifyResponse> {
+): Promise<WithRequestId<ClarifyResponse>> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const headers = requestHeaders(opts, '/v1/clarify');
   let response: Response;
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/clarify`, {
       method: 'POST',
-      headers: requestHeaders(opts),
+      headers,
       body: JSON.stringify({ prompt, ...(app ? { app } : {}) } satisfies ClarifyRequest),
       signal,
     });
@@ -227,7 +238,7 @@ export async function clarifyPrompt(
   if (!isClarifyResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
-  return bodyJson;
+  return withRequestId(bodyJson, response);
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
@@ -243,13 +254,14 @@ export async function rewritePrompt(
   clarifications: readonly Clarification[] = [],
   app?: RewriteRequest['app'],
   signal?: AbortSignal,
-): Promise<RewriteResponse> {
+): Promise<WithRequestId<RewriteResponse>> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const headers = requestHeaders(opts, '/v1/rewrite');
   let response: Response;
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/rewrite`, {
       method: 'POST',
-      headers: requestHeaders(opts),
+      headers,
       body: JSON.stringify({
         prompt,
         ...(clarifications.length > 0 ? { clarifications: [...clarifications] } : {}),
@@ -273,7 +285,7 @@ export async function rewritePrompt(
   if (!isRewriteResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
-  return bodyJson;
+  return withRequestId(bodyJson, response);
 }
 
 /** `POST /v1/report` (design D14) — the ONE call that does NOT require AI-data consent (design
@@ -286,13 +298,14 @@ export async function sendReport(
   opts: ClientOptions,
   body: ReportRequest,
   signal?: AbortSignal,
-): Promise<ReportResponse> {
+): Promise<WithRequestId<ReportResponse>> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const headers = requestHeaders(opts, '/v1/report');
   let response: Response;
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/report`, {
       method: 'POST',
-      headers: requestHeaders(opts),
+      headers,
       body: JSON.stringify(body),
       signal,
     });
@@ -312,7 +325,7 @@ export async function sendReport(
   if (!isReportResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected report response shape' });
   }
-  return bodyJson;
+  return withRequestId(bodyJson, response);
 }
 
 /** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
@@ -379,6 +392,8 @@ async function openFetchGenerateStream(
   signal: AbortSignal | undefined,
 ): Promise<ResponseBodyReader | 'aborted'> {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  // Built before the window is armed: a request that cannot be built leaves no timer behind.
+  const headers = requestHeaders(opts, '/v1/generate');
   const controller = new AbortController();
   let timedOut = false;
 
@@ -413,7 +428,7 @@ async function openFetchGenerateStream(
   try {
     response = await fetchImpl(`${opts.baseUrl}/v1/generate`, {
       method: 'POST',
-      headers: requestHeaders(opts),
+      headers,
       body: JSON.stringify(request satisfies GenerateRequest),
       signal: controller.signal,
     });
@@ -440,6 +455,7 @@ async function openFetchGenerateStream(
 
   const inner = response.body.getReader();
   return {
+    requestId: requestIdOf(response.headers),
     async read() {
       try {
         const chunk = await inner.read();
@@ -593,16 +609,38 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  * Decoding only up to a separator is what keeps the non-streaming decode correct: `\n` never
  * appears inside a multi-byte UTF-8 sequence, so a block boundary is always a character boundary,
  * and any partial character stays in the byte buffer until the block it belongs to is complete.
+ *
+ * The returned stream also carries the response's `x-whim-request-id` (request-envelope D6) once
+ * it has opened — see `GenerationStream`. A refused open carries it on the thrown error instead.
  */
-export async function* generateApp(
+export function generateApp(
   opts: ConsentedClientOptions,
   request: GenerateRequest,
   signal?: AbortSignal,
-): AsyncIterable<GenerationEvent> {
+): GenerationStream {
+  const opened: { requestId?: string } = {};
+  const stream = streamEvents(opts, request, signal, opened);
+  Object.defineProperty(stream, 'requestId', { get: () => opened.requestId, enumerable: true });
+  return stream as GenerationStream;
+}
+
+/** What `generateApp` returns: its events, plus the `x-whim-request-id` the stream's response
+ *  carried — set once the stream has opened (by the time the first `next()` settles), absent
+ *  before that and when the response had none. */
+export type GenerationStream = AsyncGenerator<GenerationEvent, void, undefined> & { readonly requestId?: string };
+
+/** `generateApp`'s event loop; records the opened stream's request id on `opened`. */
+async function* streamEvents(
+  opts: ConsentedClientOptions,
+  request: GenerateRequest,
+  signal: AbortSignal | undefined,
+  opened: { requestId?: string },
+): AsyncGenerator<GenerationEvent, void, undefined> {
   const reader = await openGenerateStream(opts, request, signal);
   if (reader === 'aborted') {
     return;
   }
+  opened.requestId = reader.requestId;
 
   const decoder = new TextDecoder();
   // The bytes that have arrived and are NOT yet part of a completed block: at most one partial

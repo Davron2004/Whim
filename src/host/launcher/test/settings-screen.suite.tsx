@@ -3,6 +3,7 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import SettingsScreen, { type SettingsScreenProps } from '../SettingsScreen';
 import { COPY } from '../copy';
+import { AI_CONSENT_VERSION } from '../release-config';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { SHELL_PALETTE } from '../theme';
 import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
@@ -16,7 +17,7 @@ function isProbeResult(node: TestRenderer.ReactTestInstance): boolean {
 }
 const props: SettingsScreenProps = {
   serverUrl: 'https://saved.example', highlighting: true, canProbe: true,
-  consentStatus: { kind: 'granted', grantedAt: '2026-09-18' },
+  consentStatus: { kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' },
   onBack: noop, onServerUrlChange: noop, onUseDefaultServer: noop,
   onHighlightingChange: noop, onOpenAIFeatures: noop,
 };

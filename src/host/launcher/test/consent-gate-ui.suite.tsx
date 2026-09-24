@@ -20,6 +20,7 @@ import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, captureTimeouts } from './react-screen';
+import { testAppInfo } from './client-fixtures';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
@@ -115,7 +116,7 @@ async function withLauncher(consent: 'none' | 'outdated', body: (tree: Tree, req
   }) as typeof fetch;
   let tree: Tree | undefined;
   try {
-    tree = await renderScreen(<LauncherRoot />);
+    tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
     await body(tree, requests, headers);
   } finally {
     if (tree) await unmountScreen(tree);
