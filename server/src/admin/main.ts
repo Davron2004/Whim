@@ -14,7 +14,7 @@ import { runAdminCli } from './cli';
 
 const config = loadServerConfig(process.env);
 const reportStore = new NodeSqliteReportStore(path.join(config.dataDir, 'reports.db'));
-const usageStore = new NodeSqliteUsageStore(path.join(config.dataDir, 'usage.db'));
+const usageStore = new NodeSqliteUsageStore(path.join(config.dataDir, 'usage.db'), { now: config.now });
 
 const result = await runAdminCli(process.argv.slice(2), {
   reportStore,

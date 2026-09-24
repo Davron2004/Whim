@@ -54,10 +54,10 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 8. Store declarations, listings and review notes
 
-- [ ] 8.1 `scripts/release/lib/store-listing.ts`: replace `PRIVACY_TYPE_MAPPING` with the manifest's store mapping, turn `checkNoLinkageOrTracking` into `checkNoTracking`, and have `checkTypeAgreement` compare all four declarations with the mapping. Red-checks in `store-listing.suite.ts` for each scenario of spec store-privacy-declarations §"Store privacy declarations follow the manifest's store mapping".
-- [ ] 8.2 Rewrite `release/store/app-store/app-privacy.json`, `release/store/play/data-safety.json`, `ios/Whim/PrivacyInfo.xcprivacy` and `release/store/answers.md` from draft-copy §4.
-- [ ] 8.3 Replace the privacy lines in `release/store/app-store/en-US/description.txt` and `release/store/play/en-US/full_description.txt` with draft-copy §3.
-- [ ] 8.4 Replace "What leaves the phone, and when" and the 4.7.1 sentence, and add the 4.7.4 and 4.7.5 answers, in `release/store/app-store/review_information/notes.txt` and `docs/store/review-notes.md` §4. Keep the network-deny TODO, and keep the notes within 4,000 characters (checked).
+- [x] 8.1 `scripts/release/lib/store-listing.ts`: replace `PRIVACY_TYPE_MAPPING` with the manifest's store mapping, turn `checkNoLinkageOrTracking` into `checkNoTracking`, and have `checkTypeAgreement` compare all four declarations with the mapping. Red-checks in `store-listing.suite.ts` for each scenario of spec store-privacy-declarations §"Store privacy declarations follow the manifest's store mapping".
+- [x] 8.2 Rewrite `release/store/app-store/app-privacy.json`, `release/store/play/data-safety.json`, `ios/Whim/PrivacyInfo.xcprivacy` and `release/store/answers.md` from draft-copy §4.
+- [x] 8.3 Replace the privacy lines in `release/store/app-store/en-US/description.txt` and `release/store/play/en-US/full_description.txt` with draft-copy §3.
+- [x] 8.4 Replace "What leaves the phone, and when" and the 4.7.1 sentence, and add the 4.7.4 and 4.7.5 answers, in `release/store/app-store/review_information/notes.txt` and `docs/store/review-notes.md` §4. Keep the network-deny TODO, and keep the notes within 4,000 characters (checked).
 
 ## 9. Store age signals
 

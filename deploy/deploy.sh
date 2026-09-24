@@ -7,9 +7,10 @@
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment.
 # Preflight refuses before anything is built or changed: a missing required value, a WHIM_API_HOST
-# that isn't api.<WHIM_WEB_HOST>, a Node major other than 22, a dirty or unpushed tree, then (full
-# deploys only) a missing, version-less or empty OpenRouter secret and a VM machine type no profile
-# names. The profile is chosen by the VM's machine type; there is no option to pick one.
+# that isn't api.<WHIM_WEB_HOST>, a Node major other than 22, server values the server's own boot
+# parse refuses (such as a keep-period above the disclosure manifest's maximum), a dirty or unpushed
+# tree, then (full deploys only) a missing, version-less or empty OpenRouter secret and a VM machine
+# type no profile names. The profile is chosen by the VM's machine type; there is no option to pick one.
 set -euo pipefail
 
 WHIM_SCRIPT=deploy.sh
@@ -54,6 +55,8 @@ profile=""
 profile_file=""
 image=""
 openrouter_value=""
+# The operator values config.env carries when set, after the two model ids it always carries.
+server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS"
 
 preflight_values() {
   whim_load_values
@@ -84,6 +87,19 @@ preflight_values() {
     [[ -z "${!key}" ]] || [[ "${!key}" =~ ^(0|[1-9][0-9]{0,14})$ ]] \
       || whim_fail "$key must be 0 or a positive integer build number: ${!key}"
   done
+}
+
+# Runs the server values config.env will carry through the server's own boot parse: it refuses a
+# keep-period above the maximum the current disclosure manifest publishes (legal-surface-v2 D9), and
+# anything else the server would refuse to boot on, before it can take the API down mid-deploy.
+preflight_server_config() {
+  local -a values=("WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
+  local key
+  for key in $server_optional_keys; do
+    [[ -z "${!key}" ]] || values+=("$key=${!key}")
+  done
+  (cd "$WHIM_REPO_ROOT" && node server/config-check.mjs "${values[@]}") \
+    || whim_fail "the server would refuse these values at boot (above). Nothing was built or changed."
 }
 
 preflight_node() {
@@ -176,7 +192,7 @@ stage_server_files() {
   whim_read_env_lines "$profile_file" append_server_key
   printf 'WHIM_ENGINEER_MODEL=%s\nWHIM_REWRITE_MODEL=%s\n' "$WHIM_ENGINEER_MODEL" "$WHIM_REWRITE_MODEL" >>"$upload/config.env"
   local key
-  for key in WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID; do
+  for key in $server_optional_keys; do
     [[ -z "${!key}" ]] || append_server_key "$key" "${!key}"
   done
   local mem_limit shm_size
@@ -287,6 +303,7 @@ preflight_values
 preflight_node
 # The re-consent rule (legal-surface-v2 D3): no deploy while the disclosure manifest widened without a consent-version bump.
 (cd "$WHIM_REPO_ROOT" && node scripts/release/run.mjs disclosure-check) || whim_fail "the disclosure release check failed (above). Nothing was built or changed."
+preflight_server_config
 preflight_git
 if [ "$site_only" -eq 1 ]; then
   build_site

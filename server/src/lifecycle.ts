@@ -27,7 +27,7 @@ import { loadServerConfig, type ServerConfig } from './config';
 import { runPreflight } from './preflight';
 import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
-import { NodeSqliteUsageStore } from './usage-store';
+import { NodeSqliteUsageStore, scheduleUsagePurge } from './usage-store';
 import { NodeSqliteReportStore, schedulePurge, type PurgeSchedule } from './reports/store';
 import { buildModelDepsFromEnv, createGenerationPipeline, MissingApiKeyError } from './generation';
 import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRoster } from './generation/model';
@@ -107,8 +107,6 @@ const FINAL_WINDOW_MS = 10_000;
 /** Bounds closing the browser, so a wedged Chromium cannot hold the exit. */
 const SESSION_CLOSE_MS = 10_000;
 const DRAIN_POLL_MS = 25;
-const PURGE_INTERVAL_MS = 3_600_000;
-const DAY_MS = 86_400_000;
 /** The re-resolution sweep's cadence, and how long after boot the first pass runs — late enough
  *  that it never competes with the boot self-test, soon enough that a restart picks up the rows
  *  the previous process's drain could not finish. */
@@ -154,20 +152,6 @@ export async function runBootSelfTest(session: SynthRunSession, cwd: string = pr
   if (!probe.blocked) {
     throw new BootError('self_test', `the egress probe was not blocked: ${JSON.stringify(probe)}`);
   }
-}
-
-/** The ledger's retention purge: at boot, then hourly on an unref'd timer. */
-function scheduleLedgerPurge(usageStore: NodeSqliteUsageStore, config: ServerConfig): PurgeSchedule {
-  const runOnce = (): void => {
-    const cutoffDay = new Date(config.now() - config.ledgerRetentionDays * DAY_MS).toISOString().slice(0, 10);
-    usageStore.purgeLedger(cutoffDay).catch((err: unknown) => {
-      log.warn({ detail: messageOf(err) }, 'ledger purge failed');
-    });
-  };
-  runOnce();
-  const timer = setInterval(runOnce, PURGE_INTERVAL_MS);
-  timer.unref();
-  return { stop: () => clearInterval(timer) };
 }
 
 /**
@@ -365,12 +349,19 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const opened = new Opened();
   try {
     const { usageStore, reportStore } = atStep('stores', () => {
-      const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'));
+      const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'), { now: config.now });
       opened.usageStore = usage;
       const reports = new NodeSqliteReportStore(path.join(dataDir, 'reports.db'));
       opened.reportStore = reports;
       opened.purges.push(schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }));
-      opened.purges.push(scheduleLedgerPurge(usage, config));
+      opened.purges.push(
+        scheduleUsagePurge(usage, {
+          ledgerRetentionDays: config.ledgerRetentionDays,
+          usageIdleDays: config.usageIdleDays,
+          now: config.now,
+          onError: (message, err) => log.warn({ detail: messageOf(err) }, message),
+        }),
+      );
       return { usageStore: usage, reportStore: reports };
     });
 
