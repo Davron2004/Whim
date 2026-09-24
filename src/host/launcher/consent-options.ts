@@ -20,6 +20,11 @@ import type { ConsentedClientOptions } from './transport-shared';
  *  `effectiveServerUrl` + `deviceId` + the installed-app reader), read FRESH from `kv` every call —
  *  never cached — so a caller that just wrote an acceptance or a grant sees it immediately,
  *  without waiting for a re-render. */
-export function liveClientOptions(kv: KVBackend, deviceId: string, appInfo: () => AppInfo): ConsentedClientOptions | null {
-  return consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo);
+export function liveClientOptions(
+  kv: KVBackend,
+  deviceId: string,
+  appInfo: () => AppInfo,
+  internalBuild: boolean,
+): ConsentedClientOptions | null {
+  return consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo);
 }

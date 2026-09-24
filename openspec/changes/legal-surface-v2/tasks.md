@@ -46,11 +46,11 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 7. Legal pages
 
-- [ ] 7.1 Add `deploy/site/legal-identity.json` and fill every legal page from it through the site's existing `{{…}}` substitution. Owner-only fields stay empty for task 11.1.
-- [ ] 7.2 Replace `deploy/site/privacy.html` with draft-copy §2, owner decisions applied. Include the "Who handles it right now" list from the provider rows, the EU/UK sections (a representative paragraph renders only when set), and the v1 90-day note. Tests for spec legal-pages §"The privacy policy page states the version-2 disclosure".
-- [ ] 7.3 Generate the Korean-language overseas-transfer section from the same provider rows (§"The policy carries the sections every open storefront needs").
-- [ ] 7.4 Add `deploy/site/terms.html` from draft-copy §6 (without the subscription and sync sections), plus `fr/privacy.html` and `fr/terms.html` translated from the English pages. Each page links its twin, and the web server routes are updated to serve them.
-- [ ] 7.5 Add the deploy check (spec legal-pages §"No placeholder or draft marker…" and the policy-vs-manifest scenario). Red-check with a missing address, a leftover `[B9]` and a manifest category missing from the policy.
+- [x] 7.1 Add `deploy/site/legal-identity.json` and fill every legal page from it through the site's existing `{{…}}` substitution. Owner-only fields stay empty for task 11.1.
+- [x] 7.2 Replace `deploy/site/privacy.html` with draft-copy §2, owner decisions applied. Include the "Who handles it right now" list from the provider rows, the EU/UK sections (a representative paragraph renders only when set), and the v1 90-day note. Tests for spec legal-pages §"The privacy policy page states the version-2 disclosure".
+- [x] 7.3 Generate the Korean-language overseas-transfer section from the same provider rows (§"The policy carries the sections every open storefront needs").
+- [x] 7.4 Add `deploy/site/terms.html` from draft-copy §6 (without the subscription and sync sections), plus `fr/privacy.html` and `fr/terms.html` translated from the English pages. Each page links its twin, and the web server routes are updated to serve them.
+- [x] 7.5 Add the deploy check (spec legal-pages §"No placeholder or draft marker…" and the policy-vs-manifest scenario). Red-check with a missing address, a leftover `[B9]` and a manifest category missing from the policy.
 
 ## 8. Store declarations, listings and review notes
 

@@ -23,6 +23,8 @@ import { testAppInfo } from './client-fixtures';
 export type Tree = TestRenderer.ReactTestRenderer;
 
 export interface SentRequest {
+  /** The full request URL, so a test can tell which server it went to. */
+  url: string;
   path: string;
   body: Record<string, unknown> | null;
   signal: AbortSignal | undefined;
@@ -42,6 +44,9 @@ export interface LauncherSetup {
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
   appInfo?: () => AppInfo;
+  /** Whether the shell runs as an internal build, which shows and honours a server-address
+   *  override (default true); false runs it as a store build. */
+  internalBuild?: boolean;
   /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
   healthz?: () => Response | Promise<Response>;
   /** Answers every request except `/healthz`. */
@@ -131,6 +136,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
       return setup.healthz ? setup.healthz() : json({ service: 'whim-server' });
     }
     const request: SentRequest = {
+      url: String(url),
       path,
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
       signal: init?.signal ?? undefined,
@@ -141,7 +147,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   }) as typeof fetch;
   let tree: Tree | undefined;
   try {
-    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} />);
+    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} />);
     await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);

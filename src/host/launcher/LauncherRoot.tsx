@@ -104,18 +104,19 @@ import {
 import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
-import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from './server-address';
+import { clearServerUrl, effectiveServerUrl, saveServerUrl, serverOverride } from './server-address';
 import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
 import { loadHighlighting, saveHighlighting } from './highlighting';
-import { getDeviceId } from './device-id';
+import { getDeviceId, resetDeviceId } from './device-id';
+import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
 import type { ClientOptions, ConsentedClientOptions } from './generation-client';
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
-import { installedAppInfo } from './installed-app-info';
+import { installedAppInfo, installedInternalBuild } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
@@ -334,10 +335,17 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
   }
 }
 
-/** `appInfo` reads the installed app's platform, version and build for the request envelope; the
- *  default is the native seam. Only a suite passes another (the launcher runner has no native
- *  module), to give the shell a build of its choosing. */
-export default function LauncherRoot({ appInfo = installedAppInfo }: Readonly<{ appInfo?: () => AppInfo }>) {
+/** `appInfo` reads the installed app's platform, version and build for the request envelope;
+ *  `internalBuild` says whether this is an internal build (only those show and honour a
+ *  server-address override, legal-surface-v2 D10). Both default to the native seam. Only a suite
+ *  passes another (the launcher runner has no native module), to give the shell a build of its
+ *  choosing. */
+export default function LauncherRoot({
+  appInfo = installedAppInfo,
+  internalBuild,
+}: Readonly<{ appInfo?: () => AppInfo; internalBuild?: boolean }>) {
+  // Read once: the installed binary can't change what kind of build it is while the process lives.
+  const [internal] = useState(() => internalBuild ?? installedInternalBuild());
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
@@ -357,7 +365,17 @@ export default function LauncherRoot({ appInfo = installedAppInfo }: Readonly<{ 
     };
   }, []);
 
-  return <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} appInfo={appInfo} />;
+  return (
+    <LauncherShell
+      index={index}
+      access={access}
+      pending={pending}
+      journal={journal}
+      kv={kv}
+      appInfo={appInfo}
+      internalBuild={internal}
+    />
+  );
 }
 
 /**
@@ -429,6 +447,7 @@ function LauncherShell({
   journal,
   kv,
   appInfo,
+  internalBuild,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -436,6 +455,7 @@ function LauncherShell({
   journal: RunJournalStore;
   kv: KVBackend;
   appInfo: () => AppInfo;
+  internalBuild: boolean;
 }>) {
   const palette = SHELL_PALETTE;
 
@@ -460,15 +480,19 @@ function LauncherShell({
   // resubscribing `Linking`'s event on every first-run tick.
   const readyRef = useRef(ready);
   readyRef.current = ready;
-  const [serverUrl, setServerUrl] = useState<string | undefined>(() => loadServerUrl(kv));
+  // The override this build honours: always `undefined` in a store build (legal-surface-v2 D10).
+  const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv, internalBuild));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
+  const [errorDetails, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
   // The report sheet's target for the done-step and history-header entry points (design D13) —
   // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
   // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
   // policy input.
   const [reportTarget, setReportTarget] = useState<InstalledApp | null>(null);
 
-  const deviceId = useMemo(() => getDeviceId(kv), [kv]);
+  // State, not a memo: Settings' "Make a new ID" replaces it, and every options memo below is keyed
+  // on it, so the next request carries the new ID.
+  const [deviceId, setDeviceId] = useState(() => getDeviceId(kv));
   // The one gate `clarifyPrompt`/`rewritePrompt`/`generateApp`/the connectivity probe read their
   // options through (design D2; spec ai-data-consent "Request options ... SHALL come from one
   // gate that yields nothing without a current grant"; spec terms-acceptance "The send gate
@@ -479,12 +503,12 @@ function LauncherShell({
   // dependency).
   const [consentTick, setConsentTick] = useState(0);
   const clientOptions = useMemo<ConsentedClientOptions | null>(
-    () => consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
+    () => consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo),
     // consentTick/serverUrl stand in for the KV reads above (acceptTerms/grantConsent/revokeConsent/
     // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
     // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [consentTick, serverUrl, deviceId, kv, appInfo],
+    [consentTick, serverUrl, deviceId, kv, appInfo, internalBuild],
   );
 
   /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
@@ -493,16 +517,16 @@ function LauncherShell({
    *  retire the memo until the render AFTER this call returns (spec ai-data-consent "After the user
    *  agrees, the action they started SHALL continue as if consent had already existed"). */
   const resolveClientOptions = (): ConsentedClientOptions | null =>
-    resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo));
+    resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo, internalBuild));
 
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
   // ONE request that needs no AI-data consent and no terms acceptance, so this is never gated the
   // way `clientOptions` above is). It still reads the grant, for the consent version its envelope
   // names, so it is keyed on `consentTick` too.
   const reportOptions = useMemo<ClientOptions>(
-    () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
+    () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv, internalBuild), deviceId, appInfo),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [consentTick, serverUrl, deviceId, kv, appInfo],
+    [consentTick, serverUrl, deviceId, kv, appInfo, internalBuild],
   );
 
   const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
@@ -514,7 +538,7 @@ function LauncherShell({
   const onlineForRequest = (options: ConsentedClientOptions): (() => void) => {
     const epoch = connectivityEpoch.current;
     return () => {
-      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv)) {
+      if (epoch === connectivityEpoch.current && options.baseUrl === effectiveServerUrl(kv, internalBuild)) {
         connectivityLoopRef.current?.markOnline();
       }
     };
@@ -812,10 +836,10 @@ function LauncherShell({
   };
 
   const onServerUrlChange = (url: string) => {
-    const previous = effectiveServerUrl(kv);
+    const previous = effectiveServerUrl(kv, internalBuild);
     saveServerUrl(kv, url);
-    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
-    setServerUrl(loadServerUrl(kv));
+    if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
+    setServerUrl(serverOverride(kv, internalBuild));
   };
 
   const onHighlightingChange = (enabled: boolean) => {
@@ -823,11 +847,22 @@ function LauncherShell({
     setHighlighting(enabled);
   };
 
+  const onErrorDetailsChange = (on: boolean) => {
+    setErrorDetails(kv, on);
+    setErrorDetailsShown(on);
+  };
+
+  /** Settings' confirmed "Make a new ID": the stored ID is replaced, and the options memos (keyed on
+   *  `deviceId`) rebuild, so every later request carries the new one. */
+  const onResetDeviceId = () => {
+    setDeviceId(resetDeviceId(kv));
+  };
+
   const onUseDefaultServer = () => {
-    const previous = effectiveServerUrl(kv);
+    const previous = effectiveServerUrl(kv, internalBuild);
     clearServerUrl(kv);
-    if (effectiveServerUrl(kv) !== previous) invalidateConnectivity();
-    setServerUrl(loadServerUrl(kv));
+    if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
+    setServerUrl(serverOverride(kv, internalBuild));
   };
 
   /** Forces `clientOptions` (and every other `termsStatus(kv)`/`consentStatus(kv)` read this render
@@ -871,6 +906,8 @@ function LauncherShell({
       openCompose(continuation.editing);
     } else if (continuation.kind === 'resume') {
       setScreen(continuation.screen);
+    } else if (continuation.kind === 'settings') {
+      setScreen({ kind: 'settings' });
     } else {
       onRetryPending(continuation.record);
     }
@@ -960,10 +997,18 @@ function LauncherShell({
     setScreen({ kind: 'consent', mode: 'review' });
   };
 
-  /** Review mode with consent off: the one action grants and returns to Settings. */
+  /** Review mode with consent off: the one action. When consent is the only step left, this screen
+   *  is that step: it grants and returns to Settings. When the terms (or anything ahead of them)
+   *  aren't current, it enters the legal flow instead, so no grant is stored without a terms
+   *  acceptance (spec terms-acceptance "Terms are accepted in their own step before the consent
+   *  screen"); the flow ends back on Settings, and declining any step returns there too. */
   const onConsentReviewTurnOn = () => {
-    onGrantConsent();
-    setScreen({ kind: 'settings' });
+    if (nextLegalStep(termsStatus(kv), consentStatus(kv), false) === 'consent') {
+      onGrantConsent();
+      setScreen({ kind: 'settings' });
+    } else {
+      advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
+    }
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -1747,6 +1792,7 @@ function LauncherShell({
       return (
         <SettingsScreen
           onBack={goHome}
+          internalBuild={internalBuild}
           serverUrl={serverUrl}
           onServerUrlChange={onServerUrlChange}
           onUseDefaultServer={onUseDefaultServer}
@@ -1755,6 +1801,10 @@ function LauncherShell({
           consentStatus={consentStatus(kv)}
           canProbe={clientOptions != null}
           onOpenAIFeatures={onOpenAIFeaturesReview}
+          errorDetails={errorDetails}
+          onErrorDetailsChange={onErrorDetailsChange}
+          deviceId={deviceId}
+          onResetDeviceId={onResetDeviceId}
         />
       );
     } else if (screen.kind === 'terms') {

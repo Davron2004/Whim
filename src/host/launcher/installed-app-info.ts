@@ -5,8 +5,14 @@
 
 import { Platform } from 'react-native';
 import NativeWhimAppInfo from '../../native/NativeWhimAppInfo';
-import { appInfoReader } from './app-info';
+import { appInfoReader, internalBuildFrom } from './app-info';
 
 /** The installed app's `{platform, version, build}`. Reads the native constants on the first call
  *  and returns the same object after; throws what `appInfoFrom` throws (see `app-info.ts`). */
 export const installedAppInfo = appInfoReader(Platform.OS, () => NativeWhimAppInfo?.getConstants());
+
+/** Whether this binary is an internal build (`app-info.ts#internalBuildFrom`); a build without the
+ *  native module reads as a store build. */
+export function installedInternalBuild(): boolean {
+  return internalBuildFrom(NativeWhimAppInfo?.getConstants());
+}

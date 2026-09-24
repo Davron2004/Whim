@@ -48,3 +48,15 @@ export function getDeviceId(kv: KVBackend): string {
   kv.set(DEVICE_ID_KEY, id);
   return id;
 }
+
+/**
+ * Replace the persisted device id with a new random one and return it (legal-surface-v2 design
+ * D10; spec privacy-settings "Settings shows this phone's ID and can make a new one"). Every
+ * later `getDeviceId(kv)` returns the new id. Touches no other key: the consent grant, the terms
+ * acceptance and the installed apps stay as they are.
+ */
+export function resetDeviceId(kv: KVBackend): string {
+  const id = randomUuidV4Shaped();
+  kv.set(DEVICE_ID_KEY, id);
+  return id;
+}

@@ -52,13 +52,23 @@ export function saveServerUrl(kv: KVBackend, raw: string): void {
 }
 
 /**
- * The server every request actually goes to (release-config "The compiled-in server is used
- * unless the user sets an override"): the saved override when one is set — a blank or
- * whitespace-only saved value already reads as "no override" via `loadServerUrl` — else the
- * compiled-in production server.
+ * The override this build honours (legal-surface-v2 design D10; spec app-launcher "Store builds
+ * SHALL … ignore any override saved by an earlier build"): the saved address in an internal build,
+ * always `undefined` in a store build. A store build leaves the saved value in place, unread.
+ * `internalBuild` comes from `installed-app-info.ts#installedInternalBuild`.
  */
-export function effectiveServerUrl(kv: KVBackend): string {
-  return loadServerUrl(kv) ?? RELEASE.serverUrl;
+export function serverOverride(kv: KVBackend, internalBuild: boolean): string | undefined {
+  return internalBuild ? loadServerUrl(kv) : undefined;
+}
+
+/**
+ * The server every request actually goes to (release-config "The compiled-in server is used
+ * unless the user sets an override"): the override this build honours (`serverOverride` — a blank
+ * or whitespace-only saved value already reads as "no override") — else the compiled-in
+ * production server.
+ */
+export function effectiveServerUrl(kv: KVBackend, internalBuild: boolean): string {
+  return serverOverride(kv, internalBuild) ?? RELEASE.serverUrl;
 }
 
 /**

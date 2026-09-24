@@ -5,7 +5,9 @@
 // (`CFBundleVersion`) from the main bundle's Info.plist. fastlane overrides the build number at
 // release time, so only the installed binary knows it. Both cross to JS as the raw strings the
 // bundle holds; `src/host/launcher/app-info.ts` validates them. A missing or non-string value
-// crosses as @"", which that wrapper rejects as missing.
+// crosses as @"", which that wrapper rejects as missing. `internalBuild` is YES only in the Debug
+// configuration (`DEBUG=1`): the Release configuration fastlane archives for the stores reports NO,
+// so a store build never honours a server-address override (legal-surface-v2 D10).
 //
 // Registered with `RCT_EXPORT_MODULE` rather than a `codegenConfig.ios.modulesProvider` entry
 // (how `WhimToneModule` is wired): the TurboModule manager falls back to registered module
@@ -22,6 +24,12 @@ NSString *InfoPlistString(NSString *key)
   id value = [NSBundle.mainBundle objectForInfoDictionaryKey:key];
   return [value isKindOfClass:NSString.class] ? (NSString *)value : @"";
 }
+
+#if DEBUG
+constexpr bool kInternalBuild = true;
+#else
+constexpr bool kInternalBuild = false;
+#endif
 
 } // namespace
 
@@ -47,6 +55,7 @@ RCT_EXPORT_MODULE(WhimAppInfo)
   return typedConstants<JS::NativeWhimAppInfo::Constants>({
       .version = InfoPlistString(@"CFBundleShortVersionString"),
       .build = InfoPlistString(@"CFBundleVersion"),
+      .internalBuild = kInternalBuild,
   });
 }
 

@@ -8,7 +8,8 @@
 // `WhimAppInfoModule.kt` (Android, `PackageInfo.versionName` / `longVersionCode`) and
 // `WhimAppInfoModule.mm` (iOS, `CFBundleShortVersionString` / `CFBundleVersion`) implement it.
 // Both values cross as the raw strings the OS reports; `src/host/launcher/app-info.ts` is the one
-// place that validates them (a positive-integer build, a non-empty version).
+// place that validates them (a positive-integer build, a non-empty version). `internalBuild` is the
+// build flag that keeps the server-address override out of store builds (legal-surface-v2 D10).
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
 
@@ -18,6 +19,10 @@ export interface Spec extends TurboModule {
     version: string;
     /** The installed build number as the OS reports it (`longVersionCode` / `CFBundleVersion`). */
     build: string;
+    /** Whether this is an internal build (dev, or the local offline Android build) rather than a
+     *  store build: the Gradle `WHIM_INTERNAL_BUILD` BuildConfig field on Android, the `DEBUG`
+     *  configuration on iOS. Only internal builds honour a server-address override. */
+    internalBuild: boolean;
   };
 }
 

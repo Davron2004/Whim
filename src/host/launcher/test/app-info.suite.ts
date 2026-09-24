@@ -4,8 +4,8 @@
  * native module (this runner's `react-native` stub registers no TurboModules).
  */
 import { Harness } from './harness';
-import { appInfoFrom, appInfoReader, type NativeAppInfoConstants } from '../app-info';
-import { installedAppInfo } from '../installed-app-info';
+import { appInfoFrom, appInfoReader, internalBuildFrom, type NativeAppInfoConstants } from '../app-info';
+import { installedAppInfo, installedInternalBuild } from '../installed-app-info';
 
 export async function runAppInfoTests(h: Harness): Promise<void> {
   await h.test('app-info: the native constants become {platform, version, build}', () => {
@@ -114,6 +114,15 @@ export async function runAppInfoTests(h: Harness): Promise<void> {
     await h.throws(() => { read(); }, 'WhimAppInfo: the native module is missing from this build', 'the failed first read throws');
     h.eq(read(), { platform: 'ios', version: '1.0.0', build: 9 }, 'the next call reads again');
     h.eq(reads, 2, 'each call before a success reads the constants');
+  });
+
+  await h.test('app-info: only a native true makes an internal build; anything else is a store build', () => {
+    h.eq(internalBuildFrom({ version: '1.0.0', build: '1', internalBuild: true }), true, 'a debug/offline build reports true');
+    h.eq(internalBuildFrom({ version: '1.0.0', build: '1', internalBuild: false }), false, 'the release build reports false');
+    h.eq(internalBuildFrom({ version: '1.0.0', build: '1' }), false, 'a binary older than the flag is a store build');
+    h.eq(internalBuildFrom({ version: '1.0.0', build: '1', internalBuild: 'true' }), false, 'a non-boolean is a store build');
+    h.eq(internalBuildFrom(null), false, 'a missing module is a store build');
+    h.eq(installedInternalBuild(), false, 'the seam, on a build without the module, reads as a store build');
   });
 
   await h.test('app-info: the seam fails loudly on a build without the WhimAppInfo module', async () => {

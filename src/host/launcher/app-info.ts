@@ -23,6 +23,7 @@ export interface AppInfo {
 export interface NativeAppInfoConstants {
   readonly version?: unknown;
   readonly build?: unknown;
+  readonly internalBuild?: unknown;
 }
 
 const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
@@ -73,6 +74,17 @@ export function appInfoFrom(os: string, constants: NativeAppInfoConstants | null
     throw new Error('WhimAppInfo: the native module is missing from this build');
   }
   return { platform, version: versionOf(constants.version), build: buildOf(constants.build) };
+}
+
+/**
+ * Whether the installed binary is an internal build (dev, or the local offline Android build) —
+ * the build flag behind legal-surface-v2 design D10: only an internal build shows or honours a
+ * server-address override. Anything but the boolean `true` — a missing module, a missing or
+ * non-boolean value — reads as a store build, so a build that can't say which it is behaves as
+ * the one the privacy policy covers.
+ */
+export function internalBuildFrom(constants: NativeAppInfoConstants | null | undefined): boolean {
+  return constants?.internalBuild === true;
 }
 
 /**

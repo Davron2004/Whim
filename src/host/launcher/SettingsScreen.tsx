@@ -10,10 +10,11 @@
 //
 // Four sections, in order (design D7; app-launcher "Settings groups its controls into titled
 // sections, with the server address under Advanced"): AI features (opens the consent screen in
-// review mode), Highlighting (unchanged), About (privacy policy, terms of use, support), Advanced
-// (the server address override, collapsed unless one is saved).
+// review mode, and the "Send error details" switch), Highlighting (unchanged), About (privacy
+// policy, terms of use, support, this phone's ID), and — in internal builds only (legal-surface-v2
+// D10) — Advanced (the server address override, collapsed unless one is saved).
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
@@ -31,6 +32,9 @@ import { useSystemBack } from './use-system-back';
 export interface SettingsScreenProps {
   /** Returns to the home screen — supplied by `LauncherRoot`. */
   onBack: () => void;
+  /** Whether this is an internal build (`installed-app-info.ts#installedInternalBuild`). A store
+   *  build renders no Advanced section and no server address field at all (legal-surface-v2 D10). */
+  internalBuild: boolean;
   /** The persisted generation-server address (design D3), or `undefined` when unset. */
   serverUrl?: string;
   /** Persists the entered address — `LauncherRoot` writes it via `saveServerUrl` and re-reads
@@ -52,6 +56,14 @@ export interface SettingsScreenProps {
   canProbe: boolean;
   /** Opens the consent screen in review mode. */
   onOpenAIFeatures: () => void;
+  /** The "Send error details" switch (privacy-settings; `error-details.ts`, default on). */
+  errorDetails: boolean;
+  /** Persists the switch — `LauncherRoot` writes it via `setErrorDetails`. */
+  onErrorDetailsChange: (on: boolean) => void;
+  /** The ID every request carries as `x-whim-device` (`device-id.ts`). */
+  deviceId: string;
+  /** Replaces the stored ID — called only after the confirm step's "Make a new ID". */
+  onResetDeviceId: () => void;
 }
 
 const ADVANCED_CHEVRON_DURATION_MS = 200;
@@ -78,6 +90,11 @@ export default function SettingsScreen({
   consentStatus,
   canProbe,
   onOpenAIFeatures,
+  internalBuild,
+  errorDetails,
+  onErrorDetailsChange,
+  deviceId,
+  onResetDeviceId,
 }: Readonly<SettingsScreenProps>) {
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
@@ -119,6 +136,15 @@ export default function SettingsScreen({
     debouncedProbe.cancel();
     setProbeState('idle');
     onUseDefaultServer();
+  };
+
+  // The confirm step before replacing the ID (privacy-settings "Settings shows this phone's ID and
+  // can make a new one"): Cancel changes nothing.
+  const confirmResetDeviceId = () => {
+    Alert.alert(COPY.settingsDeviceIdReset, COPY.settingsDeviceIdResetConfirm, [
+      { text: COPY.cancel, style: 'cancel' },
+      { text: COPY.settingsDeviceIdReset, onPress: onResetDeviceId },
+    ]);
   };
 
   const aiFeaturesSubtitle =
@@ -171,6 +197,17 @@ export default function SettingsScreen({
           <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
           <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
         </TouchableOpacity>
+        <View style={[styles.row, styles.rowFollowing, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsErrorDetailsTitle}</Text>
+          <Switch
+            value={errorDetails}
+            onValueChange={onErrorDetailsChange}
+            accessibilityLabel={COPY.settingsErrorDetailsTitle}
+            trackColor={{ false: p.cardBorder, true: p.accent }}
+            thumbColor={p.onAccent}
+          />
+        </View>
+        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsErrorDetailsHint}</Text>
 
         {/* Highlighting (unchanged) */}
         <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
@@ -181,6 +218,7 @@ export default function SettingsScreen({
           <Switch
             value={highlighting}
             onValueChange={onHighlightingChange}
+            accessibilityLabel={COPY.highlightingSectionTitle}
             trackColor={{ false: p.cardBorder, true: p.accent }}
             thumbColor={p.onAccent}
           />
@@ -208,28 +246,43 @@ export default function SettingsScreen({
         <TouchableOpacity
           onPress={() => Linking.openURL(RELEASE.supportUrl)}
           accessibilityRole="button"
-          style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
           <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
         </TouchableOpacity>
-
-        {/* Advanced (app-launcher "Settings groups its controls...with the server address under
-            Advanced") — one row that expands inline; already open while an override is saved. */}
-        <TouchableOpacity
-          onPress={() => setAdvancedOpen((open) => !open)}
-          accessibilityRole="button"
-          style={styles.advancedHeader}
-        >
-          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
-          <Animated.View
-            style={[
-              styles.advancedChevron,
-              { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
-            ]}
-          />
+        <View style={[styles.idCard, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsDeviceIdTitle}</Text>
+          <Text selectable style={[TYPE_SCALE.caption, { color: p.text }]}>
+            {deviceId}
+          </Text>
+        </View>
+        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
+        <TouchableOpacity onPress={confirmResetDeviceId} hitSlop={10} accessibilityRole="button">
+          <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+            {COPY.settingsDeviceIdReset}
+          </Text>
         </TouchableOpacity>
 
-        {advancedOpen && (
+        {/* Advanced (app-launcher "Settings groups its controls...with the server address under
+            Advanced") — internal builds only; one row that expands inline; already open while an
+            override is saved. */}
+        {internalBuild && (
+          <TouchableOpacity
+            onPress={() => setAdvancedOpen((open) => !open)}
+            accessibilityRole="button"
+            style={styles.advancedHeader}
+          >
+            <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
+            <Animated.View
+              style={[
+                styles.advancedChevron,
+                { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
+              ]}
+            />
+          </TouchableOpacity>
+        )}
+
+        {internalBuild && advancedOpen && (
           <>
             <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
               {COPY.serverAddressSectionTitle}
@@ -266,7 +319,7 @@ export default function SettingsScreen({
             )}
             {serverUrlDraft.trim().length > 0 && (
               <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
-                <Text style={[TYPE_SCALE.bodyEmphatic, styles.useDefaultAction, { color: p.accent }]}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
                   {COPY.settingsUseDefaultServer}
                 </Text>
               </TouchableOpacity>
@@ -321,6 +374,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   rowStacked: { marginBottom: 10 },
+  rowFollowing: { marginTop: 10 },
+  idCard: { borderRadius: RADIUS.field, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, gap: 4 },
   advancedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -334,5 +389,5 @@ const styles = StyleSheet.create({
   advancedChevron: { width: 8, height: 8, borderRightWidth: 2, borderBottomWidth: 2 },
   serverInput: { borderWidth: 1, borderRadius: RADIUS.field, paddingHorizontal: 12, paddingVertical: 10 },
   hint: { marginTop: 6 },
-  useDefaultAction: { marginTop: 10 },
+  textAction: { marginTop: 10 },
 });
