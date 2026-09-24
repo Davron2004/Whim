@@ -49,7 +49,7 @@ What people save inside their apps stays on their phones and isn't Whim's to bre
 
 - OpenRouter spend jumps, or the key's credit limit is hit (`docs/deploy.md` §"OpenRouter key").
 - `deploy/smoke.sh` fails in a way you didn't cause, or `whim-admin usage` shows traffic you can't explain.
-- An email to `privacy@anycognition.ca` or a report in the app.
+- An email to `support@anycognition.ca` or a report in the app.
 - A notice from OpenRouter, a model provider, Google or Apple.
 - Someone finds a secret or personal data in the public repository or a log.
 
@@ -142,7 +142,7 @@ Only after you decide a notice is due. Tell the OPC as soon as feasible after yo
 - roughly how many people (for Whim: phone IDs)
 - what you've done to reduce the risk
 - how you're telling people
-- your contact: the Privacy Officer, `privacy@anycognition.ca`
+- your contact: the Privacy Officer, `support@anycognition.ca`
 
 **Other organizations.** Also tell any organization that could reduce the harm, such as OpenRouter or Google (PIPEDA s.10.2; practice-and-terms.md).
 
@@ -151,9 +151,9 @@ Only after you decide a notice is due. Tell the OPC as soon as feasible after yo
 1. A dated notice on the support page (`deploy/site/support.html`), published with `deploy/deploy.sh --site-only`.
 2. The store listing's release notes in the next release.
 3. An in-app notice in the next release, if the risk is still live.
-4. A direct reply to anyone who wrote to `privacy@anycognition.ca` about it, or left contact details in a report.
+4. A direct reply to anyone who wrote to `support@anycognition.ca` about it, or left contact details in a report.
 
-Say: what happened and when, what information, what Whim has done, and what people can do. Two things they can do themselves: make a new phone ID in Settings, so new records aren't tied to the old one, and turn off AI features or error details in Settings. Give `privacy@anycognition.ca` for questions. Don't describe a weakness that isn't fixed yet.
+Say: what happened and when, what information, what Whim has done, and what people can do. Two things they can do themselves: make a new phone ID in Settings, so new records aren't tied to the old one, and turn off AI features or error details in Settings. Give `support@anycognition.ca` for questions. Don't describe a weakness that isn't fixed yet.
 
 PIPEDA allows this kind of indirect notice when you have no contact details for the people affected (Breach of Security Safeguards Regulations; general knowledge, not in the research files).
 

@@ -39,6 +39,12 @@
 			disable_canonical_uris
 		}
 	}
+	handle /privacy/v1 {
+		rewrite * /privacy-v1.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
 	handle /terms {
 		rewrite * /terms.html
 		file_server {

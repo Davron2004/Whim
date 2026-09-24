@@ -18,6 +18,7 @@ import {
   type DisclosureReleaseInput,
 } from '../../../contract/src/disclosure-manifest';
 import { checkDisclosureRelease } from '../../../scripts/release/lib/disclosure-check';
+import { CONSENT_WHATS_NEW } from '../../../src/host/launcher/copy';
 
 const REPO_ROOT = process.cwd();
 const V1: DisclosureManifest = MANIFESTS[1];
@@ -59,6 +60,13 @@ function withPurpose(manifest: DisclosureManifest, id: string, advertisingOrTrac
   return { ...manifest, purposes: [...manifest.purposes, { id, description: `The ${id} fixture`, advertisingOrTracking }] };
 }
 
+const CHANGED = 'What changed.';
+
+/** A fixture what's-new line: `text`, covering each of `ids` with the phrase `phrase`. */
+function line(ids: readonly string[], text = CHANGED, phrase = text): { readonly text: string; readonly covers: Readonly<Record<string, string>> } {
+  return { text, covers: Object.fromEntries(ids.map((id) => [id, phrase])) };
+}
+
 /** The live manifests with each released as-is, and a what's-new line covering exactly the diff. */
 function releaseInput(overrides: Partial<DisclosureReleaseInput> = {}): DisclosureReleaseInput {
   return {
@@ -66,7 +74,7 @@ function releaseInput(overrides: Partial<DisclosureReleaseInput> = {}): Disclosu
     released: { 1: V1, 2: V2 },
     consentVersion: 2,
     bumpReasons: {},
-    whatsNew: { en: { 1: { text: 'What changed.', covers: diffManifests(V1, V2) } } },
+    whatsNew: { en: { 1: line(diffManifests(V1, V2)) } },
     ...overrides,
   };
 }
@@ -79,10 +87,10 @@ function assertFinding(findings: readonly string[], parts: readonly string[], la
 }
 
 async function widensTests(): Promise<void> {
-  await test('disclosure diff: switching AI provider within the service-provider role does not widen', () => {
+  await test('disclosure diff: switching AI provider within the AI-provider role does not widen', () => {
     const reworded = {
       ...V2,
-      roles: V2.roles.map((r) => (r.id === 'service-providers' ? { ...r, description: 'Companies acting only for AnyCognition, such as a model vendor’s direct API' } : r)),
+      roles: V2.roles.map((r) => (r.id === 'ai-providers' ? { ...r, description: 'Companies acting only for AnyCognition, such as a model vendor’s direct API' } : r)),
     };
     nodeAssert.deepStrictEqual(diffManifests(V2, reworded), []);
   });
@@ -167,31 +175,48 @@ async function widensTests(): Promise<void> {
 
   await test('disclosure diff: version 1 to 2 widens everything v1 never disclosed', () => {
     // Error details, the app-integrity check by Apple or Google, the longer keep-periods for reports
-    // and usage records, and what v1's consent screen and privacy page never said: service providers
-    // beyond the AI companies, requests used to run Whim, connection logs used at all, authorities
-    // (when the law requires it, or for fraud, security or safety problems) and a new owner.
-    nodeAssert.deepStrictEqual(diffManifests(V1, V2), [
-      'category:app-integrity',
-      'category:error-details',
-      'keep:reports',
-      'keep:usage-records',
-      'purpose:connection-logs:legal',
-      'purpose:connection-logs:operate',
-      'purpose:connection-logs:safety',
-      'purpose:phone-id:legal',
-      'purpose:reports:legal',
-      'purpose:request-material:legal',
-      'purpose:request-material:operate',
-      'purpose:usage-records:legal',
-      'purpose:usage-records:safety',
-      'recipient:connection-logs:service-providers',
-      'recipient:phone-id:service-providers',
-      'recipient:reports:service-providers',
-      'recipient:usage-records:service-providers',
-      'role:authorities',
-      'role:platform',
-      'role:successor',
-    ]);
+    // and usage records, and what v1's consent screen and privacy page never said: companies that
+    // run Whim's servers, logs and email (v1 named only the AI companies), and what each of them
+    // gets; requests, usage records and connection logs used to run Whim; authorities (when the law
+    // requires it, or for fraud, security or safety problems) and a new owner, with what each gets.
+    const perCategory = (role: string): string[] =>
+      ['connection-logs', 'phone-id', 'reports', 'request-material', 'usage-records'].map((c) => `recipient:${c}:${role}`);
+    nodeAssert.deepStrictEqual(
+      diffManifests(V1, V2),
+      [
+        'category:app-integrity',
+        'category:error-details',
+        'keep:reports',
+        'keep:usage-records',
+        'purpose:connection-logs:legal',
+        'purpose:connection-logs:operate',
+        'purpose:connection-logs:safety',
+        'purpose:phone-id:legal',
+        'purpose:reports:legal',
+        'purpose:request-material:legal',
+        'purpose:request-material:operate',
+        'purpose:usage-records:legal',
+        'purpose:usage-records:operate',
+        'purpose:usage-records:safety',
+        ...['authorities', 'hosting-providers', 'successor'].flatMap(perCategory),
+        'role:authorities',
+        'role:hosting-providers',
+        'role:platform',
+        'role:successor',
+      ].sort((a, b) => a.localeCompare(b)),
+    );
+  });
+
+  await test('disclosure diff: a new role names each category it gets, not only itself', () => {
+    // Version 1's text named only the AI companies; request material reaching the hosting companies
+    // is a widening of its own, which a bare `role:hosting-providers` would hide.
+    const withoutHostedRequests: DisclosureManifest = {
+      ...V2,
+      uses: V2.uses.map((u) => (u.category === 'request-material' ? { ...u, roles: u.roles.filter((r) => r !== 'hosting-providers') } : u)),
+    };
+    nodeAssert.ok(diffManifests(V1, V2).includes('recipient:request-material:hosting-providers'));
+    nodeAssert.ok(!diffManifests(V1, withoutHostedRequests).includes('recipient:request-material:hosting-providers'));
+    nodeAssert.ok(diffManifests(V1, withoutHostedRequests).includes('role:hosting-providers'));
   });
 }
 
@@ -224,7 +249,7 @@ async function releaseCheckTests(): Promise<void> {
   });
 
   await test('release check: a bump with nothing new is refused until a reviewed reason exists', () => {
-    const whatsNew = { en: { 1: { text: 'What changed.', covers: diffManifests(V1, V2) }, 2: { text: 'We fixed the last screen.', covers: [] } } };
+    const whatsNew = { en: { 1: line(diffManifests(V1, V2)), 2: line([], 'We fixed the last screen.') } };
     const bumped = releaseInput({ manifests: { 1: V1, 2: V2, 3: V2 }, released: { 1: V1, 2: V2, 3: V2 }, consentVersion: 3, whatsNew });
     assertFinding(disclosureReleaseFindings(bumped), ['version 3 does not widen version 2', 'BUMP_REASONS[3]'], 'empty bump');
     nodeAssert.deepStrictEqual(disclosureReleaseFindings({ ...bumped, bumpReasons: { 3: 'The version-2 screen left out the phone ID.' } }), []);
@@ -237,15 +262,48 @@ async function releaseCheckTests(): Promise<void> {
   await test('release check: a what’s-new line that hides the longer keep-period for reports is refused, naming the language', () => {
     const hiding = diffManifests(V1, V2).filter((id) => id !== 'keep:reports');
     for (const language of ['en', 'fr']) {
-      const whatsNew = { en: { 1: { text: 'What changed.', covers: diffManifests(V1, V2) } }, [language]: { 1: { text: 'Ce qui change.', covers: hiding } } };
+      const whatsNew = { en: { 1: line(diffManifests(V1, V2)) }, [language]: { 1: line(hiding, 'Ce qui change.') } };
       assertFinding(disclosureReleaseFindings(releaseInput({ whatsNew })), [`what's-new (${language}) for version 1`, 'does not cover keep:reports'], language);
     }
   });
 
   await test('release check: a what’s-new line claiming a widening that did not happen, or missing, is refused', () => {
-    const claiming = { en: { 1: { text: 'What changed.', covers: [...diffManifests(V1, V2), 'keep:connection-logs'] } } };
+    const claiming = { en: { 1: line([...diffManifests(V1, V2), 'keep:connection-logs']) } };
     assertFinding(disclosureReleaseFindings(releaseInput({ whatsNew: claiming })), ['covers keep:connection-logs', 'did not widen'], 'extra cover');
     assertFinding(disclosureReleaseFindings(releaseInput({ whatsNew: { en: {} } })), ["what's-new (en) has no line for version 1"], 'missing line');
+  });
+
+  await test('release check: a covering phrase the line’s text doesn’t say is refused, naming the language and the widening', () => {
+    const says = { en: { 1: line(diffManifests(V1, V2), 'We keep reports for up to 12 months.', 'up to 12 months') } };
+    nodeAssert.deepStrictEqual(disclosureReleaseFindings(releaseInput({ whatsNew: says })), []);
+    const silent = { en: { 1: line(diffManifests(V1, V2), 'We keep reports longer.', 'up to 12 months') } };
+    assertFinding(disclosureReleaseFindings(releaseInput({ whatsNew: silent })), ["what's-new (en) for version 1", '"up to 12 months"', 'keep:reports'], 'unsaid phrase');
+    const blank = { en: { 1: { text: CHANGED, covers: { ...line(diffManifests(V1, V2)).covers, 'keep:reports': ' ' } } } };
+    assertFinding(disclosureReleaseFindings(releaseInput({ whatsNew: blank })), ["what's-new (en) for version 1", 'gives no phrase for keep:reports'], 'blank phrase');
+  });
+
+  await test('release check: the live French line losing “jusqu’à 12 mois” is refused, naming French and the reports keep-period', () => {
+    const french = CONSENT_WHATS_NEW.fr[1];
+    nodeAssert.ok(french.text.includes('jusqu’à 12 mois'), 'fixture: the French line says jusqu’à 12 mois');
+    const whatsNew = { ...CONSENT_WHATS_NEW, fr: { 1: { ...french, text: french.text.replace('jusqu’à 12 mois', '') } } };
+    const findings = disclosureReleaseFindings(releaseInput({ whatsNew }));
+    assertFinding(findings, ["what's-new (fr) for version 1", 'keep:reports'], 'French keep-period');
+    nodeAssert.ok(!findings.some((f) => f.includes("what's-new (en)")), `the English line is untouched: ${JSON.stringify(findings)}`);
+  });
+
+  await test('release check: request material silently reaching the hosting companies is refused', () => {
+    // The v2 manifest before the hosting companies got request material, released and explained…
+    const before: DisclosureManifest = {
+      ...V2,
+      uses: V2.uses.map((u) => (u.category === 'request-material' ? { ...u, roles: u.roles.filter((r) => r !== 'hosting-providers') } : u)),
+    };
+    const explained = { en: { 1: line(diffManifests(V1, before)) } };
+    nodeAssert.deepStrictEqual(disclosureReleaseFindings(releaseInput({ manifests: { 1: V1, 2: before }, released: { 1: V1, 2: before }, whatsNew: explained })), []);
+    // …then the same version gives it to them with nothing else changed: its snapshot and its
+    // what's-new line both catch it.
+    const findings = disclosureReleaseFindings(releaseInput({ released: { 1: V1, 2: before }, whatsNew: explained }));
+    assertFinding(findings, ['version 2 was released', 'recipient:request-material:hosting-providers'], 'released snapshot');
+    assertFinding(findings, ["what's-new (en) for version 1", 'does not cover recipient:request-material:hosting-providers'], 'what’s-new');
   });
 }
 

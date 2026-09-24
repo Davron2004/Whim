@@ -55,6 +55,7 @@ profile=""
 profile_file=""
 image=""
 openrouter_value=""
+profile_server_values=()
 # The operator values config.env carries when set, after the two model ids it always carries.
 server_optional_keys="WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID WHIM_USAGE_IDLE_DAYS"
 
@@ -89,17 +90,30 @@ preflight_values() {
   done
 }
 
+# Collects a profile line into profile_server_values unless it's a host key (never server env).
+collect_profile_server_value() {
+  whim_word_in "$1" "$WHIM_PROFILE_HOST_KEYS" || profile_server_values+=("$1=$2")
+}
+
 # Runs the server values config.env will carry through the server's own boot parse: it refuses a
 # keep-period above the maximum the current disclosure manifest publishes (legal-surface-v2 D9), and
 # anything else the server would refuse to boot on, before it can take the API down mid-deploy.
+# config.env holds the profile's server lines, then the operator's, so each profile is checked with
+# the operator values after its own (a later line wins). The VM's profile isn't known until its
+# machine type is read, and a resize can move it to any other, so every profile is checked.
 preflight_server_config() {
   local -a values=("WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
-  local key
+  local key file
   for key in $server_optional_keys; do
     [[ -z "${!key}" ]] || values+=("$key=${!key}")
   done
-  (cd "$WHIM_REPO_ROOT" && node server/config-check.mjs "${values[@]}") \
-    || whim_fail "the server would refuse these values at boot (above). Nothing was built or changed."
+  for file in "$WHIM_DEPLOY_DIR"/profiles/*.env; do
+    [ -f "$file" ] || continue
+    profile_server_values=()
+    whim_read_env_lines "$file" collect_profile_server_value
+    (cd "$WHIM_REPO_ROOT" && node server/config-check.mjs ${profile_server_values[@]+"${profile_server_values[@]}"} "${values[@]}") \
+      || whim_fail "the server would refuse these values at boot (above), with profile $(basename "$file" .env)'s lines. Nothing was built or changed."
+  done
 }
 
 preflight_node() {

@@ -67,6 +67,7 @@ Not in README "Check with a lawyer". Found while writing `docs/legal/`.
 - **G3. Quebec's incident register.** Can the breach log (`breach-log.md`) serve as the register s.3.8 asks for? It's kept in a public repository and holds no personal information; any reason not to?
 - **G4. Hosting in Montreal by a US company.** Does Google Cloud hosting data in Montreal count as communication outside Quebec under s.17? Where Cloud Logging stores logs depends on the bucket's region, which the owner still has to confirm.
 - **G5. No mechanism for a regional default.** The fallback "default error details off for EU users" (item 5) and "off in the UK too" (README note 3) need a way to tell those users apart. Whim has no location and doesn't look up IP addresses. The phone's region setting is the only signal on the phone. Would it satisfy a regulator, or is "off everywhere" the only safe version?
+- **G6. Error details on by default: legitimate interest vs consent under GDPR/UK GDPR.** The policy rests error details on legitimate interest, with a Settings switch to turn them off; it no longer calls the switch consent. Is that basis sound for an upload that is on by default, or do the EU and UK need consent (see item 5 and G5)?
 
 ## 5. What to bring back
 

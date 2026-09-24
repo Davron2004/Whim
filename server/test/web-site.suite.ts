@@ -22,7 +22,9 @@ import {
 import { LEGAL_IDENTITY_PATH, LEGAL_PAGES, pageText, renderLegalSite, statedKeepPeriods, type LegalPage } from '../src/site/legal-pages';
 import { COPY, LEGAL_COPY } from '../../src/host/launcher/copy';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig } from '../src/config';
-import { MANIFESTS, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
+import { MANIFESTS, keepLimit, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
+import { runAgeCheck, storedAgeGate } from '../../src/host/launcher/age-check';
+import type { KVBackend } from '../../src/host/version-store/fs/kv-fs';
 
 const REPO_ROOT = path.resolve(process.cwd());
 const SITE_DIR = path.join(REPO_ROOT, 'deploy', 'site');
@@ -268,6 +270,121 @@ function legalPageTests(): void {
   }
 }
 
+function providerNameTests(): void {
+  section('Web site: a provider row that names a kind of company, per language');
+
+  const kind = {
+    name: { en: 'Example mail companies', fr: 'Des entreprises de courriel', ko: '예시 메일 업체' },
+    contact: '',
+    role: { en: 'Send us alerts', fr: 'Nous envoient des alertes', ko: '알림 발송' },
+    receives: { en: 'Error summaries', fr: 'Des résumés d’erreurs', ko: '오류 요약' },
+    country: { en: 'Ireland', fr: 'Irlande', ko: '아일랜드' },
+    retention: { en: '30 days', fr: '30 jours', ko: '30일' },
+  };
+  const withKind = renderLegal(withField(REAL_IDENTITY, `providers[${providerCount(REAL_IDENTITY)}]`, kind));
+  eq('a provider row with a name per language passes the deploy check', withKind.findings, []);
+  for (const page of POLICIES) {
+    const lists = providerLists(withKind.pages[page]);
+    const own = page.startsWith('fr/') ? kind.name.fr : kind.name.en;
+    const other = page.startsWith('fr/') ? kind.name.en : kind.name.fr;
+    check(`${page}: a per-language name shows in its own language in "Who handles it right now"`, lists.list.includes(own) && !lists.list.includes(other));
+    check(`${page}: and in Korean in the Korean transfer section`, lists.korean.includes(kind.name.ko) && !lists.korean.includes(own));
+  }
+  const blankFrench = withField(REAL_IDENTITY, `providers[${providerCount(REAL_IDENTITY)}]`, { ...kind, name: { ...kind.name, fr: '' } });
+  eq(
+    'an empty French name in a per-language name fails the French pages, naming name.fr',
+    renderLegal(blankFrench).findings,
+    [`fr/privacy.html: {{PROVIDER_NAME}} is empty: set "providers[${providerCount(REAL_IDENTITY)}].name.fr" in ${LEGAL_IDENTITY_PATH}.`],
+  );
+}
+
+/** A key-value store in memory, for the age-check module the policy describes. */
+function memoryKv(): KVBackend {
+  const values = new Map<string, string>();
+  return {
+    getString: (key) => values.get(key),
+    set: (key, value) => {
+      values.set(key, value);
+    },
+    delete: (key) => {
+      values.delete(key);
+    },
+    getAllKeys: () => [...values.keys()],
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NATIVE_AGE_SIGNAL = path.join(REPO_ROOT, 'src', 'native', 'NativeWhimAgeSignal.ts');
+
+/** The store's age check as built (legal-surface-v2 D11): what one check keeps on the phone, and
+ *  after how many days an allowed outcome stops holding and the store is asked again. */
+async function builtAgeCheck(): Promise<{ readonly keptFields: readonly string[]; readonly recheckDays: number }> {
+  const kv = memoryKv();
+  const checkedAt = new Date('2026-09-27T12:00:00.000Z');
+  await runAgeCheck(kv, async () => 'adult', () => checkedAt);
+  const keptFields = kv.getAllKeys().flatMap((key) => Object.keys(JSON.parse(kv.getString(key) ?? '{}') as object)).sort((a, b) => a.localeCompare(b));
+  let recheckDays = 0;
+  while (recheckDays < 400 && storedAgeGate(kv, new Date(checkedAt.getTime() + (recheckDays + 1) * DAY_MS)) === 'allowed') recheckDays++;
+  return { keptFields, recheckDays };
+}
+
+/** What the policy's age-check paragraph must say, in the page's language, for what was built. */
+function ageParagraphFindings(page: LegalPage, html: string, built: { readonly keptFields: readonly string[]; readonly recheckDays: number }): string[] {
+  const paragraph = elementText(html, 'p', 'age-signal');
+  if (paragraph === undefined) return [`${page}: the store age check is built, but the policy has no age-check paragraph (<p id="age-signal">)`];
+  const french = page.startsWith('fr/');
+  const period = `${built.recheckDays} ${french ? 'jours' : 'days'}`;
+  const findings: string[] = [];
+  if (!paragraph.includes(period)) findings.push(`${page}: the age-check paragraph doesn't say the store is asked again every ${period}`);
+  if (!paragraph.includes(french ? 'Rien sur votre âge ne quitte votre téléphone' : 'Nothing about your age leaves your phone')) {
+    findings.push(`${page}: the age-check paragraph doesn't say nothing about age leaves the phone`);
+  }
+  return findings;
+}
+
+/** The reading text of the one `<tag id="id">`, or `undefined` when the page has none. */
+function elementText(html: string, tag: string, id: string): string | undefined {
+  const open = `<${tag} id="${id}">`;
+  const start = html.indexOf(open);
+  if (start === -1) return undefined;
+  const end = html.indexOf(`</${tag}>`, start);
+  return pageText(html.slice(start + open.length, end === -1 ? undefined : end));
+}
+
+async function ageAndPreviousVersionTests(): Promise<void> {
+  section('Web site: the policy describes the store age check as built');
+
+  const { pages } = renderLegalSite({ sources: legalSources(), identity: REAL_IDENTITY });
+  if (fs.existsSync(NATIVE_AGE_SIGNAL)) {
+    const built = await builtAgeCheck();
+    eq('setup: an age check keeps only its outcome and the date it asked', built.keptFields, ['checkedAt', 'outcome']);
+    for (const page of POLICIES) eq(`${page} carries the age-check paragraph, true to the built check`, ageParagraphFindings(page, pages[page], built), []);
+    const withoutParagraph = renderLegal(REAL_IDENTITY, { page: 'fr/privacy.html', from: '<p id="age-signal">', to: '<p>' }).pages['fr/privacy.html'];
+    eq('  red: a French policy without the age-check paragraph fails, naming the page', ageParagraphFindings('fr/privacy.html', withoutParagraph, built), [
+      'fr/privacy.html: the store age check is built, but the policy has no age-check paragraph (<p id="age-signal">)',
+    ]);
+    const stale = renderLegal(REAL_IDENTITY, { page: 'privacy.html', from: 'again every 30 days', to: 'again every 60 days' }).pages['privacy.html'];
+    check('  red: a policy stating another re-ask period than the built check fails', ageParagraphFindings('privacy.html', stale, built).some((f) => f.includes(`every ${built.recheckDays} days`)));
+  } else {
+    check('no store age check is built, so the policy needs no age-check paragraph', !fs.existsSync(NATIVE_AGE_SIGNAL));
+  }
+
+  section('Web site: the previous policy stays readable until the new one takes effect');
+
+  for (const page of POLICIES) {
+    check(`${page} links the version-1 policy at /privacy/v1`, pages[page].includes('href="/privacy/v1"'));
+  }
+  const v1 = renderPage(readPage('privacy-v1.html'), FIXTURE_VALUES);
+  check('privacy-v1.html is not a legal page: the legal-pages deploy check never reads it', !(LEGAL_PAGES as readonly string[]).includes('privacy-v1.html'));
+  check('privacy-v1.html renders from deploy values alone, naming the support address', v1.includes(FIXTURE_VALUES.WHIM_SUPPORT_EMAIL) && !v1.includes('{{'));
+  const v1Days = [...pageText(v1).matchAll(/deleted after (\d+) days|kept for (\d+) days/g)].map((m) => Number(m[1] ?? m[2]));
+  eq(
+    'privacy-v1.html states version 1’s keep-periods for reports and the ledger',
+    v1Days,
+    [keepLimit(MANIFESTS[1], 'reports')?.days, keepLimit(MANIFESTS[1], 'usage-records')?.days],
+  );
+}
+
 function deployCheckRedChecks(): void {
   section('Web site: the legal-pages deploy check refuses');
 
@@ -423,8 +540,10 @@ function parityAndRetentionTests(): void {
 
 export async function runWebSiteTests(): Promise<void> {
   legalPageTests();
+  providerNameTests();
   deployCheckRedChecks();
   parityAndRetentionTests();
+  await ageAndPreviousVersionTests();
 
   section('Web site: renderPage placeholder rules');
 
@@ -508,7 +627,7 @@ export async function runWebSiteTests(): Promise<void> {
 
   const legalPages = renderLegalSite({ sources: legalSources(), identity: FULL_IDENTITY }).pages;
   for (const page of LEGAL_PAGES) check(`${page} contains no <script`, !legalPages[page].toLowerCase().includes('<script'));
-  for (const file of ['support.html', 'app-link.html', 'not-found.html']) {
+  for (const file of ['support.html', 'app-link.html', 'not-found.html', 'privacy-v1.html']) {
     const rendered = renderPage(readPage(file), FIXTURE_VALUES_WITH_STORES).toLowerCase();
     check(`${file} contains no <script`, !rendered.includes('<script'));
   }
@@ -581,6 +700,11 @@ export async function runWebSiteTests(): Promise<void> {
         LEGAL_PAGES.map((page) => renderLegalSite({ sources: legalSources(), identity: REAL_IDENTITY }).pages[page]),
       );
       check('  ... and not the identity file itself', !fs.existsSync(path.join(outDir, path.basename(LEGAL_IDENTITY_PATH))));
+      eq(
+        '  ... and the version-1 policy, rendered from deploy values',
+        fs.readFileSync(path.join(outDir, 'privacy-v1.html'), 'utf8'),
+        renderPage(readPage('privacy-v1.html'), FIXTURE_VALUES),
+      );
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
       fs.rmSync(outDir, { recursive: true, force: true });

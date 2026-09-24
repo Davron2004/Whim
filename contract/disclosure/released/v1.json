@@ -188,7 +188,7 @@
       "namedOnScreen": true
     },
     {
-      "id": "service-providers",
+      "id": "ai-providers",
       "description": "Other companies whose AI models write the app, which may process requests outside Canada",
       "namedOnScreen": true
     }
@@ -215,7 +215,7 @@
       "category": "request-material",
       "roles": [
         "anycognition",
-        "service-providers"
+        "ai-providers"
       ],
       "purposes": [
         "build"
@@ -236,9 +236,7 @@
       "roles": [
         "anycognition"
       ],
-      "purposes": [
-        "operate"
-      ]
+      "purposes": []
     },
     {
       "category": "connection-logs",

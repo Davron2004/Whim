@@ -237,6 +237,7 @@ if [ "$pages_only" -eq 0 ]; then
   check_in_container "react-native in node_modules" "$REACT_NATIVE_JS" absent
 fi
 check_page /privacy 200
+check_page /privacy/v1 200
 check_page /terms 200
 check_page /fr/privacy 200
 check_page /fr/terms 200

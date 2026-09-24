@@ -83,6 +83,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
+| `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).
@@ -124,7 +125,7 @@ deploy/deploy.sh --site-only   # once DNS resolves — publishes the pages, buil
 deploy/deploy.sh               # once the OpenRouter secret has a version — the full deploy
 ```
 
-`--site-only` publishes `/privacy`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/*`, uploads the
+`--site-only` publishes `/privacy`, `/privacy/v1`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/*`, uploads the
 Caddyfile and reloads Caddy; it never touches the server container. Both deploys refuse before
 anything is uploaded when a legal page fails its check: an empty required value in
 `deploy/site/legal-identity.json`, a `{{…}}` left unresolved, a draft marker such as `[B9]`, or a
@@ -158,7 +159,7 @@ What each check means:
   still on in production, not just in dev.
 - **no `react-native` under the image's `node_modules`** — the production tree never carries the
   device bundle.
-- **`/privacy`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/x` → `200` html, `/nope` → `404`,
+- **`/privacy`, `/privacy/v1`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/x` → `200` html, `/nope` → `404`,
   none redirected** — the pages
   host serves flat files with no directory-index redirect (a redirect would break the association
   files below).
