@@ -2016,21 +2016,129 @@ function budgetCurrencyProblems(run: ProvisionRun, amount: string): string[] {
 /** Cloud Logging's severity order. */
 const SEVERITY_ORDER = ['DEFAULT', 'DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'];
 
-/** Whether a Logs Explorer filter of `term AND term ...` matches one server line as the Ops Agent
- *  ships it (handoff/log-shipping.md: pino fields under jsonPayload, the docker log, pino's
- *  severity). Only the term forms the alerts use are understood; any other throws, so a new form
- *  gets a case here instead of passing unread. */
+/** Advances past one `"..."` quoted span starting at the opening quote. */
+function skipQuotedSpan(filter: string, start: number): number {
+  let i = start + 1;
+  while (i < filter.length && filter[i] !== '"') i++;
+  return i + 1;
+}
+
+/** Advances past one leaf term starting at `start`, e.g. `jsonPayload.msg="provider credit
+ *  exhausted"` or `log_id("docker")`. A leaf term is read greedily, treating a quoted span as
+ *  opaque (it may hold spaces) and tracking paren depth locally, so only a `)` the term does NOT
+ *  itself own — a `log_id(...)` call closes its own paren — is left as a top-level group
+ *  boundary for the caller. */
+function readFilterWord(filter: string, start: number): number {
+  let i = start;
+  let depth = 0;
+  while (i < filter.length) {
+    const c = filter[i]!;
+    if (c === '"') {
+      i = skipQuotedSpan(filter, i);
+    } else if (c === '(') {
+      depth++;
+      i++;
+    } else if (c === ')' && depth > 0) {
+      depth--;
+      i++;
+    } else if (c === ')' || /\s/.test(c)) {
+      break;
+    } else {
+      i++;
+    }
+  }
+  return i;
+}
+
+/** Splits a Logs Explorer filter into `(`, `)`, `AND`, `OR` and leaf-term tokens (see
+ *  `readFilterWord` for how a leaf term is delimited). */
+function tokenizeFilter(filter: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < filter.length) {
+    const c = filter[i]!;
+    if (/\s/.test(c)) {
+      i++;
+    } else if (c === '(' || c === ')') {
+      tokens.push(c);
+      i++;
+    } else {
+      const end = readFilterWord(filter, i);
+      tokens.push(filter.slice(i, end));
+      i = end;
+    }
+  }
+  return tokens;
+}
+
+/** Parse state for the recursive-descent filter evaluator below: the token stream, the read
+ *  position, and the line being matched, threaded through as one object so each grammar rule is
+ *  its own top-level function instead of a closure nested inside `filterMatches`. */
+interface FilterEvalState {
+  readonly filter: string;
+  readonly tokens: readonly string[];
+  readonly line: Readonly<Record<string, unknown>>;
+  pos: number;
+}
+
+function evalFilterLeaf(term: string, line: Readonly<Record<string, unknown>>): boolean {
+  if (term === 'log_id("docker")') return true;
+  const field = /^jsonPayload\.(\w+)="([^"]*)"$/.exec(term);
+  if (field) return line[field[1]!] === field[2];
+  const numeric = /^jsonPayload\.(\w+)=(-?\d+)$/.exec(term);
+  if (numeric) return line[numeric[1]!] === Number(numeric[2]);
+  const severity = /^severity>=([A-Z]+)$/.exec(term);
+  if (severity) return SEVERITY_ORDER.indexOf(String(line.severity)) >= SEVERITY_ORDER.indexOf(severity[1]!);
+  throw new Error(`setup: filter term ${term} is not understood`);
+}
+
+function evalFilterPrimary(state: FilterEvalState): boolean {
+  const token = state.tokens[state.pos];
+  if (token === '(') {
+    state.pos++;
+    const result = evalFilterOr(state);
+    if (state.tokens[state.pos] !== ')') throw new Error(`setup: unbalanced parens in filter: ${state.filter}`);
+    state.pos++;
+    return result;
+  }
+  if (token === undefined || token === 'AND' || token === 'OR' || token === ')') {
+    throw new Error(`setup: expected a term at position ${state.pos} in filter: ${state.filter}`);
+  }
+  state.pos++;
+  return evalFilterLeaf(token, state.line);
+}
+
+function evalFilterAnd(state: FilterEvalState): boolean {
+  let result = evalFilterPrimary(state);
+  while (state.tokens[state.pos] === 'AND') {
+    state.pos++;
+    const right = evalFilterPrimary(state);
+    result = result && right;
+  }
+  return result;
+}
+
+function evalFilterOr(state: FilterEvalState): boolean {
+  let result = evalFilterAnd(state);
+  while (state.tokens[state.pos] === 'OR') {
+    state.pos++;
+    const right = evalFilterAnd(state);
+    result = result || right;
+  }
+  return result;
+}
+
+/** Whether a Logs Explorer filter matches one server line as the Ops Agent ships it
+ *  (handoff/log-shipping.md: pino fields under jsonPayload, the docker log, pino's severity).
+ *  Understands `AND`/`OR`-joined leaf terms with explicit parenthesised grouping (`AND` binds
+ *  tighter than `OR`, matching Cloud Logging query syntax) — the subset the policies in
+ *  deploy/monitoring/ use. Only the leaf term forms the alerts use are understood; any other
+ *  throws, so a new form gets a case here instead of passing unread. */
 function filterMatches(filter: string, line: Readonly<Record<string, unknown>>): boolean {
-  return filter.split(' AND ').every((term) => {
-    if (term === 'log_id("docker")') return true;
-    const field = /^jsonPayload\.(\w+)="([^"]*)"$/.exec(term);
-    if (field) return line[field[1]!] === field[2];
-    const numeric = /^jsonPayload\.(\w+)=(-?\d+)$/.exec(term);
-    if (numeric) return line[numeric[1]!] === Number(numeric[2]);
-    const severity = /^severity>=([A-Z]+)$/.exec(term);
-    if (severity) return SEVERITY_ORDER.indexOf(String(line.severity)) >= SEVERITY_ORDER.indexOf(severity[1]!);
-    throw new Error(`setup: filter term ${term} is not understood`);
-  });
+  const state: FilterEvalState = { filter, tokens: tokenizeFilter(filter), line, pos: 0 };
+  const result = evalFilterOr(state);
+  if (state.pos !== state.tokens.length) throw new Error(`setup: trailing tokens in filter: ${filter}`);
+  return result;
 }
 
 /** The structural `402` `isCreditExhaustedError` (`../src/generation/model.ts`) detects. */
@@ -2166,6 +2274,31 @@ function policyFile(name: string): { conditions: Array<{ conditionMatchedLog?: {
   return JSON.parse(readRepoFile(`deploy/monitoring/${name}`)) as ReturnType<typeof policyFile>;
 }
 
+/** Cloud Logging: an alert policy with any `conditionMatchedLog` condition can have only one
+ *  condition — this is the real `deploy/provision.sh` failure this locks against:
+ *  `INVALID_ARGUMENT: Alert policies with a log matching condition can only have a single
+ *  condition`. */
+function logMatchConditionCountProblems(name: string, policy: ReturnType<typeof policyFile>): string[] {
+  const hasLogMatchCondition = policy.conditions.some((condition) => condition.conditionMatchedLog);
+  if (!hasLogMatchCondition || policy.conditions.length <= 1) return [];
+  return [`${name}: ${policy.conditions.length} conditions but has a conditionMatchedLog condition (only one condition is allowed)`];
+}
+
+function monitoringPolicyShapeTests(): void {
+  section("Deploy artifacts: a log-matching alert policy has exactly one condition (Cloud Logging's own limit)");
+  const policyFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'monitoring')).filter((name) => /^policy-.*\.json$/.test(name));
+  const problems = policyFiles.flatMap((name) => logMatchConditionCountProblems(name, policyFile(name)));
+  checkClean('every deploy/monitoring/policy-*.json with a conditionMatchedLog condition has exactly one condition', problems);
+
+  const credit = policyFile('policy-credit-exhausted.json');
+  const restoredTwoConditionCredit: ReturnType<typeof policyFile> = { ...credit, conditions: [credit.conditions[0]!, credit.conditions[0]!] };
+  checkCaught(
+    'red: restoring policy-credit-exhausted.json to its former two-condition shape (the actual provision.sh failure) is caught',
+    logMatchConditionCountProblems('policy-credit-exhausted.json', restoredTwoConditionCredit),
+    'only one condition is allowed',
+  );
+}
+
 async function alertFilterTests(): Promise<void> {
   section('Deploy artifacts: the log-based alerts match the lines the real server writes');
   const lines = await realAlertSourceLines();
@@ -2198,17 +2331,12 @@ async function alertFilterTests(): Promise<void> {
   const creditLines = await creditAlertSourceLines();
   const creditMatching = (filter: string): Array<Record<string, unknown>> => creditLines.filter((line) => filterMatches(filter, line));
   const creditConditions = policyFile('policy-credit-exhausted.json').conditions;
-  const budgetFilter = creditConditions[0]?.conditionMatchedLog?.filter ?? '';
-  const providerFilter = creditConditions[1]?.conditionMatchedLog?.filter ?? '';
+  eq("the credit-exhausted alert has exactly one condition (a log-matching alert policy allows only one)", creditConditions.length, 1);
+  const creditFilter = creditConditions[0]?.conditionMatchedLog?.filter ?? '';
   eq(
-    "the credit-exhausted alert's first condition matches the budget_exhausted refusal and nothing else",
-    creditMatching(budgetFilter).map((line) => line.error),
-    ['budget_exhausted'],
-  );
-  eq(
-    '  ... its second condition matches the mid-generation provider 402 line and nothing else',
-    creditMatching(providerFilter).map((line) => line.msg),
-    ['provider credit exhausted'],
+    "its single condition matches the budget_exhausted refusal and the mid-generation provider 402, and nothing else",
+    creditMatching(creditFilter).map((line) => (line.msg === 'provider credit exhausted' ? line.msg : line.error)).sort((a, b) => String(a).localeCompare(String(b))),
+    ['budget_exhausted', 'provider credit exhausted'].sort((a, b) => a.localeCompare(b)),
   );
   const weakerFilter = 'log_id("docker") AND jsonPayload.status=503';
   check(
@@ -3063,6 +3191,7 @@ export async function runDeployConfigTests(): Promise<void> {
   loadtestDriveTests();
   provisionTests();
   provisionMonitoringTests();
+  monitoringPolicyShapeTests();
   await alertFilterTests();
   await runLoadTestTests();
   runbookTests();
