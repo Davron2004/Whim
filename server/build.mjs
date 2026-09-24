@@ -4,6 +4,7 @@
  *
  *   server/main.mjs (+ .map)         bundled `server/src/main.ts`
  *   server/whim-admin.mjs (+ .map)   bundled `server/src/admin/main.ts`, the operator command
+ *   server/whim-waitlist.mjs (+ .map) bundled `server/src/waitlist/cli.ts`, the waitlist operator command
  *   <every RUNTIME_ASSETS path>      copied from the repo at the same relative path
  *
  * The server starts from that tree with the tree root as its working directory:
@@ -87,6 +88,7 @@ export async function buildRuntimeTree({ outDir }) {
   fs.rmSync(target, { recursive: true, force: true });
   await bundleServerEntry({ entry: 'server/src/main.ts', outfile: path.join(target, 'server', 'main.mjs') });
   await bundleServerEntry({ entry: 'server/src/admin/main.ts', outfile: path.join(target, 'server', 'whim-admin.mjs') });
+  await bundleServerEntry({ entry: 'server/src/waitlist/cli.ts', outfile: path.join(target, 'server', 'whim-waitlist.mjs') });
   for (const asset of await runtimeAssets()) {
     const destination = path.join(target, asset);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
