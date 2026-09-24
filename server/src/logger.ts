@@ -56,6 +56,9 @@ const SENSITIVE_FIELD_NAMES: readonly string[] = [
   'authorization',
   'Authorization',
   'secret',
+  // Server-only: the beta waitlist's address (beta-waitlist D7). The route never logs it; this is
+  // the backstop for a call site that someday tries.
+  'email',
 ];
 
 /** A name that is not a plain identifier needs pino's bracket form (`["x-whim-device"]`). */

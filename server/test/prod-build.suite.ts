@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { createRequire, isBuiltin } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
@@ -31,7 +31,14 @@ import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
 const ROOT = process.cwd();
-const BUNDLES = ['server/main.mjs', 'server/main.mjs.map', 'server/whim-admin.mjs', 'server/whim-admin.mjs.map'];
+const BUNDLES = [
+  'server/main.mjs',
+  'server/main.mjs.map',
+  'server/whim-admin.mjs',
+  'server/whim-admin.mjs.map',
+  'server/whim-waitlist.mjs',
+  'server/whim-waitlist.mjs.map',
+];
 const BOOT_MS = 20_000;
 const EXIT_MS = 15_000;
 const DEVICE_A = 'a11a11a1-a11a-41a1-81a1-a11a11a11a11';
@@ -224,7 +231,7 @@ async function prepareTree(): Promise<Fixture> {
   await buildRuntimeTree({ outDir: tree });
 
   eq(
-    'the tree holds the two bundles with their source maps and every runtime asset, and nothing else',
+    'the tree holds the three bundles with their source maps and every runtime asset, and nothing else',
     listFiles(tree).sort((a, b) => a.localeCompare(b)),
     [...BUNDLES, ...RUNTIME_ASSETS].sort((a, b) => a.localeCompare(b)),
   );
@@ -235,7 +242,7 @@ async function prepareTree(): Promise<Fixture> {
   );
 
   const declared = declaredRuntimePackages();
-  for (const bundle of ['server/main.mjs', 'server/whim-admin.mjs']) {
+  for (const bundle of ['server/main.mjs', 'server/whim-admin.mjs', 'server/whim-waitlist.mjs']) {
     const outsiders = bareSpecifiers(fs.readFileSync(path.join(tree, bundle), 'utf8')).filter(
       (spec) => !isBuiltin(spec) && !declared.some((name) => spec === name || spec.startsWith(`${name}/`)),
     );
@@ -278,12 +285,15 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   const port = await freePort();
   // What deploy/Dockerfile's ENV sets from the build arg.
   const commit = 'fedcba9876543210fedcba9876543210fedcba98';
+  const dataDir = fixture.dataDir('serves');
+  const pagesOrigin = 'https://pages.example.test';
   const proc = new TreeProcess(fixture.tree, {
     WHIM_PIPELINE: 'stub',
-    WHIM_DATA_DIR: fixture.dataDir('serves'),
+    WHIM_DATA_DIR: dataDir,
     WHIM_SERVER_HOST: '127.0.0.1',
     WHIM_SERVER_PORT: String(port),
     WHIM_COMMIT: commit,
+    WHIM_WEB_ORIGIN: pagesOrigin,
   });
   try {
     check('the tree started and listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
@@ -292,6 +302,19 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     eq('GET /healthz answers 200', res.status, 200);
     eq('with the service identity, the same commit and both minimum builds off', await res.json(), { ok: true, service: 'whim-server', commit, minBuild: { ios: 0, android: 0 } });
+    const signup = await within(
+      fetch(`http://127.0.0.1:${port}/beta/signup`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.5' },
+        body: 'email=Tree.Person%40example.com&platform=android',
+      }),
+    );
+    eq(
+      'POST /beta/signup, with no device header, answers 303 to the pages origin\'s /beta/thanks',
+      signup === TIMED_OUT ? 'timed out' : [signup.status, signup.headers.get('location')],
+      [303, `${pagesOrigin}/beta/thanks`],
+    );
 
     proc.signal('SIGTERM');
     const exit = await exitOf(proc);
@@ -299,6 +322,15 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   } finally {
     await proc.dispose();
   }
+
+  // The operator command the image carries, over the waitlist.db the server just wrote.
+  const exported = spawnSync(process.execPath, [path.join(fixture.tree, 'server', 'whim-waitlist.mjs'), 'export', '--platform', 'android'], {
+    cwd: fixture.tree,
+    encoding: 'utf8',
+    timeout: EXIT_MS,
+    env: { PATH: process.env.PATH ?? '', WHIM_DATA_DIR: dataDir },
+  });
+  eq('the tree\'s whim-waitlist.mjs exports the signup the server stored', [exported.status, exported.stdout.split('\n')[1]?.split(',').slice(0, 3)], [0, ['tree.person@example.com', 'android', 'false']]);
 }
 
 async function expectBootRefusal(what: string, root: string, env: Record<string, string>, named: string): Promise<void> {

@@ -3,8 +3,8 @@
  * specs/server-deployment "Boot fails fast when the runtime is incomplete", "Production boot proves
  * the synthetic run works before serving", "SIGTERM drains in-flight work before exit").
  *
- * `startServer` is the whole composition, in order: config, preflight, stores (with their purge
- * timers), the synthetic-run session plus the boot self-test (real pipeline only), then listen. Any
+ * `startServer` is the whole composition, in order: config, preflight, stores (usage, reports and
+ * the beta waitlist, with their purge timers), the synthetic-run session plus the boot self-test (real pipeline only), then listen. Any
  * failure closes whatever was already opened and rejects with a `BootError` naming the step. Nothing
  * listens before the self-test has passed.
  *
@@ -29,6 +29,7 @@ import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
 import { NodeSqliteUsageStore, scheduleUsagePurge } from './usage-store';
 import { NodeSqliteReportStore, schedulePurge, type PurgeSchedule } from './reports/store';
+import { NodeSqliteWaitlistStore, scheduleWaitlistPurge } from './waitlist/store';
 import { buildModelDepsFromEnv, createGenerationPipeline, MissingApiKeyError } from './generation';
 import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRoster } from './generation/model';
 import { loadContentPolicyDocument } from './generation/prompts/inputs';
@@ -197,6 +198,7 @@ function scheduleCostSweep(
 class Opened {
   usageStore: NodeSqliteUsageStore | undefined;
   reportStore: NodeSqliteReportStore | undefined;
+  waitlistStore: NodeSqliteWaitlistStore | undefined;
   purges: PurgeSchedule[] = [];
   session: SynthRunSession | undefined;
 
@@ -213,6 +215,7 @@ class Opened {
       if (outcome !== 'closed') log.warn({ detail: outcome }, 'the synthetic-run session did not close cleanly');
     }
     this.reportStore?.close();
+    this.waitlistStore?.close();
     this.usageStore?.close();
   }
 }
@@ -348,11 +351,13 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
 
   const opened = new Opened();
   try {
-    const { usageStore, reportStore } = atStep('stores', () => {
+    const { usageStore, reportStore, waitlistStore } = atStep('stores', () => {
       const usage = new NodeSqliteUsageStore(path.join(dataDir, 'usage.db'), { now: config.now, usageIdleDays: config.usageIdleDays });
       opened.usageStore = usage;
       const reports = new NodeSqliteReportStore(path.join(dataDir, 'reports.db'));
       opened.reportStore = reports;
+      const waitlist = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
+      opened.waitlistStore = waitlist;
       opened.purges.push(
         schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }),
         scheduleUsagePurge(usage, {
@@ -361,8 +366,12 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
           now: config.now,
           onError: (message, err) => log.warn({ detail: messageOf(err) }, message),
         }),
+        scheduleWaitlistPurge(waitlist, {
+          now: config.now,
+          onError: (err) => log.warn({ detail: messageOf(err) }, 'waitlist purge failed'),
+        }),
       );
-      return { usageStore: usage, reportStore: reports };
+      return { usageStore: usage, reportStore: reports, waitlistStore: waitlist };
     });
 
     const policyDocument = loadContentPolicyDocument();
@@ -417,6 +426,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       slots,
       policy: cachedPolicy(basePolicy, { knownCategories: policyKnownCategories }),
       reportStore,
+      waitlistStore,
       resolver: { transport: statsTransport, tracker: resolveTracker },
       creditTransport: overrides.creditTransport ?? (apiKey ? createOpenRouterCreditTransport({ apiKey }) : undefined),
       inFlight,

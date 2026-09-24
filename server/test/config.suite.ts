@@ -68,6 +68,9 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_MAX_BODY_BYTES_REPORT', field: 'maxBodyBytesReport', validValue: '600000', parsed: 600_000 },
   { key: 'WHIM_MAX_PROMPT_BYTES', field: 'maxPromptBytes', validValue: '20000', parsed: 20_000 },
   { key: 'WHIM_MAX_REPORT_SOURCE_BYTES', field: 'maxReportSourceBytes', validValue: '300000', parsed: 300_000 },
+  { key: 'WHIM_MAX_BODY_BYTES_BETA', field: 'maxBodyBytesBeta', validValue: '8192', parsed: 8192 },
+  { key: 'WHIM_BETA_LIMIT_PER_CLIENT_HOUR', field: 'betaLimitPerClientHour', validValue: '25', parsed: 25 },
+  { key: 'WHIM_BETA_LIMIT_PER_DAY', field: 'betaLimitPerDay', validValue: '5000', parsed: 5000 },
   { key: 'WHIM_UNARY_MODEL_TIMEOUT_MS', field: 'unaryModelTimeoutMs', validValue: '70000', parsed: 70_000 },
   { key: 'WHIM_GENERATION_MAX_MS', field: 'generationMaxMs', validValue: '700000', parsed: 700_000 },
   { key: 'WHIM_CREDIT_CACHE_TTL_MS', field: 'creditCacheTtlMs', validValue: '70000', parsed: 70_000 },
@@ -102,6 +105,16 @@ export function runConfigTests(): void {
     generationMaxMs: 600_000,
   });
   eq('defaults: drain timeout is generation max + 30s', defaults.drainTimeoutMs, defaults.generationMaxMs + 30_000);
+  // The beta signup's brakes (beta-waitlist D3): what an anonymous web form may cost the server.
+  eq('defaults: the beta signup body cap and limits', {
+    maxBodyBytesBeta: defaults.maxBodyBytesBeta,
+    betaLimitPerClientHour: defaults.betaLimitPerClientHour,
+    betaLimitPerDay: defaults.betaLimitPerDay,
+  }, {
+    maxBodyBytesBeta: 4096,
+    betaLimitPerClientHour: 10,
+    betaLimitPerDay: 2000,
+  });
 
   section('Every environment-sourced numeric key: garbage fails naming it, a valid value reaches its field');
 
@@ -216,6 +229,7 @@ export function runConfigTests(): void {
       OPENROUTER_API_KEY: 'sk-test',
       WHIM_REWRITE_MODEL: 'model/rewrite',
       WHIM_ENGINEER_MODEL: 'model/engineer',
+      WHIM_WEB_ORIGIN: 'https://pages.example.test',
       ...overrides,
     });
 
@@ -257,6 +271,14 @@ export function runConfigTests(): void {
     ),
   );
   check(
+    'a missing pages origin is named at boot: the beta signup would redirect nowhere',
+    throwsNaming(() => loadServerConfig(prodEnv({ WHIM_WEB_ORIGIN: undefined })), 'WHIM_WEB_ORIGIN'),
+  );
+  check(
+    'production refuses a plain-http pages origin',
+    throwsNaming(() => loadServerConfig(prodEnv({ WHIM_WEB_ORIGIN: 'http://pages.example.test' })), 'WHIM_WEB_ORIGIN'),
+  );
+  check(
     'outside production the dev log sink and stub pipeline are both fine',
     loadServerConfig(baseEnv({ WHIM_DEV_LOG_SINK: '1', WHIM_PIPELINE: 'stub' })).pipeline === 'stub',
   );
@@ -264,6 +286,20 @@ export function runConfigTests(): void {
     'outside production a missing OpenRouter key does not fail startup',
     loadServerConfig(baseEnv()).openRouterApiKey === undefined,
   );
+
+  section('WHIM_WEB_ORIGIN (beta-waitlist D1): where the signup redirects');
+
+  eq('it reaches ServerConfig.webOrigin as given', loadServerConfig(prodEnv()).webOrigin, 'https://pages.example.test');
+  eq('outside production, unset reads as a local pages preview', defaults.webOrigin, 'http://localhost:8080');
+  for (const [what, raw] of [
+    ['a trailing slash', 'https://pages.example.test/'],
+    ['a path', 'https://pages.example.test/beta'],
+    ['a query', 'https://pages.example.test?x=1'],
+    ['no scheme', 'pages.example.test'],
+    ['another scheme', 'ftp://pages.example.test'],
+  ] as const) {
+    check(`${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_WEB_ORIGIN: raw })), 'WHIM_WEB_ORIGIN'));
+  }
 
   section('WHIM_PROVIDER_SORT (design D3)');
 
