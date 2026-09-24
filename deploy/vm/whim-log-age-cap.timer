@@ -1,0 +1,11 @@
+# Runs whim-log-age-cap.service once a day, and at boot if a run was missed while the VM was down.
+# Installed by deploy/vm/bootstrap.sh.
+[Unit]
+Description=Daily Whim container log age cap
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

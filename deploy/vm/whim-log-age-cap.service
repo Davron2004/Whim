@@ -1,0 +1,16 @@
+# Removes container log lines older than the published log age cap (deploy/vm/log-age-cap.sh).
+# Started daily by whim-log-age-cap.timer; installed by deploy/vm/bootstrap.sh.
+[Unit]
+Description=Whim container log age cap
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/whim-log-age-cap.sh
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=-/var/lib/docker/containers

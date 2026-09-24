@@ -75,3 +75,5 @@
   - Fix chains: fix-A (text + data: items 1, 2, 3, 4, 5, 6, 7, H1, H3, M1, M3, M4, L1, L2, L3, L4, L6) ‖ fix-infra (H2) ‖ fix-B after chain-9b (native/locale/age: items 8, 9, 10, M2).
 - dispatched fixA: BASE `070d732c5fbf33b9ab96b79e469c77126663d735`, worktree `.claude/worktrees/legal-surface-v2-fixA`
 - dispatched fixinfra: BASE `070d732c5fbf33b9ab96b79e469c77126663d735`, worktree `.claude/worktrees/legal-surface-v2-fixinfra`
+- chain-9b report: STATUS failed-gate in its worktree (ENV: a full `node_modules` symlink made `@whim/contract` resolve to the primary tree, tripping `prod-build.suite.ts:251`; zero-diff repro), fix complete, commit `c71decab`. Android: `userStatus()` returns the `@IntDef` annotation type, constants are Int → `result.userStatus() as? Int` before the `when`, mapping unchanged (`:app:compileDebugKotlin` BUILD SUCCESSFUL). iOS: `@import React_RCTAppDelegate;` (the module `AppDelegate.swift` already imports) before `Whim-Swift.h`.
+- chain-9b integrity: exit 0. Merged; main-tree regate-pass. Android `assembleOffline` + iOS simulator build running from the main tree.

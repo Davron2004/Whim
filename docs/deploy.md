@@ -26,7 +26,8 @@ gcloud compute ssh whim-vm --tunnel-through-iap \
 
 `bootstrap.sh` installs Docker + the compose plugin, formats and mounts the data disk at
 `/mnt/disks/whim-data`, creates the owned data directories, asserts unprivileged user namespaces
-work (Chromium's sandbox needs them), and installs the egress firewall. Safe to rerun.
+work (Chromium's sandbox needs them), and installs the egress firewall and the daily log age cap
+("Log retention on the VM" below). Safe to rerun.
 
 ### Persistent-disk snapshots
 
@@ -210,6 +211,22 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `429 server_busy` with `Retry-After` set to the next UTC midnight. The anonymous stream probe has
   its own tiny pool, `WHIM_LIMIT_PROBE_CONCURRENCY` (2), so probe traffic can never crowd the paid
   routes; like the other limits it is a default in `server/src/config.ts`, not a profile setting.
+
+## Log retention on the VM
+
+The privacy policy deletes connection data and logs within 90 days (the disclosure manifest's
+`connection-logs` maximum). `compose.yaml` rotates the containers' json-file logs by size only, so
+at low traffic lines holding IP addresses would stay for months. `deploy/vm/log-age-cap.sh` enforces
+the age: `whim-log-age-cap.timer` runs it daily (catching up after downtime), it removes every line
+older than 89 days from each container's log under `/var/lib/docker/containers` in place, and deletes
+rotated files last written before that. 89 days plus the one-day timer period stays within 90; the
+server acceptance suite fails if the cap outgrows the manifest. `bootstrap.sh` installs it, so on a
+VM bootstrapped earlier, rerun `bootstrap.sh` to add it. Check it with
+`sudo systemctl list-timers 'whim-log-age-cap*'` (next and last run) and
+`sudo journalctl -u whim-log-age-cap.service` (what each run removed).
+
+This covers only the log files on the VM. Anything shipped to Cloud Logging keeps whatever retention
+its log bucket is set to, configured separately in the project.
 
 ## Minimum supported build
 
