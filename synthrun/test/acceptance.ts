@@ -147,6 +147,19 @@ function Home() { return <Screen><Stack><Heading size="title">Harmless</Heading>
 export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
+// One uncaught throw and one unhandled rejection, each with a distinctive message, both after
+// mount. Each reaches the collector twice: through CDP (message-bearing) and through `loader.js`'s
+// realm-window listeners as a nonce-authenticated `error` frame (`where: 'runtime' | 'rejection'`,
+// name only — never the message).
+const FIXTURE_REALM_ERRORS = `import { defineApp, Screen, Stack, Heading, useEffect } from 'vc-sdk';
+function Home() {
+  useEffect(() => { Promise.reject(new Error('realm-rejection-7f3a')); }, []);
+  useEffect(() => { throw new Error('realm-throw-7f3a'); }, []);
+  return <Screen><Stack><Heading size="title">Realm errors</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'RealmErrors', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
 // CAUSES a genuine breach verdict rather than claiming one: planting a Node-style `process`
 // global makes probes.js's own escape-axis check `ambient process (Node env leak)` (§6,
 // `expectUnreachable`) reach a usable value, so `contained` — computed by the loader's
@@ -472,6 +485,41 @@ async function testObservers(): Promise<void> {
         ok(thrown?.line === 4, `the pre-finish throw still carries its original-source anchor, line 4 (got ${thrown?.line})`);
       } finally {
         obs?.detach();
+        await dispose();
+      }
+    });
+
+    // The loader's realm-listener frames are privacy-stripped (name only) and duplicate what CDP
+    // already captured with the message. The first two assertions prove both channels really
+    // fired, so the diagnostic assertions below are about the dedupe, not an absent frame.
+    await test('realm errors: each is reported once, with its message, never as the loader\'s message-free frame', async () => {
+      const { obs, dispose } = await openObservedRun(session, FIXTURE_REALM_ERRORS);
+      const loaderFrame = (where: string): boolean =>
+        obs.state.events.some((e) => e.kind === 'error' && e.trusted && framePayload(e).where === where);
+      const cdpDiagnostic = (kind: string, text: string): boolean =>
+        obs.state.diagnostics.some((d) => d.kind === kind && d.message.includes(text));
+      try {
+        await waitUntil(
+          () =>
+            loaderFrame('runtime') &&
+            loaderFrame('rejection') &&
+            cdpDiagnostic('runtime_throw', 'realm-throw-7f3a') &&
+            cdpDiagnostic('unhandled_rejection', 'realm-rejection-7f3a'),
+          3000,
+        );
+        ok(loaderFrame('runtime') && loaderFrame('rejection'), 'the built loader posted its trusted where:runtime and where:rejection frames');
+        ok(!obs.state.events.some((e) => JSON.stringify(e.payload ?? null).includes('7f3a')), 'the loader frames carry no message text');
+        const errorKinds = obs.state.diagnostics
+          .filter((d) => d.kind === 'runtime_throw' || d.kind === 'unhandled_rejection')
+          .map((d) => `${d.kind}:${d.message}`);
+        ok(
+          errorKinds.length === 2 &&
+            errorKinds.filter((m) => m.startsWith('runtime_throw:') && m.includes('realm-throw-7f3a')).length === 1 &&
+            errorKinds.filter((m) => m.startsWith('unhandled_rejection:') && m.includes('realm-rejection-7f3a')).length === 1,
+          `exactly one message-bearing diagnostic per error (got ${JSON.stringify(errorKinds)})`,
+        );
+      } finally {
+        obs.detach();
         await dispose();
       }
     });
