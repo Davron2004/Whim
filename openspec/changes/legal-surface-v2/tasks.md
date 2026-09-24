@@ -11,10 +11,10 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 2. Server records by phone ID
 
-- [ ] 2.1 `usage-store.ts`: add `last_credited_day` with an idempotent migration that backfills the run day, set it on every `credit`, and purge rows idle longer than `WHIM_USAGE_IDLE_DAYS` (default 365) in the existing daily purge path. Tests for each scenario of spec device-records §"Every server record keyed by a phone ID has a keep-period".
-- [ ] 2.2 Server config parsing refuses at startup any keep-period env value above its category's maximum in the current manifest: reports, ledger, usage idle, and log retention the server controls. Tests for §"A configured keep-period never exceeds its published maximum".
-- [ ] 2.3 `deploy/deploy.sh` runs the same parse against the deploy environment and fails on the same condition. Red-check with an over-long value.
-- [ ] 2.4 `whim-admin device export <id>` and `device delete <id>` in `server/src/admin/cli.ts`, covering reports, ledger rows and the usage row. Tests for §"The operator can export and delete one phone ID's records", including idempotence and an unknown ID.
+- [x] 2.1 `usage-store.ts`: add `last_credited_day` with an idempotent migration that backfills the run day, set it on every `credit`, and purge rows idle longer than `WHIM_USAGE_IDLE_DAYS` (default 365) in the existing daily purge path. Tests for each scenario of spec device-records §"Every server record keyed by a phone ID has a keep-period".
+- [x] 2.2 Server config parsing refuses at startup any keep-period env value above its category's maximum in the current manifest: reports, ledger, usage idle, and log retention the server controls. Tests for §"A configured keep-period never exceeds its published maximum".
+- [x] 2.3 `deploy/deploy.sh` runs the same parse against the deploy environment and fails on the same condition. Red-check with an over-long value.
+- [x] 2.4 `whim-admin device export <id>` and `device delete <id>` in `server/src/admin/cli.ts`, covering reports, ledger rows and the usage row. Tests for §"The operator can export and delete one phone ID's records", including idempotence and an unknown ID.
 
 ## 3. Consent screen v2 and the report sheet
 
@@ -79,7 +79,7 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 ## 11. Attended: owner and console steps
 
 - [ ] 11.1 Fill `deploy/site/legal-identity.json`: the business street address and phone, `privacy@anycognition.ca`, the Privacy Officer title, and the effective dates.
-- [ ] 11.2 Set up the `privacy@anycognition.ca` mailbox (B2).
+- [x] 11.2 Set up the `privacy@anycognition.ca` mailbox (B2). *Resolved 2026-09-24 by owner decision: `support@anycognition.ca` (existing Zoho mailbox) is the privacy contact; a privacy@ alias is optional later.*
 - [ ] 11.3 In the OpenRouter account, exclude providers that train on or keep inputs, and confirm prompt logging is off (B1).
 - [ ] 11.4 Read and sign the Quebec s.17 assessment. Check whether OpenRouter's DPA serves as the written agreement and gives EU/UK transfer cover (SCCs or DPF) (B3).
 - [ ] 11.5 Appoint the EU and UK Article 27 representatives and record them in the identity file. Check whether the ICO fee applies, and read the UK DPIA.

@@ -1,4 +1,5 @@
-/** Every data-sending entry point in the rendered launcher asks for AI-data consent first, sends
+/** Every data-sending entry point in the rendered launcher asks for AI-data consent first (the
+ *  terms are already accepted here; `terms-flow-ui.suite.tsx` covers the step before), sends
  *  nothing until the user agrees, and then continues the action the user started. The consent
  *  screen shows the version-2 disclosure in the spec's order, and an outdated grant (a version-1
  *  one included) adds the outdated line and the what's-new line written for that version. */
@@ -16,6 +17,7 @@ import ComposeStep from '../ComposeStep';
 import ConsentScreen from '../ConsentScreen';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
+import { acceptTerms } from '../terms-acceptance';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { PendingBuildStore } from '../pending-builds';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
@@ -139,6 +141,7 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   const pending = new PendingBuildStore(kv);
   pending.create({ id: 'failed', prompt: 'A tea timer', workingTitle: 'Tea timer' });
   pending.setFailed('failed', { reason: 'Server stopped', diagnostics: '' });
+  acceptTerms(kv, '2026-09-01T12:00:00.000Z');
   seedConsent(kv, consent);
   const clock = captureTimeouts();
   const originalFetch = globalThis.fetch;

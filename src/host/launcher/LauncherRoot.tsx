@@ -63,6 +63,7 @@ import BuildStep from './BuildStep';
 import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
+import TermsScreen from './TermsScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
 import UpdateRequiredScreen from './UpdateRequiredScreen';
 import { parseAppLink } from './app-link';
@@ -117,8 +118,9 @@ import type { AppInfo } from './app-info';
 import { installedAppInfo } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
-import { declineTarget, entryDecision } from './consent-flow';
-import type { ConsentContinuation } from './consent-flow';
+import { acceptTerms, termsStatus } from './terms-acceptance';
+import { declineTarget, nextLegalStep } from './consent-flow';
+import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
@@ -151,13 +153,17 @@ type Screen =
   // prompt typed on the flow step it replaced: `Not now` goes Home (D5), so the next compose for
   // the same app picks it back up rather than losing it.
   | { kind: 'update-required'; heldPrompt?: HeldPrompt }
-  // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `ask` opens in place of a
-  // data-sending action taken with no current grant, carrying the continuation to resume on
-  // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
-  // from Settings' AI features row and shows the identical disclosure.
-  // `refused`: a `consent_required` refusal opened it (request-envelope), not an entry point.
+  // The legal flow (legal-surface-v2 design D5; `consent-flow.ts`): the terms step, then the
+  // ask-mode consent screen, each open in place of a data-sending action taken without a current
+  // terms acceptance / consent grant. Both carry the flow (`LegalFlow`): the continuation to
+  // resume, the screen the flow replaced (`returnTo`, read by `declineTarget`), and `refused` — a
+  // `consent_required` refusal started it (request-envelope), not an entry point.
+  // `outdated`: the stored acceptance is of another terms version.
+  | ({ kind: 'terms'; outdated: boolean } & LegalFlow<Screen>)
+  // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `review` opens from
+  // Settings' AI features row and shows the identical disclosure.
   // `outdatedFrom`: the stored grant's version when that grant is outdated.
-  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdatedFrom?: number; refused?: boolean }
+  | ({ kind: 'consent'; mode: 'ask'; outdatedFrom?: number } & LegalFlow<Screen>)
   | { kind: 'consent'; mode: 'review' }
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
@@ -465,14 +471,16 @@ function LauncherShell({
   const deviceId = useMemo(() => getDeviceId(kv), [kv]);
   // The one gate `clarifyPrompt`/`rewritePrompt`/`generateApp`/the connectivity probe read their
   // options through (design D2; spec ai-data-consent "Request options ... SHALL come from one
-  // gate that yields nothing without a current grant"): `null` unless AI-data consent is CURRENT.
-  // `consentTick` has no other purpose than forcing this memo to re-read `consentStatus(kv)` after
-  // `grantConsent`/`revokeConsent` mutate the store out from under it (a plain KV write is not
-  // itself a React dependency).
+  // gate that yields nothing without a current grant"; spec terms-acceptance "The send gate
+  // requires both a terms acceptance and a consent grant"): `null` unless the terms acceptance AND
+  // AI-data consent are both CURRENT. `consentTick` has no other purpose than forcing this memo to
+  // re-read `termsStatus(kv)`/`consentStatus(kv)` after `acceptTerms`/`grantConsent`/
+  // `revokeConsent` mutate the store out from under it (a plain KV write is not itself a React
+  // dependency).
   const [consentTick, setConsentTick] = useState(0);
   const clientOptions = useMemo<ConsentedClientOptions | null>(
-    () => consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
-    // consentTick/serverUrl stand in for the KV reads above (grantConsent/revokeConsent/
+    () => consentedClientOptions(termsStatus(kv), consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
+    // consentTick/serverUrl stand in for the KV reads above (acceptTerms/grantConsent/revokeConsent/
     // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
     // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -481,16 +489,16 @@ function LauncherShell({
 
   /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
    *  the current grant, or a fresh live read (`consent-options.ts`) when it does not yet — the gap
-   *  `onConsentAskAgree` falls into, since `grantConsent`'s `consentTick` bump does not retire the
-   *  memo until the render AFTER this call returns (spec ai-data-consent "After the user agrees,
-   *  the action they started SHALL continue as if consent had already existed"). */
+   *  `onConsentAskAgree` and `onTermsAccept` fall into, since the `consentTick` bump does not
+   *  retire the memo until the render AFTER this call returns (spec ai-data-consent "After the user
+   *  agrees, the action they started SHALL continue as if consent had already existed"). */
   const resolveClientOptions = (): ConsentedClientOptions | null =>
     resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo));
 
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
-  // ONE request that needs no AI-data consent, so this is never gated the way `clientOptions`
-  // above is). It still reads the grant, for the consent version its envelope names, so it is
-  // keyed on `consentTick` too.
+  // ONE request that needs no AI-data consent and no terms acceptance, so this is never gated the
+  // way `clientOptions` above is). It still reads the grant, for the consent version its envelope
+  // names, so it is keyed on `consentTick` too.
   const reportOptions = useMemo<ClientOptions>(
     () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -822,8 +830,9 @@ function LauncherShell({
     setServerUrl(loadServerUrl(kv));
   };
 
-  /** Forces `clientOptions` (and every other `consentStatus(kv)` read this render produces) to
-   *  reflect a grant/revoke that just happened — see the `clientOptions` memo's own doc comment. */
+  /** Forces `clientOptions` (and every other `termsStatus(kv)`/`consentStatus(kv)` read this render
+   *  produces) to reflect an acceptance/grant/revoke that just happened — see the `clientOptions`
+   *  memo's own doc comment. */
   const bumpConsent = () => {
     invalidateConnectivity();
     setConsentTick((t) => t + 1);
@@ -839,7 +848,12 @@ function LauncherShell({
     bumpConsent();
   };
 
-  // ── The AI-data consent gate (design D1/D2/D5) ─────────────────────────────────────────────
+  const onAcceptTerms = () => {
+    acceptTerms(kv, new Date().toISOString());
+    bumpConsent();
+  };
+
+  // ── The legal flow: terms, then AI-data consent (design D1/D2/D5; legal-surface-v2 D5) ─────
   // Every data-sending entry point — the composer row, "Prompt again", the orb's change action,
   // history's "Change it from here", and Retry — calls `openWithConsent` instead of acting
   // directly. `onRetryPending` (defined below, among the ghost-tile handlers) is referenced here
@@ -847,9 +861,9 @@ function LauncherShell({
   // doesn't matter — the same pattern `onLeaveRunningRef.current = onLeaveRunning` already relies
   // on further down this component.
 
-  /** What a gated action resumes once consent is current: a compose continuation reopens the
-   *  composer, scoped exactly as the entry point asked; a retry continuation re-runs the stored
-   *  prompt on the SAME pending-build record, exactly as an unguarded Retry would; a resume
+  /** What a gated action resumes once terms and consent are current: a compose continuation
+   *  reopens the composer, scoped exactly as the entry point asked; a retry continuation re-runs
+   *  the stored prompt on the SAME pending-build record, exactly as an unguarded Retry would; a resume
    *  continuation (a `consent_required` refusal) returns to the step that sent the request, as it
    *  was, for the user to send it again. */
   const runContinuation = (continuation: ConsentContinuation) => {
@@ -862,25 +876,39 @@ function LauncherShell({
     }
   };
 
+  /** The screen the legal flow shows next (`nextLegalStep`, read fresh from `kv`), carrying the
+   *  flow unchanged, or `undefined` when the terms and consent are both current and the action may
+   *  run. The one place either legal screen is built, so every path into the flow — an entry point,
+   *  the terms step's `Accept`, a `consent_required` refusal — shows the same steps in the same
+   *  order. */
+  const legalScreen = (flow: LegalFlow<Screen>): Screen | undefined => {
+    const terms = termsStatus(kv);
+    const consent = consentStatus(kv);
+    const step = nextLegalStep(terms, consent, flow.refused);
+    // Picked field by field: `flow` may be the terms screen itself, whose own `kind` and
+    // `outdated` must not ride along into the next step.
+    const carried: LegalFlow<Screen> = { continuation: flow.continuation, returnTo: flow.returnTo, refused: flow.refused };
+    if (step === 'terms') return { kind: 'terms', outdated: terms.kind === 'outdated', ...carried };
+    if (step === 'consent') return { kind: 'consent', mode: 'ask', outdatedFrom: outdatedGrantVersion(consent), ...carried };
+    return undefined;
+  };
+
+  /** Moves the flow on: opens its next legal screen, or runs its continuation when nothing is left
+   *  to ask. */
+  const advanceLegalFlow = (flow: LegalFlow<Screen>) => {
+    const next = legalScreen(flow);
+    if (next === undefined) runContinuation(flow.continuation);
+    else setScreen(next);
+  };
+
   /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
-   *  that would send data asks for consent at that moment"): a current grant runs the
-   *  continuation right away; otherwise the consent screen opens in the entry point's place,
-   *  carrying the continuation and the screen it replaced (`returnTo`), so declining knows where
-   *  to land (design D5). */
+   *  that would send data asks for consent at that moment"; spec terms-acceptance "Terms are
+   *  accepted in their own step before the consent screen"): current terms and a current grant
+   *  run the continuation right away; otherwise the terms step or the consent screen opens in the
+   *  entry point's place, carrying the continuation and the screen it replaced (`returnTo`), so
+   *  declining knows where to land (design D5). */
   const openWithConsent = (continuation: ConsentContinuation) => {
-    const status = consentStatus(kv);
-    const decision = entryDecision(status, continuation);
-    if (decision.kind === 'continue') {
-      runContinuation(continuation);
-      return;
-    }
-    setScreen({
-      kind: 'consent',
-      mode: 'ask',
-      continuation: decision.continuation,
-      returnTo: screen,
-      outdatedFrom: outdatedGrantVersion(status),
-    });
+    advanceLegalFlow({ continuation, returnTo: screen, refused: false });
   };
 
   /**
@@ -891,22 +919,25 @@ function LauncherShell({
    * caller applies its own `onlyOnStep` guard to the result, so a user who has already left the
    * step is never pulled onto this screen.
    *
-   * `consent` opens the ask-mode consent screen; declining returns to `back`. `update` opens the
-   * update screen, holding the prompt typed on `back` for the next compose (its `Not now` goes
-   * Home, request-envelope D5).
+   * `consent` opens the legal flow as a refused one: the terms step first when the terms aren't
+   * current, then always the ask-mode consent screen; declining either returns to `back`. `update`
+   * opens the update screen, holding the prompt typed on `back` for the next compose (its
+   * `Not now` goes Home, request-envelope D5).
    */
   const refusalScreen = (refusal: ServiceRefusal, back: Screen, resume: ConsentContinuation): Screen | undefined => {
     const opens = REFUSAL_RULES[refusal.code].opens;
     if (opens === 'update') return updateScreenFrom(back);
     if (opens !== 'consent') return undefined;
-    return {
-      kind: 'consent',
-      mode: 'ask',
-      continuation: resume,
-      returnTo: back,
-      outdatedFrom: outdatedGrantVersion(consentStatus(kv)),
-      refused: true,
-    };
+    return legalScreen({ continuation: resume, returnTo: back, refused: true });
+  };
+
+  /** The terms step's `Accept`: records the acceptance, then moves the same flow on — to the
+   *  consent screen when consent isn't current (or the flow is a refused one), otherwise straight
+   *  to the action the user started (spec terms-acceptance "After `Accept`, the flow SHALL
+   *  continue…"). */
+  const onTermsAccept = (flow: LegalFlow<Screen>) => {
+    onAcceptTerms();
+    advanceLegalFlow(flow);
   };
 
   /** Ask mode's `Agree and continue`: grants, then resumes exactly the continuation that opened
@@ -917,10 +948,10 @@ function LauncherShell({
     runContinuation(continuation);
   };
 
-  /** Ask mode's decline (`Not now`, and hardware back — both routed through `ConsentScreen`'s one
-   *  `onClose`): grants nothing, and returns to whatever screen this one replaced (design D5:
-   *  Home for a running mini-app, since a torn-down realm is never resumed). */
-  const onConsentAskDecline = (returnTo: Screen) => {
+  /** Declining either legal screen (`Not now`, and hardware back — both routed through the
+   *  screen's one `onClose`): grants and accepts nothing, and returns to whatever screen the flow
+   *  replaced (design D5: Home for a running mini-app, since a torn-down realm is never resumed). */
+  const onLegalDecline = (returnTo: Screen) => {
     setScreen(declineTarget<Screen>(returnTo));
   };
 
@@ -1726,12 +1757,21 @@ function LauncherShell({
           onOpenAIFeatures={onOpenAIFeaturesReview}
         />
       );
+    } else if (screen.kind === 'terms') {
+      const flow = screen;
+      return (
+        <TermsScreen
+          outdated={flow.outdated}
+          onAccept={() => onTermsAccept(flow)}
+          onClose={() => onLegalDecline(flow.returnTo)}
+        />
+      );
     } else if (screen.kind === 'consent') {
       return (
         <ConsentScreenForShell
           screen={screen}
           onAskAgree={onConsentAskAgree}
-          onAskDecline={onConsentAskDecline}
+          onAskDecline={onLegalDecline}
           onReviewTurnOn={onConsentReviewTurnOn}
           onReviewTurnOff={onConsentReviewTurnOff}
           onReviewClose={onConsentReviewClose}

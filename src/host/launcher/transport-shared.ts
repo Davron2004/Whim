@@ -24,6 +24,7 @@
 
 import type { ConsentVersion, DeviceIdError, GenerateRequest } from '@whim/contract';
 import type { ConsentStatus } from './ai-consent';
+import type { TermsStatus } from './terms-acceptance';
 import type { AppInfo } from './app-info';
 import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from './wire-headers';
 import { log } from '../logging';
@@ -154,32 +155,36 @@ export interface ClientOptions {
  *  by accident. */
 declare const CONSENTED: unique symbol;
 
-/** A `ClientOptions` proven to have been built from a CURRENT AI-data consent grant (design D2;
- *  spec ai-data-consent "Nothing is sent to the server before consent is granted" — "Request
+/** A `ClientOptions` proven to have been built from a CURRENT terms acceptance and a CURRENT
+ *  AI-data consent grant (design D2; legal-surface-v2 design D5; spec ai-data-consent "Request
  *  options for clarify, rewrite, generate and connectivity probes SHALL come from one gate that
- *  yields nothing without a current grant, so a call site cannot build a request that skips it").
+ *  yields nothing without a current grant, so a call site cannot build a request that skips it";
+ *  spec terms-acceptance "The send gate requires both a terms acceptance and a consent grant").
  *  `consentedClientOptions` below is the only constructor. `sendReport` is the deliberate
  *  exception (design D3) and keeps taking plain `ClientOptions`. */
 export type ConsentedClientOptions = ClientOptions & { readonly [CONSENTED]: true };
 
-/** The one gate `clarifyPrompt`, `rewritePrompt` and `generateApp` require their options through.
- *  Returns `null` unless `status.kind === 'granted'` — an `absent` or `outdated` grant yields no
- *  options, so a caller has nothing to send a request with. The options it does yield carry that
- *  grant's version as their `consent`, so a gated request can never say `none`. */
+/** The one gate `clarifyPrompt`, `rewritePrompt`, `generateApp` and the connectivity probe require
+ *  their options through. Returns `null` unless `terms.kind === 'accepted'` AND
+ *  `consent.kind === 'granted'` — a missing or outdated acceptance, or a missing or outdated grant,
+ *  yields no options, so a caller has nothing to send a request with. The options it does yield
+ *  carry the grant's version as their `consent`, so a gated request can never say `none`. */
 export function consentedClientOptions(
-  status: ConsentStatus,
+  terms: TermsStatus,
+  consent: ConsentStatus,
   baseUrl: string,
   deviceId: string,
   appInfo: () => AppInfo,
 ): ConsentedClientOptions | null {
-  if (status.kind !== 'granted') {
+  if (terms.kind !== 'accepted' || consent.kind !== 'granted') {
     return null;
   }
-  return { baseUrl, deviceId, appInfo, consent: status.version } as ConsentedClientOptions;
+  return { baseUrl, deviceId, appInfo, consent: consent.version } as ConsentedClientOptions;
 }
 
-/** The options `sendReport` takes (design D3: a report needs no grant, so this never gates): the
- *  current grant's version as `consent` when there is one, `'none'` otherwise. */
+/** The options `sendReport` takes (design D3: a report needs no grant and no terms acceptance, so
+ *  this never gates): the current grant's version as `consent` when there is one, `'none'`
+ *  otherwise. */
 export function reportClientOptions(
   status: ConsentStatus,
   baseUrl: string,

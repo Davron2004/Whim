@@ -26,6 +26,11 @@ export const RELEASE = Object.freeze({
   webHost: `whim.${WHIM_DOMAIN}`,
   webOrigin: WEB_ORIGIN,
   privacyPolicyUrl: `${WEB_ORIGIN}/privacy`,
+  termsUrl: `${WEB_ORIGIN}/terms`,
+  /** The French twins of the two legal pages (legal-surface-v2 design D6). Links read them only
+   *  through `legal-language.ts`, keyed by the active legal language. */
+  privacyPolicyUrlFr: `${WEB_ORIGIN}/fr/privacy`,
+  termsUrlFr: `${WEB_ORIGIN}/fr/terms`,
   supportUrl: `${WEB_ORIGIN}/support`,
   /** Every app link is this base plus `encodeURIComponent(id)` (design D15). */
   appLinkBase: `${WEB_ORIGIN}/a/`,
@@ -66,3 +71,12 @@ export const STORE_LISTINGS: Readonly<Record<AppPlatform, StoreListing>> = Objec
  * release check (gate, release preflight, deploy) refuses anything else.
  */
 export const AI_CONSENT_VERSION = 2;
+
+/**
+ * The terms-of-use version this build asks users to accept (legal-surface-v2 design D5; spec
+ * terms-acceptance "Terms acceptance is versioned apart from consent"). The only place this value
+ * is written — `terms-acceptance.ts#termsStatus` compares a stored acceptance's `version` against
+ * it. It moves independently of `AI_CONSENT_VERSION`: a terms bump never re-asks for consent, and a
+ * consent bump never re-shows the terms.
+ */
+export const TERMS_VERSION = 1;

@@ -9,6 +9,7 @@ import ComposeStep from '../ComposeStep';
 import PlanStep from '../PlanStep';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { grantConsent } from '../ai-consent';
+import { acceptTerms } from '../terms-acceptance';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { SEED_VERSION } from '../seed';
@@ -35,6 +36,8 @@ export interface LauncherSetup {
   examples?: boolean;
   /** Grant AI-data consent before mounting (default true). */
   consent?: boolean;
+  /** Accept the terms of use before mounting (default true). */
+  terms?: boolean;
   /** Any other persisted state the shell should find at launch. */
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
@@ -114,6 +117,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   const index = new AppIndex(kv);
   if (!setup.examples) index.markSeeded(SEED_VERSION);
   for (const app of setup.apps ?? []) index.put(app);
+  if (setup.terms !== false) acceptTerms(kv, '2026-09-18T12:00:00.000Z');
   if (setup.consent !== false) grantConsent(kv, '2026-09-18T12:00:00.000Z');
   setup.prepare?.(kv);
   const clock = captureTimeouts();

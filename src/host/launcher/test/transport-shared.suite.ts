@@ -1,7 +1,8 @@
 /**
  * transport-shared Node suite (store-launch-compliance chain-2, task 2.3) — `consentedClientOptions`,
  * the one gate `clarifyPrompt`/`rewritePrompt`/`generateApp` require their options through (design
- * D2; spec ai-data-consent "Nothing is sent to the server before consent is granted").
+ * D2; spec ai-data-consent "Nothing is sent to the server before consent is granted"; spec
+ * terms-acceptance "The send gate requires both a terms acceptance and a consent grant").
  */
 import { Harness } from './harness';
 import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
@@ -9,13 +10,42 @@ import { MapKVBackend } from '../../version-store';
 import { GenerationClientError, consentedClientOptions, httpErrorFrom, reportClientOptions, requestHeaders } from '../transport-shared';
 import { consentStatus, grantConsent } from '../ai-consent';
 import type { ConsentStatus } from '../ai-consent';
+import { acceptTerms, termsStatus } from '../terms-acceptance';
+import type { TermsStatus } from '../terms-acceptance';
 import { appInfoFrom, appInfoReader } from '../app-info';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 import { testAppInfo } from './client-fixtures';
 
 const CONSENT_KEY = 'whim.ai-consent:v1';
+const TERMS_KEY = 'whim.terms:v1';
 const GRANTED_AT = '2026-09-14T00:00:00.000Z';
+
+/** A current terms acceptance, read back through the real terms store. */
+function acceptedTerms(): TermsStatus {
+  const kv = new MapKVBackend();
+  acceptTerms(kv, GRANTED_AT);
+  return termsStatus(kv);
+}
+
+/** The terms stores a phone can be in, each built through the real terms store: a fresh
+ *  acceptance, one of another terms version, a corrupted record, and none at all. */
+function termsStores(): Array<{ name: string; kv: MapKVBackend }> {
+  const accepted = new MapKVBackend();
+  acceptTerms(accepted, GRANTED_AT);
+  const outdated = new MapKVBackend();
+  acceptTerms(outdated, GRANTED_AT);
+  const acceptance = JSON.parse(outdated.getString(TERMS_KEY) ?? 'null') as { version: number };
+  outdated.set(TERMS_KEY, JSON.stringify({ ...acceptance, version: acceptance.version + 1 }));
+  const corrupted = new MapKVBackend();
+  corrupted.set(TERMS_KEY, '{not json');
+  return [
+    { name: 'accepted', kv: accepted },
+    { name: 'outdated', kv: outdated },
+    { name: 'corrupted', kv: corrupted },
+    { name: 'absent', kv: new MapKVBackend() },
+  ];
+}
 
 /** The consent stores a phone can be in, each built through the real consent store: a fresh grant,
  *  a grant from an earlier consent version, a corrupted record, and none at all. */
@@ -52,18 +82,18 @@ function refusalResponse(retryAfter?: string): Response {
 export async function runTransportSharedTests(h: Harness): Promise<void> {
   await h.test('consentedClientOptions: absent consent yields null', () => {
     const status: ConsentStatus = { kind: 'absent' };
-    h.eq(consentedClientOptions(status, 'https://example.invalid', 'device-1', testAppInfo), null, 'no options without a grant');
+    h.eq(consentedClientOptions(acceptedTerms(), status, 'https://example.invalid', 'device-1', testAppInfo), null, 'no options without a grant');
   });
 
   await h.test('consentedClientOptions: outdated consent yields null', () => {
     const status: ConsentStatus = { kind: 'outdated', version: 1 };
-    h.eq(consentedClientOptions(status, 'https://example.invalid', 'device-1', testAppInfo), null, 'a stale grant is no grant');
+    h.eq(consentedClientOptions(acceptedTerms(), status, 'https://example.invalid', 'device-1', testAppInfo), null, 'a stale grant is no grant');
   });
 
   await h.test('consentedClientOptions: a granted, current consent yields options carrying baseUrl and deviceId', () => {
     const kv = new MapKVBackend();
     grantConsent(kv, GRANTED_AT);
-    const opts = consentedClientOptions(consentStatus(kv), 'https://example.invalid', 'device-1', testAppInfo);
+    const opts = consentedClientOptions(acceptedTerms(), consentStatus(kv), 'https://example.invalid', 'device-1', testAppInfo);
     h.ok(opts !== null, 'options are produced');
     if (opts) {
       h.eq(opts.baseUrl, 'https://example.invalid', 'baseUrl carries through');
@@ -76,7 +106,7 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
   // options at all, or options whose consent header is the stored grant's own version.
   await h.test('consentedClientOptions: gated options always carry the granted version, never none', () => {
     for (const { name, kv } of consentStores()) {
-      const opts = consentedClientOptions(consentStatus(kv), 'https://example.invalid', 'device-1', testAppInfo);
+      const opts = consentedClientOptions(acceptedTerms(), consentStatus(kv), 'https://example.invalid', 'device-1', testAppInfo);
       if (opts === null) {
         h.ok(name !== 'granted', `${name}: no options, so nothing can be sent`);
         continue;
@@ -85,6 +115,24 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
       h.ok(name === 'granted', `${name}: only a current grant yields options`);
       h.eq(consent, String(storedVersion(kv)), `${name}: the consent header is the stored grant’s version`);
       h.ok(/^[1-9]\d*$/.test(consent), `${name}: a positive version, never none (got ${consent})`);
+    }
+  });
+
+  // terms-acceptance "A grant without terms sends nothing": a current grant alone is not enough —
+  // every terms store other than a current acceptance yields no options, even beside a fresh grant.
+  await h.test('consentedClientOptions: a current grant yields options only beside a current terms acceptance', () => {
+    const granted = new MapKVBackend();
+    grantConsent(granted, GRANTED_AT);
+    for (const { name, kv } of termsStores()) {
+      const opts = consentedClientOptions(termsStatus(kv), consentStatus(granted), 'https://example.invalid', 'device-1', testAppInfo);
+      h.eq(opts !== null, name === 'accepted', `${name} terms beside a current grant: ${name === 'accepted' ? 'options' : 'no options'}`);
+    }
+  });
+
+  await h.test('consentedClientOptions: a current terms acceptance alone yields nothing either', () => {
+    for (const { name, kv } of consentStores()) {
+      const opts = consentedClientOptions(acceptedTerms(), consentStatus(kv), 'https://example.invalid', 'device-1', testAppInfo);
+      h.eq(opts !== null, name === 'granted', `accepted terms beside a ${name} grant: ${name === 'granted' ? 'options' : 'no options'}`);
     }
   });
 
@@ -118,7 +166,7 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
     const missingModule = appInfoReader('ios', () => null);
     const kv = new MapKVBackend();
     grantConsent(kv, GRANTED_AT);
-    const opts = consentedClientOptions(consentStatus(kv), 'https://example.invalid', 'device-1', missingModule);
+    const opts = consentedClientOptions(acceptedTerms(), consentStatus(kv), 'https://example.invalid', 'device-1', missingModule);
     h.ok(opts !== null, 'making the options does not read the installed app, so it cannot fail there');
     if (!opts) return;
     const before = log.buffer.snapshot().length;

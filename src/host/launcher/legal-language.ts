@@ -3,7 +3,7 @@
  * spec legal-text-localization). Every legal surface asks `activeLegalLanguage()` and reads its
  * copy from `LEGAL_COPY[language]` and its links from `privacyPolicyUrl(language)`, so resolving
  * the language is this one function's job. English is the only language until the French table
- * lands.
+ * lands. The terms step and the Settings terms row read `termsUrl(language)` the same way.
  *
  * No React Native import — this module must load under the Node acceptance suite.
  */
@@ -22,4 +22,11 @@ const PRIVACY_POLICY_URLS: Readonly<Record<LegalLanguage, string>> = { en: RELEA
 /** The privacy policy page written in `language`. */
 export function privacyPolicyUrl(language: LegalLanguage): string {
   return PRIVACY_POLICY_URLS[language];
+}
+
+const TERMS_URLS: Readonly<Record<LegalLanguage, string>> = { en: RELEASE.termsUrl };
+
+/** The terms of use page written in `language`. */
+export function termsUrl(language: LegalLanguage): string {
+  return TERMS_URLS[language];
 }
