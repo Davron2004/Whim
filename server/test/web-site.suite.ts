@@ -36,7 +36,7 @@ function readPage(name: string): string {
 // `Record<string, string>` (rather than the closed `PlaceholderValues` type) so these fixtures
 // also satisfy `buildSite`'s `env: NodeJS.ProcessEnv` parameter without a cast.
 const FIXTURE_VALUES: Record<string, string> = {
-  WHIM_SUPPORT_EMAIL: 'support@anycognition.ca',
+  WHIM_SUPPORT_EMAIL: 'support@whim.anycognition.ca',
 };
 
 const FIXTURE_VALUES_WITH_STORES: Record<string, string> = {
@@ -547,7 +547,7 @@ export async function runWebSiteTests(): Promise<void> {
 
   section('Web site: renderPage placeholder rules');
 
-  eq('renderPage substitutes and escapes required values', renderPage('{{WHIM_SUPPORT_EMAIL}}', FIXTURE_VALUES), 'support@anycognition.ca');
+  eq('renderPage substitutes and escapes required values', renderPage('{{WHIM_SUPPORT_EMAIL}}', FIXTURE_VALUES), 'support@whim.anycognition.ca');
 
   {
     const err = await caught(() => {
