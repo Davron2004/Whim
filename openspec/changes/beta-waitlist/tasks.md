@@ -29,4 +29,4 @@
 
 - [x] 5.1 Disclose the waitlist as its own website-only category in `privacy.html` and `fr/privacy.html` (data, purpose, 730-day `data-keep`, how to leave the list) per `docs/legal/change-process.md`, with the manifest change it needs; stop and report if it would move the app's AI-consent version
 - [x] 5.2 Build the site, serve it with the production pages CSP, and screenshot `/beta` (with Android selected, and with an invalid email), `/beta/thanks` and `/beta/retry` at 375px and 1280px: fonts load, zero CSP violations in the console, no horizontal scroll
-- [ ] 5.3 Run `scripts/gate-full.sh`; fix anything it finds
+- [x] 5.3 Run `scripts/gate-full.sh`; fix anything it finds
