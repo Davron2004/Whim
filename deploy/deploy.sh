@@ -92,7 +92,8 @@ preflight_values() {
 
 # Collects a profile line into profile_server_values unless it's a host key (never server env).
 collect_profile_server_value() {
-  whim_word_in "$1" "$WHIM_PROFILE_HOST_KEYS" || profile_server_values+=("$1=$2")
+  local key="$1" value="$2"
+  whim_word_in "$key" "$WHIM_PROFILE_HOST_KEYS" || profile_server_values+=("$key=$value")
 }
 
 # Runs the server values config.env will carry through the server's own boot parse: it refuses a
@@ -108,7 +109,7 @@ preflight_server_config() {
     [[ -z "${!key}" ]] || values+=("$key=${!key}")
   done
   for file in "$WHIM_DEPLOY_DIR"/profiles/*.env; do
-    [ -f "$file" ] || continue
+    [[ -f "$file" ]] || continue
     profile_server_values=()
     whim_read_env_lines "$file" collect_profile_server_value
     (cd "$WHIM_REPO_ROOT" && node server/config-check.mjs ${profile_server_values[@]+"${profile_server_values[@]}"} "${values[@]}") \

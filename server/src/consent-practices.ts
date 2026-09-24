@@ -20,12 +20,12 @@
  */
 import type { MiddlewareHandler } from 'hono';
 import type { ConsentVersion } from '@whim/contract';
-import { CATEGORY_IDS, MANIFESTS, type CategoryId, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
+import { MANIFESTS, type CategoryId, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
 import { consentRequiredRefusal } from './admission/refusals';
 import type { V1Env } from './request-edge';
 
 /** The closed set of data categories a consent version can cover: the manifest's category ids. */
-export const PRACTICE_CATEGORIES = CATEGORY_IDS;
+export { CATEGORY_IDS as PRACTICE_CATEGORIES } from '../../contract/src/disclosure-manifest';
 export type PracticeCategory = CategoryId;
 
 export type PracticeTable = Readonly<Record<number, ReadonlySet<PracticeCategory>>>;

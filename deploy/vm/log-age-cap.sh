@@ -35,7 +35,8 @@ END { print drop + 0 }
 '
 
 inode_of() {
-  ls -di "$1" | awk '{ print $1 }'
+  local path="$1"
+  ls -di "$path" | awk '{ print $1 }'
 }
 
 # Removes the file's old leading lines without replacing it. Lines Docker appends while the kept tail
@@ -45,25 +46,25 @@ inode_of() {
 prune_old_lines() {
   local log="$1" drop dropped_bytes inode kept tail="$work/tail"
   drop="$(LC_ALL=C awk -v cutoff="$cutoff" "$OLD_PREFIX_LINES" "$log")"
-  [ "$drop" -gt 0 ] || return 0
+  [[ "$drop" -gt 0 ]] || return 0
   inode="$(inode_of "$log")"
   dropped_bytes=$(($(head -n "$drop" "$log" | wc -c)))
   tail -c +"$((dropped_bytes + 1))" "$log" >"$tail"
   kept=$(($(wc -c <"$tail")))
   tail -c +"$((dropped_bytes + kept + 1))" "$log" >>"$tail"
   kept=$(($(wc -c <"$tail")))
-  if [ "$(inode_of "$log")" != "$inode" ]; then
+  if [[ "$(inode_of "$log")" != "$inode" ]]; then
     printf 'log-age-cap: %s rotated during the run; the next run prunes it\n' "$log" >&2
     return 0
   fi
   : >"$log"
-  if [ "$kept" -gt 0 ]; then
+  if [[ "$kept" -gt 0 ]]; then
     dd if="$tail" bs="$kept" count=1 2>/dev/null >>"$log"
   fi
   printf 'log-age-cap: removed %s lines older than %s days from %s\n' "$drop" "$MAX_AGE_DAYS" "$log"
 }
 
-if [ ! -d "$CONTAINERS_ROOT" ]; then
+if [[ ! -d "$CONTAINERS_ROOT" ]]; then
   printf 'log-age-cap: %s does not exist; nothing to do\n' "$CONTAINERS_ROOT"
   exit 0
 fi
@@ -76,7 +77,7 @@ find "$CONTAINERS_ROOT" -mindepth 2 -maxdepth 2 -type f -name '*-json.log.[0-9]*
   -mmin +"$((MAX_AGE_DAYS * 1440))" -print -delete
 
 for log in "$CONTAINERS_ROOT"/*/*-json.log "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do
-  if [ -f "$log" ] && [ ! -L "$log" ]; then
+  if [[ -f "$log" ]] && [[ ! -L "$log" ]]; then
     prune_old_lines "$log"
   fi
 done

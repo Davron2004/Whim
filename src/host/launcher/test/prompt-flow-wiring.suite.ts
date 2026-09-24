@@ -122,7 +122,7 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('effectiveServerUrl: a store build ignores an override an earlier internal build saved, and keeps it unread', () => {
     const kv = new MapKVBackend();
     saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(serverOverride(kv, false), undefined, 'a store build honours no override');
+    h.eq(serverOverride(kv, { internalBuild: false }), undefined, 'a store build honours no override');
     h.eq(effectiveServerUrl(kv, false), RELEASE.serverUrl, 'every request targets the compiled-in production server');
     h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'the saved value is left in place, not deleted');
     h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'so the same phone back on an internal build still has it');

@@ -57,7 +57,7 @@ export function saveServerUrl(kv: KVBackend, raw: string): void {
  * always `undefined` in a store build. A store build leaves the saved value in place, unread.
  * `internalBuild` comes from `installed-app-info.ts#installedInternalBuild`.
  */
-export function serverOverride(kv: KVBackend, internalBuild: boolean): string | undefined {
+export function serverOverride(kv: KVBackend, { internalBuild }: { internalBuild: boolean }): string | undefined {
   return internalBuild ? loadServerUrl(kv) : undefined;
 }
 
@@ -68,7 +68,7 @@ export function serverOverride(kv: KVBackend, internalBuild: boolean): string | 
  * production server.
  */
 export function effectiveServerUrl(kv: KVBackend, internalBuild: boolean): string {
-  return serverOverride(kv, internalBuild) ?? RELEASE.serverUrl;
+  return serverOverride(kv, { internalBuild }) ?? RELEASE.serverUrl;
 }
 
 /**
