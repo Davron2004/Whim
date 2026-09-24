@@ -1,6 +1,6 @@
 # Quebec s.17 privacy impact assessment: requests sent outside Quebec
 
-**Status: draft, unsigned.** Written for the owner to complete and sign (README blocker B3; tasks.md 11.4). It is not legal advice. Nobody read the Quebec statute first-hand: both official sites refused the fetch, so everything about s.17 here rests on consistent secondary summaries (canada.md §(f) and gap 1; README "Where the research is thin"). Known risk, accepted by the owner (2026-09-24): no lawyer will review this after launch; the owner's own reading and this assessment stand as final.
+**Status: signed 2026-09-24 by Davron Djabborov (Privacy Officer, AnyCognition Inc.).** Written for the owner to complete and sign (README blocker B3; tasks.md 11.4); the owner-completed items below are still open. It is not legal advice. Nobody read the Quebec statute first-hand: both official sites refused the fetch, so everything about s.17 here rests on consistent secondary summaries (canada.md §(f) and gap 1; README "Where the research is thin"). Known risk, accepted by the owner (2026-09-24): no lawyer will review this after launch; the owner's own reading and this assessment stand as final.
 
 ## 1. What s.17 asks
 
@@ -105,6 +105,6 @@ Draft view, for the owner to accept or change: with the account setting confirme
 
 Review this assessment when a provider or country changes, when new data goes to AI providers, when OpenRouter's terms change, and at least once a year.
 
-TODO(owner): conclusion accepted or changed: ______
+Conclusion: accepted as written by the owner, 2026-09-24.
 
-Signed: ______ (Privacy Officer, AnyCognition Inc.) Date: ______
+Signed: Davron Djabborov (Privacy Officer, AnyCognition Inc.) Date: 2026-09-24
