@@ -353,8 +353,8 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       opened.usageStore = usage;
       const reports = new NodeSqliteReportStore(path.join(dataDir, 'reports.db'));
       opened.reportStore = reports;
-      opened.purges.push(schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }));
       opened.purges.push(
+        schedulePurge(reports, { retentionDays: config.reportRetentionDays, now: config.now }),
         scheduleUsagePurge(usage, {
           ledgerRetentionDays: config.ledgerRetentionDays,
           usageIdleDays: config.usageIdleDays,

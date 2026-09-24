@@ -572,9 +572,9 @@ function LauncherShell({
   const readyRef = useRef(ready);
   readyRef.current = ready;
   // The override this build honours: always `undefined` in a store build (legal-surface-v2 D10).
-  const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv, internalBuild));
+  const [serverUrl, setServerUrl] = useState<string | undefined>(() => serverOverride(kv, { internalBuild }));
   const [highlighting, setHighlighting] = useState<boolean>(() => loadHighlighting(kv));
-  const [errorDetails, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
+  const [errorDetailsShown, setErrorDetailsShown] = useState<boolean>(() => errorDetailsEnabled(kv));
   // The report sheet's target for the done-step and history-header entry points (design D13) —
   // `null` closes it. The orb's own entry point (inside a running mini-app) is a separate, local
   // state owned by `MiniAppView` itself, since it also drives that realm's `overlayOpen` back-
@@ -930,7 +930,7 @@ function LauncherShell({
     const previous = effectiveServerUrl(kv, internalBuild);
     saveServerUrl(kv, url);
     if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
-    setServerUrl(serverOverride(kv, internalBuild));
+    setServerUrl(serverOverride(kv, { internalBuild }));
   };
 
   const onHighlightingChange = (enabled: boolean) => {
@@ -953,7 +953,7 @@ function LauncherShell({
     const previous = effectiveServerUrl(kv, internalBuild);
     clearServerUrl(kv);
     if (effectiveServerUrl(kv, internalBuild) !== previous) invalidateConnectivity();
-    setServerUrl(serverOverride(kv, internalBuild));
+    setServerUrl(serverOverride(kv, { internalBuild }));
   };
 
   /** Forces `clientOptions` (and every other `termsStatus(kv)`/`consentStatus(kv)` read this render
@@ -1914,7 +1914,7 @@ function LauncherShell({
           consentStatus={consentStatus(kv)}
           canProbe={clientOptions != null}
           onOpenAIFeatures={onOpenAIFeaturesReview}
-          errorDetails={errorDetails}
+          errorDetails={errorDetailsShown}
           onErrorDetailsChange={onErrorDetailsChange}
           deviceId={deviceId}
           onResetDeviceId={onResetDeviceId}

@@ -40,7 +40,7 @@ const NO_LISTS: ListResolver = () => undefined;
  *  `@` and check each side has no whitespace and the domain has an interior `.`. */
 export function looksLikeEmail(value: string): boolean {
   const at = value.indexOf('@');
-  if (at <= 0 || at === value.length - 1 || value.indexOf('@', at + 1) !== -1) return false;
+  if (at <= 0 || at === value.length - 1 || value.includes('@', at + 1)) return false;
   const local = value.slice(0, at);
   const domain = value.slice(at + 1);
   if (/\s/.test(local) || /\s/.test(domain)) return false;
@@ -50,11 +50,11 @@ export function looksLikeEmail(value: string): boolean {
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 const EACH_BLOCK_RE = /<!--EACH:([A-Z0-9_]+):([a-z]{2})-->([\s\S]*?)<!--ENDEACH-->/g;

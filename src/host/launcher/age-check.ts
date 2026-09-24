@@ -42,12 +42,12 @@ const AGE_CHECK_KEY = 'whim.age-check:v1';
 /** How long an `allowed` outcome holds before the flow asks the store again. */
 const RECHECK_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
-const AGE_SIGNALS: readonly string[] = ['adult', 'minor-approved', 'minor-not-approved', 'under-13', 'unavailable'];
+const AGE_SIGNALS: ReadonlySet<string> = new Set(['adult', 'minor-approved', 'minor-not-approved', 'under-13', 'unavailable']);
 
 /** The native module's answer as one of the five signals. Anything else (no module, a value this
  *  build doesn't know) is `unavailable`. */
 function ageSignalFrom(raw: unknown): AgeSignal {
-  return typeof raw === 'string' && AGE_SIGNALS.includes(raw) ? (raw as AgeSignal) : 'unavailable';
+  return typeof raw === 'string' && AGE_SIGNALS.has(raw) ? (raw as AgeSignal) : 'unavailable';
 }
 
 /** A minor without the store's parental approval and a user under 13 are held; every other signal

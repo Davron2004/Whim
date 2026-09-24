@@ -46,3 +46,23 @@
 - chain-6 prep (2026-09-23 23:51 EDT): production runs `server:a9b03c47eef3ae33948aedf9ec38c2c56fe2147f` (whim-whim-server-1, Up 12 hours, healthy). Rollback target: `deploy/deploy.sh --tag a9b03c47eef3ae33948aedf9ec38c2c56fe2147f`. Owner chose to run chain-6 tonight.
 - sonar round 1 fix: commit `b45afc4` (S1 `[[`; S2 formatter without `String()` on non-Errors; S3 `TypeError` for the two shape checks, messages unchanged; S4 `RewriteRetryContext` groups the five request-wide deps). Integrity exit 0 with allowlist (4 files). Merged; gate-full PASSED on the merged tip.
 - owner review of S4: `rewriteWithRetry` had 7 params on main; chain-1b's `requestLog` made 8. The grouping is behaviour-neutral but cosmetic (`applyRewriteAttempt` has 11, `runClarifyWork` 9, both over the limit on main). Proper refactor filed as #81 (ai-proposed).
+- cleanup lane: pinned TARGET_SHA `b9d6c57`, TARGET_TREE `d3ff940`, BEFORE_COUNT 316 (39 over main); grant minted; backup `backup/pre-cleanup-integration-request-envelope`; lane worktree created.
+- PR #80 merged by owner (rebase-merge, main 672e4e4, 2026-09-24 04:37 UTC); tree identical to cleaned tip d3ff940; staging, backup and cleanup branches deleted (remote auto-deleted by GitHub).
+- chain-6 deploy (owner go): deploy/deploy.sh from main 672e4e4, both minimums 0 → exit 0, built-in smoke all passed, "done". Standalone deploy/smoke.sh: all checks passed; /healthz = {"ok":true,"service":"whim-server","minBuild":{"ios":0,"android":0}}. Includes f542669 (OpenRouter data_collection deny) and 5b04360. Rollback target recorded: a9b03c47eef3ae33948aedf9ec38c2c56fe2147f.
+- 6.1 (owner: emulator stands in for the real device; owner checks 381237 later): one real generation via flowbench tip-splitter-p1: clarify 200/2983 ms, rewrite 200/2578 ms, generate 200/21079 ms, outcome result; lines carry android/1.0.0/383324/consent 1 + requestId, no device id, one `scope` key.
+  - Emulator LEGACY APK (f808b97, pre-envelope; stands in for 381237): consent → clarify → plan → build → Tip Splitter works. Server lines 00:48–00:49: clarify/rewrite/generate 200, `platform: unknown, appVersion: unknown, build: 0, consent: 1`, each with a requestId.
+  - Emulator NEW APK (672e4e4, build 382100) installed over it: data + consent grant survived, no update screen at minimum 0, no consent re-ask; plan → build → Water Counter works. Lines 00:53–00:54: `android, 1.0.0, 382100, consent 1`.
+  - Smoke's no-device-header probes: 400 with requestId.
+  - Side findings: orb covers the bottom of generated mini-apps → #82 (ai-proposed); plan-screen footer "clipping" was scroll position, not a bug (button is a flex sibling).
+- 6.2 raise: `WHIM_MIN_BUILD_ANDROID=382101 deploy/deploy.sh` from the deploy worktree (main 672e4e4, image already built) → exit 0; smoke passed incl. /healthz = {"ok":true,"service":"whim-server","minBuild":{"ios":0,"android":382101}} → config.env-only change DID recreate the container (resolves chain-2's unverified note). Emulator (build 382100) check dispatched.
+- 6.2 emulator (build 382100 vs Android min 382101): cold start → update screen with no /v1 request (server lines: none at launch); "Not now" → home, Water Counter opens and runs; clarify → `426 update_required` (build 382100, requestId) → update screen; typed prompt "a note taking app" kept across the round trip; "Update Whim" → Google Play (`com.android.vending`). Minimum lowered back: plain deploy → /healthz minBuild {0,0}, smoke passed, done. iOS half of 6.2 (new iOS build's envelope) deferred to the owner's device check.
+
+## Closing summary
+
+- Chains: 1, 1b (added at dispatch: request id on model/policy lines), 2, 3, 4, 5, then review-fix chains 7a (server/deploy) and 7b (phone/contract), then one Sonar round (4 issues, one fix-worker). Chain-6 ran attended on production with the emulator.
+- Redispatches: 0. SendMessage revisions: 1 (chain-1, class B: a refusal code and its phone rule split across chains).
+- Deviations: class A across chains, logged per chain above. Class B: 1. Class C: 0. Regate failures: 0. Integrity failures: 0.
+- Reviewer: FINDINGS. 1 high (a rollback smoke false-fail), 2 medium (the launch-check wording, amended in the spec; 13 type errors in tsc-excluded suites), 8 low. All fixed in 7a/7b except the scenario wording, which was amended.
+- Issues filed: #79 (tsc-excluded suites), #81 (9–11 argument helpers), #82 (the orb covers the mini-app bottom), #83 (log lines over 16 KiB).
+- Harness feedback: `docs/harness-feedback/2026-09-23-request-envelope/` (86 entries from 12 authors).
+- Production: `672e4e4` deployed 2026-09-24 with both minimums at 0. The minimum-build gate was proven live by a raise to 382101 and back.

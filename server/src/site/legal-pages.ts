@@ -269,13 +269,13 @@ export function pageText(html: string): string {
     }
   }
   return out
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&')
+    .replaceAll(/\s+/g, ' ')
     .trim();
 }
 
@@ -429,8 +429,7 @@ export function renderLegalSite(input: LegalSiteInput): LegalSiteResult {
     const problems: RenderPageError[] = [];
     const html = renderTemplate(input.sources[page], identityResolver(identity, pageLanguage(page)), problems, lists);
     pages[page] = html;
-    findings.push(...new Set(problems.map((problem) => `${page}: ${problem.message}`)));
-    findings.push(...draftMarkerFindings(page, html));
+    findings.push(...new Set(problems.map((problem) => `${page}: ${problem.message}`)), ...draftMarkerFindings(page, html));
     if (page.endsWith('privacy.html')) findings.push(...policyManifestFindings(page, html, input.manifests ?? MANIFESTS));
   }
   return { pages, findings };

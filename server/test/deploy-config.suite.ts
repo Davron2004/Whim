@@ -1930,7 +1930,7 @@ function logAgeCapTests(files: ReadonlyMap<string, string>): void {
   const mtimeOnly = plant(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do'), "-name '*-json.log.[0-9]*'", "-name '*-json.log*'");
   checkCaught('  red: judging the active log by its mtime fails', logAgeCapRunProblems(mtimeOnly), 'the active log still holds a line older than the cap');
   checkCaught('  red: judging rotated logs by their mtime alone fails', logAgeCapRunProblems(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log; do')), 'a rotated log still holds a line older than the cap');
-  const rewrite = ': >"$log"\n  if [ "$kept" -gt 0 ]; then\n    dd if="$tail" bs="$kept" count=1 2>/dev/null >>"$log"\n  fi';
+  const rewrite = ': >"$log"\n  if [[ "$kept" -gt 0 ]]; then\n    dd if="$tail" bs="$kept" count=1 2>/dev/null >>"$log"\n  fi';
   checkCaught('  red: replacing the active log with a new file fails', logAgeCapRunProblems(plant(script, rewrite, 'mv "$tail" "$log"')), 'the active log was replaced');
 
   const missing = runFromPath('bash', [path.join(ROOT, 'deploy/vm/log-age-cap.sh')], { encoding: 'utf8', env: { PATH: process.env.PATH, LOG_AGE_CAP_ROOT: path.join(os.tmpdir(), 'whim-no-such-containers-root') } });
