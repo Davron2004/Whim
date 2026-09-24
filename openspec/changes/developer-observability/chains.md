@@ -26,10 +26,11 @@ chain-7, and both are also blocked outside this change until GitHub #63's rewrit
 
 ## chain-2: server-request-id-and-diagnostics-route
 
-- tasks: 2.1–2.6
-- rationale: one server layer. The contract additions, request-id middleware, ledger id and `failure_reason`, and the new route all go through `app.ts`, `usage-store.ts` and `@whim/contract`.
-- reads: specs/server-observability/spec.md §"One request id follows a /v1 request everywhere", §"The ledger records a closed failure code"; specs/device-diagnostics/spec.md §"Only an allowlisted projection…" (field list and caps only), §"The diagnostics route validates, bounds and logs without storing"; design.md D2, D7, D9, D13; specs/server-observability/spec.md §"The server reports which commit it is running"; handoff: none
-- writes-contract: handoff/server-diagnostics.md (`WHIM_REQUEST_ID_HEADER` value, the `DiagnosticsBatch` type verbatim, the route's status codes and caps, the `scope: "device"` log line shape)
+- tasks: 2.1, 2.4–2.6 (2.2 and 2.3 moved to `request-envelope`)
+- rationale: one server layer. The contract additions, `failure_reason`, the new route and the `/healthz` commit all go through `app.ts`, `usage-store.ts` and `@whim/contract`.
+- after: the `request-envelope` change is merged (its middleware order and request-id logger are what this chain builds on)
+- reads: specs/server-observability/spec.md §"The ledger records a closed failure code"; specs/device-diagnostics/spec.md §"Only an allowlisted projection…" (field list and caps only), §"The diagnostics route validates, bounds and logs without storing"; design.md D2, D9, D13; specs/server-observability/spec.md §"The server reports which commit it is running"; handoff: none
+- writes-contract: handoff/server-diagnostics.md (the `DiagnosticsBatch` type verbatim, the route's status codes and caps, the `scope: "device"` log line shape)
 
 ## chain-3: sandbox-error-capture
 
@@ -42,7 +43,7 @@ chain-7, and both are also blocked outside this change until GitHub #63's rewrit
 
 - tasks: 4.1–4.5
 - rationale: all inside the device logging seam and its callers: the projection, the transport, the global handler and fatal slot, the request-id attachment, and the static check that locks the two exits.
-- reads: specs/device-diagnostics/spec.md §"Only an allowlisted projection…", §"Error-level records are uploaded…", §"Uploads require a current AI-data consent grant", §"Uncaught host errors and fatal JS errors are captured"; specs/host-observability/spec.md (the modified sink requirement); design.md D2–D5, D7; handoff: handoff/server-diagnostics.md
+- reads: specs/device-diagnostics/spec.md §"Only an allowlisted projection…", §"Error-level records are uploaded…", §"Uploads require a current AI-data consent grant", §"Uncaught host errors and fatal JS errors are captured"; specs/host-observability/spec.md (the modified sink requirement); design.md D2–D5, D7; handoff: handoff/server-diagnostics.md, `openspec/changes/request-envelope/handoff/envelope.md`
 - writes-contract: none
 - after: chain-2; GitHub #63 merged. Its code doesn't need #63, but merging the upload before the disclosure check (chain-5) exists would leave `main` able to ship undisclosed diagnostics.
 

@@ -2,8 +2,9 @@
 
 ### Requirement: Only an allowlisted projection of an error record leaves the device
 The device SHALL send a log record off the phone only as its projection onto a closed diagnostic
-shape, computed after the seam's redaction. The batch envelope SHALL carry exactly `platform`,
-`osVersion`, `appVersion` and `buildNumber`. Each record SHALL carry exactly `at`, `level`,
+shape, computed after the seam's redaction. The batch body SHALL carry exactly `osVersion`
+beyond its records; platform, app version and build travel in the request envelope
+(`request-envelope`). Each record SHALL carry exactly `at`, `level`,
 `channel`, `message`, and a subset of the allowlisted fields `screen`, `errorClass`, `where`,
 `stage`, `reason`, `kind`, `status`, `errorCode`, `domain`, `readyState`,
 `observedRepairAttempts`, `requestId`, `route`, `count` and `stack`; every other field SHALL be
