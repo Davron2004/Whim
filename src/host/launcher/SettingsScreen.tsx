@@ -10,15 +10,15 @@
 //
 // Four sections, in order (design D7; app-launcher "Settings groups its controls into titled
 // sections, with the server address under Advanced"): AI features (opens the consent screen in
-// review mode), Highlighting (unchanged), About (privacy policy + support), Advanced (the server
-// address override, collapsed unless one is saved).
+// review mode), Highlighting (unchanged), About (privacy policy, terms of use, support), Advanced
+// (the server address override, collapsed unless one is saved).
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
-import { activeLegalLanguage, privacyPolicyUrl } from './legal-language';
+import { activeLegalLanguage, privacyPolicyUrl, termsUrl } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
@@ -197,6 +197,13 @@ export default function SettingsScreen({
           style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
           <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => Linking.openURL(termsUrl(activeLegalLanguage()))}
+          accessibilityRole="button"
+          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+        >
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.termsOfUseLabel}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => Linking.openURL(RELEASE.supportUrl)}

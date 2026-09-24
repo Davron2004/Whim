@@ -311,6 +311,21 @@ export const COPY = {
   // row) — one key, so they can never read differently.
   privacyPolicyLabel: 'Privacy policy',
   supportLabel: 'Support',
+  // The Settings About row that opens the terms of use (terms-acceptance "The terms are reachable
+  // from Settings").
+  termsOfUseLabel: 'Terms of use',
+
+  // ── terms step (terms-acceptance; legal-surface-v2 design D5) ───────────────
+  // Shown before the consent screen while the terms aren't accepted. It says nothing about data:
+  // what is sent, to whom and why is the consent screen's alone (Play's prominent-disclosure rule).
+  termsTitle: 'Terms of use',
+  termsLead:
+    'Whim’s AI features come with a few rules: what you can build, what AI gets wrong, and what we’re responsible for.',
+  // Shown in place of `termsLead` when the stored acceptance is of another terms version.
+  termsUpdatedLine: 'We’ve updated the terms of use.',
+  termsLabel: 'Read the terms of use',
+  termsAccept: 'Accept',
+  termsDecline: 'Not now',
 
   // ── settings ────────────────────────────────────────────────────────────────
   settingsAISectionTitle: 'AI features',
@@ -388,9 +403,16 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
   },
 };
 
-/** The keys the consent screen reads from the active legal language's table (spec ai-data-consent
- *  "The disclosure names what is sent…"; `legal-language.ts#activeLegalLanguage`). */
+/** The keys the terms step and the consent screen read from the active legal language's table
+ *  (spec terms-acceptance "Terms are accepted in their own step…"; spec ai-data-consent "The
+ *  disclosure names what is sent…"; `legal-language.ts#activeLegalLanguage`). */
 type LegalCopyKey =
+  | 'termsTitle'
+  | 'termsLead'
+  | 'termsUpdatedLine'
+  | 'termsLabel'
+  | 'termsAccept'
+  | 'termsDecline'
   | 'consentTitle'
   | 'consentLead'
   | 'consentSentTitle'
@@ -423,8 +445,9 @@ type LegalCopyKey =
  *  language supplies a table of just these keys. */
 export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
 
-/** Every legal language's copy table. The screen reads `LEGAL_COPY[activeLegalLanguage()]`; the
- *  consent coverage check (`checks/test/repo/consent-coverage.suite.ts`) reads every table here. */
+/** Every legal language's copy table. The terms step and the consent screen read
+ *  `LEGAL_COPY[activeLegalLanguage()]`; the consent coverage check
+ *  (`checks/test/repo/consent-coverage.suite.ts`) reads every table here. */
 export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY };
 
 /** Which keys put each disclosure-manifest category and recipient role on the consent screen

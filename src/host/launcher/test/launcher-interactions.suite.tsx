@@ -12,6 +12,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { AppIndex } from '../app-index';
 import { SEED_VERSION } from '../seed';
 import { grantConsent } from '../ai-consent';
+import { acceptTerms } from '../terms-acceptance';
 import { saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
 import { renderScreen, unmountScreen, captureTimeouts } from './react-screen';
@@ -24,6 +25,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     resetNativeStorage();
     const kv = createMmkvBackend('whim.launcher');
     new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
     saveServerUrl(kv, 'https://s1.example');
     const clock = captureTimeouts();
@@ -84,6 +86,7 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     resetNativeStorage();
     const kv = createMmkvBackend('whim.launcher');
     new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
     saveServerUrl(kv, 'https://current.example');
     const clock = captureTimeouts();

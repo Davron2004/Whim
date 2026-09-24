@@ -9,6 +9,7 @@ import MiniAppView from '../MiniAppView';
 import ComposeStep from '../ComposeStep';
 import { StoreAccess } from '../store-access';
 import { grantConsent } from '../ai-consent';
+import { acceptTerms } from '../terms-acceptance';
 import { log } from '../../logging';
 import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import FailureScreen from '../FailureScreen';
@@ -96,6 +97,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     resetNativeStorage();
     const kv = createMmkvBackend('whim.launcher');
     new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
     grantConsent(kv, '2026-09-18T12:00:00.000Z');
     const originalFetch = globalThis.fetch;
     let signal: AbortSignal | undefined;

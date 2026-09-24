@@ -4,7 +4,7 @@ Evidence for changing the coding harness (`docs/harness.md`), collected run by r
 
 ## Protocol
 
-At the end of every `/opsx:apply` or `/fix-loop` run, before dismissing agents, the orchestrator sends every subagent it used the same debrief: implementers, fix-workers, reviewers and verifiers. Each agent writes `<run>/<label>.md`; read-only roles reply, and the orchestrator saves the reply word for word. The orchestrator then writes `<run>/orchestrator.md`, updates the tables below, and commits the folder with the run's ledger.
+Every dispatch prompt (implementer, fix-worker, reviewer, verifier) ends by asking for a `HARNESS FEEDBACK` section in the agent's own final report, in the template below. The orchestrator saves it word for word to `<run>/<label>.md`. Never collect feedback by resuming a finished agent: a resume reloads the agent's whole transcript after its prompt cache has expired (subagent cache lives about 5 minutes). On 2026-09-24, eight debrief resumes re-read over a million tokens and hit the session limit. The orchestrator then writes `<run>/orchestrator.md`, updates the tables below, and commits the folder with the run's ledger.
 
 Template, one entry per time the harness blocked, slowed, redirected or forced a workaround, including workarounds never reported:
 

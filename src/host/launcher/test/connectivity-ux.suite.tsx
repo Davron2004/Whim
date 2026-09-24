@@ -10,6 +10,7 @@ import { COPY } from '../copy';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { SEED_VERSION } from '../seed';
 import { grantConsent } from '../ai-consent';
+import { acceptTerms } from '../terms-acceptance';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, unmountScreen, textOf, captureTimeouts } from './react-screen';
@@ -88,6 +89,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       resetNativeStorage();
       const kv = createMmkvBackend('whim.launcher');
       new AppIndex(kv).markSeeded(SEED_VERSION);
+      acceptTerms(kv, '2026-09-19T12:00:00.000Z');
       if (consented) grantConsent(kv, '2026-09-19T12:00:00.000Z');
       const clock = captureTimeouts();
       const originalFetch = globalThis.fetch;

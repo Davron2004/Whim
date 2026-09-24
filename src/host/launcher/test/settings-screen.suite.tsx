@@ -3,11 +3,11 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import SettingsScreen, { type SettingsScreenProps } from '../SettingsScreen';
 import { COPY } from '../copy';
-import { AI_CONSENT_VERSION } from '../release-config';
+import { AI_CONSENT_VERSION, RELEASE, WHIM_DOMAIN } from '../release-config';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { SHELL_PALETTE } from '../theme';
-import { captureTimeouts, renderScreen, unmountScreen } from './react-screen';
-import { StyleSheet } from './native-host';
+import { button, captureTimeouts, press, renderScreen, unmountScreen } from './react-screen';
+import { Linking, StyleSheet } from './native-host';
 
 const noop = () => {};
 const isAdvancedTitle = (node: TestRenderer.ReactTestInstance) => node.type === 'Text' && node.children.includes(COPY.settingsAdvancedSectionTitle);
@@ -85,6 +85,17 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     try {
       h.eq(saved.root.findAll(node => node.type === 'TextInput').length, 1, 'a saved override opens Advanced already');
     } finally { await unmountScreen(saved); }
+  });
+  await h.test('Settings: About’s Terms of use opens the English terms page on the Whim web host', async () => {
+    const tree = await renderScreen(<SettingsScreen {...props} />);
+    try {
+      const opened = Linking.opened.length;
+      await press(button(tree, COPY.termsOfUseLabel));
+      const urls = Linking.opened.slice(opened);
+      h.eq(urls, [RELEASE.termsUrl], 'the English terms URL, not the privacy policy or a French twin');
+      const host = new URL(urls[0] ?? 'about:blank').host;
+      h.ok(host === RELEASE.webHost && host.endsWith(`.${WHIM_DOMAIN}`), `on the host derived from the release domain (got ${host})`);
+    } finally { await unmountScreen(tree); }
   });
   await h.test('Settings: leaving before debounce cancels the pending probe', async () => {
     const clock = captureTimeouts();

@@ -6,7 +6,7 @@ Owner decisions this design builds on (README, 2026-09-23):
 
 1. Three core promises: nobody at Whim can read saved data; no ads, selling or cross-app tracking; requests aren't kept after handling except inside a report.
 2. Every storefront stays open. The EU/UK work and the Korean transfer section are therefore pre-launch.
-3. AnyCognition Inc., a business address and phone, `privacy@anycognition.ca`, the owner as Privacy Officer by title. Play stays on the personal account for now.
+3. AnyCognition Inc., a business address and phone, `privacy@anycognition.ca`, the owner as Privacy Officer by title. Play stays on the personal account for now. *Updated 2026-09-24: the contact is `support@anycognition.ca`; the address and phone render only once set (like the EU/UK representatives), so the pages publish with the email contact until then.*
 4. French for the terms, the terms step, the consent screen and the policy.
 5. Terms under Ontario law, with their own Accept step before the consent screen.
 6. Reports and usage records kept at most 12 months; error details, connection data and logs at most 90 days; error details on by default.

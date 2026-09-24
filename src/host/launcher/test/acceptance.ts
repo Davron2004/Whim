@@ -48,6 +48,7 @@ import { runAppBusyTests } from './app-busy.suite';
 import { runBootStateTests } from './boot-state.suite';
 import { runHistoryWaitTests } from './history-wait.suite';
 import { runAiConsentTests } from './ai-consent.suite';
+import { runTermsAcceptanceTests } from './terms-acceptance.suite';
 import { runAppLinkTests } from './app-link.suite';
 import { runTransportSharedTests } from './transport-shared.suite';
 import { runServiceRefusalTests } from './service-refusal.suite';
@@ -70,6 +71,7 @@ import { runFlowScreensUiTests } from './flow-screens-ui.suite';
 import { runHistoryUiTests } from './history-ui.suite';
 import { runAppInfoTests } from './app-info.suite';
 import { runRequestEnvelopeUiTests } from './request-envelope-ui.suite';
+import { runTermsFlowUiTests } from './terms-flow-ui.suite';
 
 const h = new Harness();
 
@@ -113,6 +115,7 @@ await runAppBusyTests(h);
 await runBootStateTests(h);
 await runHistoryWaitTests(h);
 await runAiConsentTests(h);
+await runTermsAcceptanceTests(h);
 await runAppLinkTests(h);
 await runTransportSharedTests(h);
 await runServiceRefusalTests(h);
@@ -137,6 +140,7 @@ await runFlowScreensUiTests(h);
 await runHistoryUiTests(h);
 await runAppInfoTests(h);
 await runRequestEnvelopeUiTests(h);
+await runTermsFlowUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

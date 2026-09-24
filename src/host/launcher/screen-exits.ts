@@ -7,6 +7,7 @@ export type ScreenKind =
   | 'history'
   | 'link-missing'
   | 'update-required'
+  | 'terms'
   | 'consent'
   | 'compose'
   | 'clarify'
@@ -23,6 +24,7 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-ap
   'history': { back: 'screen' },
   'link-missing': { back: 'screen' },
   'update-required': { back: 'screen' },
+  'terms': { back: 'screen' },
   'consent': { back: 'screen' },
   'compose': { back: 'screen' },
   'clarify': { back: 'screen' },
