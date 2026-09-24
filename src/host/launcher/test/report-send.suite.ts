@@ -11,11 +11,14 @@ import { Harness } from './harness';
 import { COPY } from '../copy';
 import ReportSheet from '../ReportSheet';
 import { sendFailureOutcome } from '../report-send';
+import { sendReport } from '../generation-client';
+import { appInfoReader } from '../app-info';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
-import { GenerationClientError } from '../transport-shared';
+import { GenerationClientError, reportClientOptions } from '../transport-shared';
 import { log } from '../../logging';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { testAppInfo } from './client-fixtures';
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 const ACCESS = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
@@ -35,7 +38,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let closed = 0;
     const tree = await renderScreen(React.createElement(ReportSheet, {
-      app: APP, access: ACCESS, options: { baseUrl: 'https://server.test', deviceId: 'device', fetchImpl }, onClose: () => { closed++; },
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => { closed++; },
     }));
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
@@ -94,5 +97,16 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       'a genuine network-level failure logs as network',
     );
     h.eq(sendFailureOutcome(new Error('boom')), 'network', 'an unrecognised thrown value logs as network');
+  });
+
+  // request-envelope: a report whose envelope could not be built never left the phone.
+  await h.test('sendFailureOutcome: a report that could not be built logs as client, never as network', async () => {
+    let fetched = 0;
+    const fetchImpl = (async () => { fetched++; return json({ reportId: 'r-1' }, 202); }) as typeof fetch;
+    const missingModule = appInfoReader('ios', () => null);
+    const options = { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', missingModule), fetchImpl };
+    const err = await sendReport(options, { reason: 'broken' }).then(() => undefined, (e: unknown) => e);
+    h.eq(fetched, 0, 'nothing was sent');
+    h.eq(sendFailureOutcome(err), 'client', 'so the outcome does not claim the network failed');
   });
 }

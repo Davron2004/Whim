@@ -22,7 +22,8 @@ export async function runAiConsentTests(h: Harness): Promise<void> {
   await h.test('ai-consent: grantConsent round-trips to granted at the compiled version', () => {
     const kv = new MapKVBackend();
     grantConsent(kv, GRANTED_AT);
-    h.eq(consentStatus(kv), { kind: 'granted', grantedAt: GRANTED_AT }, 'granted, carrying grantedAt');
+    const stored = JSON.parse(kv.getString(CONSENT_KEY) ?? 'null') as { version: number };
+    h.eq(consentStatus(kv), { kind: 'granted', version: stored.version, grantedAt: GRANTED_AT }, 'granted, carrying the stored grant’s version and grantedAt');
   });
 
   await h.test('ai-consent: a stored grant under a lower version reads outdated', () => {

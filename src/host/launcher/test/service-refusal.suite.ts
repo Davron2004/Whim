@@ -10,7 +10,7 @@
  *     only (seconds, minutes, same local day, tomorrow), per this chain's declared read scope.
  */
 import { Harness } from './harness';
-import { retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
+import { refusalText, retryAtOf, retryLine, serviceRefusalOf } from '../service-refusal';
 import { GenerationClientError } from '../transport-shared';
 import { ServiceRefusalCode } from '@whim/contract';
 
@@ -34,6 +34,22 @@ export async function runServiceRefusalTests(h: Harness): Promise<void> {
       if (refusal) {
         h.eq(refusal.code, code, 'the code round-trips');
         h.eq(refusal.hint, HINT, 'the hint round-trips');
+      }
+    }
+  });
+
+  // request-envelope: the two refusals about the phone itself speak in the phone's own words; every
+  // other code keeps showing the server's hint exactly as it arrived.
+  await h.test('refusalText: the server’s hint verbatim, except the two refusals about the phone itself', () => {
+    const aboutThePhone = new Set(['update_required', 'consent_required']);
+    for (const code of ServiceRefusalCode.options) {
+      const refusal = serviceRefusalOf(httpError(code));
+      if (!refusal) continue;
+      const text = refusalText(refusal);
+      if (aboutThePhone.has(code)) {
+        h.ok(text !== HINT && text.length > 0, `${code}: the phone’s own words, not the server’s hint`);
+      } else {
+        h.eq(text, HINT, `${code}: the server’s hint, byte for byte`);
       }
     }
   });

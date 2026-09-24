@@ -15,6 +15,7 @@
  */
 
 import { Harness } from './harness';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER } from '@whim/contract';
 import { probeServer } from '../server-probe';
 
 const BASE_URL = 'https://example.invalid';
@@ -98,4 +99,15 @@ export async function runServerProbeTests(h: Harness): Promise<void> {
     },
   );
 
+  // request-envelope: only `/v1` requests carry the envelope; `/healthz` is outside `/v1`.
+  await h.test('probeServer: the /healthz probe carries none of the envelope headers', async () => {
+    let sent: Headers | undefined;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      sent = new Headers(init?.headers);
+      return jsonResponse({ ok: true, service: 'whim-server' });
+    }) as typeof fetch;
+    h.eq(await probeServer(BASE_URL, { fetchImpl }), 'verified', 'the probe ran');
+    const carried = [PLATFORM_HEADER, APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER].filter((name) => sent?.has(name));
+    h.eq(carried, [], 'no envelope header rides on it');
+  });
 }

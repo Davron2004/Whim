@@ -20,6 +20,7 @@ import { SEED_VERSION } from '../seed';
 import { resetNativeStorage } from './native-storage';
 import { Linking, linkListenerCount, openLink } from './native-host';
 import { button, press, renderScreen, unmountScreen, textOf } from './react-screen';
+import { testAppInfo } from './client-fixtures';
 
 const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 const noop = () => {};
@@ -107,7 +108,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('Timer'));
       let request!: Promise<void>;

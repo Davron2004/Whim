@@ -23,7 +23,7 @@ import { buildReportRequest, reportDraftFor, reportLogFields, reportPreview } fr
 import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
-import { REFUSAL_RULES, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
@@ -64,7 +64,7 @@ interface ReportNotice {
 function reportNoticeFrom(refusal: ServiceRefusal): ReportNotice {
   const retryAt = retryAtOf(refusal, Date.now());
   return {
-    hint: refusal.code === 'payload_too_large' ? COPY.reportTooLarge : refusal.hint,
+    hint: refusal.code === 'payload_too_large' ? COPY.reportTooLarge : refusalText(refusal),
     tone: REFUSAL_RULES[refusal.code].tone,
     ...(retryAt !== undefined ? { retryAt } : {}),
   };

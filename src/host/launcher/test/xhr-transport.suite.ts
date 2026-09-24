@@ -20,7 +20,10 @@ import { generateApp, GenerationClientError, rewritePrompt } from '../generation
 import type { ConsentedClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
+import { TEST_APP_INFO, grantedOptions } from './client-fixtures';
+import { appInfoReader } from '../app-info';
 import type { GenerationEvent } from '@whim/contract';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 
@@ -36,7 +39,7 @@ async function collect(source: AsyncIterable<GenerationEvent>): Promise<Generati
   return out;
 }
 
-const BASE = { baseUrl: 'https://example.invalid', deviceId: 'device-1' } as ConsentedClientOptions;
+const BASE = grantedOptions('https://example.invalid', 'device-1');
 
 /** Wire `generateApp` to drive `openXhrGenerateStream` against `fakeXhr`, bypassing the module's
  *  own runtime capability probe (`ClientOptions.streamTransport`, per `generation-client.ts`). */
@@ -688,4 +691,57 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     },
   );
 
+  // --- request-envelope chain-4: the envelope and the request id over the XHR transport ---
+
+  await h.test('openXhrGenerateStream: the request carries the device id and the four envelope headers', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    const collected = collect(generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }));
+    fakeXhr.respondHeaders(200);
+    fakeXhr.respondComplete();
+    await outcomeOrHung(collected, 1000);
+    const sent = fakeXhr.requestHeaders;
+    h.eq(
+      [sent['x-whim-device'], sent[PLATFORM_HEADER], sent[APP_VERSION_HEADER], sent[BUILD_HEADER], sent[CONSENT_HEADER]],
+      ['device-1', TEST_APP_INFO.platform, TEST_APP_INFO.version, String(TEST_APP_INFO.build), String(BASE.consent)],
+      'the same envelope the fetch path sends',
+    );
+  });
+
+  await h.test('openXhrGenerateStream: the request id is read at HEADERS_RECEIVED, before any body arrives', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    fakeXhr.setResponseHeaders({ [REQUEST_ID_HEADER]: 'req-xhr' });
+    const opened = outcomeOrHung(openXhrGenerateStream(BASE, { prompt: 'p' }, undefined, () => fakeXhr as unknown as XMLHttpRequest), 1000);
+    fakeXhr.respondHeaders(200);
+    const reader = (await opened) as ResponseBodyReader | 'hung';
+    h.eq(reader === 'hung' ? reader : reader.requestId, 'req-xhr', 'the reader handed back on the status carries the id');
+
+    const streamXhr = new FakeXMLHttpRequest();
+    streamXhr.setResponseHeaders({ [REQUEST_ID_HEADER]: 'req-stream' });
+    const stream = generateApp(withFakeXhr(streamXhr), { prompt: 'p' });
+    const first = stream.next();
+    streamXhr.respondHeaders(200);
+    streamXhr.respondIncremental(sseFrame({ type: 'token', text: 'hi' }, 1));
+    await withTimeout(first, 1000);
+    h.eq(stream.requestId, 'req-stream', 'and generateApp’s stream exposes it once open');
+  });
+
+  await h.test('openXhrGenerateStream: a refusal carries its request id on the error', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    fakeXhr.setResponseHeaders({ [REQUEST_ID_HEADER]: 'req-refused' });
+    const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
+    fakeXhr.respondHeaders(429);
+    fakeXhr.respondIncremental(JSON.stringify({ error: 'server_busy', hint: 'Try again soon' }));
+    fakeXhr.respondComplete();
+    const caught = await expectThrow(first);
+    h.ok(caught instanceof GenerationClientError, 'throws GenerationClientError');
+    h.eq(caught instanceof GenerationClientError ? [caught.code, caught.requestId] : caught, ['server_busy', 'req-refused'], 'with the refusal’s id');
+  });
+
+  await h.test('openXhrGenerateStream: an unreadable installed app fails as a client error and never opens the XHR', async () => {
+    const fakeXhr = new FakeXMLHttpRequest();
+    const broken = { ...withFakeXhr(fakeXhr), appInfo: appInfoReader('android', () => null) } as ConsentedClientOptions;
+    const err = await outcomeOrHung(collect(generateApp(broken, { prompt: 'p' })), 1000);
+    h.eq(err instanceof GenerationClientError ? err.kind : err, 'client', 'a client error, not a hang');
+    h.eq([fakeXhr.openedUrl, fakeXhr.sendCount], [undefined, 0], 'nothing was opened or sent');
+  });
 }

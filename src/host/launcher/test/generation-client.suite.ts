@@ -31,8 +31,17 @@ import { buildRewriteAppContext } from '../generation-request';
 import type { ConsentedClientOptions } from '../generation-client';
 import type { InstalledApp } from '../app-index';
 import type { GenerationEvent } from '@whim/contract';
-import { GenerationEvent as GenerationEventSchema } from '@whim/contract';
+import {
+  APP_VERSION_HEADER,
+  BUILD_HEADER,
+  CONSENT_HEADER,
+  GenerationEvent as GenerationEventSchema,
+  PLATFORM_HEADER,
+  REQUEST_ID_HEADER,
+} from '@whim/contract';
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
+import { appInfoReader } from '../app-info';
+import { TEST_APP_INFO, grantedOptions } from './client-fixtures';
 import { log } from '../../logging';
 import { CHANNELS } from '../../logging/channels';
 
@@ -83,7 +92,7 @@ function abortableSseResponse(startEvent: GenerationEvent, signal: AbortSignal |
   return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-const BASE = { baseUrl: 'https://example.invalid', deviceId: 'device-1' } as ConsentedClientOptions;
+const BASE = grantedOptions('https://example.invalid', 'device-1');
 
 /** One installed entry to re-prompt: a storage app whose display names ("Completions", "Date",
  *  "Note") are deliberately different from the burned ids underneath them ("c1", "f1", "f2"), so
@@ -680,5 +689,83 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const e = err as GenerationClientError;
       h.eq(e.kind, 'http', 'a body without a reportId is classified http, not accepted as success');
     }
+  });
+
+  // --- request-envelope chain-4: the envelope on every /v1 call, and the request id back ---
+
+  await h.test('every /v1 call carries the device id and the four envelope headers, from the installed app and the grant', async () => {
+    const seen: Array<{ path: string; headers: Headers }> = [];
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      seen.push({ path, headers: new Headers(init?.headers) });
+      if (path === '/v1/clarify') return new Response(JSON.stringify({ questions: [] }), { status: 200 });
+      if (path === '/v1/rewrite') return new Response(JSON.stringify({ rewrittenPrompt: 'r' }), { status: 200 });
+      if (path === '/v1/report') return new Response(JSON.stringify({ reportId: 'r-1' }), { status: 202 });
+      return sseResponse([sseFrame({ type: 'failure', reason: 'x', attempts: 1, diagnostics: [] }, 1)]);
+    }) as typeof fetch;
+    const opts = { ...BASE, fetchImpl };
+    await clarifyPrompt(opts, 'p');
+    await rewritePrompt(opts, 'p');
+    await sendReport(opts, { reason: 'broken' });
+    await collect(generateApp(opts, { prompt: 'p' }));
+    h.eq(seen.map((s) => s.path), ['/v1/clarify', '/v1/rewrite', '/v1/report', '/v1/generate'], 'all four calls were sent');
+    for (const { path, headers } of seen) {
+      h.eq(
+        [headers.get('x-whim-device'), headers.get(PLATFORM_HEADER), headers.get(APP_VERSION_HEADER), headers.get(BUILD_HEADER)],
+        ['device-1', TEST_APP_INFO.platform, TEST_APP_INFO.version, String(TEST_APP_INFO.build)],
+        `${path}: the device id and the installed app’s platform, version and build`,
+      );
+      h.eq(headers.get(CONSENT_HEADER), String(BASE.consent), `${path}: the consent version the options were granted under`);
+    }
+  });
+
+  await h.test('clarify, rewrite and report expose the response’s request id on their result; no id, no key', async () => {
+    const answer = (body: unknown, status: number, id?: string) => (async () =>
+      new Response(JSON.stringify(body), { status, headers: id ? { [REQUEST_ID_HEADER]: id } : {} })) as unknown as typeof fetch;
+    const clarified = await clarifyPrompt({ ...BASE, fetchImpl: answer({ questions: [] }, 200, 'req-c') }, 'p');
+    const rewritten = await rewritePrompt({ ...BASE, fetchImpl: answer({ rewrittenPrompt: 'r' }, 200, 'req-r') }, 'p');
+    const reported = await sendReport({ ...BASE, fetchImpl: answer({ reportId: 'r-1' }, 202, 'req-p') }, { reason: 'other' });
+    h.eq([clarified.requestId, rewritten.requestId, reported.requestId], ['req-c', 'req-r', 'req-p'], 'each result carries its own id');
+    const bare = await rewritePrompt({ ...BASE, fetchImpl: answer({ rewrittenPrompt: 'r' }, 200) }, 'p');
+    h.eq(bare, { rewrittenPrompt: 'r' }, 'a response without the header adds nothing to the result');
+  });
+
+  await h.test('generateApp (fetch path): the opened stream exposes the request id; a refused open puts it on the error', async () => {
+    const opened = (async () => {
+      const response = sseResponse([sseFrame({ type: 'token', text: 'hi' }, 1)]);
+      response.headers.set(REQUEST_ID_HEADER, 'req-g');
+      return response;
+    }) as typeof fetch;
+    const stream = generateApp({ ...BASE, fetchImpl: opened }, { prompt: 'p' });
+    h.eq(stream.requestId, undefined, 'nothing is known before the stream opens');
+    const first = await settledOrHung(stream.next(), 1000);
+    h.eq(first !== 'hung' && !(first instanceof Error) ? first.value : first, { type: 'token', text: 'hi' }, 'the stream yields its event');
+    h.eq(stream.requestId, 'req-g', 'and exposes the id its response carried');
+
+    const refused = (async () =>
+      new Response(JSON.stringify({ error: 'daily_limit', hint: 'That’s all for today.' }), {
+        status: 429,
+        headers: { [REQUEST_ID_HEADER]: 'req-429' },
+      })) as typeof fetch;
+    const err = await settledOrHung(collect(generateApp({ ...BASE, fetchImpl: refused }, { prompt: 'p' })), 1000);
+    h.ok(err instanceof GenerationClientError, 'a refused open throws GenerationClientError');
+    h.eq(err instanceof GenerationClientError ? [err.code, err.requestId] : err, ['daily_limit', 'req-429'], 'carrying the refusal’s request id');
+  });
+
+  await h.test('an unreadable installed app fails every /v1 call as a client error before anything is sent', async () => {
+    let fetched = 0;
+    const fetchImpl = (async () => { fetched++; return new Response('{}', { status: 200 }); }) as typeof fetch;
+    const broken = { ...BASE, fetchImpl, appInfo: appInfoReader('ios', () => null) } as ConsentedClientOptions;
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ['clarify', () => clarifyPrompt(broken, 'p')],
+      ['rewrite', () => rewritePrompt(broken, 'p')],
+      ['report', () => sendReport(broken, { reason: 'other' })],
+      ['generate', () => collect(generateApp(broken, { prompt: 'p' }))],
+    ];
+    for (const [name, call] of calls) {
+      const err = await settledOrHung(call(), 1000);
+      h.eq(err instanceof GenerationClientError ? err.kind : err, 'client', `${name}: a client error, not a crash or a hang`);
+    }
+    h.eq(fetched, 0, 'and not one request left the phone, with or without an envelope');
   });
 }

@@ -13,16 +13,20 @@
 import type { InstalledApp } from './app-index';
 import type { PendingBuildRecord } from './pending-builds';
 import type { ConsentStatus } from './ai-consent';
+import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
 
 /**
  * What a gated action resumes once consent is current. The five entry points (the home composer
  * row, "Prompt again", the orb's change action, and history's "Change it from here" all open
- * compose; Retry on a failed/interrupted build re-runs a pending record) collapse to these two
- * shapes.
+ * compose; Retry on a failed/interrupted build re-runs a pending record) collapse to the first two
+ * shapes. `resume` is the third: a request the server refused `consent_required` (request-envelope)
+ * goes back to the flow step that sent it, exactly as it was — the typed prompt, the answers and
+ * the plan rows included.
  */
 export type ConsentContinuation =
   | { kind: 'compose'; editing?: InstalledApp }
-  | { kind: 'retry'; record: PendingBuildRecord };
+  | { kind: 'retry'; record: PendingBuildRecord }
+  | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen };
 
 export type EntryDecision =
   | { kind: 'continue' }

@@ -10,13 +10,14 @@
  */
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { consentStatus } from './ai-consent';
+import type { AppInfo } from './app-info';
 import { effectiveServerUrl } from './server-address';
 import { consentedClientOptions } from './transport-shared';
 import type { ConsentedClientOptions } from './transport-shared';
 
 /** The same gate the `clientOptions` memo composes (`consentStatus` + `effectiveServerUrl` +
- *  `deviceId`), read FRESH from `kv` every call — never cached — so a caller that just wrote a
- *  grant sees it immediately, without waiting for a re-render to catch up. */
-export function liveClientOptions(kv: KVBackend, deviceId: string): ConsentedClientOptions | null {
-  return consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId);
+ *  `deviceId` + the installed-app reader), read FRESH from `kv` every call — never cached — so a
+ *  caller that just wrote a grant sees it immediately, without waiting for a re-render. */
+export function liveClientOptions(kv: KVBackend, deviceId: string, appInfo: () => AppInfo): ConsentedClientOptions | null {
+  return consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo);
 }

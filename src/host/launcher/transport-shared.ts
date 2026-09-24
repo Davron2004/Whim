@@ -22,14 +22,18 @@
  * `include` glob picking up every `.ts` file in the tree.
  */
 
-import type { DeviceIdError, GenerateRequest } from '@whim/contract';
+import type { ConsentVersion, DeviceIdError, GenerateRequest } from '@whim/contract';
 import type { ConsentStatus } from './ai-consent';
+import type { AppInfo } from './app-info';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from './wire-headers';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
 declare global {
   interface ResponseBodyReader {
     read(): Promise<{ done: boolean; value?: Uint8Array }>;
+    /** The stream response's `x-whim-request-id`, set when the transport opened it. */
+    readonly requestId?: string;
   }
   interface Body {
     readonly body: { getReader(): ResponseBodyReader } | null;
@@ -86,6 +90,14 @@ function retryAfterSecondsOf(response: Response): number | undefined {
   return seconds > 0 ? seconds : undefined;
 }
 
+/** A response's `x-whim-request-id` (request-envelope D6), or `undefined` when it carries none: a
+ *  server from before the header, or a response with no headers at all (optional for the same
+ *  test-double reason `retryAfterSecondsOf` gives). An empty value counts as none. */
+export function requestIdOf(headers: { get(name: string): string | null } | undefined): string | undefined {
+  const id = headers?.get(REQUEST_ID_HEADER) ?? '';
+  return id === '' ? undefined : id;
+}
+
 /** The exact shape `openGenerateStream` resolves to (`generation-client.ts`). Any conforming
  *  producer — the built-in `fetch`-based path or `xhr-transport.ts`'s `openXhrGenerateStream` —
  *  can serve as `ClientOptions.streamTransport` (design D2). */
@@ -97,6 +109,14 @@ type StreamTransport = (
 
 /** Per-request client config. `deviceId` is attached as the `x-whim-device` header on every
  *  call (spec "Every server request carries a persisted anonymous device identity").
+ *
+ *  `appInfo` and `consent` are the rest of the client envelope every `/v1` request carries
+ *  (request-envelope spec "Every /v1 request carries the client envelope"). `appInfo` is a reader,
+ *  not the values: `requestHeaders` calls it each time it builds a request and never before, so a
+ *  build missing the native module fails that request (a `client` error) instead of the render
+ *  that made these options, and never sends a partial envelope. `consent` is the consent version
+ *  the request is sent under — the current grant's, or `'none'` when there is no grant (only a
+ *  report can be sent without one).
  *
  *  `streamTransport` overrides the module's own runtime capability determination for
  *  `POST /v1/generate` (design D1/D2) — it is what lets the acceptance suite drive the XHR
@@ -116,6 +136,8 @@ type StreamTransport = (
 export interface ClientOptions {
   baseUrl: string;
   deviceId: string;
+  appInfo: () => AppInfo;
+  consent: ConsentVersion;
   fetchImpl?: typeof fetch;
   streamTransport?: StreamTransport;
   connectTimeoutMs?: number;
@@ -142,16 +164,29 @@ export type ConsentedClientOptions = ClientOptions & { readonly [CONSENTED]: tru
 
 /** The one gate `clarifyPrompt`, `rewritePrompt` and `generateApp` require their options through.
  *  Returns `null` unless `status.kind === 'granted'` — an `absent` or `outdated` grant yields no
- *  options, so a caller has nothing to send a request with. */
+ *  options, so a caller has nothing to send a request with. The options it does yield carry that
+ *  grant's version as their `consent`, so a gated request can never say `none`. */
 export function consentedClientOptions(
   status: ConsentStatus,
   baseUrl: string,
   deviceId: string,
+  appInfo: () => AppInfo,
 ): ConsentedClientOptions | null {
   if (status.kind !== 'granted') {
     return null;
   }
-  return { baseUrl, deviceId } as ConsentedClientOptions;
+  return { baseUrl, deviceId, appInfo, consent: status.version } as ConsentedClientOptions;
+}
+
+/** The options `sendReport` takes (design D3: a report needs no grant, so this never gates): the
+ *  current grant's version as `consent` when there is one, `'none'` otherwise. */
+export function reportClientOptions(
+  status: ConsentStatus,
+  baseUrl: string,
+  deviceId: string,
+  appInfo: () => AppInfo,
+): ClientOptions {
+  return { baseUrl, deviceId, appInfo, consent: status.kind === 'granted' ? status.version : 'none' };
 }
 
 export const CONNECT_TIMEOUT_MS = 15_000;
@@ -164,7 +199,7 @@ export function connectTimeoutOf(opts: ClientOptions): number {
  *  connect window expires — a hung connect is a network failure, never an in-progress stream. */
 export const CONNECT_TIMEOUT_HINT = 'The generate request timed out before the first event';
 
-export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse';
+export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse' | 'client';
 
 /**
  * - `network`    — the request itself failed (fetch threw, not an abort).
@@ -172,11 +207,15 @@ export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stre
  * - `http`       — any other non-2xx response.
  * - `stream_parse` — a `generateApp` SSE frame failed JSON parsing or `GenerationEvent`
  *   validation.
+ * - `client`     — the request could not be built, so nothing was sent: the installed app's
+ *   version could not be read (`requestHeaders`). `hint` is the reader's own message.
  *
  * `code` and `retryAfterSeconds` are `http`-only (store-launch-compliance design D8/D11):
  * `code` is the body's `ApiError.error` identifier, present only when the body structurally
  * validates as `ApiError`; `retryAfterSeconds` is the response's `Retry-After` header, present
- * only when it is a positive integer. Both are `undefined` on every other `kind`.
+ * only when it is a positive integer. Both are `undefined` on every other `kind`. `requestId` is
+ * the response's `x-whim-request-id` (request-envelope D6), so only an error the server answered
+ * (`http`/`device_id`) can carry one.
  */
 export class GenerationClientError extends Error {
   readonly kind: GenerationClientErrorKind;
@@ -184,10 +223,11 @@ export class GenerationClientError extends Error {
   readonly hint?: string;
   readonly code?: string;
   readonly retryAfterSeconds?: number;
+  readonly requestId?: string;
 
   constructor(
     kind: GenerationClientErrorKind,
-    opts?: { status?: number; hint?: string; code?: string; retryAfterSeconds?: number },
+    opts?: { status?: number; hint?: string; code?: string; retryAfterSeconds?: number; requestId?: string },
   ) {
     super(opts?.hint ?? kind);
     this.name = 'GenerationClientError';
@@ -196,15 +236,34 @@ export class GenerationClientError extends Error {
     this.hint = opts?.hint;
     this.code = opts?.code;
     this.retryAfterSeconds = opts?.retryAfterSeconds;
+    this.requestId = opts?.requestId;
   }
 }
 
-/** Build the `content-type: application/json` + `x-whim-device` request headers shared by both
- *  the unary (`rewritePrompt`) and streaming (`openGenerateStream`) request paths, so the two
- *  injection seams cannot drift in how they construct headers (design D2 mitigation). Exported
- *  so `xhr-transport.ts` (chain-2) can reuse it rather than reimplementing header construction. */
-export function requestHeaders(opts: ClientOptions): Record<string, string> {
-  return { 'content-type': 'application/json', 'x-whim-device': opts.deviceId };
+/** Build the headers of a `/v1` request — `content-type`, `x-whim-device` and the four envelope
+ *  headers — shared by every `/v1` call and both stream transports, so no path can drift in how it
+ *  builds them (design D2 mitigation). Only `/v1` calls use this; `/healthz` sends none of it.
+ *
+ *  The installed app's version is read here, per request. A reader that throws fails the request
+ *  before anything is sent — `GenerationClientError{kind:'client'}`, with a breadcrumb for `path`
+ *  — rather than sending the request with part of the envelope, or none. */
+export function requestHeaders(opts: ClientOptions, path: string): Record<string, string> {
+  let app: AppInfo;
+  try {
+    app = opts.appInfo();
+  } catch (err) {
+    const hint = err instanceof Error ? err.message : String(err);
+    logMappedError(path, opts.baseUrl, 'client', { message: hint });
+    throw new GenerationClientError('client', { hint });
+  }
+  return {
+    'content-type': 'application/json',
+    'x-whim-device': opts.deviceId,
+    [PLATFORM_HEADER]: app.platform,
+    [APP_VERSION_HEADER]: app.version,
+    [BUILD_HEADER]: String(app.build),
+    [CONSENT_HEADER]: String(opts.consent),
+  };
 }
 
 /** route path only (no query/body) */
@@ -239,9 +298,10 @@ export function logMappedError(
  *  above), attributed to `path`/`baseUrl` so both transports' call sites are traceable. */
 export async function httpErrorFrom(response: Response, path: string, baseUrl: string): Promise<GenerationClientError> {
   const bodyJson: unknown = await response.json().catch(() => null);
+  const requestId = requestIdOf(response.headers);
   if (isDeviceIdError(bodyJson)) {
     logMappedError(path, baseUrl, 'device_id', { status: response.status, message: bodyJson.hint });
-    return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint });
+    return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint, requestId });
   }
   const hint =
     bodyJson !== null && typeof bodyJson === 'object' && typeof (bodyJson as Record<string, unknown>).hint === 'string'
@@ -250,5 +310,5 @@ export async function httpErrorFrom(response: Response, path: string, baseUrl: s
   const code = isApiErrorBody(bodyJson) ? bodyJson.error : undefined;
   const retryAfterSeconds = retryAfterSecondsOf(response);
   logMappedError(path, baseUrl, 'http', { status: response.status, message: hint });
-  return new GenerationClientError('http', { status: response.status, hint, code, retryAfterSeconds });
+  return new GenerationClientError('http', { status: response.status, hint, code, retryAfterSeconds, requestId });
 }

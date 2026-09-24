@@ -111,11 +111,14 @@ import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId } from './device-id';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
 import type { ClientOptions, ConsentedClientOptions } from './generation-client';
+import { reportClientOptions } from './transport-shared';
+import type { AppInfo } from './app-info';
+import { installedAppInfo } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, revokeConsent } from './ai-consent';
 import { declineTarget, entryDecision } from './consent-flow';
 import type { ConsentContinuation } from './consent-flow';
-import { REFUSAL_RULES, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
 import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
 import type { RefusalSentFrom } from './refusal-target';
@@ -138,7 +141,8 @@ type Screen =
   // data-sending action taken with no current grant, carrying the continuation to resume on
   // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
   // from Settings' AI features row and shows the identical disclosure.
-  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdated: boolean }
+  // `refused`: a `consent_required` refusal opened it (request-envelope), not an entry point.
+  | { kind: 'consent'; mode: 'ask'; continuation: ConsentContinuation; returnTo: Screen; outdated: boolean; refused?: boolean }
   | { kind: 'consent'; mode: 'review' }
   // The five steps of screen `2a`, shaped and sequenced by `prompt-flow.ts`. `editing` absent =
   // the new-app flow (the home composer row); present = the per-app "Prompt again" edit flow.
@@ -218,13 +222,14 @@ function logGenError(stage: string, err: unknown): void {
 }
 
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
- *  the hint verbatim, the tone `REFUSAL_RULES` assigns its code, and — only when it carried a
- *  `Retry-After` — the re-enable moment. `ServiceNotice` derives the copy-table retry line from
- *  `retryAt` fresh on every render, so nothing here precomputes or caches that text. */
+ *  the hint verbatim (or the phone's own text for the code, `refusalText`), the tone
+ *  `REFUSAL_RULES` assigns its code, and — only when it carried a `Retry-After` — the re-enable
+ *  moment. `ServiceNotice` derives the copy-table retry line from `retryAt` fresh on every render,
+ *  so nothing here precomputes or caches that text. */
 function noticeFrom(refusal: ServiceRefusal): FlowNotice {
   const retryAt = retryAtOf(refusal, Date.now());
   return {
-    hint: refusal.hint,
+    hint: refusalText(refusal),
     tone: REFUSAL_RULES[refusal.code].tone,
     ...(retryAt !== undefined ? { retryAt } : {}),
   };
@@ -291,7 +296,10 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
   }
 }
 
-export default function LauncherRoot() {
+/** `appInfo` reads the installed app's platform, version and build for the request envelope; the
+ *  default is the native seam. Only a suite passes another (the launcher runner has no native
+ *  module), to give the shell a build of its choosing. */
+export default function LauncherRoot({ appInfo = installedAppInfo }: Readonly<{ appInfo?: () => AppInfo }>) {
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
   // KVBackend instance the installed-apps index uses (one MMKV instance, several consumers).
@@ -311,7 +319,7 @@ export default function LauncherRoot() {
     };
   }, []);
 
-  return <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} />;
+  return <LauncherShell index={index} access={access} pending={pending} journal={journal} kv={kv} appInfo={appInfo} />;
 }
 
 /**
@@ -365,6 +373,7 @@ function ConsentScreenForShell({
       <ConsentScreen
         mode="ask"
         outdated={screen.outdated}
+        refused={screen.refused}
         onAgree={() => onAskAgree(screen.continuation)}
         onClose={() => onAskDecline(screen.returnTo)}
       />
@@ -381,12 +390,14 @@ function LauncherShell({
   pending,
   journal,
   kv,
+  appInfo,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
   pending: PendingBuildStore;
   journal: RunJournalStore;
   kv: KVBackend;
+  appInfo: () => AppInfo;
 }>) {
   const palette = SHELL_PALETTE;
 
@@ -428,12 +439,12 @@ function LauncherShell({
   // itself a React dependency).
   const [consentTick, setConsentTick] = useState(0);
   const clientOptions = useMemo<ConsentedClientOptions | null>(
-    () => consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId),
+    () => consentedClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
     // consentTick/serverUrl stand in for the KV reads above (grantConsent/revokeConsent/
     // saveServerUrl mutate `kv` directly, which is not itself a React dependency) — the same
     // "extra dep forces a re-read" idiom this file's other KV-backed memos and effects already use.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [consentTick, serverUrl, deviceId, kv],
+    [consentTick, serverUrl, deviceId, kv, appInfo],
   );
 
   /** The options a data-sending entry point acts with, RIGHT NOW: the memo when it already reflects
@@ -442,15 +453,16 @@ function LauncherShell({
    *  memo until the render AFTER this call returns (spec ai-data-consent "After the user agrees,
    *  the action they started SHALL continue as if consent had already existed"). */
   const resolveClientOptions = (): ConsentedClientOptions | null =>
-    resolveOptions(clientOptions, liveClientOptions(kv, deviceId));
+    resolveOptions(clientOptions, liveClientOptions(kv, deviceId, appInfo));
 
   // Plain `ClientOptions` for the report sheet's `sendReport` call (design D3 — reporting is the
-  // ONE request that needs no AI-data consent, so this is never gated by `consentStatus`/
-  // `consentTick` the way `clientOptions` above is).
-  const reportClientOptions = useMemo<ClientOptions>(
-    () => ({ baseUrl: effectiveServerUrl(kv), deviceId }),
+  // ONE request that needs no AI-data consent, so this is never gated the way `clientOptions`
+  // above is). It still reads the grant, for the consent version its envelope names, so it is
+  // keyed on `consentTick` too.
+  const reportOptions = useMemo<ClientOptions>(
+    () => reportClientOptions(consentStatus(kv), effectiveServerUrl(kv), deviceId, appInfo),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [serverUrl, deviceId, kv],
+    [consentTick, serverUrl, deviceId, kv, appInfo],
   );
 
   const [connectivity, setConnectivity] = useState<Connectivity>('unknown');
@@ -765,10 +777,14 @@ function LauncherShell({
 
   /** What a gated action resumes once consent is current: a compose continuation reopens the
    *  composer, scoped exactly as the entry point asked; a retry continuation re-runs the stored
-   *  prompt on the SAME pending-build record, exactly as an unguarded Retry would. */
+   *  prompt on the SAME pending-build record, exactly as an unguarded Retry would; a resume
+   *  continuation (a `consent_required` refusal) returns to the step that sent the request, as it
+   *  was, for the user to send it again. */
   const runContinuation = (continuation: ConsentContinuation) => {
     if (continuation.kind === 'compose') {
       openCompose(continuation.editing);
+    } else if (continuation.kind === 'resume') {
+      setScreen(continuation.screen);
     } else {
       onRetryPending(continuation.record);
     }
@@ -793,6 +809,29 @@ function LauncherShell({
       returnTo: screen,
       outdated: status.kind === 'outdated',
     });
+  };
+
+  /**
+   * The screen a refused request opens instead of landing as a notice, when its rule names one
+   * (`REFUSAL_RULES[code].opens`, request-envelope D5/D7), or `undefined` for a refusal that lands
+   * as a notice. `back` is the screen the request was sent from, exactly as it was — the typed
+   * prompt, the answers and the plan rows included; `resume` is what agreeing continues. Each
+   * caller applies its own `onlyOnStep` guard to the result, so a user who has already left the
+   * step is never pulled onto this screen.
+   *
+   * `consent` opens the ask-mode consent screen; declining returns to `back`. `update` has no
+   * screen of its own here and lands as its sender notice (`handoff/refusal-routing.md`).
+   */
+  const refusalScreen = (refusal: ServiceRefusal, back: Screen, resume: ConsentContinuation): Screen | undefined => {
+    if (REFUSAL_RULES[refusal.code].opens !== 'consent') return undefined;
+    return {
+      kind: 'consent',
+      mode: 'ask',
+      continuation: resume,
+      returnTo: back,
+      outdated: consentStatus(kv).kind === 'outdated',
+      refused: true,
+    };
   };
 
   /** Ask mode's `Agree and continue`: grants, then resumes exactly the continuation that opened
@@ -945,9 +984,13 @@ function LauncherShell({
       if (refusal) {
         // Never the failure screen (service-refusals "never opens the failure screen"): the
         // rewrite's landing is compose or clarify — whichever step's Continue sent it — for a
-        // sender refusal, and always compose for a refusal about the words themselves.
+        // sender refusal, and always compose for a refusal about the words themselves. A refusal
+        // that opens a screen of its own goes there, with that same step to come back to.
         logServiceRefusal('rewrite', refusal);
-        const target = rewriteRefusalTarget(sentFrom, plan, refusal, noticeFrom(refusal));
+        const back = rewriteRefusalTarget(sentFrom, plan, refusal);
+        const target =
+          refusalScreen(refusal, back, { kind: 'resume', screen: back }) ??
+          rewriteRefusalTarget(sentFrom, plan, refusal, noticeFrom(refusal));
         setScreen(onlyOnStep<Screen, 'plan'>('plan', () => target));
         return;
       }
@@ -1002,10 +1045,12 @@ function LauncherShell({
       if (refusal) {
         // Never the failure screen (service-refusals "never opens the failure screen"): a
         // clarify request's only sender is compose, and a refusal about the words themselves
-        // lands there too, so the landing is always compose.
+        // lands there too, so the landing is always compose. A refusal that opens a screen of its
+        // own goes there, with the compose step (the typed prompt intact) to come back to.
         logServiceRefusal('clarify', refusal);
-        const notice = noticeFrom(refusal);
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => ({ ...from, notice })));
+        const back = composeStep(from.editing, from.text);
+        const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => target));
         return;
       }
       if (!isClarifySkip(e)) {
@@ -1123,9 +1168,12 @@ function LauncherShell({
    * A refused `generateApp` call (design D10; `refusedGenerateOutcome` decides drop vs settle):
    * a fresh attempt still on its build screen is dropped exactly as a cancel drops it, and the
    * flow returns to `fromPlan` (when given) with the notice. Everything else — a detached
-   * attempt, or any Retry — settles `failed` with the refusal's hint as the reason; a Retry
-   * additionally refreshes the failure screen it was launched from, with Retry gated by the
-   * notice's own `retryAt`.
+   * attempt, or any Retry — settles `failed` with the refusal's text (`refusalText`) as the
+   * reason; a Retry additionally refreshes the failure screen it was launched from, with Retry
+   * gated by the notice's own `retryAt`. A refusal that opens a screen of its own
+   * (`refusalScreen`) opens it in place of either landing: back to the plan for a dropped attempt,
+   * back to the refreshed failure screen (and its Retry) for a Retry. A detached attempt opens
+   * nothing — the user is elsewhere; its ghost keeps the reason.
    */
   const handleGenerateRefusal = (
     attemptId: string,
@@ -1139,18 +1187,22 @@ function LauncherShell({
     const notice = noticeFrom(refusal);
     const outcome = refusedGenerateOutcome(isRetry, detached);
     releaseLiveRef(attemptId);
-    settleRefusedGenerate(pending, journal, attemptId, outcome, refusal.hint, counts);
+    settleRefusedGenerate(pending, journal, attemptId, outcome, refusalText(refusal), counts);
     refresh();
     if (outcome === 'drop') {
       if (fromPlan) {
-        setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...fromPlan, notice })));
+        const back: PlanScreen = { ...fromPlan, notice: undefined };
+        const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
+        setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
       }
       return;
     }
     if (!isRetry) return;
     const updated = pending.get(attemptId);
     if (updated) {
-      setScreen(onlyOnStep<Screen, 'build'>('build', () => ({ ...failureFromRecord(updated), notice })));
+      const back = failureFromRecord(updated);
+      const target = refusalScreen(refusal, back, { kind: 'retry', record: updated }) ?? { ...back, notice };
+      setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
     }
   };
 
@@ -1570,7 +1622,7 @@ function LauncherShell({
           onChangeIt={() => openWithConsent({ kind: 'compose', editing: screen.app })}
           installedApp={screen.app}
           access={access}
-          reportOptions={reportClientOptions}
+          reportOptions={reportOptions}
         />
       );
     } else if (screen.kind === 'dev') {
@@ -1611,7 +1663,7 @@ function LauncherShell({
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setReportTarget(screen.app)}
           />
-          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+          <ReportSheet app={reportTarget} access={access} options={reportOptions} onClose={() => setReportTarget(null)} />
         </>
       );
     } else if (screen.kind === 'link-missing') {
@@ -1694,7 +1746,7 @@ function LauncherShell({
             onBackToApps={goHome}
             onReport={() => setReportTarget(from.app)}
           />
-          <ReportSheet app={reportTarget} access={access} options={reportClientOptions} onClose={() => setReportTarget(null)} />
+          <ReportSheet app={reportTarget} access={access} options={reportOptions} onClose={() => setReportTarget(null)} />
         </>
       );
     } else if (screen.kind === 'failure') {
