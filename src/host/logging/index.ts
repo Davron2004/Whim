@@ -3,8 +3,8 @@
  * device log surface").
  *
  * Built on `react-native-logs` v5.6.0: pure JS, zero deps, and a transport model — the ring buffer,
- * the console and the batching HTTP sink are three transports over one record stream, rather than
- * three call sites each formatting their own string.
+ * the console, the batching dev sink and the diagnostics upload are transports over one record
+ * stream, rather than call sites each formatting their own string.
  *
  * Usage, and the shape the lint tripwire recognizes:
  *
@@ -23,6 +23,8 @@ import { logger } from 'react-native-logs';
 import type { DevLogLevel, DevLogRecord } from '@whim/contract';
 import type { Channel } from './channels';
 import { ALL_CHANNELS, CHANNELS } from './channels';
+import { DiagnosticsTransport } from './diagnostics';
+import type { DiagnosticsOptions } from './diagnostics';
 import { redactFields } from './redact';
 import { LogRing, RING_CAPACITY } from './ring-buffer';
 import { DevLogSink } from './sink';
@@ -54,6 +56,8 @@ export interface SeamOptions {
   now: () => number;
   /** Sink configuration; the sink is off unless `enabled` is explicitly set. */
   sink: Partial<SinkOptions>;
+  /** Diagnostics-upload configuration; nothing is uploaded until a `target` says it may be. */
+  diagnostics: Partial<DiagnosticsOptions>;
 }
 
 export interface Seam {
@@ -65,6 +69,8 @@ export interface Seam {
   readonly buffer: LogRing;
   /** The batching dev-server transport (off until configured with `enabled: true`). */
   readonly sink: DevLogSink;
+  /** The error-record upload (sends nothing until configured with a `target` that allows it). */
+  readonly diagnostics: DiagnosticsTransport;
   /** Raise or lower the default threshold. */
   setLevel(level: LogLevel): void;
   /** Raise or lower one channel's threshold; `undefined` restores the default. */
@@ -105,6 +111,13 @@ export function createSeam(options: Partial<SeamOptions> = {}): Seam {
     },
   });
 
+  const diagnostics = new DiagnosticsTransport({
+    ...options.diagnostics,
+    // Same rule as the dev sink's: the failure lands on the sink channel, which the diagnostics
+    // transport never takes, so recording it cannot trigger another upload.
+    onFailure: (message, fields) => emit('warn', CHANNELS.sink, message, fields),
+  });
+
   const rnl = logger.createLogger<(props: { rawMsg: unknown }) => void, LogLevel>({
     levels: LEVEL_ORDER,
     severity: 'debug',
@@ -114,6 +127,7 @@ export function createSeam(options: Partial<SeamOptions> = {}): Seam {
       const record = (props.rawMsg as DevLogRecord[])[0];
       const stored = buffer.push(record);
       sink.enqueue(stored);
+      diagnostics.enqueue(stored);
       if (mirrorToConsole) {
         consoleWrite(stored);
       }
@@ -156,6 +170,7 @@ export function createSeam(options: Partial<SeamOptions> = {}): Seam {
     error: (channel, message, fields) => emit('error', channel, message, fields),
     buffer,
     sink,
+    diagnostics,
     setLevel: level => {
       defaultLevel = level;
     },

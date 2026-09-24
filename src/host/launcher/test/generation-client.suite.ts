@@ -627,7 +627,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const logged = log.buffer
         .snapshot()
         .slice(before)
-        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/clarify');
+        .find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
       h.ok(logged !== undefined, 'records a breadcrumb at the httpErrorFrom mapping site');
       if (logged) {
         h.eq(logged.fields.status, 404, 'the response status is a named field');

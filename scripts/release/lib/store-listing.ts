@@ -4,7 +4,9 @@
  * literals, no exclamation marks or promotional terms, committed screenshot sizes and ratios, a
  * 13+ age rating override, and the four privacy declarations (`app-privacy.json`,
  * `data-safety.json`, the iOS privacy manifest, `answers.md`) against the current disclosure
- * manifest's store mapping (legal-surface-v2 design D8). Pure file reads plus the `parseXmlPlist`
+ * manifest's store mapping (legal-surface-v2 design D8), and, once device code carries the
+ * diagnostics transport, that every declaration covers crash logs and diagnostics
+ * (developer-observability design D11). Pure file reads plus the `parseXmlPlist`
  * reader from `./ios-project` — no shelling out, safe to run in the Linux devcontainer gate.
  */
 
@@ -14,6 +16,7 @@ import type { Buffer as NodeBuffer } from 'buffer';
 import type { NativeReleaseConfig } from './native-config';
 import { parseXmlPlist, type PlistValue } from './ios-project';
 import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
+import { CONSENT_SCREEN_COVERAGE, LEGAL_COPY } from '../../../src/host/launcher/copy';
 
 // `existsSync`/`readdirSync`/`Dirent` are already declared for 'node:fs' by
 // `synthrun/env.d.ts` (ambient module augmentations merge additively across the program —
@@ -650,6 +653,117 @@ function checkPrivacyConsistency(repoRoot: string): StoreListingFinding[] {
   return [...checkTypeAgreement(sources, MANIFESTS[latestVersion()]), ...checkNoTracking(sources)];
 }
 
+// ── A build that sends diagnostics declares them everywhere ─────────────────────────────────
+//
+// developer-observability design D11; spec device-diagnostics "What the app sends is disclosed
+// wherever it is declared". The checks above compare the declarations with whatever the current
+// manifest maps, so a manifest that stopped mapping error details would let every declaration
+// drop them together. Once the device can send diagnostics, the manifest, all four store
+// declarations, the consent screen and both privacy pages must carry them; together with
+// `checkTypeAgreement` that also makes the declarations agree on their flags and purposes.
+
+const DIAGNOSTICS_CATEGORY = 'error-details';
+const DISCLOSURE_MANIFEST_PATH = 'contract/src/disclosure-manifest.ts';
+const CONSENT_COPY_PATH = 'src/host/launcher/copy.ts';
+const PRIVACY_PAGES: readonly string[] = ['deploy/site/privacy.html', 'deploy/site/fr/privacy.html'];
+
+/** What marks the diagnostics transport in device code: the route it posts to, or its seam name. */
+const DIAGNOSTICS_TRANSPORT_MARKERS: readonly string[] = ['/v1/diagnostics', 'diagnosticsTransport'];
+
+function diagnosticsType(type: string, manifestType?: string): MappedType {
+  return { type, manifestTypes: new Set(manifestType === undefined ? [] : [manifestType]), flags: {}, purposes: new Set(), categories: [DIAGNOSTICS_CATEGORY] };
+}
+
+/** The store types crash logs and diagnostics are declared as, per store. */
+const DIAGNOSTICS_STORE_TYPES: MappedStoreTypes = {
+  apple: [diagnosticsType('CRASH_DATA', 'NSPrivacyCollectedDataTypeCrashData'), diagnosticsType('OTHER_DIAGNOSTIC_DATA', 'NSPrivacyCollectedDataTypeOtherDiagnosticData')],
+  play: [diagnosticsType('crash_logs'), diagnosticsType('diagnostics')],
+};
+
+/** The first device source (`src/`, outside tests and generated output, or `index.js`) that
+ *  carries a transport marker, or `undefined` when the build can't send diagnostics. */
+export function diagnosticsTransportFile(repoRoot: string): string | undefined {
+  const candidates = [...walkFiles(repoRoot, 'src').filter((f) => /\.(tsx?|js)$/.test(f) && !/\/(test|generated)\//.test(f)), 'index.js'];
+  return candidates.find((file) => {
+    const text = readText(repoRoot, file);
+    return text !== undefined && DIAGNOSTICS_TRANSPORT_MARKERS.some((marker) => text.includes(marker));
+  });
+}
+
+/** The error-details category in the manifest: present, on the consent screen, and mapped to every diagnostics store type. */
+function manifestDiagnosticsFindings(manifest: DisclosureManifest, because: string): StoreListingFinding[] {
+  const category = manifest.categories.find((c) => c.id === DIAGNOSTICS_CATEGORY);
+  if (category === undefined) return [{ file: DISCLOSURE_MANIFEST_PATH, message: `the current manifest has no ${DIAGNOSTICS_CATEGORY} category; ${because}` }];
+  const findings: StoreListingFinding[] = [];
+  if (!category.onScreen) findings.push({ file: DISCLOSURE_MANIFEST_PATH, message: `${DIAGNOSTICS_CATEGORY} is not on the consent screen; ${because}` });
+  for (const want of DIAGNOSTICS_STORE_TYPES.apple) {
+    if (!category.store.apple.some((t) => t.type === want.type && want.manifestTypes.has(t.manifestType))) {
+      findings.push({ file: DISCLOSURE_MANIFEST_PATH, message: `${DIAGNOSTICS_CATEGORY} does not map to Apple "${want.type}" (${[...want.manifestTypes].join('')}); ${because}` });
+    }
+  }
+  for (const want of DIAGNOSTICS_STORE_TYPES.play) {
+    if (!category.store.play.some((t) => t.type === want.type)) {
+      findings.push({ file: DISCLOSURE_MANIFEST_PATH, message: `${DIAGNOSTICS_CATEGORY} does not map to Play "${want.type}"; ${because}` });
+    }
+  }
+  return findings;
+}
+
+/** Each store declaration names every diagnostics type of its store, in its own vocabulary. */
+function declarationDiagnosticsFindings(sources: readonly DeclarationSource[], because: string): StoreListingFinding[] {
+  return sources.flatMap((source) =>
+    DIAGNOSTICS_STORE_TYPES[source.store].flatMap((want): StoreListingFinding[] => {
+      const spelled = source.vocabulary.type(want) ?? want.type;
+      return source.declarations.some((d) => d.type === spelled) ? [] : [{ file: source.file, message: `does not declare "${spelled}"; ${because}` }];
+    }),
+  );
+}
+
+/** Both privacy pages list error details under what leaves the phone and under how long it's kept. */
+function privacyPageDiagnosticsFindings(repoRoot: string, because: string): StoreListingFinding[] {
+  const listsCategory = (html: string, attribute: string): boolean =>
+    [...html.matchAll(new RegExp(`\\s${attribute}="([^"]*)"`, 'g'))].some((m) => m[1].split(/\s+/).includes(DIAGNOSTICS_CATEGORY));
+  return PRIVACY_PAGES.flatMap((file): StoreListingFinding[] => {
+    const html = readText(repoRoot, file);
+    if (html === undefined) return [{ file, message: `is missing; ${because}` }];
+    return ['data-category', 'data-keep']
+      .filter((attribute) => !listsCategory(html, attribute))
+      .map((attribute) => ({ file, message: `has no ${attribute}="${DIAGNOSTICS_CATEGORY}" row; ${because}` }));
+  });
+}
+
+/** The consent screen's text for error details, per language (`CONSENT_SCREEN_COVERAGE`'s keys in `LEGAL_COPY`). */
+function liveConsentText(): Readonly<Record<string, string>> {
+  const keys = CONSENT_SCREEN_COVERAGE.categories[DIAGNOSTICS_CATEGORY] ?? [];
+  return Object.fromEntries(Object.entries(LEGAL_COPY).map(([language, table]) => [language, keys.map((key) => table[key]).join(' ').trim()]));
+}
+
+/** The declarations read as modules rather than files; a suite passes its own. */
+export interface DiagnosticsDisclosureModules {
+  readonly manifest: DisclosureManifest;
+  /** Language → the consent screen's text for error details (empty when the screen names none). */
+  readonly consentText: Readonly<Record<string, string>>;
+}
+
+/** Empty when the build can't send diagnostics or every declaration carries them. */
+export function checkDiagnosticsDisclosure(
+  repoRoot: string,
+  modules: DiagnosticsDisclosureModules = { manifest: MANIFESTS[latestVersion()], consentText: liveConsentText() },
+): StoreListingFinding[] {
+  const transport = diagnosticsTransportFile(repoRoot);
+  if (transport === undefined) return [];
+  const because = `the build sends crash logs and diagnostics (${transport})`;
+  const consentFindings = Object.entries(modules.consentText)
+    .filter(([, text]) => text === '')
+    .map(([language]) => ({ file: CONSENT_COPY_PATH, message: `the ${language} consent screen names no error details; ${because}` }));
+  return [
+    ...manifestDiagnosticsFindings(modules.manifest, because),
+    ...declarationDiagnosticsFindings(readDeclarationSources(repoRoot), because),
+    ...consentFindings,
+    ...privacyPageDiagnosticsFindings(repoRoot, because),
+  ];
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────────────────────
 
 /** Checks `release/store/` under `repoRoot` against `config` (the parsed native release file). Empty = passes. */
@@ -662,5 +776,6 @@ export function checkStoreListing(repoRoot: string, config: NativeReleaseConfig)
     ...checkPlayScreenshots(repoRoot),
     ...checkAgeRating(repoRoot),
     ...checkPrivacyConsistency(repoRoot),
+    ...checkDiagnosticsDisclosure(repoRoot),
   ];
 }

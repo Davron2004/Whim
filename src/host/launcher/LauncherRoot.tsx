@@ -114,7 +114,7 @@ import { loadHighlighting, saveHighlighting } from './highlighting';
 import { getDeviceId, resetDeviceId } from './device-id';
 import { errorDetailsEnabled, setErrorDetails } from './error-details';
 import { GenerationClientError, clarifyPrompt, consentedClientOptions, generateApp, rewritePrompt } from './generation-client';
-import type { ClientOptions, ConsentedClientOptions } from './generation-client';
+import type { ClientOptions, ConsentedClientOptions, GenerationStream } from './generation-client';
 import { reportClientOptions } from './transport-shared';
 import type { AppInfo } from './app-info';
 import { installedAppInfo, installedInternalBuild } from './installed-app-info';
@@ -251,21 +251,25 @@ function defaultSeeds(): SeedSpec[] {
     .map(s => ({ ...s, record: APP_RECORDS[s.id], bundleSource: APP_BUNDLES[s.id] }));
 }
 
-/** The taxonomy `errorReason()` intentionally scrubs off the screen, as named fields: constructor,
- *  GenerationClientError kind/status/hint, message, stack. Never prompt text or generated source. */
-function errorFields(err: unknown): Record<string, unknown> {
+/** The taxonomy `errorReason()` intentionally scrubs off the screen, as named fields: error class,
+ *  GenerationClientError kind/status/hint/requestId, message, stack. Never prompt text or generated
+ *  source. `requestId` is the id of the request the error is about (request-envelope D6): the
+ *  error's own, else `streamRequestId`, the id of the generation stream it happened on. */
+function errorFields(err: unknown, streamRequestId?: string): Record<string, unknown> {
   const isErr = err instanceof Error;
+  const clientError = err instanceof GenerationClientError ? err : undefined;
   return {
-    ctor: isErr ? err.constructor.name : typeof err,
-    ...(err instanceof GenerationClientError ? { kind: err.kind, status: err.status, hint: err.hint } : {}),
+    errorClass: isErr ? err.constructor.name : typeof err,
+    ...(clientError ? { kind: clientError.kind, status: clientError.status, hint: clientError.hint } : {}),
+    requestId: clientError?.requestId ?? streamRequestId,
     message: isErr ? err.message : undefined,
     stack: isErr ? err.stack : undefined,
   };
 }
 
 /** Breadcrumb for a swallowed generation-path error, on the generation channel. */
-function logGenError(stage: string, err: unknown): void {
-  log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err) });
+function logGenError(stage: string, err: unknown, streamRequestId?: string): void {
+  log.error(CHANNELS.gen, 'generation step failed', { stage, ...errorFields(err, streamRequestId) });
 }
 
 /** A recognised service refusal turned into the notice a step screen renders (design D9/D11/D12):
@@ -301,6 +305,8 @@ function logGenFailureShown(input: {
   /** The class name to record when nothing was thrown (the two stream-shaped failures). */
   failureClass?: string;
   diagnostics?: readonly Diagnostic[];
+  /** The generation stream's request id, when the failure happened on an opened stream. */
+  streamRequestId?: string;
 }): void {
   log.error(CHANNELS.gen, 'failure screen shown', {
     stage: input.stage,
@@ -308,12 +314,13 @@ function logGenFailureShown(input: {
     observedRepairAttempts: input.observedRepairAttempts,
     ...(input.err === undefined
       ? {
-          ctor: input.failureClass ?? 'GenerationFailure',
+          errorClass: input.failureClass ?? 'GenerationFailure',
           kind: input.diagnostics?.[0]?.kind,
+          requestId: input.streamRequestId,
           message: input.reason,
           stack: undefined,
         }
-      : errorFields(input.err)),
+      : errorFields(input.err, input.streamRequestId)),
     ...(input.diagnostics
       ? { diagnostics: input.diagnostics.map((d) => ({ kind: d.kind, symbol: d.symbol, message: d.message })) }
       : {}),
@@ -1154,9 +1161,10 @@ function LauncherShell({
     stage: string,
     observed = 0,
     settledAttemptId?: string,
+    streamRequestId?: string,
   ): Screen => {
     const reasoned = errorReason(err);
-    logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err });
+    logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err, streamRequestId });
     return {
       kind: 'failure',
       editing,
@@ -1496,8 +1504,10 @@ function LauncherShell({
     const ctl = { controller, cancelled: false, detached: false };
     genRef.current = ctl;
     const editing = building.editing;
-    // Declared outside the try so a throw mid-stream still knows what the device observed.
+    // Declared outside the try so a throw mid-stream still knows what the device observed, and on
+    // which request (the stream's `x-whim-request-id`, once it has opened).
     const counts: EventCounts = { stage: 0, token: 0, diagnostic: 0, repair: 0 };
+    let stream: GenerationStream | undefined;
 
     // The id this attempt writes to, decided and persisted before the request exists: a new
     // install mints one, a rebuild's id IS the app it rebuilds, a retry reuses its record's.
@@ -1547,7 +1557,8 @@ function LauncherShell({
       // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
       // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
       // held until the stream ends so the terminal-event handling below stays in one place.
-      for await (const event of generateApp({ ...options, onKeepalive }, request, controller.signal)) {
+      stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
+      for await (const event of stream) {
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
@@ -1572,12 +1583,13 @@ function LauncherShell({
 
       if (terminal == null) {
         // Stream ended with no terminal event and no cancel — a stream error, not a crash.
-        log.error(CHANNELS.gen, 'stream ended with no terminal event', { ...counts });
+        log.error(CHANNELS.gen, 'stream ended with no terminal event', { ...counts, requestId: stream.requestId });
         logGenFailureShown({
           stage: 'stream ended with no terminal event',
           reason: GENERIC_STREAM_ERROR,
           observedRepairAttempts: counts.repair,
           failureClass: 'StreamEndedWithoutTerminalEvent',
+          streamRequestId: stream.requestId,
         });
         showStreamFailure({
           attemptId,
@@ -1597,6 +1609,7 @@ function LauncherShell({
           observedRepairAttempts: counts.repair,
           failureClass: 'GenerationFailureEvent',
           diagnostics: terminal.diagnostics,
+          streamRequestId: stream.requestId,
         });
         showStreamFailure({
           attemptId,
@@ -1650,10 +1663,10 @@ function LauncherShell({
         return;
       }
       releaseGenRef(ctl);
-      logGenError('build failed', e);
+      logGenError('build failed', e, stream?.requestId);
       const reasoned = errorReason(e);
       settleFailed(attemptId, reasoned.reason, reasoned.diagnostics, terminalCounts());
-      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId));
+      setScreen(failure(editing, building.text, e, 'build failed', counts.repair, attemptId, stream?.requestId));
     }
   };
 

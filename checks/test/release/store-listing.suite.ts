@@ -8,7 +8,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, assert } from '../harness';
-import { checkStoreListing } from '../../../scripts/release/lib/store-listing';
+import {
+  checkDiagnosticsDisclosure,
+  checkStoreListing,
+  diagnosticsTransportFile,
+  type DiagnosticsDisclosureModules,
+} from '../../../scripts/release/lib/store-listing';
+import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
 import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 
 const REPO_ROOT = process.cwd();
@@ -123,6 +129,55 @@ function withFixtureRepo(overrides: FixtureOverrides, fn: (dir: string) => void)
 
 function messagesFor(dir: string): string[] {
   return checkStoreListing(dir, FIXTURE_CONFIG).map((f) => `${f.file}: ${f.message}`);
+}
+
+// ── Diagnostics disclosure (developer-observability task 5.2) ──
+
+const TRANSPORT_PATH = 'src/host/logging/diagnostics-transport.ts';
+const PRIVACY_PAGE_PATHS = ['deploy/site/privacy.html', 'deploy/site/fr/privacy.html'];
+const DISCLOSURE_MANIFEST_PATH = 'contract/src/disclosure-manifest.ts';
+
+/** A device module that posts to the diagnostics route, plus the committed privacy pages the check then reads. */
+function withTransport(text: Record<string, string | undefined> = {}): Record<string, string | undefined> {
+  return {
+    [TRANSPORT_PATH]: 'export function send(base: string, body: string) { return fetch(`${base}/v1/diagnostics`, { method: "POST", body }); }\n',
+    ...Object.fromEntries(PRIVACY_PAGE_PATHS.map((p) => [p, committed(p)])),
+    ...text,
+  };
+}
+
+/** The committed privacy manifest without the `NSPrivacyCollectedDataTypes` entry for `type`. */
+function manifestWithout(xml: string, type: string): string {
+  const anchor = xml.indexOf(`<string>${type}</string>`);
+  if (anchor === -1) throw new Error(`fixture setup bug: the privacy manifest has no ${type}`);
+  return xml.slice(0, xml.lastIndexOf('<dict>', anchor)) + xml.slice(xml.indexOf('</dict>', anchor) + '</dict>'.length);
+}
+
+/** Every committed store declaration with its crash and diagnostics entries removed, all four files together. */
+function declarationsWithoutDiagnostics(): Record<string, string> {
+  const appPrivacy = editedAppPrivacy((entries) => entries.filter((e) => e.category !== 'CRASH_DATA' && e.category !== 'OTHER_DIAGNOSTIC_DATA'));
+  const dataSafety = JSON.parse(committed(DATA_SAFETY_PATH)) as { types: { id: string }[] };
+  const answersLines = committed(ANSWERS_PATH).split('\n');
+  const answers = answersLines.filter((line) => !(line.startsWith('|') && /error details/i.test(line)));
+  if (answersLines.length - answers.length !== 4) throw new Error('fixture setup bug: answers.md should have four error-details rows');
+  return {
+    [APP_PRIVACY_PATH]: appPrivacy,
+    [DATA_SAFETY_PATH]: JSON.stringify({ ...dataSafety, types: dataSafety.types.filter((t) => t.id !== 'crash_logs' && t.id !== 'diagnostics') }),
+    [PRIVACY_MANIFEST_PATH]: manifestWithout(manifestWithout(committed(PRIVACY_MANIFEST_PATH), 'NSPrivacyCollectedDataTypeCrashData'), 'NSPrivacyCollectedDataTypeOtherDiagnosticData'),
+    [ANSWERS_PATH]: answers.join('\n'),
+  };
+}
+
+/** The current manifest with its error-details category gone, as a manifest that stopped mapping diagnostics would be. */
+function manifestWithoutErrorDetails(): DisclosureManifest {
+  const current = MANIFESTS[latestVersion()];
+  return { ...current, categories: current.categories.filter((c) => c.id !== 'error-details') };
+}
+
+const SOME_CONSENT_TEXT = { en: 'Error details when something goes wrong.', fr: 'Détails d’erreur quand quelque chose ne va pas.' };
+
+function diagnosticsMessages(dir: string, modules?: DiagnosticsDisclosureModules): string[] {
+  return checkDiagnosticsDisclosure(dir, modules).map((f) => `${f.file}: ${f.message}`);
 }
 
 export async function run(): Promise<void> {
@@ -299,6 +354,78 @@ export async function run(): Promise<void> {
       assert(
         messages.some((m) => m.startsWith(`${PRIVACY_MANIFEST_PATH}: `) && m.includes('NSPrivacyCollectedDataTypeDeviceID') && m.includes('phone-id')),
         `expected a missing-type finding naming ${PRIVACY_MANIFEST_PATH}, the device ID type and phone-id, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-diagnostics: the transport is found by its route or its seam name, and a mention in a test is not a build that sends diagnostics', () => {
+    withFixtureRepo({ text: { 'src/host/logging/test/transport.suite.ts': 'post("/v1/diagnostics")\n' } }, (dir) => {
+      assert(diagnosticsTransportFile(dir) === undefined, `a test file must not count as the transport, got ${String(diagnosticsTransportFile(dir))}`);
+    });
+    withFixtureRepo({ text: withTransport() }, (dir) => {
+      assert(diagnosticsTransportFile(dir) === TRANSPORT_PATH, `expected the route to mark ${TRANSPORT_PATH}, got ${String(diagnosticsTransportFile(dir))}`);
+    });
+    withFixtureRepo({ text: { 'src/host/logging/index.ts': 'export const seam = createSeam({ sinks: [devSink, diagnosticsTransport] });\n' } }, (dir) => {
+      assert(diagnosticsTransportFile(dir) === 'src/host/logging/index.ts', `expected the seam name to mark the file, got ${String(diagnosticsTransportFile(dir))}`);
+    });
+  });
+
+  await test('store-diagnostics: with the transport in the build, the committed declarations pass: the Play form, privacy manifest and App Store answers declare the same diagnostics types', () => {
+    withFixtureRepo({ text: withTransport() }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(messages.length === 0, `expected the committed declarations to cover diagnostics, got ${JSON.stringify(messages)}`);
+    });
+  });
+
+  await test('store-diagnostics: with the transport in the build, a privacy manifest without the diagnostics entry fails, naming the manifest and the transport', () => {
+    const manifest = manifestWithout(committed(PRIVACY_MANIFEST_PATH), 'NSPrivacyCollectedDataTypeOtherDiagnosticData');
+    withFixtureRepo({ text: withTransport({ [PRIVACY_MANIFEST_PATH]: manifest }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${PRIVACY_MANIFEST_PATH}: `) && m.includes('NSPrivacyCollectedDataTypeOtherDiagnosticData') && m.includes(TRANSPORT_PATH)),
+        `expected a finding naming ${PRIVACY_MANIFEST_PATH}, the diagnostics type and ${TRANSPORT_PATH}, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-diagnostics: a manifest that stops mapping error details, with every declaration dropping them too, still fails once the transport ships, naming each file', () => {
+    const modules = { manifest: manifestWithoutErrorDetails(), consentText: SOME_CONSENT_TEXT };
+    withFixtureRepo({ text: withTransport(declarationsWithoutDiagnostics()) }, (dir) => {
+      const messages = diagnosticsMessages(dir, modules);
+      for (const [file, type] of [
+        [DISCLOSURE_MANIFEST_PATH, 'error-details'],
+        [APP_PRIVACY_PATH, 'OTHER_DIAGNOSTIC_DATA'],
+        [DATA_SAFETY_PATH, 'crash_logs'],
+        [PRIVACY_MANIFEST_PATH, 'NSPrivacyCollectedDataTypeCrashData'],
+        [ANSWERS_PATH, 'Crash Data'],
+        [ANSWERS_PATH, 'Diagnostics'],
+      ]) {
+        assert(messages.some((m) => m.startsWith(`${file}: `) && m.includes(type)), `expected a finding naming ${file} and ${type}, got ${JSON.stringify(messages)}`);
+      }
+    });
+    withFixtureRepo({ text: declarationsWithoutDiagnostics() }, (dir) => {
+      const messages = diagnosticsMessages(dir, modules);
+      assert(messages.length === 0, `without the transport the build sends no diagnostics, so nothing must be required; got ${JSON.stringify(messages)}`);
+    });
+  });
+
+  await test('store-diagnostics: with the transport in the build, a consent screen naming no error details in one language fails, naming the copy file and the language', () => {
+    withFixtureRepo({ text: withTransport() }, (dir) => {
+      const messages = diagnosticsMessages(dir, { manifest: MANIFESTS[latestVersion()], consentText: { ...SOME_CONSENT_TEXT, fr: '' } });
+      assert(
+        messages.length === 1 && messages[0].startsWith('src/host/launcher/copy.ts: ') && messages[0].includes('fr consent screen'),
+        `expected one finding naming src/host/launcher/copy.ts and fr, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-diagnostics: with the transport in the build, a privacy page that keeps no error-details period fails, naming the page', () => {
+    const page = replaceOnce(committed('deploy/site/fr/privacy.html'), /data-keep="error-details connection-logs"/, 'data-keep="connection-logs"');
+    withFixtureRepo({ text: withTransport({ 'deploy/site/fr/privacy.html': page }) }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith('deploy/site/fr/privacy.html: ') && m.includes('data-keep="error-details"')),
+        `expected a finding naming deploy/site/fr/privacy.html and its data-keep row, got ${JSON.stringify(messages)}`,
       );
     });
   });

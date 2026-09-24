@@ -6,7 +6,7 @@
  *  losing what they typed, and what the launch-time `/healthz` minimum does (and, when it is
  *  missing, malformed or slow, doesn't do). */
 import TestRenderer from 'react-test-renderer';
-import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER } from '@whim/contract';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from '@whim/contract';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
 import ComposeStep from '../ComposeStep';
@@ -34,6 +34,8 @@ import { TEST_APP_INFO } from './client-fixtures';
 import { Linking, Platform, injectedScripts } from './native-host';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal, updateRequiredRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
+import { log } from '../../logging';
+import { toDiagnostic } from '../../logging/diagnostic';
 
 const ENVELOPE = [PLATFORM_HEADER, APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER];
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'] };
@@ -165,6 +167,45 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     } finally {
       Object.assign(StoreAccess.prototype, original);
     }
+  });
+
+  await h.test('request id: a clarify the server fails logs its request id on every error record about it', async () => {
+    const server = () =>
+      new Response(JSON.stringify({}), { status: 500, headers: { 'Content-Type': 'application/json', [REQUEST_ID_HEADER]: 'req-clarify-9' } });
+    await withLauncher({ server }, async ({ tree }) => {
+      log.buffer.clear();
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      const errors = log.buffer.snapshot().filter((r) => r.level === 'error');
+      h.eq(
+        errors.map((r) => [r.message, toDiagnostic(r).requestId]),
+        [
+          ['transport failed', 'req-clarify-9'],
+          ['generation step failed', 'req-clarify-9'],
+          ['failure screen shown', 'req-clarify-9'],
+        ],
+        'the transport breadcrumb, the step failure and the failure screen each carry it, and it survives the projection',
+      );
+    });
+  });
+
+  await h.test('request id: a build whose stream ends in a failure logs the stream’s request id with it', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    const server = (r: SentRequest) => {
+      if (r.path !== '/v1/generate') return streamingServer(streams)(r);
+      const stream = sseStream(r.signal);
+      streams.push(stream);
+      return new Response(stream.response.body, { headers: { 'Content-Type': 'text/event-stream', [REQUEST_ID_HEADER]: 'req-gen-1' } });
+    };
+    await withLauncher({ server }, async ({ tree }) => {
+      await startBuild(tree, 'A tea timer');
+      log.buffer.clear();
+      streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 2, diagnostics: [{ kind: 'type', symbol: 'x', message: 'm', hint: 'Try fewer screens.' }] });
+      streams[0].end();
+      await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      const shown = log.buffer.snapshot().filter((r) => r.message === 'failure screen shown');
+      h.eq(shown.map((r) => [r.fields.errorClass, r.fields.requestId]), [['GenerationFailureEvent', 'req-gen-1']], 'the failure record names the stream’s request');
+    });
   });
 
   await h.test('envelope: on a build missing the app-info module, Continue shows the failure screen and sends nothing', async () => {

@@ -15,6 +15,7 @@ import { createStorageEngine } from '../../storage-engine';
 import { DEFAULT_THEME } from '../../../sdk/theme';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
+import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
 import { injectedScripts } from './native-host';
 import { closedDatabases, resetNativeStorage } from './native-storage';
@@ -207,6 +208,46 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
       h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
     });
+  });
+
+  await h.test('mini-app: an app’s errors are uploaded as their class and site only, so "Alice owes 40" never leaves the phone', async () => {
+    const bodies: string[] = [];
+    log.diagnostics.configure({
+      target: () => ({ baseUrl: 'https://server.test', headers: {} }),
+      osVersion: '15',
+      post: async (_url, _headers, body) => {
+        bodies.push(body);
+        return { ok: true, status: 204 };
+      },
+    });
+    try {
+      await withMiniApp(TIP, async ({ loadEnd, frame }) => {
+        await loadEnd();
+        await frame(FIRST_PAINT);
+        // A handler throws `new Error("Alice owes 40")`: loader.js reports the class, never the message.
+        await frame({ kind: 'error', trusted: true, payload: { where: 'runtime', name: 'Error' } });
+        // It throws `Object.assign(new Error("x"), { name: "Alice owes 40" })`: the name is the app's own.
+        await frame({ kind: 'error', trusted: true, payload: { where: 'runtime', name: 'Alice owes 40' } });
+        // A mount throw: loader.js's mount frame carries the message as well.
+        await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError', message: 'Alice owes 40' } });
+      });
+      await log.diagnostics.flush();
+    } finally {
+      log.diagnostics.configure({ target: () => null });
+    }
+    const batches = bodies.map((body) => JSON.parse(body) as unknown);
+    h.ok(batches.length > 0 && batches.every((batch) => DiagnosticsBatch.safeParse(batch).success), 'every upload is a batch the server accepts');
+    h.eq(
+      batches.flatMap((batch) => (batch as DiagnosticsBatch).records).map((r) => [r.message, r.where, r.errorClass]),
+      [
+        ['mini-app error', 'runtime', 'Error'],
+        ['mini-app error', 'runtime', 'Other'],
+        ['mini-app failed', 'mount', 'TypeError'],
+      ],
+      'each error is its site and a built-in class; a name the app made up is Other',
+    );
+    h.ok(!bodies.some((body) => body.includes('Alice')), '"Alice" appears nowhere in any batch');
+    h.ok(!bodies.some((body) => body.includes(TIP.appId)), 'nor does the app’s id');
   });
 
   await h.test('mini-app: an app that never paints reaches the recovery screen when the startup deadline passes', async () => {

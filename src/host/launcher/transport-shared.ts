@@ -277,21 +277,25 @@ function hostPortOf(baseUrl: string): string {
 }
 
 /** Breadcrumb for every GenerationClientError mapping site across both transports, on the seam's
- *  generation channel: path, host:port, kind, status, readyState and detail are NAMED FIELDS, not
- *  a formatted line, so a reader can filter on them (spec "A breadcrumb carries structure, not a
- *  formatted string"). NEVER pass prompt/body text, the x-whim-device value, or the API key here. */
+ *  generation channel: route, host:port, kind, status, readyState, requestId and detail are NAMED
+ *  FIELDS, not a formatted line, so a reader can filter on them (spec "A breadcrumb carries
+ *  structure, not a formatted string"). `route` is the request path, the name the diagnostics
+ *  allowlist sends it under; `requestId` is the response's `x-whim-request-id`, present only when
+ *  the server answered, so the record can be joined to the server's lines for that request. NEVER
+ *  pass prompt/body text, the x-whim-device value, or the API key here. */
 export function logMappedError(
   path: string,
   baseUrl: string,
   kind: GenerationClientErrorKind,
-  detail?: { status?: number; readyState?: number; message?: string },
+  detail?: { status?: number; readyState?: number; message?: string; requestId?: string },
 ): void {
   log.error(CHANNELS.gen, 'transport failed', {
-    path,
+    route: path,
     host: hostPortOf(baseUrl),
     kind,
     status: detail?.status,
     readyState: detail?.readyState,
+    requestId: detail?.requestId,
     detail: detail?.message,
   });
 }
@@ -305,7 +309,7 @@ export async function httpErrorFrom(response: Response, path: string, baseUrl: s
   const bodyJson: unknown = await response.json().catch(() => null);
   const requestId = requestIdOf(response.headers);
   if (isDeviceIdError(bodyJson)) {
-    logMappedError(path, baseUrl, 'device_id', { status: response.status, message: bodyJson.hint });
+    logMappedError(path, baseUrl, 'device_id', { status: response.status, message: bodyJson.hint, requestId });
     return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint, requestId });
   }
   const hint =
@@ -314,6 +318,6 @@ export async function httpErrorFrom(response: Response, path: string, baseUrl: s
       : undefined;
   const code = isApiErrorBody(bodyJson) ? bodyJson.error : undefined;
   const retryAfterSeconds = retryAfterSecondsOf(response);
-  logMappedError(path, baseUrl, 'http', { status: response.status, message: hint });
+  logMappedError(path, baseUrl, 'http', { status: response.status, message: hint, requestId });
   return new GenerationClientError('http', { status: response.status, hint, code, retryAfterSeconds, requestId });
 }
