@@ -228,7 +228,8 @@ interpolate `compose.yaml`. `$C` below stands for
 `sudo -H docker compose --project-directory /opt/whim --file /opt/whim/compose.yaml` (the same
 string the deploy scripts use, from `deploy/lib.sh`).
 
-- **Logs** — in Logs Explorer (project `WHIM_GCP_PROJECT`), 30 days in the `_Default` bucket. The
+- **Logs** — in Logs Explorer (project `WHIM_GCP_PROJECT`; scope it to the `whim-logs` bucket), 30 days
+  in the `whim-logs` bucket in `WHIM_GCP_REGION`, which the `_Default` sink feeds (`provision.sh`). The
   Ops Agent on the VM host (`deploy/vm/ops-agent.yaml`, installed by `bootstrap.sh`) ships both
   containers' json-file logs, 1–4 s behind. Structured JSON via `pino`, redacted at the serializer:
   no request content, ever. Each pino field is a typed `jsonPayload` field, and severity comes from
@@ -303,8 +304,8 @@ the manifest. `bootstrap.sh` installs it, so on a VM bootstrapped earlier, rerun
 add it. Check it with `sudo systemctl list-timers 'whim-log-age-cap*'` (next and last run) and
 `sudo journalctl -u whim-log-age-cap.service` (what each run removed or recreated).
 
-This covers only the log files on the VM. Anything shipped to Cloud Logging keeps whatever retention
-its log bucket is set to, configured separately in the project.
+This covers only the log files on the VM. What reaches Cloud Logging is kept 30 days in the regional
+`whim-logs` bucket (`provision.sh`).
 
 ## Minimum supported build
 

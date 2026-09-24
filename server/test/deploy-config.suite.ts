@@ -1931,11 +1931,18 @@ const PROVISION_BASE: readonly StubRule[] = [
   ['*builds get-default-service-account*', 0, 'projects/p/serviceAccounts/123@cloudbuild.gserviceaccount.com\\n'],
 ];
 
+/** Cloud Logging's own default, where a new project's `_Default` sink writes. */
+const GLOBAL_LOG_DESTINATION = 'logging.googleapis.com/projects/anycognition-whim/locations/global/buckets/_Default';
+const REGIONAL_LOG_DESTINATION = 'logging.googleapis.com/projects/anycognition-whim/locations/northamerica-northeast1/buckets/whim-logs';
+
 /** A project where none of the alerting resources exist yet. Creates answer with a resource name. */
 const NOTHING_PROVISIONED: readonly StubRule[] = [
   ['*compute resource-policies describe*', 1, ''],
   ['*compute disks describe*resourcePolicies*', 0, '{}\\n'],
   ['*storage buckets describe*', 1, ''],
+  ['*logging buckets describe whim-logs *', 1, ''],
+  ['*logging sinks describe _Default *', 0, `${GLOBAL_LOG_DESTINATION}\\n`],
+  ['*logging buckets describe _Default --location global *', 0, '30\\n'],
   ['*monitoring channels list*', 0, ''],
   ['*monitoring channels create*', 0, `${CHANNEL_NAME}\\n`],
   ['*monitoring uptime list-configs*', 0, ''],
@@ -1995,6 +2002,9 @@ function stateAfter(run: ProvisionRun, budgetAmount = PROVISION_VALUES.WHIM_MONT
     ['*compute resource-policies describe*', 0, `${keepDays}\\n`],
     ['*compute disks describe*resourcePolicies*', 0, `{"resourcePolicies": ["https://www.googleapis.com/compute/v1/projects/anycognition-whim/regions/northamerica-northeast1/resourcePolicies/${attached}"]}\\n`],
     ['*storage buckets describe*', 0, ''],
+    ['*logging buckets describe whim-logs *', 0, `${/ logging buckets create whim-logs .*--retention-days (\d+)/.exec(callMatching(run.calls, / logging buckets create whim-logs /))?.[1] ?? ''}\\n`],
+    ['*logging sinks describe _Default *', 0, `${/ logging sinks update _Default (\S+)/.exec(callMatching(run.calls, / logging sinks update _Default /))?.[1] ?? ''}\\n`],
+    ['*logging buckets describe _Default --location global *', 0, `${/ logging buckets update _Default --location global --retention-days (\d+)/.exec(callMatching(run.calls, / logging buckets update _Default /))?.[1] ?? ''}\\n`],
     ['*monitoring channels list*', 0, `${row(String(channel?.displayName), CHANNEL_NAME, specOf(channel))}\\n`],
     ['*monitoring uptime list-configs*', 0, `${row(uptimeDisplay, UPTIME_NAME, uptimeSpec, API_HOST)}\\n`],
     ...metrics,
@@ -2388,6 +2398,14 @@ function provisionMonitoringTests(): void {
       `${unread.stderr}\n${unread.calls.join(' / ')}`,
     );
   }
+  const logBucketCall = callMatching(first.calls, / logging buckets create whim-logs /);
+  check(
+    '  ... logs are stored in the region: a 30-day whim-logs bucket there, the _Default sink pointed at it, the global bucket cut to 1 day',
+    logBucketCall.includes('--location northamerica-northeast1') && logBucketCall.includes('--retention-days 30')
+      && callMatching(first.calls, / logging sinks update _Default /).includes(REGIONAL_LOG_DESTINATION)
+      && callMatching(first.calls, / logging buckets update _Default /).includes('--location global --retention-days 1'),
+    first.calls.filter((line) => / logging (?:buckets|sinks) /.test(line)).join(' / '),
+  );
   check('  ... the source-map bucket is private', /storage buckets create \S+ .*--uniform-bucket-level-access --public-access-prevention/.test(callMatching(first.calls, / storage buckets create /)));
 
   // specs/server-observability "Rerunning provisioning is a no-op".
