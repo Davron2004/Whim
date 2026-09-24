@@ -484,6 +484,7 @@ async function testEveryV1RouteGated(): Promise<void> {
     ['/v1/clarify', { prompt: 'a timer' }],
     ['/v1/report', { reason: 'broken' }],
     ['/v1/usage', undefined],
+    ['/v1/diagnostics', { osVersion: '14', records: [{ at: 1, level: 'error', channel: 'whim', message: 'm' }] }],
   ] as const;
   for (const [route, body] of routes) {
     const { app, model, usageStore } = forbiddenModelApp(minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }));
@@ -519,7 +520,7 @@ async function testLegacyAndDefaults(): Promise<void> {
     const res = await send(app, '/v1/clarify', { ...legacy, ...ENVELOPE, [PLATFORM_HEADER]: platform, [BUILD_HEADER]: '1' }, { prompt: 'a timer' });
     eq(`neither minimum configured: ${platform} build 1 is served`, res.status, 200);
   }
-  eq('neither minimum configured: /healthz reports both as 0', await (await send(app, '/healthz', {})).json(), { ok: true, service: 'whim-server', minBuild: { ios: 0, android: 0 } });
+  eq('neither minimum configured: /healthz reports both as 0', await (await send(app, '/healthz', {})).json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 0, android: 0 } });
 }
 
 async function testHealthzReportsMinimums(): Promise<void> {
@@ -528,9 +529,19 @@ async function testHealthzReportsMinimums(): Promise<void> {
   const app = testApp({ config: minimumsFrom({ WHIM_MIN_BUILD_IOS: '381000', WHIM_MIN_BUILD_ANDROID: '382000' }) });
   const res = await send(app, '/healthz', {});
   eq('no device header or envelope needed: 200', res.status, 200);
-  eq('the body carries both minimums, every other field unchanged', await res.json(), { ok: true, service: 'whim-server', minBuild: { ios: 381000, android: 382000 } });
+  eq('the body carries both minimums, every other field unchanged', await res.json(), { ok: true, service: 'whim-server', commit: 'unknown', minBuild: { ios: 381000, android: 382000 } });
   const junkEnvelope = await send(app, '/healthz', { [BUILD_HEADER]: 'junk' });
   eq('a malformed envelope header does not reach /healthz (no envelope is read there)', junkEnvelope.status, 200);
+}
+
+async function testHealthzReportsCommit(): Promise<void> {
+  section('Commit — /healthz names the commit the image was built from (specs/server-observability)');
+
+  const sha = '89abcdef0123456789abcdef0123456789abcdef';
+  const built = await send(testApp({ config: { commit: loadServerConfig({ WHIM_COMMIT: sha }).commit } }), '/healthz', {});
+  eq('an image built with WHIM_COMMIT reports it, beside ok, service and minBuild', await built.json(), { ok: true, service: 'whim-server', commit: sha, minBuild: { ios: 0, android: 0 } });
+  const local = await send(testApp(), '/healthz', {});
+  eq('a server outside the release image reports "unknown"', ((await local.json()) as { commit?: unknown }).commit, 'unknown');
 }
 
 // ─── Consent practices ───────────────────────────────────────────────────────
@@ -679,6 +690,7 @@ export async function runRequestEdgeTests(): Promise<void> {
   await testEveryV1RouteGated();
   await testLegacyAndDefaults();
   await testHealthzReportsMinimums();
+  await testHealthzReportsCommit();
   testPermits();
   await testConsentBackstop();
   testEveryDataRouteDeclaresAPractice();

@@ -22,7 +22,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { RewriteRequest, RewriteResponse, type ApiError, type PlanRow, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelMessage, type ModelRoster } from '../generation/model';
-import type { UsageStore, RequestOutcome } from '../usage-store';
+import type { FailureReason, UsageStore, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
 import type { CreditTransport } from '../admission/credit';
@@ -294,9 +294,15 @@ export function makeRewriteRoute(
       const { requestId, release, policyGenerationId } = admission;
 
       let settlementUsage: Usage | undefined;
-      const finish = async (outcome: RequestOutcome, generationIds: string[], creditedGenerationIds: Set<string>, usage?: Usage): Promise<void> => {
+      const finish = async (
+        outcome: RequestOutcome,
+        generationIds: string[],
+        creditedGenerationIds: Set<string>,
+        usage?: Usage,
+        failureReason?: FailureReason,
+      ): Promise<void> => {
         settlementUsage = usage;
-        await usageStore.settle(requestId, { outcome, usage, now: clock() });
+        await usageStore.settle(requestId, { outcome, failureReason, usage, now: clock() });
         if (policyGenerationId !== undefined) {
           generationIds = [policyGenerationId, ...generationIds];
           creditedGenerationIds.add(policyGenerationId);
@@ -329,7 +335,7 @@ export function makeRewriteRoute(
 
         if (result.outcome === 'budget_exhausted') {
           invalidateCreditCache();
-          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage);
+          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage, 'budget_exhausted');
           const r = budgetExhaustedRefusal();
           return c.json(r.body, r.status, r.headers);
         }

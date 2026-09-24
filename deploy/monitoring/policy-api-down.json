@@ -1,0 +1,32 @@
+{
+  "displayName": "Whim: API down",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "/healthz failed twice in a row from at least two checker regions",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.type=\"uptime_url\" AND metric.label.check_id=\"{{UPTIME_CHECK_ID}}\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "600s",
+            "perSeriesAligner": "ALIGN_FRACTION_TRUE"
+          }
+        ],
+        "comparison": "COMPARISON_LT",
+        "thresholdValue": 0.01,
+        "duration": "0s",
+        "trigger": {
+          "count": 2
+        }
+      }
+    }
+  ],
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The API's `/healthz` failed its last two checks (5 minutes apart) from at least two regions: phones can't generate. First run `deploy/smoke.sh`, which names the failing layer (DNS, TLS, the server, the proxy). Then see docs/deploy.md, Operating: Alerts."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

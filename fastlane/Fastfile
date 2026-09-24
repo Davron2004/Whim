@@ -26,6 +26,7 @@ min_fastlane_version("2.237.0")
 # as a second line of defense.
 skip_docs
 
+require "fileutils"
 require "json"
 require "shellwords"
 
@@ -35,6 +36,12 @@ CONFIG_HOME = File.expand_path("~/.config/whim")
 def root(*segments)
   File.join(ROOT_DIR, *segments)
 end
+
+# Where each lane's build leaves its composed Hermes source map (developer-observability D12).
+# Android: the React Native Gradle plugin's fixed output for the release variant. iOS: the path this
+# file hands the bundle phase as SOURCEMAP_FILE (react-native-xcode.sh writes the map only when set).
+ANDROID_SOURCE_MAP = root("android/app/build/generated/sourcemaps/react/release/index.android.bundle.map")
+IOS_SOURCE_MAP = root("ios/build/sourcemaps/main.jsbundle.map")
 
 # ---------------------------------------------------------------------------------------------
 # Shared helpers
@@ -50,6 +57,21 @@ end
 # non-zero exit", no extra check needed.
 def release_cli(*args)
   sh_at_root("node", "scripts/release/run.mjs", *args)
+end
+
+# Uploads the build's map to the private source-map bucket before the store upload
+# (specs/device-diagnostics "Release builds keep a source map for every shipped bundle"). The
+# command exits non-zero when the map is missing or the upload fails, and `sh` raises on that, so
+# no build ships without its map.
+def upload_source_map(platform, build_number, map_path)
+  release_cli("upload-source-map", "--platform", platform, "--build", build_number.to_s, map_path)
+end
+
+# A map left by an earlier build must never be uploaded as this build's, so each lane deletes it
+# before building.
+def clear_source_map(map_path)
+  FileUtils.rm_f(map_path)
+  FileUtils.mkdir_p(File.dirname(map_path))
 end
 
 def native_config
@@ -139,6 +161,7 @@ platform :ios do
 
     sh_at_root("npm", "run", "build")
     sh("cd #{root('ios').shellescape} && bundle exec pod install")
+    clear_source_map(IOS_SOURCE_MAP)
 
     # gym appends xcargs to the -exportArchive command as well as the archive, so the auth
     # flags go in once here; an export_xcargs copy makes xcodebuild refuse the duplicate
@@ -149,11 +172,12 @@ platform :ios do
       configuration: "Release",
       export_method: "app-store",
       output_directory: root("ios/build/release"),
-      xcargs: "WHIM_BUILD_NUMBER=#{build_number} #{asc_auth_xcargs}"
+      xcargs: "WHIM_BUILD_NUMBER=#{build_number} SOURCEMAP_FILE=#{IOS_SOURCE_MAP.shellescape} #{asc_auth_xcargs}"
     )
 
     archive_path = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
     release_cli("privacy-audit", File.join(archive_path, "Products/Applications/Whim.app"))
+    upload_source_map("ios", build_number, IOS_SOURCE_MAP)
 
     upload_to_testflight(
       api_key: asc_api_key_hash,
@@ -208,6 +232,7 @@ platform :android do
                  *(options[:placeholder_domain] ? ["--allow-placeholder-domain"] : []))
 
     sh_at_root("npm", "run", "build")
+    clear_source_map(ANDROID_SOURCE_MAP)
     gradle(
       project_dir: root("android"),
       task: "bundle",
@@ -220,6 +245,8 @@ platform :android do
 
     aab_path = root("android/app/build/outputs/bundle/release/app-release.aab")
     release_cli("verify-aab", aab_path, "--build", build_number.to_s)
+    # Even with upload:false: the AAB then goes to Play by hand, so its map is kept all the same.
+    upload_source_map("android", build_number, ANDROID_SOURCE_MAP)
 
     should_upload = options[:upload] != false
     if should_upload

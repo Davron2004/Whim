@@ -15,14 +15,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER } from '@whim/contract';
 import { check, eq, section } from './harness';
+import { captureLogs } from './log-capture';
 import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
-import { TIMED_OUT, within } from './route-doubles';
+import { TIMED_OUT, machinePipeline, within } from './route-doubles';
+import { ScriptedModelClient } from './scripted-model';
+import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
+import { createServerLogger } from '../src/logger';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig, ServerConfigError } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
+import { invalidateCreditCache, type CreditTransport } from '../src/admission/credit';
+import { cachedPolicy, PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult } from '../src/policy';
+import { defaultModelRoster } from '../src/generation/model';
+import type { Clock } from '../src/generation/machine';
 import * as releaseConfig from '../../src/host/launcher/release-config';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
@@ -89,6 +98,10 @@ function envEntries(text: string): Array<[string, string]> {
 const SECRET_NAME = /(?:^|_)(?:API_?KEY|KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIALS?)$/i;
 const KEY_SHAPED_VALUE = /\bsk-(?:or-)?(?:v1-)?[A-Za-z0-9]{16,}/;
 
+/** Names that end like a secret but hold no secret, per file: fluent-bit's `time_key` names the
+ *  JSON field that carries the record's timestamp. */
+const NON_SECRET_NAMES: ReadonlyMap<string, ReadonlySet<string>> = new Map([['deploy/vm/ops-agent.yaml', new Set(['time_key'])]]);
+
 function isLiteralValue(value: string): boolean {
   const trimmed = value.trim();
   return trimmed !== '' && !trimmed.startsWith('$') && !trimmed.startsWith('"$');
@@ -117,7 +130,7 @@ function secretProblems(files: ReadonlyMap<string, string>): string[] {
     if (KEY_SHAPED_VALUE.test(text)) problems.push(`${rel} holds a key-shaped value`);
     text.split('\n').forEach((line, index) => {
       for (const [name, value] of assignmentsOnLine(line)) {
-        if (SECRET_NAME.test(name) && isLiteralValue(value)) {
+        if (SECRET_NAME.test(name) && isLiteralValue(value) && !NON_SECRET_NAMES.get(rel)?.has(name)) {
           problems.push(`${rel}:${index + 1} sets secret-named ${name} to a value`);
         }
       }
@@ -209,6 +222,26 @@ function dockerfileProblems(text: string, playwrightVersion: string): string[] {
     ...envCopyProblems(instructions),
     ...secretProblems(new Map([['deploy/Dockerfile', text]])),
   ];
+}
+
+/** The runtime stage turns the build arg into the environment the server reads, defaulting to
+ *  `"unknown"` for any build the release pipeline didn't make (developer-observability D13). */
+function commitBakeProblems(text: string): string[] {
+  const instructions = dockerInstructions(text);
+  const runtime = instructions.slice(instructions.map((i) => i.keyword).lastIndexOf('FROM'));
+  const has = (keyword: string, args: string): boolean => runtime.some((i) => i.keyword === keyword && i.args === args);
+  const problems: string[] = [];
+  if (!has('ARG', 'WHIM_COMMIT=unknown')) problems.push('the runtime stage lacks ARG WHIM_COMMIT=unknown');
+  if (!has('ENV', 'WHIM_COMMIT=$WHIM_COMMIT')) problems.push('the runtime stage lacks ENV WHIM_COMMIT=$WHIM_COMMIT');
+  return problems;
+}
+
+/** The commit describes the image's bytes, never what the deploy step believed: nothing outside the
+ *  image build may name WHIM_COMMIT, since a compose, env or profile value would override the baked one. */
+function runtimeCommitProblems(files: ReadonlyMap<string, string>): string[] {
+  return [...files]
+    .filter(([rel, text]) => rel !== 'deploy/Dockerfile' && rel !== 'deploy/cloudbuild.yaml' && text.includes('WHIM_COMMIT'))
+    .map(([rel]) => `${rel} names WHIM_COMMIT outside the image build`);
 }
 
 function imageUidOf(dockerfile: string): string {
@@ -635,14 +668,23 @@ function requiredLineProblems(rel: string, text: string, required: readonly stri
   return required.filter((line) => !lines.has(line)).map((line) => `${rel} lacks ${line}`);
 }
 
+/** The one build argument the image takes: the commit it is built from, from the same substitution
+ *  that tags it (developer-observability D13). */
+const COMMIT_BUILD_ARG = '--build-arg=WHIM_COMMIT=$COMMIT_SHA';
+
 function cloudbuildProblems(text: string): string[] {
   const problems: string[] = [];
-  for (const needle of ['--platform=linux/amd64', '-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA']) {
+  for (const needle of ['--platform=linux/amd64', '-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA', COMMIT_BUILD_ARG]) {
     if (!text.includes(needle)) problems.push(`cloudbuild.yaml lacks ${needle}`);
   }
-  for (const forbidden of ['secretEnv', 'availableSecrets', '--build-arg']) {
+  for (const forbidden of ['secretEnv', 'availableSecrets']) {
     if (text.includes(forbidden)) problems.push(`cloudbuild.yaml uses ${forbidden}`);
   }
+  const buildArgs = text.split('\n').filter((line) => line.includes('--build-arg'));
+  for (const line of buildArgs) {
+    if (line.trim().replace(/^- /, '') !== COMMIT_BUILD_ARG) problems.push(`cloudbuild.yaml uses --build-arg other than ${COMMIT_BUILD_ARG}: ${line.trim()}`);
+  }
+  if (buildArgs.length > 1) problems.push(`cloudbuild.yaml passes ${buildArgs.length} --build-arg lines`);
   const stepImages = text
     .split('\n')
     .map((line) => line.trim().replace(/^- /, ''))
@@ -769,6 +811,12 @@ const STUB_SCRIPT = [
   'case "$tool $*" in',
   '  "gcloud "*" compute ssh "*server.env*) cat >"$STUB_DIR/server-env-stdin" ;;',
   'esac',
+  // Keeps each file a gcloud call reads (--policy-from-file=... and the like) as from-file/<n>-<name>.
+  'if [ "$tool" = gcloud ]; then',
+  '  for arg in "$@"; do',
+  '    case "$arg" in --*-from-file=*) mkdir -p "$STUB_DIR/from-file"; n=$(ls "$STUB_DIR/from-file" | wc -l); cp "${arg#*=}" "$STUB_DIR/from-file/$((n + 1))-${arg##*/}" ;; esac',
+  '  done',
+  'fi',
   'out_file=""',
   'previous=""',
   'for arg in "$@"; do',
@@ -924,8 +972,11 @@ const PAGES_UP: readonly StubRule[] = [
   [`*https://${WEB_HOST}/nope`, 0, `404|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/.well-known/*`, 0, '404|application/json|', ''],
 ];
-/** The default-configuration `/healthz` body; `smokeTests` checks it against the real server's. */
-const DEFAULT_HEALTH = '{"ok":true,"service":"whim-server","minBuild":{"ios":0,"android":0}}';
+/** The commit the fixture server's image reports: any full SHA, since smoke run standalone accepts any. */
+const HEALTH_COMMIT = '0123456789abcdef0123456789abcdef01234567';
+/** The default-configuration `/healthz` body of an image built at HEALTH_COMMIT; `smokeTests` checks
+ *  it against the real server's. */
+const DEFAULT_HEALTH = `{"ok":true,"service":"whim-server","commit":"${HEALTH_COMMIT}","minBuild":{"ios":0,"android":0}}`;
 const API_UP: readonly StubRule[] = [
   [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
@@ -1155,18 +1206,30 @@ function deploySiteOnlyTests(): void {
 }
 
 /** What the real server's `/healthz` answers, taken from the producer rather than written beside
- *  smoke.sh: under the default configuration, and with the Android minimum at 382000. `preGate` is
- *  the default body without `minBuild`: what a server from before the minimum-build gate answers,
- *  e.g. after a rollback to a pre-change image. */
+ *  smoke.sh: an image built at HEALTH_COMMIT under the default configuration, and with the Android
+ *  minimum at 382000. `preGate` is the default body without `minBuild`: what a server from before
+ *  the minimum-build gate answers. `unbuilt` is a server outside the release image (no WHIM_COMMIT). */
 interface HealthBodies {
   readonly defaults: string;
   readonly androidRaised: string;
   readonly preGate: string;
+  readonly unbuilt: string;
 }
 
 function withoutMinBuild(body: string): string {
   const health = JSON.parse(body) as Record<string, unknown>;
   delete health.minBuild;
+  return JSON.stringify(health);
+}
+
+/** The same body from an image built at another commit (or reporting another value). */
+function withCommit(body: string, commit: unknown): string {
+  return JSON.stringify({ ...(JSON.parse(body) as Record<string, unknown>), commit });
+}
+
+function withoutCommit(body: string): string {
+  const health = JSON.parse(body) as Record<string, unknown>;
+  delete health.commit;
   return JSON.stringify(health);
 }
 
@@ -1196,7 +1259,7 @@ function deployFullTests(health: HealthBodies): void {
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180' });
     fullDeployRules(sandbox, true);
-    writeRules(sandbox, 'curl', [healthRule(health.androidRaised), ...API_UP, ...PAGES_UP]);
+    writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
     const config = stubFile(sandbox, 'upload/config.env');
     eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /healthz', run.status, 0);
@@ -1211,6 +1274,7 @@ function deployFullTests(health: HealthBodies): void {
       WHIM_REPAIR_REASONING: 'off',
     });
     fullDeployRules(sandbox, false);
+    writeRules(sandbox, 'curl', [healthRule(withCommit(health.defaults, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     fs.writeFileSync(path.join(sandbox.stubs, 'machine-type'), 'e2-standard-8');
     const run = runScript(sandbox, 'deploy.sh', []);
     const calls = toolLog(sandbox, 'gcloud');
@@ -1245,10 +1309,11 @@ function deployFullTests(health: HealthBodies): void {
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(withCommit(health.defaults, TAG)), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
     const calls = toolLog(sandbox, 'gcloud');
     const ssh = calls.filter((line) => line.includes('compute ssh'));
-    eq('a rollback to a pushed tag succeeds', run.status, 0);
+    eq('a rollback to a pushed tag succeeds, its smoke finding that tag\'s commit on /healthz', run.status, 0);
     check('  ... without building', indexOfCall(calls, 'builds submit') === -1, calls.join(' / '));
     check('  ... deploying that tag with the standard profile', stubFile(sandbox, 'upload/compose.env').includes(`server:${TAG}\n`) && stubFile(sandbox, 'upload/compose.env').includes('WHIM_PROFILE=standard') && stubFile(sandbox, 'upload/config.env') === 'WHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\n');
     check(
@@ -1262,9 +1327,9 @@ function deployFullTests(health: HealthBodies): void {
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     fullDeployRules(sandbox, true);
-    writeRules(sandbox, 'curl', [healthRule(health.preGate), ...API_UP, ...PAGES_UP]);
+    writeRules(sandbox, 'curl', [healthRule(withCommit(health.preGate, TAG)), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
-    eq('a rollback to a server from before the minimum-build gate, both minimums 0, succeeds', run.status, 0);
+    eq('a rollback to a server without the minimum-build gate, both minimums 0, succeeds', run.status, 0);
     check(
       '  ... printing done after smoke warns that the server predates the gate',
       run.stdout.includes('deploy.sh: done') && run.stderr.includes('WARN') && run.stderr.includes('predates the minimum-build gate'),
@@ -1275,7 +1340,7 @@ function deployFullTests(health: HealthBodies): void {
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox, { WHIM_MIN_BUILD_IOS: '381000' });
     fullDeployRules(sandbox, true);
-    writeRules(sandbox, 'curl', [healthRule(health.preGate), ...API_UP, ...PAGES_UP]);
+    writeRules(sandbox, 'curl', [healthRule(withCommit(health.preGate, TAG)), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
     check(
       'a rollback below the minimum-build gate while the iOS minimum is raised fails its smoke, naming the dropped gate',
@@ -1283,6 +1348,30 @@ function deployFullTests(health: HealthBodies): void {
       run.stderr,
     );
     check('  ... and never prints done', !run.stdout.includes('deploy.sh: done'), run.stdout);
+  });
+
+  // specs/server-observability "A deploy that didn't take is caught": the container still serves
+  // the previous image, whose /healthz names the previous commit.
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(health.defaults), ...API_UP, ...PAGES_UP]);
+    const run = runScript(sandbox, 'deploy.sh', []);
+    const head = headOf(sandbox);
+    check(
+      'a deploy whose server still reports the previous commit fails its smoke, naming both SHAs',
+      run.status === 1 && run.stderr.includes(`commit is ${HEALTH_COMMIT}, but this deploy rolled out ${head}`),
+      run.stderr,
+    );
+    check('  ... and never prints done', !run.stdout.includes('deploy.sh: done'), run.stdout);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(health.defaults), ...API_UP, ...PAGES_UP]);
+    const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
+    check('a rollback whose server still reports another commit fails its smoke, naming the tag', run.status === 1 && run.stderr.includes(`but this deploy rolled out ${TAG}`), run.stderr);
   });
 }
 
@@ -1310,19 +1399,48 @@ function smokeTests(health: HealthBodies): void {
   });
 
   eq("the smoke fixtures' /healthz body is the real server's default body", DEFAULT_HEALTH, health.defaults);
-  const smokeAgainst = (operatorValues: Readonly<Record<string, string>>, body: string): ScriptRun => {
+  const smokeAgainst = (operatorValues: Readonly<Record<string, string>>, body: string, args: readonly string[] = []): ScriptRun => {
     let run: ScriptRun = { status: null, stdout: '', stderr: '' };
     withSandbox((sandbox) => {
       writeOperatorFile(sandbox, operatorValues);
       writeRules(sandbox, 'gcloud', VM_ANSWERS);
       writeRules(sandbox, 'dig', DNS_READY);
       writeRules(sandbox, 'curl', [healthRule(body), ...API_UP, ...PAGES_UP]);
-      run = runScript(sandbox, 'smoke.sh', []);
+      run = runScript(sandbox, 'smoke.sh', args);
     });
     return run;
   };
   const defaultRun = smokeAgainst({}, health.defaults);
-  eq("smoke passes against the real server's /healthz under the default configuration", defaultRun.status, 0);
+  eq("smoke passes against the real server's /healthz under the default configuration, run standalone", defaultRun.status, 0);
+
+  // specs/server-observability "The server reports which commit it is running".
+  const unbuiltRun = smokeAgainst({}, health.unbuilt);
+  check(
+    'smoke fails against a server outside the release image, whose /healthz reports commit "unknown"',
+    unbuiltRun.status === 1 && unbuiltRun.stderr.includes('commit "unknown" is not a full 40-character SHA'),
+    unbuiltRun.stderr,
+  );
+  const shortRun = smokeAgainst({}, withCommit(health.defaults, HEALTH_COMMIT.slice(0, 12)));
+  check('smoke fails when /healthz reports an abbreviated commit', shortRun.status === 1 && shortRun.stderr.includes(`commit "${HEALTH_COMMIT.slice(0, 12)}" is not a full 40-character SHA`), shortRun.stderr);
+  const noCommitRun = smokeAgainst({}, withoutCommit(health.defaults));
+  check('smoke fails when /healthz reports no commit at all', noCommitRun.status === 1 && noCommitRun.stderr.includes('no commit: this server predates the commit report'), noCommitRun.stderr);
+  const matchedRun = smokeAgainst({}, health.defaults, ['--commit', HEALTH_COMMIT]);
+  eq('smoke --commit passes when /healthz reports exactly that commit', matchedRun.status, 0);
+  const mismatchedRun = smokeAgainst({}, health.defaults, ['--commit', TAG]);
+  check(
+    'smoke --commit fails when /healthz reports another commit, naming both SHAs',
+    mismatchedRun.status === 1 && mismatchedRun.stderr.includes(`commit is ${HEALTH_COMMIT}, but this deploy rolled out ${TAG}`),
+    mismatchedRun.stderr,
+  );
+  for (const [what, args] of [
+    ['an abbreviated sha', ['--commit', TAG.slice(0, 7)]],
+    ['--pages-only', ['--pages-only', '--commit', TAG]],
+  ] as const) {
+    withSandbox((sandbox) => {
+      const run = runScript(sandbox, 'smoke.sh', args);
+      check(`smoke refuses --commit with ${what} as a usage error, before any DNS lookup`, run.status === 2 && toolLog(sandbox, 'dig').length === 0, run.stderr);
+    });
+  }
   const raisedRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.androidRaised);
   eq('smoke passes when /healthz reports the Android minimum the operator values set', raisedRun.status, 0);
   const staleRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.defaults);
@@ -1680,11 +1798,326 @@ function provisionTests(): void {
 
   withSandbox((sandbox) => {
     writeRules(sandbox, 'gcloud', [['*compute addresses list*', 0, '']]);
-    const run = runScript(sandbox, 'provision.sh', []);
+    const run = runScript(sandbox, 'provision.sh', [], PROVISION_VALUES);
     const calls = toolLog(sandbox, 'gcloud');
     check('provision.sh fails when no reserved address holds WHIM_STATIC_IP, naming it', run.status === 1 && run.stderr.includes(`no reserved address in northamerica-northeast1 holds ${STATIC_IP}`), run.stderr);
     check('  ... having created or enabled nothing', calls.length === 1 && calls.every((line) => !/create|enable|add-iam-policy-binding/.test(line)), calls.join(' / '));
   });
+
+  withSandbox((sandbox) => {
+    const run = runScript(sandbox, 'provision.sh', []);
+    check(
+      'provision.sh without the alert values names each, before any gcloud call',
+      run.status === 1 && ['WHIM_ALERT_EMAIL', 'WHIM_BILLING_ACCOUNT', 'WHIM_MONTHLY_BUDGET_USD'].every((key) => run.stderr.includes(`missing required value ${key}`)) && toolLog(sandbox, 'gcloud').length === 0,
+      run.stderr,
+    );
+  });
+  for (const [key, value] of [['WHIM_ALERT_EMAIL', 'owner@example.test", "type": "sms'], ['WHIM_BILLING_ACCOUNT', 'billingAccounts/0123AB'], ['WHIM_MONTHLY_BUDGET_USD', '250.50']] as const) {
+    withSandbox((sandbox) => {
+      const run = runScript(sandbox, 'provision.sh', [], { ...PROVISION_VALUES, [key]: value });
+      check(`provision.sh refuses a malformed ${key}, naming it, before any gcloud call`, run.status === 1 && run.stderr.includes(key) && toolLog(sandbox, 'gcloud').length === 0, run.stderr);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Alerts, budget, snapshots and the source-map bucket (developer-observability D10, D12)
+
+const PROVISION_VALUES = { WHIM_ALERT_EMAIL: 'owner@example.test', WHIM_BILLING_ACCOUNT: '0123AB-4567CD-89EF01', WHIM_MONTHLY_BUDGET_USD: '250' } as const;
+const CHANNEL_NAME = 'projects/anycognition-whim/notificationChannels/7001';
+const UPTIME_NAME = 'projects/anycognition-whim/uptimeCheckConfigs/whim-api-healthz-x1';
+const BUDGET_NAME = `billingAccounts/${PROVISION_VALUES.WHIM_BILLING_ACCOUNT}/budgets/b-1`;
+
+/** The rules every full provision run needs, whatever exists: the adopted address, the VM, Cloud
+ *  Build's account. */
+const PROVISION_BASE: readonly StubRule[] = [
+  ['*compute addresses list*', 0, 'whim-ip,IN_USE\\n'],
+  ['*builds get-default-service-account*', 0, 'projects/p/serviceAccounts/123@cloudbuild.gserviceaccount.com\\n'],
+];
+
+/** A project where none of the alerting resources exist yet. Creates answer with a resource name. */
+const NOTHING_PROVISIONED: readonly StubRule[] = [
+  ['*compute resource-policies describe*', 1, ''],
+  ['*compute disks describe*resourcePolicies*', 0, '{}\\n'],
+  ['*storage buckets describe*', 1, ''],
+  ['*monitoring channels list*', 0, ''],
+  ['*monitoring channels create*', 0, `${CHANNEL_NAME}\\n`],
+  ['*monitoring uptime list-configs*', 0, ''],
+  ['*monitoring uptime create*', 0, `${UPTIME_NAME}\\n`],
+  ['*logging metrics describe*', 1, ''],
+  ['*monitoring policies list*', 0, ''],
+  ['*monitoring policies create*', 0, 'projects/anycognition-whim/alertPolicies/9001\\n'],
+  ['*billing budgets list*', 0, ''],
+];
+
+interface ProvisionRun extends ScriptRun {
+  readonly calls: string[];
+  /** Each file a gcloud call read, parsed, keyed by the file's name, the last one winning. */
+  readonly files: Map<string, Record<string, unknown>>;
+}
+
+function provisionAgainst(state: readonly StubRule[], values: Readonly<Record<string, string>> = PROVISION_VALUES): ProvisionRun {
+  let result: ProvisionRun | undefined;
+  withSandbox((sandbox) => {
+    writeRules(sandbox, 'gcloud', [...PROVISION_BASE, ...state]);
+    const run = runScript(sandbox, 'provision.sh', [], values);
+    const captured = path.join(sandbox.stubs, 'from-file');
+    const names = fs.existsSync(captured) ? fs.readdirSync(captured).sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10)) : [];
+    const files = new Map(names.map((name) => [name.replace(/^\d+-/, ''), JSON.parse(fs.readFileSync(path.join(captured, name), 'utf8')) as Record<string, unknown>]));
+    result = { ...run, calls: toolLog(sandbox, 'gcloud'), files };
+  });
+  if (!result) throw new Error('setup: provision sandbox did not run');
+  return result;
+}
+
+function callMatching(calls: readonly string[], pattern: RegExp): string {
+  return calls.find((line) => pattern.test(line)) ?? '';
+}
+
+function specOf(resource: Record<string, unknown> | undefined): string {
+  return String((resource?.userLabels as Record<string, unknown> | undefined)?.whim_spec ?? '');
+}
+
+/** The project as a finished run left it: every list and describe answers with what that run
+ *  created, read back from its gcloud calls and the files they took. */
+function stateAfter(run: ProvisionRun, budgetAmount = PROVISION_VALUES.WHIM_MONTHLY_BUDGET_USD): StubRule[] {
+  const row = (...fields: string[]): string => fields.join('\\t');
+  const channel = run.files.get('channel-email.json');
+  const uptimeCall = callMatching(run.calls, / monitoring uptime create /);
+  const uptimeDisplay = / monitoring uptime create (.+?) --resource-type/.exec(uptimeCall)?.[1] ?? '';
+  const uptimeSpec = /whim_spec=([0-9a-f]+)/.exec(uptimeCall)?.[1] ?? '';
+  const keepDays = /--max-retention-days (\d+)/.exec(callMatching(run.calls, /resource-policies create snapshot-schedule /))?.[1] ?? '';
+  const attached = /--resource-policies (\S+)/.exec(callMatching(run.calls, / add-resource-policies /))?.[1] ?? '';
+  const policies = [...run.files].filter(([name]) => name.startsWith('policy-')).map(([, policy], index) => row(String(policy.displayName), `projects/anycognition-whim/alertPolicies/${index}`, specOf(policy)));
+  const metrics: StubRule[] = [...run.files]
+    .filter(([name]) => name.startsWith('metric-'))
+    .map(([name, metric]) => [`*logging metrics describe ${name.replace(/^metric-|\.json$/g, '')} *`, 0, `${String(metric.description)}\\n`]);
+  return [
+    ['*compute resource-policies describe*', 0, `${keepDays}\\n`],
+    ['*compute disks describe*resourcePolicies*', 0, `{"resourcePolicies": ["https://www.googleapis.com/compute/v1/projects/anycognition-whim/regions/northamerica-northeast1/resourcePolicies/${attached}"]}\\n`],
+    ['*storage buckets describe*', 0, ''],
+    ['*monitoring channels list*', 0, `${row(String(channel?.displayName), CHANNEL_NAME, specOf(channel))}\\n`],
+    ['*monitoring uptime list-configs*', 0, `${row(uptimeDisplay, UPTIME_NAME, uptimeSpec, API_HOST)}\\n`],
+    ...metrics,
+    ['*monitoring policies list*', 0, policies.map((line) => `${line}\\n`).join('')],
+    ['*billing budgets list*', 0, `${row('Whim monthly spend', BUDGET_NAME, budgetAmount, CHANNEL_NAME)}\\n`],
+    ...NOTHING_PROVISIONED,
+  ];
+}
+
+const CHANGING_CALL = / (?:create|update|add-resource-policies) /;
+
+/** Cloud Logging's severity order. */
+const SEVERITY_ORDER = ['DEFAULT', 'DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'];
+
+/** Whether a Logs Explorer filter of `term AND term ...` matches one server line as the Ops Agent
+ *  ships it (handoff/log-shipping.md: pino fields under jsonPayload, the docker log, pino's
+ *  severity). Only the term forms the alerts use are understood; any other throws, so a new form
+ *  gets a case here instead of passing unread. */
+function filterMatches(filter: string, line: Readonly<Record<string, unknown>>): boolean {
+  return filter.split(' AND ').every((term) => {
+    if (term === 'log_id("docker")') return true;
+    const field = /^jsonPayload\.(\w+)="([^"]*)"$/.exec(term);
+    if (field) return line[field[1]!] === field[2];
+    const numeric = /^jsonPayload\.(\w+)=(-?\d+)$/.exec(term);
+    if (numeric) return line[numeric[1]!] === Number(numeric[2]);
+    const severity = /^severity>=([A-Z]+)$/.exec(term);
+    if (severity) return SEVERITY_ORDER.indexOf(String(line.severity)) >= SEVERITY_ORDER.indexOf(severity[1]!);
+    throw new Error(`setup: filter term ${term} is not understood`);
+  });
+}
+
+/** The structural `402` `isCreditExhaustedError` (`../src/generation/model.ts`) detects. */
+class FakeProviderCreditError extends Error {
+  readonly status = 402;
+}
+
+/** Always fails the content-policy check — the credit-exhausted filter's red case: it shares
+ *  status 503 with `budget_exhausted` and must NOT match this alert. */
+class AlwaysUnavailablePolicy implements ContentPolicy {
+  async check(): Promise<PolicyCheckResult> {
+    throw new PolicyUnavailableError('deploy-config test: classifier down');
+  }
+}
+
+const CREDIT_TEST_DEVICE_ID = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
+
+/** Every log line the real server writes for the "credit exhausted" alert's two sources — a
+ *  pre-admission `budget_exhausted` refusal (the cached operator credit is already below the
+ *  floor) and a mid-generation provider `402` (`scope="run" msg="provider credit exhausted"`,
+ *  logged by `generation/machine.ts`'s `endOnThrow`) — plus one `policy_unavailable` refusal, the
+ *  filter's red case. */
+async function creditAlertSourceLines(): Promise<Record<string, unknown>[]> {
+  const headers = { 'content-type': 'application/json', 'x-whim-device': CREDIT_TEST_DEVICE_ID };
+  const post = (app: ReturnType<typeof createApp>, route: string, body: unknown): Promise<Response | typeof TIMED_OUT> =>
+    within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
+
+  const capture = captureLogs();
+  try {
+    invalidateCreditCache();
+    const lowCredit: CreditTransport = {
+      lookupKey: async () => ({ status: 200, bodyText: JSON.stringify({ data: { limit_remaining: 0.1 } }) }),
+    };
+    const budgetApp = createApp({
+      pipeline: createStubPipeline(0),
+      usageStore: new InMemoryUsageStore(),
+      config: { ...loadServerConfig({}), minCreditUsd: 0.5 },
+      creditTransport: lowCredit,
+    });
+    const budgetRes = await post(budgetApp, '/v1/clarify', { prompt: 'a tip splitter' });
+    if (budgetRes === TIMED_OUT || budgetRes.status !== 503) {
+      throw new Error(`setup: the budget_exhausted refusal answered ${budgetRes === TIMED_OUT ? 'nothing' : budgetRes.status}`);
+    }
+
+    const policyApp = createApp({
+      pipeline: createStubPipeline(0),
+      usageStore: new InMemoryUsageStore(),
+      config: loadServerConfig({}),
+      policy: cachedPolicy(new AlwaysUnavailablePolicy()),
+    });
+    const policyRes = await post(policyApp, '/v1/clarify', { prompt: 'a tip splitter' });
+    if (policyRes === TIMED_OUT || policyRes.status !== 503) {
+      throw new Error(`setup: the policy_unavailable refusal answered ${policyRes === TIMED_OUT ? 'nothing' : policyRes.status}`);
+    }
+
+    invalidateCreditCache();
+    const roster = defaultModelRoster('vendor/rewrite-g', 'vendor/engineer-g');
+    const model = new ScriptedModelClient(roster, [{ role: 'plan', deltas: [], error: new FakeProviderCreditError('insufficient credit') }]);
+    const clock: Clock = { now: () => Date.now() };
+    const genApp = createApp({ pipeline: machinePipeline(model, clock, roster), usageStore: new InMemoryUsageStore(), config: loadServerConfig({}) });
+    const genRes = await post(genApp, '/v1/generate', { prompt: 'a tip splitter' });
+    if (genRes === TIMED_OUT) throw new Error('setup: /v1/generate did not answer in time');
+    const drained = await within(readSseResponse(genRes));
+    if (drained === TIMED_OUT) throw new Error('setup: the /v1/generate stream did not settle in time');
+  } finally {
+    capture.stop();
+  }
+  return capture.records;
+}
+
+/** Every line the real server logs for one report, one error diagnostic and one warning diagnostic. */
+async function realAlertSourceLines(): Promise<Record<string, unknown>[]> {
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), config: loadServerConfig({}) });
+  const headers = {
+    'content-type': 'application/json',
+    'x-whim-device': 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3',
+    [PLATFORM_HEADER]: 'android',
+    [APP_VERSION_HEADER]: '1.2.0',
+    [BUILD_HEADER]: '382000',
+    [CONSENT_HEADER]: '2',
+  };
+  const post = async (route: string, body: unknown): Promise<number> => {
+    const res = await within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
+    if (res === TIMED_OUT) throw new Error(`setup: ${route} did not answer in time`);
+    return res.status;
+  };
+  const capture = captureLogs();
+  try {
+    const report = await post('/v1/report', { reason: 'offensive', note: 'MARKER-NOTE', appName: 'MARKER-APP', prompt: 'MARKER-PROMPT', source: 'MARKER-SOURCE' });
+    const record = (level: string): Record<string, unknown> => ({ at: Date.now(), level, channel: 'whim:launcher', message: `${level} probe` });
+    const diagnostics = await post('/v1/diagnostics', { osVersion: '14', records: [record('error'), record('warn')] });
+    if (report !== 202 || diagnostics !== 204) throw new Error(`setup: report answered ${report}, diagnostics ${diagnostics}`);
+  } finally {
+    capture.stop();
+  }
+  return capture.records;
+}
+
+function policyFile(name: string): { conditions: Array<{ conditionMatchedLog?: { filter: string; labelExtractors?: Record<string, string> } }>; documentation: { content: string } } {
+  return JSON.parse(readRepoFile(`deploy/monitoring/${name}`)) as ReturnType<typeof policyFile>;
+}
+
+async function alertFilterTests(): Promise<void> {
+  section('Deploy artifacts: the log-based alerts match the lines the real server writes');
+  const lines = await realAlertSourceLines();
+  const matching = (filter: string): Array<Record<string, unknown>> => lines.filter((line) => filterMatches(filter, line));
+
+  const report = policyFile('policy-report.json').conditions[0]?.conditionMatchedLog;
+  const reportFilter = report?.filter ?? '';
+  const reportLines = matching(reportFilter);
+  eq('the report alert matches exactly the one "report accepted" line a report writes', reportLines.map((line) => line.msg), ['report accepted']);
+  const extractors = Object.entries(report?.labelExtractors ?? {});
+  const extracted = Object.fromEntries(extractors.map(([label, rule]) => [label, reportLines[0]?.[/^EXTRACT\(jsonPayload\.(\w+)\)$/.exec(rule)?.[1] ?? '']]));
+  eq('  ... and its email carries only that line\'s report id and reason', extracted, { reportId: reportLines[0]?.reportId, reason: 'offensive' });
+  const labelsUsed = [...policyFile('policy-report.json').documentation.content.matchAll(/\$\{log\.extracted_label\.(\w+)\}/g)].map((match) => match[1]);
+  check('  ... and its text names no label it does not extract', labelsUsed.length > 0 && labelsUsed.every((label) => extractors.some(([name]) => name === label)), JSON.stringify(labelsUsed));
+  check('  ... none of which holds the note, app name, prompt or source', !JSON.stringify(extracted).includes('MARKER'), JSON.stringify(extracted));
+  eq('  red: the same filter on another scope matches nothing', matching(plant(reportFilter, 'scope="report"', 'scope="reports"')).length, 0);
+
+  const deviceFilter = policyFile('policy-device-error.json').conditions[0]?.conditionMatchedLog?.filter ?? '';
+  eq('the device-error alert matches the error diagnostic and not the warning', matching(deviceFilter).map((line) => line.msg), ['error probe']);
+  eq('  red: at WARNING it would match both', matching(deviceFilter.replace('severity>=ERROR', 'severity>=WARNING')).map((line) => line.msg), ['error probe', 'warn probe']);
+
+  const creditLines = await creditAlertSourceLines();
+  const creditMatching = (filter: string): Array<Record<string, unknown>> => creditLines.filter((line) => filterMatches(filter, line));
+  const creditConditions = policyFile('policy-credit-exhausted.json').conditions;
+  const budgetFilter = creditConditions[0]?.conditionMatchedLog?.filter ?? '';
+  const providerFilter = creditConditions[1]?.conditionMatchedLog?.filter ?? '';
+  eq(
+    "the credit-exhausted alert's first condition matches the budget_exhausted refusal and nothing else",
+    creditMatching(budgetFilter).map((line) => line.error),
+    ['budget_exhausted'],
+  );
+  eq(
+    '  ... its second condition matches the mid-generation provider 402 line and nothing else',
+    creditMatching(providerFilter).map((line) => line.msg),
+    ['provider credit exhausted'],
+  );
+  const weakerFilter = 'log_id("docker") AND jsonPayload.status=503';
+  check(
+    '  red: a status=503-only filter is not discriminating — it also catches the policy_unavailable refusal, which shares 503 with budget_exhausted',
+    creditMatching(weakerFilter).some((line) => line.error === 'policy_unavailable'),
+    JSON.stringify(creditMatching(weakerFilter).map((line) => line.error)),
+  );
+}
+
+function provisionMonitoringTests(): void {
+  section('Deploy scripts: provision.sh alerts, budget, snapshots and source maps (developer-observability D10)');
+  const policyFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'monitoring')).filter((name) => /^policy-.*\.json$/.test(name));
+
+  const first = provisionAgainst(NOTHING_PROVISIONED);
+  eq('a first provision run succeeds', first.status, 0);
+  const created = (pattern: RegExp): number => first.calls.filter((line) => pattern.test(line)).length;
+  eq(
+    '  ... creating the channel, the uptime check, the log metric, every policy, the budget, the bucket and the snapshot schedule',
+    [created(/ beta monitoring channels create /), created(/ monitoring uptime create /), created(/ logging metrics create /), created(/ monitoring policies create /), created(/ billing budgets create /), created(/ storage buckets create gs:\/\/anycognition-whim-sourcemaps /), created(/ resource-policies create snapshot-schedule /), created(/ disks add-resource-policies whim-data /)],
+    [1, 1, 1, policyFiles.length, 1, 1, 1, 1],
+  );
+  const channel = first.files.get('channel-email.json');
+  eq('  ... the channel emails WHIM_ALERT_EMAIL', (channel?.labels as Record<string, unknown> | undefined)?.email_address, PROVISION_VALUES.WHIM_ALERT_EMAIL);
+  const policies = [...first.files].filter(([name]) => name.startsWith('policy-'));
+  check(
+    '  ... every policy notifies exactly the channel the run created',
+    policies.length === policyFiles.length && policies.every(([, policy]) => JSON.stringify(policy.notificationChannels) === JSON.stringify([CHANNEL_NAME])),
+    JSON.stringify(policies.map(([, policy]) => policy.notificationChannels)),
+  );
+  check('  ... the API-down policy watches the uptime check the run created', JSON.stringify(first.files.get('policy-api-down.json')).includes(`check_id=\\"${UPTIME_NAME.split('/').at(-1)}\\"`));
+  const uptimeCall = callMatching(first.calls, / monitoring uptime create /);
+  const regions = /--regions (\S+)/.exec(uptimeCall)?.[1]?.split(',') ?? [];
+  check(`  ... the uptime check probes https://${API_HOST}/healthz every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && uptimeCall.includes('--path /healthz') && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
+  const budgetCall = callMatching(first.calls, / billing budgets create /);
+  check(
+    '  ... the budget covers WHIM_MONTHLY_BUDGET_USD on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
+    budgetCall.includes(`--billing-account ${PROVISION_VALUES.WHIM_BILLING_ACCOUNT}`) && budgetCall.includes('--budget-amount 250USD') && ['0.5', '0.9', '1.0'].every((percent) => budgetCall.includes(`--threshold-rule percent=${percent}`)) && budgetCall.includes(`--notifications-rule-monitoring-notification-channels ${CHANNEL_NAME}`),
+    budgetCall,
+  );
+  check('  ... the source-map bucket is private', /storage buckets create \S+ .*--uniform-bucket-level-access --public-access-prevention/.test(callMatching(first.calls, / storage buckets create /)));
+
+  // specs/server-observability "Rerunning provisioning is a no-op".
+  const second = provisionAgainst(stateAfter(first));
+  eq('a second run against what the first created succeeds', second.status, 0);
+  eq('  ... planning no change: no create, update or attach', second.calls.filter((line) => CHANGING_CALL.test(line)), []);
+  check('  ... and saying each resource is unchanged', (second.stdout.match(/^unchanged /gm) ?? []).length >= policyFiles.length + 5, second.stdout);
+
+  const newEmail = provisionAgainst(stateAfter(first), { ...PROVISION_VALUES, WHIM_ALERT_EMAIL: 'someone-else@example.test' });
+  eq('a rerun with a new alert address updates the one channel in place and nothing else', newEmail.calls.filter((line) => CHANGING_CALL.test(line)).map((line) => / (beta monitoring channels update) /.exec(line)?.[1] ?? line), ['beta monitoring channels update']);
+  const newBudget = provisionAgainst(stateAfter(first), { ...PROVISION_VALUES, WHIM_MONTHLY_BUDGET_USD: '400' });
+  const budgetChanges = newBudget.calls.filter((line) => CHANGING_CALL.test(line));
+  check('a rerun with a new monthly amount updates the one budget to it and nothing else', budgetChanges.length === 1 && budgetChanges[0]!.includes(`billing budgets update ${BUDGET_NAME} `) && budgetChanges[0]!.includes('--budget-amount 400USD'), budgetChanges.join(' / '));
+
+  const duplicated = stateAfter(first).map((rule): StubRule => (rule[0] === '*monitoring policies list*' ? [rule[0], rule[1], `${rule[2] ?? ''}${(rule[2] ?? '').split('\\n')[0]}\\n`] : rule));
+  const twice = provisionAgainst(duplicated);
+  check('a policy display name held by two policies refuses, naming it, rather than guessing which to update', twice.status === 1 && twice.stderr.includes('two resources are named'), twice.stderr);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1698,6 +2131,14 @@ function imageTests(files: ReadonlyMap<string, string>, playwrightVersion: strin
   checkClean('.gcloudignore honours .gitignore and keeps env files out of the upload', requiredLineProblems('.gcloudignore', files.get('.gcloudignore') ?? '', ['#!include:.gitignore', '.git', '**/node_modules', '**/.env']));
   checkClean('cloudbuild.yaml builds linux/amd64 tagged with the commit SHA, with a pinned builder and no secret', cloudbuildProblems(files.get('deploy/cloudbuild.yaml') ?? ''));
   checkCaught('  red: a build-time secret fails', cloudbuildProblems(`${files.get('deploy/cloudbuild.yaml') ?? ''}availableSecrets: {}\n`), 'availableSecrets');
+  const cloudbuild = files.get('deploy/cloudbuild.yaml') ?? '';
+  checkCaught('  red: a second build arg fails', cloudbuildProblems(plant(cloudbuild, `      - ${COMMIT_BUILD_ARG}\n`, `      - ${COMMIT_BUILD_ARG}\n      - --build-arg=NODE_ENV=development\n`)), '--build-arg other than');
+  checkCaught('  red: a commit build arg not taken from $COMMIT_SHA fails', cloudbuildProblems(plant(cloudbuild, COMMIT_BUILD_ARG, '--build-arg=WHIM_COMMIT=$_LAST_GOOD')), '--build-arg other than');
+  checkCaught('  red: a build without the commit arg fails', cloudbuildProblems(plant(cloudbuild, `      - ${COMMIT_BUILD_ARG}\n`, '')), `lacks ${COMMIT_BUILD_ARG}`);
+  checkClean('the runtime stage bakes the build arg into WHIM_COMMIT, "unknown" by default', commitBakeProblems(dockerfile));
+  checkCaught('  red: a runtime stage that drops the ENV fails', commitBakeProblems(plant(dockerfile, 'ENV WHIM_COMMIT=$WHIM_COMMIT\n', '')), 'lacks ENV WHIM_COMMIT');
+  checkClean('no deploy file outside the image build names WHIM_COMMIT', runtimeCommitProblems(files));
+  checkCaught('  red: a compose environment setting WHIM_COMMIT fails', runtimeCommitProblems(withFile(files, 'deploy/compose.yaml', `${files.get('deploy/compose.yaml') ?? ''}# WHIM_COMMIT=${TAG}\n`)), 'deploy/compose.yaml names WHIM_COMMIT');
 }
 
 function composeTests(files: ReadonlyMap<string, string>, ctx: ComposeContext): void {
@@ -1716,8 +2157,12 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   red('dropping flush_interval -1 fails', plant(caddyfile, '\t\tflush_interval -1\n', ''), 'flush_interval -1');
 }
 
-/** Only stub binaries run: curl stops bootstrap before disk or service operations. */
-function runVmFixture(script: string, args: string[] = []): { status: number | null; calls: string[][] } {
+/** Knobs for the stubs: `STUB_DOCKER_OK=1` answers docker with success (Docker already installed),
+ *  `STUB_CURL_OK=1` lets a download succeed, `STUB_GPG_FINGERPRINT` is the fingerprint gpg reports. */
+type VmStubEnv = Readonly<Partial<Record<'STUB_DOCKER_OK' | 'STUB_CURL_OK' | 'STUB_GPG_FINGERPRINT', string>>>;
+
+/** Only stub binaries run: curl (or a refused key) stops bootstrap before disk or service operations. */
+function runVmFixture(script: string, args: string[] = [], stubEnv: VmStubEnv = {}): { status: number | null; calls: string[][]; stderr: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-vm-commands-'));
   try {
     const log = path.join(dir, 'calls.jsonl');
@@ -1728,18 +2173,20 @@ const tool = path.basename(process.argv[1]);
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify([tool, ...args]) + '\\n');
 if (tool === 'id') console.log('0');
-if (tool === 'curl') process.exit(71);
+if (tool === 'gpg') console.log(['fpr', '', '', '', '', '', '', '', '', process.env.STUB_GPG_FINGERPRINT, ''].join(':'));
+if (tool === 'curl' && process.env.STUB_CURL_OK !== '1') process.exit(71);
+if (tool === 'docker' && process.env.STUB_DOCKER_OK === '1') process.exit(0);
 if (tool === 'docker' || args.includes('-L') || args.includes('-D')) process.exit(1);
 `;
-    for (const tool of ['modprobe', 'iptables', 'ip6tables', 'id', 'docker', 'apt-get', 'install', 'curl', 'systemctl']) {
+    for (const tool of ['modprobe', 'iptables', 'ip6tables', 'id', 'docker', 'apt-get', 'install', 'curl', 'gpg', 'systemctl']) {
       fs.writeFileSync(path.join(dir, tool), stub, { mode: 0o755 });
     }
     const file = path.join(dir, 'script.sh');
     fs.writeFileSync(file, script);
-    const run = runFromPath('bash', [file, ...args], { encoding: 'utf8', timeout: 10_000, env: { PATH: `${dir}:/usr/bin:/bin`, COMMAND_LOG: log } });
+    const run = runFromPath('bash', [file, ...args], { encoding: 'utf8', timeout: 10_000, env: { PATH: `${dir}:/usr/bin:/bin`, COMMAND_LOG: log, ...stubEnv } });
     if (run.error) throw run.error;
     const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]) : [];
-    return { status: run.status, calls };
+    return { status: run.status, calls, stderr: run.stderr };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1941,10 +2388,170 @@ function logAgeCapTests(files: ReadonlyMap<string, string>): void {
   checkCaught('  red: an install step that never enables the timer fails', logAgeCapInstallProblems(plant(bootstrap, `  systemctl enable --now ${LOG_AGE_CAP_UNIT}.timer\n`, ''), service), 'the timer is not enabled');
 }
 
+const OPS_AGENT_KEY_URL = 'https://packages.cloud.google.com/apt/doc/apt-key.gpg';
+
+/** A key whose fingerprint is not Google's signer: bootstrap stops before the apt source, the
+ *  package or any service is touched. */
+function bootstrapOpsAgentKeyTests(files: ReadonlyMap<string, string>): void {
+  section('Deploy scripts: Ops Agent signing key');
+  const forged = 'F'.repeat(40);
+  const run = runVmFixture(files.get('deploy/vm/bootstrap.sh') ?? '', ['--region', 'test-region'], {
+    STUB_DOCKER_OK: '1',
+    STUB_CURL_OK: '1',
+    STUB_GPG_FINGERPRINT: forged,
+  });
+  eq('bootstrap refuses an Ops Agent key with another fingerprint', run.status, 1);
+  check('  ... naming the fingerprint it got', run.stderr.includes(`Ops Agent apt key has fingerprint '${forged}'`), run.stderr);
+  const touched = run.calls.filter((call) => call[0] === 'apt-get' || call[0] === 'systemctl' || call.some((arg) => arg.includes('google-cloud-ops-agent/config.yaml')));
+  check('  ... before installing the agent, its config or restarting a service', touched.length === 0, JSON.stringify(touched));
+  const curl = run.calls.find((call) => call[0] === 'curl' && call.includes(OPS_AGENT_KEY_URL)) ?? [];
+  check('Ops Agent signing key starts at HTTPS', curl.length > 0, JSON.stringify(run.calls));
+  for (const option of ['--proto', '--proto-redir']) {
+    const index = curl.indexOf(option);
+    check(`Ops Agent signing key constrains ${option} to HTTPS`, index >= 0 && curl[index + 1] === '=https', JSON.stringify(curl));
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Log shipping (developer-observability D8): deploy/vm/ops-agent.yaml, read with the compose-subset
+// parser above. Its level regex and severity map run over the server's real pino lines, the way
+// fluent-bit applies them to the `log` field of a Docker json-file record.
+
+const DOCKER_JSON_LOGS = '/var/lib/docker/containers/*/*-json.log';
+
+/** A one-level YAML flow map (`{a: b, "c": d}`), possibly continued on more-indented lines. */
+function yamlFlowMap(entry: YamlEntry | undefined): Map<string, string> {
+  const text = [entry?.inline ?? '', ...(entry?.body ?? []).map((line) => line.trim())].join(' ').trim();
+  if (!text.startsWith('{') || !text.endsWith('}')) throw new Error(`not a flow map: ${text.slice(0, 40)}`);
+  return new Map(
+    text
+      .slice(1, -1)
+      .split(',')
+      .map((pair) => pair.trim())
+      .filter((pair) => pair !== '')
+      .map((pair): [string, string] => {
+        const colon = pair.indexOf(':');
+        return [unquote(pair.slice(0, colon).trim()), unquote(pair.slice(colon + 1).trim())];
+      }),
+  );
+}
+
+/** What the config does with one Docker `log` field: the severity it assigns, or undefined. */
+type SeverityOf = (logField: string) => string | undefined;
+
+function agentSeverity(processors: ReadonlyMap<string, YamlEntry>, order: readonly string[]): SeverityOf {
+  const regexName = order.find((name) => {
+    const processor = yamlChild(processors, name);
+    return yamlScalar(processor, 'type') === 'parse_regex' && yamlScalar(processor, 'field') === 'log';
+  });
+  if (!regexName) throw new Error('no parse_regex processor on the log field');
+  const severityName = order.find((name) => yamlChild(yamlChild(processors, name), 'fields').has('severity'));
+  if (!severityName) throw new Error('no processor sets severity');
+  const severity = yamlChild(yamlChild(yamlChild(processors, severityName), 'fields'), 'severity');
+  const group = /^jsonPayload\.(\w+)$/.exec(yamlScalar(severity, 'move_from'))?.[1];
+  if (!group) throw new Error(`severity is not moved from a captured field: ${yamlScalar(severity, 'move_from')}`);
+  // fluent-bit's regex engine (Onigmo, Ruby syntax) anchors ^ and $ at line boundaries: the `m` flag.
+  const regex = new RegExp(yamlScalar(yamlChild(processors, regexName), 'regex'), 'm');
+  const values = yamlFlowMap(severity.get('map_values'));
+  return (logField) => {
+    const groups = regex.exec(logField)?.groups ?? {};
+    // After the regex, the JSON parser merges the line's own fields into the same payload.
+    const payload: Record<string, unknown> = { ...groups, ...(JSON.parse(groups.log ?? logField) as Record<string, unknown>) };
+    const value = payload[group];
+    // map_values compiles to a Lua string comparison: pino's number 30 never matches "30".
+    return typeof value === 'string' ? values.get(value) : undefined;
+  };
+}
+
+function composeLoggingProblems(composeText: string, label: string): string[] {
+  const services = yamlChild(yamlEntries(composeText.split('\n')), 'services');
+  return [...services.keys()].flatMap((name) => {
+    const logging = yamlChild(yamlChild(services, name), 'logging');
+    const driver = yamlScalar(logging, 'driver');
+    const labels = yamlScalar(yamlChild(logging, 'options'), 'labels');
+    return [
+      ...(driver === 'json-file' ? [] : [`${name} logs with ${driver || 'the default driver'}, not json-file, so the agent's receiver and docker compose logs miss it`]),
+      ...(labels === label ? [] : [`${name} logging options label ${JSON.stringify(labels)}, not ${label}, which the agent copies into labels.compose_service`]),
+    ];
+  });
+}
+
+/** The agent ships every container's json-file log with pino's severity, and nothing from the host. */
+function opsAgentProblems(configText: string, composeText: string, pinoLines: readonly string[]): string[] {
+  try {
+    const logging = yamlChild(yamlEntries(configText.split('\n')), 'logging');
+    const metrics = yamlChild(yamlEntries(configText.split('\n')), 'metrics');
+    const receiver = yamlChild(yamlChild(logging, 'receivers'), 'docker');
+    const pipelines = yamlChild(yamlChild(logging, 'service'), 'pipelines');
+    const docker = yamlChild(pipelines, 'docker');
+    const order = yamlList(docker.get('processors'));
+    const processors = yamlChild(logging, 'processors');
+    const problems: string[] = [];
+    if (yamlScalar(receiver, 'type') !== 'files' || !sameList(yamlList(receiver.get('include_paths')), [DOCKER_JSON_LOGS])) {
+      problems.push(`the docker receiver's include_paths are not exactly Docker's json-file logs (${DOCKER_JSON_LOGS})`);
+    }
+    if (!sameList(yamlList(docker.get('receivers')), ['docker'])) problems.push('the docker pipeline does not read the docker receiver');
+    for (const name of order) if (!processors.has(name)) problems.push(`the docker pipeline names an undefined processor ${name}`);
+    for (const [where, defaults] of [['logging', pipelines], ['metrics', yamlChild(yamlChild(metrics, 'service'), 'pipelines')]] as const) {
+      const receivers = yamlFlowMap(defaults.get('default_pipeline')).get('receivers');
+      if (receivers !== '[]') problems.push(`the ${where} default_pipeline is not off (receivers ${receivers ?? 'unset'}), so the agent ships host data`);
+    }
+    const severityOf = agentSeverity(processors, order);
+    for (const line of pinoLines) {
+      const pino = JSON.parse(line) as { level: number; severity?: string };
+      const shipped = severityOf(line);
+      if (shipped === undefined || shipped !== pino.severity) {
+        problems.push(`the agent maps pino level ${pino.level} to ${shipped ?? 'no severity'}, but the line says ${pino.severity ?? 'nothing'}`);
+      }
+    }
+    const fields = yamlChild(yamlChild(processors, order.find((name) => yamlChild(yamlChild(processors, name), 'fields').has('severity')) ?? ''), 'fields');
+    const label = /^jsonPayload\.attrs\."([^"]+)"$/.exec(yamlScalar(yamlChild(fields, 'labels.compose_service'), 'copy_from'))?.[1];
+    if (!label) problems.push('labels.compose_service is not copied from a Docker log label');
+    return [...problems, ...composeLoggingProblems(composeText, label ?? '(none)')];
+  } catch (error) {
+    return [`ops-agent.yaml does not parse: ${(error as Error).message}`];
+  }
+}
+
+/** One line per pino level, from the server's own logger — the lines the agent will read. */
+function realPinoLines(): string[] {
+  const lines: string[] = [];
+  const logger = createServerLogger({
+    level: 'trace',
+    destination: {
+      write(line: string): void {
+        lines.push(line);
+      },
+    },
+  });
+  for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const) logger[level]({ status: 500 }, 'shipping probe');
+  return lines;
+}
+
+function logShippingTests(files: ReadonlyMap<string, string>): void {
+  section('Deploy artifacts: log shipping (Ops Agent)');
+  const config = files.get('deploy/vm/ops-agent.yaml') ?? '';
+  const compose = files.get('deploy/compose.yaml') ?? '';
+  const lines = realPinoLines();
+  check('deploy/vm/ops-agent.yaml is present', config !== '');
+  eq('the probe produced one pino line per level', lines.length, 6);
+  checkClean('the agent tails the json-file logs, maps every pino level to the severity the line carries, ships no host data, and both services keep json-file with the service label', opsAgentProblems(config, compose, lines));
+  const red = (name: string, configText: string, composeText: string, needle: string): void => checkCaught(`  red: ${name}`, opsAgentProblems(configText, composeText, lines), needle);
+  red('mapping pino 50 to WARNING fails', plant(config, '"50": ERROR', '"50": WARNING'), compose, 'maps pino level 50 to WARNING');
+  red('mapping from pino\'s numeric level field fails', plant(config, 'move_from: jsonPayload.level_text', 'move_from: jsonPayload.level'), compose, 'maps pino level 50 to no severity');
+  red('a severity map without pino 30 fails', plant(config, '"30": INFO, ', ''), compose, 'maps pino level 30 to no severity');
+  red('shipping the host syslog fails', plant(config, 'default_pipeline: {receivers: []}', 'default_pipeline: {receivers: [syslog]}'), compose, 'logging default_pipeline is not off');
+  red('tailing another path fails', plant(config, DOCKER_JSON_LOGS, '/var/log/syslog'), compose, 'include_paths');
+  red('a server on the gcplogs driver fails', config, plant(compose, 'driver: json-file', 'driver: gcplogs'), 'whim-server logs with gcplogs');
+  red('a server without the service label fails', config, plant(compose, '        labels: com.docker.compose.service\n', ''), 'whim-server logging options label');
+}
+
 function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
   section('Deploy artifacts: secrets, sandbox, hostnames');
   checkClean('no deploy file sets a secret-named variable to a value or holds a key-shaped value', secretProblems(files));
   checkCaught('  red: a filled server.env.example fails', secretProblems(withFile(files, 'deploy/server.env.example', 'OPENROUTER_API_KEY=abc\n')), 'deploy/server.env.example:1 sets secret-named OPENROUTER_API_KEY');
+  checkCaught('  red: a secret-named value in ops-agent.yaml still fails', secretProblems(withFile(files, 'deploy/vm/ops-agent.yaml', `${files.get('deploy/vm/ops-agent.yaml') ?? ''}api_key: abc\n`)), 'sets secret-named api_key');
+  checkCaught('  red: time_key outside ops-agent.yaml still fails', secretProblems(withFile(files, 'deploy/cloudbuild.yaml', 'time_key: abc\n')), 'deploy/cloudbuild.yaml:1 sets secret-named time_key');
   checkClean('no deploy artifact disables the Chromium sandbox', sandboxFlagProblems(files));
   checkCaught('  red: --no-sandbox in the Dockerfile fails', sandboxFlagProblems(withFile(files, 'deploy/Dockerfile', 'CMD ["chromium", "--no-sandbox"]\n')), 'deploy/Dockerfile disables');
   const apexDomain = apexDomainOf(Object.fromEntries(envEntries(files.get('deploy/defaults.env') ?? '')).WHIM_WEB_HOST ?? '');
@@ -2041,11 +2648,12 @@ export async function runDeployConfigTests(): Promise<void> {
   const serverSources = readFiles(listFilesUnder('server/src'));
   const playwrightVersion = lockfileVersion('playwright');
   const defaults = loadServerConfig({});
-  const defaultHealth = await realHealthBody({});
+  const defaultHealth = await realHealthBody({ WHIM_COMMIT: HEALTH_COMMIT });
   const health: HealthBodies = {
     defaults: defaultHealth,
-    androidRaised: await realHealthBody({ WHIM_MIN_BUILD_ANDROID: '382000' }),
+    androidRaised: await realHealthBody({ WHIM_COMMIT: HEALTH_COMMIT, WHIM_MIN_BUILD_ANDROID: '382000' }),
     preGate: withoutMinBuild(defaultHealth),
+    unbuilt: await realHealthBody({}),
   };
   const egressSubnet = /^readonly SUBNET=(\S+)$/m.exec(files.get('deploy/vm/whim-egress.sh') ?? '')?.[1] ?? '(none)';
   const composeContext: ComposeContext = {
@@ -2063,6 +2671,8 @@ export async function runDeployConfigTests(): Promise<void> {
   caddyTests(files, maxBodyBytes, siteFiles);
   egressIpv6Tests(files);
   bootstrapDownloadTests(files);
+  bootstrapOpsAgentKeyTests(files);
+  logShippingTests(files);
   logAgeCapTests(files);
   scanTests(files, serverSources);
   valuesTests(files);
@@ -2077,6 +2687,8 @@ export async function runDeployConfigTests(): Promise<void> {
   loadtestStartTests();
   loadtestDriveTests();
   provisionTests();
+  provisionMonitoringTests();
+  await alertFilterTests();
   await runLoadTestTests();
   runbookTests();
 }

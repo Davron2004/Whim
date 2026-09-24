@@ -61,6 +61,8 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_LIMIT_PROBE_CONCURRENCY', field: 'maxConcurrentProbes', validValue: '5', parsed: 5 },
   { key: 'WHIM_LIMIT_REPORTS_PER_DEVICE_DAY', field: 'limitReportsPerDeviceDay', validValue: '11', parsed: 11 },
   { key: 'WHIM_LIMIT_REPORTS_PER_DAY', field: 'limitReportsPerDay', validValue: '301', parsed: 301 },
+  { key: 'WHIM_LIMIT_DIAGNOSTICS_PER_DEVICE_DAY', field: 'limitDiagnosticsPerDeviceDay', validValue: '201', parsed: 201 },
+  { key: 'WHIM_LIMIT_DIAGNOSTICS_PER_DAY', field: 'limitDiagnosticsPerDay', validValue: '20001', parsed: 20_001 },
   { key: 'WHIM_MAX_BODY_BYTES_UNARY', field: 'maxBodyBytesUnary', validValue: '70000', parsed: 70_000 },
   { key: 'WHIM_MAX_BODY_BYTES_GENERATE', field: 'maxBodyBytesGenerate', validValue: '2000000', parsed: 2_000_000 },
   { key: 'WHIM_MAX_BODY_BYTES_REPORT', field: 'maxBodyBytesReport', validValue: '600000', parsed: 600_000 },
@@ -157,6 +159,21 @@ export function runConfigTests(): void {
     for (const key of ['WHIM_MIN_BUILD_IOS', 'WHIM_MIN_BUILD_ANDROID']) {
       check(`${key}: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ [key]: raw })), key));
     }
+  }
+
+  section('WHIM_COMMIT (developer-observability D13): a full SHA or "unknown", nothing else');
+
+  eq('unset: the commit is "unknown"', defaults.commit, 'unknown');
+  eq('the Dockerfile default "unknown" stays "unknown"', loadServerConfig(baseEnv({ WHIM_COMMIT: 'unknown' })).commit, 'unknown');
+  const sha = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+  eq('a full lowercase SHA is reported as given', loadServerConfig(baseEnv({ WHIM_COMMIT: sha })).commit, sha);
+  for (const [what, raw] of [
+    ['an abbreviated SHA', sha.slice(0, 7)],
+    ['an uppercase SHA', sha.toUpperCase()],
+    ['a branch name', 'main'],
+    ['an empty value', ''],
+  ] as const) {
+    check(`WHIM_COMMIT: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_COMMIT: raw })), 'WHIM_COMMIT'));
   }
 
   section('A configured keep-period never exceeds its published maximum (specs/device-records)');

@@ -1,0 +1,11 @@
+{
+  "type": "email",
+  "displayName": "Whim alerts",
+  "description": "The owner's alert address. Every Whim alert policy and the spend budget email it (docs/deploy.md, Operating: Alerts).",
+  "labels": {
+    "email_address": "{{ALERT_EMAIL}}"
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

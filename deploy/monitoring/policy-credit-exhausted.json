@@ -1,0 +1,32 @@
+{
+  "displayName": "Whim: credit exhausted",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "A budget_exhausted refusal was logged",
+      "conditionMatchedLog": {
+        "filter": "log_id(\"docker\") AND jsonPayload.msg=\"request\" AND jsonPayload.error=\"budget_exhausted\""
+      }
+    },
+    {
+      "displayName": "A mid-generation provider 402 exhausted the operator's credit",
+      "conditionMatchedLog": {
+        "filter": "log_id(\"docker\") AND jsonPayload.scope=\"run\" AND jsonPayload.msg=\"provider credit exhausted\""
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "3600s"
+  },
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "Whim's own OpenRouter credit is exhausted: generate, clarify and rewrite are refusing (or ending) with `budget_exhausted`. At most one email per hour: check the balance at https://openrouter.ai/credits and top up, then see docs/deploy.md, Operating: Alerts."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

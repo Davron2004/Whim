@@ -45,7 +45,7 @@ export function deployHostLockstepFindings(domain: string, deploy: DeployDefault
   return findings;
 }
 
-function parseSimpleEnv(text: string): Map<string, string> {
+export function parseSimpleEnv(text: string): Map<string, string> {
   const values = new Map<string, string>();
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim();

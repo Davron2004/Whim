@@ -51,6 +51,10 @@ export interface ServerConfig {
   readonly maxConcurrentProbes: number;
   readonly limitReportsPerDeviceDay: number;
   readonly limitReportsPerDay: number;
+  /** `POST /v1/diagnostics`: records one device may send per UTC day, and records every device
+   *  together may send per UTC day (developer-observability D4). */
+  readonly limitDiagnosticsPerDeviceDay: number;
+  readonly limitDiagnosticsPerDay: number;
   readonly maxBodyBytesUnary: number;
   readonly maxBodyBytesGenerate: number;
   readonly maxBodyBytesReport: number;
@@ -74,6 +78,10 @@ export interface ServerConfig {
    *  app-update-gate). `0`, the default, turns the gate off for that platform. */
   readonly minBuildIos: number;
   readonly minBuildAndroid: number;
+
+  /** `WHIM_COMMIT`: the full git SHA the image was built from, baked in by `deploy/Dockerfile`'s
+   *  build arg (developer-observability D13), or `"unknown"` for any other build. */
+  readonly commit: string;
 
   /** Injectable clock for UTC-day arithmetic (admission, the usage ledger). Defaults to
    *  `Date.now`; override via `loadServerConfig`'s `opts.now`. */
@@ -156,6 +164,20 @@ function readMinimumBuild(env: NodeJS.ProcessEnv, name: string): number {
   return Number(raw);
 }
 
+/** A full git commit SHA, as Cloud Build's `$COMMIT_SHA` gives it. */
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
+/** Unset, or the Dockerfile's own default, is `"unknown"`: an image the release pipeline didn't
+ *  build. Anything else must be a full SHA, so `/healthz` never names a commit it can't prove. */
+function readCommit(env: NodeJS.ProcessEnv, name: string): string {
+  const raw = env[name];
+  if (raw === undefined || raw === 'unknown') return 'unknown';
+  if (!COMMIT_SHA.test(raw)) {
+    throw new ServerConfigError(name, `${name} must be a full 40-character lowercase git commit SHA or "unknown", got ${JSON.stringify(raw)}.`);
+  }
+  return raw;
+}
+
 function readFlag(env: NodeJS.ProcessEnv, name: string): boolean {
   return env[name] === '1';
 }
@@ -211,6 +233,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     maxConcurrentProbes: readPositiveInt(env, 'WHIM_LIMIT_PROBE_CONCURRENCY', 2),
     limitReportsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DEVICE_DAY', 10),
     limitReportsPerDay: readPositiveInt(env, 'WHIM_LIMIT_REPORTS_PER_DAY', 300),
+    limitDiagnosticsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_DIAGNOSTICS_PER_DEVICE_DAY', 200),
+    limitDiagnosticsPerDay: readPositiveInt(env, 'WHIM_LIMIT_DIAGNOSTICS_PER_DAY', 20_000),
     maxBodyBytesUnary: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_UNARY', 65_536),
     maxBodyBytesGenerate: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_GENERATE', 1_048_576),
     maxBodyBytesReport: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_REPORT', 524_288),
@@ -229,6 +253,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
 
     minBuildIos: readMinimumBuild(env, 'WHIM_MIN_BUILD_IOS'),
     minBuildAndroid: readMinimumBuild(env, 'WHIM_MIN_BUILD_ANDROID'),
+
+    commit: readCommit(env, 'WHIM_COMMIT'),
 
     now: opts?.now ?? Date.now,
   };

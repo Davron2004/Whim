@@ -11,10 +11,21 @@ deploy/provision.sh --profile event    # or straight onto the event machine type
 ```
 
 Idempotent: creates the Artifact Registry repo, a minimal service account, the VM with its
-persistent disk, firewall rules (80, 443/tcp+udp, IAP-only SSH), and the **empty** Secret Manager
-secret `whim-openrouter-api-key`. It adopts the reserved static IP whose value is `WHIM_STATIC_IP`
-and fails if none exists — it never creates one, because a wrong address would move DNS. It never
-adds a secret version; see "OpenRouter key" below.
+persistent disk and its daily snapshot schedule, firewall rules (80, 443/tcp+udp, IAP-only SSH),
+the **empty** Secret Manager secret `whim-openrouter-api-key`, the private source-map bucket
+`gs://<WHIM_GCP_PROJECT>-sourcemaps`, the alerts in `deploy/monitoring/` and the billing budget (see
+Operating → Alerts). It adopts the reserved static IP whose value is `WHIM_STATIC_IP` and fails if
+none exists — it never creates one, because a wrong address would move DNS. It never adds a secret
+version; see "OpenRouter key" below. It needs `WHIM_ALERT_EMAIL`, `WHIM_BILLING_ACCOUNT` and
+`WHIM_MONTHLY_BUDGET_USD` in the values file, and gcloud's `beta` component for the notification
+channel (`gcloud components install beta`).
+
+Each alert resource is found by display name (the log metric by name) and carries a fingerprint of
+its rendered definition, so a rerun creates what is missing, updates what changed and prints
+`unchanged` for the rest; a second run with the same values changes nothing. Two resources sharing
+one display name make it stop rather than guess: delete the extra one in the console. The uptime
+check's host can't be edited in place, so after a host change it stops and names the check to
+delete.
 
 Then bootstrap the VM itself:
 
@@ -24,23 +35,38 @@ gcloud compute ssh whim-vm --tunnel-through-iap \
   --command 'sudo bash /tmp/whim-vm/bootstrap.sh --region northamerica-northeast1'
 ```
 
-`bootstrap.sh` installs Docker + the compose plugin, formats and mounts the data disk at
+`bootstrap.sh` installs Docker + the compose plugin and the Ops Agent with its log-shipping config
+(see Operating → Logs), formats and mounts the data disk at
 `/mnt/disks/whim-data`, creates the owned data directories, asserts unprivileged user namespaces
 work (Chromium's sandbox needs them), and installs the egress firewall and the daily log age cap
 ("Log retention on the VM" below). Safe to rerun.
 
 ### Persistent-disk snapshots
 
-Not automated by any script here — schedule it once, outside this repo:
+The disk holds the usage ledger, reports and the published site — the only durable state.
+`provision.sh` creates the snapshot schedule `whim-data-daily` (daily at 07:00 UTC, each snapshot
+kept 14 days) and attaches it to `whim-data`. A resource policy can't be edited, so if one by that
+name keeps a different number of days it stops: detach and delete that policy, then rerun.
+
+Restoring the disk from a snapshot (the server is down from step 2 to step 6):
 
 ```sh
-gcloud compute resource-policies create snapshot-schedule whim-data-daily \
-  --region "$WHIM_GCP_REGION" --daily-schedule --start-time 07:00 --max-retention-days 14
-gcloud compute disks add-resource-policies whim-data \
-  --zone "$WHIM_GCP_ZONE" --resource-policies whim-data-daily
+gcloud compute snapshots list --filter='sourceDisk~/whim-data$' --sort-by=~creationTimestamp   # pick SNAPSHOT
+gcloud compute instances stop whim-vm --zone "$WHIM_GCP_ZONE"
+gcloud compute snapshots create whim-data-before-restore --source-disk whim-data \
+  --source-disk-zone "$WHIM_GCP_ZONE"                                # keeps today's state, just in case
+gcloud compute instances detach-disk whim-vm --disk whim-data --zone "$WHIM_GCP_ZONE"
+gcloud compute disks delete whim-data --zone "$WHIM_GCP_ZONE"
+gcloud compute disks create whim-data --zone "$WHIM_GCP_ZONE" --type pd-balanced --source-snapshot SNAPSHOT
+gcloud compute instances attach-disk whim-vm --disk whim-data --device-name whim-data --zone "$WHIM_GCP_ZONE"
+gcloud compute instances start whim-vm --zone "$WHIM_GCP_ZONE"
+deploy/provision.sh    # reattaches the snapshot schedule to the new disk
+deploy/smoke.sh
 ```
 
-The disk holds the usage ledger, reports and the published site — the only durable state.
+The restored filesystem keeps its UUID, so the VM's `/etc/fstab` line mounts it unchanged and the
+containers come back on boot (`restart: unless-stopped`). Delete `whim-data-before-restore` once
+the restore is confirmed.
 
 ## DNS
 
@@ -85,6 +111,9 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
+| `WHIM_ALERT_EMAIL` | for `provision.sh` | where every alert and the budget email go (Operating → Alerts) |
+| `WHIM_BILLING_ACCOUNT` | for `provision.sh` | the billing account id (`XXXXXX-XXXXXX-XXXXXX`) the spend budget is created on |
+| `WHIM_MONTHLY_BUDGET_USD` | for `provision.sh` | the budget's monthly amount in whole US dollars; it emails at 50, 90 and 100 % |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).
 
@@ -146,13 +175,17 @@ deploy/smoke.sh --pages-only  # DNS + pages only
 What each check means:
 
 - **DNS** — both hostnames resolve to `WHIM_STATIC_IP` only, no `AAAA`.
-- **`/healthz`** — `200` with a JSON body holding `"ok":true`, `"service":"whim-server"` and
-  `"minBuild":{"ios":0,"android":0}`, with the two minimums your values file sets in place of the
-  zeros: the boot self-test (a real generation through the sandbox) passed, this isn't a stray
-  load-test container (its `/healthz` would name `whim-server-loadtest`), and the minimum builds you
-  deployed are the ones the server enforces. A server from before the minimum-build gate answers
-  with no `minBuild` at all: smoke passes it with one `WARN` line when both minimums are `0`, and
-  fails when either is raised, since that server cannot enforce it.
+- **`/healthz`** — `200` with a JSON body holding `"ok":true`, `"service":"whim-server"`, the
+  `"commit"` the image was built from and `"minBuild":{"ios":0,"android":0}`, with the two minimums
+  your values file sets in place of the zeros: the boot self-test (a real generation through the
+  sandbox) passed, this isn't a stray load-test container (its `/healthz` would name
+  `whim-server-loadtest`), and the minimum builds you deployed are the ones the server enforces.
+  `commit` is baked into the image by Cloud Build (`WHIM_COMMIT`, from the same SHA that tags it);
+  standalone, smoke accepts any full 40-character SHA and fails on `"unknown"` (an image the
+  release pipeline didn't build). `deploy.sh` runs `deploy/smoke.sh --commit <sha>` with the SHA it
+  rolled out, so a container still serving the previous image fails, naming both SHAs. A server
+  without `minBuild` passes the minimum-build check with one `WARN` line when both minimums are `0`,
+  and fails it when either is raised, since that server cannot enforce it.
 - **`/v1/generate` without a device header → `400`** — the identity gate is live.
 - **`/healthz/sse` frame spacing** — the proxy isn't buffering the stream.
 - **metadata-server fetch blocked from inside the container** — the synthetic run's egress lock is
@@ -195,8 +228,44 @@ interpolate `compose.yaml`. `$C` below stands for
 `sudo -H docker compose --project-directory /opt/whim --file /opt/whim/compose.yaml` (the same
 string the deploy scripts use, from `deploy/lib.sh`).
 
-- **Logs** — `$C logs --since 24h whim-server` (or `logs -f`). Structured JSON via `pino`; no
-  request content, ever.
+- **Logs** — in Logs Explorer (project `WHIM_GCP_PROJECT`), 30 days in the `_Default` bucket. The
+  Ops Agent on the VM host (`deploy/vm/ops-agent.yaml`, installed by `bootstrap.sh`) ships both
+  containers' json-file logs, 1–4 s behind. Structured JSON via `pino`, redacted at the serializer:
+  no request content, ever. Each pino field is a typed `jsonPayload` field, and severity comes from
+  the pino level. Save these queries:
+
+  | Query | Filter |
+  | --- | --- |
+  | One request (the `x-whim-request-id` a client reports) | `log_id("docker") jsonPayload.requestId="<id>"` |
+  | Terminal failures, by reason | `log_id("docker") jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow |
+  | Device errors | `log_id("docker") jsonPayload.scope="device"` |
+  | Accepted reports | `log_id("docker") jsonPayload.msg="report accepted"` (its `reportId` feeds `reports show` below) |
+  | Warnings and worse | `log_id("docker") severity>=WARNING` |
+
+  `labels.compose_service="whim-server"` or `="caddy"` picks a container. Entries written before the
+  `labels` option in `compose.yaml` was deployed don't have it: use `jsonPayload.pid:*` for pino and
+  `jsonPayload.ts:*` for Caddy. A line that isn't JSON (a crash trace) arrives as the string
+  `jsonPayload.log` with no severity, and a line over 16 KiB arrives split into unparsed pieces.
+  From a terminal, pass the same filter to `gcloud logging read '<filter>' --project
+  "$WHIM_GCP_PROJECT" --freshness 1d`. Fallback on the VM: `$C logs --since 24h whim-server` (or
+  `logs -f`). json-file stays the logging driver so this keeps working.
+  If entries stop arriving, check `systemctl is-active google-cloud-ops-agent-fluent-bit` and
+  `journalctl -u google-cloud-ops-agent` on the VM.
+- **Alerts** — `provision.sh` applies `deploy/monitoring/` (policy JSON, the uptime check's
+  settings, the log metric) and emails everything to `WHIM_ALERT_EMAIL`. Tune a threshold by editing
+  the file and rerunning `provision.sh`. What each email means and the first thing to run:
+
+  | Alert | Fires when | Rate | First command |
+  | --- | --- | --- | --- |
+  | Whim: API down | `https://<WHIM_API_HOST>/healthz` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/smoke.sh` from a laptop: it names the failing layer |
+  | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `$C exec -T whim-server node server/whim-admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
+  | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `$C exec -T whim-server node server/whim-admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
+  | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
+  | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
+  | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET_USD` | once per threshold per month | the Billing reports page for the project, by service |
+
+  "While it lasts" means one email when the condition starts and one when it clears. The budget
+  also emails the billing account's admins.
 - **Reports** — `$C exec -T whim-server node server/whim-admin.mjs reports list [--since N] [--limit N] [--json]`,
   `reports show <id> [--json]`, `reports purge`.
 - **Usage and cost** — `$C exec -T whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
@@ -340,13 +409,16 @@ Roll back with the **current** checkout's `deploy/deploy.sh --tag <sha>`, never 
 older commit and running its `deploy.sh`: an older `deploy/lib.sh` refuses any `deploy.env` line it
 doesn't know (`unknown variable WHIM_MIN_BUILD_IOS`), even an empty one.
 
+Rolling back to an image from before the commit report (developer-observability) leaves a server
+whose `/healthz` has no `commit`: the rollback is live, but smoke fails on that check, so
+`deploy.sh` exits 1 without `done`. Confirm the rest of the smoke output passed, then roll forward
+as soon as you can.
+
 Rolling back to an image from before the minimum-build gate drops the gate: that server answers
-`/healthz` without `minBuild` and serves every build. With both minimums at `0` nothing is lost,
-and smoke passes with one `WARN` line saying so. With either minimum raised, the rollback is live
-but smoke fails for exactly that reason (the server "cannot enforce the configured minimums"), so
-`deploy.sh` exits 1 without `done`. Roll forward to an image with the gate as soon as you can; if
-serving every build is acceptable until then, set both minimums back to `0` in your values file so
-`deploy/smoke.sh` passes again (with the warning).
+`/healthz` without `minBuild` and serves every build. Such an image also predates the commit
+report, so smoke fails on `commit` as above whatever the minimums; with either minimum raised it
+also fails because the server "cannot enforce the configured minimums". Roll forward to an image
+with the gate as soon as you can.
 
 Rotating the OpenRouter key: add a new version to `whim-openrouter-api-key` in Secret Manager, then
 run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version and recreates

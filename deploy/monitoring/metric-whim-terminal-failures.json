@@ -1,0 +1,9 @@
+{
+  "description": "Terminal generation failures: one per terminal failure line the server logs (developer-observability D10). whim_spec {{SPEC}}",
+  "filter": "log_id(\"docker\") AND jsonPayload.msg=\"terminal failure\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1"
+  }
+}

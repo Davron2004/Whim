@@ -12,7 +12,8 @@ import { check, eq, section } from './harness';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
-import { createServerLogger, REDACTED } from '../src/logger';
+import { createServerLogger, log as rootLog, REDACTED } from '../src/logger';
+import { captureLogs } from './log-capture';
 import { type DevLogSinkOptions } from '../src/routes/dev-logs';
 import type { DevLogBatch, DevLogRecord, DevLogSinkPath } from '@whim/contract';
 
@@ -152,6 +153,65 @@ function testRedactionSurvivesCasingAndDepth(): void {
   }
 }
 
+/** Spec (server-observability): "Each pino line SHALL carry a `severity` string … alongside its
+ *  numeric level", and "An error line has error severity" — on every level, not only `error`. */
+function testSeverityNextToTheNumericLevel(): void {
+  section('logging — every line carries a Cloud Logging severity next to its numeric level');
+
+  const lines: string[] = [];
+  const logger = createServerLogger({
+    level: 'trace',
+    destination: {
+      write(line: string): void {
+        lines.push(line);
+      },
+    },
+  });
+  logger.trace('t');
+  logger.debug('d');
+  logger.info('i');
+  logger.warn('w');
+  logger.error('e');
+  logger.fatal('f');
+
+  const parsed = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  eq('each level keeps its numeric pino level', parsed.map((p) => p.level), [10, 20, 30, 40, 50, 60]);
+  eq(
+    'each level carries its Cloud Logging severity name',
+    parsed.map((p) => p.severity),
+    ['DEBUG', 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+  );
+}
+
+/** Spec: "An error line has error severity" on the application's own logger, and "The
+ *  serializer-level redaction SHALL be unchanged" — the formatter must not reopen a path. */
+function testRootErrorLineIsRedactedWithErrorSeverity(): void {
+  section('logging — the root logger\'s error line has severity ERROR and stays redacted');
+
+  const capture = captureLogs();
+  try {
+    rootLog.error(
+      { prompt: 'ERROR-PROMPT-SECRET', fields: { deviceId: DEVICE_ID }, status: 500 },
+      'severity probe',
+    );
+  } finally {
+    capture.stop();
+  }
+
+  const index = capture.records.findIndex((r) => r.msg === 'severity probe');
+  check('the root logger serialized the error line', index >= 0);
+  const line = capture.records[index] ?? {};
+  eq('the error line keeps numeric level 50', line.level, 50);
+  eq('the error line has severity ERROR', line.severity, 'ERROR');
+  eq('its prompt is still the marker', line.prompt, REDACTED);
+  eq('its nested device id is still the marker', (line.fields as Record<string, unknown> | undefined)?.deviceId, REDACTED);
+  eq('its non-sensitive field is untouched', line.status, 500);
+  const raw = capture.raw[index] ?? '';
+  for (const secret of ['ERROR-PROMPT-SECRET', DEVICE_ID]) {
+    check(`the raw value ${secret} appears nowhere in the error line`, !raw.includes(secret));
+  }
+}
+
 /** Spec: "Disabled by default" + "The route is not under the device gate's prefix". */
 async function testSinkIsOffByDefaultAndOutsideV1(): Promise<void> {
   section('log sink — disabled by default, and never under /v1');
@@ -259,6 +319,8 @@ async function testSinkRejectsWhole(): Promise<void> {
 export async function runLoggingTests(): Promise<void> {
   testRedactionAtTheSerializer();
   testRedactionSurvivesCasingAndDepth();
+  testSeverityNextToTheNumericLevel();
+  testRootErrorLineIsRedactedWithErrorSeverity();
   await testSinkIsOffByDefaultAndOutsideV1();
   await testSinkAppendsInOrder();
   await testSinkRejectsWhole();

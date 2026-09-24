@@ -10,7 +10,8 @@
     "sha.js",
     "@babel/preset-env",
     "@babel/runtime",
-    "@react-native/new-app-screen"
+    "@react-native/new-app-screen",
+    "metro-symbolicate"
   ],
   "ignoreExportsUsedInFile": true,
   "workspaces": {

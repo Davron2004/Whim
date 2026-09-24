@@ -31,6 +31,7 @@ import { runProdBuildTests } from './prod-build.suite';
 import { runDeployConfigTests } from './deploy-config.suite';
 import { runFlowbenchTests } from './flowbench.suite';
 import { runRequestEdgeTests } from './request-edge.suite';
+import { runDiagnosticsTests } from './diagnostics.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -58,5 +59,6 @@ await runProdBuildTests();
 await runDeployConfigTests();
 await runFlowbenchTests();
 await runRequestEdgeTests();
+await runDiagnosticsTests();
 
 report();

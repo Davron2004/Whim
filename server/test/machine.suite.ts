@@ -501,8 +501,10 @@ async function testRepairCapExhaustion(): Promise<void> {
     ]),
   });
   const machine = new GenerationMachine(deps);
-  const events = await collect(machine.run(NEW_APP_REQUEST));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(machine.run(NEW_APP_REQUEST, undefined, trace));
   assertCompletedEnvelope('repair-cap exhaustion', events);
+  eq('repair-cap exhaustion: the trace records the repair_exhausted code for the ledger', trace.failureCode, 'repair_exhausted');
 
   eq('repair-cap exhaustion: 3 repair pairs', stageEvents(events, 'repair').length, 6);
   eq('repair-cap exhaustion: repair attempt numbers are 1,2,3', stageEvents(events, 'repair').filter((e) => e.status === 'start').map((e) => e.attempt), [1, 2, 3]);
@@ -531,8 +533,10 @@ async function testPlanReaskThenFailure(): Promise<void> {
   ]);
   const deps = baseDeps({ model });
   const machine = new GenerationMachine(deps);
-  const events = await collect(machine.run(NEW_APP_REQUEST));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(machine.run(NEW_APP_REQUEST, undefined, trace));
   assertCompletedEnvelope('plan re-ask', events);
+  eq('plan re-ask: the trace records the plan_failed code', trace.failureCode, 'plan_failed');
 
   eq('plan re-ask: exactly two plan pairs', stageEvents(events, 'plan').length, 4);
   eq('plan re-ask: no generate stage begins', stageEvents(events, 'generate').length, 0);
@@ -686,8 +690,10 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
     run: scriptedRun([{ contained: false, diagnostics: [] }]),
   });
   const machine = new GenerationMachine(deps);
-  const events = await collect(machine.run(NEW_APP_REQUEST));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(machine.run(NEW_APP_REQUEST, undefined, trace));
   assertCompletedEnvelope('containment failure', events);
+  eq('containment failure: the trace records the containment_failed code', trace.failureCode, 'containment_failed');
 
   eq('containment failure: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
   eq('containment failure: no diagnostic event is emitted', events.filter((e) => e.type === 'diagnostic').length, 0);
@@ -717,8 +723,10 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
     // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
     run: scriptedRun([{ contained: null, diagnostics: [] }]),
   });
-  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST));
+  const trace: RunTrace = { generationIds: [] };
+  const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
   assertCompletedEnvelope('unobserved verdict', events);
+  eq('unobserved verdict: the trace records the run_unverified code', trace.failureCode, 'run_unverified');
 
   eq('unobserved verdict: no repair stage ever begins', stageEvents(events, 'repair').length, 0);
   eq('unobserved verdict: the run stage bracket still closes', stageEvents(events, 'run').map((e) => e.status), ['start', 'done']);
@@ -1098,6 +1106,7 @@ async function testRunTraceCollectsGenerationIds(): Promise<void> {
   await collect(machine.run(NEW_APP_REQUEST, undefined, trace));
 
   eq('RunTrace: one id per model call, in order', trace.generationIds, ['gen-plan-1', 'gen-generate-1']);
+  eq('RunTrace: a delivered run records no failure code', trace.failureCode, undefined);
 }
 
 async function testBuildFailureBecomesADiagnosticAndIsRepairable(): Promise<void> {

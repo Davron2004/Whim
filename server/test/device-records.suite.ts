@@ -120,7 +120,9 @@ async function testMigrationOnPreChangeDatabase(): Promise<void> {
       before.usage.map(() => backfilledDay(RUN_AT)),
     );
     eq('  ... no lifetime total changed', withoutDay(migrated.usage), before.usage);
-    eq('  ... the ledger is untouched', migrated.requests, before.requests);
+    // The same open also adds the ledger's nullable failure_reason (developer-observability D9):
+    // every existing value stays as it was and the new column reads null.
+    eq('  ... the ledger is untouched', migrated.requests, before.requests.map((row) => ({ ...row, failure_reason: null })));
 
     // A second boot, days later: nothing changes, and the backfilled day does NOT move to the
     // second boot's day (moving it would keep an idle phone's totals forever).

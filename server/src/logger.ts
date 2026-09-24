@@ -105,6 +105,20 @@ const REDACT_PATHS: readonly string[] = [
   ),
 ];
 
+/**
+ * pino's numeric level as a Cloud Logging severity name. The Ops Agent on the VM maps severity from
+ * the first `level`/`severity` key of each line (design D8), and pino writes the formatter's keys
+ * first, so the numeric `level` stays first and `severity` rides next to it for any reader that
+ * wants the name. Thresholds rather than a label table, so a custom level still gets a severity.
+ */
+function severityOf(level: number): 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL' {
+  if (level >= 60) return 'CRITICAL';
+  if (level >= 50) return 'ERROR';
+  if (level >= 40) return 'WARNING';
+  if (level >= 30) return 'INFO';
+  return 'DEBUG';
+}
+
 export type ServerLogger = Logger;
 
 export interface ServerLoggerOptions {
@@ -115,6 +129,8 @@ export interface ServerLoggerOptions {
    *  lines are device records, not this process's records. */
   base?: LoggerOptions['base'];
   timestamp?: LoggerOptions['timestamp'];
+  /** Replaces the default formatters, `severity` included — the dev log sink's device records keep
+   *  their own level label instead. */
   formatters?: LoggerOptions['formatters'];
 }
 
@@ -127,6 +143,7 @@ export function createServerLogger(options: ServerLoggerOptions = {}): ServerLog
   const loggerOptions: LoggerOptions = {
     level: process.env.WHIM_LOG_LEVEL ?? 'info',
     redact: { paths: [...REDACT_PATHS], censor: REDACTED },
+    formatters: { level: (_label, level) => ({ level, severity: severityOf(level) }) },
     ...rest,
   };
   return destination ? pino(loggerOptions, destination) : pino(loggerOptions, process.stdout);

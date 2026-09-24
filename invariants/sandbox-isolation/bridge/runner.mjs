@@ -8,7 +8,8 @@
 // the bridge is real, the engine is real; only "RN host" is stood in for by "Node host".
 //
 // Scenarios: storage-reachable round-trip · undeclared-capability denial · stub-authority probe
-// · forged-sysret inertness · sql-injector end-to-end · trusted paint forwarding · + a NEGATIVE
+// · forged-sysret inertness · sql-injector end-to-end · trusted paint forwarding · INV-CUEGATE
+// · INV-ERRFRAME (post-paint handler throw / unhandled rejection → trusted error frame) · + a NEGATIVE
 // CONTROL (a deliberately misconfigured gate that grants undeclared capabilities MUST be flagged
 // red — proving the suite is not vacuously green).
 //
@@ -36,6 +37,25 @@ const { makeHost } = await import(pathToFileURL(shimOut).href);
 const artifacts = JSON.parse(await readFile(join(ROOT, 'src/runtime/generated/runtime-artifacts.json'), 'utf8'));
 const { parts, bundles, appRecords } = artifacts;
 const srcdocB = buildSrcdoc({ parts, channel: 'b' });
+
+// Suite-local fixtures (owner-authored, under ./fixtures): compiled here with the SAME options
+// as build/build.mjs's bundleApp (single IIFE, classic JSX, `tsconfigRaw: '{}'`, vc-sdk/react
+// externals) so they obey the bundle contract without joining the product build's APPS.
+async function bundleLocalFixture(appId, file, name) {
+  const out = await esbuild({
+    entryPoints: [join(HERE, 'fixtures', file)],
+    bundle: true, format: 'iife', globalName: '__WHIM_APP_MODULE__',
+    platform: 'browser', target: 'es2019',
+    tsconfigRaw: '{}',
+    jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
+    inject: [join(ROOT, 'build/react-inject-shim.ts')],
+    external: ['vc-sdk', 'react', 'react-dom', 'react-dom/client'],
+    minify: false, write: false, logLevel: 'warning',
+  });
+  bundles[appId] = out.outputFiles[0].text;
+  appRecords[appId] = { appId, name, manifest: { capabilities: [] }, schemaArtifact: undefined };
+}
+await bundleLocalFixture('error-raiser', 'error-raiser.app.tsx', 'Error Raiser');
 
 const failures = [];
 const notes = [];
@@ -320,6 +340,111 @@ const chromiumBrowser = await chromium.launch();
   record(grantedOk, 'INV-CUEGATE off-set+non-vacuity (invalid_params rejected; granted cues DO fire — exactly the valid two)',
     `off-set→invalid_params=${offsetInvalidParams} valid-cues-fired=${validFired} backend-log=${JSON.stringify(granted.host.cueLog)} ` +
     `(must be exactly haptic:double+sound:chime — proves the gate is a live path AND the forged sysret added no phantom cue)`);
+}
+
+// 9. INV-ERRFRAME (developer-observability task 3.4, device-diagnostics "Mini-app failures reach
+//    the seam as error records") — after the app has painted, a throw in a button handler and an
+//    unhandled rejection each reach the RN host as the EXISTING nonce-authenticated `error`
+//    frame: `trusted: true`, `payload.where` exactly `runtime` / `rejection`, `payload.name` the
+//    error's own class name, and NONE of the message text anywhere in what the host receives (the
+//    message can carry user data). Judged on the frames the outer page forwards to RN, never on
+//    the bundle's own report. Guards against a vacuous pass:
+//      • the frame must arrive within ERRFRAME_BUDGET_MS of the tap; no frame is a FAIL;
+//      • a trusted `paint` must precede the tap (post-paint, not a mount failure);
+//      • the tap must be observed (its `press` ui-event) so a missed click is named as such;
+//      • a benign tap first must produce NO `error` frame (the frame is caused by the throw);
+//      • the leak detector is checked against a planted frame carrying the message.
+//    The forged half: the bundle posts `error` frames with no nonce and with a guessed nonce; the
+//    host page must forward both as `rejected-forgery` and never as a trusted `error`.
+{
+  const ERRFRAME_BUDGET_MS = 3000;
+  const NEEDLES = ['Alice', 'owes 40', 'Lisbon'];
+  const leaks = (frames) => frames.some((f) => { const s = JSON.stringify(f); return NEEDLES.some((n) => s.includes(n)); });
+  const plantedCaught = leaks([{ kind: 'error', trusted: true, payload: { where: 'runtime', name: 'LedgerError', message: 'Alice owes 40 for the Lisbon trip' } }]);
+
+  const framesNow = (page) => page.evaluate(() => globalThis.__rnFrames.map((s) => JSON.parse(s)));
+  async function waitFrames(page, pred, budgetMs) {
+    const deadline = Date.now() + budgetMs;
+    let frames = await framesNow(page);
+    while (!pred(frames) && Date.now() < deadline) {
+      await page.waitForTimeout(50);
+      frames = await framesNow(page);
+    }
+    return { frames, met: pred(frames) };
+  }
+  async function tap(page, label) {
+    for (const f of page.frames()) {
+      try { const b = await f.$(`button:text-is("${label}")`); if (b) { await b.click(); return true; } } catch {}
+    }
+    return false;
+  }
+  const isPaint = (f) => f.kind === 'paint' && f.trusted === true;
+  const isErr = (f) => f.kind === 'error';
+  const pressed = (label) => (fs) => fs.some((f) => f.kind === 'ui-event' && f.payload?.type === 'press' && f.payload?.label === label);
+
+  /** Paint, tap Calm (must stay error-free), tap `label`, then wait for a trusted error frame
+   *  with `where`. Returns everything the checks judge. */
+  async function errorCase(name, label, where) {
+    let seen = null;
+    const r = await scenario(name, 'error-raiser', {
+      drive: async (page) => {
+        const painted = await waitFrames(page, (fs) => fs.some(isPaint), 5000);
+        await tap(page, 'Calm');
+        const calm = await waitFrames(page, pressed('Calm'), ERRFRAME_BUDGET_MS);
+        await page.waitForTimeout(300);
+        const calmErrors = (await framesNow(page)).filter(isErr).length;
+        const tapped = await tap(page, label);
+        const hit = await waitFrames(page, (fs) => fs.some((f) => isErr(f) && f.trusted === true && f.payload?.where === where), ERRFRAME_BUDGET_MS);
+        await page.waitForTimeout(300); // let any duplicate or wrongly-classified frame land too
+        seen = { painted: painted.met, calmSeen: calm.met, calmErrors, tapped, pressSeen: pressed(label)(await framesNow(page)), arrived: hit.met };
+      },
+    });
+    const frames = r.rnFrames;
+    const paintIdx = frames.findIndex(isPaint);
+    const errIdx = frames.findIndex((f) => isErr(f) && f.trusted === true && f.payload?.where === where);
+    const errFrame = errIdx >= 0 ? frames[errIdx] : null;
+    const otherErrors = frames.filter((f) => isErr(f) && f.payload?.where !== where);
+    return { s: seen || {}, frames, paintIdx, errIdx, errFrame, otherErrors, foreignCalls: r.foreignCalls };
+  }
+
+  for (const [name, label, where, errName] of [
+    ['errframe-runtime', 'Throw', 'runtime', 'LedgerError'],
+    ['errframe-rejection', 'Reject', 'rejection', 'SettleError'],
+  ]) {
+    const c = await errorCase(name, label, where);
+    const s = c.s;
+    const postPaint = c.paintIdx >= 0 && c.errIdx > c.paintIdx;
+    const nameOk = c.errFrame?.payload?.name === errName;
+    const leaked = leaks(c.frames);
+    const ok = s.painted === true && s.calmSeen === true && s.calmErrors === 0 && s.tapped === true && s.pressSeen === true &&
+      s.arrived === true && postPaint && nameOk && c.otherErrors.length === 0 && !leaked && plantedCaught && c.foreignCalls === 0;
+    record(ok, `INV-ERRFRAME ${where} (post-paint ${label} tap → trusted error frame, name, no message text)`,
+      `painted=${s.painted} calm-tap seen=${s.calmSeen} errors after calm tap=${s.calmErrors} (want 0) ${label} tapped=${s.tapped} press seen=${s.pressSeen} ` +
+      `trusted error where=${where} within ${ERRFRAME_BUDGET_MS}ms=${s.arrived} after paint=${postPaint} name=${JSON.stringify(c.errFrame?.payload?.name)} (want ${errName}) ` +
+      `other-where error frames=${JSON.stringify(c.otherErrors.map((f) => f.payload?.where))} (want []) message text reached host=${leaked} ` +
+      `detector catches planted message=${plantedCaught} frame=${JSON.stringify(c.errFrame)}`);
+  }
+
+  // Forged half — must hold before and after chain 3.
+  {
+    let seen = null;
+    const r = await scenario('errframe-forged', 'error-raiser', {
+      drive: async (page) => {
+        const painted = await waitFrames(page, (fs) => fs.some(isPaint), 5000);
+        const tapped = await tap(page, 'Forge');
+        const rej = await waitFrames(page, (fs) => fs.filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'error').length >= 2, ERRFRAME_BUDGET_MS);
+        await page.waitForTimeout(300);
+        seen = { painted: painted.met, tapped, rejectedBoth: rej.met };
+      },
+    });
+    const s = seen || {};
+    const rejected = r.rnFrames.filter((f) => f.kind === 'rejected-forgery' && f.forgedKind === 'error');
+    const acceptedForged = r.rnFrames.filter((f) => isErr(f) && (f.trusted === true || f.payload?.name === 'ForgedError'));
+    const ok = s.painted === true && s.tapped === true && s.rejectedBoth === true && rejected.every((f) => f.trusted === false) && acceptedForged.length === 0;
+    record(ok, 'INV-ERRFRAME forged (nonce-less + guessed-nonce error frames rejected)',
+      `painted=${s.painted} Forge tapped=${s.tapped} rejected-forgery(error) frames=${rejected.length} (want 2, all trusted:false) ` +
+      `error frames forwarded as real=${acceptedForged.length} (want 0)`);
+  }
 }
 
 await chromiumBrowser.close();

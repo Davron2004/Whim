@@ -540,6 +540,7 @@ async function testPolicyOutcomes(): Promise<void> {
     eq('the pipeline was never invoked', pipeline.runs, 0);
     eq('the refusal released its slot exactly once', h.slots.releaseCalls, [1]);
     eq('the ledger row settled as refused', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.outcome), ['refused']);
+    eq('the refused row names the content_policy refusal', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['content_policy']);
     eq('a policy refusal is not refunded', await h.usageStore.generationUnits(AT_2200_UTC), 1);
     const next = await postGenerate(h.app, PROMPT, DEVICE_A);
     eq('the device\'s next generation is not refused as device_busy', next.status, 200);
@@ -555,6 +556,7 @@ async function testPolicyOutcomes(): Promise<void> {
     eq('the pipeline was never invoked', pipeline.runs, 0);
     eq('the unavailable check released its slot', h.slots.generations, 0);
     eq('the unit was refunded', await h.usageStore.generationUnits(AT_2200_UTC), 0);
+    eq('the unavailable row names the policy_unavailable refusal', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['policy_unavailable']);
     const retry = await postGenerate(h.app, PROMPT, DEVICE_A);
     eq('the retry after recovery is admitted, not daily_limit', retry.status, 200);
     h.inFlight.abortAll();
@@ -644,6 +646,7 @@ async function testTerminalAndCancel(): Promise<void> {
     const events = await readEvents('a delivered run', await postGenerate(h.app, PROMPT, DEVICE_A));
     eq('a delivered run ends in one result', events.filter((e) => e.type === 'result' || e.type === 'failure').length, 1);
     await expectTornDown('terminal', h, 'delivered');
+    eq('terminal: a delivered row carries no failure reason', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), [undefined]);
     const next = await postGenerate(h.app, PROMPT, DEVICE_A);
     eq('terminal: the device immediately generates again', next.status, 200);
     await readEvents('the follow-up run', next);
@@ -780,6 +783,7 @@ async function testErrorExpiryAndDrain(): Promise<void> {
     const res = await postGenerate(h.app, PROMPT, DEVICE_A);
     check('error: the stream errors', (await within(caught(() => readSseResponse(res).then(() => undefined)))) instanceof Error);
     await expectTornDown('error', h, 'failed');
+    eq('error: a pipeline that yields no failure terminal leaves no failure reason', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), [undefined]);
   }
 
   // The run's wall-clock budget, on the real machine.
@@ -797,6 +801,7 @@ async function testErrorExpiryAndDrain(): Promise<void> {
     eq('expiry: the failure says it took too long', last?.type === 'failure' ? last.reason : undefined, EXPIRED_REASON);
     check('expiry: the model transport observed the abort', model.calls[0]?.aborted === true);
     await expectTornDown('expiry', h, 'expired');
+    eq('expiry: the ledger row names the expired code', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['expired']);
   }
 
   // A drain abort.
@@ -829,6 +834,7 @@ async function testMidRunCreditExhaustion(): Promise<void> {
   eq('402: it is a failure naming the budget', last?.type === 'failure' ? last.reason : undefined, CREDIT_EXHAUSTED_REASON);
   eq('402: no repair attempt followed', model.requests.length, 1);
   await expectTornDown('402', h, 'failed');
+  eq('402: the ledger row names the credit_exhausted code', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['credit_exhausted']);
 
   await expectRefusal('402: the same device immediately generates again', await postGenerate(h.app, PROMPT, DEVICE_A), 503, 'budget_exhausted', null);
   eq('402: the cached credit was invalidated, so the key was looked up again', credit.lookups(), 2);

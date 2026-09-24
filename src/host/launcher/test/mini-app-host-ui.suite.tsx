@@ -82,6 +82,21 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
  *  its first delivery, whatever generation the host bound the realm under. */
 const FIRST_PAINT = { kind: 'paint', trusted: true, payload: { generation: 1, mountToFirstPaintMs: 42, appName: 'Tip Splitter' } };
 
+/** Uncaught realm errors exactly as the outer page forwards them to RN, copied from the frames
+ *  `npm run bridge:invariants` (INV-ERRFRAME) records for the error-raiser fixture. */
+const RUNTIME_ERROR_FRAME = { kind: 'error', trusted: true, payload: { where: 'runtime', name: 'LedgerError' } };
+const REJECTION_ERROR_FRAME = { kind: 'error', trusted: true, payload: { where: 'rejection', name: 'SettleError' } };
+
+interface ErrorRecordFields { where?: unknown; errorClass?: unknown; appId?: unknown }
+
+/** The `error`-level records the seam holds for mini-app failures, oldest first. */
+function miniAppErrorRecords(): { message: string; fields: ErrorRecordFields }[] {
+  return log.buffer
+    .snapshot()
+    .filter((r) => r.level === 'error' && r.channel === 'whim:page')
+    .map((r) => ({ message: r.message, fields: (r.fields ?? {}) as ErrorRecordFields }));
+}
+
 export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
   await h.test('mini-app: the boot surface covers a WebView that is already mounted, until a trusted first paint', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, clock }) => {
@@ -145,11 +160,66 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('mini-app: a handler throw and an unhandled rejection after paint are error records, and the app keeps running', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
+      await loadEnd();
+      await frame(FIRST_PAINT);
+      log.buffer.clear();
+      await frame(RUNTIME_ERROR_FRAME);
+      await frame(REJECTION_ERROR_FRAME);
+      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'neither takes the app down');
+      h.eq(
+        miniAppErrorRecords(),
+        [
+          { message: 'mini-app error', fields: { where: 'runtime', errorClass: 'LedgerError', appId: TIP.appId } },
+          { message: 'mini-app error', fields: { where: 'rejection', errorClass: 'SettleError', appId: TIP.appId } },
+        ],
+        'each reaches the seam as one error record with its where, its class and the app',
+      );
+    });
+  });
+
+  await h.test('mini-app: a mount failure shows the recovery screen and is an error record without the message', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown }) => {
+      await loadEnd();
+      log.buffer.clear();
+      // loader.js's mount-failure frame carries the message; only the class may reach the seam.
+      await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError', message: 'SENTINEL cannot read total' } });
+      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen shows');
+      h.eq(
+        miniAppErrorRecords(),
+        [{ message: 'mini-app failed', fields: { where: 'mount', errorClass: 'TypeError', appId: TIP.appId } }],
+        'one error record for the mount failure',
+      );
+      h.ok(!JSON.stringify(log.buffer.snapshot()).includes('SENTINEL'), 'and the message text is in no record');
+    });
+  });
+
+  await h.test('mini-app: an unauthenticated error frame is neither a failure screen nor an error record', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
+      await loadEnd();
+      await frame(FIRST_PAINT);
+      log.buffer.clear();
+      // The outer page's forward of a bundle-posted frame that failed the nonce check.
+      await frame({ kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: { where: 'runtime', name: 'ForgedError' } });
+      // A frame claiming the `error` kind without the page's authentication.
+      await frame({ kind: 'error', trusted: false, payload: { where: 'mount', name: 'ForgedError' } });
+      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
+      h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
+    });
+  });
+
   await h.test('mini-app: an app that never paints reaches the recovery screen when the startup deadline passes', async () => {
     await withMiniApp(TIP, async ({ loadEnd, shown, clock }) => {
       await loadEnd();
+      log.buffer.clear();
       await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
       h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen shows instead of an endless boot surface');
+      h.eq(
+        miniAppErrorRecords(),
+        [{ message: 'mini-app failed', fields: { where: 'paint-timeout', errorClass: 'StartupDeadline', appId: TIP.appId } }],
+        'and the timeout is an error record',
+      );
     });
   });
 
@@ -190,8 +260,14 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       const earlier = createStorageEngine({ appId: WATER.appId, mode: "persistent" });
       earlier.open(WATER.schemaArtifact!);
       earlier.close();
+      log.buffer.clear();
       await loadEnd();
       h.ok(shown().includes(COPY.launchFailedTitle), 'the launch-failed screen shows');
+      h.eq(
+        miniAppErrorRecords(),
+        [{ message: 'mini-app failed', fields: { where: 'launch', errorClass: 'type_change', appId: WATER.appId } }],
+        'the refused launch is one error record, carrying the refusal kind and not the engine hint',
+      );
       h.eq(injectedScripts.length, 0, 'and nothing was delivered');
       h.ok(!/type|schema|kind|hint|date|text/i.test(shown().replace(COPY.launchFailedBody, '').replace(COPY.launchFailedTitle, '').replace(COPY.launchFailedBack, '')),
         'no engine vocabulary or raw error detail is shown beside the copy');

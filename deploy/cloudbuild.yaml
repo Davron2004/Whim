@@ -4,7 +4,8 @@
 #   gcloud builds submit --project <project> --region <region> --config deploy/cloudbuild.yaml \
 #     --substitutions COMMIT_SHA=<full sha>,_REGION=<region> .
 #
-# The build reads no secret and passes no build argument.
+# The build reads no secret. Its one build argument is WHIM_COMMIT, the same SHA that tags the image,
+# which /healthz reports (developer-observability D13).
 substitutions:
   _REGION: northamerica-northeast1
 steps:
@@ -14,6 +15,7 @@ steps:
       - build
       - --platform=linux/amd64
       - --file=deploy/Dockerfile
+      - --build-arg=WHIM_COMMIT=$COMMIT_SHA
       - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/whim/server:$COMMIT_SHA
       - .
 images:

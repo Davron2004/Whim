@@ -1,0 +1,30 @@
+{
+  "displayName": "Whim: new report",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "A user sent a report",
+      "conditionMatchedLog": {
+        "filter": "log_id(\"docker\") AND jsonPayload.scope=\"report\" AND jsonPayload.msg=\"report accepted\"",
+        "labelExtractors": {
+          "reportId": "EXTRACT(jsonPayload.reportId)",
+          "reason": "EXTRACT(jsonPayload.reason)"
+        }
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "300s"
+    },
+    "autoClose": "1800s"
+  },
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "Report ${log.extracted_label.reportId}, reason ${log.extracted_label.reason}. Read it on the VM with `whim-admin reports show ${log.extracted_label.reportId}` (docs/deploy.md, Operating: Alerts). At most one email per 5 minutes: `whim-admin reports list` shows any others."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

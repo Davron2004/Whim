@@ -1,0 +1,26 @@
+{
+  "displayName": "Whim: device error",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "A phone sent a diagnostic at ERROR or above",
+      "conditionMatchedLog": {
+        "filter": "log_id(\"docker\") AND jsonPayload.scope=\"device\" AND severity>=ERROR"
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "3600s"
+  },
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "A phone reported an error. At most one email per hour: read them all in Logs Explorer with `log_id(\"docker\") jsonPayload.scope=\"device\" severity>=ERROR` (docs/deploy.md, Operating: Alerts)."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

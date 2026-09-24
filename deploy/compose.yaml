@@ -1,7 +1,8 @@
 # Whim on the VM (design D17, D21, D24). deploy/deploy.sh uploads this file to /opt/whim and writes
 # /opt/whim/.env next to it, which supplies every interpolated value below. Each one is written
 # ${NAME:?}, so a compose command run without that file fails instead of recreating a container
-# with blank settings.
+# with blank settings. Logging stays json-file: the Ops Agent on the host (deploy/vm/ops-agent.yaml)
+# tails those files, and the `labels` option puts the compose service name into each record for it.
 name: whim
 
 services:
@@ -42,6 +43,7 @@ services:
       options:
         max-size: 10m
         max-file: "5"
+        labels: com.docker.compose.service
     healthcheck:
       test:
         - CMD
@@ -74,6 +76,7 @@ services:
       options:
         max-size: 10m
         max-file: "5"
+        labels: com.docker.compose.service
 
 networks:
   whim:

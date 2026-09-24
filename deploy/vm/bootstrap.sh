@@ -4,16 +4,18 @@
 #
 #   sudo bash bootstrap.sh --region <gcp-region>
 #
-# Installs Docker Engine and the compose plugin, the Artifact Registry credential helper, mounts the
-# persistent data disk (formatting it only when it has no filesystem), creates the owned data
-# directories, asserts unprivileged user namespaces work (Chromium's sandbox needs them), installs
-# the egress firewall and the daily container-log age cap. Safe to rerun.
+# Installs Docker Engine and the compose plugin, the Google Cloud Ops Agent with ops-agent.yaml (ships
+# the containers' json-file logs to Cloud Logging from the host), the Artifact Registry credential
+# helper, mounts the persistent data disk (formatting it only when it has no filesystem), creates the
+# owned data directories, asserts unprivileged user namespaces work (Chromium's sandbox needs them),
+# installs the egress firewall and the daily container-log age cap. Safe to rerun.
 set -euo pipefail
 
 readonly DATA_DEVICE=/dev/disk/by-id/google-whim-data
 readonly DATA_MOUNT=/mnt/disks/whim-data
 readonly SERVER_UID=10001
 readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+readonly OPS_AGENT_KEY_FINGERPRINT=35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3
 
 fail() {
   printf 'bootstrap.sh: %s\n' "$1" >&2
@@ -61,6 +63,31 @@ install_docker() {
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
   systemctl enable --now docker
+}
+
+# The agent runs on the host, outside the DOCKER-USER egress chain, and tails Docker's json-file logs
+# (design D8), so compose.yaml keeps json-file and `docker compose logs` keeps working. Every step
+# overwrites, so a rerun (or an agent installed by Google's script) converges on this config. The
+# `-2` suite pins major version 2. The config lands right after the install: until then the agent
+# runs its default config, which ships the host's syslog.
+install_ops_agent() {
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL --proto '=https' --proto-redir '=https' https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    -o /etc/apt/keyrings/google-cloud-ops-agent.asc
+  local fingerprint
+  fingerprint="$(gpg --show-keys --with-colons /etc/apt/keyrings/google-cloud-ops-agent.asc | awk -F: '$1 == "fpr" { print $10; exit }')"
+  [ "$fingerprint" = "$OPS_AGENT_KEY_FINGERPRINT" ] || fail "Ops Agent apt key has fingerprint '$fingerprint', expected $OPS_AGENT_KEY_FINGERPRINT"
+  chmod a+r /etc/apt/keyrings/google-cloud-ops-agent.asc
+  local codename
+  codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
+  printf 'deb [signed-by=/etc/apt/keyrings/google-cloud-ops-agent.asc] https://packages.cloud.google.com/apt google-cloud-ops-agent-%s-2 main\n' \
+    "$codename" >/etc/apt/sources.list.d/google-cloud-ops-agent.list
+  apt-get update
+  apt-get install -y google-cloud-ops-agent
+  install -m 0644 -o root -g root "$here/ops-agent.yaml" /etc/google-cloud-ops-agent/config.yaml
+  systemctl enable google-cloud-ops-agent
+  # The agent only: never dockerd or the containers.
+  systemctl restart google-cloud-ops-agent
 }
 
 configure_registry() {
@@ -143,6 +170,7 @@ install_log_age_cap() {
 }
 
 install_docker
+install_ops_agent
 configure_registry
 mount_data_disk
 create_directories
