@@ -487,6 +487,9 @@ const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'
 const ASSOCIATION_ROUTES = ['/.well-known/apple-app-site-association', '/.well-known/assetlinks.json'];
 const PAGE_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ['/privacy', 'privacy.html'],
+  ['/terms', 'terms.html'],
+  ['/fr/privacy', 'fr/privacy.html'],
+  ['/fr/terms', 'fr/terms.html'],
   ['/support', 'support.html'],
   ['/a/*', 'app-link.html'],
   ['', 'not-found.html'],
@@ -905,6 +908,9 @@ const DNS_READY: readonly StubRule[] = [
 const HTML = 'text/html; charset=utf-8';
 const PAGES_UP: readonly StubRule[] = [
   [`*https://${WEB_HOST}/privacy`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/terms`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/fr/privacy`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/fr/terms`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/support`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/a/x`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/nope`, 0, `404|${HTML}|`, '<html>'],
@@ -1868,7 +1874,7 @@ export async function runDeployConfigTests(): Promise<void> {
     seccompFiles: fs.readdirSync(path.join(ROOT, 'deploy', 'seccomp')),
   };
   const maxBodyBytes = Math.max(defaults.maxBodyBytesUnary, defaults.maxBodyBytesGenerate, defaults.maxBodyBytesReport);
-  const siteFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'site'));
+  const siteFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'site'), { recursive: true, encoding: 'utf8' });
 
   imageTests(files, playwrightVersion);
   composeTests(files, composeContext);

@@ -1,0 +1,70 @@
+{
+  "legalName": "AnyCognition Inc.",
+  "streetAddress": "",
+  "locality": "Ottawa, Ontario, Canada",
+  "phone": "",
+  "contactEmail": "support@anycognition.ca",
+  "privacyOfficerTitle": {
+    "en": "Privacy Officer",
+    "fr": "responsable de la protection des renseignements personnels"
+  },
+  "effectiveDates": {
+    "privacy": "2026-09-24",
+    "terms": "2026-09-24",
+    "providerList": "2026-09-24"
+  },
+  "representatives": {
+    "eu": "",
+    "uk": ""
+  },
+  "providers": [
+    {
+      "name": "Google Cloud (Google LLC)",
+      "contact": "",
+      "role": {
+        "en": "Hosts our server and logs",
+        "fr": "Héberge notre serveur et nos journaux",
+        "ko": "Whim 서버와 로그 호스팅"
+      },
+      "receives": {
+        "en": "Everything the app sends",
+        "fr": "Tout ce que l’app envoie",
+        "ko": "앱이 보내는 모든 정보(요청 내용, 앱 자료, 휴대폰 ID, 오류 정보, 앱 무결성 확인, 접속 정보, 신고)"
+      },
+      "country": {
+        "en": "Canada (Montreal)",
+        "fr": "Canada (Montréal)",
+        "ko": "캐나다(몬트리올)"
+      },
+      "retention": {
+        "en": "As long as we keep each kind of information, as “How long we keep it” says",
+        "fr": "Aussi longtemps que nous conservons chaque type de renseignement, comme l’indique « Combien de temps nous les conservons »",
+        "ko": "Whim의 보관 기간과 같음: 요청 내용과 앱 자료는 처리하는 동안만, 신고·이용 기록·앱 무결성 확인은 최대 12개월, 오류 정보·접속 정보·로그는 최대 90일"
+      }
+    },
+    {
+      "name": "OpenRouter, Inc.",
+      "contact": "",
+      "role": {
+        "en": "Passes each AI request to a model provider",
+        "fr": "Transmet chaque requête d’IA à un fournisseur de modèles",
+        "ko": "앱을 만들고 바꾸기 위한 각 AI 요청을 AI 모델 제공업체에 전달"
+      },
+      "receives": {
+        "en": "Your request and app material",
+        "fr": "Votre demande et le matériel de l’app",
+        "ko": "요청 내용(설명, 질문에 대한 답변, 승인한 계획)과 앱 자료(앱 이름, 코드, 설명, 데이터 구조)"
+      },
+      "country": {
+        "en": "United States",
+        "fr": "États-Unis",
+        "ko": "미국"
+      },
+      "retention": {
+        "en": "Only while each request is handled; the model provider it goes to may keep it for a limited time under its own published retention period",
+        "fr": "Seulement pendant le traitement de chaque demande; le fournisseur de modèles qui la reçoit peut la conserver pendant une durée limitée, selon sa propre durée de conservation publiée",
+        "ko": "각 요청을 처리하는 동안만 보관. 요청을 받은 AI 모델 제공업체는 자체 공개한 보관 기간에 따라 일정 기간 보관할 수 있음"
+      }
+    }
+  ]
+}

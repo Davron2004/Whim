@@ -39,6 +39,24 @@
 			disable_canonical_uris
 		}
 	}
+	handle /terms {
+		rewrite * /terms.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /fr/privacy {
+		rewrite * /fr/privacy.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /fr/terms {
+		rewrite * /fr/terms.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
 	handle /support {
 		rewrite * /support.html
 		file_server {

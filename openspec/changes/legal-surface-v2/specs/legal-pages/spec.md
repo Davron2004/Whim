@@ -50,9 +50,13 @@ The site SHALL serve the terms of use at `/terms` in English and `/fr/terms` in 
 ### Requirement: No placeholder or draft marker reaches a published legal page
 The legal pages SHALL take every owner-only value from one checked-in identity file: legal name, address, phone, privacy mailbox, Privacy Officer title, effective dates, the optional representatives, and the provider rows. The deploy check SHALL fail when any published legal page contains an unresolved `{{…}}` substitution, a draft marker such as `[B7]` or `[D21]`, or a bracketed placeholder such as `[street address]`.
 
-#### Scenario: A missing address blocks the deploy
-- **WHEN** the identity file has no street address and the site deploy check runs
-- **THEN** the check fails, naming the page and the unresolved value
+#### Scenario: A missing required identity value blocks the deploy
+- **WHEN** the identity file has no contact email (or another required value: legal name, Privacy Officer title, a stated effective date) and the site deploy check runs
+- **THEN** the check fails, naming the page and the missing value
+
+#### Scenario: An address not yet set is left out, not left blank
+- **WHEN** the identity file has no street address and phone (owner decision 2026-09-24: optional until set)
+- **THEN** the pages publish with the email contact only, with no empty address line, and the check passes
 
 #### Scenario: A leftover draft marker blocks the deploy
 - **WHEN** a policy page still contains `[B9]`
