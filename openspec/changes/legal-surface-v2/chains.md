@@ -83,7 +83,7 @@ Every text chain reads `docs/research/legal-surface-2026-09/draft-copy.md` (the 
 ## chain-11: attended-owner-steps (ATTENDED, not dispatchable)
 
 - tasks: 11.1–11.12
-- rationale: console, account, signature, hiring and real-device work only the owner can do. The build orchestrator stops and asks before each one.
+- rationale: console, account, signature, hiring and real-device work only the owner can do. The build orchestrator stops and asks before each one. *(11.5, 11.7 and 11.12 declined by the owner 2026-09-24 — no representatives, no fluent reads, no lawyer.)*
 - reads: design.md Migration Plan; `docs/legal/*` from chain-10
 - writes-contract: none
 - after: 11.1 before the site deploy; 11.4 after chain-10; 11.7 after chains 6 and 7; 11.8 and 11.10 before any v2 copy is released; 11.11 last

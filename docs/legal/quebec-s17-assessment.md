@@ -1,6 +1,6 @@
 # Quebec s.17 privacy impact assessment: requests sent outside Quebec
 
-**Status: draft, unsigned.** Written for the owner to complete and sign (README blocker B3; tasks.md 11.4). It is not legal advice. Nobody read the Quebec statute first-hand: both official sites refused the fetch, so everything about s.17 here rests on consistent secondary summaries (canada.md §(f) and gap 1; README "Where the research is thin"). Lawyer items 1 and 2 cover it after launch (decision 7).
+**Status: draft, unsigned.** Written for the owner to complete and sign (README blocker B3; tasks.md 11.4). It is not legal advice. Nobody read the Quebec statute first-hand: both official sites refused the fetch, so everything about s.17 here rests on consistent secondary summaries (canada.md §(f) and gap 1; README "Where the research is thin"). Known risk, accepted by the owner (2026-09-24): no lawyer will review this after launch; the owner's own reading and this assessment stand as final.
 
 ## 1. What s.17 asks
 
@@ -13,7 +13,7 @@ As reported (canada.md §(f), medium-high confidence): before communicating pers
 
 The information may go only if the assessment shows it would receive adequate protection. The communication must rest on a written agreement that takes the assessment's results into account and, where needed, sets terms to reduce the risks it found.
 
-Section 3.3 may separately ask for an assessment before any new information system that handles personal information. That section's text and number weren't verified (canada.md §(f), low confidence). This document can serve as the start of that assessment too; lawyer item 2 asks whether it was already due.
+Section 3.3 may separately ask for an assessment before any new information system that handles personal information. That section's text and number weren't verified (canada.md §(f), low confidence). This document can serve as the start of that assessment too. Known risk, accepted by the owner: whether a s.3.3 assessment was already due is unconfirmed, and no lawyer will answer it.
 
 ## 2. What leaves Quebec, to whom, and why
 
@@ -58,9 +58,9 @@ TODO(owner): confirm the OpenRouter account setting and prompt logging (tasks.md
 
 s.17 needs a written agreement with the recipient. Whim's contract is with OpenRouter; it has none with the model providers behind it.
 
-TODO(owner): check whether OpenRouter's standard terms or DPA can serve as the written agreement, and whether they bind OpenRouter's model providers to the same limits (B3; lawyer item 2). Record the document name, version and date: ______
+TODO(owner): check whether OpenRouter's standard terms or DPA can serve as the written agreement, and whether they bind OpenRouter's model providers to the same limits (B3). Record the document name, version and date: ______
 
-What the agreement should cover. This is a checklist drawn from the risks in section 6, not a statement of what the law requires; lawyer item 2 asks exactly that.
+What the agreement should cover. This is a checklist drawn from the risks in section 6, not a statement of what the law requires. Known risk, accepted by the owner: no lawyer will confirm what the law actually requires here.
 
 - [ ] Use only to provide the service to Whim. No training, and no use for OpenRouter's or a provider's own products.
 - [ ] Onward transfer to model providers only under the same limits.
@@ -72,9 +72,9 @@ What the agreement should cover. This is a checklist drawn from the risks in sec
 
 ## 6. The legal framework where the information goes
 
-**United States (OpenRouter, and any model provider based there).** No federal comprehensive privacy law. The FTC Act §5 makes a company's privacy promises enforceable, with no size threshold (eu-uk-us.md §2.1). State comprehensive privacy laws apply above user-count thresholds (eu-uk-us.md §2.3). The research files don't analyse US government access to data held by US companies for Quebec's purposes; lawyer item 2.
+**United States (OpenRouter, and any model provider based there).** No federal comprehensive privacy law. The FTC Act §5 makes a company's privacy promises enforceable, with no size threshold (eu-uk-us.md §2.1). State comprehensive privacy laws apply above user-count thresholds (eu-uk-us.md §2.3). The research files don't analyse US government access to data held by US companies for Quebec's purposes. Known risk, accepted by the owner: unresolved, and no lawyer will analyse it.
 
-**Other countries.** Which ones depends on the provider list in section 2. DeepSeek models can be served from several countries (lawyer item 3). One option, if a country's framework looks weak, is to restrict routing to named providers or countries. Lawyer item 3 asks whether routing should be limited by country for Quebec and EU users.
+**Other countries.** Which ones depends on the provider list in section 2. DeepSeek models can be served from several countries. One option, if a country's framework looks weak, is to restrict routing to named providers or countries. Known risk, accepted by the owner: whether routing should be limited by country for Quebec and EU users is undecided, and no lawyer will answer it.
 
 ## 7. The logging flow (B)
 
@@ -82,7 +82,7 @@ Server logs live on the VM in Montreal today (`docs/backlog.md`). `developer-obs
 
 TODO(owner): once logs move, confirm the log bucket's storage region (draft-copy §2's provider list also asks this). If it's Montreal, flow B doesn't leave Quebec. If it isn't, assess it here: connection data and logs are low sensitivity (IP addresses, times, versions; no request content), and Google acts for Whim under Google Cloud's terms.
 
-Google Cloud is a US company even when the data stays in Montreal. Whether that alone counts as communication outside Quebec isn't answered by the research; see the lawyer brief.
+Google Cloud is a US company even when the data stays in Montreal. Whether that alone counts as communication outside Quebec isn't answered by the research. Known risk, accepted by the owner: no lawyer will answer it.
 
 ## 8. Risks and what reduces them
 
@@ -103,7 +103,7 @@ Draft view, for the owner to accept or change: with the account setting confirme
 - [ ] Provider list and countries filled in (section 2)
 - [ ] Logging flow checked (section 7)
 
-Review this assessment when a provider or country changes, when new data goes to AI providers, when OpenRouter's terms change, after the lawyer review (decision 7), and at least once a year.
+Review this assessment when a provider or country changes, when new data goes to AI providers, when OpenRouter's terms change, and at least once a year.
 
 TODO(owner): conclusion accepted or changed: ______
 

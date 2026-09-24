@@ -10,7 +10,7 @@ Owner decisions this design builds on (README, 2026-09-23):
 4. French for the terms, the terms step, the consent screen and the policy.
 5. Terms under Ontario law, with their own Accept step before the consent screen.
 6. Reports and usage records kept at most 12 months; error details, connection data and logs at most 90 days; error details on by default.
-7. No lawyer before launch. The brief is written for after.
+7. No lawyer before launch. The brief is written for after. *Updated 2026-09-24: declined by the owner — no lawyer will ever be engaged (solo, non-revenue project); the brief (`docs/legal/lawyer-brief.md`) was deleted and its open questions folded into the affected docs as accepted known risks.*
 
 Dependencies:
 
@@ -32,7 +32,7 @@ Dependencies:
 - Zero-retention routing (`zdr: true`). It's hardening that the copy doesn't rely on (README B1). `data_collection: 'deny'` is already sent (f542669).
 - The in-app 30-day notice for a material terms change. It gets built with the first such change; none exists yet.
 - Moving Play to an organization account (decision 3), a block list by phone ID, and the subscription and sync text (it stays bracketed out).
-- Lawyer review (decision 7).
+- Lawyer review (decision 7). *Declined by the owner 2026-09-24: not deferred, never happening.*
 
 ## Decisions
 
@@ -101,7 +101,7 @@ A translation never moves the consent version (D3 treats copy as wording). The a
 
 Pages are filled from it through the site's existing `{{…}}` substitution. The deploy check fails when any published legal page still has an unresolved `{{…}}` or a draft marker (`[B…]`, `[D…]`, or `[` followed by a lowercase placeholder word).
 
-The representative paragraphs render only when their values are set. Appointing the representatives is an attended pre-launch task, not a deploy block. The Korean overseas-transfer section is generated from the provider rows, so the list and the section can't disagree.
+The representative paragraphs render only when their values are set. Appointing the representatives is an attended pre-launch task, not a deploy block. *Declined by the owner 2026-09-24: the representatives will never be appointed; the paragraphs stay unset and unrendered indefinitely.* The Korean overseas-transfer section is generated from the provider rows, so the list and the section can't disagree.
 
 ### D8. Store declarations are derived from the manifest's store mapping
 
@@ -141,20 +141,20 @@ This PR edits that change's spec, design, tasks and chains directly, because the
 
 ## Risks / Trade-offs
 
-- [Every territory stays open on research that covers Canada, the US, the EU and the UK] → The owner accepted this knowingly (decision 2). The Korean section ships. Brazil, Japan and India stay open questions in the post-launch lawyer brief.
-- [No lawyer before launch] → The text ships with the research's own fallbacks. These include the Agree tap as EU ePrivacy consent for the ID, and Play "Shared: Yes" for request material. The brief lists them for after launch.
+- [Every territory stays open on research that covers Canada, the US, the EU and the UK] → The owner accepted this knowingly (decision 2). The Korean section ships. Brazil, Japan and India stay open questions, unresearched. *Declined by the owner 2026-09-24: the post-launch lawyer brief that would have tracked them was deleted; these remain accepted known risks.*
+- [No lawyer before launch] → The text ships with the research's own fallbacks. These include the Agree tap as EU ePrivacy consent for the ID, and Play "Shared: Yes" for request material. *Declined by the owner 2026-09-24: no lawyer review is planned at all; the fallbacks are final, and the open questions that would have gone to the (now-deleted) brief are recorded as known risks in `docs/legal/`.*
 - [Play stays on a personal account while EU storefronts are open] → The Play DSA trader declaration waits (decision 3), and the listing names a different party from the policy. Filed as a caveat issue.
 - [Server and app ordering] → The v2 practices must be deployed before any app build that sends `x-whim-consent: 2`. Otherwise `request-envelope`'s backstop refuses its requests. See the migration plan.
 - [Testers holding a v1 grant are asked again] → This is intended and happens once, before public launch.
 - [Locale detection under Hermes] → There's a fallback to the platform locale constant. Chain-6 checks both on Android and iOS.
-- [The age-signal APIs are new and failures let the user through] → This favours availability over a hard block. Revisit it if the lawyer or a regulator says otherwise.
+- [The age-signal APIs are new and failures let the user through] → This favours availability over a hard block. Revisit it if a regulator says otherwise. *(No lawyer will review this — declined by the owner 2026-09-24.)*
 - [The saved-data promise rests on network-deny acceptance (B7)] → An attended release gate: the v2 copy doesn't ship until `platform-release-readiness` 13.6 and 13.7 pass.
 
 ## Migration Plan
 
 1. `request-envelope` is applied and deployed. This change is applied after it.
 2. Server deploy: the derived `PRACTICES` with version 2, the `usage` migration and purge, the device tool, and the config caps. It's safe alone: v1 clients keep their v1 practices.
-3. The owner's attended pre-release steps: the identity values, the mailbox, the OpenRouter account setting, the Texas §121.053 notice to each store before the changed terms and policy go live, the fluent French and Korean reads, and B7's device runs.
+3. The owner's attended pre-release steps: the identity values, the mailbox, the OpenRouter account setting, the Texas §121.053 notice to each store before the changed terms and policy go live, the fluent French and Korean reads (declined by the owner 2026-09-24 — AI-drafted text is final), and B7's device runs.
 4. Site deploy: `/privacy`, `/terms` and the French pages at v2.
 5. App release with `AI_CONSENT_VERSION` 2, `TERMS_VERSION` 1, age signals and the Settings rows. The store forms are submitted in the same release.
 
