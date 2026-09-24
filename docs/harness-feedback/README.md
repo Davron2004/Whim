@@ -29,6 +29,7 @@ Verdicts:
 | Run | Agents | Entries | Caught | Drawback | Env | Neutral |
 |---|---|---|---|---|---|---|
 | [2026-09-23 request-envelope](2026-09-23-request-envelope/) | 8 implementers, reviewer, 2 verifiers, orchestrator | 86 | 9 | 40 | 18 | 19 |
+| [2026-09-24 legal-surface-v2](2026-09-24-legal-surface-v2/) (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
 
 ## Recurring themes
 
@@ -49,6 +50,11 @@ Verdicts:
 | T11 | **Conflicting instructions.** An injected co-author reminder vs CLAUDE.md and the chain block (one agent committed it, then amended it out); a stale git-status snapshot in a subagent's context | 4 | DRAWBACK | open |
 | T13 | **Strict file ownership orphans cross-cutting follow-ups.** A fix makes a handoff line stale but `openspec/` is out of scope; a real-producer fixture needs a builder in another chain's files; an allowlist lives in `server/` while the chain owns `src/` | 3 | DRAWBACK | open |
 | T12 | Shell quirks: zsh `nomatch` on `--include=*.ts`; tool output size limits | 7 | ENV | put in env facts |
+
+Run 2 (legal-surface-v2) reinforced T2 (all agents), T3 (#79), T4 (native builds only in the main tree; 9b), T6, T10, T11 (co-author reminder, 5 agents) and T13, and added:
+- **T14 Cross-change interactions nobody tests.** lsv2's log-age cap truncates a file devobs's Ops Agent tails; found only when a human-style re-apply read both diffs.
+- **T15 Environment drift inside the gate.** Node/ICU version changes a static scan's verdict (#87); a full `node_modules` symlink changes `prod-build.suite` (9b).
+- **T16 Deferred work falls through.** A paragraph deferred by chain-7 "until age signals ship" was never assigned to chain-9 (reviewer H1).
 
 ## What caught real mistakes (keep these)
 
