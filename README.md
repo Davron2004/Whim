@@ -153,3 +153,9 @@ Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WH
 
 Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
 Deploying the server publicly is attended-only too — see `docs/deploy.md`.
+
+## License
+
+Apache License 2.0, see `LICENSE`. Fork it, change it and ship it. If you distribute something
+built on this code, keep the `NOTICE` file with it. Running your own server needs nothing: point
+the app at it under Settings → Advanced → Server address.
