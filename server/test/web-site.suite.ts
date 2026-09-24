@@ -177,8 +177,10 @@ function legalPageTests(): void {
 
   const real = renderLegalSite({ sources: legalSources(), identity: REAL_IDENTITY });
   eq('the checked-in identity file passes the deploy check', real.findings, []);
+  const unaddressed = ['streetAddress', 'phone'].reduce((value, name) => withField(value, name, ''), REAL_IDENTITY);
+  const noAddress = renderLegalSite({ sources: legalSources(), identity: unaddressed });
   for (const page of LEGAL_PAGES) {
-    check(`${page}: with no street address or phone, no address line renders`, !real.pages[page].includes('class="postal"'));
+    check(`${page}: with no street address or phone, no address line renders`, !noAddress.pages[page].includes('class="postal"'));
     check(`${page}: names no privacy@ mailbox (the owner has none)`, !real.pages[page].toLowerCase().includes('privacy@'));
   }
   for (const page of POLICIES) {
