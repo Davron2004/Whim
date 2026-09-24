@@ -76,7 +76,7 @@ render_monitoring() {
   local template="$1" text key value
   shift
   text="$(<"$template")"
-  while [ "$#" -gt 0 ]; do
+  while [[ "$#" -gt 0 ]]; do
     key="$1" value="$2"
     shift 2
     text="${text//\{\{$key\}\}/$value}"
@@ -85,6 +85,7 @@ render_monitoring() {
   text="${text//\{\{SPEC\}\}/$RENDERED_SPEC}"
   case "$text" in
     *'{{'*) whim_fail "$template: a {{placeholder}} is left unfilled" ;;
+    *) ;;
   esac
   RENDERED_FILE="$work/$(basename "$template")"
   printf '%s\n' "$text" >"$RENDERED_FILE"
@@ -92,9 +93,9 @@ render_monitoring() {
 
 # The top-level displayName of a deploy/monitoring JSON file (two-space indent, one key per line).
 display_name_of() {
-  local name
-  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$1")"
-  [ -n "$name" ] || whim_fail "$1 has no top-level displayName"
+  local name file="$1"
+  name="$(sed -n 's/^  "displayName": "\([^"]*\)",$/\1/p' "$file")"
+  [[ -n "$name" ]] || whim_fail "$file has no top-level displayName"
   printf '%s' "$name"
 }
 
@@ -102,20 +103,20 @@ display_name_of() {
 # name is $1, and sets ROW_NAME, ROW_SPEC and ROW_EXTRA from it (all empty when there is none). Two
 # resources under one display name can't be told apart, so that refuses.
 find_row() {
-  local wanted="$1" line match="" rest
+  local wanted="$1" rows="$2" line match="" rest
   while IFS= read -r line; do
-    [ "${line%%"$TAB"*}" = "$wanted" ] || continue
-    [ -z "$match" ] || whim_fail "two resources are named '$wanted'; delete one, then rerun"
+    [[ "${line%%"$TAB"*}" = "$wanted" ]] || continue
+    [[ -z "$match" ]] || whim_fail "two resources are named '$wanted'; delete one, then rerun"
     match="$line"
-  done <<<"$2"
+  done <<<"$rows"
   ROW_NAME="" ROW_SPEC="" ROW_EXTRA=""
-  [ -n "$match" ] || return 0
+  [[ -n "$match" ]] || return 0
   rest="${match#*"$TAB"}"
   ROW_NAME="${rest%%"$TAB"*}"
-  [ "$rest" != "$ROW_NAME" ] || return 0
+  [[ "$rest" != "$ROW_NAME" ]] || return 0
   rest="${rest#*"$TAB"}"
   ROW_SPEC="${rest%%"$TAB"*}"
-  [ "$rest" != "$ROW_SPEC" ] || return 0
+  [[ "$rest" != "$ROW_SPEC" ]] || return 0
   ROW_EXTRA="${rest#*"$TAB"}"
 }
 
@@ -127,11 +128,11 @@ apply_rendered() {
   shift 3
   display="$(display_name_of "$RENDERED_FILE")"
   find_row "$display" "$rows"
-  if [ -z "$ROW_NAME" ]; then
+  if [[ -z "$ROW_NAME" ]]; then
     APPLIED_NAME="$(whim_gcloud "$@" create "$file_flag=$RENDERED_FILE" --format='value(name)')"
-    [ -n "$APPLIED_NAME" ] || whim_fail "creating $what '$display' returned no resource name"
+    [[ -n "$APPLIED_NAME" ]] || whim_fail "creating $what '$display' returned no resource name"
     echo "created $what '$display'"
-  elif [ "$ROW_SPEC" != "$RENDERED_SPEC" ]; then
+  elif [[ "$ROW_SPEC" != "$RENDERED_SPEC" ]]; then
     whim_gcloud "$@" update "$ROW_NAME" "$file_flag=$RENDERED_FILE" >/dev/null
     APPLIED_NAME="$ROW_NAME"
     echo "updated $what '$display'"
@@ -142,9 +143,10 @@ apply_rendered() {
 }
 
 capture_uptime_value() {
-  whim_word_in "$1" "DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT" \
-    || whim_fail "$3: unknown uptime check setting $1"
-  printf -v "uptime_$1" '%s' "$2"
+  local key="$1" value="$2" context="$3"
+  whim_word_in "$key" "DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT" \
+    || whim_fail "$context: unknown uptime check setting $key"
+  printf -v "uptime_$key" '%s' "$value"
 }
 
 echo "==> static address $WHIM_STATIC_IP"
@@ -211,7 +213,7 @@ echo "==> snapshot schedule $SNAPSHOT_POLICY (daily, keep $SNAPSHOT_KEEP_DAYS) o
 if keep_days="$(whim_gcloud compute resource-policies describe "$SNAPSHOT_POLICY" --region "$region" \
   --format='value(snapshotSchedulePolicy.retentionPolicy.maxRetentionDays)' 2>/dev/null)"; then
   # A resource policy can't be edited in place: a different one is the owner's to replace.
-  [ "$keep_days" = "$SNAPSHOT_KEEP_DAYS" ] \
+  [[ "$keep_days" = "$SNAPSHOT_KEEP_DAYS" ]] \
     || whim_fail "resource policy $SNAPSHOT_POLICY keeps snapshots $keep_days days, not $SNAPSHOT_KEEP_DAYS; detach and delete it, then rerun"
   echo "unchanged resource policy $SNAPSHOT_POLICY"
 else
@@ -260,23 +262,23 @@ uptime_DISPLAY_NAME="" uptime_CHECK_PATH="" uptime_PERIOD_MINUTES="" uptime_TIME
 whim_read_env_lines "$uptime_file" capture_uptime_value
 for key in DISPLAY_NAME CHECK_PATH PERIOD_MINUTES TIMEOUT_SECONDS REGIONS MATCHER_CONTENT; do
   value_name="uptime_$key"
-  [ -n "${!value_name}" ] || whim_fail "$uptime_file sets no $key"
+  [[ -n "${!value_name}" ]] || whim_fail "$uptime_file sets no $key"
 done
 uptime_spec="$(git hash-object "$uptime_file")"
 uptime_settings=(--path "$uptime_CHECK_PATH" --period "$uptime_PERIOD_MINUTES" --timeout "$uptime_TIMEOUT_SECONDS"
   --validate-ssl=true --matcher-content "$uptime_MATCHER_CONTENT" --matcher-type contains-string)
 find_row "$uptime_DISPLAY_NAME" \
   "$(whim_gcloud monitoring uptime list-configs --format='value(displayName,name,userLabels.whim_spec,monitoredResource.labels.host)')"
-if [ -z "$ROW_NAME" ]; then
+if [[ -z "$ROW_NAME" ]]; then
   uptime_name="$(whim_gcloud monitoring uptime create "$uptime_DISPLAY_NAME" --resource-type uptime-url \
     --resource-labels "host=$WHIM_API_HOST,project_id=$project" --protocol https --port 443 "${uptime_settings[@]}" \
     --regions "$uptime_REGIONS" --user-labels "whim_spec=$uptime_spec" --format='value(name)')"
-  [ -n "$uptime_name" ] || whim_fail "creating uptime check '$uptime_DISPLAY_NAME' returned no resource name"
+  [[ -n "$uptime_name" ]] || whim_fail "creating uptime check '$uptime_DISPLAY_NAME' returned no resource name"
   echo "created uptime check '$uptime_DISPLAY_NAME'"
-elif [ "$ROW_EXTRA" != "$WHIM_API_HOST" ]; then
+elif [[ "$ROW_EXTRA" != "$WHIM_API_HOST" ]]; then
   # An uptime check's host can't be updated in place.
   whim_fail "uptime check '$uptime_DISPLAY_NAME' watches ${ROW_EXTRA:-another host}, not $WHIM_API_HOST; delete it (gcloud monitoring uptime delete ${ROW_NAME##*/}), then rerun"
-elif [ "$ROW_SPEC" != "$uptime_spec" ]; then
+elif [[ "$ROW_SPEC" != "$uptime_spec" ]]; then
   uptime_name="$ROW_NAME"
   whim_gcloud monitoring uptime update "${uptime_name##*/}" "${uptime_settings[@]}" --set-regions "$uptime_REGIONS" \
     --update-user-labels "whim_spec=$uptime_spec" >/dev/null
@@ -324,11 +326,11 @@ budget_settings=(--budget-amount "${WHIM_MONTHLY_BUDGET}${currency}" --filter-pr
   --notifications-rule-monitoring-notification-channels "$channel")
 find_row "$BUDGET_DISPLAY_NAME" "$(whim_gcloud billing budgets list --billing-account "$WHIM_BILLING_ACCOUNT" \
   --format='value(displayName,name,amount.specifiedAmount.units,notificationsRule.monitoringNotificationChannels)')"
-if [ -z "$ROW_NAME" ]; then
+if [[ -z "$ROW_NAME" ]]; then
   whim_gcloud billing budgets create --billing-account "$WHIM_BILLING_ACCOUNT" --display-name "$BUDGET_DISPLAY_NAME" \
     "${budget_settings[@]}" --threshold-rule percent=0.5 --threshold-rule percent=0.9 --threshold-rule percent=1.0 >/dev/null
   echo "created budget '$BUDGET_DISPLAY_NAME'"
-elif [ "$ROW_SPEC" != "$WHIM_MONTHLY_BUDGET" ] || [ "$ROW_EXTRA" != "$channel" ]; then
+elif [[ "$ROW_SPEC" != "$WHIM_MONTHLY_BUDGET" ]] || [[ "$ROW_EXTRA" != "$channel" ]]; then
   whim_gcloud billing budgets update "$ROW_NAME" --billing-account "$WHIM_BILLING_ACCOUNT" "${budget_settings[@]}" \
     --clear-threshold-rules --add-threshold-rule percent=0.5 --add-threshold-rule percent=0.9 \
     --add-threshold-rule percent=1.0 >/dev/null

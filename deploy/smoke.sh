@@ -27,15 +27,15 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --commit)
-      [ "$#" -ge 2 ] || whim_usage_error "--commit needs a commit sha"
+      [[ "$#" -ge 2 ]] || whim_usage_error "--commit needs a commit sha"
       expected_commit="$2"
       shift 2
       ;;
     *) whim_usage_error "unknown argument: $1" ;;
   esac
 done
-if [ -n "$expected_commit" ]; then
-  [ "$pages_only" -eq 0 ] || whim_usage_error "--pages-only checks no /healthz, so it takes no --commit"
+if [[ -n "$expected_commit" ]]; then
+  [[ "$pages_only" -eq 0 ]] || whim_usage_error "--pages-only checks no /healthz, so it takes no --commit"
   [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--commit must be a full 40-character git commit sha"
 fi
 
