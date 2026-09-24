@@ -27,6 +27,7 @@ import ReportSheet from './ReportSheet';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
 import type { ClientOptions } from './generation-client';
+import type { LegalLanguage } from './legal-language';
 
 export interface MiniAppViewProps {
   record: AppRecord;
@@ -51,6 +52,8 @@ export interface MiniAppViewProps {
   /** The orb's report was refused `update_required`: the host opens the update screen in place of
    *  this running app (request-envelope D5). */
   onUpdateRequired: () => void;
+  /** The active legal language, for the report sheet's privacy link. */
+  legalLanguage: LegalLanguage;
 }
 
 export default function MiniAppView({
@@ -65,6 +68,7 @@ export default function MiniAppView({
   access,
   reportOptions,
   onUpdateRequired,
+  legalLanguage,
 }: Readonly<MiniAppViewProps>) {
   // The report sheet is a host-layer overlay over the running realm (design D14): while it is
   // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
@@ -184,6 +188,7 @@ export default function MiniAppView({
         app={reportOpen ? installedApp : null}
         access={access}
         options={reportOptions}
+        legalLanguage={legalLanguage}
         onClose={() => setReportOpen(false)}
         onUpdateRequired={() => {
           setReportOpen(false);

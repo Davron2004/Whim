@@ -29,7 +29,7 @@ import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } f
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
 import { COPY, reportCodeSizeLabel } from './copy';
-import { activeLegalLanguage, privacyPolicyUrl } from './legal-language';
+import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 
 const REASONS: readonly ReportReason[] = ['broken', 'wrong_result', 'hard_to_use', 'harmful', 'offensive', 'other'];
@@ -82,9 +82,11 @@ export interface ReportSheetProps {
   /** A send refused `update_required`: the host opens the update screen in place of the sheet
    *  (request-envelope D5), and closing the sheet discards the draft as any close does. */
   onUpdateRequired: () => void;
+  /** The active legal language: the privacy link opens its policy page. */
+  legalLanguage: LegalLanguage;
 }
 
-export default function ReportSheet({ app, access, options, onClose, onUpdateRequired }: Readonly<ReportSheetProps>) {
+export default function ReportSheet({ app, access, options, onClose, onUpdateRequired, legalLanguage }: Readonly<ReportSheetProps>) {
   const p = SHELL_PALETTE;
   const [draft, setDraft] = useState<ReportDraft | null>(null);
   const [phase, setPhase] = useState<Phase>('draft');
@@ -245,7 +247,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
           )}
 
           <Text style={[TYPE_SCALE.caption, styles.deviceIdLine, { color: p.textMuted }]}>{COPY.reportDeviceIdLine}</Text>
-          <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(activeLegalLanguage()))} hitSlop={10} style={styles.privacyLink}>
+          <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))} hitSlop={10} style={styles.privacyLink}>
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>
 

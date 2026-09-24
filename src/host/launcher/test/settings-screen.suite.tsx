@@ -21,6 +21,7 @@ const props: SettingsScreenProps = {
   onBack: noop, onServerUrlChange: noop, onUseDefaultServer: noop,
   onHighlightingChange: noop, onOpenAIFeatures: noop,
   internalBuild: true, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
+  legalLanguage: 'en',
 };
 export async function runSettingsScreenTests(h: Harness): Promise<void> {
   for (const [status, body, label, color] of [

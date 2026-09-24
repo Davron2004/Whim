@@ -6,7 +6,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY, type LegalCopyTable } from '../copy';
 import { RELEASE } from '../release-config';
 import LauncherRoot from '../LauncherRoot';
 import HomeScreen from '../HomeScreen';
@@ -116,16 +116,23 @@ const SPEC_ORDER = [
   'consentAskFirst', 'consentFootnote', 'privacyPolicyLabel',
 ] as const;
 
-/** The first key of `SPEC_ORDER` the rendered text doesn't show after the previous one, or null. */
-function firstOutOfOrder(text: string): string | null {
+/** The first key of `SPEC_ORDER` the rendered text doesn't show, in `table`'s wording, after the
+ *  previous one, or null. */
+function firstOutOfOrder(text: string, table: LegalCopyTable): string | null {
   let cursor = 0;
   for (const key of SPEC_ORDER) {
-    const at = text.indexOf(COPY[key], cursor);
+    const at = text.indexOf(table[key], cursor);
     if (at < 0) return key;
-    cursor = at + COPY[key].length;
+    cursor = at + table[key].length;
   }
   return null;
 }
+
+/** Each legal language, with the word the terms of use go by in it and its privacy policy page. */
+const LANGUAGES = [
+  { language: 'en', termsWord: /terms/i, privacyUrl: RELEASE.privacyPolicyUrl },
+  { language: 'fr', termsWord: /conditions/i, privacyUrl: RELEASE.privacyPolicyUrlFr },
+] as const;
 
 /** Every what's-new line, in every language, for every version. */
 function everyWhatsNewLine(): string[] {
@@ -162,7 +169,7 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   }) as typeof fetch;
   let tree: Tree | undefined;
   try {
-    tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
+    tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
     await body(tree, requests, headers);
   } finally {
     if (tree) await unmountScreen(tree);
@@ -211,25 +218,28 @@ export async function runConsentGateUiTests(h: Harness): Promise<void> {
     });
   });
 
-  for (const mode of ['ask', 'review'] as const) {
-    await h.test(`consent screen (${mode}): the disclosure is complete, in order, with the privacy link and no terms`, async () => {
-      const tree = await renderScreen(<ConsentScreen mode={mode} consentOn={false} onAgree={() => {}} onClose={() => {}} />);
-      try {
-        const text = textOf(tree.root);
-        const outOfOrder = firstOutOfOrder(text);
-        h.ok(outOfOrder === null, `every section renders in the spec's order (first missing or out of order: ${outOfOrder ?? 'none'})`);
-        const covered = [...Object.entries(CONSENT_SCREEN_COVERAGE.categories), ...Object.entries(CONSENT_SCREEN_COVERAGE.roles)];
-        for (const [id, keys] of covered) {
-          h.ok(keys.every((key) => text.includes(COPY[key])), `the screen shows what names ${id}`);
+  for (const { language, termsWord, privacyUrl } of LANGUAGES) {
+    for (const mode of ['ask', 'review'] as const) {
+      await h.test(`consent screen (${language}, ${mode}): the disclosure is complete, in order, with the privacy link and no terms`, async () => {
+        const table = LEGAL_COPY[language];
+        const tree = await renderScreen(<ConsentScreen mode={mode} language={language} onLanguageChange={() => {}} consentOn={false} onAgree={() => {}} onClose={() => {}} />);
+        try {
+          const text = textOf(tree.root);
+          const outOfOrder = firstOutOfOrder(text, table);
+          h.ok(outOfOrder === null, `every section renders in the spec's order (first missing or out of order: ${outOfOrder ?? 'none'})`);
+          const covered = [...Object.entries(CONSENT_SCREEN_COVERAGE.categories), ...Object.entries(CONSENT_SCREEN_COVERAGE.roles)];
+          for (const [id, keys] of covered) {
+            h.ok(keys.every((key) => text.includes(table[key])), `the screen shows what names ${id}`);
+          }
+          h.ok(!termsWord.test(text), 'nothing on the screen is about the terms of use');
+          const opened = Linking.opened.length;
+          await press(button(tree, table.privacyPolicyLabel));
+          h.eq(Linking.opened.slice(opened), [privacyUrl], 'the privacy link opens the policy in the screen’s language');
+        } finally {
+          await unmountScreen(tree);
         }
-        h.ok(!/terms/i.test(text), 'nothing on the screen is about the terms of use');
-        const opened = Linking.opened.length;
-        await press(button(tree, COPY.privacyPolicyLabel));
-        h.eq(Linking.opened.slice(opened), [RELEASE.privacyPolicyUrl], 'the privacy link opens the English policy');
-      } finally {
-        await unmountScreen(tree);
-      }
-    });
+      });
+    }
   }
 
   await h.test('consent gate: a version-1 grant asks again, saying in full what changed since version 1', async () => {

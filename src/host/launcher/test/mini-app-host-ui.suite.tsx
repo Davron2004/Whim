@@ -56,6 +56,7 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
       access={{} as StoreAccess}
       reportOptions={grantedOptions('https://server.test', 'device')}
       onUpdateRequired={() => {}}
+      legalLanguage="en"
     />,
   );
   const webView = () => tree.root.findAll((n) => n.type === 'WebView')[0];

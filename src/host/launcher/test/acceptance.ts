@@ -73,6 +73,8 @@ import { runAppInfoTests } from './app-info.suite';
 import { runRequestEnvelopeUiTests } from './request-envelope-ui.suite';
 import { runTermsFlowUiTests } from './terms-flow-ui.suite';
 import { runPrivacySettingsUiTests } from './privacy-settings-ui.suite';
+import { runLegalLanguageTests } from './legal-language.suite';
+import { runLegalLanguageUiTests } from './legal-language-ui.suite';
 
 const h = new Harness();
 
@@ -143,6 +145,8 @@ await runAppInfoTests(h);
 await runRequestEnvelopeUiTests(h);
 await runTermsFlowUiTests(h);
 await runPrivacySettingsUiTests(h);
+await runLegalLanguageTests(h);
+await runLegalLanguageUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

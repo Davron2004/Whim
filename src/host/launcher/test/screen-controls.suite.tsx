@@ -31,12 +31,12 @@ const access = { timeline: async () => [], activeId: async () => null } as unkno
 // Adding a screen kind requires a behavioral fixture (home and mini-app exits have separate
 // contracts). These are real screens with only their outside callbacks/storage supplied.
 const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string; render: (leave: () => void) => React.ReactElement }> = {
-  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} internalBuild errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} /> },
+  settings: { label: COPY.backLabel, render: leave => <SettingsScreen onBack={leave} highlighting canProbe={false} consentStatus={{ kind: 'absent' }} onServerUrlChange={noop} onUseDefaultServer={noop} onHighlightingChange={noop} onOpenAIFeatures={noop} internalBuild errorDetails onErrorDetailsChange={noop} deviceId="test-device" onResetDeviceId={noop} legalLanguage="en" /> },
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
-  terms: { label: COPY.termsDecline, render: leave => <TermsScreen onClose={leave} onAccept={noop} /> },
-  consent: { label: COPY.consentDecline, render: leave => <ConsentScreen mode="ask" onClose={leave} onAgree={noop} /> },
+  terms: { label: COPY.termsDecline, render: leave => <TermsScreen language="en" onLanguageChange={noop} onClose={leave} onAccept={noop} /> },
+  consent: { label: COPY.consentDecline, render: leave => <ConsentScreen mode="ask" language="en" onLanguageChange={noop} onClose={leave} onAgree={noop} /> },
   compose: { label: COPY.backLabel, render: leave => <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={leave} /> },
   clarify: { label: COPY.backLabel, render: leave => <ClarifyStep prompt="Timer" questions={[]} answers={{}} loading editing={false} onAnswer={noop} onContinue={noop} onBack={leave} /> },
   plan: { label: COPY.backLabel, render: leave => <PlanStep rows={[]} loading editing={false} onChangeRow={noop} onBuild={noop} onBack={leave} /> },
@@ -65,7 +65,7 @@ export async function runScreenControlTests(h: Harness): Promise<void> {
     await h.test(`consent review (${consentOn}): safe exit neither grants nor revokes`, async () => {
       let closed = 0;
       let changes = 0;
-      const tree = await renderScreen(<ConsentScreen mode="review" consentOn={consentOn} onClose={() => { closed++; }} onAgree={() => { changes++; }} onTurnOff={() => { changes++; }} />);
+      const tree = await renderScreen(<ConsentScreen mode="review" language="en" onLanguageChange={() => {}} consentOn={consentOn} onClose={() => { closed++; }} onAgree={() => { changes++; }} onTurnOff={() => { changes++; }} />);
       try {
         await press(button(tree, consentOn ? COPY.consentReviewKeepOn : COPY.consentDecline));
         await TestRenderer.act(async () => { hardwareBack(); });

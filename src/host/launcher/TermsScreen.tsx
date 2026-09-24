@@ -10,18 +10,24 @@
  * consent screen alone (Play's prominent-disclosure rule).
  *
  * Every string comes from the active legal language's table (`LEGAL_COPY`), and the link opens
- * that language's terms page. An acceptance of another terms version swaps the lead for the
+ * that language's terms page. The switch above the title offers the other language in one tap
+ * (spec legal-text-localization). An acceptance of another terms version swaps the lead for the
  * updated-terms line (spec "Terms acceptance is versioned apart from consent").
  */
 import React from 'react';
 import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { LEGAL_COPY } from './copy';
-import { activeLegalLanguage, termsUrl } from './legal-language';
+import LegalLanguageSwitch from './LegalLanguageSwitch';
+import { termsUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 export interface TermsScreenProps {
+  /** The active legal language: this screen's copy and its terms link. */
+  language: LegalLanguage;
+  /** The language switch was tapped: the launcher persists the choice and re-renders in it. */
+  onLanguageChange: (language: LegalLanguage) => void;
   /** The stored acceptance is of another terms version: the updated-terms line replaces the lead. */
   outdated?: boolean;
   /** Records the acceptance and continues the flow. */
@@ -30,15 +36,21 @@ export interface TermsScreenProps {
   onClose: () => void;
 }
 
-export default function TermsScreen({ outdated = false, onAccept, onClose }: Readonly<TermsScreenProps>) {
+export default function TermsScreen({
+  language,
+  onLanguageChange,
+  outdated = false,
+  onAccept,
+  onClose,
+}: Readonly<TermsScreenProps>) {
   const p = SHELL_PALETTE;
   useSystemBack(onClose);
-  const language = activeLegalLanguage();
   const copy = LEGAL_COPY[language];
 
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <ScrollView contentContainerStyle={styles.content}>
+        <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
         <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{copy.termsTitle}</Text>
         <Text style={[TYPE_SCALE.body, styles.lead, { color: p.text }]}>
           {outdated ? copy.termsUpdatedLine : copy.termsLead}
