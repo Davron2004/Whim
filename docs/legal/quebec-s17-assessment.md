@@ -22,14 +22,22 @@ Whim can't tell where a user is. Its server runs in Google Cloud's Montreal regi
 | Flow | What | From | To | Purpose | Status |
 |---|---|---|---|---|---|
 | A | The request (what the user typed or dictated, their answers, the plan they approved) and, for a change, the app material (name, code, description, data layout, never saved data) | Whim's server, Montreal | OpenRouter, Inc., United States, which passes it to one model provider per call | Build or change the app, after an automated safety check that is also run by an AI provider | Live. The subject of this assessment. |
-| B | Connection data, logs and error details | Whim's server, Montreal | Google Cloud Logging | Keep Whim secure and working; find and fix problems | Once `developer-observability` ships. See section 7. |
+| B | Connection data, logs and error details | Whim's server, Montreal | Google Cloud Logging | Keep Whim secure and working; find and fix problems | Live since 2026-09-24, stored in Montreal. See section 7. |
+| D | Email a user sends to `support@whim.anycognition.ca` (their address, what they write), and alert emails, which carry no user content (a report alert names only its id, reason and sizes) | The user's email provider, or Google Cloud Monitoring | Zoho Mail (Zoho Corporation), United States data centre (the account is on `mail.zoho.com`) | Answer the user; tell the owner something broke | Live. Low sensitivity; the user chooses what to write. |
 | C | App-integrity key and verdict | The phone | Apple (App Attest) or Google (Play Integrity), United States | Stop scripts and modified apps | Once #65 ships. Update this assessment then. |
 
 What doesn't go to OpenRouter or the model providers: the phone ID, the IP address, usage records, error details and reports. These reach only Whim's own server and its hosting and logging providers (draft-copy §4, note on "Shared"; README verification item 24). Reports aren't sent to AI providers (README "What goes", privacy policy row).
 
-TODO(owner): list the model providers OpenRouter actually routed Whim's requests to over the last 30 days, with each one's country. The activity log in the OpenRouter dashboard should show the provider used for each request.
+**Model providers, checked 2026-09-24** (OpenRouter Activity, 2026-08-25 to 2026-09-24; full table, countries and sources in `openrouter-providers-2026-09-24.md`). About 1,389 requests went to 38 providers. By country of the provider's headquarters:
 
-TODO(owner): say whether an email provider receives anything (draft-copy §2's provider list has an "[Email provider, if any]" row). If it receives personal information and sits outside Quebec, add it as a flow.
+- United States: most of the volume, led by Wafer, CoreWeave, Fireworks, Together and DeepInfra.
+- China: Alibaba (13% of requests, the only host of the Qwen models Whim uses), Baidu, StreamLake (Kuaishou), Seed (ByteDance), SiliconFlow, Xiaomi, DeepSeek.
+- Canada: Cohere. Sweden: Inceptron. Spain: NextBit. Netherlands: Nebius.
+- Not determined: DekaLLM, Open Inference, Mancer, Ambient (no public company record), and Phala (sources disagree).
+
+Six requests went to DeepSeek's own API, which may train on prompts. They predate `data_collection: 'deny'`, which has excluded that API since 2026-09-23.
+
+**Email provider:** Zoho Mail, in the United States, receives support email and alert emails (flow D).
 
 ## 3. How sensitive the information is
 
@@ -52,17 +60,19 @@ Only to build or change the app the user asked for, and to run the safety check 
 - Whim keeps no request after handling (decision 1).
 - Zero-retention routing (`zdr: true`) is not relied on (README B1). Some providers that don't train still keep requests for a limited time for abuse checks and legal duties, and the policy says so (draft-copy §2, "How the AI part works").
 
-TODO(owner): confirm the OpenRouter account setting and prompt logging (tasks.md 11.3), with the date checked: ______
+Checked 2026-09-24 (openrouter.ai/settings/privacy, which applies each toggle at once): every "allow endpoints that train on or publish request data" toggle is off, OpenRouter's own use of inputs and outputs is off, and zero-data-retention-only routing is off (not relied on, above).
 
 **Contractual**
 
 s.17 needs a written agreement with the recipient. Whim's contract is with OpenRouter; it has none with the model providers behind it.
 
-TODO(owner): check whether OpenRouter's standard terms or DPA can serve as the written agreement, and whether they bind OpenRouter's model providers to the same limits (B3). Record the document name, version and date: ______
+Checked 2026-09-24. OpenRouter's Terms of Service (last updated 2026-08-31), Privacy Policy (2026-08-31) and Data Processing Agreement (2026-08-26) apply to Whim as they stand. Terms §10.2 incorporates the DPA by reference for commercial use, so there is nothing to sign. OpenRouter itself doesn't train on inputs or outputs, and keeps prompts only if the customer opts in.
+
+They **don't** bind the model providers. The DPA's subprocessor list covers only OpenRouter's own 18 infrastructure vendors. For model providers, DPA §2.4(b) offers only zero-data-retention-only routing, which rests on each provider's published policy "and does not constitute OpenRouter's guarantee". So the "onward transfer under the same limits" item below is not met in writing. The closest available step is to turn on zero-data-retention-only routing. Alibaba, which hosts the Qwen models, keeps prompts for an unknown period, so that change needs a model check first.
 
 What the agreement should cover. This is a checklist drawn from the risks in section 6, not a statement of what the law requires. Known risk, accepted by the owner: no lawyer will confirm what the law actually requires here.
 
-- [ ] Use only to provide the service to Whim. No training, and no use for OpenRouter's or a provider's own products.
+- [ ] Use only to provide the service to Whim. No training, and no use for OpenRouter's or a provider's own products. (Met for OpenRouter itself; for providers, only as each one's published policy.)
 - [ ] Onward transfer to model providers only under the same limits.
 - [ ] Retention: a stated limit for OpenRouter's own request metadata and logs, and for providers' abuse-check copies.
 - [ ] Security measures, and confidentiality for anyone who can see requests.
@@ -80,7 +90,7 @@ What the agreement should cover. This is a checklist drawn from the risks in sec
 
 Server logs live on the VM in Montreal today (`docs/backlog.md`). `developer-observability` moves them to Cloud Logging. Where Cloud Logging stores them depends on the log bucket's region.
 
-TODO(owner): once logs move, confirm the log bucket's storage region (draft-copy §2's provider list also asks this). If it's Montreal, flow B doesn't leave Quebec. If it isn't, assess it here: connection data and logs are low sensitivity (IP addresses, times, versions; no request content), and Google acts for Whim under Google Cloud's terms.
+Checked 2026-09-24. Logs moved to Cloud Logging on 2026-09-24 (`developer-observability`), and at first they went to Cloud Logging's default `_Default` bucket, whose location is **global**, not Montreal. The same day, `deploy/provision.sh` created the `whim-logs` bucket in `northamerica-northeast1` (Montreal, 30 days) and pointed the `_Default` sink at it; new entries were seen arriving there. The global `_Default` bucket now gets nothing new, and its retention was cut to 1 day, so the copies it took (a few hours of connection data and logs: low sensitivity, no request content) expire on 2026-09-25. Google's own `_Required` bucket (global, 400 days) holds only Google Cloud's admin audit logs, not Whim's logs. So flow B stays in Quebec, subject to the next paragraph.
 
 Google Cloud is a US company even when the data stays in Montreal. Whether that alone counts as communication outside Quebec isn't answered by the research. Known risk, accepted by the owner: no lawyer will answer it.
 
@@ -98,10 +108,10 @@ Google Cloud is a US company even when the data stays in Montreal. Whether that 
 
 Draft view, for the owner to accept or change: with the account setting confirmed and a written agreement covering the points in section 5, the information would receive adequate protection, and flow A may continue. The main reasons are that no identifiers travel with the request, nothing is kept by Whim, and the providers may not train on it or use it for themselves. Without a written agreement, s.17's condition isn't met.
 
-- [ ] Account setting and prompt logging confirmed (section 5)
-- [ ] Written agreement in place (section 5)
-- [ ] Provider list and countries filled in (section 2)
-- [ ] Logging flow checked (section 7)
+- [x] Account setting and prompt logging confirmed (section 5), 2026-09-24
+- [ ] Written agreement in place (section 5): OpenRouter's terms and DPA apply, but they don't bind the model providers
+- [x] Provider list and countries filled in (section 2), 2026-09-24
+- [x] Logging flow checked (section 7), 2026-09-24
 
 Review this assessment when a provider or country changes, when new data goes to AI providers, when OpenRouter's terms change, and at least once a year.
 
