@@ -8,7 +8,7 @@
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from '../server-address';
+import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl, serverOverride } from '../server-address';
 import { RELEASE } from '../release-config';
 import { clarifyPrompt, rewritePrompt } from '../generation-client';
 import type { ConsentedClientOptions } from '../generation-client';
@@ -93,30 +93,39 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   // ── effectiveServerUrl / clearServerUrl (release-config "The compiled-in server is used
   // unless the user sets an override") ───────────────────────────────────────────────────────
 
-  await h.test('effectiveServerUrl: a fresh store resolves to the compiled-in production server', () => {
+  await h.test('effectiveServerUrl: in an internal build, a fresh store resolves to the compiled-in production server', () => {
     const kv = new MapKVBackend();
-    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'no saved override -> RELEASE.serverUrl');
+    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'no saved override -> RELEASE.serverUrl');
   });
 
-  await h.test('effectiveServerUrl: a saved override wins over the compiled-in server', () => {
+  await h.test('effectiveServerUrl: in an internal build, a saved override wins over the compiled-in server', () => {
     const kv = new MapKVBackend();
     saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(effectiveServerUrl(kv), '10.0.2.2:8787', 'a saved override takes priority');
+    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'a saved override takes priority');
   });
 
   await h.test('effectiveServerUrl: a whitespace-only saved value falls back to the default', () => {
     const kv = new MapKVBackend();
     saveServerUrl(kv, '   ');
-    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'blank/whitespace counts as no override');
+    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'blank/whitespace counts as no override');
   });
 
   await h.test('clearServerUrl: removes a saved override, restoring the compiled-in default', () => {
     const kv = new MapKVBackend();
     saveServerUrl(kv, '10.0.2.2:8787');
-    h.eq(effectiveServerUrl(kv), '10.0.2.2:8787', 'override is active before clearing');
+    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'override is active before clearing');
     clearServerUrl(kv);
     h.eq(loadServerUrl(kv), undefined, 'the saved key is gone');
-    h.eq(effectiveServerUrl(kv), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
+    h.eq(effectiveServerUrl(kv, true), RELEASE.serverUrl, 'the next request goes to the compiled-in server');
+  });
+
+  await h.test('effectiveServerUrl: a store build ignores an override an earlier internal build saved, and keeps it unread', () => {
+    const kv = new MapKVBackend();
+    saveServerUrl(kv, '10.0.2.2:8787');
+    h.eq(serverOverride(kv, false), undefined, 'a store build honours no override');
+    h.eq(effectiveServerUrl(kv, false), RELEASE.serverUrl, 'every request targets the compiled-in production server');
+    h.eq(loadServerUrl(kv), '10.0.2.2:8787', 'the saved value is left in place, not deleted');
+    h.eq(effectiveServerUrl(kv, true), '10.0.2.2:8787', 'so the same phone back on an internal build still has it');
   });
 
   // ── the clarify exchange, over an injected fetch ────────────────────────────────────────────

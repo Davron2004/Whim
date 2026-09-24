@@ -333,6 +333,15 @@ export const COPY = {
   settingsAboutSectionTitle: 'About',
   settingsAdvancedSectionTitle: 'Advanced',
   settingsUseDefaultServer: 'Use Whim’s server',
+  // AI features section (legal-surface-v2 design D10; spec privacy-settings).
+  settingsErrorDetailsTitle: 'Send error details',
+  settingsErrorDetailsHint: 'When something goes wrong, Whim sends technical details so we can fix it. Not what you typed or saved.',
+  // About section: the ID sent as `x-whim-device`, and the confirm step before replacing it.
+  settingsDeviceIdTitle: 'This phone’s ID',
+  settingsDeviceIdHint: 'The ID Whim made for this phone. Include it if you ask us about your data.',
+  settingsDeviceIdReset: 'Make a new ID',
+  settingsDeviceIdResetConfirm:
+    'Whim will use a new ID from now on. Records tied to the old one are kept for up to 12 months, then deleted. Write to us if you want them deleted sooner.',
   // Shown in place of the save-time probe result while AI features are off (server-connectivity
   // "Without a current consent grant the system SHALL NOT probe").
   settingsProbeNeutral: 'Checked once AI features are on',

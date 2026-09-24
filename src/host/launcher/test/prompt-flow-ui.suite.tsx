@@ -27,7 +27,8 @@ const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId:
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
-const isSwitch = (node: TestRenderer.ReactTestInstance) => node.type === 'Switch';
+const isHighlightingSwitch = (node: TestRenderer.ReactTestInstance) =>
+  node.type === 'Switch' && node.props.accessibilityLabel === COPY.highlightingSectionTitle;
 
 /** Compose `text` and continue through a zero-question clarify to a loaded plan. */
 async function composeToPlan(tree: Tree, text: string): Promise<void> {
@@ -207,7 +208,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => tree.root.findByType(PlanStep).props.onBack());
       await TestRenderer.act(async () => tree.root.findByType(ComposeStep).props.onBack());
       await TestRenderer.act(async () => home(tree).props.onSettings());
-      await TestRenderer.act(async () => tree.root.find(isSwitch).props.onValueChange(false));
+      await TestRenderer.act(async () => tree.root.find(isHighlightingSwitch).props.onValueChange(false));
       await TestRenderer.act(async () => tree.root.findByType(SettingsScreen).props.onBack());
       await composeToPlan(tree, 'A timer');
       h.eq(styledSpans(tree), 0, 'after switching it off, the same row renders as plain text');

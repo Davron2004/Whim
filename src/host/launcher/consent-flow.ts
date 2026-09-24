@@ -28,12 +28,14 @@ import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
  * all open compose; Retry on a failed/interrupted build re-runs a pending record) collapse to the
  * first two shapes. `resume` is the third: a request the server refused `consent_required`
  * (request-envelope) goes back to the flow step that sent it, exactly as it was — the typed
- * prompt, the answers and the plan rows included.
+ * prompt, the answers and the plan rows included. `settings` is Settings' "Turn on AI features"
+ * without current terms: the flow grants through its own steps and ends back on Settings.
  */
 export type ConsentContinuation =
   | { kind: 'compose'; editing?: InstalledApp }
   | { kind: 'retry'; record: PendingBuildRecord }
-  | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen };
+  | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen }
+  | { kind: 'settings' };
 
 /** A screen of the legal flow: the terms step, then the ask-mode consent screen. */
 export type LegalStep = 'terms' | 'consent';

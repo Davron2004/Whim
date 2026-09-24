@@ -171,12 +171,16 @@ android {
     //     LAN generation server speaks http. Never uploaded.
     //   • release — the store build: upload-signed from the four WHIM_UPLOAD_* values, never the
     //     debug key, not debuggable, no cleartext exception, shipped as an AAB.
+    // WHIM_INTERNAL_BUILD (read by WhimAppInfoModule) is true for debug and offline, false for
+    // release: only internal builds honour a server-address override (legal-surface-v2 D10).
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            buildConfigField "boolean", "WHIM_INTERNAL_BUILD", "true"
         }
         release {
             signingConfig signingConfigs.release
+            buildConfigField "boolean", "WHIM_INTERNAL_BUILD", "false"
             debuggable false
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -184,6 +188,8 @@ android {
         offline {
             initWith release
             signingConfig signingConfigs.debug
+            // Overrides the value `initWith release` copied.
+            buildConfigField "boolean", "WHIM_INTERNAL_BUILD", "true"
             debuggable true
             matchingFallbacks = ['release']
             // The RN plugin sets this placeholder in `finalizeDsl`, on build types it knows by name

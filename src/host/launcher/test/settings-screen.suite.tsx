@@ -20,6 +20,7 @@ const props: SettingsScreenProps = {
   consentStatus: { kind: 'granted', version: AI_CONSENT_VERSION, grantedAt: '2026-09-18' },
   onBack: noop, onServerUrlChange: noop, onUseDefaultServer: noop,
   onHighlightingChange: noop, onOpenAIFeatures: noop,
+  internalBuild: true, errorDetails: true, onErrorDetailsChange: noop, deviceId: 'test-device', onResetDeviceId: noop,
 };
 export async function runSettingsScreenTests(h: Harness): Promise<void> {
   for (const [status, body, label, color] of [

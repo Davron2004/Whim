@@ -63,6 +63,11 @@ export const Linking = {
 };
 export function linkListenerCount(): number { return urlListeners.size; }
 export function openLink(url: string): void { for (const listener of urlListeners) listener({ url }); }
-export const Alert = { alert: () => {} };
+export interface AlertButton { text?: string; style?: string; onPress?: () => void }
+/** Every `Alert.alert` call, in order, so a test can read the dialog and press one of its buttons. */
+export const Alert = {
+  shown: [] as { title: string; message?: string; buttons: AlertButton[] }[],
+  alert: (title: string, message?: string, buttons: AlertButton[] = []) => { Alert.shown.push({ title, message, buttons }); },
+};
 export const Vibration = { vibrate: () => {}, cancel: () => {} };
 export const TurboModuleRegistry = { get: () => null, getEnforcing: () => ({ play: () => {}, stop: () => {} }) };

@@ -72,6 +72,7 @@ import { runHistoryUiTests } from './history-ui.suite';
 import { runAppInfoTests } from './app-info.suite';
 import { runRequestEnvelopeUiTests } from './request-envelope-ui.suite';
 import { runTermsFlowUiTests } from './terms-flow-ui.suite';
+import { runPrivacySettingsUiTests } from './privacy-settings-ui.suite';
 
 const h = new Harness();
 
@@ -141,6 +142,7 @@ await runHistoryUiTests(h);
 await runAppInfoTests(h);
 await runRequestEnvelopeUiTests(h);
 await runTermsFlowUiTests(h);
+await runPrivacySettingsUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
