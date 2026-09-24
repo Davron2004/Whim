@@ -26,10 +26,10 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 4. Terms step
 
-- [ ] 4.1 `release-config.ts`: `TERMS_VERSION = 1` and `RELEASE.termsUrl` (with French twins for both legal URLs). Add a non-RN terms-acceptance module for `whim.terms:v1` that fails closed. Tests for spec terms-acceptance §"Terms acceptance is versioned apart from consent".
-- [ ] 4.2 Add the terms step screen and the terms copy keys from draft-copy §1. Wire the flow: data-sending action → terms (if not current) → consent (if not current) → the started action. Tests for each scenario of §"Terms are accepted in their own step before the consent screen".
-- [ ] 4.3 The request gate yields options only with both a current acceptance and a current grant, and reports stay exempt. Tests for §"The send gate requires both a terms acceptance and a consent grant".
-- [ ] 4.4 Add the Settings About "Terms of use" link (§"The terms are reachable from Settings").
+- [x] 4.1 `release-config.ts`: `TERMS_VERSION = 1` and `RELEASE.termsUrl` (with French twins for both legal URLs). Add a non-RN terms-acceptance module for `whim.terms:v1` that fails closed. Tests for spec terms-acceptance §"Terms acceptance is versioned apart from consent".
+- [x] 4.2 Add the terms step screen and the terms copy keys from draft-copy §1. Wire the flow: data-sending action → terms (if not current) → consent (if not current) → the started action. Tests for each scenario of §"Terms are accepted in their own step before the consent screen".
+- [x] 4.3 The request gate yields options only with both a current acceptance and a current grant, and reports stay exempt. Tests for §"The send gate requires both a terms acceptance and a consent grant".
+- [x] 4.4 Add the Settings About "Terms of use" link (§"The terms are reachable from Settings").
 
 ## 5. Settings rows and the server override
 

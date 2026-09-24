@@ -123,10 +123,14 @@ deploy/deploy.sh --site-only   # once DNS resolves — publishes the pages, buil
 deploy/deploy.sh               # once the OpenRouter secret has a version — the full deploy
 ```
 
-`--site-only` publishes `/privacy`, `/support`, `/a/*`, uploads the Caddyfile and reloads Caddy; it
-never touches the server container. The full deploy builds the image via Cloud Build (unless
-`--tag` names one that already exists), uploads compose/seccomp/config, writes the secret into
-`/etc/whim/server.env`, recreates `whim-server`, and runs smoke.
+`--site-only` publishes `/privacy`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/*`, uploads the
+Caddyfile and reloads Caddy; it never touches the server container. Both deploys refuse before
+anything is uploaded when a legal page fails its check: an empty required value in
+`deploy/site/legal-identity.json`, a `{{…}}` left unresolved, a draft marker such as `[B9]`, or a
+retention row that disagrees with the disclosure manifest (`server/src/site/legal-pages.ts`). The
+full deploy builds the image via Cloud Build (unless `--tag` names one that already exists), uploads
+compose/seccomp/config, writes the secret into `/etc/whim/server.env`, recreates `whim-server`, and
+runs smoke.
 
 ## Verifying (smoke)
 
@@ -153,7 +157,8 @@ What each check means:
   still on in production, not just in dev.
 - **no `react-native` under the image's `node_modules`** — the production tree never carries the
   device bundle.
-- **`/privacy`, `/support`, `/a/x` → `200` html, `/nope` → `404`, neither redirected** — the pages
+- **`/privacy`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/x` → `200` html, `/nope` → `404`,
+  none redirected** — the pages
   host serves flat files with no directory-index redirect (a redirect would break the association
   files below).
 - **each `.well-known` path** — `200` + `application/json` + no redirect + bytes equal to the
@@ -166,7 +171,7 @@ below matter, the app side must already point at this domain: `WHIM_DOMAIN` in
 `release/whim-release.xcconfig` and `src/host/launcher/release-config.ts` must both be
 `anycognition.ca` (platform-release-readiness's precondition, held by its own lockstep suite).
 
-1. The first server deploy publishes `/privacy`, `/support` and `/a/*`. Both `.well-known` paths
+1. The first server deploy publishes the legal pages, `/support` and `/a/*`. Both `.well-known` paths
    answer `404` — no fingerprint is committed yet.
 2. platform-release-readiness task 14.1 commits `release/android-upload-cert.sha256`. The site is
    unaffected: the association-files command still refuses with only the upload fingerprint.
