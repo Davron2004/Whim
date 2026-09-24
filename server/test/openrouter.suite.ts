@@ -296,7 +296,7 @@ export async function runOpenRouterTests(): Promise<void> {
     await drain(deltas);
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
     const sort: ProviderSort = 'throughput';
-    eq('provider sort set: request carries provider.sort and denies data collection', body.provider, { data_collection: 'deny', sort });
+    eq('provider sort set: request carries provider.sort, denies data collection and requires zero retention', body.provider, { data_collection: 'deny', zdr: true, sort });
   }
   {
     let capturedCall: CapturedCall | undefined;
@@ -304,7 +304,7 @@ export async function runOpenRouterTests(): Promise<void> {
     const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
     await drain(deltas);
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
-    eq('provider sort unset: request only denies data collection', body.provider, { data_collection: 'deny' });
+    eq('provider sort unset: request only denies data collection and requires zero retention', body.provider, { data_collection: 'deny', zdr: true });
   }
 
   await testPreStreamHttpErrors();

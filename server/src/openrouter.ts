@@ -164,10 +164,12 @@ function requestBody(options: OpenRouterOptions, providerSort: ProviderSort | un
     ...(options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens }),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     ...reasoningField(options.reasoning),
-    // `data_collection: 'deny'` keeps prompts away from providers that train on or keep them.
-    // Measured 2026-09-23: 25 of 26 providers for the engineer model still qualify (only DeepSeek's
-    // own API drops out), and the routed pick and price didn't change.
-    provider: { data_collection: 'deny', ...(providerSort ? { sort: providerSort } : {}) },
+    // `data_collection: 'deny'` keeps prompts away from providers that train on them. Measured
+    // 2026-09-23: 25 of 26 providers for the engineer model still qualify (only DeepSeek's own API
+    // drops out), and the routed pick and price didn't change. `zdr: true` also drops providers that
+    // keep a copy for any time; it is the one limit OpenRouter's DPA commits to for model providers
+    // (§2.4(b); docs/legal/quebec-s17-assessment.md section 5).
+    provider: { data_collection: 'deny', zdr: true, ...(providerSort ? { sort: providerSort } : {}) },
     stream_options: { include_usage: true },
   });
 }
