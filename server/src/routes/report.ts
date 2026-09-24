@@ -123,7 +123,7 @@ async function settleFailedReportAdmission(
   reportLog: ServerLogger,
 ): Promise<void> {
   try {
-    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+    await usageStore.settle(requestId, { outcome: 'error', failureReason: 'internal_error', now: clock() });
   } catch (settleErr) {
     reportLogError(reportLog, settleErr, cause);
   }

@@ -20,6 +20,7 @@ import {
   ModelContentPolicy,
   PolicyUnavailableError,
   cachedPolicy,
+  parseCategoryList,
   buildClarifyPolicyInput,
   buildRewritePolicyInput,
   buildGeneratePolicyInput,
@@ -30,6 +31,7 @@ import {
 
 const repoRoot = path.resolve(process.cwd());
 const CATEGORIES = loadContentPolicyDocument(repoRoot).categories;
+const KNOWN_CATEGORIES = parseCategoryList(CATEGORIES);
 const REWRITE_MODEL_ID = 'test-vendor/rewrite-classifier-1';
 
 // ── Fake ModelClient doubles — none of these ever touch the network ──────────
@@ -475,9 +477,11 @@ async function testLogContent(): Promise<void> {
     check('the checked text never appears in the captured log output', capture.raw.every((line) => !line.includes(MARKER)));
   }
 
+  // A category that matches the policy document's own list (case-insensitively) is logged as
+  // itself — `cachedPolicy` is wired with `knownCategories`, as the real composition root does.
   {
     const { policy: inner } = countingPolicy(() => ({ refuse: 'graphic violence or gore' }));
-    const cached = cachedPolicy(inner);
+    const cached = cachedPolicy(inner, { knownCategories: KNOWN_CATEGORIES });
     const capture = captureLogs();
     let records;
     const input = `{"prompt":"${MARKER}-refuse"}`;
@@ -490,10 +494,33 @@ async function testLogContent(): Promise<void> {
     }
     eq('refuse then cache hit: two log records', records.length, 2);
     eq('first record: fresh refuse verdict', records[0]?.verdict, 'refuse');
-    eq('first record: carries the category', records[0]?.category, 'graphic violence or gore');
+    eq('first record: a known category is logged as itself', records[0]?.category, 'graphic violence or gore');
     eq('second record: cached-refuse verdict', records[1]?.verdict, 'cached-refuse');
     eq('second record: still carries the category', records[1]?.category, 'graphic violence or gore');
     check('the checked text never appears in the captured log output', capture.raw.every((line) => !line.includes(MARKER)));
+  }
+
+  // A classifier can echo arbitrary user-derived text as `category` (`parseVerdict` accepts any
+  // non-empty string — `policy.suite.ts`'s own "off-list category: still a refusal" case above).
+  // That free text MUST NOT reach the log: it is folded to `'other'`, and none of it appears on any
+  // captured line, even though the verdict itself still refuses (spec "unknown category as a
+  // refusal" governs the verdict only).
+  {
+    const leakedText = 'Alice owes 40 for Lisbon';
+    const { policy: inner } = countingPolicy(() => ({ refuse: leakedText }));
+    const cached = cachedPolicy(inner, { knownCategories: KNOWN_CATEGORIES });
+    const capture = captureLogs();
+    let records;
+    try {
+      await cached.check(`{"prompt":"${MARKER}-offlist"}`, 'generate');
+      records = withMessage(capture, 'content policy check');
+    } finally {
+      capture.stop();
+    }
+    eq('off-list category: one log record', records.length, 1);
+    eq('off-list category: verdict is still refuse', records[0]?.verdict, 'refuse');
+    eq('off-list category logs as "other"', records[0]?.category, 'other');
+    check('the off-list category text never appears in the captured log output', capture.raw.every((line) => !line.includes('Alice')));
   }
 
   {

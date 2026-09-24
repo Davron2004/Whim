@@ -237,7 +237,7 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | Query | Filter |
   | --- | --- |
   | One request (the `x-whim-request-id` a client reports) | `log_id("docker") jsonPayload.requestId="<id>"` |
-  | Terminal failures, by reason | `log_id("docker") jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow |
+  | Terminal failures, by reason | `log_id("docker") jsonPayload.msg="terminal failure"`, plus `jsonPayload.reason="<code>"` to narrow (`reason` holds the closed failure code, e.g. `plan_failed`, never the sentence the user saw) |
   | Device errors | `log_id("docker") jsonPayload.scope="device"` |
   | Accepted reports | `log_id("docker") jsonPayload.msg="report accepted"` (its `reportId` feeds `reports show` below) |
   | Warnings and worse | `log_id("docker") severity>=WARNING` |

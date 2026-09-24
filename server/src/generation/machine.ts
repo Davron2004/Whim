@@ -672,7 +672,10 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     state.budget.recordTerminal(terminal.type === 'result' ? 'delivered' : 'failed', code);
     if (terminal.type === 'failure') {
-      state.log.info({ reason: terminal.reason }, 'terminal failure');
+      // The closed code, never `terminal.reason`: a plan_failed sentence quotes model-written
+      // screen names that echo the prompt, and this line ships to Cloud Logging. The field is
+      // `reason` because the logger redacts any field named `code`.
+      state.log.info({ reason: code }, 'terminal failure');
     } else {
       state.log.info('terminal result');
     }

@@ -17,13 +17,18 @@
  *
  * Extended by developer-observability chain-2 (design D9, specs/server-observability "The ledger
  * records a closed failure code"): a nullable `failure_reason` holding the pipeline's terminal
- * failure code or the refusal code a request ended with, validated against those closed sets on
- * write so the ledger still holds no text.
+ * failure code, the request failure code (`model_failure`, `internal_error`) or the refusal code a
+ * request ended with, validated against those closed sets on write so the ledger still holds no text.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
-import { TERMINAL_FAILURE_CODES, type TerminalFailureCode } from './generation/failure-codes';
+import {
+  REQUEST_FAILURE_CODES,
+  TERMINAL_FAILURE_CODES,
+  type RequestFailureCode,
+  type TerminalFailureCode,
+} from './generation/failure-codes';
 
 export interface UsageStore {
   /** Add usage to the running total for a device. */
@@ -155,11 +160,15 @@ export interface AdmitParams {
   globalKinds?: readonly RequestKind[];
 }
 
-/** Why a request ended in failure or refusal: the pipeline's terminal failure code or the
- *  refusal code it was answered with. Nothing else is ever stored. */
-export type FailureReason = TerminalFailureCode | ServiceRefusalCode;
+/** Why a request ended in failure or refusal: the pipeline's terminal failure code, the request
+ *  failure code, or the refusal code it was answered with. Nothing else is ever stored. */
+export type FailureReason = TerminalFailureCode | RequestFailureCode | ServiceRefusalCode;
 
-const FAILURE_REASONS: ReadonlySet<string> = new Set<string>([...TERMINAL_FAILURE_CODES, ...ServiceRefusalCode.options]);
+const FAILURE_REASONS: ReadonlySet<string> = new Set<string>([
+  ...TERMINAL_FAILURE_CODES,
+  ...REQUEST_FAILURE_CODES,
+  ...ServiceRefusalCode.options,
+]);
 
 /** The outcomes a request can end in without failing: they never carry a failure reason. */
 const SUCCESS_OUTCOMES: ReadonlySet<RequestOutcome> = new Set<RequestOutcome>(['delivered', 'ok']);
@@ -247,7 +256,7 @@ function assertFailureReason(params: SettleParams): void {
   const reason: unknown = params.failureReason;
   if (reason === undefined) return;
   if (typeof reason !== 'string' || !FAILURE_REASONS.has(reason)) {
-    throw new Error(`failure_reason must be a terminal failure or refusal code, got ${JSON.stringify(reason)}`);
+    throw new Error(`failure_reason must be a terminal failure, request failure or refusal code, got ${JSON.stringify(reason)}`);
   }
   if (SUCCESS_OUTCOMES.has(params.outcome)) {
     throw new Error(`failure_reason ${reason} cannot settle a request whose outcome is ${params.outcome}`);

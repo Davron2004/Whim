@@ -783,7 +783,7 @@ async function testErrorExpiryAndDrain(): Promise<void> {
     const res = await postGenerate(h.app, PROMPT, DEVICE_A);
     check('error: the stream errors', (await within(caught(() => readSseResponse(res).then(() => undefined)))) instanceof Error);
     await expectTornDown('error', h, 'failed');
-    eq('error: a pipeline that yields no failure terminal leaves no failure reason', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), [undefined]);
+    eq('error: a pipeline that throws before any failure terminal settles as internal_error', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['internal_error']);
   }
 
   // The run's wall-clock budget, on the real machine.
@@ -802,6 +802,19 @@ async function testErrorExpiryAndDrain(): Promise<void> {
     check('expiry: the model transport observed the abort', model.calls[0]?.aborted === true);
     await expectTornDown('expiry', h, 'expired');
     eq('expiry: the ledger row names the expired code', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['expired']);
+  }
+
+  // The run expires, then the request is aborted before the failure terminal is sent.
+  {
+    const model = new ControlledModelClient([STALL], 'gen-expiry-aborted');
+    const clock = new ManualTimerClock();
+    const h = harness({ pipeline: machinePipeline(model, clock, ROSTER) });
+    await postGenerate(h.app, PROMPT, DEVICE_A);
+    check('expiry then abort: the model call started', await waitFor(() => model.calls.length === 1));
+    clock.fireAll();
+    h.inFlight.abortAll();
+    await expectTornDown('expiry then abort', h, 'expired');
+    eq('expiry then abort: the row still names the expired code', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['expired']);
   }
 
   // A drain abort.
@@ -1052,6 +1065,7 @@ async function testThrowingStoreSettlesTheLedgerRow(): Promise<void> {
     h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.outcome),
     ['error'],
   );
+  eq('  ... naming internal_error', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['internal_error']);
   eq('the generation slot was released', h.slots.controller.counts().generations, 0);
   eq('the unit is NOT refunded — the classifier call it paid for already happened', await h.usageStore.generationUnits(AT_2200_UTC), 1);
 }

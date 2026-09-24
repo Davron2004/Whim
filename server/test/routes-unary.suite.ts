@@ -20,6 +20,7 @@ import {
   InMemoryUsageStore,
   NodeSqliteUsageStore,
   type CostState,
+  type FailureReason,
   type RequestOutcome,
   type UsageStore,
 } from '../src/usage-store';
@@ -143,16 +144,22 @@ function freshDeviceHeader(): Record<string, string> {
  *  from "the row was left open forever". */
 const STORE_BLIP_MESSAGE = 'usage store unavailable';
 
+interface SettleRecord {
+  requestId: string;
+  outcome: RequestOutcome;
+  failureReason?: FailureReason;
+}
+
 interface CreditThrowingStore {
   store: UsageStore;
   admitted: string[];
-  settles: { requestId: string; outcome: RequestOutcome }[];
+  settles: SettleRecord[];
 }
 
 function creditThrowingStore(): CreditThrowingStore {
   const inner = new InMemoryUsageStore();
   const admitted: string[] = [];
-  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  const settles: SettleRecord[] = [];
   const store: UsageStore = {
     credit: () => Promise.reject(new Error(STORE_BLIP_MESSAGE)),
     read: (deviceId) => inner.read(deviceId),
@@ -163,7 +170,7 @@ function creditThrowingStore(): CreditThrowingStore {
     },
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
-      settles.push({ requestId, outcome: params.outcome });
+      settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });
       await inner.settle(requestId, params);
     },
     recordCost: (requestId, params) => inner.recordCost(requestId, params),
@@ -180,11 +187,11 @@ function reportInsertFailureStore(): {
   usageStore: UsageStore;
   reportStore: ReportStore;
   admitted: string[];
-  settles: { requestId: string; outcome: RequestOutcome }[];
+  settles: SettleRecord[];
 } {
   const inner = new InMemoryUsageStore();
   const admitted: string[] = [];
-  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  const settles: SettleRecord[] = [];
   const usageStore: UsageStore = {
     credit: (deviceId, usage) => inner.credit(deviceId, usage),
     read: (deviceId) => inner.read(deviceId),
@@ -195,7 +202,7 @@ function reportInsertFailureStore(): {
     },
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
-      settles.push({ requestId, outcome: params.outcome });
+      settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });
       await inner.settle(requestId, params);
     },
     recordCost: (requestId, params) => inner.recordCost(requestId, params),
@@ -218,10 +225,10 @@ function reportInsertFailureStore(): {
 function reportOkSettlementFailureStore(): {
   usageStore: UsageStore;
   reportStore: ReportStore;
-  settles: { requestId: string; outcome: RequestOutcome }[];
+  settles: SettleRecord[];
 } {
   const inner = new InMemoryUsageStore();
-  const settles: { requestId: string; outcome: RequestOutcome }[] = [];
+  const settles: SettleRecord[] = [];
   let failOkSettlement = true;
   const usageStore: UsageStore = {
     credit: (deviceId, usage) => inner.credit(deviceId, usage),
@@ -229,7 +236,7 @@ function reportOkSettlementFailureStore(): {
     admit: (params) => inner.admit(params),
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
-      settles.push({ requestId, outcome: params.outcome });
+      settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });
       if (params.outcome === 'ok' && failOkSettlement) {
         failOkSettlement = false;
         throw new Error('usage store unavailable');
@@ -549,6 +556,11 @@ async function testThrowingStoreReleasesTheSlot(): Promise<void> {
     'the ledger row it opened was settled, as an error',
     blipping.settles.filter((s) => s.requestId === blipping.admitted[0]).map((s) => s.outcome),
     ['error'],
+  );
+  eq(
+    '  ... naming internal_error',
+    blipping.settles.filter((s) => s.requestId === blipping.admitted[0]).map((s) => s.failureReason),
+    ['internal_error'],
   );
 
   // The proof that matters: the pool still admits work afterwards.
@@ -1119,6 +1131,36 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
   }
 }
 
+/** specs/server-observability "The ledger records a closed failure code": every clarify/rewrite
+ *  failure settles its row with a closed code, never null and never the error's text. */
+async function testUnaryFailuresNameTheirCode(): Promise<void> {
+  section('Every clarify/rewrite failure settles its ledger row with a closed code');
+  const cases: ReadonlyArray<{ name: string; route: 'clarify' | 'rewrite'; model?: ModelClient; code: FailureReason }> = [
+    { name: 'clarify: the model call throws', route: 'clarify', model: new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: new Error('model boom') }]), code: 'model_failure' },
+    { name: 'clarify: the model answers something unusable', route: 'clarify', model: new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: ['not questions at all'] }]), code: 'model_failure' },
+    { name: 'clarify: no model is configured', route: 'clarify', code: 'internal_error' },
+    {
+      name: 'rewrite: both attempts fail',
+      route: 'rewrite',
+      model: new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['A counter'] },
+        { role: 'rewrite', deltas: [], error: new Error('provider failed') },
+      ]),
+      code: 'model_failure',
+    },
+    { name: 'rewrite: no model is configured', route: 'rewrite', code: 'internal_error' },
+  ];
+  for (const { name, route, model, code } of cases) {
+    invalidateCreditCache();
+    const usageStore = new InMemoryUsageStore();
+    const { app } = testApp({ model, usageStore });
+    const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    eq(`${name} → 502`, res.status, 502);
+    const ledger = (await usageStore.deviceRecords(DEVICE_ID)).ledger;
+    eq(`  ... and its row settles as an error naming ${code}`, ledger.map((row) => [row.outcome, row.failureReason]), [['error', code]]);
+  }
+}
+
 async function testBudgetExhaustedMidCall(): Promise<void> {
   section('design D6b "A 402 mid-flight ends the request and invalidates the cache"');
 
@@ -1211,7 +1253,7 @@ async function testReportRoute(): Promise<void> {
     const body = (await res.json()) as ApiError;
     eq('the storage failure remains an internal error', body.error, 'internal_error');
     eq('one report ledger row was admitted', failing.admitted.length, 1);
-    eq('the admitted report row settles as error', failing.settles, [{ requestId: failing.admitted[0], outcome: 'error' }]);
+    eq('the admitted report row settles as error, naming internal_error', failing.settles, [{ requestId: failing.admitted[0], outcome: 'error', failureReason: 'internal_error' }]);
     eq('the failed report remains charged to the report daily allowance', (await failing.usageStore.summary({ days: 1, now: FIXED_NOW })).days[0]?.countByKind.report, 1);
   }
 
@@ -1224,6 +1266,7 @@ async function testReportRoute(): Promise<void> {
     eq('an ok-settlement failure after report persistence → 500', res.status, 500);
     eq('the report remains stored after the failed settlement', (await reportStore.list({ now: FIXED_NOW })).length, 1);
     eq('the failed ok settlement is followed by error cleanup', failing.settles.map((entry) => entry.outcome), ['ok', 'error']);
+    eq('  ... which names internal_error', failing.settles.map((entry) => entry.failureReason), [undefined, 'internal_error']);
   }
 
   // An over-long note is a shape error.
@@ -1387,6 +1430,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testFailedClassifierUsageStillResolvesById();
   await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();
+  await testUnaryFailuresNameTheirCode();
   await testReportRoute();
   await testHealthzSse();
 }
