@@ -7,7 +7,7 @@
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { runAgeCheck, storedAgeGate, type AgeCheckOutcome } from '../age-check';
+import { runAgeCheck, storedAgeGate, type AgeCheckResult } from '../age-check';
 import { nextLegalStep } from '../consent-flow';
 import type { TermsStatus } from '../terms-acceptance';
 import type { ConsentStatus } from '../ai-consent';
@@ -17,11 +17,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKED = new Date('2026-09-24T09:30:00.000Z');
 
 /** Runs one check against a fresh store with `answer` as the native module's reply. */
-async function checkWith(answer: () => Promise<unknown>): Promise<{ kv: MapKVBackend; outcome: AgeCheckOutcome }> {
+async function checkWith(answer: () => Promise<unknown>): Promise<{ kv: MapKVBackend; outcome: AgeCheckResult }> {
   const kv = new MapKVBackend();
   const outcome = await runAgeCheck(kv, answer, () => CHECKED);
   return { kv, outcome };
 }
+
+/** The record an age check left in `kv`. */
+const storedRecord = (kv: MapKVBackend): Record<string, unknown> => JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null');
 
 /** A store holding an age check with this outcome, made `daysAgo` days before `CHECKED`. */
 async function checkedDaysAgo(signal: string, daysAgo: number): Promise<MapKVBackend> {
@@ -34,17 +37,26 @@ const ACCEPTED: TermsStatus = { kind: 'accepted', version: 1, acceptedAt: '2026-
 const GRANTED: ConsentStatus = { kind: 'granted', version: 2, grantedAt: '2026-09-01T00:00:00.000Z' };
 
 export async function runAgeCheckTests(h: Harness): Promise<void> {
-  for (const [signal, outcome] of [
-    ['adult', 'allowed'],
-    ['minor-approved', 'allowed'],
-    ['unavailable', 'allowed'],
-    ['minor-not-approved', 'blocked'],
+  for (const [signal, result, stored] of [
+    ['adult', 'allowed', 'allowed'],
+    ['minor-approved', 'allowed', 'allowed'],
+    ['unavailable', 'allowed', 'allowed'],
+    ['minor-not-approved', 'minor-not-approved', 'blocked'],
+    ['under-13', 'under-13', 'blocked'],
   ] as const) {
-    await h.test(`age-check: a native "${signal}" answer is ${outcome}`, async () => {
-      const result = await checkWith(() => Promise.resolve(signal));
-      h.eq(result.outcome, outcome, `${signal} -> ${outcome}`);
+    await h.test(`age-check: a native "${signal}" answer is ${result}, stored as ${stored}`, async () => {
+      const check = await checkWith(() => Promise.resolve(signal));
+      h.eq(check.outcome, result, `${signal} -> ${result}`);
+      h.eq(storedRecord(check.kv).outcome, stored, `${signal} is stored as ${stored}`);
     });
   }
+
+  await h.test('age-check: a user under 13 is held, and the store keeps only "blocked" and its date', async () => {
+    const { kv, outcome } = await checkWith(() => Promise.resolve('under-13'));
+    h.eq(outcome, 'under-13', 'the check says why it held the user, for the message');
+    h.eq(storedRecord(kv), { outcome: 'blocked', checkedAt: CHECKED.toISOString() }, 'exactly { outcome: blocked, checkedAt }');
+    h.eq(storedAgeGate(kv, CHECKED), 'unchecked', 'and it is asked again at the next attempt, like any blocked outcome');
+  });
 
   await h.test('age-check: no signal lets the user through — a rejected, throwing, missing or unknown answer is allowed', async () => {
     const answers: Record<string, () => Promise<unknown>> = {
@@ -94,7 +106,8 @@ export async function runAgeCheckTests(h: Harness): Promise<void> {
     const absent: TermsStatus = { kind: 'absent' };
     const noConsent: ConsentStatus = { kind: 'absent' };
     h.eq(nextLegalStep('unchecked', absent, noConsent, false), 'age-check', 'no outcome: the check runs before the terms');
-    h.eq(nextLegalStep('blocked', absent, noConsent, false), 'age-blocked', 'held: the parental-approval message, never the terms');
+    h.eq(nextLegalStep('minor-not-approved', absent, noConsent, false), 'age-blocked', 'held: the parental-approval message, never the terms');
+    h.eq(nextLegalStep('under-13', absent, noConsent, false), 'age-blocked', 'held under 13: the 13-and-over message, never the terms');
     h.eq(nextLegalStep('allowed', absent, noConsent, false), 'terms', 'allowed: the terms step');
     h.eq(nextLegalStep('allowed', { kind: 'outdated', version: 0 }, noConsent, false), 'terms', 'an outdated acceptance is a due terms step too');
     h.eq(nextLegalStep('unchecked', { kind: 'outdated', version: 0 }, noConsent, false), 'age-check', 'so it is checked first');

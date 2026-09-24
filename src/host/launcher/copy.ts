@@ -331,11 +331,14 @@ export const COPY = {
   termsDecline: 'Not now',
   // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
   // Shown in place of the terms step when the store says the user is a minor without a parent's
-  // approval. The AI features stay off; the apps on the phone keep working. `ageBack` also leaves
-  // the brief screen shown while the store is asked.
+  // approval (`ageBlocked*`) or under 13 (`ageUnder13*`). The AI features stay off; the apps on
+  // the phone keep working. `ageBack` also leaves the brief screen shown while the store is asked.
   ageBlockedTitle: 'A parent needs to approve Whim',
   ageBlockedBody:
     'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
+  ageUnder13Title: 'Whim’s AI features are for people 13 and over',
+  ageUnder13Body:
+    'The App Store or Google Play says this account belongs to someone under 13, so Whim can’t make new apps for you. The apps you already have keep working.',
   ageBack: 'Back',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
@@ -474,6 +477,8 @@ export const LEGAL_COPY_KEYS = [
   'termsDecline',
   'ageBlockedTitle',
   'ageBlockedBody',
+  'ageUnder13Title',
+  'ageUnder13Body',
   'ageBack',
   'consentTitle',
   'consentLead',
@@ -526,6 +531,9 @@ const FRENCH: LegalCopyTable = {
   ageBlockedTitle: 'Un parent doit approuver Whim',
   ageBlockedBody:
     'Les fonctions d’IA de Whim nécessitent l’approbation d’un parent pour ce compte. Un parent peut approuver Whim dans l’App Store ou Google Play, puis vous pourrez réessayer. Les apps que vous avez déjà continuent de fonctionner.',
+  ageUnder13Title: 'Les fonctions d’IA de Whim sont réservées aux personnes de 13\u00a0ans et plus',
+  ageUnder13Body:
+    'Selon l’App Store ou Google Play, ce compte appartient à une personne de moins de 13\u00a0ans, donc Whim ne peut pas créer de nouvelles apps pour vous. Les apps que vous avez déjà continuent de fonctionner.',
   ageBack: 'Retour',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:

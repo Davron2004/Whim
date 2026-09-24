@@ -76,7 +76,9 @@ native leg lands.
   (whim.anycognition.ca/a/<id>) that opens it.
 - **4.7.5 (age limits for above-the-rating content).** Whim is rated 13+. The server's content
   check refuses requests for content above that rating, so no mini app needs a separate age gate.
-  Whim also reads the store's age range where the law requires it and keeps it on the device.
+  Where the law requires it, Whim also checks the store's age range: a user under 13 gets the AI
+  features blocked, and Whim keeps only the outcome (allowed or blocked), on the device, never the
+  range itself.
 
 ## 3. Guideline 2.5.2 context
 

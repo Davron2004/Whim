@@ -3,17 +3,18 @@
 // store-age-signals). `WhimAgeSignalModule.mm` calls `check(presenting:completion:)` for the
 // WhimAgeSignal TurboModule.
 // ─────────────────────────────────────────────────────────────────────────────
-// Answers one of `adult`, `minor-approved`, `minor-not-approved` or `unavailable`, and nothing
-// else: the age range and how it was declared stay inside this function.
+// Answers one of `adult`, `minor-approved`, `under-13` or `unavailable`, and nothing else: the
+// age range and how it was declared stay inside this function.
 //
 // • iOS 26.2+ only: that release added `isEligibleForAgeFeatures`, which says whether an age law
 //   applies to this user. The store is asked for the range only when it does, so nobody else sees
 //   Apple's share-your-age sheet. Older iOS, a user it doesn't apply to, a declined sheet, no
 //   presenting screen and any error all answer `unavailable`.
-// • One age gate, 18: the least Whim needs to know.
-// • Under 18 is `minor-approved`: where these laws apply, the App Store gets a parent's consent
-//   before a minor's account can download the app, so a minor running it was approved through the
-//   store. A parent withdrawing that consent reaches the developer only as an App Store Server
+// • Two age gates, 13 and 18: the least Whim needs to know. A range whose upper bound is below 13
+//   is `under-13`, which Whim holds whatever a parent approved.
+// • Otherwise under 18 is `minor-approved`: where these laws apply, the App Store gets a parent's
+//   consent before a minor's account can download the app, so a minor running it was approved
+//   through the store. A parent withdrawing that consent reaches the developer only as an App Store Server
 //   Notification, which Whim does not receive (nothing about age leaves the phone), so iOS never
 //   answers `minor-not-approved` today.
 //
@@ -46,8 +47,9 @@ final class WhimAgeSignalReader: NSObject {
   private static func reduced(presenting presenter: UIViewController) async -> String {
     do {
       guard try await AgeRangeService.shared.isEligibleForAgeFeatures else { return unavailable }
-      switch try await AgeRangeService.shared.requestAgeRange(ageGates: 18, in: presenter) {
+      switch try await AgeRangeService.shared.requestAgeRange(ageGates: 13, 18, in: presenter) {
       case .sharing(let range):
+        if let upper = range.upperBound, upper < 13 { return "under-13" }
         if let lower = range.lowerBound, lower >= 18 { return "adult" }
         if let upper = range.upperBound, upper < 18 { return "minor-approved" }
         return unavailable

@@ -12,7 +12,7 @@ import TermsScreen from '../TermsScreen';
 import LauncherRoot from '../LauncherRoot';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { COPY } from '../copy';
-import { consentStatus } from '../ai-consent';
+import { consentStatus, grantConsent } from '../ai-consent';
 import { termsStatus } from '../terms-acceptance';
 import { getDeviceId } from '../device-id';
 import { errorDetailsEnabled } from '../error-details';
@@ -97,7 +97,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       h.eq(errorDetailsEnabled(kv), false, 'the module reports off before any next upload decision');
       h.eq(errorDetailsSwitch(tree).props.value, false, 'the switch reads off');
       await unmountScreen(tree);
-      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild />);
+      const restarted = await renderScreen(<LauncherRoot appInfo={testAppInfo} internalBuild deviceLocale={() => 'en-US'} />);
       try {
         await openSettings(restarted);
         h.eq(errorDetailsEnabled(kv), false, 'after a restart the module still reports off');
@@ -199,6 +199,23 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
   });
 
   // ── Settings' "Turn on AI features" routes through the terms step ────────────────────────────
+
+  await h.test('Settings: the AI features row dates the grant with its month named — the phone’s locale, or Canadian French with the French legal text', async () => {
+    // Noon local time, so every time zone formats the same calendar day.
+    const grantedAt = new Date(2026, 8, 24, 12).toISOString();
+    const cases: Array<[locale: string, line: string]> = [
+      ['en-CA', 'On since Sep 24, 2026'],
+      ['en-US', 'On since Sep 24, 2026'],
+      ['fr-CA', 'On since 24 sept. 2026'],
+    ];
+    for (const [locale, line] of cases) {
+      await withLauncher({ locale, consent: false, prepare: (kv) => grantConsent(kv, grantedAt), server: clarifyServer }, async ({ tree }) => {
+        await openSettings(tree);
+        h.ok(textOf(tree.root).includes(line), `${locale}: "${line}"`);
+        h.ok(!textOf(tree.root).includes('9/24/2026'), `${locale}: never the month-first number date`);
+      });
+    }
+  });
 
   await h.test('Settings: turning AI features on without a terms record opens the terms step and grants nothing until terms, then consent, are agreed', async () => {
     await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv, sent }) => {

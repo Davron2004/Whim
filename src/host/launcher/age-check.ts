@@ -2,9 +2,11 @@
  * age-check — the store's age signal, reduced on the phone and kept only as an outcome
  * (legal-surface-v2 design D11; spec store-age-signals). The platform answers through the
  * `WhimAgeSignal` native module (Apple Declared Age Range, Play Age Signals); this module reduces
- * that answer to one of four signals, turns the signal into `allowed` or `blocked`, and stores only
+ * that answer to one of five signals, turns the signal into `allowed` or `blocked`, and stores only
  * `{ outcome, checkedAt }` under `whim.age-check:v1` in the shared `whim.launcher` KVBackend. The
  * raw signal is never stored (Texas Bus. & Com. Code §121.055), and nothing here is ever sent.
+ * Which of the two held messages shows (a parent can approve, or 13 and over) comes from the
+ * check's own answer within the session; a stored `blocked` is asked again anyway.
  *
  * The legal flow (`consent-flow.ts#nextLegalStep`) asks for a check ahead of the terms step when
  * no outcome still holds: none stored, one older than 30 days, or a blocked one, so a parent's
@@ -16,33 +18,42 @@
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
 
-/** What the store says about the user, reduced to what Whim acts on. `unavailable` covers an
- *  unsupported OS, a region without a signal, a user the store can't place, and any error. */
-type AgeSignal = 'adult' | 'minor-approved' | 'minor-not-approved' | 'unavailable';
+/** What the store says about the user, reduced to what Whim acts on. `under-13` is a store age
+ *  range whose upper bound is below 13; `unavailable` covers an unsupported OS, a region without a
+ *  signal, a user the store can't place, and any error. */
+type AgeSignal = 'adult' | 'minor-approved' | 'minor-not-approved' | 'under-13' | 'unavailable';
 
 /** The only thing an age check keeps. */
-export type AgeCheckOutcome = 'allowed' | 'blocked';
+type AgeCheckOutcome = 'allowed' | 'blocked';
 
-/** The age input of the legal flow: a stored or just-derived outcome, or `unchecked` when a check
+/** Why a check held the user, which picks the held message: a minor without the store's parental
+ *  approval, or a user under 13. Never stored. */
+export type AgeHold = 'minor-not-approved' | 'under-13';
+
+/** What a check returns: `allowed`, or the reason it held the user (stored as `blocked`). */
+export type AgeCheckResult = 'allowed' | AgeHold;
+
+/** The age input of the legal flow: a stored or just-derived result, or `unchecked` when a check
  *  is due before the terms step. */
-export type AgeGate = AgeCheckOutcome | 'unchecked';
+export type AgeGate = AgeCheckResult | 'unchecked';
 
 const AGE_CHECK_KEY = 'whim.age-check:v1';
 
 /** How long an `allowed` outcome holds before the flow asks the store again. */
 const RECHECK_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
-const AGE_SIGNALS: readonly string[] = ['adult', 'minor-approved', 'minor-not-approved', 'unavailable'];
+const AGE_SIGNALS: readonly string[] = ['adult', 'minor-approved', 'minor-not-approved', 'under-13', 'unavailable'];
 
-/** The native module's answer as one of the four signals. Anything else (no module, a value this
+/** The native module's answer as one of the five signals. Anything else (no module, a value this
  *  build doesn't know) is `unavailable`. */
 function ageSignalFrom(raw: unknown): AgeSignal {
   return typeof raw === 'string' && AGE_SIGNALS.includes(raw) ? (raw as AgeSignal) : 'unavailable';
 }
 
-/** Only a minor without the store's parental approval is held; every other signal continues. */
-function ageOutcomeOf(signal: AgeSignal): AgeCheckOutcome {
-  return signal === 'minor-not-approved' ? 'blocked' : 'allowed';
+/** A minor without the store's parental approval and a user under 13 are held; every other signal
+ *  continues. */
+function ageResultOf(signal: AgeSignal): AgeCheckResult {
+  return signal === 'minor-not-approved' || signal === 'under-13' ? signal : 'allowed';
 }
 
 interface StoredAgeCheck {
@@ -79,14 +90,16 @@ export function storedAgeGate(kv: KVBackend, now: Date): AgeGate {
 }
 
 /**
- * Asks the platform through `read`, reduces its answer, stores `{ outcome, checkedAt }` and returns
- * the outcome. A `read` that throws or rejects counts as `unavailable`, so it continues.
+ * Asks the platform through `read`, reduces its answer, stores `{ outcome, checkedAt }` (a held
+ * result as `blocked`) and returns the result. A `read` that throws or rejects counts as
+ * `unavailable`, so it continues.
  */
-export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date): Promise<AgeCheckOutcome> {
+export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date): Promise<AgeCheckResult> {
   const signal = await Promise.resolve()
     .then(read)
     .then(ageSignalFrom, (): AgeSignal => 'unavailable');
-  const stored: StoredAgeCheck = { outcome: ageOutcomeOf(signal), checkedAt: now().toISOString() };
+  const result = ageResultOf(signal);
+  const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
   kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
-  return stored.outcome;
+  return result;
 }

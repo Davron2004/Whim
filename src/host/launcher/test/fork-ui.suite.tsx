@@ -24,7 +24,7 @@ export async function runForkUiTests(h: Harness): Promise<void> {
       const originalFork = StoreAccess.prototype.fork;
       const calls: unknown[][] = [];
       StoreAccess.prototype.fork = async function (...args: unknown[]) { calls.push(args); return { ...app, id: 'timer-copy' }; } as typeof originalFork;
-      const tree = await renderScreen(<LauncherRoot />);
+      const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
       try {
         await TestRenderer.act(async () => tree.root.find(node => node.type === 'TouchableOpacity' && typeof node.props.onLongPress === 'function').props.onLongPress());
         await press(button(tree, COPY.actionFork));

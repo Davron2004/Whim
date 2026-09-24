@@ -2,13 +2,16 @@
  * legal-language Node suite (legal-surface-v2 task 6.1; spec legal-text-localization "Legal text
  * is French first on a French-language phone, with an express choice of English"): a stored
  * choice wins and is kept under `whim.legal-language:v1`; without one, any French locale gives
- * French and everything else English; the locale comes from `Intl`, with the platform constant
- * as the fallback.
+ * French and everything else English; the locale comes from the user's preferred languages on
+ * iOS and from `Intl` on Android, each with the other source as the fallback; and a legal date is
+ * written unambiguously in the phone's locale, or Canadian French with the French legal text.
  */
 
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
-import { activeLegalLanguage, chooseLegalLanguage, intlLocale, preferredLocale } from '../legal-language';
+import { activeLegalLanguage, chooseLegalLanguage, intlLocale, legalDateLabel, preferredLocale } from '../legal-language';
+import { deviceLocale } from '../device-locale';
+import { I18nManager, Platform, Settings } from './native-host';
 
 const CHOICE_KEY = 'whim.legal-language:v1';
 
@@ -27,6 +30,33 @@ function withIntl<T>(replacement: unknown, body: () => T): T {
 function intlResolving(locale: string): unknown {
   return { DateTimeFormat: () => ({ resolvedOptions: () => ({ locale }) }) };
 }
+
+/** What a phone reports besides `Intl`: its OS, the iOS user's preferred languages, and Android's
+ *  first configured locale. */
+interface PhonePlatform {
+  os: 'ios' | 'android';
+  appleLanguages?: string[];
+  localeIdentifier?: string;
+}
+
+/** Runs `body` as a phone reporting `phone`, restoring the react-native shims after. */
+function onPhone<T>(phone: PhonePlatform, body: () => T): T {
+  const saved = { os: Platform.OS, get: Settings.get, getConstants: I18nManager.getConstants };
+  const constants = I18nManager as unknown as { getConstants: () => { localeIdentifier?: string } };
+  Platform.OS = phone.os;
+  Settings.get = (key: string): unknown => (key === 'AppleLanguages' ? phone.appleLanguages : undefined);
+  constants.getConstants = () => ({ ...saved.getConstants(), localeIdentifier: phone.localeIdentifier });
+  try {
+    return body();
+  } finally {
+    Platform.OS = saved.os;
+    Settings.get = saved.get;
+    I18nManager.getConstants = saved.getConstants;
+  }
+}
+
+/** Noon, local time, on 24 September 2026: the same calendar day in every time zone's formatting. */
+const SEPT_24 = new Date(2026, 8, 24, 12).toISOString();
 
 export async function runLegalLanguageTests(h: Harness): Promise<void> {
   await h.test('legal-language: with no choice, a French phone in any region gets French', () => {
@@ -60,14 +90,41 @@ export async function runLegalLanguageTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('legal-language: the locale comes from Intl, and the platform constant only when Intl has none', () => {
+  await h.test('legal-language: the first source wins, and the fallback only when the first has none', () => {
     h.eq(withIntl(intlResolving('fr-CA'), intlLocale), 'fr-CA', 'Intl’s resolved default locale is read');
     h.eq(withIntl(undefined, intlLocale), undefined, 'a runtime without Intl reads nothing');
-    h.eq(preferredLocale('en-US', 'fr_CA'), 'en-US', 'Intl wins over the platform constant');
-    h.eq(preferredLocale(undefined, 'fr_CA'), 'fr_CA', 'without Intl, the platform constant is used');
-    h.eq(preferredLocale('', 'fr_CA'), 'fr_CA', 'an empty Intl answer counts as none');
+    h.eq(preferredLocale('en-US', 'fr_CA'), 'en-US', 'the first source wins over the fallback');
+    h.eq(preferredLocale(undefined, 'fr_CA'), 'fr_CA', 'without a first answer, the fallback is used');
+    h.eq(preferredLocale('', 'fr_CA'), 'fr_CA', 'an empty answer counts as none');
     h.eq(preferredLocale(undefined, undefined), undefined, 'neither source: no locale');
-    const withoutIntl = withIntl(undefined, () => preferredLocale(intlLocale(), 'fr_CA'));
-    h.eq(activeLegalLanguage(new MapKVBackend(), withoutIntl), 'fr', 'a French Android phone without Intl still gets French');
+  });
+
+  await h.test('device-locale: a French iPhone gets French even when Intl follows the app’s English-only localizations', () => {
+    const locale = withIntl(intlResolving('en-CA'), () => onPhone({ os: 'ios', appleLanguages: ['fr-CA', 'en-CA'] }, deviceLocale));
+    h.eq(locale, 'fr-CA', 'the first of the user’s preferred languages, not Intl’s en-CA');
+    h.eq(activeLegalLanguage(new MapKVBackend(), locale), 'fr', 'so the legal text is French');
+    const noList = withIntl(intlResolving('fr-FR'), () => onPhone({ os: 'ios' }, deviceLocale));
+    h.eq(noList, 'fr-FR', 'without a preferred-languages list, Intl answers');
+  });
+
+  await h.test('device-locale: Android asks Intl first, and I18nManager’s locale only when Intl has none', () => {
+    const android: PhonePlatform = { os: 'android', appleLanguages: ['de-DE'], localeIdentifier: 'fr_CA' };
+    h.eq(withIntl(intlResolving('en-CA'), () => onPhone(android, deviceLocale)), 'en-CA', 'Intl follows the phone on Android');
+    const withoutIntl = withIntl(undefined, () => onPhone(android, deviceLocale));
+    h.eq(withoutIntl, 'fr_CA', 'without Intl, the first configured locale');
+    h.eq(activeLegalLanguage(new MapKVBackend(), withoutIntl), 'fr', 'so a French Android phone without Intl still gets French');
+  });
+
+  await h.test('legal-language: a legal date names its month, in the phone’s locale or Canadian French with the French text', () => {
+    h.eq(legalDateLabel(SEPT_24, 'en', 'en-CA'), 'Sep 24, 2026', 'a Canadian English phone');
+    h.eq(legalDateLabel(SEPT_24, 'en', 'en-US'), 'Sep 24, 2026', 'a US phone reads the same, never 9/24/2026');
+    h.ok(legalDateLabel(SEPT_24, 'en', 'en-GB').startsWith('24 Sep'), 'a British phone puts the day first');
+    h.eq(legalDateLabel(SEPT_24, 'fr', 'en-US'), '24 sept. 2026', 'the French legal text writes it in Canadian French, whatever the phone');
+    h.eq(legalDateLabel(SEPT_24, 'en', 'fr_CA'), '24 sept. 2026', 'an Android-style fr_CA identifier is read');
+  });
+
+  await h.test('legal-language: without Intl, or with a locale it rejects, a legal date is the ISO day', () => {
+    h.eq(withIntl(undefined, () => legalDateLabel(SEPT_24, 'en', 'en-CA')), '2026-09-24', 'no Intl');
+    h.eq(legalDateLabel(SEPT_24, 'en', 'not a locale!'), '2026-09-24', 'a locale Intl cannot read');
   });
 }

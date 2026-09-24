@@ -62,12 +62,13 @@ export interface LegalFlow<S> {
  * for a flow a `consent_required` refusal started, even over a current local grant, since the
  * server has just said it needs consent again. Ahead of the terms step (spec store-age-signals "The
  * launcher checks the store's age signal before the terms step"): the age check while no outcome
- * holds (`age` is `unchecked`), and the parental-approval message when the outcome is `blocked`.
+ * holds (`age` is `unchecked`), and the held message when the check held the user (`age` is the
+ * reason: `minor-not-approved` or `under-13`).
  */
 export function nextLegalStep(age: AgeGate, terms: TermsStatus, consent: ConsentStatus, refused: boolean): LegalStep | null {
   if (terms.kind !== 'accepted') {
     if (age === 'unchecked') return 'age-check';
-    return age === 'blocked' ? 'age-blocked' : 'terms';
+    return age === 'allowed' ? 'terms' : 'age-blocked';
   }
   if (refused || consent.kind !== 'granted') return 'consent';
   return null;
