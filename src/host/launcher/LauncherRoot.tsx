@@ -120,6 +120,8 @@ import { installedAppInfo, installedInternalBuild } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
+import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
+import { deviceLocale as installedDeviceLocale } from './device-locale';
 import { declineTarget, nextLegalStep } from './consent-flow';
 import type { ConsentContinuation, LegalFlow } from './consent-flow';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
@@ -337,13 +339,15 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
 
 /** `appInfo` reads the installed app's platform, version and build for the request envelope;
  *  `internalBuild` says whether this is an internal build (only those show and honour a
- *  server-address override, legal-surface-v2 D10). Both default to the native seam. Only a suite
- *  passes another (the launcher runner has no native module), to give the shell a build of its
- *  choosing. */
+ *  server-address override, legal-surface-v2 D10); `deviceLocale` reads the phone's preferred
+ *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6). All
+ *  default to the native seam. Only a suite passes another (the launcher runner has no native
+ *  module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   internalBuild,
-}: Readonly<{ appInfo?: () => AppInfo; internalBuild?: boolean }>) {
+  deviceLocale = installedDeviceLocale,
+}: Readonly<{ appInfo?: () => AppInfo; internalBuild?: boolean; deviceLocale?: () => string | undefined }>) {
   // Read once: the installed binary can't change what kind of build it is while the process lives.
   const [internal] = useState(() => internalBuild ?? installedInternalBuild());
   // Construct the persistent host services once (device native modules — lazy under the hood).
@@ -374,6 +378,7 @@ export default function LauncherRoot({
       kv={kv}
       appInfo={appInfo}
       internalBuild={internal}
+      deviceLocale={deviceLocale}
     />
   );
 }
@@ -415,6 +420,8 @@ function ConsentScreenForShell({
   onReviewTurnOff,
   onReviewClose,
   consentOn,
+  language,
+  onLanguageChange,
 }: Readonly<{
   screen: Extract<Screen, { kind: 'consent' }>;
   onAskAgree: (continuation: ConsentContinuation) => void;
@@ -423,11 +430,15 @@ function ConsentScreenForShell({
   onReviewTurnOff: () => void;
   onReviewClose: () => void;
   consentOn: boolean;
+  language: LegalLanguage;
+  onLanguageChange: (language: LegalLanguage) => void;
 }>) {
   if (screen.mode === 'ask') {
     return (
       <ConsentScreen
         mode="ask"
+        language={language}
+        onLanguageChange={onLanguageChange}
         outdatedFrom={screen.outdatedFrom}
         refused={screen.refused}
         onAgree={() => onAskAgree(screen.continuation)}
@@ -436,7 +447,15 @@ function ConsentScreenForShell({
     );
   }
   return (
-    <ConsentScreen mode="review" consentOn={consentOn} onAgree={onReviewTurnOn} onTurnOff={onReviewTurnOff} onClose={onReviewClose} />
+    <ConsentScreen
+      mode="review"
+      language={language}
+      onLanguageChange={onLanguageChange}
+      consentOn={consentOn}
+      onAgree={onReviewTurnOn}
+      onTurnOff={onReviewTurnOff}
+      onClose={onReviewClose}
+    />
   );
 }
 
@@ -448,6 +467,7 @@ function LauncherShell({
   kv,
   appInfo,
   internalBuild,
+  deviceLocale,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -456,8 +476,16 @@ function LauncherShell({
   kv: KVBackend;
   appInfo: () => AppInfo;
   internalBuild: boolean;
+  deviceLocale: () => string | undefined;
 }>) {
   const palette = SHELL_PALETTE;
+  // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
+  // from the stored choice or the phone's language, and replaced when the user taps a switch.
+  const [legalLanguage, setLegalLanguage] = useState<LegalLanguage>(() => activeLegalLanguage(kv, deviceLocale()));
+  const onLegalLanguageChange = (language: LegalLanguage) => {
+    chooseLegalLanguage(kv, language);
+    setLegalLanguage(language);
+  };
 
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   // A sender-landing (`neutral`-tone) notice on whichever step currently carries one clears the
@@ -1784,6 +1812,7 @@ function LauncherShell({
           access={access}
           reportOptions={reportOptions}
           onUpdateRequired={onReportUpdateRequired}
+          legalLanguage={legalLanguage}
         />
       );
     } else if (screen.kind === 'dev') {
@@ -1805,12 +1834,15 @@ function LauncherShell({
           onErrorDetailsChange={onErrorDetailsChange}
           deviceId={deviceId}
           onResetDeviceId={onResetDeviceId}
+          legalLanguage={legalLanguage}
         />
       );
     } else if (screen.kind === 'terms') {
       const flow = screen;
       return (
         <TermsScreen
+          language={legalLanguage}
+          onLanguageChange={onLegalLanguageChange}
           outdated={flow.outdated}
           onAccept={() => onTermsAccept(flow)}
           onClose={() => onLegalDecline(flow.returnTo)}
@@ -1826,6 +1858,8 @@ function LauncherShell({
           onReviewTurnOff={onConsentReviewTurnOff}
           onReviewClose={onConsentReviewClose}
           consentOn={consentStatus(kv).kind === 'granted'}
+          language={legalLanguage}
+          onLanguageChange={onLegalLanguageChange}
         />
       );
     } else if (screen.kind === 'history') {
@@ -1842,6 +1876,7 @@ function LauncherShell({
             app={reportTarget}
             access={access}
             options={reportOptions}
+            legalLanguage={legalLanguage}
             onClose={() => setReportTarget(null)}
             onUpdateRequired={onReportUpdateRequired}
           />
@@ -1934,6 +1969,7 @@ function LauncherShell({
             app={reportTarget}
             access={access}
             options={reportOptions}
+            legalLanguage={legalLanguage}
             onClose={() => setReportTarget(null)}
             onUpdateRequired={onReportUpdateRequired}
           />

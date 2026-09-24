@@ -33,9 +33,9 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 5. Settings rows and the server override
 
-- [ ] 5.1 Add a non-RN error-details preference module (`whim.error-details:v1`, missing means on) and the "Send error details" switch in the AI features section. Write `handoff/privacy-settings.md` with the module's signatures for `developer-observability` chain-4. Tests for spec privacy-settings §"Settings carries a 'Send error details' switch…".
-- [ ] 5.2 `device-id.ts`: add `resetDeviceId(kv)`. The About section gets a "This phone's ID" row (selectable text) and "Make a new ID" behind a confirm step, using draft-copy's strings. Tests for §"Settings shows this phone's ID and can make a new one", including that the header equals the shown ID.
-- [ ] 5.3 Compile the server-address override out of store builds and make them ignore a saved override. Internal builds (dev, and the local offline `android:release`) keep it. Record which flag each build path sets in `progress.md`. Tests for spec app-launcher §"The Settings screen persists a server address…" and §"Settings groups its controls…".
+- [x] 5.1 Add a non-RN error-details preference module (`whim.error-details:v1`, missing means on) and the "Send error details" switch in the AI features section. Write `handoff/privacy-settings.md` with the module's signatures for `developer-observability` chain-4. Tests for spec privacy-settings §"Settings carries a 'Send error details' switch…".
+- [x] 5.2 `device-id.ts`: add `resetDeviceId(kv)`. The About section gets a "This phone's ID" row (selectable text) and "Make a new ID" behind a confirm step, using draft-copy's strings. Tests for §"Settings shows this phone's ID and can make a new one", including that the header equals the shown ID.
+- [x] 5.3 Compile the server-address override out of store builds and make them ignore a saved override. Internal builds (dev, and the local offline `android:release`) keep it. Record which flag each build path sets in `progress.md`. Tests for spec app-launcher §"The Settings screen persists a server address…" and §"Settings groups its controls…".
 
 ## 6. French
 

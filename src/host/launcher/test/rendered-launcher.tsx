@@ -40,6 +40,9 @@ export interface LauncherSetup {
   consent?: boolean;
   /** Accept the terms of use before mounting (default true). */
   terms?: boolean;
+  /** The phone's preferred locale, as the shell reads it (default `en-US`, whatever the machine
+   *  running the suite is set to). */
+  locale?: string;
   /** Any other persisted state the shell should find at launch. */
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
@@ -147,7 +150,8 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   }) as typeof fetch;
   let tree: Tree | undefined;
   try {
-    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} />);
+    const locale = setup.locale ?? 'en-US';
+    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} deviceLocale={() => locale} />);
     await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);

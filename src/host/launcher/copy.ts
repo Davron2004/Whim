@@ -326,6 +326,9 @@ export const COPY = {
   termsLabel: 'Read the terms of use',
   termsAccept: 'Accept',
   termsDecline: 'Not now',
+  // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
+  // names the OTHER language, in that language, so English's own entry is the French label.
+  legalLanguageSwitch: 'Continuer en français',
 
   // ── settings ────────────────────────────────────────────────────────────────
   settingsAISectionTitle: 'AI features',
@@ -380,84 +383,151 @@ export interface ConsentWhatsNewLine {
   readonly covers: readonly WideningId[];
 }
 
+/** What a version-1 grant has not agreed to: the widenings from consent version 1 to the current
+ *  one. Every language's version-1 line covers exactly these. */
+const WIDENED_SINCE_V1: readonly WideningId[] = [
+  'category:app-integrity',
+  'category:error-details',
+  'keep:reports',
+  'keep:usage-records',
+  'purpose:connection-logs:legal',
+  'purpose:connection-logs:operate',
+  'purpose:connection-logs:safety',
+  'purpose:phone-id:legal',
+  'purpose:reports:legal',
+  'purpose:request-material:legal',
+  'purpose:request-material:operate',
+  'purpose:usage-records:legal',
+  'purpose:usage-records:safety',
+  'recipient:connection-logs:service-providers',
+  'recipient:phone-id:service-providers',
+  'recipient:reports:service-providers',
+  'recipient:usage-records:service-providers',
+  'role:authorities',
+  'role:platform',
+  'role:successor',
+];
+
 /** Language → the consent version a grant was given under → its what's-new line. Kept beside
- *  `COPY` rather than in it: every `COPY` value is a string its readers iterate as one. */
+ *  `COPY` rather than in it: every `COPY` value is a string its readers iterate as one. A
+ *  translation is wording: it covers what its English line covers. */
 export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>> = {
   en: {
     1: {
       text: 'New: error details when something goes wrong, and checks by Apple or Google that requests come from the real Whim app. We may keep reports and usage records for up to 12 months instead of 90 days. We now also say that companies working for us, like cloud hosting providers, handle your phone ID, usage records, connection logs and reports; that we use your requests to run Whim and your connection logs to run it and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
-      covers: [
-        'category:app-integrity',
-        'category:error-details',
-        'keep:reports',
-        'keep:usage-records',
-        'purpose:connection-logs:legal',
-        'purpose:connection-logs:operate',
-        'purpose:connection-logs:safety',
-        'purpose:phone-id:legal',
-        'purpose:reports:legal',
-        'purpose:request-material:legal',
-        'purpose:request-material:operate',
-        'purpose:usage-records:legal',
-        'purpose:usage-records:safety',
-        'recipient:connection-logs:service-providers',
-        'recipient:phone-id:service-providers',
-        'recipient:reports:service-providers',
-        'recipient:usage-records:service-providers',
-        'role:authorities',
-        'role:platform',
-        'role:successor',
-      ],
+      covers: WIDENED_SINCE_V1,
+    },
+  },
+  fr: {
+    1: {
+      text: 'Nouveau\u00a0: les détails d’erreur quand quelque chose ne va pas, et les vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim. Nous pouvons conserver les signalements et les registres d’utilisation jusqu’à 12 mois au lieu de 90 jours. Nous précisons aussi maintenant que des entreprises qui travaillent pour nous, comme des hébergeurs infonuagiques, traitent l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements\u00a0; que nous utilisons vos demandes pour faire fonctionner Whim, et vos données de connexion pour le faire fonctionner et le garder sûr\u00a0; et dans quels cas nous communiquerions des renseignements aux autorités, parce que la loi l’exige ou pour des problèmes de fraude, de sécurité ou de sûreté, ou à un nouveau propriétaire si Whim change de mains.',
+      covers: WIDENED_SINCE_V1,
     },
   },
 };
 
 /** The keys the terms step and the consent screen read from the active legal language's table
  *  (spec terms-acceptance "Terms are accepted in their own step…"; spec ai-data-consent "The
- *  disclosure names what is sent…"; `legal-language.ts#activeLegalLanguage`). */
-type LegalCopyKey =
-  | 'termsTitle'
-  | 'termsLead'
-  | 'termsUpdatedLine'
-  | 'termsLabel'
-  | 'termsAccept'
-  | 'termsDecline'
-  | 'consentTitle'
-  | 'consentLead'
-  | 'consentSentTitle'
-  | 'consentSentRequest'
-  | 'consentSentEdit'
-  | 'consentSentDevice'
-  | 'consentSentErrors'
-  | 'consentWhyTitle'
-  | 'consentWhy'
-  | 'consentWhoTitle'
-  | 'consentWho'
-  | 'consentWhoPlatform'
-  | 'consentWhoAuthorities'
-  | 'consentStaysTitle'
-  | 'consentStays'
-  | 'consentNeverTitle'
-  | 'consentNever'
-  | 'consentAskFirst'
-  | 'consentFootnote'
-  | 'consentOutdatedLine'
-  | 'consentAgree'
-  | 'consentDecline'
-  | 'consentReviewKeepOn'
-  | 'consentReviewTurnOff'
-  | 'consentReviewTurnOn'
-  | 'permissionRequiredLine'
-  | 'privacyPolicyLabel';
+ *  disclosure names what is sent…"; spec legal-text-localization "Every legal copy key exists in
+ *  both languages"). A runtime list, so the coverage check can require each one in every table. */
+export const LEGAL_COPY_KEYS = [
+  'termsTitle',
+  'termsLead',
+  'termsUpdatedLine',
+  'termsLabel',
+  'termsAccept',
+  'termsDecline',
+  'consentTitle',
+  'consentLead',
+  'consentSentTitle',
+  'consentSentRequest',
+  'consentSentEdit',
+  'consentSentDevice',
+  'consentSentErrors',
+  'consentWhyTitle',
+  'consentWhy',
+  'consentWhoTitle',
+  'consentWho',
+  'consentWhoPlatform',
+  'consentWhoAuthorities',
+  'consentStaysTitle',
+  'consentStays',
+  'consentNeverTitle',
+  'consentNever',
+  'consentAskFirst',
+  'consentFootnote',
+  'consentOutdatedLine',
+  'consentAgree',
+  'consentDecline',
+  'consentReviewKeepOn',
+  'consentReviewTurnOff',
+  'consentReviewTurnOn',
+  'permissionRequiredLine',
+  'privacyPolicyLabel',
+  'legalLanguageSwitch',
+] as const;
+
+type LegalCopyKey = (typeof LEGAL_COPY_KEYS)[number];
 
 /** One legal language's table: every legal key, as a string. English is `COPY` itself; another
  *  language supplies a table of just these keys. */
 export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
 
+/** The French legal table (legal-surface-v2 design D6): Canadian French, "vous", plain register.
+ *  Every `consent` key the privacy page must quote is quoted word for word by `/fr/privacy`
+ *  (`server/test/web-site.suite.ts`). A non-breaking space goes before a colon, so the colon
+ *  never starts a line. */
+const FRENCH: LegalCopyTable = {
+  termsTitle: 'Conditions d’utilisation',
+  termsLead:
+    'Les fonctions d’IA de Whim s’accompagnent de quelques règles\u00a0: ce que vous pouvez créer, là où l’IA se trompe et ce dont nous sommes responsables.',
+  termsUpdatedLine: 'Nous avons mis à jour les conditions d’utilisation.',
+  termsLabel: 'Lire les conditions d’utilisation',
+  termsAccept: 'Accepter',
+  termsDecline: 'Pas maintenant',
+  consentTitle: 'Avant que Whim crée des apps pour vous',
+  consentLead:
+    'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
+  consentSentTitle: 'Ce qui est envoyé',
+  consentSentRequest: 'Ce que vous demandez\u00a0: votre description, vos réponses et le plan que vous approuvez',
+  consentSentEdit:
+    'Lorsque vous modifiez une app\u00a0: son nom, son code et sa description, et la structure de ses données, jamais les données elles-mêmes',
+  consentSentDevice: 'Un identifiant que Whim crée pour ce téléphone, utilisé pour les limites quotidiennes et les totaux d’utilisation.',
+  consentSentErrors:
+    'Des détails d’erreur quand quelque chose ne va pas. Ils sont uniquement techniques, jamais ce que vous avez tapé ou enregistré.',
+  consentWhyTitle: 'Pourquoi',
+  consentWhy:
+    'Pour créer vos apps et faire fonctionner Whim\u00a0: limites quotidiennes, prévention des abus, maîtrise des coûts, et détection et correction des problèmes.',
+  consentWhoTitle: 'Qui les reçoit',
+  consentWho:
+    'AnyCognition, l’entreprise qui conçoit Whim, et des entreprises qui travaillent pour nous, comme des hébergeurs infonuagiques et des fournisseurs d’IA. Certaines sont à l’extérieur du Canada. Elles ne peuvent pas utiliser ces renseignements pour entraîner des modèles d’IA ni pour leurs propres produits, mais certaines peuvent les conserver brièvement pour des raisons de sécurité ou juridiques.',
+  consentWhoPlatform: 'Apple ou Google peuvent aussi vérifier que les demandes proviennent de la véritable app Whim.',
+  consentWhoAuthorities: 'Nous communiquons des renseignements aux autorités lorsque la loi l’exige.',
+  consentStaysTitle: 'Ce que vous enregistrez dans vos apps',
+  consentStays:
+    'Personne chez Whim ne peut le lire. Cela reste sur votre téléphone, et tout ce que Whim pourrait un jour synchroniser ou sauvegarder pour vous est chiffré sur votre téléphone avec une clé que Whim n’a jamais.',
+  consentNeverTitle: 'Ce que nous ne faisons jamais',
+  consentNever:
+    'Afficher des publicités, vendre vos données ou les communiquer à des fins publicitaires, ou vous suivre dans d’autres apps et sites Web.',
+  consentAskFirst:
+    'Si nous voulons un jour recueillir un nouveau type de renseignements, les utiliser à une nouvelle fin, les conserver plus longtemps ou les confier à un nouveau type d’entreprise, nous vous le demanderons d’abord.',
+  consentFootnote:
+    'Vous pouvez désactiver les fonctions d’IA et les détails d’erreur dans les réglages de Whim (Settings). Les apps que vous avez déjà continuent de fonctionner dans les deux cas.',
+  consentOutdatedLine: 'Ce texte a changé depuis que vous l’avez accepté.',
+  consentAgree: 'Accepter et continuer',
+  consentDecline: 'Pas maintenant',
+  consentReviewKeepOn: 'Garder les fonctions d’IA activées',
+  consentReviewTurnOff: 'Désactiver les fonctions d’IA',
+  consentReviewTurnOn: 'Activer les fonctions d’IA',
+  permissionRequiredLine: 'Whim a de nouveau besoin de votre permission pour envoyer ceci.',
+  privacyPolicyLabel: 'Politique de confidentialité',
+  legalLanguageSwitch: 'Continue in English',
+};
+
 /** Every legal language's copy table. The terms step and the consent screen read
- *  `LEGAL_COPY[activeLegalLanguage()]`; the consent coverage check
+ *  `LEGAL_COPY[language]` for the launcher's active legal language; the consent coverage check
  *  (`checks/test/repo/consent-coverage.suite.ts`) reads every table here. */
-export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY };
+export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY, fr: FRENCH };
 
 /** Which keys put each disclosure-manifest category and recipient role on the consent screen
  *  (legal-surface-v2 design D4). Plain manifest ids: the app never imports the manifest. The

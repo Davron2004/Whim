@@ -12,7 +12,8 @@ import ConsentScreen from '../ConsentScreen';
 import HistoryScreen from '../HistoryScreen';
 import MiniAppView from '../MiniAppView';
 import TermsScreen from '../TermsScreen';
-import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW } from '../copy';
+import { COPY, CONSENT_SCREEN_COVERAGE, CONSENT_WHATS_NEW, LEGAL_COPY } from '../copy';
+import type { LegalLanguage } from '../legal-language';
 import { RELEASE } from '../release-config';
 import { StoreAccess } from '../store-access';
 import { termsStatus } from '../terms-acceptance';
@@ -58,24 +59,32 @@ function composingNewApp(tree: Tree): boolean {
 const clarifyServer = (r: SentRequest): Response | Promise<Response> =>
   r.path === '/v1/clarify' ? json({ questions: [] }) : new Promise<Response>(() => {});
 
-/** Word stems that would make the terms step a data disclosure: what is sent, to whom, or why. */
-const DATA_STEMS = [
-  'data', 'send', 'sent', 'share', 'collect', 'information', 'personal', 'privacy', 'phone', 'device',
-  'server', 'provider', 'compan', 'anycognition', 'apple', 'google', 'advertis', 'track', 'error',
-];
+/** Word stems, per language, that would make the terms step a data disclosure: what is sent, to
+ *  whom, or why. */
+const DATA_STEMS: Readonly<Record<LegalLanguage, readonly string[]>> = {
+  en: [
+    'data', 'send', 'sent', 'share', 'collect', 'information', 'personal', 'privacy', 'phone', 'device',
+    'server', 'provider', 'compan', 'anycognition', 'apple', 'google', 'advertis', 'track', 'error',
+  ],
+  fr: [
+    'donn', 'envo', 'partag', 'recueil', 'collect', 'renseign', 'personnel', 'confidentialit', 'téléphone',
+    'appareil', 'serveur', 'fournisseur', 'entreprise', 'anycognition', 'apple', 'google', 'publicit', 'suiv',
+    'erreur', 'identifiant',
+  ],
+};
 
-/** The words of `text` that start with a data stem, or are the bare word "ID". */
-function dataWords(text: string): string[] {
-  const words = text.toLowerCase().split(/[^a-z]+/);
-  return words.filter((word) => word === 'id' || DATA_STEMS.some((stem) => word.startsWith(stem)));
+/** The words of `text` that start with one of `language`'s data stems, or are the bare word "ID". */
+function dataWords(text: string, language: LegalLanguage): string[] {
+  const words = text.toLowerCase().split(/[^a-zà-öø-ÿœ]+/);
+  return words.filter((word) => word === 'id' || DATA_STEMS[language].some((stem) => word.startsWith(stem)));
 }
 
-/** Every consent-screen disclosure string: the covered category and role lines and the prose
- *  sections around them. */
-function disclosureStrings(): string[] {
+/** Every consent-screen disclosure string in `language`: the covered category and role lines and
+ *  the prose sections around them. */
+function disclosureStrings(language: LegalLanguage): string[] {
   const covered = [...Object.values(CONSENT_SCREEN_COVERAGE.categories), ...Object.values(CONSENT_SCREEN_COVERAGE.roles)].flat();
   const prose = ['consentLead', 'consentWhy', 'consentStays', 'consentNever', 'consentAskFirst', 'consentFootnote'] as const;
-  return [...covered, ...prose].map((key) => COPY[key]);
+  return [...covered, ...prose].map((key) => LEGAL_COPY[language][key]);
 }
 
 export async function runTermsFlowUiTests(h: Harness): Promise<void> {
@@ -230,18 +239,22 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
-  for (const outdated of [false, true]) {
-    await h.test(`terms step (${outdated ? 'updated terms' : 'first acceptance'}): it says nothing about data`, async () => {
-      const tree = await renderScreen(<TermsScreen outdated={outdated} onAccept={() => {}} onClose={() => {}} />);
-      try {
-        const text = textOf(tree.root);
-        h.ok(text.includes(COPY.termsTitle) && text.includes(COPY.termsAccept) && text.includes(COPY.termsDecline), 'the step rendered its title and actions');
-        h.eq(disclosureStrings().filter((line) => text.includes(line)), [], 'no consent disclosure line appears');
-        h.eq(dataWords(text), [], 'no word about what is sent, to whom or why');
-        h.ok(!text.includes(COPY.privacyPolicyLabel), 'and no privacy policy link');
-      } finally {
-        await unmountScreen(tree);
-      }
-    });
+  for (const language of ['en', 'fr'] as const) {
+    for (const outdated of [false, true]) {
+      await h.test(`terms step (${language}, ${outdated ? 'updated terms' : 'first acceptance'}): it says nothing about data`, async () => {
+        const copy = LEGAL_COPY[language];
+        const tree = await renderScreen(<TermsScreen language={language} onLanguageChange={() => {}} outdated={outdated} onAccept={() => {}} onClose={() => {}} />);
+        try {
+          const text = textOf(tree.root);
+          h.ok(text.includes(copy.termsTitle) && text.includes(copy.termsAccept) && text.includes(copy.termsDecline), 'the step rendered its title and actions');
+          h.ok(text.includes(outdated ? copy.termsUpdatedLine : copy.termsLead), 'and its lead or updated-terms line');
+          h.eq(disclosureStrings(language).filter((line) => text.includes(line)), [], 'no consent disclosure line appears');
+          h.eq(dataWords(text, language), [], 'no word about what is sent, to whom or why');
+          h.ok(!text.includes(copy.privacyPolicyLabel), 'and no privacy policy link');
+        } finally {
+          await unmountScreen(tree);
+        }
+      });
+    }
   }
 }

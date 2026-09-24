@@ -19,7 +19,7 @@ import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
-import { activeLegalLanguage, privacyPolicyUrl, termsUrl } from './legal-language';
+import { privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
@@ -32,6 +32,8 @@ import { useSystemBack } from './use-system-back';
 export interface SettingsScreenProps {
   /** Returns to the home screen — supplied by `LauncherRoot`. */
   onBack: () => void;
+  /** The active legal language: the About section's privacy and terms links open its pages. */
+  legalLanguage: LegalLanguage;
   /** Whether this is an internal build (`installed-app-info.ts#installedInternalBuild`). A store
    *  build renders no Advanced section and no server address field at all (legal-surface-v2 D10). */
   internalBuild: boolean;
@@ -95,6 +97,7 @@ export default function SettingsScreen({
   onErrorDetailsChange,
   deviceId,
   onResetDeviceId,
+  legalLanguage,
 }: Readonly<SettingsScreenProps>) {
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
@@ -230,14 +233,14 @@ export default function SettingsScreen({
           {COPY.settingsAboutSectionTitle}
         </Text>
         <TouchableOpacity
-          onPress={() => Linking.openURL(privacyPolicyUrl(activeLegalLanguage()))}
+          onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))}
           accessibilityRole="button"
           style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >
           <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => Linking.openURL(termsUrl(activeLegalLanguage()))}
+          onPress={() => Linking.openURL(termsUrl(legalLanguage))}
           accessibilityRole="button"
           style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >

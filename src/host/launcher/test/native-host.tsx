@@ -70,4 +70,8 @@ export const Alert = {
   alert: (title: string, message?: string, buttons: AlertButton[] = []) => { Alert.shown.push({ title, message, buttons }); },
 };
 export const Vibration = { vibrate: () => {}, cancel: () => {} };
+/** The platform locale constants `device-locale.ts` falls back to. Suites pick the phone's locale
+ *  through `LauncherRoot`'s `deviceLocale` instead, so these only have to exist. */
+export const I18nManager = { getConstants: () => ({ isRTL: false, doLeftAndRightSwapInRTL: true, localeIdentifier: undefined }) };
+export const Settings = { get: (_key: string): unknown => undefined };
 export const TurboModuleRegistry = { get: () => null, getEnforcing: () => ({ play: () => {}, stop: () => {} }) };

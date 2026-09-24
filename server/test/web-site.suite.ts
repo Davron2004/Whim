@@ -20,7 +20,7 @@ import {
   type AssociationFilesRunner,
 } from '../src/site/build';
 import { LEGAL_IDENTITY_PATH, LEGAL_PAGES, pageText, renderLegalSite, statedKeepPeriods, type LegalPage } from '../src/site/legal-pages';
-import { COPY } from '../../src/host/launcher/copy';
+import { COPY, LEGAL_COPY } from '../../src/host/launcher/copy';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig } from '../src/config';
 import { MANIFESTS, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
 
@@ -354,6 +354,22 @@ function parityAndRetentionTests(): void {
     const copyWithNewKey = { ...COPY, consentWhatSentReports: 'A new disclosure line, never quoted anywhere.' };
     const redMissing = missingConsentDisclosures(copyWithNewKey, CONSENT_ALLOWLIST, normalizedPolicy);
     eq('an unquoted new consent key fails naming itself', redMissing, ['consentWhatSentReports']);
+  }
+
+  // The French policy quotes the French consent screen the same way (legal-surface-v2 D6): same
+  // allowlist, same normalization, against the French legal table.
+  const normalizedFrenchPolicy = normalizeForParity(pages['fr/privacy.html']);
+  eq(
+    'fr/privacy.html quotes every non-allowlisted French consent key verbatim',
+    missingConsentDisclosures(LEGAL_COPY.fr, CONSENT_ALLOWLIST, normalizedFrenchPolicy),
+    [],
+  );
+
+  {
+    // A French page whose "who gets it" paragraph drifted from the app's must fail, naming the key.
+    const drifted = renderLegal(REAL_IDENTITY, { page: 'fr/privacy.html', from: 'pour des raisons de sécurité ou juridiques', to: 'pour des raisons de sécurité' });
+    const redMissing = missingConsentDisclosures(LEGAL_COPY.fr, CONSENT_ALLOWLIST, normalizeForParity(drifted.pages['fr/privacy.html']));
+    eq('a French page that drops words from the French consentWho fails naming consentWho', redMissing, ['consentWho']);
   }
 
   // The processor is named in the provider list, and nowhere else: no promise rests on a vendor.

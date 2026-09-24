@@ -5,8 +5,10 @@
  * manifest category and recipient role on the screen, and nothing but this suite holds the two
  * together: every on-screen category and screen-named role of the current manifest needs an entry,
  * and every key it names must be non-empty in every legal language table (`LEGAL_COPY`). Each of
- * those tables also needs a what's-new line for every older consent version, and no consent or
- * report string, and no what's-new line, may name OpenRouter or call anything anonymous.
+ * those tables also needs a what's-new line for every older consent version, and every legal key
+ * (`LEGAL_COPY_KEYS`, plus any `consent` key a table carries) non-empty (spec
+ * legal-text-localization "Every legal copy key exists in both languages"). No consent or report
+ * string, and no what's-new line, may name OpenRouter or call anything anonymous.
  * (The launcher's consent UI suite holds the other half: the screen renders every covered key.)
  */
 
@@ -18,6 +20,7 @@ import {
   CONSENT_SCREEN_COVERAGE,
   CONSENT_WHATS_NEW,
   LEGAL_COPY,
+  LEGAL_COPY_KEYS,
   type LegalCopyTable,
 } from '../../../src/host/launcher/copy';
 
@@ -32,6 +35,8 @@ export interface ConsentCoverageInput {
   };
   /** Language → that language's legal copy table. */
   readonly tables: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** The keys the legal screens read, which every table must carry. */
+  readonly legalKeys: readonly string[];
   /** Language → grant version → what's-new line. */
   readonly whatsNew: Readonly<Record<string, Readonly<Record<number, { readonly text: string }>>>>;
 }
@@ -76,6 +81,19 @@ function whatsNewFindings(input: ConsentCoverageInput): string[] {
   );
 }
 
+/** A key starting with `consent` is legal copy whichever table it was added to. */
+const CONSENT_KEY = /^consent/;
+
+/** Every legal key — the declared list, and any `consent` key in any table — is non-empty in every
+ *  table: a key added to one language only fails, naming the table that lacks it. */
+function legalKeyFindings(input: ConsentCoverageInput): string[] {
+  const tables = Object.entries(input.tables);
+  const keys = new Set([...input.legalKeys, ...tables.flatMap(([, table]) => Object.keys(table).filter((key) => CONSENT_KEY.test(key)))]);
+  return tables.flatMap(([language, table]) =>
+    [...keys].filter((key) => isBlank(table[key])).map((key) => `legal key ${key} is missing or empty in the ${language} table`),
+  );
+}
+
 /** No consent or report string, and no what's-new line, says what `BANNED` forbids. */
 function wordingFindings(input: ConsentCoverageInput): string[] {
   const strings = Object.entries(input.tables).flatMap(([language, table]) =>
@@ -89,7 +107,7 @@ function wordingFindings(input: ConsentCoverageInput): string[] {
 
 /** One finding per gap; `[]` means the screen covers the manifest in every language. */
 export function consentCoverageFindings(input: ConsentCoverageInput): string[] {
-  return [...coverageFindings(input), ...whatsNewFindings(input), ...wordingFindings(input)];
+  return [...coverageFindings(input), ...whatsNewFindings(input), ...legalKeyFindings(input), ...wordingFindings(input)];
 }
 
 const CURRENT = latestVersion();
@@ -101,6 +119,7 @@ function liveInput(change: Partial<ConsentCoverageInput> = {}): ConsentCoverageI
     olderVersions: Object.keys(MANIFESTS).map(Number).filter((v) => v < CURRENT),
     coverage: CONSENT_SCREEN_COVERAGE,
     tables: LEGAL_COPY,
+    legalKeys: LEGAL_COPY_KEYS,
     whatsNew: CONSENT_WHATS_NEW,
     ...change,
   };
@@ -139,7 +158,23 @@ export async function run(): Promise<void> {
     const french: LegalCopyTable = { ...LEGAL_COPY.en, consentSentErrors: ' ' };
     const whatsNew = { ...CONSENT_WHATS_NEW, fr: CONSENT_WHATS_NEW.en };
     const findings = consentCoverageFindings(liveInput({ tables: { en: LEGAL_COPY.en, fr: french }, whatsNew }));
-    nodeAssert.deepStrictEqual(findings, ['category error-details: consentSentErrors is missing or empty in the fr table']);
+    nodeAssert.deepStrictEqual(findings, [
+      'category error-details: consentSentErrors is missing or empty in the fr table',
+      'legal key consentSentErrors is missing or empty in the fr table',
+    ]);
+  });
+
+  await test('legal keys: a key deleted from the French table fails, naming the key and the French table', () => {
+    for (const key of ['termsLead', 'consentOutdatedLine', 'legalLanguageSwitch'] as const) {
+      const findings = consentCoverageFindings(liveInput({ tables: { en: LEGAL_COPY.en, fr: without<string>(LEGAL_COPY.fr, key) } }));
+      nodeAssert.deepStrictEqual(findings, [`legal key ${key} is missing or empty in the fr table`], `deleting ${key}`);
+    }
+  });
+
+  await test('legal keys: a new consent key added to the English table only fails, naming the key and the French table', () => {
+    const english = { ...LEGAL_COPY.en, consentSentVoice: 'What you say, when you talk instead of typing' };
+    const findings = consentCoverageFindings(liveInput({ tables: { en: english, fr: LEGAL_COPY.fr } }));
+    nodeAssert.deepStrictEqual(findings, ['legal key consentSentVoice is missing or empty in the fr table']);
   });
 
   await test('consent coverage: a new on-screen category or screen-named role with no copy key fails, naming it', () => {
@@ -158,7 +193,7 @@ export async function run(): Promise<void> {
   });
 
   await test('consent coverage: a language with no what’s-new line for version 1 fails, naming it', () => {
-    const findings = consentCoverageFindings(liveInput({ tables: { en: LEGAL_COPY.en, fr: { ...LEGAL_COPY.en } } }));
+    const findings = consentCoverageFindings(liveInput({ whatsNew: without(CONSENT_WHATS_NEW, 'fr') }));
     assertFinding(findings, ['fr table', 'version-1 grant'], 'missing what’s-new');
   });
 

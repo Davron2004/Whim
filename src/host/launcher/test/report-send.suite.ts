@@ -42,7 +42,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let closed = 0;
     const tree = await renderScreen(React.createElement(ReportSheet, {
-      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => { closed++; }, onUpdateRequired: () => {},
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => { closed++; }, onUpdateRequired: () => {}, legalLanguage: 'en',
     }));
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
@@ -89,7 +89,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       return json({ reportId: 'r-1' }, 202);
     }) as typeof fetch;
     const tree = await renderScreen(React.createElement(ReportSheet, {
-      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => {}, onUpdateRequired: () => {},
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => {}, onUpdateRequired: () => {}, legalLanguage: 'en',
     }));
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });

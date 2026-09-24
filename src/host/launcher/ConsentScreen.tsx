@@ -16,7 +16,8 @@
  *
  * Every string comes from the active legal language's table (`LEGAL_COPY`), in the order spec
  * ai-data-consent "The disclosure names what is sent…" lists, and the privacy link opens that
- * language's policy. An outdated grant adds, above the title, the outdated line and the what's-new
+ * language's policy. The switch at the top offers the other language in one tap, in both modes
+ * (spec legal-text-localization). An outdated grant adds, above the title, the outdated line and the what's-new
  * line written for the grant's version (spec "Consent grants are versioned").
  */
 import React from 'react';
@@ -24,7 +25,8 @@ import { Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'r
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { consentWhatsNewText, LEGAL_COPY, type LegalCopyTable } from './copy';
 import { consentScreenActions, type ConsentScreenAction } from './consent-screen-actions';
-import { activeLegalLanguage, privacyPolicyUrl } from './legal-language';
+import LegalLanguageSwitch from './LegalLanguageSwitch';
+import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -58,6 +60,10 @@ function SectionTitle({ text }: Readonly<{ text: string }>) {
 
 export interface ConsentScreenProps {
   mode: 'ask' | 'review';
+  /** The active legal language: this screen's copy, its what's-new line and its privacy link. */
+  language: LegalLanguage;
+  /** The language switch was tapped: the launcher persists the choice and re-renders in it. */
+  onLanguageChange: (language: LegalLanguage) => void;
   /** Ask mode only: the version of the stored grant when it is outdated (spec "Consent grants are
    *  versioned") — shows the outdated line and that version's what's-new line above the title. */
   outdatedFrom?: number;
@@ -81,6 +87,8 @@ export interface ConsentScreenProps {
 
 export default function ConsentScreen({
   mode,
+  language,
+  onLanguageChange,
   outdatedFrom,
   refused = false,
   consentOn = false,
@@ -90,7 +98,6 @@ export default function ConsentScreen({
 }: Readonly<ConsentScreenProps>) {
   const p = SHELL_PALETTE;
   useSystemBack(onClose);
-  const language = activeLegalLanguage();
   const copy = LEGAL_COPY[language];
 
   /** `agree`/`turnOn` grant and `turnOff` also deletes an existing grant — neither is `onClose`,
@@ -114,6 +121,7 @@ export default function ConsentScreen({
   return (
     <View style={[styles.root, { backgroundColor: p.bg }]}>
       <ScrollView contentContainerStyle={styles.content}>
+        <LegalLanguageSwitch language={language} onChange={onLanguageChange} />
         {notice !== undefined && (
           <View style={[styles.notice, whatsNew !== undefined && styles.noticeWithWhatsNew]}>
             <Text style={[TYPE_SCALE.body, { color: p.danger }]}>{notice}</Text>
