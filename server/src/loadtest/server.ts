@@ -9,8 +9,9 @@
  *
  * Refuses to start when `OPENROUTER_API_KEY` is set in `env` — before installing the `fetch` trap or
  * calling `start` — and otherwise forces `NODE_ENV=production`, the inert key `loadtest-no-network`,
- * and the fixed roster `loadtest/engineer` / `loadtest/rewrite` onto the environment `start` sees, so
- * every other production refusal in `config.ts` still applies and nothing here is env-selectable.
+ * the fixed roster `loadtest/engineer` / `loadtest/rewrite` and an unroutable `WHIM_WEB_ORIGIN` onto
+ * the environment `start` sees, so every other production refusal in `config.ts` still applies and
+ * nothing here is env-selectable.
  *
  * The `fetch` trap is a safety net independent of the two transport swaps above: it replaces
  * `globalThis.fetch` with a function that counts its calls and throws, installed right before
@@ -146,6 +147,8 @@ export async function runLoadtestServer(options: RunLoadtestServerOptions): Prom
     OPENROUTER_API_KEY: LOADTEST_INERT_API_KEY,
     WHIM_ENGINEER_MODEL: LOADTEST_ROSTER.engineer.model,
     WHIM_REWRITE_MODEL: LOADTEST_ROSTER.rewrite.model,
+    // Production requires a pages origin; the load test posts no signup, so an unroutable one.
+    WHIM_WEB_ORIGIN: 'https://loadtest.invalid',
   };
 
   const trap = installFetchTrap();

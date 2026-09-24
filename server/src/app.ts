@@ -4,6 +4,8 @@
  * Routes:
  *   GET  /healthz          — anonymous health check: the image's `commit` and the live minimum builds (`minBuild`)
  *   GET  /healthz/sse      — anonymous stream probe (three spaced SSE comment frames, then close)
+ *   POST /beta/signup      — the pages site's beta waitlist form (anonymous, outside /v1; answers
+ *                            303 back to the pages host)
  *   POST /v1/generate      — SSE generation stream
  *   POST /v1/rewrite       — model-backed rewrite + optional plan rows
  *   POST /v1/clarify       — unary pre-stream clarify exchange (0–3 questions)
@@ -16,8 +18,8 @@
  * The x-whim-device gate is mounted ONCE, by path prefix over `/v1/*`, and never route by route: a
  * route added under `/v1` later is gated by construction rather than by whoever remembers. It asks
  * an injectable `DeviceVerifier` (design D15) for the calling device's id — routes, admission and
- * metering read only what it returns, never the raw header. `/healthz` and `/healthz/sse` stay
- * outside the prefix and anonymous.
+ * metering read only what it returns, never the raw header. `/healthz`, `/healthz/sse` and
+ * `/beta/signup` stay outside the prefix and anonymous.
  *
  * `/v1/*` middleware order (request-envelope): request id (`assignRequestId`) → device gate →
  * client envelope (`readEnvelope`) → the minimum-build gate (`minimumBuildGate`) → routes, each of
@@ -47,6 +49,10 @@ import type { CreditTransport } from './admission/credit';
 import { cachedPolicy } from './policy/cache';
 import { StubContentPolicy, type ContentPolicy } from './policy/policy';
 import { InMemoryReportStore, type ReportStore } from './reports/store';
+import { InMemoryWaitlistStore, type WaitlistStore } from './waitlist/store';
+import { createSignupLimiter, type SignupLimiter } from './waitlist/limiter';
+import { CURRENT_NOTICE_ID } from './waitlist/notices';
+import { makeBetaSignupRoute } from './routes/beta-signup';
 import { ResolveTracker, type ResolveBounds, type UsageAndCostTransport } from './usage/resolve';
 
 /** A transport that never resolves a generation id — the resolver's default when a caller supplies
@@ -103,6 +109,11 @@ export interface AppOptions {
   /** The report store `/v1/report` persists into (design D10). Defaults to a fresh
    *  `InMemoryReportStore`. */
   reportStore?: ReportStore;
+  /** The beta waitlist `POST /beta/signup` stores into (beta-waitlist D4). Defaults to a fresh
+   *  `InMemoryWaitlistStore`. */
+  waitlistStore?: WaitlistStore;
+  /** The signup flood brake. Defaults to one sized from `config`. */
+  signupLimiter?: SignupLimiter;
   /** Deps for the post-request cost resolution and aborted-run token reconciliation of
    *  `/v1/generate`, `/v1/clarify` and `/v1/rewrite` (design D7's resolver, `usage/resolve.ts`).
    *  `tracker`, when supplied, is the SAME instance a later `drain` (chain-11) calls `.drain()` on;
@@ -190,6 +201,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   });
   const policy = options.policy ?? cachedPolicy(new StubContentPolicy());
   const reportStore = options.reportStore ?? new InMemoryReportStore();
+  const waitlistStore = options.waitlistStore ?? new InMemoryWaitlistStore();
+  const signupLimiter =
+    options.signupLimiter ?? createSignupLimiter({ perClientHour: config.betaLimitPerClientHour, perDay: config.betaLimitPerDay });
   const resolveTracker = options.resolver?.tracker ?? new ResolveTracker();
   const resolveTransport = options.resolver?.transport ?? NO_OP_RESOLVE_TRANSPORT;
   const resolveBounds = options.resolver?.bounds;
@@ -291,6 +305,13 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       },
     });
   });
+
+  // The beta waitlist form — outside /v1 on purpose: a browser has no device id, and /v1 stays
+  // device-gated by construction. It has its own body cap and limits, and no /v1 middleware.
+  app.route(
+    '/beta/signup',
+    makeBetaSignupRoute({ store: waitlistStore, limiter: signupLimiter, config, clock, noticeId: CURRENT_NOTICE_ID }),
+  );
 
   // The request id comes first, so every `/v1` response — the device gate's refusals included —
   // carries it.
