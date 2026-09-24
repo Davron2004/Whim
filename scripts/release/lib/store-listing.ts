@@ -2,8 +2,9 @@
  * Validates `release/store/` (design D11; specs/store-listing/spec.md, all requirements):
  * required files and their per-store length limits, no committed URL files or domain/`whim.`
  * literals, no exclamation marks or promotional terms, committed screenshot sizes and ratios, a
- * 13+ age rating override, and privacy consistency across `app-privacy.json`, `data-safety.json`
- * and the iOS privacy manifest through D11's mapping. Pure file reads plus the `parseXmlPlist`
+ * 13+ age rating override, and the four privacy declarations (`app-privacy.json`,
+ * `data-safety.json`, the iOS privacy manifest, `answers.md`) against the current disclosure
+ * manifest's store mapping (legal-surface-v2 design D8). Pure file reads plus the `parseXmlPlist`
  * reader from `./ios-project` — no shelling out, safe to run in the Linux devcontainer gate.
  */
 
@@ -12,6 +13,7 @@ import path from 'node:path';
 import type { Buffer as NodeBuffer } from 'buffer';
 import type { NativeReleaseConfig } from './native-config';
 import { parseXmlPlist, type PlistValue } from './ios-project';
+import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
 
 // `existsSync`/`readdirSync`/`Dirent` are already declared for 'node:fs' by
 // `synthrun/env.d.ts` (ambient module augmentations merge additively across the program —
@@ -19,7 +21,7 @@ import { parseXmlPlist, type PlistValue } from './ios-project';
 // modifiers rather than add anything.
 
 export interface StoreListingFinding {
-  /** Repo-relative path (or comma-joined paths, for a cross-file disagreement). */
+  /** Repo-relative path. */
   readonly file: string;
   readonly message: string;
 }
@@ -85,6 +87,7 @@ const APP_STORE_AGE_RATING_PATH = 'release/store/app-store/age-rating.json';
 const APP_PRIVACY_PATH = 'release/store/app-store/app-privacy.json';
 const DATA_SAFETY_PATH = 'release/store/play/data-safety.json';
 const PRIVACY_MANIFEST_PATH = 'ios/Whim/PrivacyInfo.xcprivacy';
+const ANSWERS_PATH = 'release/store/answers.md';
 
 function readText(repoRoot: string, relPath: string): string | undefined {
   try {
@@ -271,118 +274,380 @@ function checkAgeRating(repoRoot: string): StoreListingFinding[] {
   return [];
 }
 
-// ── Privacy consistency (app-privacy.json, data-safety.json, PrivacyInfo.xcprivacy) ────────
+// ── Privacy declarations follow the disclosure manifest's store mapping ─────────────────────
+//
+// legal-surface-v2 design D8; spec store-privacy-declarations. Each of the four declarations
+// (app-privacy.json, PrivacyInfo.xcprivacy, data-safety.json, answers.md's two console tables) is
+// read into `Declaration`s in its own vocabulary and compared with the current manifest's mapping
+// spelled in that same vocabulary, so a finding names the file and the type as the file spells it.
 
-interface PrivacyTypeMapping {
-  readonly appPrivacyCategory: string;
-  readonly manifestType: string;
-  readonly dataSafetyId: string;
-  readonly label: string;
+/** One declared store type. `flags` holds `linked` (Apple) or `optional` and `shared` (Play);
+ *  `undefined` when the file doesn't say, which never matches the mapping. */
+interface Declaration {
+  readonly type: string;
+  readonly flags: Readonly<Record<string, boolean | undefined>>;
+  readonly purposes: readonly string[];
 }
 
-/** design D11's mapping: the two data types Whim's privacy answers ever name. */
-export const PRIVACY_TYPE_MAPPING: readonly PrivacyTypeMapping[] = [
-  {
-    appPrivacyCategory: 'OTHER_USER_CONTENT',
-    manifestType: 'NSPrivacyCollectedDataTypeOtherUserContent',
-    dataSafetyId: 'other_user_generated_content',
-    label: 'user content',
-  },
-  {
-    appPrivacyCategory: 'DEVICE_ID',
-    manifestType: 'NSPrivacyCollectedDataTypeDeviceID',
-    dataSafetyId: 'device_or_other_ids',
-    label: 'device ID',
-  },
-];
+/** A store type the mapping gives, with the manifest categories it comes from. */
+interface ExpectedDeclaration extends Declaration {
+  readonly categories: readonly string[];
+}
+
+/** One store type as the mapping gives it, in the mapping's own tokens. */
+interface MappedType {
+  readonly type: string;
+  /** Apple only: the privacy-manifest data types the categories give (one, when well formed). */
+  readonly manifestTypes: ReadonlySet<string>;
+  readonly flags: Readonly<Record<string, boolean>>;
+  readonly purposes: ReadonlySet<string>;
+  readonly categories: readonly string[];
+}
+
+interface MappedStoreTypes {
+  readonly apple: readonly MappedType[];
+  readonly play: readonly MappedType[];
+}
+
+/** How several categories' flags for one store type combine: linked or shared if any category's
+ *  is, optional only if every category's is (so required if any is). */
+const FLAG_UNION: Readonly<Record<string, (a: boolean, b: boolean) => boolean>> = {
+  linked: (a, b) => a || b,
+  shared: (a, b) => a || b,
+  optional: (a, b) => a && b,
+};
+
+function mergeMapped(into: Map<string, MappedType>, category: string, next: Omit<MappedType, 'categories'>): void {
+  const had = into.get(next.type);
+  into.set(next.type, {
+    type: next.type,
+    manifestTypes: new Set([...(had?.manifestTypes ?? []), ...next.manifestTypes]),
+    flags: had === undefined ? next.flags : Object.fromEntries(Object.entries(next.flags).map(([flag, value]) => [flag, FLAG_UNION[flag](had.flags[flag], value)])),
+    purposes: new Set([...(had?.purposes ?? []), ...next.purposes]),
+    categories: [...(had?.categories ?? []), category],
+  });
+}
+
+/** Each store type's declaration is the union over the categories that map to it (`FLAG_UNION`,
+ *  and every purpose any of them lists). */
+function mappedStoreTypes(manifest: DisclosureManifest): MappedStoreTypes {
+  const apple = new Map<string, MappedType>();
+  const play = new Map<string, MappedType>();
+  for (const category of manifest.categories) {
+    for (const t of category.store.apple) {
+      mergeMapped(apple, category.id, { type: t.type, manifestTypes: new Set([t.manifestType]), flags: { linked: t.linked }, purposes: new Set(t.purposes) });
+    }
+    for (const t of category.store.play) {
+      mergeMapped(play, category.id, { type: t.type, manifestTypes: new Set(), flags: { optional: t.optional, shared: t.shared }, purposes: new Set(t.purposes) });
+    }
+  }
+  return { apple: [...apple.values()], play: [...play.values()] };
+}
+
+/** How one file spells the mapping's tokens; `fix` says what to change when one has no spelling. */
+interface Vocabulary {
+  readonly type: (t: MappedType) => string | undefined;
+  readonly purpose: (token: string) => string | undefined;
+  readonly fix?: string;
+}
+
+const MAPPING_TOKENS: Vocabulary = { type: (t) => t.type, purpose: (token) => token };
+
+/** `PrivacyInfo.xcprivacy` spellings of the `app-privacy.json` purpose tokens the mapping uses. */
+const PRIVACY_MANIFEST_PURPOSES: Readonly<Record<string, string>> = {
+  APP_FUNCTIONALITY: 'NSPrivacyCollectedDataTypePurposeAppFunctionality',
+  ANALYTICS: 'NSPrivacyCollectedDataTypePurposeAnalytics',
+};
+
+const PRIVACY_MANIFEST_VOCABULARY: Vocabulary = {
+  type: (t) => (t.manifestTypes.size === 1 ? [...t.manifestTypes][0] : undefined),
+  purpose: (token) => PRIVACY_MANIFEST_PURPOSES[token],
+  fix: 'a purpose needs an entry in PRIVACY_MANIFEST_PURPOSES (scripts/release/lib/store-listing.ts), and every category must give one Apple type the same manifestType',
+};
+
+/** The console labels `answers.md` uses for the mapping's tokens (Apple tokens are upper case,
+ *  Play tokens lower case, so one table serves both stores). */
+const CONSOLE_LABELS: Readonly<Record<string, string>> = {
+  OTHER_USER_CONTENT: 'Other User Content',
+  DEVICE_ID: 'Device ID',
+  PRODUCT_INTERACTION: 'Product Interaction',
+  CRASH_DATA: 'Crash Data',
+  OTHER_DIAGNOSTIC_DATA: 'Other Diagnostic Data',
+  APP_FUNCTIONALITY: 'App Functionality',
+  ANALYTICS: 'Analytics',
+  other_user_generated_content: 'Other user-generated content',
+  device_or_other_ids: 'Device or other IDs',
+  app_interactions: 'App interactions',
+  crash_logs: 'Crash logs',
+  diagnostics: 'Diagnostics',
+  app_functionality: 'App functionality',
+  analytics: 'Analytics',
+  fraud_prevention_security_compliance: 'Fraud prevention, security and compliance',
+};
+
+const CONSOLE_VOCABULARY: Vocabulary = {
+  type: (t) => CONSOLE_LABELS[t.type],
+  purpose: (token) => CONSOLE_LABELS[token],
+  fix: 'add its console label to CONSOLE_LABELS (scripts/release/lib/store-listing.ts)',
+};
+
+/** The mapping spelled in `vocabulary`; an unspellable token is itself a finding and stays as the token. */
+function expectedDeclarations(file: string, types: readonly MappedType[], vocabulary: Vocabulary): { expected: ExpectedDeclaration[]; findings: StoreListingFinding[] } {
+  const findings: StoreListingFinding[] = [];
+  const hint = vocabulary.fix === undefined ? '' : `; ${vocabulary.fix}`;
+  const spell = (token: string, word: string | undefined): string => {
+    if (word === undefined) findings.push({ file, message: `has no spelling for the store mapping's "${token}"${hint}` });
+    return word ?? token;
+  };
+  const expected = types.map((t): ExpectedDeclaration => ({
+    type: spell(t.type, vocabulary.type(t)),
+    flags: t.flags,
+    purposes: [...t.purposes].map((p) => spell(p, vocabulary.purpose(p))),
+    categories: t.categories,
+  }));
+  return { expected, findings };
+}
+
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((x) => right.has(x));
+}
+
+/** Every way `declared` (one file) differs from the mapping spelled in that file's vocabulary. */
+function compareDeclarations(file: string, declared: readonly Declaration[], expected: readonly ExpectedDeclaration[]): StoreListingFinding[] {
+  const findings: StoreListingFinding[] = [];
+  const declaredTypes = declared.map((d) => d.type);
+  for (const type of declaredTypes.filter((t, index) => declaredTypes.indexOf(t) !== index)) {
+    findings.push({ file, message: `declares "${type}" twice` });
+  }
+  for (const want of expected) {
+    const from = `the store mapping gives it for ${want.categories.join(', ')}`;
+    const got = declared.find((d) => d.type === want.type);
+    if (got === undefined) {
+      findings.push({ file, message: `does not declare "${want.type}"; ${from}` });
+      continue;
+    }
+    for (const [flag, value] of Object.entries(want.flags)) {
+      if (got.flags[flag] !== value) {
+        findings.push({ file, message: `declares "${want.type}" with ${flag}=${String(got.flags[flag])}; ${from} with ${flag}=${String(value)}` });
+      }
+    }
+    if (!sameSet(got.purposes, want.purposes)) {
+      findings.push({ file, message: `declares "${want.type}" for ${JSON.stringify(got.purposes)}; ${from} for ${JSON.stringify(want.purposes)}` });
+    }
+  }
+  const known = new Set(expected.map((e) => e.type));
+  for (const type of declaredTypes.filter((t) => !known.has(t))) {
+    findings.push({ file, message: `declares "${type}", which the store mapping doesn't give — data saved inside mini-apps must never be declared collected` });
+  }
+  return findings;
+}
+
+// ── Reading the four declarations ───────────────────────────────────────────────────────────
+
+/** One file's (or one `answers.md` table's) declarations, read in its own vocabulary. */
+interface DeclarationSource {
+  readonly file: string;
+  readonly store: keyof MappedStoreTypes;
+  readonly vocabulary: Vocabulary;
+  readonly declarations: readonly Declaration[];
+  /** Declared type → whether the file marks it as used for tracking; `undefined` when a file
+   *  that must answer doesn't. Empty for Play, whose form has no tracking answer (an advertising
+   *  purpose is refused as a purpose the mapping doesn't give). */
+  readonly tracking: ReadonlyMap<string, boolean | undefined>;
+  /** Problems reading the file's shape (a missing table or column). */
+  readonly findings: readonly StoreListingFinding[];
+}
 
 function isPlistDict(v: PlistValue | undefined): v is { [key: string]: PlistValue } {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-interface AppPrivacyEntry {
-  readonly category?: unknown;
-  readonly data_protections?: unknown;
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
-function readAppPrivacyEntries(repoRoot: string): AppPrivacyEntry[] {
+function booleanOrUndefined(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+// Each reader returns `undefined` for a missing file, already its own "missing required file" finding.
+
+function readAppPrivacy(repoRoot: string): DeclarationSource | undefined {
   const text = readText(repoRoot, APP_PRIVACY_PATH);
-  if (text === undefined) return [];
+  if (text === undefined) return undefined;
   const parsed: unknown = JSON.parse(text);
-  return Array.isArray(parsed) ? (parsed as AppPrivacyEntry[]) : [];
+  const entries = Array.isArray(parsed) ? (parsed as { category?: unknown; purposes?: unknown; data_protections?: unknown }[]) : [];
+  const declarations: Declaration[] = [];
+  const tracking = new Map<string, boolean | undefined>();
+  for (const entry of entries) {
+    if (typeof entry.category !== 'string') continue;
+    const protections = stringsOf(entry.data_protections);
+    const linked = protections.includes('DATA_LINKED_TO_YOU');
+    const saysOne = linked !== protections.includes('DATA_NOT_LINKED_TO_YOU');
+    declarations.push({ type: entry.category, flags: { linked: saysOne ? linked : undefined }, purposes: stringsOf(entry.purposes) });
+    tracking.set(entry.category, protections.includes('DATA_USED_TO_TRACK_YOU'));
+  }
+  return { file: APP_PRIVACY_PATH, store: 'apple', vocabulary: MAPPING_TOKENS, declarations, tracking, findings: [] };
 }
 
-interface DataSafetyEntry {
-  readonly id?: unknown;
-  readonly collected?: unknown;
-}
-
-function readDataSafetyEntries(repoRoot: string): DataSafetyEntry[] {
-  const text = readText(repoRoot, DATA_SAFETY_PATH);
-  if (text === undefined) return [];
-  const parsed: unknown = JSON.parse(text);
-  const types = typeof parsed === 'object' && parsed !== null ? (parsed as { types?: unknown }).types : undefined;
-  return Array.isArray(types) ? (types as DataSafetyEntry[]) : [];
-}
-
-function manifestCollectedTypeNames(repoRoot: string): Set<string> {
+function readPrivacyManifest(repoRoot: string): DeclarationSource | undefined {
   const text = readText(repoRoot, PRIVACY_MANIFEST_PATH);
-  const result = new Set<string>();
-  if (text === undefined) return result;
+  if (text === undefined) return undefined;
   const plist = parseXmlPlist(text);
   const types = isPlistDict(plist) ? plist.NSPrivacyCollectedDataTypes : undefined;
-  if (!Array.isArray(types)) return result;
-  for (const entry of types) {
-    if (isPlistDict(entry) && typeof entry.NSPrivacyCollectedDataType === 'string') result.add(entry.NSPrivacyCollectedDataType);
+  const declarations: Declaration[] = [];
+  const tracking = new Map<string, boolean | undefined>();
+  for (const entry of Array.isArray(types) ? types : []) {
+    if (!isPlistDict(entry) || typeof entry.NSPrivacyCollectedDataType !== 'string') continue;
+    const type = entry.NSPrivacyCollectedDataType;
+    declarations.push({ type, flags: { linked: booleanOrUndefined(entry.NSPrivacyCollectedDataTypeLinked) }, purposes: stringsOf(entry.NSPrivacyCollectedDataTypePurposes) });
+    tracking.set(type, booleanOrUndefined(entry.NSPrivacyCollectedDataTypeTracking));
   }
-  return result;
+  return { file: PRIVACY_MANIFEST_PATH, store: 'apple', vocabulary: PRIVACY_MANIFEST_VOCABULARY, declarations, tracking, findings: [] };
 }
 
-function checkTypeAgreement(repoRoot: string): StoreListingFinding[] {
-  const findings: StoreListingFinding[] = [];
-  const appPrivacyCategories = new Set(readAppPrivacyEntries(repoRoot).map((e) => e.category).filter((c): c is string => typeof c === 'string'));
-  const dataSafetyIds = new Set(
-    readDataSafetyEntries(repoRoot)
-      .filter((e) => e.collected === true)
-      .map((e) => e.id)
-      .filter((id): id is string => typeof id === 'string'),
+function readDataSafety(repoRoot: string): DeclarationSource | undefined {
+  const text = readText(repoRoot, DATA_SAFETY_PATH);
+  if (text === undefined) return undefined;
+  const parsed: unknown = JSON.parse(text);
+  const types = typeof parsed === 'object' && parsed !== null ? (parsed as { types?: unknown }).types : undefined;
+  const entries = Array.isArray(types) ? (types as { id?: unknown; collected?: unknown; optional?: unknown; shared?: unknown; purposes?: unknown }[]) : [];
+  const declarations = entries.flatMap((e): Declaration[] =>
+    e.collected === true && typeof e.id === 'string'
+      ? [{ type: e.id, flags: { optional: booleanOrUndefined(e.optional), shared: booleanOrUndefined(e.shared) }, purposes: stringsOf(e.purposes) }]
+      : [],
   );
-  const manifestTypes = manifestCollectedTypeNames(repoRoot);
-  const namedFiles = `${APP_PRIVACY_PATH}, ${DATA_SAFETY_PATH}, ${PRIVACY_MANIFEST_PATH}`;
-
-  for (const mapping of PRIVACY_TYPE_MAPPING) {
-    const inAppPrivacy = appPrivacyCategories.has(mapping.appPrivacyCategory);
-    const inDataSafety = dataSafetyIds.has(mapping.dataSafetyId);
-    const inManifest = manifestTypes.has(mapping.manifestType);
-    if (inAppPrivacy === inDataSafety && inDataSafety === inManifest) continue;
-    findings.push({
-      file: namedFiles,
-      message: `disagree on the ${mapping.label} data type (app-privacy.json:${inAppPrivacy} data-safety.json:${inDataSafety} PrivacyInfo.xcprivacy:${inManifest})`,
-    });
-  }
-
-  const knownCategories = new Set(PRIVACY_TYPE_MAPPING.map((m) => m.appPrivacyCategory));
-  for (const category of appPrivacyCategories) {
-    if (!knownCategories.has(category)) {
-      findings.push({ file: APP_PRIVACY_PATH, message: `declares an unexpected category "${category}" — data saved inside mini-apps must never be declared collected` });
-    }
-  }
-  return findings;
+  return { file: DATA_SAFETY_PATH, store: 'play', vocabulary: MAPPING_TOKENS, declarations, tracking: new Map(), findings: [] };
 }
 
-function checkNoLinkageOrTracking(repoRoot: string): StoreListingFinding[] {
+interface MarkdownTable {
+  readonly header: readonly string[];
+  readonly rows: readonly (readonly string[])[];
+}
+
+/** The markdown tables in `text`: a header row, a `|---|` rule, then body rows. */
+function markdownTables(text: string): MarkdownTable[] {
+  const cells = (line: string): string[] => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  const isRow = (line: string | undefined): boolean => line?.trim().startsWith('|') ?? false;
+  const isRule = (line: string | undefined): boolean => line !== undefined && /^\s*\|[\s|:-]+\|\s*$/.test(line);
+  const lines = text.split('\n');
+  const tables: MarkdownTable[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!isRow(lines[i]) || !isRule(lines[i + 1])) {
+      i++;
+      continue;
+    }
+    let end = i + 2;
+    while (isRow(lines[end])) end++;
+    tables.push({ header: cells(lines[i]), rows: lines.slice(i + 2, end).map(cells) });
+    i = end;
+  }
+  return tables;
+}
+
+/** A type cell without its trailing parenthetical note: "Crash logs (error details)" → "Crash logs". */
+function withoutNote(cell: string): string {
+  const open = cell.indexOf(' (');
+  return open !== -1 && cell.endsWith(')') ? cell.slice(0, open) : cell;
+}
+
+const YES_NO: Readonly<Record<string, boolean>> = { Yes: true, No: false };
+const REQUIRED_OPTIONAL: Readonly<Record<string, boolean>> = { Required: false, Optional: true };
+
+/** One `answers.md` console table, found by its type column and read by column name. Every row
+ *  is a declaration, so a `collectedColumn` must say Yes on each. */
+interface AnswersTable {
+  readonly name: string;
+  readonly store: keyof MappedStoreTypes;
+  readonly typeColumn: string;
+  readonly flagColumns: Readonly<Record<string, { readonly column: string; readonly values: Readonly<Record<string, boolean>> }>>;
+  readonly purposeColumn: string;
+  readonly trackingColumn?: string;
+  readonly collectedColumn?: string;
+}
+
+const ANSWERS_TABLES: readonly AnswersTable[] = [
+  {
+    name: 'App Store App Privacy',
+    store: 'apple',
+    typeColumn: 'Apple data type',
+    flagColumns: { linked: { column: 'Linked to you', values: YES_NO } },
+    purposeColumn: 'Purpose',
+    trackingColumn: 'Used to track you',
+  },
+  {
+    name: 'Google Play Data safety',
+    store: 'play',
+    typeColumn: 'Data type (Play name)',
+    flagColumns: { shared: { column: 'Shared', values: YES_NO }, optional: { column: 'Required or optional', values: REQUIRED_OPTIONAL } },
+    purposeColumn: 'Purposes',
+    collectedColumn: 'Collected',
+  },
+];
+
+/** Reads one console table. A type cell may end in a parenthetical note, e.g. "Device or other
+ *  IDs (the random phone ID)"; purposes are separated by semicolons. */
+function readAnswersTable(text: string, spec: AnswersTable): DeclarationSource {
+  const source = { file: ANSWERS_PATH, store: spec.store, vocabulary: CONSOLE_VOCABULARY };
+  const table = markdownTables(text).find((t) => t.header.includes(spec.typeColumn));
+  if (table === undefined) {
+    return { ...source, declarations: [], tracking: new Map(), findings: [{ file: ANSWERS_PATH, message: `has no ${spec.name} table (one with a "${spec.typeColumn}" column)` }] };
+  }
+  const optionalColumns = [spec.trackingColumn, spec.collectedColumn].filter((c): c is string => c !== undefined);
+  const columns = [spec.typeColumn, spec.purposeColumn, ...Object.values(spec.flagColumns).map((f) => f.column), ...optionalColumns];
+  const missing = columns.filter((c) => !table.header.includes(c));
+  if (missing.length > 0) {
+    const names = missing.map((c) => JSON.stringify(c)).join(', ');
+    return { ...source, declarations: [], tracking: new Map(), findings: [{ file: ANSWERS_PATH, message: `its ${spec.name} table has no ${names} column` }] };
+  }
+  const at = (row: readonly string[], column: string): string => row[table.header.indexOf(column)] ?? '';
+  const declarations: Declaration[] = [];
+  const tracking = new Map<string, boolean | undefined>();
   const findings: StoreListingFinding[] = [];
-  for (const entry of readAppPrivacyEntries(repoRoot)) {
-    const protections = entry.data_protections;
-    if (Array.isArray(protections) && protections.includes('DATA_LINKED_TO_YOU')) {
-      findings.push({ file: APP_PRIVACY_PATH, message: `"${String(entry.category)}" claims DATA_LINKED_TO_YOU; Whim links no data to an identity` });
+  for (const row of table.rows) {
+    const type = withoutNote(at(row, spec.typeColumn));
+    const flags = Object.fromEntries(Object.entries(spec.flagColumns).map(([flag, { column, values }]) => [flag, values[at(row, column)]]));
+    declarations.push({ type, flags, purposes: at(row, spec.purposeColumn).split(';').map((p) => p.trim()).filter((p) => p !== '') });
+    if (spec.trackingColumn !== undefined) tracking.set(type, YES_NO[at(row, spec.trackingColumn)]);
+    if (spec.collectedColumn !== undefined && at(row, spec.collectedColumn) !== 'Yes') {
+      findings.push({ file: ANSWERS_PATH, message: `its ${spec.name} table lists "${type}" with ${spec.collectedColumn} "${at(row, spec.collectedColumn)}"; list only collected types, marked Yes` });
     }
   }
-  return findings;
+  return { ...source, declarations, tracking, findings };
+}
+
+function readDeclarationSources(repoRoot: string): DeclarationSource[] {
+  const answers = readText(repoRoot, ANSWERS_PATH);
+  const answerTables = answers === undefined ? [] : ANSWERS_TABLES.map((spec) => readAnswersTable(answers, spec));
+  return [readAppPrivacy(repoRoot), readPrivacyManifest(repoRoot), readDataSafety(repoRoot), ...answerTables].filter((s): s is DeclarationSource => s !== undefined);
+}
+
+/** Each declaration declares exactly the store types, flags and purposes the mapping gives. */
+function checkTypeAgreement(sources: readonly DeclarationSource[], manifest: DisclosureManifest): StoreListingFinding[] {
+  const mapped = mappedStoreTypes(manifest);
+  return sources.flatMap((source) => {
+    const { expected, findings } = expectedDeclarations(source.file, mapped[source.store], source.vocabulary);
+    return [...source.findings, ...findings, ...compareDeclarations(source.file, source.declarations, expected)];
+  });
+}
+
+/** No declaration marks a type as used for tracking, and one that must answer says no. */
+function checkNoTracking(sources: readonly DeclarationSource[]): StoreListingFinding[] {
+  return sources.flatMap(({ file, tracking }) =>
+    [...tracking].flatMap(([type, tracked]): StoreListingFinding[] => {
+      if (tracked === true) return [{ file, message: `marks "${type}" as used for tracking; Whim tracks no one` }];
+      if (tracked === undefined) return [{ file, message: `doesn't say whether "${type}" is used for tracking; it must say no` }];
+      return [];
+    }),
+  );
 }
 
 function checkPrivacyConsistency(repoRoot: string): StoreListingFinding[] {
-  return [...checkTypeAgreement(repoRoot), ...checkNoLinkageOrTracking(repoRoot)];
+  const sources = readDeclarationSources(repoRoot);
+  return [...checkTypeAgreement(sources, MANIFESTS[latestVersion()]), ...checkNoTracking(sources)];
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────────────────────

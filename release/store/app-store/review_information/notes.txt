@@ -1,29 +1,29 @@
 HOW TO TRY WHIM
-No login, no account. Home already has example apps.
+No login or account. Home has example apps.
 1. Tap "Describe an app..." on Home.
-2. A fresh install opens the AI-data consent screen first -- expected, not a bug. "Agree and continue" proceeds; "Not now" or system back returns to Home with nothing sent, examples still usable.
-3. Type a one-line description, tap "Continue"; answer (or skip) up to three clarifying questions, tap "Continue" again.
+2. A fresh install shows the AI-data consent screen first (expected). "Agree and continue" proceeds; "Not now" returns Home, nothing sent.
+3. Type a one-line description, tap "Continue"; answer or skip up to three questions, tap "Continue".
 4. Review the plan, tap "Build it" (about a minute), then "Open it".
-5. Inside the app, the floating orb's menu has "Report this app" -- the in-app reporting 4.7.1 asks for.
-6. Long-press an installed app's tile, choose "App link", for its universal link as selectable text.
+5. In the app, the floating orb's menu has "Report this app".
+6. Long-press a tile, choose "App link" to see its universal link.
 
 GUIDELINE 4.7
-Mini apps are plain HTML5/JavaScript, generated per user request, run in a same-process WebView. Three legs sandbox that: an opaque-origin iframe, a CSP with no unsafe-eval, and host-side neutralization of globals a bundle could reach through. No network API (fetch, XMLHttpRequest, WebSocket, EventSource, navigator.sendBeacon) is exposed to mini-app code, which never sees the host's network stack.
+Mini apps are HTML5/JavaScript in a same-process WebView. Three legs sandbox them: an opaque-origin iframe, a CSP with no unsafe-eval, and host-side neutralization of globals. Mini-app code gets no network API (fetch, XHR, WebSocket, EventSource, sendBeacon).
 
 [TODO -- network-deny is not fully shipped yet] Those legs stop a mini app calling out, but not yet the sandboxed frame navigating itself to an arbitrary URL as a top-level navigation, still a GET off the device. A native WebView policy refusing that load class is planned; until it ships, do not tell App Review no data can leave the device from a mini app -- state only what the shipped legs block, and remove this note the day the native leg lands.
 
-4.7.1 filtering/reporting/privacy: the consent screen ("Before Whim makes apps for you") discloses what is sent and to whom before the first request. The server checks a small, bounded content-policy classifier call before running the clarify/rewrite/generate model; a rejected request gets a refusal and that model is never called -- filtering fails closed. Reporting is live from the orb menu, the done step, and each app's history header. Nothing to block: no accounts, no sharing, no way to see another user's content.
+4.7.1 filtering/reporting/privacy: the consent screen ("Before Whim builds apps for you") discloses what is sent, why, and to whom before the first request. A content-policy model checks each request first; a rejected one never reaches the clarify/rewrite/generate model -- filtering fails closed. Reporting: orb menu, done step, each app's history header. Nothing to block: no accounts, no sharing, no way to see others' content.
 
-4.7.2 no native APIs without permission: a mini app reaches the device only through ten local, asynchronous capability-bridge calls, confined to its own data: storage.kv (get/set/remove), storage.records (append/list/update/remove), diag.echo (a round-trip test pipe, no side effect), cues.haptic, cues.sound. None touches camera, microphone, location, contacts, filesystem, or network.
+4.7.2 no native APIs without permission: a mini app reaches the device only through ten local bridge calls confined to its own data: key-value and record storage (seven calls), diag.echo (no-op test), cues.haptic, cues.sound. None touches camera, microphone, location, contacts, files or network.
 
-4.7.3 no data/permissions without consent: a mini app only gets what the user typed into it and what it saved via the calls above -- never the consent grant, device ID, or any host credential.
+4.7.3 no data/permissions without consent: a mini app gets only what the user typed into it and saved -- never the consent grant, device ID or any host credential.
 
-4.7.4 an index with a universal link per app: the Home grid is that index; each tile's long-press menu has "App link" as selectable text.
+4.7.4: Whim offers no catalogue of software. Each mini app is built on request for the one user who asked for it and lives only on their phone. The Home screen is the index of that user's apps, and each has a universal link (/a/<id> on Whim's website) that opens it.
 
-4.7.5 age limits: Whim's own content has no descriptors, but user-driven generation gets a 13+ floor, gated by the 4.7.1 policy.
+4.7.5: Whim is rated 13+. The server's content check refuses requests for content above that rating, so no mini app needs a separate age gate.
 
 GUIDELINE 2.5.2
-Mini apps do not download or execute code that changes Whim's own features. Each is plain HTML5/JS in a WebView with the containment above; none can add, remove or alter Whim itself -- no new screens, no capabilities, nothing running outside its sandboxed frame.
+Mini apps do not download or execute code that changes Whim's own features: each stays in the sandbox above and can't add, remove or alter anything in Whim.
 
 WHAT LEAVES THE PHONE, AND WHEN
-Nothing leaves the phone from inside a running mini app -- see the note above for the one open gap. Three things leave the phone, outside any mini app's reach: a generation request (clarify/rewrite/generate), sent only after AI-data consent, carrying what the user typed, their answers, the approved plan, and, for a change to an existing app, its name, code, description and saved-data shape -- never the rows saved inside it -- plus an anonymous per-install device ID for daily limits; a report, sent only when the user taps "Send report", not gated on consent; and a GET /healthz check, sent only once consent is granted, carrying no user content or body. Nothing else: no analytics, no crash reporter, no ads SDK, no background telemetry.
+Nothing leaves the phone from inside a mini app (see the note above while it stands). Outside mini apps, Whim sends nothing until the user taps "Agree and continue" on the AI-data consent screen. That screen says what is sent, why, and who receives it, including third-party AI (guideline 5.1.2(i)), and Settings can turn it off at any time. After that, building or changing an app sends what the user typed, their answers and the approved plan. A change also sends the app's name, code, description and data layout, never the data saved inside it. A random per-install ID is sent too, for daily limits and abuse prevention, with the app's version and build. Right now the server passes requests to AI model providers through OpenRouter, restricted to providers that don't train on the data or use it for their own products. The app may also send technical error details with no user content, which the user can turn off in Settings, and it checks server health. A report is sent only when the user taps "Send report" and doesn't need AI consent. No ads, no ad or tracking SDK, no tracking, so no ATT prompt.

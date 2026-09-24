@@ -18,11 +18,11 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 3. Consent screen v2 and the report sheet
 
-- [ ] 3.1 Replace the consent keys in `copy.ts` with draft-copy §1 (typographic apostrophes; review-mode keys unchanged), and delete the v1 keys.
-- [ ] 3.2 `ConsentScreen.tsx` renders the sections in the order of spec ai-data-consent §"The disclosure names what is sent…", and shows the outdated line plus `consentWhatsNew[grant.version].text` when the grant is outdated. The privacy link uses the active legal language's URL; the language hook can return English until task 6.1.
-- [ ] 3.3 Add the screen coverage check (D4) to the gate. Every screen category and screen-named role in the current manifest has a non-empty copy key in every language table. No consent or report string contains "OpenRouter" or "anonymous". Red-check by deleting the app-integrity sentence.
-- [ ] 3.4 Report sheet: `reportDeviceIdLine` replaces `reportAnonIdLine`, and `reportThanksTitle` becomes draft-copy's line. Tests for spec content-reporting §"The sheet previews exactly the body that Send transmits".
-- [ ] 3.5 Update `ai-consent.suite.ts` and `consent-gate-ui.suite.tsx` for version 2, including the version-1-grant scenario with its what's-new line.
+- [x] 3.1 Replace the consent keys in `copy.ts` with draft-copy §1 (typographic apostrophes; review-mode keys unchanged), and delete the v1 keys.
+- [x] 3.2 `ConsentScreen.tsx` renders the sections in the order of spec ai-data-consent §"The disclosure names what is sent…", and shows the outdated line plus `consentWhatsNew[grant.version].text` when the grant is outdated. The privacy link uses the active legal language's URL; the language hook can return English until task 6.1.
+- [x] 3.3 Add the screen coverage check (D4) to the gate. Every screen category and screen-named role in the current manifest has a non-empty copy key in every language table. No consent or report string contains "OpenRouter" or "anonymous". Red-check by deleting the app-integrity sentence.
+- [x] 3.4 Report sheet: `reportDeviceIdLine` replaces `reportAnonIdLine`, and `reportThanksTitle` becomes draft-copy's line. Tests for spec content-reporting §"The sheet previews exactly the body that Send transmits".
+- [x] 3.5 Update `ai-consent.suite.ts` and `consent-gate-ui.suite.tsx` for version 2, including the version-1-grant scenario with its what's-new line.
 
 ## 4. Terms step
 

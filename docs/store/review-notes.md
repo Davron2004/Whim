@@ -48,10 +48,10 @@ merges, don't tell App Review "no data can leave the device from inside a mini a
 three shipped legs actually block, and update this paragraph (and delete this TODO) the day the
 native leg lands.
 
-- **4.7.1 (filtering, reporting, privacy).** The consent screen (`Before Whim makes apps for you`,
-  copy.ts `consentTitle`) discloses what's sent and to whom before the first request goes out —
-  see §4. The server checks a content-policy classifier — itself one small, bounded model call —
-  before running the clarify, rewrite or generate model on every request; a request the classifier
+- **4.7.1 (filtering, reporting, privacy).** The consent screen (`Before Whim builds apps for you`,
+  copy.ts `consentTitle`) discloses what is sent, why, and to whom before the first request goes
+  out — see §4. The server checks a content-policy classifier — itself one small, bounded model
+  call — before running the clarify, rewrite or generate model on every request; a request the classifier
   rejects comes back as a `content_policy` refusal, and the clarify/rewrite/generate model itself
   is never called (`service-refusals` spec, `REFUSAL_RULES` table) — filtering fails closed, not
   open. In-app reporting is live from three places: the orb menu (`Report this app`), the done
@@ -67,13 +67,12 @@ native leg lands.
 - **4.7.3 (no data or permissions to mini apps without consent).** A mini app only ever gets what
   the user typed into it and the data it saved through the storage syscalls above. It never
   receives the consent grant, the device ID, or any host credential.
-- **4.7.4 (an index, with a universal link per app).** The home grid is that index. Every installed
-  app's tile long-press menu carries `App link`, which shows the app's `https://whim.<domain>/a/…`
-  link as selectable text.
-- **4.7.5 (age limits for above-the-rating content).** Whim's own content carries no descriptors,
-  but arbitrary user-driven generation gets a 13+ floor (see `release/store/app-store/
-  age-rating.json`, `answers.md`), and the same server-side content policy that gates 4.7.1 stands
-  between a prompt and a model call.
+- **4.7.4 (an index, with a universal link per app).** Whim offers no catalogue of software. Each
+  mini app is built on request for the one user who asked for it and lives only on their phone.
+  The Home screen is the index of that user's apps, and each has a universal link
+  (whim.anycognition.ca/a/<id>) that opens it.
+- **4.7.5 (age limits for above-the-rating content).** Whim is rated 13+. The server's content
+  check refuses requests for content above that rating, so no mini app needs a separate age gate.
 
 ## 3. Guideline 2.5.2 context
 
@@ -87,26 +86,20 @@ decisions.md` #64 has the fuller argument and the review history this rests on.
 
 ## 4. What leaves the phone, and when
 
-Nothing leaves the phone from inside a running mini app — see the §2 TODO for the one gap still
-open in that claim, and don't overstate it while that gap is open.
+Reviewer-only, so it names the router; the in-app consent screen doesn't.
 
-Two things leave the phone, both outside any mini app's own reach:
-
-- **A generation request** (clarify, rewrite, or generate), sent only after the user grants AI-data
-  consent on the screen described in §1. It carries what the user typed, their answers to Whim's
-  questions, the approved plan, and — for a change to an existing app — that app's name, its code, its
-  current description, and the shape of its saved data (never the rows saved inside it). An
-  anonymous per-install device ID rides along for daily-limit enforcement. Declining consent, or
-  never granting it, keeps every one of these off the wire; the examples and any already-installed
-  app keep working either way.
-- **A report**, sent only when the user fills in the report sheet and taps `Send report`. It's not
-  gated on AI-data consent (a user who declined AI features can still report something) — see
-  `docs/decisions.md`'s entry for D3 below.
-- **A `GET /healthz` connectivity check**, sent only once AI-data consent is granted (and, once
-  granted, when Settings' server field is saved), to show an online/offline status line. It carries
-  no user content and no request body.
-
-Nothing else: no analytics SDK, no crash reporter, no ads SDK, no background telemetry.
+Nothing leaves the phone from inside a mini app (see the §2 TODO while it stands). Outside mini
+apps, Whim sends nothing until the user taps "Agree and continue" on the AI-data consent screen.
+That screen says what is sent, why, and who receives it, including third-party AI (guideline
+5.1.2(i)), and Settings can turn it off at any time. After that, building or changing an app
+sends what the user typed, their answers and the approved plan. A change also sends the app's
+name, code, description and data layout, never the data saved inside it. A random per-install ID
+is sent too, for daily limits and abuse prevention, with the app's version and build. Right now
+the server passes requests to AI model providers through OpenRouter, restricted to providers that
+don't train on the data or use it for their own products. The app may also send technical error
+details with no user content, which the user can turn off in Settings, and it checks server
+health. A report is sent only when the user taps "Send report" and doesn't need AI consent. No
+ads, no ad or tracking SDK, no tracking, so no ATT prompt.
 
 ## 5. Store forms (draft — confirm every value in its own console before submitting)
 
