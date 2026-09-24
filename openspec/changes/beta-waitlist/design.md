@@ -66,6 +66,8 @@ hash up in a closed registry of notice ids in code (for example `beta-1 → sha2
 wording fails the build, fail-closed like the legal pages (research.md Q1). The registry is shared
 with the server, which stores the current `notice_id` with each signup. Changing the wording means
 registering a new id, and old rows keep the id their author saw.
+The fingerprint is taken over the source text with placeholders unrendered (the consent line
+contains `{{WHIM_SUPPORT_EMAIL}}`), so a deploy value can't change the notice id or break the build.
 *Alternative:* storing a boolean alone, which can't show what was agreed to.
 
 **6. Opt-out, as the owner asked.** The checkbox is unchecked by default and records an opt-out.

@@ -20,7 +20,7 @@
 
 ## 4. Pages site
 
-- [ ] 4.1 If the design pass hasn't landed them yet, create plain stand-ins for `deploy/site/beta.html`, `beta-thanks.html` and `beta-retry.html` that meet the form contract and required copy in `design-brief.md`; if they exist, don't restyle them
+- [ ] 4.1 The designed pages are given: `deploy/site/beta.html`, `beta-thanks.html`, `beta-retry.html` and `deploy/site/assets/fonts/**` came from the design pass (see design-brief.md) and already meet its locked contract. Don't restyle or reword them. If wiring needs a change to them, make the smallest edit that keeps the look and list it in progress.md
 - [ ] 4.2 Add the pages to the build's page list, add the required `WHIM_BETA_SIGNUP_URL` placeholder, copy `deploy/site/assets/**` into the output, and fail the build on an unregistered `data-notice` wording
 - [ ] 4.3 `deploy/Caddyfile`: `handle` blocks for `/beta`, `/beta/thanks`, `/beta/retry` and `/assets/*`; add `font-src 'self'` to the pages CSP; `deploy/deploy.sh`: derive `WHIM_BETA_SIGNUP_URL` from the API host
 - [ ] 4.4 Site suites: form contract, no script anywhere, notice fingerprint (a changed wording fails, a registered one passes), assets copied, Caddy routes and CSP pinned in `deploy-config.suite.ts`
@@ -28,4 +28,5 @@
 ## 5. Privacy policy
 
 - [ ] 5.1 Disclose the waitlist as its own website-only category in `privacy.html` and `fr/privacy.html` (data, purpose, 730-day `data-keep`, how to leave the list) per `docs/legal/change-process.md`, with the manifest change it needs; stop and report if it would move the app's AI-consent version
-- [ ] 5.2 Run `scripts/gate-full.sh`; fix anything it finds
+- [ ] 5.2 Build the site, serve it with the production pages CSP, and screenshot `/beta` (with Android selected, and with an invalid email), `/beta/thanks` and `/beta/retry` at 375px and 1280px: fonts load, zero CSP violations in the console, no horizontal scroll
+- [ ] 5.3 Run `scripts/gate-full.sh`; fix anything it finds

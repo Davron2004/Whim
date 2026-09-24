@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#3f3d8f">
+<title>Join the beta · Whim</title>
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio.
+   Put this @layer first; product CSS outside the layer always wins. */
+@layer od-layout {
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+  .od-stack { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill { flex: 1 1 0; min-width: 0; }
+  .od-fixed { flex: none; }
+  .od-grid { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap { white-space: nowrap; }
+  .od-keep { word-break: keep-all; overflow-wrap: anywhere; }
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+    padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch { min-width: 44px; min-height: 44px; }
+}
+/* /OD-LAYOUT-PRIMITIVES v1 */
+@font-face { font-family: "Instrument Sans"; src: url("/assets/fonts/InstrumentSans-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Instrument Sans"; src: url("/assets/fonts/InstrumentSans-SemiBold.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "Instrument Sans"; src: url("/assets/fonts/InstrumentSans-Bold.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/assets/fonts/IBMPlexMono-Medium.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+:root {
+  color-scheme: light;
+  --paper: #fbfaf8; --surface: #f1efea; --border: #e0dcd4;
+  --ink: #17171a; --text: #1c1917; --muted: #6b6560; --faint: #a8a29a;
+  --accent: #3f3d8f; --done: #0d9488; --broken: #b91c1c;
+  --font: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --body: 1rem; --caption: .75rem; --eyebrow: .65625rem;
+  --title: 1.625rem; --display: 2.125rem;
+  --xs: 8px; --sm: 12px; --md: 16px; --lg: 22px; --xl: 34px;
+  --field-radius: 14px; --button-radius: 18px; --chip-radius: 999px;
+  --control-height: 56px; --capsule-height: 48px; --tap-size: 44px; --form-width: 430px;
+  --focus-width: 3px; --focus-offset: 4px;
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); -webkit-text-size-adjust: 100%; }
+body { margin: 0; color: var(--text); font: 400 var(--body)/1.7 var(--font); }
+h1, h2, p { margin: 0; }
+button, input { font: inherit; }
+a { color: var(--accent); text-underline-offset: .2em; text-decoration-thickness: 1px; }
+button, a, label[for], .choice, .opt-out { cursor: pointer; }
+:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
+.page { display: grid; min-height: 100vh; min-height: 100svh; }
+.brand {
+  display: flex; flex-direction: column; gap: var(--lg);
+  padding: var(--lg); padding-top: max(var(--lg), env(safe-area-inset-top));
+  background: var(--accent); color: var(--paper);
+}
+.lockup { --od-gap: var(--sm); }
+.brand-mark { display: block; width: 36px; height: 36px; flex: none; }
+.wordmark { display: block; font-size: var(--title); font-weight: 600; line-height: 1; letter-spacing: -.025em; }
+.brand-copy { --od-gap: var(--md); }
+.brand-line { max-width: 17ch; font-size: var(--title); font-weight: 700; line-height: 1.15; letter-spacing: -.025em; text-wrap: balance; }
+.brand-note { font-size: var(--caption); }
+.brand-bottom { display: none; }
+.eyebrow { font: 500 var(--eyebrow)/1.55 var(--mono); text-transform: uppercase; letter-spacing: .14em; }
+.content { display: flex; flex-direction: column; min-width: 0; padding: var(--xl) var(--lg) var(--md); padding-bottom: max(var(--md), env(safe-area-inset-bottom)); }
+.content-inner { width: 100%; max-width: var(--form-width); margin-inline: auto; }
+.intro { --od-gap: var(--sm); margin-bottom: var(--lg); }
+h1 { font-size: var(--display); font-weight: 700; line-height: 1; letter-spacing: -.03em; text-wrap: balance; }
+.lead { color: var(--muted); max-width: 36ch; }
+form { display: grid; gap: var(--lg); position: relative; }
+fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+legend { padding: 0; margin-bottom: var(--xs); font-weight: 600; }
+.required-note { font-size: var(--caption); font-weight: 400; color: var(--muted); }
+.choices {
+  --od-gap: 0px; --od-cols: 3; --segment-slant: var(--xs);
+  position: relative; isolation: isolate; overflow: hidden;
+  border: 1px solid var(--muted); border-radius: var(--chip-radius);
+  background: var(--surface);
+}
+.choice {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  min-width: 0; min-height: var(--capsule-height); padding: var(--xs);
+  color: var(--text); line-height: 1.5;
+}
+.choice::before {
+  content: ""; position: absolute; top: 0; left: calc(-1 * var(--segment-slant));
+  width: calc(100% + 2 * var(--segment-slant)); height: 100%;
+  background: var(--surface); pointer-events: none; z-index: -1;
+  clip-path: polygon(calc(2 * var(--segment-slant)) 0, 100% 0, calc(100% - 2 * var(--segment-slant)) 100%, 0 100%);
+}
+.choice:first-child::before {
+  clip-path: polygon(0 0, 100% 0, calc(100% - 2 * var(--segment-slant)) 100%, 0 100%);
+}
+.choice:last-child::before {
+  clip-path: polygon(calc(2 * var(--segment-slant)) 0, 100% 0, 100% 100%, 0 100%);
+}
+.choice:not(:last-child)::after {
+  content: ""; position: absolute; top: 0; right: calc(-1 * var(--segment-slant));
+  width: calc(2 * var(--segment-slant)); height: 100%;
+  background: var(--muted); pointer-events: none;
+  clip-path: polygon(calc(100% - 1px) 0, 100% 0, 1px 100%, 0 100%);
+}
+.choice input {
+  position: absolute; top: 50%; left: 50%; display: block;
+  width: 1px; height: 1px; margin: 0; opacity: 0;
+}
+.choice span { display: block; position: relative; white-space: nowrap; }
+.choice:has(input:checked) { color: var(--paper); }
+.choice:has(input:checked)::before { background: var(--accent); }
+.choice input:checked + span { font-weight: 600; }
+.choice input:focus-visible + span { outline: 2px solid currentColor; outline-offset: var(--focus-offset); border-radius: 2px; }
+.choices:has(input:focus-visible) { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
+.field { --od-gap: var(--xs); }
+.field > label { font-weight: 600; }
+.email {
+  display: block; width: 100%; min-width: 0; min-height: var(--control-height);
+  padding: var(--sm) var(--md); border: 1px solid var(--muted);
+  border-radius: var(--field-radius); background: var(--surface); color: var(--text);
+  font-size: var(--body); line-height: 1.5; appearance: none;
+}
+.email::placeholder { color: var(--muted); opacity: 1; }
+.email:focus { border-color: var(--accent); }
+.email:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: var(--focus-offset); }
+.android-hint, .other-hint { color: var(--muted); font-size: var(--body); line-height: 1.55; }
+.other-hint { display: none; }
+@supports selector(form:has(input:checked)) {
+  .android-hint { display: none; }
+  form:has(#platform-android:checked) .android-hint { display: block; }
+  form:has(#platform-other:checked) .other-hint { display: block; }
+}
+.field-error { display: none; font-size: var(--caption); color: var(--text); }
+.email:user-invalid { border-color: var(--accent); border-style: dashed; }
+.email:user-invalid ~ .field-error { display: block; }
+.opt-out { display: flex; align-items: flex-start; gap: var(--sm); min-height: var(--tap-size); padding-block: var(--xs); line-height: 1.55; }
+.opt-out input { display: block; flex: none; margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.opt-out span { display: block; }
+.submit {
+  display: flex; align-items: center; justify-content: center; gap: var(--sm);
+  width: 100%; min-height: var(--control-height); padding: var(--md) var(--lg);
+  border: 1px solid var(--accent); border-radius: var(--button-radius);
+  background: var(--accent); color: var(--paper); font-weight: 600; line-height: 1.5;
+  text-decoration: none;
+}
+.submit span { display: block; white-space: nowrap; }
+.submit:active { background: var(--ink); border-color: var(--ink); }
+.notice { color: var(--muted); font-size: var(--caption); line-height: 1.55; }
+.notice a { overflow-wrap: anywhere; }
+.bot-field[hidden] { display: block; position: absolute; left: -10000px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+.footer { margin-top: var(--xl); padding-top: var(--md); border-top: 1px solid var(--border); }
+.footer a { display: inline-flex; min-height: var(--tap-size); align-items: center; padding-inline: var(--xs); margin-inline-start: calc(-1 * var(--xs)); font-size: var(--caption); }
+.result .content { justify-content: center; }
+.result .intro { margin-bottom: var(--xl); }
+.result-body { --od-gap: var(--xl); }
+.invite-detail { --od-gap: var(--xs); }
+.invite-detail h2 { font-size: var(--body); font-weight: 600; line-height: 1.5; }
+.invite-detail p { color: var(--muted); }
+.status { --od-gap: var(--xs); margin-bottom: var(--lg); color: var(--muted); font-size: var(--caption); }
+.status svg { display: block; flex: none; width: 22px; height: 22px; }
+.status-done svg { color: var(--done); }
+.status-retry svg { color: var(--broken); }
+.retry-copy { margin-bottom: var(--xl); color: var(--muted); }
+@media (hover: hover) {
+  a:hover { text-decoration-thickness: 2px; color: var(--ink); }
+  .choice:not(:has(input:checked)):hover::before { background: var(--border); }
+  .submit:hover { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+}
+@media (min-width: 375px) {
+  .brand { padding-inline: var(--xl); }
+}
+@media (min-width: 768px) {
+  .brand { padding-inline: calc(var(--xl) * 2); }
+  .content { padding: calc(var(--xl) * 2) var(--xl) var(--xl); }
+}
+@media (min-width: 1024px) {
+  .page { grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); }
+  .brand { padding: calc(var(--xl) * 2); gap: var(--xl); }
+  .brand-copy { flex: 1; justify-content: center; }
+  .brand-line { font-size: var(--display); line-height: 1; letter-spacing: -.03em; max-width: 12ch; }
+  .brand-bottom { display: block; }
+  .brand-note { max-width: 26ch; font-size: var(--body); line-height: 1.7; }
+  .content { justify-content: center; padding: calc(var(--xl) * 2); }
+}
+@media (min-width: 1440px) {
+  .brand { padding: calc(var(--xl) * 3); }
+  .content { padding-inline: calc(var(--xl) * 3); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  .choices, .email, .submit { border: 1px solid ButtonText; }
+  .choice::before { background: Canvas; }
+  .choice:not(:last-child)::after { background: ButtonText; }
+  .choice:has(input:checked) { color: HighlightText; }
+  .choice:has(input:checked)::before { background: Highlight; forced-color-adjust: none; }
+  .choice input:checked + span { color: HighlightText; forced-color-adjust: none; }
+  .choices:has(input:focus-visible) { outline-color: Highlight; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <aside class="brand" aria-label="Whim">
+    <div class="lockup od-row">
+      <svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="310 310 404 404" width="36" height="36" aria-hidden="true" focusable="false"><path d="M 362 390 L 437 650 L 512 490 L 587 650 L 662 390" fill="none" stroke="currentColor" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="wordmark">Whim</span>
+    </div>
+    <div class="brand-copy od-stack">
+      <p class="brand-line">Small apps you describe.</p>
+    </div>
+    <p class="brand-bottom eyebrow">A little room for your ideas</p>
+  </aside>
+  <main class="content">
+    <div class="content-inner">
+
+    <header class="intro od-stack">
+      <h1>Join the beta</h1>
+      <p class="lead">Leave your email. We'll invite you when your beta is ready.</p>
+    </header>
+    <form method="post" action="{{WHIM_BETA_SIGNUP_URL}}">
+      <fieldset>
+        <legend>Your phone <span class="required-note">(required)</span></legend>
+        <div class="choices od-grid">
+          <label class="choice" for="platform-ios"><input type="radio" id="platform-ios" name="platform" value="ios" required><span>iOS</span></label>
+          <label class="choice" for="platform-android"><input type="radio" id="platform-android" name="platform" value="android"><span>Android</span></label>
+          <label class="choice" for="platform-other"><input type="radio" id="platform-other" name="platform" value="other" aria-describedby="other-hint"><span>Other</span></label>
+        </div>
+      </fieldset>
+      <div class="field od-field">
+        <label for="email">Email <span class="required-note">(required)</span></label>
+        <p id="android-hint" class="android-hint">On Android, use the email of the Google account on your phone. Google Play sends tester invites to that address.</p>
+        <p id="other-hint" class="other-hint">Wow, what phone have you got? I’m not sure I can support other platforms, but you can still sign up for Whim updates.</p>
+        <input class="email" type="email" id="email" name="email" required maxlength="254" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" aria-describedby="android-hint email-error">
+        <p id="email-error" class="field-error">Enter a complete email address, such as you@example.com.</p>
+      </div>
+      <label class="opt-out" for="updates-opt-out" data-notice><input type="checkbox" id="updates-opt-out" name="updates_opt_out" value="1"><span>Don't email me about Whim updates</span></label>
+      <div class="bot-field" hidden aria-hidden="true"><label for="company">Company</label><input type="text" id="company" name="company" tabindex="-1" autocomplete="off" aria-hidden="true"></div>
+      <button class="submit" type="submit"><span>Join the waitlist</span></button>
+      <p class="notice" data-notice>We keep your email and phone type to invite you to the beta. Unless you tick the box above, we may occasionally email you about Whim. Leave the list by writing to <a href="mailto:{{WHIM_SUPPORT_EMAIL}}">{{WHIM_SUPPORT_EMAIL}}</a>. Read our <a href="/privacy">privacy policy</a>.</p>
+    </form>
+<footer class="footer"><a href="/privacy">Privacy</a></footer>
+    </div>
+  </main>
+</div>
+</body>
+</html>
