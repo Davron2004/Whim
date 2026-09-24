@@ -6,7 +6,8 @@
  * live load-test server by `server/test/e2e.ts`. `server/loadtest.mjs` is the CLI these all bundle
  * into.
  *
- * One synthetic device is one fresh UUID posting `POST /v1/generate` with a prompt unique to it
+ * One synthetic device is one fresh UUID posting `POST /v1/generate`, with a complete client
+ * envelope (`../bench-envelope.ts`) and a prompt unique to it
  * (so the content-policy cache can never hide the classifier's work) and reading its SSE stream to
  * the terminal event, recording time to the first REAL event (never a `:` comment/keepalive frame)
  * and total time. The leak probe starts `cap` fresh devices, aborts each right after its first
@@ -23,6 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import type { ApiError, GenerationEvent } from '@whim/contract';
+import { benchEnvelopeHeaders } from '../bench-envelope';
 
 const realFetch: typeof fetch = globalThis.fetch;
 
@@ -164,7 +166,7 @@ export async function runDevice(options: RunDeviceOptions): Promise<DeviceOutcom
   try {
     response = await realFetch(`${options.baseUrl}/v1/generate`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId },
+      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...benchEnvelopeHeaders() },
       body: JSON.stringify({ prompt: options.prompt }),
       signal,
     });

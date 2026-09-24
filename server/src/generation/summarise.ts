@@ -25,6 +25,7 @@ import { isCreditExhaustedError, type ModelClient, type ModelRoster } from './mo
 import { invalidateCreditCache } from '../admission/credit';
 import { buildSummaryMessages } from './prompts';
 import { parseJsonBlock } from './json-block';
+import type { ServerLogger } from '../logger';
 
 /** Everything the summariser is allowed to see. Deliberately record-free (see the header). */
 export interface SummariserInput {
@@ -51,8 +52,12 @@ export interface SummariseResult {
 }
 
 export interface Summariser {
-  /** Never rejects — every failure resolves `{}`. */
-  summarise(input: SummariserInput, signal?: AbortSignal): Promise<SummariseResult>;
+  /** Never rejects — every failure resolves `{}`. `logger`, when present, is the request-bound
+   *  logger (spec request-envelope "One request id follows a /v1 request everywhere") the
+   *  summariser's own "model call" line is emitted through; absent for a call made outside any
+   *  request, which logs through the model client's own module logger exactly as before this
+   *  parameter existed. */
+  summarise(input: SummariserInput, signal?: AbortSignal, logger?: ServerLogger): Promise<SummariseResult>;
 }
 
 const KINDS: readonly SummaryKind[] = ['Start', 'Added', 'Changed', 'Removed', 'Look', 'Fixed'];
@@ -205,7 +210,7 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    async summarise(input: SummariserInput, signal?: AbortSignal): Promise<SummariseResult> {
+    async summarise(input: SummariserInput, signal?: AbortSignal, logger?: ServerLogger): Promise<SummariseResult> {
       const controller = new AbortController();
       const forwardAbort = (): void => controller.abort();
       signal?.addEventListener('abort', forwardAbort, { once: true });
@@ -219,6 +224,7 @@ export function createModelSummariser(options: ModelSummariserOptions): Summaris
               messages: buildSummaryMessages(input),
               reasoning: roster.summary.reasoning,
               role: 'summary',
+              logger,
             },
             controller.signal,
           );

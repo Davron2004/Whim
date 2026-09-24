@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ApiError, Clarification, ClarifyResponse, GenerationEvent, RewriteResponse } from '@whim/contract';
+import { benchEnvelopeHeaders } from '../bench-envelope';
 import { buildReport, type CaseOutcome, type CaseReport, type EvalCase, type EvalSet, type FlowBenchmarkReport, type GenerateReport, type PhaseReport, type StageTiming } from './report';
 
 export { formatMarkdownReport } from './report';
@@ -125,7 +126,7 @@ async function post(url: string, body: unknown, deviceId: string, timeoutMs: num
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId },
+      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...benchEnvelopeHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -184,7 +185,7 @@ async function generateAttempt(url: string, body: unknown, deviceId: string, ove
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId },
+      headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...benchEnvelopeHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });

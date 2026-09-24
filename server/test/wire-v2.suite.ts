@@ -26,6 +26,7 @@ import {
   type GenerationPipelineDeps,
   type RunOutcome,
   type RunStage,
+  type RunTrace,
 } from '../src/generation/machine';
 import {
   createModelSummariser,
@@ -91,9 +92,11 @@ async function testWholeRouteTableIsGated(): Promise<void> {
   const { app } = appWithModel([]);
   const mounted = app.routes.filter((r) => r.path.startsWith('/v1') && r.method !== 'ALL');
   const prefixMiddleware = app.routes.filter((r) => r.path === '/v1/*' && r.method === 'ALL');
+  const routeLevelMiddleware = app.routes.filter((r) => r.path.startsWith('/v1/') && r.path !== '/v1/*' && r.method === 'ALL');
 
   check('the /v1 route table is non-trivial', mounted.length >= 4, `found ${mounted.length}`);
-  eq('the gate is mounted once, by prefix', prefixMiddleware.length, 1);
+  eq('the four /v1 edge middlewares are mounted by prefix: request id, device gate, envelope, minimum build', prefixMiddleware.length, 4);
+  eq('no /v1 route mounts middleware of its own', routeLevelMiddleware.map((r) => r.path), []);
   check('the clarify route is mounted', mounted.some((r) => r.path === '/v1/clarify'));
 
   for (const route of mounted) {
@@ -508,6 +511,41 @@ async function testSummariserWireReasoningIsExplicitlyOff(): Promise<void> {
   eq('the wire body explicitly disables reasoning', captured.body?.reasoning, { enabled: false });
 }
 
+/**
+ * request-envelope chain-1b: the summariser's own "model call" line (emitted deep inside the REAL
+ * `OpenRouterClient`, never through `ScriptedModelClient`) carries the run's request id — chain-1
+ * bound every OTHER run line to it via `state.log`, but stopped short of the summariser's own model
+ * turn. Red-check: fails naming the "model call" line if `machine.ts#summariseDelivery` stops
+ * forwarding `state.modelLog` into `summariser.summarise`, or if `createModelSummariser` stops
+ * forwarding it onward into its own `model.stream` call — either regression leaves
+ * `summaryLine.requestId` `undefined` instead of the trace's id. The raw line check fails if the
+ * summariser is handed the run logger, whose `scope` would sit beside the model client's own.
+ */
+async function testSummariserModelCallCarriesRequestId(): Promise<void> {
+  section("Wire v2 — the summariser's own model-call line carries the run's request id (request-envelope)");
+
+  const captured: { body?: Record<string, unknown> } = {};
+  const summariserModel = openRouterModelClient(new OpenRouterClient(summaryWireFetch(captured)));
+  const summariser = createModelSummariser({ model: summariserModel, roster: ROSTER, timeoutMs: 2_000 });
+  const trace: RunTrace = { generationIds: [], requestId: 'req-summary-line-9f2c' };
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(deliveringDeps(summariser)).run(REQUEST, undefined, trace));
+  } finally {
+    capture.stop();
+  }
+
+  eq('setup: the run delivered', events.at(-1)?.type, 'result');
+  const modelCallLines = withMessage(capture, 'model call');
+  const summaryLine = modelCallLines.find((r) => r.role === 'summary');
+  check('setup: the summariser made its own model call', summaryLine !== undefined, JSON.stringify(modelCallLines));
+  eq("the summariser's model call line carries the run's request id", summaryLine?.requestId, trace.requestId);
+  const rawSummaryLine = capture.raw.find((_, index) => capture.records[index] === summaryLine) ?? '';
+  eq("the summariser's raw model call line holds one scope key (pino writes a duplicate twice)", rawSummaryLine.split('"scope":').length - 1, 1);
+}
+
 async function testModelSummariser(): Promise<void> {
   section('Wire v2 — the model-backed summariser');
 
@@ -763,6 +801,7 @@ export async function runWireV2Tests(): Promise<void> {
   testSummaryShaping();
   await testModelSummariser();
   await testSummariserWireReasoningIsExplicitlyOff();
+  await testSummariserModelCallCarriesRequestId();
   await testSummaryOnTerminalEvent();
   await testSseFramesSummaryUnmodified();
 }

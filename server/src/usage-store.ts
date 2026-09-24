@@ -12,7 +12,6 @@
  * `usage` table are unchanged.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
 import type { Usage } from '@whim/contract';
 
 export interface UsageStore {
@@ -23,12 +22,14 @@ export interface UsageStore {
 
   /**
    * Atomically counts today's non-refunded rows for `deviceId` (and, when `globalLimit` is given,
-   * for every device across `globalKinds`) and inserts a new `pending` ledger row when under both
-   * limits. The device limit is checked first, so a request over BOTH limits refuses as `'device'`
-   * (spec: "the device limit's daily_limit refusal SHALL win"). `now` drives the UTC-day bucket and the
+   * for every device across `globalKinds`) and inserts a new `pending` ledger row, keyed by
+   * `params.requestId`, when under both limits. The device limit is checked first, so a request
+   * over BOTH limits refuses as `'device'` (spec: "the device limit's daily_limit refusal SHALL
+   * win"). `now` drives the UTC-day bucket and the
    * `retryAfterSec` computation — never `Date.now()` read internally — so callers control day
    * rollover in tests. Implementations MUST perform the count-then-insert with no `await` between
    * them, so two overlapping calls (`Promise.all`) can never both observe room for the last unit.
+   * A `requestId` already in the ledger rejects rather than replacing its row.
    */
   admit(params: AdmitParams): Promise<AdmitResult>;
   /** Marks a previously admitted request as not counting toward its daily unit. Idempotent: a
@@ -86,6 +87,9 @@ export type RequestOutcome =
 export type CostState = 'pending' | 'resolved' | 'unresolved';
 
 export interface AdmitParams {
+  /** The row's id: the request's own id (`x-whim-request-id`), minted at the `/v1` edge — the
+   *  store never mints one, so the response header, the log lines and the ledger row agree. */
+  requestId: string;
   deviceId: string;
   kind: RequestKind;
   /** Injected clock reading (ms since epoch) — drives the UTC-day bucket and `retryAfterSec`. */
@@ -335,7 +339,7 @@ export class InMemoryUsageStore implements UsageStore {
   }
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
     const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     let deviceCount = 0;
@@ -351,7 +355,8 @@ export class InMemoryUsageStore implements UsageStore {
     if (globalLimit !== undefined && globalCount >= globalLimit) {
       return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
     }
-    const requestId = randomUUID();
+    // The SQLite store's primary key refuses a reused id at this same point, after the limits.
+    if (this.ledger.has(requestId)) throw new Error('UNIQUE constraint failed: requests.id');
     this.ledger.set(requestId, {
       id: requestId,
       deviceId,
@@ -504,7 +509,7 @@ export class NodeSqliteUsageStore implements UsageStore {
   }
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
     const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     this.db.exec('BEGIN IMMEDIATE');
@@ -526,7 +531,6 @@ export class NodeSqliteUsageStore implements UsageStore {
           return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
         }
       }
-      const requestId = randomUUID();
       this.db.prepare(`
         INSERT INTO requests
           (id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens, cost_usd, cost_state, generation_ids, refunded)

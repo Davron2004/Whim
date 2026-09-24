@@ -47,9 +47,9 @@ import {
 } from '../usage/resolve';
 import { buildClarifyMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
-import { log } from '../logger';
-
-type Env = { Variables: { deviceId: string } };
+import type { ServerLogger } from '../logger';
+import type { V1Env } from '../request-edge';
+import { consentPractice } from '../consent-practices';
 
 /** The kinds the ONE global unary daily ceiling (`ServerConfig.limitUnaryPerDay`) is counted
  *  across. Clarify and rewrite share it rather than getting a ceiling each, so the pair's total
@@ -112,6 +112,10 @@ function shapeClarify(text: string): ClarifyResponse | undefined {
  *  are the same values the route's own post-response `finish()` uses — a policy refusal still
  *  needs them to resolve the classifier call's cost onto the request's ledger row. */
 export interface UnaryAdmissionDeps {
+  /** The request's id (`x-whim-request-id`) — the ledger row admission inserts takes it. */
+  requestId: string;
+  /** The request-scoped logger, bound to `requestId`. */
+  log: ServerLogger;
   deviceId: string;
   kind: Extract<RequestKind, 'clarify' | 'rewrite'>;
   deviceLimit: number;
@@ -188,7 +192,7 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: creditTtlMs, floorUsd: creditFloorUsd });
     if (!credit.ok) return { ok: false, refusal: budgetExhaustedRefusal() };
     if (credit.lookupFailed) {
-      log.warn({ lookupFailed: credit.lookupFailed, route: policyRoute }, 'operator credit lookup failed open');
+      deps.log.warn({ lookupFailed: credit.lookupFailed, route: policyRoute }, 'operator credit lookup failed open');
     }
   }
 
@@ -208,7 +212,7 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
   } catch (err) {
     acquired.handle.release();
     if (admittedRequestId !== undefined) {
-      await settleFailedUnaryRequest(deps.usageStore, admittedRequestId, deps.clock, err);
+      await settleFailedUnaryRequest(deps.usageStore, admittedRequestId, deps.clock, err, deps.log);
     }
     throw err;
   }
@@ -220,21 +224,22 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
  * blip is a free retry an abusive client can farm — the row is simply marked `error` so it stops
  * being an open `pending` request nothing will ever settle. A `settle` that throws in turn (the
  * same store is, after all, the usual reason we are here) is logged and swallowed: the caller is
- * already unwinding with the original error, which is the one worth surfacing.
+ * already unwinding with the original error, which is the one worth surfacing. `requestLog` is
+ * bound to the request id, which is also the row's id.
  */
 export async function settleFailedUnaryRequest(
   usageStore: UsageStore,
   requestId: string,
   clock: () => number,
   cause: unknown,
+  requestLog: ServerLogger,
   usage?: Usage,
 ): Promise<void> {
   try {
     await usageStore.settle(requestId, { outcome: 'error', usage, now: clock() });
   } catch (settleErr) {
-    log.error(
+    requestLog.error(
       {
-        requestId,
         detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
         cause: cause instanceof Error ? cause.message : String(cause),
       },
@@ -253,6 +258,7 @@ async function admitUnaryWithSlot(
   onAdmitted: (requestId: string) => void,
 ): Promise<UnaryAdmissionOutcome> {
   const {
+    requestId: admittingId,
     deviceId,
     kind,
     deviceLimit,
@@ -269,6 +275,7 @@ async function admitUnaryWithSlot(
   } = deps;
 
   const admitted = await usageStore.admit({
+    requestId: admittingId,
     deviceId,
     kind,
     now: clock(),
@@ -287,7 +294,7 @@ async function admitUnaryWithSlot(
   onAdmitted(requestId);
 
   try {
-    const result = await policy.check(policyInput, policyRoute, signal);
+    const result = await policy.check(policyInput, policyRoute, signal, deps.log);
     if (result.usage) {
       await usageStore.credit(deviceId, result.usage);
     }
@@ -360,12 +367,13 @@ export function makeClarifyRoute(
   roster: ModelRoster | undefined,
   usageStore: UsageStore,
   options: ClarifyRouteOptions,
-): Hono<Env> {
-  const app = new Hono<Env>();
+): Hono<V1Env> {
+  const app = new Hono<V1Env>();
   const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
+    consentPractice('request-material', 'required'),
     bodyLimit({
       maxSize: config.maxBodyBytesUnary,
       onError: (c) => {
@@ -389,7 +397,10 @@ export function makeClarifyRoute(
         return c.json(r.body, r.status, r.headers);
       }
 
+      const requestLog = c.get('log');
       const admission = await admitUnaryRequest({
+        requestId: c.get('requestId'),
+        log: requestLog,
         deviceId,
         kind: 'clarify',
         deviceLimit: config.limitClarifyPerDeviceDay,
@@ -431,9 +442,9 @@ export function makeClarifyRoute(
       };
 
       try {
-        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub);
+        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub, requestLog);
       } catch (err) {
-        await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err, requestLog, settlementUsage);
         throw err;
       } finally {
         release();
@@ -466,6 +477,7 @@ async function runClarifyWork(
   usageStore: UsageStore,
   finish: FinishFn,
   stub: boolean | undefined,
+  requestLog: ServerLogger,
 ): Promise<Response> {
   if (stub) {
     const stubbed = parsed.prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
@@ -488,6 +500,7 @@ async function runClarifyWork(
       messages: buildClarifyMessages({ request: parsed }),
       reasoning: roster.clarify.reasoning,
       role: 'clarify',
+      logger: requestLog,
     },
     combined,
   );

@@ -46,13 +46,9 @@ import {
   type UsageAndCostTransport,
 } from '../usage/resolve';
 import { buildSseStream } from '../sse';
-import { log } from '../logger';
-
-/** Same scope as `app.ts`'s middleware child: an SSE response's request record is emitted from
- *  here instead, once its body has actually drained. */
-const requestLog = log.child({ scope: 'request' });
-
-type Env = { Variables: { deviceId: string } };
+import type { ServerLogger } from '../logger';
+import { envelopeLogFields, type V1Env } from '../request-edge';
+import { consentPractice } from '../consent-practices';
 
 /** `Pipeline.run` (`../pipeline.ts`) stays unchanged (design D1) — a real implementation MAY
  *  accept an optional third `trace` out-parameter (design D9) without it being part of that
@@ -103,6 +99,10 @@ export interface GenerateRouteOptions {
 }
 
 interface AdmissionDeps extends GenerateRouteOptions {
+  /** The request's id (`x-whim-request-id`) — the ledger row admission inserts takes it. */
+  requestId: string;
+  /** The request-scoped logger, bound to `requestId`. */
+  log: ServerLogger;
   deviceId: string;
   request: GenerateRequest;
   usageStore: UsageStore;
@@ -118,12 +118,13 @@ interface AdmittedGeneration {
 
 type Admission = { ok: true; admitted: AdmittedGeneration } | { ok: false; refusal: ServiceRefusal };
 
-export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, options: GenerateRouteOptions): Hono<Env> {
-  const app = new Hono<Env>();
+export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, options: GenerateRouteOptions): Hono<V1Env> {
+  const app = new Hono<V1Env>();
   const { config } = options;
 
   app.post(
     '/',
+    consentPractice('request-material', 'required'),
     bodyLimit({
       maxSize: config.maxBodyBytesGenerate,
       onError: (c) => {
@@ -140,6 +141,9 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
       const method = c.req.method;
       const path = c.req.path;
       const deviceId = c.get('deviceId');
+      const requestId = c.get('requestId');
+      const requestLog = c.get('log');
+      const envelopeFields = envelopeLogFields(c.get('envelope'));
 
       const body = await c.req.json().catch(() => null);
       const parsed = GenerateRequest.safeParse(body);
@@ -156,7 +160,15 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
       }
 
       const requestSignal = c.req.raw.signal;
-      const admission = await admitGeneration({ ...options, deviceId, request: parsed.data, usageStore, signal: requestSignal });
+      const admission = await admitGeneration({
+        ...options,
+        requestId,
+        log: requestLog,
+        deviceId,
+        request: parsed.data,
+        usageStore,
+        signal: requestSignal,
+      });
       if (!admission.ok) {
         const r = admission.refusal;
         return c.json(r.body, r.status, r.headers);
@@ -166,6 +178,7 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
         ...options,
         pipeline,
         usageStore,
+        log: requestLog,
         deviceId,
         request: parsed.data,
         requestSignal,
@@ -174,7 +187,17 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
           // Status is always 200 here: the SSE response's headers are already committed by the
           // time this fires, whether the stream drained normally, errored mid-stream, or was
           // cancelled.
-          requestLog.info({ method, path, status: 200, durationMs: Math.round(performance.now() - requestStart) }, 'request');
+          requestLog.info(
+            {
+              scope: 'request',
+              method,
+              path,
+              status: 200,
+              durationMs: Math.round(performance.now() - requestStart),
+              ...envelopeFields,
+            },
+            'request',
+          );
         },
       });
 
@@ -201,7 +224,7 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: config.creditCacheTtlMs, floorUsd: config.minCreditUsd });
     if (!credit.ok) return { ok: false, refusal: budgetExhaustedRefusal() };
     if (credit.lookupFailed) {
-      log.warn({ lookupFailed: credit.lookupFailed, route: 'generate' }, 'operator credit lookup failed open');
+      deps.log.warn({ lookupFailed: credit.lookupFailed, route: 'generate' }, 'operator credit lookup failed open');
     }
   }
 
@@ -221,7 +244,7 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
     // the very store that just failed would hold the slot open for however long that settle takes.
     acquired.handle.release();
     if (admittedRequestId !== undefined) {
-      await settleFailedAdmission(deps.usageStore, admittedRequestId, clock, err);
+      await settleFailedAdmission(deps.usageStore, admittedRequestId, clock, err, deps.log);
     }
     throw err;
   }
@@ -229,19 +252,20 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
 
 /** Closes the ledger row of an admission that threw past the daily-unit insert (the twin of
  *  `routes/clarify.ts`'s helper of the same name — same rule: no refund, and a `settle` that throws
- *  in turn is logged, never raised over the original error). */
+ *  in turn is logged, never raised over the original error). `requestLog` is bound to the request
+ *  id, which is also the row's id. */
 async function settleFailedAdmission(
   usageStore: UsageStore,
   requestId: string,
   clock: () => number,
   cause: unknown,
+  requestLog: ServerLogger,
 ): Promise<void> {
   try {
     await usageStore.settle(requestId, { outcome: 'error', now: clock() });
   } catch (settleErr) {
-    log.error(
+    requestLog.error(
       {
-        requestId,
         detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
         cause: cause instanceof Error ? cause.message : String(cause),
       },
@@ -260,6 +284,7 @@ async function admitWithSlot(
   const { usageStore, config, clock, deviceId, policy, request, signal } = deps;
 
   const unit = await usageStore.admit({
+    requestId: deps.requestId,
     deviceId,
     kind: 'generate',
     now: clock(),
@@ -276,7 +301,7 @@ async function admitWithSlot(
   // Any failure to produce a verdict is `policy_unavailable` (specs/content-policy "The policy
   // check fails closed"); `cachedPolicy` has already logged it as `unavailable`.
   let unavailable: PolicyUnavailableError | undefined;
-  const checked = await policy.check(buildGeneratePolicyInput(request), 'generate', signal).then(
+  const checked = await policy.check(buildGeneratePolicyInput(request), 'generate', signal, deps.log).then(
     (result): PolicyCheckResult | undefined => result,
     (err): undefined => {
       unavailable = err instanceof PolicyUnavailableError ? err : undefined;
@@ -310,6 +335,7 @@ async function admitWithSlot(
 interface StreamDeps extends GenerateRouteOptions {
   pipeline: Pipeline;
   usageStore: UsageStore;
+  log: ServerLogger;
   deviceId: string;
   request: GenerateRequest;
   requestSignal: AbortSignal;
@@ -336,8 +362,9 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
   else requestSignal.addEventListener('abort', abort, { once: true });
   const untrack = inFlight.track(abort);
 
-  // The pipeline appends each model call's provider generation id and the run's outcome here.
-  const trace: RunTrace = { generationIds: [] };
+  // The pipeline appends each model call's provider generation id and the run's outcome here, and
+  // logs every run line under the request's id (== the ledger row id).
+  const trace: RunTrace = { generationIds: [], requestId: admitted.requestId };
   const ending: StreamEnding = { creditOwned: false, usage: undefined, terminal: undefined };
 
   const teardown = async (): Promise<void> => {
@@ -353,8 +380,8 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
         await usageStore.settle(admitted.requestId, settlement);
         break;
       } catch (err) {
-        requestLog.warn({
-          requestId: admitted.requestId,
+        deps.log.warn({
+          scope: 'request',
           outcome,
           attempt,
           detail: err instanceof Error ? err.message : String(err),

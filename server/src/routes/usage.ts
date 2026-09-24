@@ -5,11 +5,10 @@
  */
 import { Hono } from 'hono';
 import type { UsageStore } from '../usage-store';
+import type { V1Env } from '../request-edge';
 
-type Env = { Variables: { deviceId: string } };
-
-export function makeUsageRoute(usageStore: UsageStore): Hono<Env> {
-  const app = new Hono<Env>();
+export function makeUsageRoute(usageStore: UsageStore): Hono<V1Env> {
+  const app = new Hono<V1Env>();
 
   app.get('/', async (c) => {
     const deviceId = c.get('deviceId');

@@ -11,6 +11,7 @@
  */
 import type { OpenRouterClient } from '../openrouter';
 import type { Usage } from '@whim/contract';
+import type { ServerLogger } from '../logger';
 
 // ─── Wire-agnostic message/stream shapes ────────────────────────────────────
 
@@ -44,6 +45,14 @@ export interface ModelRequest {
   reasoning: ReasoningSetting;
   /** Required so every call is attributable (design D4) — see `ModelCallLabel`'s doc comment. */
   role: ModelCallLabel;
+  /** The request-bound logger (spec request-envelope "One request id follows a /v1 request
+   *  everywhere") — when present, the adapter's `model call` line uses THIS instead of its own
+   *  module logger, so the line carries the same `requestId` as the rest of that request. Bound
+   *  with `requestId` only: a logger that already carries a `scope` (a run or route logger) would
+   *  put a second `scope` key on the line beside the adapter's own. Absent
+   *  for a call made outside any request (flowbench, load test, admin scripts), which keeps
+   *  logging through the module logger exactly as before. */
+  logger?: ServerLogger;
 }
 
 /** One streamed unit from a model turn: either visible completion text (`'text'`) or reasoning the
@@ -221,6 +230,7 @@ export function openRouterModelClient(client: OpenRouterClient): ModelClient {
         temperature: req.temperature,
         reasoning: req.reasoning,
         role: req.role,
+        logger: req.logger,
         signal,
       });
     },

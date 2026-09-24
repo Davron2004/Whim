@@ -7,7 +7,7 @@
  * always wrap the base policy in this so every check is observed.
  */
 import { createHash } from 'node:crypto';
-import { log } from '../logger';
+import { log, type ServerLogger } from '../logger';
 import type { ContentPolicy, PolicyCheckResult, PolicyRoute, PolicyVerdict } from './policy';
 
 const DEFAULT_MAX_ENTRIES = 1000;
@@ -33,13 +33,21 @@ function describe(verdict: PolicyVerdict): { kind: 'allow' | 'refuse'; category?
   return verdict === 'allow' ? { kind: 'allow' } : { kind: 'refuse', category: verdict.refuse };
 }
 
-function logCheck(route: PolicyRoute, verdict: string, category: string | undefined, durationMs: number): void {
+function logCheck(
+  route: PolicyRoute,
+  verdict: string,
+  category: string | undefined,
+  durationMs: number,
+  logger: ServerLogger | undefined,
+): void {
   const fields: Record<string, unknown> = { route, verdict, durationMs };
   if (category !== undefined) fields.category = category;
   // Only route/verdict/category/duration ever reach this call — no checked text and no digest
   // (spec "The record SHALL NOT carry checked text"; "Only the digest and the verdict SHALL be
-  // held" for the cache, and even that pair is never logged together).
-  log.info(fields, 'content policy check');
+  // held" for the cache, and even that pair is never logged together). `logger`, when present, is
+  // the request-bound logger (spec request-envelope) — falls back to the module logger otherwise,
+  // exactly as before this parameter existed.
+  (logger ?? log).info(fields, 'content policy check');
 }
 
 /**
@@ -58,7 +66,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
   const entries = new Map<string, CacheEntry>();
 
   return {
-    async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult> {
+    async check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult> {
       const startedAt = now();
       const digest = digestOf(input);
       const existing = entries.get(digest);
@@ -67,7 +75,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
           entries.delete(digest);
           entries.set(digest, existing);
           const { kind, category } = describe(existing.verdict);
-          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', category, now() - startedAt);
+          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', category, now() - startedAt, logger);
           // A cache hit made no classifier call — no usage/generationId to carry.
           return { verdict: existing.verdict };
         }
@@ -76,9 +84,9 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
 
       let result: PolicyCheckResult;
       try {
-        result = await inner.check(input, route, signal);
+        result = await inner.check(input, route, signal, logger);
       } catch (err) {
-        logCheck(route, 'unavailable', undefined, now() - startedAt);
+        logCheck(route, 'unavailable', undefined, now() - startedAt, logger);
         throw err;
       }
 
@@ -90,7 +98,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
       }
 
       const { kind, category } = describe(result.verdict);
-      logCheck(route, kind, category, now() - startedAt);
+      logCheck(route, kind, category, now() - startedAt, logger);
       return result;
     },
   };

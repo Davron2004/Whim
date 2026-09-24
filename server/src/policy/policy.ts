@@ -9,6 +9,7 @@
 import type { ModelClient, ModelRequest } from '../generation/model';
 import { parseJsonBlock } from '../generation/json-block';
 import type { Usage } from '@whim/contract';
+import type { ServerLogger } from '../logger';
 
 /** Which endpoint is running the check — carried through only for the log record. Never sent to
  *  the classifier and never part of the cache key: two routes checking identical canonical input
@@ -52,8 +53,12 @@ export interface ContentPolicy {
   /** Resolves to a result carrying the verdict, or throws `PolicyUnavailableError` when no verdict
    *  could be produced — NEVER resolves an `'allow'` verdict on failure. `signal` aborts the
    *  underlying call (e.g. a client disconnect); `ModelContentPolicy` also enforces its own
-   *  configured timeout independent of `signal`. */
-  check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult>;
+   *  configured timeout independent of `signal`. `logger`, when present, is the request-bound
+   *  logger (spec request-envelope "One request id follows a /v1 request everywhere") the "content
+   *  policy check" record and the classifier's own "model call" line are both emitted through;
+   *  absent for a check made outside any request (e.g. a background refresh), which logs through
+   *  the module logger exactly as before this parameter existed. */
+  check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult>;
 }
 
 const MAX_TOKENS = 48;
@@ -114,7 +119,7 @@ export interface ModelContentPolicyOptions {
 export class ModelContentPolicy implements ContentPolicy {
   constructor(private readonly opts: ModelContentPolicyOptions) {}
 
-  async check(input: string, route: PolicyRoute, signal?: AbortSignal): Promise<PolicyCheckResult> {
+  async check(input: string, route: PolicyRoute, signal?: AbortSignal, logger?: ServerLogger): Promise<PolicyCheckResult> {
     const timeoutSignal = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     const request: ModelRequest = {
@@ -126,6 +131,7 @@ export class ModelContentPolicy implements ContentPolicy {
       maxTokens: MAX_TOKENS,
       reasoning: 'off',
       role: 'policy',
+      logger,
     };
 
     let text = '';

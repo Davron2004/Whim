@@ -30,7 +30,7 @@ import { type Plan, parsePlan, validatePlan } from './plan';
 import { unwrapSourceFence } from './source-block';
 import type { Summariser } from './summarise';
 import { invalidateCreditCache } from '../admission/credit';
-import { log } from '../logger';
+import { log, type ServerLogger } from '../logger';
 
 /** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
  *  triggers and terminal outcomes — as one child logger carrying its scope as a field. Everything
@@ -40,6 +40,19 @@ import { log } from '../logger';
  *
  *  Nothing here is called from inside a delta-iteration or token-emission loop. */
 const runLog = log.child({ scope: 'run' });
+
+/** The run's own logger: `runLog`, bound to the request id when the trace carries one, so every
+ *  line of a served request's run joins its request line and ledger row. */
+function runLogFor(trace: RunTrace | undefined): ServerLogger {
+  return trace?.requestId === undefined ? runLog : runLog.child({ requestId: trace.requestId });
+}
+
+/** The logger the run hands its model calls and summariser: the root logger bound to the request id
+ *  alone, never `runLog`, whose `scope` would sit beside the model client's own (pino writes both
+ *  keys). Undefined outside a request, so the model client logs through its module logger. */
+function modelLogFor(trace: RunTrace | undefined): ServerLogger | undefined {
+  return trace?.requestId === undefined ? undefined : log.child({ requestId: trace.requestId });
+}
 
 // ─── Injected stage interfaces (design D2) ──────────────────────────────────
 
@@ -133,6 +146,9 @@ export type RunTraceOutcome = 'delivered' | 'failed' | 'expired' | 'aborted';
  *  generation id as it resolves. A stub that ignores it stays conforming. */
 export interface RunTrace {
   generationIds: string[];
+  /** The request this run serves (`x-whim-request-id`, also its ledger row id). Set by the caller
+   *  before the run starts; every run log line carries it as `requestId`. */
+  requestId?: string;
   /** Written once, by whichever ending happens first, and never changed after: `'expired'` the
    *  moment the deadline elapses, `'aborted'` the moment the request signal fires (or when the
    *  consumer stops the run without either), `'delivered'`/`'failed'` just before the `result`/
@@ -271,15 +287,15 @@ function outcomeFromDecision(decision: Exclude<DiagnosticsDecision, { action: 'p
 
 /** One breadcrumb for a `stage` transition — same fields the wire's `stage` event itself carries
  *  (stage name, status, and attempt when present). */
-function logStage(stage: string, status: string, attempt?: number): void {
-  runLog.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
+function logStage(state: RunState, stage: string, status: string, attempt?: number): void {
+  state.log.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
 }
 
 /** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
  *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
  *  called from inside the delta iteration loop (design D5 scope). */
-function throwLoggedModelCallFailure(which: 'usage' | 'id', error: unknown): never {
-  runLog.error(
+function throwLoggedModelCallFailure(state: RunState, which: 'usage' | 'id', error: unknown): never {
+  state.log.error(
     {
       which,
       errorClass: error instanceof Error ? error.constructor.name : typeof error,
@@ -395,6 +411,7 @@ class RunBudget {
     maxRunMs: number,
     private readonly requestSignal: AbortSignal | undefined,
     private readonly trace: RunTrace | undefined,
+    private readonly runLogger: ServerLogger,
   ) {
     if (requestSignal?.aborted) {
       this.onRequestAbort();
@@ -438,7 +455,7 @@ class RunBudget {
     this.deadlineArmed = false;
     this.disarmTimer = undefined;
     if (!this.record('expired')) return;
-    runLog.info('run expired');
+    this.runLogger.info('run expired');
     this.controller.abort();
   };
 
@@ -470,6 +487,10 @@ interface RunState {
   diagnostics: Diagnostic[];
   candidatesProduced: number;
   budget: RunBudget;
+  /** The run's logger (`runLogFor`) — every run line goes through it. */
+  log: ServerLogger;
+  /** The logger model calls and the summariser receive (`modelLogFor`). */
+  modelLog: ServerLogger | undefined;
 }
 
 interface RepairBudgetsSnapshot {
@@ -555,10 +576,11 @@ export class GenerationMachine {
     signal?: AbortSignal,
     trace?: RunTrace,
   ): AsyncGenerator<GenerationEvent> {
-    const budget = new RunBudget(this.deps.clock, this.maxRunMs, signal, trace);
+    const runLogger = runLogFor(trace);
+    const budget = new RunBudget(this.deps.clock, this.maxRunMs, signal, trace, runLogger);
     try {
       if (budget.signal.aborted) return;
-      const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0, budget };
+      const state: RunState = { usage: ZERO_USAGE, diagnostics: [], candidatesProduced: 0, budget, log: runLogger, modelLog: modelLogFor(trace) };
       yield* this.runStages(request, budget.signal, trace, state);
       // The deadline stopped the stages, which emitted nothing further. Unlike a client abort, this
       // still ends as a completed run. Its abort checks read the REQUEST signal, because the run
@@ -582,7 +604,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, void> {
-    runLog.info('run start');
+    state.log.info('run start');
     try {
       const edit = editContextFor(request);
 
@@ -608,7 +630,7 @@ export class GenerationMachine {
     // re-query the credit rather than trust the cached value.
     if (creditExhausted) invalidateCreditCache();
     if (signal.aborted) return;
-    runLog.error(
+    state.log.error(
       {
         errorClass: err instanceof Error ? err.constructor.name : typeof err,
         detail: err instanceof Error ? err.message : String(err),
@@ -638,9 +660,9 @@ export class GenerationMachine {
     if (signal?.aborted) return;
     state.budget.recordTerminal(terminal.type === 'result' ? 'delivered' : 'failed');
     if (terminal.type === 'failure') {
-      runLog.info({ reason: terminal.reason }, 'terminal failure');
+      state.log.info({ reason: terminal.reason }, 'terminal failure');
     } else {
-      runLog.info('terminal result');
+      state.log.info('terminal result');
     }
     yield terminal;
   }
@@ -663,7 +685,7 @@ export class GenerationMachine {
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
     const stream = this.deps.model.stream(
-      { model: roleSetting.model, messages, reasoning: roleSetting.reasoning, role: label },
+      { model: roleSetting.model, messages, reasoning: roleSetting.reasoning, role: label, logger: state.modelLog },
       signal,
     );
     const usageResult = settle(stream.usage);
@@ -686,10 +708,10 @@ export class GenerationMachine {
     }
     if (signal?.aborted) return { text, aborted: true };
     const settledUsage = await usageResult;
-    if (!settledUsage.ok) throwLoggedModelCallFailure('usage', settledUsage.error);
+    if (!settledUsage.ok) throwLoggedModelCallFailure(state, 'usage', settledUsage.error);
     state.usage = sumUsage(state.usage, settledUsage.value);
     const settledId = await idResult;
-    if (!settledId.ok) throwLoggedModelCallFailure('id', settledId.error);
+    if (!settledId.ok) throwLoggedModelCallFailure(state, 'id', settledId.error);
     return { text, aborted: signal?.aborted ?? false };
   }
 
@@ -715,7 +737,7 @@ export class GenerationMachine {
 
     for (let attempt = 1; attempt <= this.bounds.planAttempts; attempt++) {
       if (signal?.aborted) return undefined;
-      logStage('plan', 'start');
+      logStage(state, 'plan', 'start');
       yield { type: 'stage', stage: 'plan', status: 'start' };
       if (signal?.aborted) return undefined;
 
@@ -730,7 +752,7 @@ export class GenerationMachine {
 
       const { plan, failureReason } = this.resolvePlan(turn.text, request);
 
-      logStage('plan', 'done');
+      logStage(state, 'plan', 'done');
       yield { type: 'stage', stage: 'plan', status: 'done' };
       if (signal?.aborted) return undefined;
 
@@ -759,7 +781,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
-    logStage('generate', 'start');
+    logStage(state, 'generate', 'start');
     yield { type: 'stage', stage: 'generate', status: 'start' };
     if (signal?.aborted) return undefined;
 
@@ -770,7 +792,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, this.deps.roster.engineer, 'generate', signal, trace, state, true);
     if (turn.aborted) return undefined;
 
-    logStage('generate', 'done');
+    logStage(state, 'generate', 'done');
     yield { type: 'stage', stage: 'generate', status: 'done' };
     if (signal?.aborted) return undefined;
 
@@ -791,7 +813,7 @@ export class GenerationMachine {
     trace: RunTrace | undefined,
     state: RunState,
   ): AsyncGenerator<GenerationEvent, string | undefined> {
-    logStage('repair', 'start', roundAttempt);
+    logStage(state, 'repair', 'start', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'start', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -809,7 +831,7 @@ export class GenerationMachine {
     const turn = yield* this.runModelTurn(messages, this.deps.roster.repair, 'repair', signal, trace, state, true);
     if (turn.aborted) return undefined;
 
-    logStage('repair', 'done', roundAttempt);
+    logStage(state, 'repair', 'done', roundAttempt);
     yield { type: 'stage', stage: 'repair', status: 'done', attempt: roundAttempt };
     if (signal?.aborted) return undefined;
 
@@ -840,7 +862,7 @@ export class GenerationMachine {
         repairAttempts: this.bounds.repairAttempts,
         warningRepairAttempts: this.bounds.warningRepairAttempts,
       };
-      const outcome = yield* this.processCandidate(source, request, edit, roundAttempt, signal, state.diagnostics, budgets);
+      const outcome = yield* this.processCandidate(source, request, edit, roundAttempt, signal, state, budgets);
 
       if (outcome.kind === 'aborted') return;
 
@@ -855,7 +877,7 @@ export class GenerationMachine {
 
       const kindCounts: Record<string, number> = {};
       for (const d of outcome.diagnostics) kindCounts[d.kind] = (kindCounts[d.kind] ?? 0) + 1;
-      runLog.info({ kindCounts, warningsOnly: outcome.warningsOnly }, 'repair triggered');
+      state.log.info({ kindCounts, warningsOnly: outcome.warningsOnly }, 'repair triggered');
 
       repairsUsed += 1;
       if (outcome.warningsOnly) warningRepairsUsed += 1;
@@ -924,6 +946,7 @@ export class GenerationMachine {
           diagnostics: [...state.diagnostics],
         },
         signal,
+        state.modelLog,
       );
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
       return result.summary;
@@ -932,7 +955,7 @@ export class GenerationMachine {
       // the operator's credit wherever it is raised, so the next admission must re-query rather
       // than trust a cached value (the same invalidation `endOnThrow` performs).
       if (isCreditExhaustedError(err)) invalidateCreditCache();
-      runLog.error(
+      state.log.error(
         {
           errorClass: err instanceof Error ? err.constructor.name : typeof err,
           detail: err instanceof Error ? err.message : String(err),
@@ -949,17 +972,17 @@ export class GenerationMachine {
     diagnostics: readonly Diagnostic[],
     stage: 'check' | 'run',
     attemptField: { attempt?: number },
-    diagnosticsAccum: Diagnostic[],
+    state: RunState,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<GenerationEvent, void> {
     for (const d of diagnostics) {
       if (signal?.aborted) return;
-      diagnosticsAccum.push(d);
+      state.diagnostics.push(d);
       yield { type: 'diagnostic', diagnostic: d };
       if (signal?.aborted) return;
     }
     if (signal?.aborted) return;
-    logStage(stage, 'done', attemptField.attempt);
+    logStage(state, stage, 'done', attemptField.attempt);
     yield { type: 'stage', stage, status: 'done', ...attemptField };
   }
 
@@ -972,12 +995,12 @@ export class GenerationMachine {
     edit: EditContext,
     roundAttempt: number | undefined,
     signal: AbortSignal | undefined,
-    diagnosticsAccum: Diagnostic[],
+    state: RunState,
     budgets: RepairBudgetsSnapshot,
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
     const attemptField = roundAttempt !== undefined ? { attempt: roundAttempt } : {};
 
-    logStage('check', 'start', attemptField.attempt);
+    logStage(state, 'check', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'check', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const checkReport = await this.deps.check.check(
@@ -986,7 +1009,7 @@ export class GenerationMachine {
       signal,
     );
     if (signal?.aborted) return { kind: 'aborted' };
-    yield* this.emitDiagnosticsAndDone(checkReport.diagnostics, 'check', attemptField, diagnosticsAccum, signal);
+    yield* this.emitDiagnosticsAndDone(checkReport.diagnostics, 'check', attemptField, state, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 
     const decision = decideAfterDiagnostics(checkReport.diagnostics, budgets);
@@ -996,7 +1019,7 @@ export class GenerationMachine {
       source,
       checkReport,
       signal,
-      diagnosticsAccum,
+      state,
       budgets,
       attemptField,
       [...checkReport.diagnostics],
@@ -1007,19 +1030,19 @@ export class GenerationMachine {
     source: string,
     checkReport: CheckReport,
     signal: AbortSignal | undefined,
-    diagnosticsAccum: Diagnostic[],
+    state: RunState,
     budgets: RepairBudgetsSnapshot,
     attemptField: { attempt?: number },
     roundDiagnostics: Diagnostic[],
   ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
-    logStage('run', 'start', attemptField.attempt);
+    logStage(state, 'run', 'start', attemptField.attempt);
     yield { type: 'stage', stage: 'run', status: 'start', ...attemptField };
     if (signal?.aborted) return { kind: 'aborted' };
     const buildOutcome = await this.deps.build.build(source, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 
     if (!buildOutcome.ok) {
-      yield* this.emitDiagnosticsAndDone([buildOutcome.diagnostic], 'run', attemptField, diagnosticsAccum, signal);
+      yield* this.emitDiagnosticsAndDone([buildOutcome.diagnostic], 'run', attemptField, state, signal);
       if (signal?.aborted) return { kind: 'aborted' };
       roundDiagnostics.push(buildOutcome.diagnostic);
       return budgets.repairsUsed < budgets.repairAttempts
@@ -1039,12 +1062,12 @@ export class GenerationMachine {
     // stage's `done` half — the bracket the wire opened above always closes — and neither streams a
     // `diagnostic` event.
     if (runOutcome.contained !== true) {
-      logStage('run', 'done', attemptField.attempt);
+      logStage(state, 'run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
       return unverifiedRunOutcome(runOutcome.contained);
     }
 
-    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, diagnosticsAccum, signal);
+    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 
     roundDiagnostics.push(...runOutcome.diagnostics);

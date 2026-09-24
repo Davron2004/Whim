@@ -9,10 +9,11 @@
  * full-app content-free data-directory scan belong to chain-9/10's suites.
  */
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { check, eq, section } from './harness';
+import { caught, check, eq, section } from './harness';
 import { InMemoryUsageStore, NodeSqliteUsageStore, type AdmitResult, type UsageStore } from '../src/usage-store';
 
 const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -38,7 +39,7 @@ async function admitNTimes(
   deviceLimit: number,
 ): Promise<void> {
   for (let i = 0; i < n; i++) {
-    await store.admit({ deviceId, kind: 'generate', now, deviceLimit });
+    await store.admit({ requestId: randomUUID(), deviceId, kind: 'generate', now, deviceLimit });
   }
 }
 
@@ -53,7 +54,7 @@ async function testDailyLimitAndRetryAfter(): Promise<void> {
   {
     const store = new NodeSqliteUsageStore(':memory:');
     await admitNTimes(store, DEVICE_A, 15, AT_22_00_UTC, 15);
-    const refusal = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+    const refusal = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
     check('16th admit at 22:00 UTC refuses', refusal.ok === false);
     if (!refusal.ok) {
       eq('refusal reason', refusal.reason, 'device');
@@ -65,11 +66,11 @@ async function testDailyLimitAndRetryAfter(): Promise<void> {
   // The day rolls over: a device exhausted at 23:59:59.999 is admitted again at 00:00:00.000
   {
     const store = new NodeSqliteUsageStore(':memory:');
-    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
     check('admitted just before midnight', admitted.ok === true);
-    const refused = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
+    const refused = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
     check('a second request the same instant refuses', refused.ok === false);
-    const nextDay = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now: FIRST_INSTANT_NEXT_DAY, deviceLimit: 1 });
+    const nextDay = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now: FIRST_INSTANT_NEXT_DAY, deviceLimit: 1 });
     check('the very next millisecond, on the new UTC day, is admitted', nextDay.ok === true);
     store.close();
   }
@@ -82,9 +83,9 @@ async function testGlobalCeilings(): Promise<void> {
   {
     const store = new NodeSqliteUsageStore(':memory:');
     const now = AT_22_00_UTC;
-    await store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
-    await store.admit({ deviceId: DEVICE_B, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
-    const refusal = await store.admit({ deviceId: DEVICE_C, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
+    await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
+    await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
+    const refusal = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_C, kind: 'generate', now, deviceLimit: 15, globalLimit: 2 });
     check('third device refused once the global ceiling is reached', refusal.ok === false);
     if (!refusal.ok) {
       eq('global refusal reason', refusal.reason, 'global');
@@ -97,8 +98,8 @@ async function testGlobalCeilings(): Promise<void> {
   {
     const store = new NodeSqliteUsageStore(':memory:');
     const now = AT_22_00_UTC;
-    await store.admit({ deviceId: DEVICE_A, kind: 'report', now, deviceLimit: 1, globalLimit: 1 });
-    const refusal = await store.admit({ deviceId: DEVICE_A, kind: 'report', now, deviceLimit: 1, globalLimit: 1 });
+    await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'report', now, deviceLimit: 1, globalLimit: 1 });
+    const refusal = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'report', now, deviceLimit: 1, globalLimit: 1 });
     check('both limits exhausted at once', refusal.ok === false);
     if (!refusal.ok) eq('device limit wins over the global ceiling', refusal.reason, 'device');
     store.close();
@@ -115,8 +116,8 @@ async function testAtomicLastUnit(): Promise<void> {
     const store = new NodeSqliteUsageStore(':memory:');
     const now = AT_22_00_UTC;
     const [r1, r2]: AdmitResult[] = await Promise.all([
-      store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 1 }),
-      store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 1 }),
     ]);
     const oks = [r1, r2].filter((r) => r.ok);
     const refusals = [r1, r2].filter((r) => !r.ok);
@@ -132,8 +133,8 @@ async function testAtomicLastUnit(): Promise<void> {
     const store = new NodeSqliteUsageStore(':memory:');
     const now = AT_22_00_UTC;
     const [r1, r2]: AdmitResult[] = await Promise.all([
-      store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15, globalLimit: 1 }),
-      store.admit({ deviceId: DEVICE_B, kind: 'generate', now, deviceLimit: 15, globalLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15, globalLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now, deviceLimit: 15, globalLimit: 1 }),
     ]);
     const oks = [r1, r2].filter((r) => r.ok);
     eq('exactly one concurrent admit for the last global unit succeeds', oks.length, 1);
@@ -145,8 +146,8 @@ async function testAtomicLastUnit(): Promise<void> {
     const store = new InMemoryUsageStore();
     const now = AT_22_00_UTC;
     const [r1, r2]: AdmitResult[] = await Promise.all([
-      store.admit({ deviceId: DEVICE_A, kind: 'rewrite', now, deviceLimit: 1 }),
-      store.admit({ deviceId: DEVICE_A, kind: 'rewrite', now, deviceLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'rewrite', now, deviceLimit: 1 }),
+      store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'rewrite', now, deviceLimit: 1 }),
     ]);
     eq('InMemoryUsageStore: exactly one concurrent admit succeeds', [r1, r2].filter((r) => r.ok).length, 1);
   }
@@ -158,12 +159,12 @@ async function testDurabilityAcrossReopen(): Promise<void> {
   const dbPath = tmpDbPath('durability');
   try {
     const store1 = new NodeSqliteUsageStore(dbPath);
-    const admitted = await store1.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    const admitted = await store1.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
     check('first instance admits the one allowed unit', admitted.ok === true);
     store1.close();
 
     const store2 = new NodeSqliteUsageStore(dbPath);
-    const refused = await store2.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    const refused = await store2.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
     check('reopened instance still refuses — the count survived a restart', refused.ok === false);
     store2.close();
   } finally {
@@ -177,17 +178,52 @@ async function testRefund(): Promise<void> {
   // A refunded unit does not count toward the daily limit, and is idempotent.
   const store = new NodeSqliteUsageStore(':memory:');
   const now = AT_22_00_UTC;
-  const first = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now, deviceLimit: 1 });
+  const first = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now, deviceLimit: 1 });
   check('first admit succeeds', first.ok === true);
   if (first.ok) {
     await store.refund(first.requestId);
     await store.refund(first.requestId); // idempotent: a repeated refund is a no-op
-    const second = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now, deviceLimit: 1 });
+    const second = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now, deviceLimit: 1 });
     check('after refund, the unit is available again', second.ok === true);
   }
   // Refunding an unknown id never throws.
   await store.refund('does-not-exist');
   store.close();
+}
+
+/** Request-envelope D6: the store never mints an id — the row is keyed by the one the request
+ *  carries, observed through the store's own id-addressed API rather than a returned value. */
+async function testRowKeyedByCallerId(): Promise<void> {
+  section("Usage ledger — admit keys the row by the caller's request id (request-envelope D6)");
+
+  const stores: Array<[string, UsageStore]> = [
+    ['in-memory', new InMemoryUsageStore()],
+    ['sqlite', new NodeSqliteUsageStore(':memory:')],
+  ];
+  for (const [label, store] of stores) {
+    const requestId = randomUUID();
+    const admitted = await store.admit({ requestId, deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    eq(`${label}: admit answers with the caller's id`, admitted.ok ? admitted.requestId : undefined, requestId);
+    await store.refund(requestId);
+    const next = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    check(`${label}: refunding by the caller's id frees the only unit, so the row carries that id`, next.ok);
+  }
+}
+
+async function testDuplicateIdRejected(): Promise<void> {
+  section('Usage ledger — admit rejects a request id already in the ledger, in both stores');
+
+  const refusals: Array<[string, unknown]> = [];
+  for (const [label, store] of [['in-memory', new InMemoryUsageStore()], ['sqlite', new NodeSqliteUsageStore(':memory:')]] as Array<[string, UsageStore]>) {
+    const requestId = randomUUID();
+    await store.admit({ requestId, deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    const duplicate = await caught(() => store.admit({ requestId, deviceId: DEVICE_B, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 5 }).then(() => undefined));
+    check(`${label}: a second admit with the same request id rejects`, duplicate instanceof Error, String(duplicate));
+    refusals.push([label, duplicate instanceof Error ? duplicate.message : duplicate]);
+    const nextForA = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 1 });
+    eq(`${label}: the first row still counts against its own device`, nextForA.ok ? 'admitted' : nextForA.reason, 'device');
+  }
+  eq('both stores reject with the same message', refusals[0]?.[1], refusals[1]?.[1]);
 }
 
 async function testSettleAndRecordCostIdempotent(): Promise<void> {
@@ -196,7 +232,7 @@ async function testSettleAndRecordCostIdempotent(): Promise<void> {
   const dbPath = tmpDbPath('idempotent');
   try {
     const store = new NodeSqliteUsageStore(dbPath);
-    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
     check('admit succeeds', admitted.ok === true);
     if (!admitted.ok) {
       store.close();
@@ -232,13 +268,13 @@ async function testSettlesAgainstAdmissionDay(): Promise<void> {
   section('Usage ledger — a request admitted before midnight settles against its admission day');
 
   const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: LAST_INSTANT_OF_DAY, deviceLimit: 1 });
   check('admitted just before midnight', admitted.ok === true);
   if (admitted.ok) {
     // Settle runs AFTER the rollover — the row must still belong to the admission day, so the
     // NEXT day's admission for the same device is unaffected by this request's settlement.
     await store.settle(admitted.requestId, { outcome: 'delivered', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } });
-    const nextDay = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: FIRST_INSTANT_NEXT_DAY, deviceLimit: 1 });
+    const nextDay = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: FIRST_INSTANT_NEXT_DAY, deviceLimit: 1 });
     check('the next UTC day still has its own fresh unit', nextDay.ok === true);
   }
   store.close();
@@ -250,17 +286,17 @@ async function testRetentionPurge(): Promise<void> {
   const store = new NodeSqliteUsageStore(':memory:');
   const oldDay = Date.UTC(2025, 0, 1, 12, 0, 0, 0);
   const recentDay = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
-  await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: oldDay, deviceLimit: 15 });
-  await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: recentDay, deviceLimit: 15 });
+  await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: oldDay, deviceLimit: 15 });
+  await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: recentDay, deviceLimit: 15 });
 
   const deleted = await store.purgeLedger('2025-06-01');
   eq('purgeLedger deletes only rows strictly before the cutoff', deleted, 1);
 
   // The purged day's allowance is now fully available again (its row is gone), while the
   // recent row still counts toward the recent day.
-  const reAdmitOld = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: oldDay, deviceLimit: 1 });
+  const reAdmitOld = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: oldDay, deviceLimit: 1 });
   check('the purged day has no surviving rows', reAdmitOld.ok === true);
-  const stillBlockedRecent = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: recentDay, deviceLimit: 1 });
+  const stillBlockedRecent = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: recentDay, deviceLimit: 1 });
   check('the recent day still has its row', stillBlockedRecent.ok === false);
   store.close();
 }
@@ -272,10 +308,10 @@ async function testSummary(): Promise<void> {
   const day1 = Date.UTC(2026, 0, 14, 10, 0, 0, 0);
   const day2 = Date.UTC(2026, 0, 15, 10, 0, 0, 0);
 
-  const genA = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: day1, deviceLimit: 15 });
-  const genB = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: day2, deviceLimit: 15 });
-  const genC = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: day2, deviceLimit: 15 });
-  const clarifyA = await store.admit({ deviceId: DEVICE_A, kind: 'clarify', now: day2, deviceLimit: 60 });
+  const genA = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: day1, deviceLimit: 15 });
+  const genB = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: day2, deviceLimit: 15 });
+  const genC = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: day2, deviceLimit: 15 });
+  const clarifyA = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now: day2, deviceLimit: 60 });
 
   if (genA.ok) await store.settle(genA.requestId, { outcome: 'delivered' });
   if (genB.ok) await store.settle(genB.requestId, { outcome: 'delivered' });
@@ -330,8 +366,8 @@ async function testUnresolvedCostIsUpgradable(): Promise<void> {
     const sqlite = new NodeSqliteUsageStore(dbPath);
     for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
       const label = store === sqlite ? 'sqlite' : 'in-memory';
-      const late = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
-      const final = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+      const late = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+      const final = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
       if (!late.ok || !final.ok) {
         check(`${label}: admit succeeds`, false);
         continue;
@@ -379,7 +415,7 @@ async function testSweepCandidates(): Promise<void> {
     const label = store === sqlite ? 'sqlite' : 'in-memory';
     const minute = 60_000;
     const admitAt = async (deviceId: string, now: number): Promise<string> => {
-      const result = await store.admit({ deviceId, kind: 'generate', now, deviceLimit: 15 });
+      const result = await store.admit({ requestId: randomUUID(), deviceId, kind: 'generate', now, deviceLimit: 15 });
       return result.ok ? result.requestId : '';
     };
 
@@ -445,8 +481,8 @@ async function testSweepMaxAge(): Promise<void> {
     const label = store === sqlite ? 'sqlite' : 'in-memory';
     const now = AT_22_00_UTC;
 
-    const oldAdmit = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 25 * hour, deviceLimit: 15 });
-    const freshAdmit = await store.admit({ deviceId: DEVICE_B, kind: 'generate', now: now - 1 * hour, deviceLimit: 15 });
+    const oldAdmit = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: now - 25 * hour, deviceLimit: 15 });
+    const freshAdmit = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: now - 1 * hour, deviceLimit: 15 });
     if (!oldAdmit.ok || !freshAdmit.ok) throw new Error('setup: admit should succeed');
 
     await store.settle(oldAdmit.requestId, { outcome: 'delivered', now: now - 25 * hour });
@@ -476,7 +512,7 @@ async function testSweepIgnoresPersistedEmptyIdsArray(): Promise<void> {
   try {
     const store = new NodeSqliteUsageStore(dbPath);
     const now = AT_22_00_UTC;
-    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 60_000, deviceLimit: 15 });
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: now - 60_000, deviceLimit: 15 });
     if (!admitted.ok) throw new Error('setup: admit should succeed');
     await store.settle(admitted.requestId, { outcome: 'delivered', now: now - 60_000 });
 
@@ -564,7 +600,7 @@ async function testEmptyGlobalKinds(): Promise<void> {
   for (const store of [new InMemoryUsageStore(), sqlite] as UsageStore[]) {
     const label = store === sqlite ? 'sqlite' : 'in-memory';
     const admit = (deviceId: string): Promise<AdmitResult> =>
-      store.admit({ deviceId, kind: 'clarify', now: AT_22_00_UTC, deviceLimit: 60, globalLimit: 2, globalKinds: [] });
+      store.admit({ requestId: randomUUID(), deviceId, kind: 'clarify', now: AT_22_00_UTC, deviceLimit: 60, globalLimit: 2, globalKinds: [] });
 
     check(`${label}: first admit under the ceiling`, (await admit(DEVICE_A)).ok === true);
     check(`${label}: second admit under the ceiling`, (await admit(DEVICE_B)).ok === true);
@@ -576,6 +612,8 @@ async function testEmptyGlobalKinds(): Promise<void> {
 }
 
 export async function runLedgerTests(): Promise<void> {
+  await testRowKeyedByCallerId();
+  await testDuplicateIdRejected();
   await testDailyLimitAndRetryAfter();
   await testGlobalCeilings();
   await testAtomicLastUnit();
