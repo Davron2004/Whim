@@ -13,7 +13,7 @@ and keep the Log section in the README current with the date. Don't restate what
 the files back to me; assume I know it.
 
 Ground rules: the repo's CLAUDE.md applies. Don't touch product code for this work unless I ask.
-The phone on stage is an iPhone 16 Pro Max; the laptop is an old Intel MacBook that only holds
+The phone on stage is an iPhone 15 Plus; the laptop is an old Intel MacBook that only holds
 slides and the mirror. Generation on the demo phone is limited to 15 per UTC day, so don't
 suggest burning runs casually.
 
