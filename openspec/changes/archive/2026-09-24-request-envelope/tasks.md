@@ -35,5 +35,7 @@
 
 ## 6. Live verification (attended)
 
-- [ ] 6.1 Deploy with both minimums at `0`. Confirm TestFlight build 381237 still clarifies and generates, and its request lines carry the legacy envelope and a request id. Record in `progress.md`.
-- [ ] 6.2 On a new iOS build and a new Android build, confirm each request line carries the real platform, version and build. Then raise one platform's minimum above its build, deploy, and confirm the update screen shows at launch and on a clarify refusal and that "Update Whim" opens the right listing. Lower it back and confirm. Record in `progress.md`.
+- [x] 6.1 Deploy with both minimums at `0`. Confirm TestFlight build 381237 still clarifies and generates, and its request lines carry the legacy envelope and a request id. Record in `progress.md`.
+- [x] 6.2 On a new iOS build and a new Android build, confirm each request line carries the real platform, version and build. Then raise one platform's minimum above its build, deploy, and confirm the update screen shows at launch and on a clarify refusal and that "Update Whim" opens the right listing. Lower it back and confirm. Record in `progress.md`.
+
+Note on 6.1–6.2 (2026-09-24): the owner accepted the Android emulator as the device for both. A pre-envelope APK stood in for TestFlight 381237. The owner checks the real phone and the new iOS build's envelope separately. Evidence is in `progress.md`.
