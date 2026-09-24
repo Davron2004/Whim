@@ -48,6 +48,9 @@ export interface MiniAppViewProps {
   /** Plain `ClientOptions` for the report sheet's `sendReport` call — no AI-data consent required
    *  (design D3). */
   reportOptions: ClientOptions;
+  /** The orb's report was refused `update_required`: the host opens the update screen in place of
+   *  this running app (request-envelope D5). */
+  onUpdateRequired: () => void;
 }
 
 export default function MiniAppView({
@@ -61,6 +64,7 @@ export default function MiniAppView({
   installedApp,
   access,
   reportOptions,
+  onUpdateRequired,
 }: Readonly<MiniAppViewProps>) {
   // The report sheet is a host-layer overlay over the running realm (design D14): while it is
   // open, back-policy's `overlayOpen` input closes it instead of forwarding the press into the
@@ -181,6 +185,10 @@ export default function MiniAppView({
         access={access}
         options={reportOptions}
         onClose={() => setReportOpen(false)}
+        onUpdateRequired={() => {
+          setReportOpen(false);
+          onUpdateRequired();
+        }}
       />
     </View>
   );

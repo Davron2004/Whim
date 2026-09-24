@@ -99,6 +99,13 @@ export async function runServerProbeTests(h: Harness): Promise<void> {
     },
   );
 
+  // request-envelope: the server now reports its minimum builds on the same body; Settings'
+  // save-time check must still recognise it (handoff/min-build.md, the default configuration).
+  await h.test('probeServer: the /healthz body that reports minBuild still classifies verified', async () => {
+    const fetchImpl = (async () => jsonResponse({ ok: true, service: 'whim-server', minBuild: { ios: 0, android: 0 } })) as typeof fetch;
+    h.eq(await probeServer(BASE_URL, { fetchImpl }), 'verified', 'classifies verified');
+  });
+
   // request-envelope: only `/v1` requests carry the envelope; `/healthz` is outside `/v1`.
   await h.test('probeServer: the /healthz probe carries none of the envelope headers', async () => {
     let sent: Headers | undefined;

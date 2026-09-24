@@ -38,7 +38,7 @@ export async function runReportSendTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let closed = 0;
     const tree = await renderScreen(React.createElement(ReportSheet, {
-      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => { closed++; },
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => { closed++; }, onUpdateRequired: () => {},
     }));
     try {
       await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });

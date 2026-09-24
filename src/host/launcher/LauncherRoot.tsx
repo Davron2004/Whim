@@ -64,6 +64,7 @@ import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
+import UpdateRequiredScreen from './UpdateRequiredScreen';
 import { parseAppLink } from './app-link';
 import { schemeAndHostOf } from './scheme-host';
 import { resolveAppLink, linkExitFor, PendingLinkHolder } from './link-routing';
@@ -103,7 +104,7 @@ import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestio
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { clearServerUrl, effectiveServerUrl, loadServerUrl, saveServerUrl } from './server-address';
-import { probeServer } from './server-probe';
+import { probeServerHealth } from './server-probe';
 import { ConnectivityLoop } from './connectivity';
 import type { Connectivity } from './connectivity';
 import { showOfflineIndicator, showServerUnreachableNotice } from './connectivity-ux';
@@ -127,6 +128,14 @@ import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
 import { probeGateFor } from './probe-gate';
+import { belowMinimumBuild } from './update-gate';
+
+/** A prompt typed on a flow step the update screen replaced, and the app it was for (absent = a new
+ *  app). */
+interface HeldPrompt {
+  readonly editing?: InstalledApp;
+  readonly text: string;
+}
 
 type Screen =
   | { kind: 'home' }
@@ -137,6 +146,11 @@ type Screen =
   // An app link's id matched neither an installed app nor a pending build (design D15; spec
   // app-links "A link to an app that isn't on this phone shows a friendly screen").
   | { kind: 'link-missing' }
+  // The update screen (request-envelope D5; spec app-update-gate): an `update_required` refusal, or
+  // the launch-time check finding this build below its platform's minimum. `heldPrompt` is the
+  // prompt typed on the flow step it replaced: `Not now` goes Home (D5), so the next compose for
+  // the same app picks it back up rather than losing it.
+  | { kind: 'update-required'; heldPrompt?: HeldPrompt }
   // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `ask` opens in place of a
   // data-sending action taken with no current grant, carrying the continuation to resume on
   // agreement and the screen it replaced (`returnTo`, read by `declineTarget`). `review` opens
@@ -178,6 +192,23 @@ type Screen =
        *  retry window is not persisted (design D11: "the server stays authoritative"). */
       notice?: FlowNotice;
     };
+
+/** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
+ *  that has one. Pure, so it can run inside a `setScreen` updater. */
+function updateScreenFrom(from: Screen): Screen {
+  if ((from.kind === 'compose' || from.kind === 'clarify' || from.kind === 'plan') && from.text !== '') {
+    return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text } };
+  }
+  return { kind: 'update-required' };
+}
+
+/** Where the update screen may open when the user's current action did not ask for it — the
+ *  launch-time check's verdict, or a build left running being refused: Home, or a prompt being
+ *  typed. Anywhere else, above all a running mini-app, the user carries on, and their next AI
+ *  action shows the screen. */
+function updateMayInterrupt(screen: Screen): boolean {
+  return screen.kind === 'home' || screen.kind === 'compose';
+}
 
 /** The developer affordance that opens the dev log overlay. A mechanism word, deliberately not in
  *  `copy.ts` — the same standing `DevProbeScreen`'s and the overlay's own labels have. */
@@ -492,6 +523,10 @@ function LauncherShell({
   // `clientOptions` is keyed on `consentTick` above (design D2), so granting consent starts a
   // fresh `ConnectivityLoop` here and revoking it tears the old one down through the SAME cleanup
   // that runs on an address change or unmount — one effect serves startup, grant and revoke alike.
+  //
+  // The launch-time update check (request-envelope D5) rides on this loop's own `/healthz` probe —
+  // no request and no wait of its own. Only a minimum the probe actually read, above the installed
+  // build, opens the update screen; a slow, failed or minimum-less probe leaves everything as it was.
   useEffect(() => {
     const decision = probeGateFor(clientOptions);
     if (decision.kind === 'idle') {
@@ -499,17 +534,26 @@ function LauncherShell({
       setConnectivity('unknown');
       return undefined;
     }
+    let live = true;
     const loop = new ConnectivityLoop({
-      probe: () => probeServer(decision.baseUrl),
+      probe: async () => {
+        const health = await probeServerHealth(decision.baseUrl);
+        if (live && belowMinimumBuild(appInfo, health.minBuild)) {
+          log.warn(CHANNELS.app, 'installed build is below the server minimum', { ...health.minBuild });
+          setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
+        }
+        return health.result;
+      },
       publish: setConnectivity,
     });
     connectivityLoopRef.current = loop;
     loop.start();
     return () => {
+      live = false;
       loop.stop();
       if (connectivityLoopRef.current === loop) connectivityLoopRef.current = null;
     };
-  }, [clientOptions]);
+  }, [clientOptions, appInfo]);
 
   // A breadcrumb for every connectivity transition, the same device-observability discipline as
   // the `serverUrl`-keyed sink-config effect above: this session state has no screen surface of
@@ -544,6 +588,16 @@ function LauncherShell({
   const aboutRef = useRef<{ id: string; about: string } | null>(null);
   const aboutFor = (editing?: InstalledApp): string | undefined =>
     editing != null && aboutRef.current?.id === editing.id ? aboutRef.current.about : undefined;
+
+  // The prompt the update screen's `Not now` carried Home (`heldPrompt`), waiting for the next
+  // compose opened for the same app — taken once, then gone.
+  const heldPromptRef = useRef<HeldPrompt | null>(null);
+  const takeHeldPrompt = (editing?: InstalledApp): string | undefined => {
+    const held = heldPromptRef.current;
+    if (held == null || held.editing?.id !== editing?.id) return undefined;
+    heldPromptRef.current = null;
+    return held.text;
+  };
 
   // The home grid's per-app wait affordances (`app-busy.ts`): which app is opening, forking or
   // being deleted right now. A ref for the guard — two taps in one frame both read the same
@@ -731,6 +785,23 @@ function LauncherShell({
     setScreen({ kind: 'home' });
   };
 
+  /** The update screen's `Not now`, and system back: Home, carrying the prompt the screen held for
+   *  the next compose on the same app. */
+  const onUpdateNotNow = (heldPrompt: HeldPrompt | undefined) => {
+    if (heldPrompt) heldPromptRef.current = heldPrompt;
+    goHome();
+  };
+
+  /** A report refused `update_required`, from any of its three sheets: the update screen replaces
+   *  the screen the sheet sits on — only while that screen still shows, the same never-pull-back
+   *  rule every other refusal follows. */
+  const onReportUpdateRequired = () => {
+    setReportTarget(null);
+    setScreen((prev) =>
+      prev.kind === 'done' || prev.kind === 'history' || prev.kind === 'app' ? { kind: 'update-required' } : prev,
+    );
+  };
+
   const onServerUrlChange = (url: string) => {
     const previous = effectiveServerUrl(kv);
     saveServerUrl(kv, url);
@@ -819,11 +890,14 @@ function LauncherShell({
    * caller applies its own `onlyOnStep` guard to the result, so a user who has already left the
    * step is never pulled onto this screen.
    *
-   * `consent` opens the ask-mode consent screen; declining returns to `back`. `update` has no
-   * screen of its own here and lands as its sender notice (`handoff/refusal-routing.md`).
+   * `consent` opens the ask-mode consent screen; declining returns to `back`. `update` opens the
+   * update screen, holding the prompt typed on `back` for the next compose (its `Not now` goes
+   * Home, request-envelope D5).
    */
   const refusalScreen = (refusal: ServiceRefusal, back: Screen, resume: ConsentContinuation): Screen | undefined => {
-    if (REFUSAL_RULES[refusal.code].opens !== 'consent') return undefined;
+    const opens = REFUSAL_RULES[refusal.code].opens;
+    if (opens === 'update') return updateScreenFrom(back);
+    if (opens !== 'consent') return undefined;
     return {
       kind: 'consent',
       mode: 'ask',
@@ -921,7 +995,7 @@ function LauncherShell({
    *  a cap. A read that fails or finds no snapshot leaves `aboutRef` untouched for this id, which
    *  `aboutFor` already treats as "no description" — a degraded edit flow, never a blocked one. */
   const openCompose = (editing?: InstalledApp, text?: string) => {
-    setScreen(composeStep(editing, text ?? ''));
+    setScreen(composeStep(editing, text ?? takeHeldPrompt(editing) ?? ''));
     if (!editing) return;
     (async () => {
       let about: string | undefined;
@@ -1173,7 +1247,8 @@ function LauncherShell({
    * gated by the notice's own `retryAt`. A refusal that opens a screen of its own
    * (`refusalScreen`) opens it in place of either landing: back to the plan for a dropped attempt,
    * back to the refreshed failure screen (and its Retry) for a Retry. A detached attempt opens
-   * nothing — the user is elsewhere; its ghost keeps the reason.
+   * nothing — the user is elsewhere; its ghost keeps the reason — except the update screen, which
+   * opens where it interrupts nothing (`updateMayInterrupt`).
    */
   const handleGenerateRefusal = (
     attemptId: string,
@@ -1195,6 +1270,10 @@ function LauncherShell({
         const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...fromPlan, notice };
         setScreen(onlyOnStep<Screen, 'build'>('build', () => target));
       }
+      return;
+    }
+    if (detached && REFUSAL_RULES[refusal.code].opens === 'update') {
+      setScreen((prev) => (updateMayInterrupt(prev) ? updateScreenFrom(prev) : prev));
       return;
     }
     if (!isRetry) return;
@@ -1603,6 +1682,10 @@ function LauncherShell({
   // v2: the shell is fixed and always light (paper), never dark — see theme.ts.
   const statusBarStyle = 'dark-content';
 
+  /** Home's developer-probe entry, offered only where the dev log tools are. Decided here rather than
+   *  inside `renderScreenContent`, whose complexity budget goes to the screen kinds. */
+  const onOpenDevProbe = devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined;
+
   /** The ready-gated screen switch, pulled out of `LauncherShell`'s own body (a nested
    *  closure sonarjs's cognitive-complexity rule assesses separately) purely to keep the
    *  count of `Screen` kinds this shell can render from ever competing with `LauncherShell`'s
@@ -1623,6 +1706,7 @@ function LauncherShell({
           installedApp={screen.app}
           access={access}
           reportOptions={reportOptions}
+          onUpdateRequired={onReportUpdateRequired}
         />
       );
     } else if (screen.kind === 'dev') {
@@ -1663,11 +1747,20 @@ function LauncherShell({
             onChangeIt={(app) => openWithConsent({ kind: 'compose', editing: app })}
             onReport={() => setReportTarget(screen.app)}
           />
-          <ReportSheet app={reportTarget} access={access} options={reportOptions} onClose={() => setReportTarget(null)} />
+          <ReportSheet
+            app={reportTarget}
+            access={access}
+            options={reportOptions}
+            onClose={() => setReportTarget(null)}
+            onUpdateRequired={onReportUpdateRequired}
+          />
         </>
       );
     } else if (screen.kind === 'link-missing') {
       return <AppLinkMissingScreen onBackToApps={goHome} />;
+    } else if (screen.kind === 'update-required') {
+      const held = screen.heldPrompt;
+      return <UpdateRequiredScreen onNotNow={() => onUpdateNotNow(held)} />;
     } else if (screen.kind === 'compose') {
       const from = screen;
       return (
@@ -1746,7 +1839,13 @@ function LauncherShell({
             onBackToApps={goHome}
             onReport={() => setReportTarget(from.app)}
           />
-          <ReportSheet app={reportTarget} access={access} options={reportOptions} onClose={() => setReportTarget(null)} />
+          <ReportSheet
+            app={reportTarget}
+            access={access}
+            options={reportOptions}
+            onClose={() => setReportTarget(null)}
+            onUpdateRequired={onReportUpdateRequired}
+          />
         </>
       );
     } else if (screen.kind === 'failure') {
@@ -1776,7 +1875,7 @@ function LauncherShell({
           onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
           onCreate={() => openWithConsent({ kind: 'compose' })}
           onSettings={() => setScreen({ kind: 'settings' })}
-          onOpenDevProbe={devLogOverlayEnabled(__DEV__) ? () => setScreen({ kind: 'dev' }) : undefined}
+          onOpenDevProbe={onOpenDevProbe}
           offline={showOfflineIndicator(connectivity)}
           onOpenPending={onOpenPending}
           onCancelPending={onCancelPending}
