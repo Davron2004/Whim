@@ -22,6 +22,7 @@ import { parseFingerprintFile, getAabManifestFacts, getAabSignerFingerprint, aab
 import { auditApp } from './lib/privacy-audit';
 import { buildAssociationFiles, UPLOAD_FINGERPRINT_PATH } from './lib/association-files';
 import { ensureReleaseTag, realGitRunner } from './lib/release-tag';
+import { checkDisclosureRelease } from './lib/disclosure-check';
 
 declare module 'node:fs' {
   export function writeFileSync(path: string, data: string, encoding: 'utf8'): void;
@@ -84,12 +85,24 @@ function runCheck(): number {
     ...checkAndroidProject(repoRoot).map((f) => `Android project — ${f.file}: ${f.message}`),
     ...checkAssets(repoRoot).map((f) => `assets — ${f.path}: ${f.message}`),
     ...checkStoreListing(repoRoot, config).map((f) => `store listing — ${f.file}: ${f.message}`),
+    ...checkDisclosureRelease(repoRoot).map((f) => `disclosure — ${f}`),
   ];
   if (lines.length === 0) {
     process.stdout.write('check: every repo check passed\n');
     return 0;
   }
   for (const line of lines) process.stdout.write(`check: ${line}\n`);
+  return 1;
+}
+
+/** The re-consent rule's release check alone: what `deploy/deploy.sh` runs before anything moves. */
+function runDisclosureCheck(): number {
+  const findings = checkDisclosureRelease(process.cwd());
+  if (findings.length === 0) {
+    process.stdout.write('disclosure-check: the disclosure manifest and AI_CONSENT_VERSION agree\n');
+    return 0;
+  }
+  for (const f of findings) process.stdout.write(`disclosure-check: ${f}\n`);
   return 1;
 }
 
@@ -230,8 +243,12 @@ export const COMMANDS: Record<string, CliCommand> = {
     run: runGenerateAssets,
   },
   check: {
-    summary: 'check — runs every repo release check (native literals, iOS/Android project, assets, store listing).',
+    summary: 'check — runs every repo release check (native literals, iOS/Android project, assets, store listing, disclosure).',
     run: runCheck,
+  },
+  'disclosure-check': {
+    summary: 'disclosure-check — the re-consent rule: the disclosure manifest, its released snapshots, AI_CONSENT_VERSION and the what’s-new lines agree.',
+    run: runDisclosureCheck,
   },
   'native-config': {
     summary: 'native-config --json — prints release/whim-release.xcconfig as JSON.',

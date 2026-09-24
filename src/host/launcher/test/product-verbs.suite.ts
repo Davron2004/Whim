@@ -6,7 +6,7 @@
  */
 
 import { Harness } from './harness';
-import { COPY, forkedFromLabel, deleteBody, addedFieldsLine } from '../copy';
+import { COPY, CONSENT_WHATS_NEW, forkedFromLabel, deleteBody, addedFieldsLine } from '../copy';
 import { monogram, tileColor } from '../tiles';
 
 // Mechanism / git vocabulary that must never reach the launcher surface. NOTE: "fork" is NOT
@@ -22,6 +22,7 @@ export async function runProductVerbsTests(h: Harness): Promise<void> {
   await h.test('product-verbs: launcher copy carries no mechanism/git vocabulary', async () => {
     const strings: string[] = [
       ...Object.values(COPY),
+      ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
       forkedFromLabel('Water Counter'),
       deleteBody('Tip Splitter'),
       monogram('Water Counter'),

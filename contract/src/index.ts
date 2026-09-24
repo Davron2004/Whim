@@ -29,6 +29,10 @@ export type { DiagnosticKind } from '../../checks/contract';
  *  module wide (`dev-log.ts`) and nothing runtime crosses with it. */
 export type { DevLogBatch, DevLogLevel, DevLogRecord, DevLogSinkPath } from './dev-log';
 
+/** The disclosure manifest's widening ids (legal-surface-v2 D4), type-only: the launcher's
+ *  what's-new copy names them. The manifest's values are imported by path, never through here. */
+export type { WideningId } from './disclosure-manifest';
+
 /** Integer token counts. ONE shape, used identically by the SSE `usage` event, `/v1/usage`, and
  *  the OpenRouter wrapper's captured usage — imported by reference, never re-declared. */
 export const Usage = z.object({

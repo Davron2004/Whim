@@ -60,7 +60,9 @@ export const STORE_LISTINGS: Readonly<Record<AppPlatform, StoreListing>> = Objec
 /**
  * The AI-data consent version this build asks for (design D4). The only place this value is
  * written — `ai-consent.ts#consentStatus` compares a stored grant's `version` against it, and
- * nothing else compares against a different value. Bump it whenever what Whim sends, or to whom,
- * changes.
+ * nothing else compares against a different value. It moves only under the re-consent rule
+ * (spec ai-data-consent "The consent version changes only when the disclosure manifest widens"):
+ * it equals the highest version in `contract/src/disclosure-manifest.ts`, and the disclosure
+ * release check (gate, release preflight, deploy) refuses anything else.
  */
-export const AI_CONSENT_VERSION = 1;
+export const AI_CONSENT_VERSION = 2;

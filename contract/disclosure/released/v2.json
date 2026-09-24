@@ -1,0 +1,597 @@
+{
+  "categories": [
+    {
+      "id": "request-material",
+      "rows": [
+        {
+          "name": "Request",
+          "description": "What you type or dictate, your answers, and the plan you approve"
+        },
+        {
+          "name": "App material",
+          "description": "For a change: an app’s name, code, description and data layout"
+        }
+      ],
+      "excludes": {
+        "saved-data": "Anything saved in the app"
+      },
+      "keep": {
+        "kind": "not-kept"
+      },
+      "consent": "main",
+      "toggle": "none",
+      "onScreen": true,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "OTHER_USER_CONTENT",
+            "manifestType": "NSPrivacyCollectedDataTypeOtherUserContent",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "other_user_generated_content",
+            "optional": false,
+            "shared": true,
+            "purposes": [
+              "app_functionality",
+              "fraud_prevention_security_compliance"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-id",
+      "rows": [
+        {
+          "name": "Phone ID",
+          "description": "A random ID made on the phone"
+        }
+      ],
+      "excludes": {
+        "hardware-ids": "Hardware IDs",
+        "name": "Your name",
+        "phone-number": "Your phone number"
+      },
+      "keep": {
+        "kind": "with",
+        "categories": [
+          "usage-records",
+          "reports"
+        ]
+      },
+      "consent": "main",
+      "toggle": "none",
+      "onScreen": true,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "DEVICE_ID",
+            "manifestType": "NSPrivacyCollectedDataTypeDeviceID",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY",
+              "ANALYTICS"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "device_or_other_ids",
+            "optional": false,
+            "shared": false,
+            "purposes": [
+              "app_functionality",
+              "analytics",
+              "fraud_prevention_security_compliance"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "app-integrity",
+      "rows": [
+        {
+          "name": "App-integrity check",
+          "description": "A key made on the phone and a verdict from Apple or Google on whether a request comes from a genuine Whim app on a real device, bound to the phone ID"
+        }
+      ],
+      "excludes": {
+        "hardware-ids": "Hardware IDs",
+        "store-account": "Your Apple or Google account"
+      },
+      "keep": {
+        "kind": "max-days",
+        "days": 365,
+        "after": "last-use"
+      },
+      "consent": "main",
+      "toggle": "none",
+      "onScreen": false,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "DEVICE_ID",
+            "manifestType": "NSPrivacyCollectedDataTypeDeviceID",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "device_or_other_ids",
+            "optional": false,
+            "shared": false,
+            "purposes": [
+              "fraud_prevention_security_compliance"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "usage-records",
+      "rows": [
+        {
+          "name": "Usage records",
+          "description": "Per request: type, times, how it ended (including an error code), size, cost and request number; running lifetime totals per phone ID"
+        }
+      ],
+      "excludes": {
+        "request-content": "Request content"
+      },
+      "keep": {
+        "kind": "max-days",
+        "days": 365,
+        "after": "last-use"
+      },
+      "consent": "main",
+      "toggle": "none",
+      "onScreen": false,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "PRODUCT_INTERACTION",
+            "manifestType": "NSPrivacyCollectedDataTypeProductInteraction",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY",
+              "ANALYTICS"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "app_interactions",
+            "optional": false,
+            "shared": false,
+            "purposes": [
+              "app_functionality",
+              "analytics",
+              "fraud_prevention_security_compliance"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "error-details",
+      "rows": [
+        {
+          "name": "Error details",
+          "description": "Technical details when something breaks: versions, error type from a fixed list, code location, screen and request number"
+        }
+      ],
+      "excludes": {
+        "typed-text": "Anything you typed",
+        "saved-data": "Anything saved in your apps",
+        "free-text-errors": "Any free-text error name or message from a mini-app"
+      },
+      "keep": {
+        "kind": "max-days",
+        "days": 90,
+        "after": "collection"
+      },
+      "consent": "main",
+      "toggle": "default-on",
+      "onScreen": true,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "CRASH_DATA",
+            "manifestType": "NSPrivacyCollectedDataTypeCrashData",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY",
+              "ANALYTICS"
+            ]
+          },
+          {
+            "type": "OTHER_DIAGNOSTIC_DATA",
+            "manifestType": "NSPrivacyCollectedDataTypeOtherDiagnosticData",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY",
+              "ANALYTICS"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "crash_logs",
+            "optional": true,
+            "shared": false,
+            "purposes": [
+              "analytics",
+              "app_functionality"
+            ]
+          },
+          {
+            "type": "diagnostics",
+            "optional": true,
+            "shared": false,
+            "purposes": [
+              "analytics",
+              "app_functionality"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "connection-logs",
+      "rows": [
+        {
+          "name": "Connection and log data",
+          "description": "IP address, times, the app’s version and build number, the consent version and similar details any server sees, including visits to Whim’s website; security and operational logs"
+        }
+      ],
+      "excludes": {
+        "request-content": "Request content"
+      },
+      "keep": {
+        "kind": "max-days",
+        "days": 90,
+        "after": "collection"
+      },
+      "consent": "main",
+      "toggle": "none",
+      "onScreen": false,
+      "savedData": "none",
+      "store": {
+        "apple": [],
+        "play": []
+      }
+    },
+    {
+      "id": "reports",
+      "rows": [
+        {
+          "name": "Reports",
+          "description": "Reason, note, app name, the app’s code if saved, and the prompt if the user includes it"
+        }
+      ],
+      "excludes": {
+        "saved-data": "Anything saved in the app, unless the user types it into the note"
+      },
+      "keep": {
+        "kind": "max-days",
+        "days": 365,
+        "after": "collection"
+      },
+      "consent": "user-act",
+      "toggle": "none",
+      "onScreen": false,
+      "savedData": "none",
+      "store": {
+        "apple": [
+          {
+            "type": "OTHER_USER_CONTENT",
+            "manifestType": "NSPrivacyCollectedDataTypeOtherUserContent",
+            "linked": true,
+            "purposes": [
+              "APP_FUNCTIONALITY"
+            ]
+          }
+        ],
+        "play": [
+          {
+            "type": "other_user_generated_content",
+            "optional": true,
+            "shared": false,
+            "purposes": [
+              "app_functionality",
+              "fraud_prevention_security_compliance"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "id": "anycognition",
+      "description": "AnyCognition, the company that makes Whim",
+      "namedOnScreen": true
+    },
+    {
+      "id": "service-providers",
+      "description": "Companies acting only for AnyCognition, such as hosting, AI, logging and email, some outside Canada. They may keep data briefly for their own security and legal duties, but never train AI on it or use it for their own products",
+      "namedOnScreen": true
+    },
+    {
+      "id": "platform",
+      "description": "The phone’s platform, Apple or Google, for app-integrity checks under its own terms, and for verifying a purchase the user made with it",
+      "namedOnScreen": true
+    },
+    {
+      "id": "authorities",
+      "description": "Authorities when the law requires it, and when handling fraud, security or safety problems",
+      "namedOnScreen": true
+    },
+    {
+      "id": "successor",
+      "description": "A successor if Whim changes hands, bound by the same policy",
+      "namedOnScreen": false
+    }
+  ],
+  "purposes": [
+    {
+      "id": "build",
+      "description": "Build and change your apps",
+      "advertisingOrTracking": false
+    },
+    {
+      "id": "operate",
+      "description": "Run Whim: daily limits, abuse and fraud prevention, security, keeping it working, finding and fixing problems, cost and capacity",
+      "advertisingOrTracking": false
+    },
+    {
+      "id": "safety",
+      "description": "Handle reports and keep Whim safe",
+      "advertisingOrTracking": false
+    },
+    {
+      "id": "legal",
+      "description": "Meet legal obligations",
+      "advertisingOrTracking": false
+    }
+  ],
+  "uses": [
+    {
+      "category": "request-material",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "build",
+        "operate"
+      ]
+    },
+    {
+      "category": "request-material",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal"
+      ]
+    },
+    {
+      "category": "request-material",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "build",
+        "operate"
+      ]
+    },
+    {
+      "category": "phone-id",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "operate",
+        "safety"
+      ]
+    },
+    {
+      "category": "phone-id",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal",
+        "safety"
+      ]
+    },
+    {
+      "category": "phone-id",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "operate",
+        "safety"
+      ]
+    },
+    {
+      "category": "usage-records",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    },
+    {
+      "category": "usage-records",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal",
+        "safety"
+      ]
+    },
+    {
+      "category": "usage-records",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    },
+    {
+      "category": "connection-logs",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "operate",
+        "safety"
+      ]
+    },
+    {
+      "category": "connection-logs",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal",
+        "safety"
+      ]
+    },
+    {
+      "category": "connection-logs",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "operate",
+        "safety"
+      ]
+    },
+    {
+      "category": "reports",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "safety"
+      ]
+    },
+    {
+      "category": "reports",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal",
+        "safety"
+      ]
+    },
+    {
+      "category": "reports",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "safety"
+      ]
+    },
+    {
+      "category": "app-integrity",
+      "roles": [
+        "anycognition",
+        "service-providers",
+        "platform"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    },
+    {
+      "category": "app-integrity",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal",
+        "safety"
+      ]
+    },
+    {
+      "category": "app-integrity",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    },
+    {
+      "category": "error-details",
+      "roles": [
+        "anycognition",
+        "service-providers"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    },
+    {
+      "category": "error-details",
+      "roles": [
+        "authorities"
+      ],
+      "purposes": [
+        "legal"
+      ]
+    },
+    {
+      "category": "error-details",
+      "roles": [
+        "successor"
+      ],
+      "purposes": [
+        "operate"
+      ]
+    }
+  ],
+  "promises": [
+    {
+      "id": "saved-data-unreadable",
+      "text": "Nobody at Whim can read what you save inside your apps. It reaches Whim, if ever, only encrypted on the phone with a key Whim never has, and only through a feature you turn on."
+    },
+    {
+      "id": "no-advertising",
+      "text": "No ads, no selling or sharing data for advertising, and no tracking across other apps and websites."
+    },
+    {
+      "id": "requests-not-kept",
+      "text": "Requests aren’t kept after they’re handled, except inside a report."
+    }
+  ]
+}

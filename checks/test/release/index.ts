@@ -9,6 +9,7 @@ import { run as runStoreListing } from './store-listing.suite';
 import { run as runReleaseCli } from './release-cli.suite';
 import { run as runDomainLockstep } from './domain-lockstep.suite';
 import { run as runNativeNetworkDeny } from './native-network-deny.suite';
+import { run as runDisclosure } from './disclosure.suite';
 
 export async function runReleaseSuites(): Promise<void> {
   await runNativeConfig();
@@ -20,4 +21,5 @@ export async function runReleaseSuites(): Promise<void> {
   await runReleaseCli();
   await runDomainLockstep();
   await runNativeNetworkDeny();
+  await runDisclosure();
 }

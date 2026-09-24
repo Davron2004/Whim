@@ -17,6 +17,7 @@ import { checkIosProject, type IosProjectFinding } from './ios-project';
 import { checkAndroidProject, type AndroidProjectFinding } from './android-project';
 import { checkAssets, GENERATE_ASSETS_COMMAND, type AssetFinding } from './assets';
 import { checkStoreListing, type StoreListingFinding } from './store-listing';
+import { checkDisclosureRelease } from './disclosure-check';
 
 declare module 'node:fs' {
   export function existsSync(path: string): boolean;
@@ -90,6 +91,8 @@ export interface PreflightSnapshot {
   readonly androidProjectFindings: readonly AndroidProjectFinding[] | undefined;
   readonly assetFindings: readonly AssetFinding[];
   readonly storeListingFindings: readonly StoreListingFinding[];
+  /** The re-consent rule's release check (`disclosure-check.ts`), one line per refusal. */
+  readonly disclosureFindings: readonly string[];
 }
 
 export interface PreflightOptions {
@@ -163,6 +166,12 @@ function repoCheckFindings(snapshot: PreflightSnapshot): PreflightFinding[] {
     findings.push({
       reason: `native literal — ${literal.file}:${literal.line}: literal ${literal.key} value ${JSON.stringify(literal.literal)}`,
       fix: `use the $(${literal.key}) macro from release/whim-release.xcconfig instead of a literal`,
+    });
+  }
+  for (const disclosure of snapshot.disclosureFindings) {
+    findings.push({
+      reason: `disclosure — ${disclosure}`,
+      fix: 'follow the re-consent rule in contract/src/disclosure-manifest.ts: a new manifest version with AI_CONSENT_VERSION bumped, a reviewed BUMP_REASONS entry, or a what’s-new line covering the diff',
     });
   }
   return findings;
@@ -345,5 +354,6 @@ export function collectPreflightSnapshot(repoRoot: string, platform: ReleasePlat
     androidProjectFindings: platform === 'android' ? checkAndroidProject(repoRoot) : undefined,
     assetFindings: checkAssets(repoRoot),
     storeListingFindings: checkStoreListing(repoRoot, config),
+    disclosureFindings: checkDisclosureRelease(repoRoot),
   };
 }

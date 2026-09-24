@@ -20,6 +20,8 @@
  * (The DevProbeScreen — a __DEV__-only surface — deliberately shows mechanism diagnostics; it is
  * NOT the launcher surface and is out of this table's scope.)
  */
+import type { WideningId } from '@whim/contract';
+
 export const COPY = {
   // ── home (2a) ───────────────────────────────────────────────────────────────
   homeTitle: 'Whim',
@@ -327,6 +329,46 @@ export const COPY = {
   appLinkMissingBack: 'Back to your apps',
   appLinkSheetClose: 'Done',
 } as const;
+
+/** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
+ *  stored grant is from an older consent version. `covers` must equal the disclosure manifest's
+ *  widenings from that version to the current one; the disclosure release check fails otherwise. */
+export interface ConsentWhatsNewLine {
+  readonly text: string;
+  readonly covers: readonly WideningId[];
+}
+
+/** Language → the consent version a grant was given under → its what's-new line. Kept beside
+ *  `COPY` rather than in it: every `COPY` value is a string its readers iterate as one. */
+export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>> = {
+  en: {
+    1: {
+      text: 'New: error details when something goes wrong, and checks by Apple or Google that requests come from the real Whim app. We may keep reports and usage records for up to 12 months instead of 90 days. We now also say that companies working for us, like cloud hosting providers, handle your phone ID, usage records, connection logs and reports; that we use your requests to run Whim and your connection logs to run it and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
+      covers: [
+        'category:app-integrity',
+        'category:error-details',
+        'keep:reports',
+        'keep:usage-records',
+        'purpose:connection-logs:legal',
+        'purpose:connection-logs:operate',
+        'purpose:connection-logs:safety',
+        'purpose:phone-id:legal',
+        'purpose:reports:legal',
+        'purpose:request-material:legal',
+        'purpose:request-material:operate',
+        'purpose:usage-records:legal',
+        'purpose:usage-records:safety',
+        'recipient:connection-logs:service-providers',
+        'recipient:phone-id:service-providers',
+        'recipient:reports:service-providers',
+        'recipient:usage-records:service-providers',
+        'role:authorities',
+        'role:platform',
+        'role:successor',
+      ],
+    },
+  },
+};
 
 /** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
  *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */

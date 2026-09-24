@@ -37,7 +37,8 @@ import { InMemoryReportStore } from '../src/reports/store';
 import { cachedPolicy, ModelContentPolicy } from '../src/policy';
 import { defaultModelRoster, openRouterModelClient, type ModelClient, type ModelRoster, type ModelStream } from '../src/generation/model';
 import { OpenRouterClient, type FetchFn } from '../src/openrouter';
-import { PRACTICE_CATEGORIES, PRACTICES, permits, type PracticeTable } from '../src/consent-practices';
+import { PRACTICE_CATEGORIES, PRACTICES, highestConsentVersion, permits, practicesFrom, type PracticeCategory, type PracticeTable } from '../src/consent-practices';
+import { MANIFESTS } from '../../contract/src/disclosure-manifest';
 import { BENCH_APP_VERSION } from '../src/bench-envelope';
 import { runDevice } from '../src/loadtest/drive';
 import { parseNativeReleaseConfig } from '../../scripts/release/lib/native-config';
@@ -535,13 +536,32 @@ async function testHealthzReportsMinimums(): Promise<void> {
 // ─── Consent practices ───────────────────────────────────────────────────────
 
 function testPermits(): void {
-  section('Consent practices — permits() reads the append-only table');
+  section('Consent practices — permits() reads the table derived from the disclosure manifest');
 
+  // Version 1 keeps every category request-envelope gave it, plus the phone ID v1 disclosed;
+  // version 2 adds error details and the app-integrity check.
+  const versionOne: readonly PracticeCategory[] = ['request-material', 'usage-records', 'connection-logs', 'reports', 'phone-id'];
+  const versionTwo: readonly PracticeCategory[] = [...versionOne, 'error-details', 'app-integrity'];
   for (const category of PRACTICE_CATEGORIES) {
-    check(`version 1 covers ${category}`, permits(1, category));
+    eq(`version 1 covers ${category} exactly when v1 disclosed it`, permits(1, category), versionOne.includes(category));
+    eq(`version 2 covers ${category} exactly when v2 discloses it`, permits(2, category), versionTwo.includes(category));
     check(`consent none covers no ${category}`, !permits('none', category));
-    eq(`a version above the highest known reads as it for ${category}`, permits(99, category), permits(1, category));
+    eq(`a version above the highest known reads as it for ${category}`, permits(99, category), permits(highestConsentVersion(), category));
   }
+  check('a diagnostics request under consent 2 may send error details', permits(2, 'error-details'));
+  check('a diagnostics request under consent 1 may not, so the consent_required refusal applies', !permits(1, 'error-details'));
+
+  // The server now in production knows only request-envelope's hand-listed version 1. A phone on
+  // this build sends consent 2, which that server reads as version 1: v1's categories and no more.
+  const requestEnvelopeTable: PracticeTable = { 1: new Set(['request-material', 'usage-records', 'connection-logs', 'reports']) };
+  check('an older server serves consent 2 under version 1', permits(2, 'request-material', requestEnvelopeTable));
+  check('an older server never grants consent 2 a category it does not know', !permits(2, 'error-details', requestEnvelopeTable));
+
+  // A category added to a new manifest version is permitted for that version, with no edit here.
+  const errorDetails = MANIFESTS[2].categories.filter((c) => c.id === 'error-details');
+  const derived = practicesFrom({ 1: MANIFESTS[1], 2: { ...MANIFESTS[1], categories: [...MANIFESTS[1].categories, ...errorDetails] } });
+  check('a category a new manifest version adds is permitted for that version', permits(2, 'error-details', derived));
+  check('  ... and not for the version before it', !permits(1, 'error-details', derived));
 
   const table: PracticeTable = {
     1: new Set(['request-material']),
@@ -646,7 +666,7 @@ async function testDriversSendAnEnvelope(): Promise<void> {
   const [line] = requestLines(capture, '/v1/generate');
   check('its request line names a real platform, not the legacy one', line?.platform === 'android' || line?.platform === 'ios', String(line?.platform));
   check('its request line carries a positive build number', typeof line?.build === 'number' && line.build > 0, String(line?.build));
-  eq('its request line carries the release version and a granted consent', [line?.appVersion, line?.consent], [release.WHIM_MARKETING_VERSION, 1]);
+  eq('its request line carries the release version and the highest granted consent', [line?.appVersion, line?.consent], [release.WHIM_MARKETING_VERSION, highestConsentVersion()]);
 }
 
 export async function runRequestEdgeTests(): Promise<void> {

@@ -70,11 +70,11 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 10. Compliance documents
 
-- [ ] 10.1 Write `docs/legal/breach-runbook.md` (detect, contain, assess real risk of significant harm, notify the OPC and people, PIPEDA s.10.1) and `docs/legal/breach-log.md` (a record of every breach, s.10.3).
-- [ ] 10.2 Draft `docs/legal/quebec-s17-assessment.md` for requests leaving Quebec to OpenRouter and the providers behind it (README B3, canada.md), for the owner to sign.
-- [ ] 10.3 Draft `docs/legal/uk-childrens-code-dpia.md` covering 13–17-year-olds, including the case for error details on by default (README note 3).
-- [ ] 10.4 Write `docs/legal/lawyer-brief.md` for after launch (decision 7). It lists README "Check with a lawyer" in priority order and every fallback the shipped text relies on.
-- [ ] 10.5 Write `docs/legal/change-process.md`. It covers the re-consent rule and where it's checked, the provider-list update, and the standing Texas §121.053 notice to each store before a significant terms or policy change.
+- [x] 10.1 Write `docs/legal/breach-runbook.md` (detect, contain, assess real risk of significant harm, notify the OPC and people, PIPEDA s.10.1) and `docs/legal/breach-log.md` (a record of every breach, s.10.3).
+- [x] 10.2 Draft `docs/legal/quebec-s17-assessment.md` for requests leaving Quebec to OpenRouter and the providers behind it (README B3, canada.md), for the owner to sign.
+- [x] 10.3 Draft `docs/legal/uk-childrens-code-dpia.md` covering 13–17-year-olds, including the case for error details on by default (README note 3).
+- [x] 10.4 Write `docs/legal/lawyer-brief.md` for after launch (decision 7). It lists README "Check with a lawyer" in priority order and every fallback the shipped text relies on.
+- [x] 10.5 Write `docs/legal/change-process.md`. It covers the re-consent rule and where it's checked, the provider-list update, and the standing Texas §121.053 notice to each store before a significant terms or policy change.
 
 ## 11. Attended: owner and console steps
 

@@ -285,6 +285,8 @@ $(remote_reload_caddy "$WHIM_COMPOSE")"
 
 preflight_values
 preflight_node
+# The re-consent rule (legal-surface-v2 D3): no deploy while the disclosure manifest widened without a consent-version bump.
+(cd "$WHIM_REPO_ROOT" && node scripts/release/run.mjs disclosure-check) || whim_fail "the disclosure release check failed (above). Nothing was built or changed."
 preflight_git
 if [ "$site_only" -eq 1 ]; then
   build_site

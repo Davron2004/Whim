@@ -26,6 +26,7 @@ import type { ProseSegment, WhimClass } from '../../ui/whim-prose/types';
 import { appColor, SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../../sdk/theme';
 import {
   COPY,
+  CONSENT_WHATS_NEW,
   addedFieldsLine,
   clarifyHeadline,
   copySheetBody,
@@ -58,6 +59,7 @@ function textOf(segments: readonly ProseSegment[], cls: WhimClass): string[] {
 function everyCopyString(): string[] {
   return [
     ...Object.values(COPY),
+    ...Object.values(CONSENT_WHATS_NEW).flatMap((lines) => Object.values(lines).map((line) => line.text)),
     forkedFromLabel('Water Counter'),
     deleteBody('Pour Timer'),
     addedFieldsLine(['notes (text)']),

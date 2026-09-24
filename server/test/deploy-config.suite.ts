@@ -978,6 +978,21 @@ function deployPreflightTests(): void {
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
+    writeRules(sandbox, 'node', [['scripts/release/run.mjs disclosure-check', 1, 'disclosure-check: version 2 was released and has widened\\n']]);
+    const run = runScript(sandbox, 'deploy.sh', []);
+    check('deploy.sh refuses when the disclosure release check fails', run.status === 1 && run.stderr.includes('disclosure release check failed'), run.stderr);
+    eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    runScript(sandbox, 'deploy.sh', []);
+    check('deploy.sh runs the disclosure release check on a deploy that goes ahead', toolLog(sandbox, 'node').includes('scripts/release/run.mjs disclosure-check'));
+    check('  ... and gets past it to the secret lookup', toolLog(sandbox, 'gcloud').length > 0);
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
     fs.writeFileSync(path.join(sandbox.repo, 'deploy', 'stray.txt'), 'uncommitted');
     const run = runScript(sandbox, 'deploy.sh', []);
     check('deploy.sh refuses a dirty tree', run.status === 1 && run.stderr.includes('uncommitted or untracked'), run.stderr);

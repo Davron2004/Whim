@@ -33,7 +33,8 @@ When the stored grant is outdated, the consent screen SHALL show, above the titl
 
 #### Scenario: A version-1 grant asks again
 - **WHEN** a user agreed under consent version 1 and the app now ships consent version 2
-- **THEN** their next data-sending action opens the consent screen with the outdated line and a what's-new line naming error details, the app-integrity check by Apple or Google, and the longer keep-period for reports and usage records, and no request is sent until they agree again
+- **THEN** their next data-sending action opens the consent screen with the outdated line and a what's-new line that names every widening from version 1 to version 2: error details, the app-integrity check by Apple or Google, the longer keep-period for reports and usage records, and everything version 1's text never said (including the hosting companies and what they handle, the use of requests and connection logs to run Whim and keep it safe, and sharing with authorities or a new owner)
+- **AND** no request is sent until they agree again
 
 #### Scenario: A corrupted record fails closed
 - **WHEN** the stored consent record is not valid JSON
