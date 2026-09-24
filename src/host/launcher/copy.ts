@@ -276,6 +276,12 @@ export const COPY = {
   // (`server/test/web-site.suite.ts`).
   updateRequiredLine: 'Update Whim to keep making and changing apps.',
   permissionRequiredLine: 'Whim needs your permission again before it can send this.',
+  // The update screen (app-update-gate; design D5): what an `update_required` refusal or a build
+  // below the launch-time minimum opens. It blocks the AI features only, so it says the apps stay.
+  updateTitle: 'Whim needs an update',
+  updateBody: 'Making and changing apps needs the latest version of Whim. The apps you already have keep working.',
+  updateAction: 'Update Whim',
+  updateNotNow: 'Not now',
   // Review mode's action set (spec "Settings shows consent and can review or turn it off"): the
   // large button is always the safe one — keeping AI features on, or turning them on from off.
   consentReviewKeepOn: 'Keep AI features on',

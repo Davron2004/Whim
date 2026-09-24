@@ -19,6 +19,7 @@ import { log } from '../../logging';
 import { injectedScripts } from './native-host';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { grantedOptions } from './client-fixtures';
 
 type Tree = TestRenderer.ReactTestRenderer;
 
@@ -53,7 +54,8 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
       onChangeIt={() => {}}
       installedApp={app}
       access={{} as StoreAccess}
-      reportOptions={{ baseUrl: 'https://server.test', deviceId: 'device' }}
+      reportOptions={grantedOptions('https://server.test', 'device')}
+      onUpdateRequired={() => {}}
     />,
   );
   const webView = () => tree.root.findAll((n) => n.type === 'WebView')[0];

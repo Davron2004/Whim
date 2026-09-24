@@ -31,13 +31,17 @@ export interface SentRequest {
 export interface LauncherSetup {
   /** Installed apps put into the index before the shell mounts. */
   apps?: InstalledApp[];
+  /** Launch as a first run, so the shell installs its example apps itself (default false). */
+  examples?: boolean;
   /** Grant AI-data consent before mounting (default true). */
   consent?: boolean;
   /** Any other persisted state the shell should find at launch. */
   prepare?: (kv: KVBackend) => void;
   /** The installed app's info reader the shell builds its envelope from (default `testAppInfo`). */
   appInfo?: () => AppInfo;
-  /** Answers every request except `/healthz` (which always answers healthy). */
+  /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
+  healthz?: () => Response | Promise<Response>;
+  /** Answers every request except `/healthz`. */
   server: (request: SentRequest) => Response | Promise<Response>;
 }
 
@@ -108,7 +112,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   resetNativeStorage();
   const kv = createMmkvBackend('whim.launcher');
   const index = new AppIndex(kv);
-  index.markSeeded(SEED_VERSION);
+  if (!setup.examples) index.markSeeded(SEED_VERSION);
   for (const app of setup.apps ?? []) index.put(app);
   if (setup.consent !== false) grantConsent(kv, '2026-09-18T12:00:00.000Z');
   setup.prepare?.(kv);
@@ -120,7 +124,7 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
     const path = new URL(String(url)).pathname;
     if (path === '/healthz') {
       probes.push(new Headers(init?.headers));
-      return json({ service: 'whim-server' });
+      return setup.healthz ? setup.healthz() : json({ service: 'whim-server' });
     }
     const request: SentRequest = {
       path,

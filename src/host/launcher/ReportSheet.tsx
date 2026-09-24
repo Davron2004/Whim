@@ -79,9 +79,12 @@ export interface ReportSheetProps {
   /** Plain `ClientOptions` — sending a report needs no AI-data consent (design D3). */
   options: ClientOptions;
   onClose: () => void;
+  /** A send refused `update_required`: the host opens the update screen in place of the sheet
+   *  (request-envelope D5), and closing the sheet discards the draft as any close does. */
+  onUpdateRequired: () => void;
 }
 
-export default function ReportSheet({ app, access, options, onClose }: Readonly<ReportSheetProps>) {
+export default function ReportSheet({ app, access, options, onClose, onUpdateRequired }: Readonly<ReportSheetProps>) {
   const p = SHELL_PALETTE;
   const [draft, setDraft] = useState<ReportDraft | null>(null);
   const [phase, setPhase] = useState<Phase>('draft');
@@ -136,6 +139,10 @@ export default function ReportSheet({ app, access, options, onClose }: Readonly<
       const refusal = serviceRefusalOf(err);
       if (refusal) {
         log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, refusal.code) });
+        if (REFUSAL_RULES[refusal.code].opens === 'update') {
+          onUpdateRequired();
+          return;
+        }
         const settled = settleSend<ReportNotice>({ kind: 'refused', notice: reportNoticeFrom(refusal) });
         setPhase(settled.phase);
         setNotice(settled.notice);

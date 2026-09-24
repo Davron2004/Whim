@@ -12,6 +12,7 @@
  *
  * No React Native import — this module must load under the Node acceptance suite.
  */
+import type { AppPlatform } from './app-info';
 
 export const WHIM_DOMAIN = 'anycognition.ca';
 
@@ -28,6 +29,32 @@ export const RELEASE = Object.freeze({
   supportUrl: `${WEB_ORIGIN}/support`,
   /** Every app link is this base plus `encodeURIComponent(id)` (design D15). */
   appLinkBase: `${WEB_ORIGIN}/a/`,
+});
+
+/** Whim's own store records (request-envelope D5; spec app-update-gate "The store identifiers SHALL
+ *  live in the release configuration"). The Play package is the native release app id —
+ *  `checks/test/release/domain-lockstep.suite.ts` fails the gate if the two drift. */
+export const STORE_IDS = Object.freeze({
+  appStoreId: '6814891009',
+  playPackage: 'com.anycognition.whim',
+});
+
+/** One platform's store listing: `store` opens the store app, `web` is the https listing the update
+ *  screen falls back to when the store app can't open (emulators, simulators, no Play Store). */
+export interface StoreListing {
+  readonly store: string;
+  readonly web: string;
+}
+
+export const STORE_LISTINGS: Readonly<Record<AppPlatform, StoreListing>> = Object.freeze({
+  ios: Object.freeze({
+    store: `itms-apps://apps.apple.com/app/id${STORE_IDS.appStoreId}`,
+    web: `https://apps.apple.com/app/id${STORE_IDS.appStoreId}`,
+  }),
+  android: Object.freeze({
+    store: `market://details?id=${STORE_IDS.playPackage}`,
+    web: `https://play.google.com/store/apps/details?id=${STORE_IDS.playPackage}`,
+  }),
 });
 
 /**

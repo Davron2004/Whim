@@ -11,7 +11,7 @@
 import { test, assert } from '../harness';
 import { loadNativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 import { domainLockstepFinding, deployHostLockstepFindings, loadDeployDefaults, type DeployDefaults } from '../../../scripts/release/lib/domain-lockstep';
-import { WHIM_DOMAIN as LAUNCHER_WHIM_DOMAIN } from '../../../src/host/launcher/release-config';
+import { STORE_IDS, WHIM_DOMAIN as LAUNCHER_WHIM_DOMAIN } from '../../../src/host/launcher/release-config';
 
 const REPO_ROOT = process.cwd();
 
@@ -20,6 +20,16 @@ export async function run(): Promise<void> {
     const native = loadNativeReleaseConfig(REPO_ROOT);
     const finding = domainLockstepFinding(native.WHIM_DOMAIN, LAUNCHER_WHIM_DOMAIN);
     assert(finding === undefined, finding ?? '');
+  });
+
+  // The update screen's Play link names this package (request-envelope D5); a drifted value opens
+  // some other app's listing, or none.
+  await test('app-id lockstep: the launcher’s Play package is the native release app id', () => {
+    const native = loadNativeReleaseConfig(REPO_ROOT);
+    assert(
+      STORE_IDS.playPackage === native.WHIM_APP_ID,
+      `release-config.ts names Play package ${STORE_IDS.playPackage}, the native release file WHIM_APP_ID ${native.WHIM_APP_ID}`,
+    );
   });
 
   await test('domainLockstepFinding: a mismatch fails and names both values (discriminating: a same-length-only check would miss this)', () => {
