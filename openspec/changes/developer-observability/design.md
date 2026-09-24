@@ -49,14 +49,14 @@ Redaction by field name can't catch free text. A mini-app's error message, a hos
   - `screen`, `errorClass`, `where`, `stage`, `reason`, `kind`, `status`, `errorCode`, `domain`, `readyState`, `observedRepairAttempts`, `requestId`, `count`
   - `route`: the path only, e.g. `/v1/generate`. It is never a URL.
   - `stack`: see below.
-- **Limits:** strings are capped at 128 characters. `stack` is capped at 4 KB, has its first line dropped (Hermes puts `Name: message` there), and is only kept for host errors. Mini-app frames never carry a stack or a message, just `where` and `name` → `errorClass`.
+- **Limits:** strings are capped at 128 characters. `stack` is capped at 4 KB, has its first line dropped (Hermes puts `Name: message` there), and is only kept for host errors. Mini-app frames never carry a stack or a message, just `where` and `name` → `errorClass`. A mini-app's `name` is generated code's choice, so it can hold saved data: it maps onto a closed set of built-in error names (`Error`, `TypeError`, `RangeError`, `ReferenceError`, `SyntaxError`, `EvalError`, `URIError`, `AggregateError`), and anything else travels as `Other` (#63 B9, `legal-surface-v2`). Host `errorClass` values come from Whim's own code and stay bounded strings.
 
 The same closed shape is a zod schema in `@whim/contract` (`DiagnosticsBatch`, `.strict()`). The server rejects unknown keys, so the rule holds even against an old or tampered client. The device imports the type only, since zod never enters Metro.
 
 Alternative: extend the redaction list. It fails open on the next new field name. The allowlist fails closed.
 
 ### D3. Uploads respect the AI-data consent gate
-The diagnostics transport sends only while a current consent grant exists. Records emitted without one are dropped, not queued. #63's rewritten consent text covers diagnostics (D11), so the grant covers them.
+The diagnostics transport sends only while a current consent grant exists and the "Send error details" switch that `legal-surface-v2` adds to Settings is on (on by default). Records emitted without both are dropped, not queued. #63's rewritten consent text covers diagnostics (D11), so the grant covers them, and the switch is the separate opt-out the disclosure manifest promises.
 
 Alternative: a no-consent exception like reports. Rejected. A report is a user's deliberate act; a background upload is not.
 
@@ -124,8 +124,8 @@ The report alert sends only what is already in the logs: id and reason. Content 
 #63 rewrites the consent screen, policy and store declarations from first principles, with room for planned features, and lands first. Its text should already cover error diagnostics, so this change adds no consent copy and bumps no consent version. That avoids a re-ask whose only cause would be this feature.
 
 What this change owns:
-- **Release checks.** They fail when a build contains the diagnostics transport and any declaration (consent screen, privacy policy, Play Data safety, iOS privacy manifest, App Store privacy answers) doesn't cover crash logs and diagnostics as collected, not shared, and not linked. They also fail when the declarations disagree.
-- **Facts to check against #63's text:** diagnostics are not linked to identity (no device id is sent), are kept 30 days in server logs, and go to service providers acting for Whim. On iOS that means `CrashData` + `OtherDiagnosticData`, and on Play, App info and performance → Crash logs + Diagnostics.
+- **Release checks.** They fail when a build contains the diagnostics transport and any declaration (consent screen, privacy policy, Play Data safety, iOS privacy manifest, App Store privacy answers) doesn't cover crash logs and diagnostics as the disclosure manifest's error-details category and store mapping record them. They also fail when the declarations disagree.
+- **Facts to check against #63's text:** the disclosure manifest in `legal-surface-v2` is the source. Diagnostics are the "error details" category: collected, declared Linked on Apple (the request carries the device header, and Apple counts linkage through a device ID), never tracking, kept at most 90 days (today's config: about 30 days in server logs), optional and on by default, and sent to service providers acting for Whim. On iOS that means `CrashData` + `OtherDiagnosticData`, and on Play, App info and performance → Crash logs + Diagnostics.
 - **Fallback.** If #63's text doesn't cover diagnostics, add the missing declaration here and bump the consent version. That is the one re-ask.
 
 The current policy and store text are an unreviewed AI draft, so none of their specifics (including "no crash-reporting SDKs") constrain this change.

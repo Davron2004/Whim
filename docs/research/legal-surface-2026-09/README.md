@@ -6,29 +6,36 @@ The four lists below are the job. Everything after them is the reasoning, and yo
 
 ## Decide before public launch
 
-Seven decisions. Each one sets something every user agrees to, so changing it after launch means asking everyone again, or it changes what the store consoles say on day one.
+Seven decisions. Each one sets something every user agrees to, so changing it after launch means asking everyone again, or it changes what the store consoles say on day one. The owner answered all seven on 2026-09-23; the OpenSpec change `legal-surface-v2` lands the text and the agent tasks.
 
 1. **What are the core promises?**
    - Recommendation: three. Nobody at Whim can read what you save in your apps (anything ever synced is encrypted with a key Whim never has). No ads, no selling or sharing for advertising, no cross-app tracking. Requests aren't kept after they're handled, except inside a report. "No accounts" stays a fact, not a promise.
    - Why now: weakening a core promise later re-asks everyone. Writing the first one around who can read the data, not where it sits, is what lets encrypted sync ship later without a re-ask. (Notes 1, 2, 21.)
+   - **Owner answer (2026-09-23): as recommended.** Three core promises; "no accounts" stays a fact.
 2. **Which storefronts at launch?**
    - Recommendation: Canada and the US. Add the EU and UK once their list below is done. Keep every other country off until someone checks its law.
    - Why now: Whim is currently offered in every territory except mainland China, and listing a country is what triggers its law (Korea's PIPA, the EU's trader rule). (Notes 12, 17.)
+   - **Owner answer (2026-09-23): keep all territories** (every App Store and Play territory except mainland China), accepting the unresearched-country risk knowingly. Consequences: the "Only if you open EU/UK storefronts" list becomes pre-launch work, the policy gains the Korean-language section on overseas transfers, and lawyer item 15 (countries outside the research) moves up.
 3. **Who does the text name, and how do people reach you?**
    - Recommendation: AnyCognition Inc. everywhere, a business address and phone (a virtual office or business line, not personal ones), a `privacy@` mailbox, and the owner as Privacy Officer by title. Move Play to an AnyCognition organization account.
    - Why now: the policy, the terms, Apple's minimum EULA terms and Quebec all need contact details, and today the Play listing names a different party from the policy. (Notes 10, 11.)
+   - **Owner answer (2026-09-23): as recommended, except Play stays on the personal developer account for now.** AnyCognition Inc. in the policy, terms and App Store; a business address and phone; `privacy@anycognition.ca`; the owner as Privacy Officer by title. Open consequence: the Play listing keeps naming a different party from the policy, and with EU storefronts kept (decision 2) a Play DSA trader declaration would publish the account holder's details, so that declaration waits until the account question is revisited.
 4. **French for Quebec at launch?**
    - Recommendation: yes, for the terms, the terms step, the consent screen and the policy, French first for fr-CA users with an express choice of English.
    - Why now: the Charter's French-first rule for contracts of adhesion is in force, and a store can't leave Quebec out of the Canadian storefront. Whether it reaches an Ontario seller is unconfirmed. (Note 16.)
+   - **Owner answer (2026-09-23): as recommended.** French terms, terms step, consent screen and policy at launch; French first for fr-CA with an express choice of English.
 5. **Adopt terms of use?**
    - Recommendation: yes, under Ontario law, accepted with their own "Accept" step right before the data consent screen.
    - Why now: acceptance is collected at first use, so adding terms later puts a new step in front of every existing user. A premium subscription will need them anyway. (Note 9.)
+   - **Owner answer (2026-09-23): as recommended.** Terms at `/terms` under Ontario law, accepted in their own step right before the data consent screen; Apple's Standard EULA stays on iOS.
 6. **What ceilings go in the disclosure manifest?**
    - Recommendation: reports and usage records kept at most 12 months; error details, connection data and logs at most 90 days; error details on by default with a switch to turn them off. Smaller numbers are fine.
    - Why now: after launch, raising a ceiling or turning a default on re-asks everyone. Lowering either is free. (Notes 3, 5.)
+   - **Owner answer (2026-09-23): as recommended.** Reports and usage records at most 12 months; error details, connection data and logs at most 90 days; error details on by default with a Settings switch. With EU storefronts kept (decision 2), lawyer item 4 may still flip the default to off for EU users only; the wording doesn't change.
 7. **Pay for a lawyer before launch, and for what?**
    - Recommendation: one scoped review of the policy and terms, the Quebec items, whether the AI providers count as service providers, and the Texas age duties. EU and UK questions only if decision 2 opens those storefronts.
    - Why now: that's where the research below is weakest, and a wrong guess lands in text every user agrees to. ("Check with a lawyer".)
+   - **Owner answer (2026-09-23): no lawyer before launch.** Launch on this research; "Check with a lawyer" becomes a post-launch brief, not a launch gate. The text ships with the draft's own fallbacks where an item is unsettled (for example the Agree tap as EU ePrivacy consent for the phone ID, and Play "Shared: Yes" for request content until the provider role is confirmed).
 
 ## Do before public launch
 
