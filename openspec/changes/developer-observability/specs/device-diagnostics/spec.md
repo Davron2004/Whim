@@ -11,8 +11,10 @@ beyond its records; platform, app version and build travel in the request envelo
 dropped. String values SHALL be capped at 128 characters, except `stack`, which SHALL be capped at
 4 KB with its first line removed. `route` SHALL be a path only, never a URL with a host or query.
 A record originating in a mini-app SHALL NOT carry `stack` or any message text; its error name
-SHALL travel as `errorClass`. No device id, prompt, answer, plan, app name, generated source,
-report note or stored user data SHALL appear in a projection.
+SHALL travel as `errorClass`, mapped onto a closed set of built-in JavaScript error names
+(`Error`, `TypeError`, `RangeError`, `ReferenceError`, `SyntaxError`, `EvalError`, `URIError`,
+`AggregateError`) with any other name sent as `Other` (#63 B9). No device id, prompt, answer, plan,
+app name, generated source, report note or stored user data SHALL appear in a projection.
 
 #### Scenario: Unknown fields are dropped
 - **WHEN** a record with fields `detail`, `url`, `appId` and `errorClass` is projected
@@ -27,6 +29,11 @@ report note or stored user data SHALL appear in a projection.
 - **WHEN** a mini-app throws `new Error("Alice owes 40")` after mount
 - **THEN** the projection carries `where: "runtime"` and `errorClass: "Error"`, and "Alice" appears
   nowhere in the batch
+
+#### Scenario: A mini-app error name built from saved data never leaves
+- **WHEN** a mini-app throws an error whose `name` is set from a saved record, such as
+  `Object.assign(new Error("x"), { name: "Alice owes 40" })`
+- **THEN** the projection carries `errorClass: "Other"`, and "Alice" appears nowhere in the batch
 
 #### Scenario: A full URL is reduced to its path
 - **WHEN** a transport error on `https://api.example/v1/generate?x=1` is projected
@@ -59,12 +66,18 @@ on the sink channel, SHALL NOT surface to the user, and SHALL NOT recurse into a
   record is in the ring buffer
 
 ### Requirement: Uploads require a current AI-data consent grant
-The diagnostics transport SHALL NOT make any request unless a current AI-data consent grant exists.
-Records emitted while no current grant exists SHALL be discarded, not queued for later.
+The diagnostics transport SHALL NOT make any request unless a current AI-data consent grant exists
+and the Settings "Send error details" switch (`legal-surface-v2`, spec `privacy-settings`) is on.
+Records emitted while either is missing SHALL be discarded, not queued for later.
 
 #### Scenario: No consent, no upload
 - **WHEN** the user has not agreed, or has turned AI features off, and an error is logged
 - **THEN** no request is made to `/v1/diagnostics` and the record is not sent after a later grant
+
+#### Scenario: The error-details switch is off
+- **WHEN** consent is current, the user has turned "Send error details" off, and an error is logged
+- **THEN** no request is made to `/v1/diagnostics` and the record is not sent after the switch is
+  turned back on
 
 ### Requirement: Uncaught host errors and fatal JS errors are captured
 The app SHALL install a global JS error handler and an unhandled-promise-rejection hook that log
@@ -144,7 +157,9 @@ and SHALL fail with a clear message when no map exists for that key rather than 
 Every place that declares what Whim collects SHALL cover diagnostics before a build containing the
 diagnostics transport ships: the consent screen, the privacy policy, the Play Data safety form, the
 iOS privacy manifest and the App Store privacy answers SHALL each cover crash logs and diagnostics
-as collected, not shared, and not linked to identity. The release checks SHALL fail when a build
+as the disclosure manifest's error-details category and store mapping record them (`legal-surface-v2`,
+spec `ai-data-consent`): collected, linked (Apple's definition counts linkage through the request's
+device ID), never used for tracking, optional and on by default. The release checks SHALL fail when a build
 contains the diagnostics transport and any of these omits diagnostics, and when they disagree with
 each other.
 
