@@ -34,6 +34,8 @@ export const REFUSAL_RULES: { readonly [K in ServiceRefusalCode]: RefusalRule } 
   daily_limit: { landing: 'sender', tone: 'neutral' },
   device_busy: { landing: 'sender', tone: 'neutral' },
   server_busy: { landing: 'sender', tone: 'neutral' },
+  update_required: { landing: 'sender', tone: 'neutral' },
+  consent_required: { landing: 'sender', tone: 'neutral' },
 };
 
 /** What `serviceRefusalOf` returns for a recognised refusal: the closed code, the server's own

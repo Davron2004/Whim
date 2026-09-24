@@ -21,6 +21,7 @@ import {
 } from '../src/admission/slots';
 import {
   budgetExhaustedRefusal,
+  consentRequiredRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
   deviceBusyRefusal,
@@ -29,6 +30,7 @@ import {
   serverBusyCeilingRefusal,
   serverBusyRefusal,
   slotRefusal,
+  updateRequiredRefusal,
   type ServiceRefusal,
 } from '../src/admission/refusals';
 import { shapeOnlyVerifier } from '../src/device-identity';
@@ -241,6 +243,8 @@ function runRefusals(): void {
     { name: 'content_policy', refusal: contentPolicyRefusal(), status: 422, code: 'content_policy' },
     { name: 'policy_unavailable', refusal: policyUnavailableRefusal(), status: 503, code: 'policy_unavailable' },
     { name: 'budget_exhausted', refusal: budgetExhaustedRefusal(), status: 503, code: 'budget_exhausted' },
+    { name: 'update_required', refusal: updateRequiredRefusal(), status: 426, code: 'update_required' },
+    { name: 'consent_required', refusal: consentRequiredRefusal(), status: 403, code: 'consent_required' },
   ];
 
   for (const c of cases) {

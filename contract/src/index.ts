@@ -295,6 +295,45 @@ export const DeviceIdError = z.object({
 });
 export type DeviceIdError = z.infer<typeof DeviceIdError>;
 
+/** The request envelope's header names (request-envelope D1/D8): every `/v1` request carries the
+ *  first four, and every `/v1` response carries the request id. The device cannot import values
+ *  from this package (zod never enters Metro), so it keeps its own literals and a static check holds
+ *  them equal to these. */
+export const PLATFORM_HEADER = 'x-whim-platform';
+export const APP_VERSION_HEADER = 'x-whim-app-version';
+export const BUILD_HEADER = 'x-whim-build';
+export const CONSENT_HEADER = 'x-whim-consent';
+export const REQUEST_ID_HEADER = 'x-whim-request-id';
+
+/** The platforms a client envelope can name. */
+export const ClientPlatform = z.enum(['ios', 'android']);
+export type ClientPlatform = z.infer<typeof ClientPlatform>;
+
+/** A positive integer as header text: digits only, no sign, no leading zero, no exponent, and at
+ *  most 15 digits so it always converts to a safe integer. */
+const PositiveIntegerText = z.string().regex(/^[1-9]\d{0,14}$/).transform(Number);
+
+/** The installed marketing version the envelope accepts: a digit first, then up to 31 of
+ *  `[0-9A-Za-z.+-]`, so a pre-release or build suffix still parses (`1.0.0`, `1.1.0-beta.2`). The
+ *  device keeps its own literal (`src/host/launcher/app-info.ts`) and a static check holds the two
+ *  equal, so the phone never sends a version this schema refuses. */
+export const APP_VERSION_PATTERN = /^\d[0-9A-Za-z.+-]{0,31}$/;
+
+/** The four envelope headers as the server reads them: the input is the raw header text keyed by
+ *  field, the output the parsed envelope. `appVersion` is the installed marketing version
+ *  (`APP_VERSION_PATTERN`); `build` is the installed build number; `consent` is the consent
+ *  version the request is sent under, or `none` when no grant is required and none exists. A
+ *  request with NONE of the headers is a legacy client — that default is the server's, not a value
+ *  of this schema. */
+export const ClientEnvelope = z.object({
+  platform: ClientPlatform,
+  appVersion: z.string().regex(APP_VERSION_PATTERN),
+  build: PositiveIntegerText,
+  consent: z.union([z.literal('none'), PositiveIntegerText]),
+});
+export type ClientEnvelope = z.infer<typeof ClientEnvelope>;
+export type ConsentVersion = ClientEnvelope['consent'];
+
 /** The closed vocabulary of `error` identifiers a conforming server uses for size, admission,
  *  content-policy, and operator-budget refusals. Every value validates as `ApiError`, whose `error`
  *  stays an open string — this is a narrower, closed-enum specialization used by admission control
@@ -302,6 +341,8 @@ export type DeviceIdError = z.infer<typeof DeviceIdError>;
  *  the operator's own provider credit is exhausted (distinct from `daily_limit`, a device/global
  *  admission ceiling, and `policy_unavailable`, the content classifier being down); its `hint`
  *  SHALL say generation is unavailable for now without naming the provider or a dollar amount.
+ *  `update_required` (`426`) refuses a build below its platform's minimum; `consent_required`
+ *  (`403`) refuses a request whose consent version does not cover the route's data practice.
  *  Grows only additively — no refusal introduces a second error shape. */
 export const ServiceRefusalCode = z.enum([
   'payload_too_large',
@@ -311,5 +352,7 @@ export const ServiceRefusalCode = z.enum([
   'content_policy',
   'policy_unavailable',
   'budget_exhausted',
+  'update_required',
+  'consent_required',
 ]);
 export type ServiceRefusalCode = z.infer<typeof ServiceRefusalCode>;

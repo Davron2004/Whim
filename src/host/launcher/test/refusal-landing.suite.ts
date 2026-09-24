@@ -22,7 +22,15 @@ import { ServiceRefusalCode } from '@whim/contract';
 
 // Expectations come from the service-refusals spec, independently of the production table.
 const TEXT_LANDING_CODES = ['content_policy', 'payload_too_large'] as const;
-const SENDER_LANDING_CODES = ['policy_unavailable', 'budget_exhausted', 'daily_limit', 'device_busy', 'server_busy'] as const;
+const SENDER_LANDING_CODES = [
+  'policy_unavailable',
+  'budget_exhausted',
+  'daily_limit',
+  'device_busy',
+  'server_busy',
+  'update_required',
+  'consent_required',
+] as const;
 
 export async function runRefusalLandingTests(h: Harness): Promise<void> {
   await h.test('refusalLanding: a text-landing code always returns to compose for clarify or rewrite', () => {
