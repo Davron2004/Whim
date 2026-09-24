@@ -1,9 +1,9 @@
 HOW TO TRY WHIM
 No login or account. Home has example apps.
 1. Tap "Describe an app..." on Home.
-2. A fresh install shows the AI-data consent screen first (expected). "Agree and continue" proceeds; "Not now" returns Home, nothing sent.
+2. Expected on a fresh install: "Terms of use" ("Accept"), then the AI-data consent screen ("Agree and continue"); "Not now" on either returns Home, nothing sent.
 3. Type a one-line description, tap "Continue"; answer or skip up to three questions, tap "Continue".
-4. Review the plan, tap "Build it" (about a minute), then "Open it".
+4. Review the plan, tap "Build it" (~1 min), then "Open it".
 5. In the app, the floating orb's menu has "Report this app".
 6. Long-press a tile, choose "App link" to see its universal link.
 
@@ -20,10 +20,10 @@ Mini apps are HTML5/JavaScript in a same-process WebView. Three legs sandbox the
 
 4.7.4: Whim offers no catalogue of software. Each mini app is built on request for the one user who asked for it and lives only on their phone. The Home screen is the index of that user's apps, and each has a universal link (/a/<id> on Whim's website) that opens it.
 
-4.7.5: Whim is rated 13+. The server's content check refuses requests for content above that rating, so no mini app needs a separate age gate.
+4.7.5: Whim is rated 13+. The server's content check refuses requests for content above that rating, so no mini app needs a separate age gate. Whim also reads the store's age range where the law requires it and keeps it on the device.
 
 GUIDELINE 2.5.2
-Mini apps do not download or execute code that changes Whim's own features: each stays in the sandbox above and can't add, remove or alter anything in Whim.
+Mini apps don't download or execute code that changes Whim's own features: each stays in the sandbox above and can't add, remove or alter anything in Whim.
 
 WHAT LEAVES THE PHONE, AND WHEN
 Nothing leaves the phone from inside a mini app (see the note above while it stands). Outside mini apps, Whim sends nothing until the user taps "Agree and continue" on the AI-data consent screen. That screen says what is sent, why, and who receives it, including third-party AI (guideline 5.1.2(i)), and Settings can turn it off at any time. After that, building or changing an app sends what the user typed, their answers and the approved plan. A change also sends the app's name, code, description and data layout, never the data saved inside it. A random per-install ID is sent too, for daily limits and abuse prevention, with the app's version and build. Right now the server passes requests to AI model providers through OpenRouter, restricted to providers that don't train on the data or use it for their own products. The app may also send technical error details with no user content, which the user can turn off in Settings, and it checks server health. A report is sent only when the user taps "Send report" and doesn't need AI consent. No ads, no ad or tracking SDK, no tracking, so no ATT prompt.

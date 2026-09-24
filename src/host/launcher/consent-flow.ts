@@ -5,8 +5,9 @@
  * installed apps usable"; spec terms-acceptance "Terms are accepted in their own step before the
  * consent screen").
  *
- * The flow is: data-sending action → the terms step (if the terms aren't current) → the consent
- * screen (if consent isn't current) → the action the user started. Each step re-asks
+ * The flow is: data-sending action → the store age check (when the terms step is due and no age
+ * outcome holds; legal-surface-v2 D11) → the terms step (if the terms aren't current) → the
+ * consent screen (if consent isn't current) → the action the user started. Each step re-asks
  * `nextLegalStep` with fresh reads, so a step that is already current is skipped.
  *
  * `LauncherRoot.tsx` imports react-native and cannot be imported under the launcher's Node suite,
@@ -20,6 +21,7 @@ import type { InstalledApp } from './app-index';
 import type { PendingBuildRecord } from './pending-builds';
 import type { ConsentStatus } from './ai-consent';
 import type { TermsStatus } from './terms-acceptance';
+import type { AgeGate } from './age-check';
 import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
 
 /**
@@ -37,8 +39,9 @@ export type ConsentContinuation =
   | { kind: 'resume'; screen: ComposeScreen | ClarifyScreen | PlanScreen }
   | { kind: 'settings' };
 
-/** A screen of the legal flow: the terms step, then the ask-mode consent screen. */
-export type LegalStep = 'terms' | 'consent';
+/** A step of the legal flow: the store age check and, when it holds the user, the parental-approval
+ *  message; then the terms step; then the ask-mode consent screen. */
+export type LegalStep = 'age-check' | 'age-blocked' | 'terms' | 'consent';
 
 /**
  * One pass through the legal flow, carried unchanged from step to step. `continuation` is what the
@@ -57,10 +60,15 @@ export interface LegalFlow<S> {
  * gate requires both a terms acceptance and a consent grant"): the terms step while the terms
  * aren't accepted at `TERMS_VERSION`, then the consent screen while there is no current grant — or,
  * for a flow a `consent_required` refusal started, even over a current local grant, since the
- * server has just said it needs consent again.
+ * server has just said it needs consent again. Ahead of the terms step (spec store-age-signals "The
+ * launcher checks the store's age signal before the terms step"): the age check while no outcome
+ * holds (`age` is `unchecked`), and the parental-approval message when the outcome is `blocked`.
  */
-export function nextLegalStep(terms: TermsStatus, consent: ConsentStatus, refused: boolean): LegalStep | null {
-  if (terms.kind !== 'accepted') return 'terms';
+export function nextLegalStep(age: AgeGate, terms: TermsStatus, consent: ConsentStatus, refused: boolean): LegalStep | null {
+  if (terms.kind !== 'accepted') {
+    if (age === 'unchecked') return 'age-check';
+    return age === 'blocked' ? 'age-blocked' : 'terms';
+  }
   if (refused || consent.kind !== 'granted') return 'consent';
   return null;
 }
@@ -72,11 +80,11 @@ export interface ConsentReturnScreen {
 }
 
 /**
- * Where declining (or system back) on the terms step or an ask-mode consent screen returns to
- * (spec "Declining SHALL return the user to the screen that opened the consent screen, or to Home
- * when that screen was a running mini-app"): the screen that opened the flow, UNLESS that screen
- * was a running mini-app (`kind: 'app'`) — a torn-down realm is never resumed, so that one case
- * goes Home instead.
+ * Where declining (or system back) on the age check, the terms step or an ask-mode consent screen
+ * returns to (spec "Declining SHALL return the user to the screen that opened the consent screen,
+ * or to Home when that screen was a running mini-app"): the screen that opened the flow, UNLESS
+ * that screen was a running mini-app (`kind: 'app'`) — a torn-down realm is never resumed, so that
+ * one case goes Home instead.
  */
 export function declineTarget<S extends ConsentReturnScreen>(returnTo: S): S | { kind: 'home' } {
   return returnTo.kind === 'app' ? { kind: 'home' } : returnTo;

@@ -50,6 +50,9 @@ export interface LauncherSetup {
   /** Whether the shell runs as an internal build, which shows and honours a server-address
    *  override (default true); false runs it as a store build. */
   internalBuild?: boolean;
+  /** Answers the store age check the shell runs before the terms step, as the native module would
+   *  (default: `unavailable`, a phone with no signal). */
+  ageSignal?: () => Promise<unknown>;
   /** Answers the connectivity probe's `/healthz` (default: healthy, with no `minBuild`). */
   healthz?: () => Response | Promise<Response>;
   /** Answers every request except `/healthz`. */
@@ -151,7 +154,10 @@ export async function withLauncher(setup: LauncherSetup, body: (launcher: Launch
   let tree: Tree | undefined;
   try {
     const locale = setup.locale ?? 'en-US';
-    tree = await renderScreen(<LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} deviceLocale={() => locale} />);
+    const ageSignal = setup.ageSignal ?? (() => Promise.resolve('unavailable'));
+    tree = await renderScreen(
+      <LauncherRoot appInfo={setup.appInfo ?? testAppInfo} internalBuild={setup.internalBuild ?? true} deviceLocale={() => locale} ageSignal={ageSignal} />,
+    );
     await body({ tree, kv, sent, probes, paths: () => sent.map((r) => r.path), clock });
   } finally {
     if (tree) await unmountScreen(tree);

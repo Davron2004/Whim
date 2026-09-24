@@ -231,6 +231,8 @@ tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Play Age Signals (legal-surface-v2 D11): the store's age signal, read by WhimAgeSignalModule.
+    implementation("com.google.android.play:age-signals:0.0.1-beta01")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

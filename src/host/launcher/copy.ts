@@ -326,6 +326,14 @@ export const COPY = {
   termsLabel: 'Read the terms of use',
   termsAccept: 'Accept',
   termsDecline: 'Not now',
+  // ── store age check (store-age-signals; legal-surface-v2 design D11) ─────────
+  // Shown in place of the terms step when the store says the user is a minor without a parent's
+  // approval. The AI features stay off; the apps on the phone keep working. `ageBack` also leaves
+  // the brief screen shown while the store is asked.
+  ageBlockedTitle: 'A parent needs to approve Whim',
+  ageBlockedBody:
+    'Whim’s AI features need a parent’s approval on this account. A parent can approve Whim through the App Store or Google Play, then you can try again. The apps you already have keep working.',
+  ageBack: 'Back',
   // The one-tap switch the terms step and the consent screen show (legal-text-localization): it
   // names the OTHER language, in that language, so English's own entry is the French label.
   legalLanguageSwitch: 'Continuer en français',
@@ -426,10 +434,11 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
   },
 };
 
-/** The keys the terms step and the consent screen read from the active legal language's table
- *  (spec terms-acceptance "Terms are accepted in their own step…"; spec ai-data-consent "The
- *  disclosure names what is sent…"; spec legal-text-localization "Every legal copy key exists in
- *  both languages"). A runtime list, so the coverage check can require each one in every table. */
+/** The keys the age-check screen, the terms step and the consent screen read from the active legal
+ *  language's table (spec terms-acceptance "Terms are accepted in their own step…"; spec
+ *  ai-data-consent "The disclosure names what is sent…"; spec legal-text-localization "Every legal
+ *  copy key exists in both languages"). A runtime list, so the coverage check can require each one
+ *  in every table. */
 export const LEGAL_COPY_KEYS = [
   'termsTitle',
   'termsLead',
@@ -437,6 +446,9 @@ export const LEGAL_COPY_KEYS = [
   'termsLabel',
   'termsAccept',
   'termsDecline',
+  'ageBlockedTitle',
+  'ageBlockedBody',
+  'ageBack',
   'consentTitle',
   'consentLead',
   'consentSentTitle',
@@ -485,6 +497,10 @@ const FRENCH: LegalCopyTable = {
   termsLabel: 'Lire les conditions d’utilisation',
   termsAccept: 'Accepter',
   termsDecline: 'Pas maintenant',
+  ageBlockedTitle: 'Un parent doit approuver Whim',
+  ageBlockedBody:
+    'Les fonctions d’IA de Whim nécessitent l’approbation d’un parent pour ce compte. Un parent peut approuver Whim dans l’App Store ou Google Play, puis vous pourrez réessayer. Les apps que vous avez déjà continuent de fonctionner.',
+  ageBack: 'Retour',
   consentTitle: 'Avant que Whim crée des apps pour vous',
   consentLead:
     'Pour créer ou modifier une app, Whim envoie ce que vous demandez à notre serveur. Des entreprises d’IA qui travaillent pour nous écrivent le code.',
