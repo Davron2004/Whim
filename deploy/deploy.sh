@@ -79,6 +79,11 @@ preflight_values() {
       *) whim_fail "WHIM_PROVIDER_SORT must be one of price, throughput, latency: $WHIM_PROVIDER_SORT" ;;
     esac
   fi
+  # The server refuses to boot on anything else, so a typo here would take the API down mid-deploy.
+  for key in WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID; do
+    [[ -z "${!key}" ]] || [[ "${!key}" =~ ^(0|[1-9][0-9]{0,14})$ ]] \
+      || whim_fail "$key must be 0 or a positive integer build number: ${!key}"
+  done
 }
 
 preflight_node() {
@@ -171,7 +176,7 @@ stage_server_files() {
   whim_read_env_lines "$profile_file" append_server_key
   printf 'WHIM_ENGINEER_MODEL=%s\nWHIM_REWRITE_MODEL=%s\n' "$WHIM_ENGINEER_MODEL" "$WHIM_REWRITE_MODEL" >>"$upload/config.env"
   local key
-  for key in WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT; do
+  for key in WHIM_CLARIFY_MODEL WHIM_SUMMARY_MODEL WHIM_PLAN_MODEL WHIM_REPAIR_MODEL WHIM_CLARIFY_REASONING WHIM_REWRITE_REASONING WHIM_SUMMARY_REASONING WHIM_PLAN_REASONING WHIM_ENGINEER_REASONING WHIM_REPAIR_REASONING WHIM_PROVIDER_SORT WHIM_MIN_BUILD_IOS WHIM_MIN_BUILD_ANDROID; do
     [[ -z "${!key}" ]] || append_server_key "$key" "${!key}"
   done
   local mem_limit shm_size

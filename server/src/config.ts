@@ -61,6 +61,11 @@ export interface ServerConfig {
   readonly ledgerRetentionDays: number;
   readonly drainTimeoutMs: number;
 
+  /** The lowest build each platform may use `/v1` with (`WHIM_MIN_BUILD_IOS`/`_ANDROID`,
+   *  app-update-gate). `0`, the default, turns the gate off for that platform. */
+  readonly minBuildIos: number;
+  readonly minBuildAndroid: number;
+
   /** Injectable clock for UTC-day arithmetic (admission, the usage ledger). Defaults to
    *  `Date.now`; override via `loadServerConfig`'s `opts.now`. */
   readonly now: () => number;
@@ -96,6 +101,20 @@ function readNonNegativeDecimal(env: NodeJS.ProcessEnv, name: string, fallback: 
     throw new ServerConfigError(name, `${name} must be a non-negative decimal USD amount, got ${JSON.stringify(raw)}.`);
   }
   return n;
+}
+
+/** `0` or a build number in the envelope's own range (`x-whim-build`: up to 15 digits, no leading
+ *  zero). Stricter than `Number()`, which would read an empty value as `0` and turn the gate off
+ *  without a word. */
+const BUILD_NUMBER = /^(0|[1-9]\d{0,14})$/;
+
+function readMinimumBuild(env: NodeJS.ProcessEnv, name: string): number {
+  const raw = env[name];
+  if (raw === undefined) return 0;
+  if (!BUILD_NUMBER.test(raw)) {
+    throw new ServerConfigError(name, `${name} must be 0 or a positive integer build number, got ${JSON.stringify(raw)}.`);
+  }
+  return Number(raw);
 }
 
 function readFlag(env: NodeJS.ProcessEnv, name: string): boolean {
@@ -167,6 +186,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     reportRetentionDays: readPositiveInt(env, 'WHIM_REPORT_RETENTION_DAYS', 90),
     ledgerRetentionDays: readPositiveInt(env, 'WHIM_LEDGER_RETENTION_DAYS', 90),
     drainTimeoutMs: readPositiveInt(env, 'WHIM_DRAIN_TIMEOUT_MS', generationMaxMs + 30_000),
+
+    minBuildIos: readMinimumBuild(env, 'WHIM_MIN_BUILD_IOS'),
+    minBuildAndroid: readMinimumBuild(env, 'WHIM_MIN_BUILD_ANDROID'),
 
     now: opts?.now ?? Date.now,
   };

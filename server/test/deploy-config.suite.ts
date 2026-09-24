@@ -18,7 +18,11 @@ import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncRetur
 import { check, eq, section } from './harness';
 import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
-import { loadServerConfig } from '../src/config';
+import { TIMED_OUT, within } from './route-doubles';
+import { createApp } from '../src/app';
+import { loadServerConfig, ServerConfigError } from '../src/config';
+import { createStubPipeline } from '../src/pipeline';
+import { InMemoryUsageStore } from '../src/usage-store';
 import * as releaseConfig from '../../src/host/launcher/release-config';
 
 const ROOT = process.cwd();
@@ -665,8 +669,10 @@ function keysReadByLoadServerConfig(): Set<string> {
   return read;
 }
 
+/** A minimum build is an operator value: in a profile it would reach config.env beside the
+ *  operator's own line, and a resize would silently move it (app-update-gate). */
 function isForbiddenProfileKey(key: string): boolean {
-  return PROFILE_FORBIDDEN_NAMES.has(key) || key.startsWith('WHIM_LIMIT_') || key.includes('RETENTION') || SECRET_NAME.test(key);
+  return PROFILE_FORBIDDEN_NAMES.has(key) || key.startsWith('WHIM_LIMIT_') || key.startsWith('WHIM_MIN_BUILD_') || key.includes('RETENTION') || SECRET_NAME.test(key);
 }
 
 function profileKeyProblems(name: string, keys: readonly string[], readKeys: ReadonlySet<string>): string[] {
@@ -770,6 +776,7 @@ const STUB_SCRIPT = [
   '  "gcloud "*" compute instances describe "*) cat "$STUB_DIR/machine-type"; echo ;;',
   '  "node -p "*) echo "${STUB_NODE_VERSION:-22.11.0}" ;;',
   '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
+  '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
   '    mkdir -p "${@: -1}"',
   '    for page in privacy support app-link not-found; do echo "<!doctype html><title>$page</title>" >"${@: -1}/$page.html"; done',
@@ -891,8 +898,10 @@ const PAGES_UP: readonly StubRule[] = [
   [`*https://${WEB_HOST}/nope`, 0, `404|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/.well-known/*`, 0, '404|application/json|', ''],
 ];
+/** The default-configuration `/healthz` body; `smokeTests` checks it against the real server's. */
+const DEFAULT_HEALTH = '{"ok":true,"service":"whim-server","minBuild":{"ios":0,"android":0}}';
 const API_UP: readonly StubRule[] = [
-  [`*https://${API_HOST}/healthz`, 0, '200|application/json|', '{"ok":true,"service":"whim-server"}'],
+  [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
   [`*https://${API_HOST}/healthz/sse`, 0, ': whim-healthz-probe\\n\\n'],
 ];
@@ -942,6 +951,24 @@ function deployPreflightTests(): void {
     eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
   });
 
+  // deploy.sh must refuse exactly what would stop the server booting, and nothing it would accept:
+  // a value that slipped through here takes the API down mid-deploy.
+  for (const value of ['0', '382000', '123456789012345', '-1', '0382000', '38200O', '1e5', '1234567890123456']) {
+    const bootAccepts = !configRefuses({ WHIM_MIN_BUILD_ANDROID: value }, 'WHIM_MIN_BUILD_ANDROID');
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: value });
+      const run = runScript(sandbox, 'deploy.sh', []);
+      const refused = run.stderr.includes('WHIM_MIN_BUILD_ANDROID must be');
+      // The first gcloud call is the secret lookup, right after the value checks.
+      const pastValueChecks = toolLog(sandbox, 'gcloud').length > 0;
+      if (bootAccepts) {
+        check(`deploy.sh accepts WHIM_MIN_BUILD_ANDROID=${value}, as server boot does`, !refused && pastValueChecks, run.stderr);
+      } else {
+        check(`deploy.sh refuses WHIM_MIN_BUILD_ANDROID=${value}, naming it before any gcloud call, as server boot does`, run.status === 1 && refused && !pastValueChecks, run.stderr);
+      }
+    });
+  }
+
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
     const run = runScript(sandbox, 'deploy.sh', [], { STUB_NODE_VERSION: '24.1.0' });
@@ -966,6 +993,16 @@ function deployPreflightTests(): void {
     check('deploy.sh refuses an unpushed commit', run.status === 1 && run.stderr.includes('not on any remote branch'), run.stderr);
     eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
   });
+}
+
+function configRefuses(env: NodeJS.ProcessEnv, variable: string): boolean {
+  try {
+    loadServerConfig(env);
+    return false;
+  } catch (error) {
+    if (error instanceof ServerConfigError && error.variable === variable) return true;
+    throw error;
+  }
 }
 
 function missingKeyCase(name: string, rules: readonly StubRule[], needle: string): void {
@@ -1018,6 +1055,33 @@ function deploySiteOnlyTests(): void {
   });
 }
 
+/** What the real server's `/healthz` answers, taken from the producer rather than written beside
+ *  smoke.sh: under the default configuration, and with the Android minimum at 382000. `preGate` is
+ *  the default body without `minBuild`: what a server from before the minimum-build gate answers,
+ *  e.g. after a rollback to a pre-change image. */
+interface HealthBodies {
+  readonly defaults: string;
+  readonly androidRaised: string;
+  readonly preGate: string;
+}
+
+function withoutMinBuild(body: string): string {
+  const health = JSON.parse(body) as Record<string, unknown>;
+  delete health.minBuild;
+  return JSON.stringify(health);
+}
+
+async function realHealthBody(env: NodeJS.ProcessEnv): Promise<string> {
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), config: loadServerConfig(env) });
+  const body = await within(Promise.resolve(app.request('/healthz')).then((res) => res.text()));
+  if (body === TIMED_OUT) throw new Error('setup: /healthz did not answer in time');
+  return body;
+}
+
+function healthRule(body: string): StubRule {
+  return [`*https://${API_HOST}/healthz`, 0, '200|application/json|', body];
+}
+
 function fullDeployRules(sandbox: Sandbox, imageExists: boolean): void {
   writeRules(sandbox, 'gcloud', [...SECRET_READABLE, ['*artifacts docker images describe*', imageExists ? 0 : 1, ''], ...VM_ANSWERS]);
   writeRules(sandbox, 'dig', DNS_READY);
@@ -1028,8 +1092,18 @@ function headOf(sandbox: Sandbox): string {
   return runFromPath('git', ['rev-parse', 'HEAD'], { cwd: sandbox.repo, encoding: 'utf8' }).stdout.trim();
 }
 
-function deployFullTests(): void {
+function deployFullTests(health: HealthBodies): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000' });
+    fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(health.androidRaised), ...API_UP, ...PAGES_UP]);
+    const run = runScript(sandbox, 'deploy.sh', []);
+    const config = stubFile(sandbox, 'upload/config.env');
+    eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /healthz', run.status, 0);
+    check('  ... carrying WHIM_MIN_BUILD_ANDROID to config.env and leaving the unset iOS minimum out', config.includes('WHIM_MIN_BUILD_ANDROID=382000\n') && !config.includes('WHIM_MIN_BUILD_IOS'), config);
+  });
+
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox, {
       WHIM_PLAN_REASONING: 'low',
@@ -1083,9 +1157,36 @@ function deployFullTests(): void {
       ssh.join(' / '),
     );
   });
+
+  // Rolling back below the minimum-build gate: the old server answers /healthz without minBuild.
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(health.preGate), ...API_UP, ...PAGES_UP]);
+    const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
+    eq('a rollback to a server from before the minimum-build gate, both minimums 0, succeeds', run.status, 0);
+    check(
+      '  ... printing done after smoke warns that the server predates the gate',
+      run.stdout.includes('deploy.sh: done') && run.stderr.includes('WARN') && run.stderr.includes('predates the minimum-build gate'),
+      `${run.stdout}\n${run.stderr}`,
+    );
+  });
+
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_IOS: '381000' });
+    fullDeployRules(sandbox, true);
+    writeRules(sandbox, 'curl', [healthRule(health.preGate), ...API_UP, ...PAGES_UP]);
+    const run = runScript(sandbox, 'deploy.sh', ['--tag', TAG]);
+    check(
+      'a rollback below the minimum-build gate while the iOS minimum is raised fails its smoke, naming the dropped gate',
+      run.status === 1 && run.stderr.includes('cannot enforce the configured minimums (iOS 381000, Android 0)'),
+      run.stderr,
+    );
+    check('  ... and never prints done', !run.stdout.includes('deploy.sh: done'), run.stdout);
+  });
 }
 
-function smokeTests(): void {
+function smokeTests(health: HealthBodies): void {
   section('Deploy scripts: smoke.sh');
   withSandbox((sandbox) => {
     const run = runScript(sandbox, 'smoke.sh', []);
@@ -1107,6 +1208,42 @@ function smokeTests(): void {
     const run = runScript(sandbox, 'smoke.sh', []);
     check('smoke fails on a load-test server identity', run.status === 1 && run.stderr.includes('whim-server-loadtest'), run.stderr);
   });
+
+  eq("the smoke fixtures' /healthz body is the real server's default body", DEFAULT_HEALTH, health.defaults);
+  const smokeAgainst = (operatorValues: Readonly<Record<string, string>>, body: string): ScriptRun => {
+    let run: ScriptRun = { status: null, stdout: '', stderr: '' };
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, operatorValues);
+      writeRules(sandbox, 'gcloud', VM_ANSWERS);
+      writeRules(sandbox, 'dig', DNS_READY);
+      writeRules(sandbox, 'curl', [healthRule(body), ...API_UP, ...PAGES_UP]);
+      run = runScript(sandbox, 'smoke.sh', []);
+    });
+    return run;
+  };
+  const defaultRun = smokeAgainst({}, health.defaults);
+  eq("smoke passes against the real server's /healthz under the default configuration", defaultRun.status, 0);
+  const raisedRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.androidRaised);
+  eq('smoke passes when /healthz reports the Android minimum the operator values set', raisedRun.status, 0);
+  const staleRun = smokeAgainst({ WHIM_MIN_BUILD_ANDROID: '382000' }, health.defaults);
+  check('smoke fails when /healthz still reports the old minimum, showing the live body', staleRun.status === 1 && staleRun.stderr.includes(health.defaults), staleRun.stderr);
+
+  // A rollback to an image from before the minimum-build gate: its /healthz carries no minBuild.
+  const preGateRun = smokeAgainst({}, health.preGate);
+  eq('smoke passes against a server from before the minimum-build gate when both minimums are 0', preGateRun.status, 0);
+  eq(
+    '  ... with one WARN line saying the server predates the gate',
+    preGateRun.stderr.split('\n').filter((line) => line.startsWith('WARN')).map((line) => line.includes('predates the minimum-build gate')),
+    [true],
+  );
+  for (const variable of ['WHIM_MIN_BUILD_IOS', 'WHIM_MIN_BUILD_ANDROID']) {
+    const droppedRun = smokeAgainst({ [variable]: '382000' }, health.preGate);
+    check(
+      `smoke fails against a server from before the minimum-build gate while ${variable} is raised, naming the dropped gate`,
+      droppedRun.status === 1 && droppedRun.stderr.includes('cannot enforce the configured minimums') && droppedRun.stderr.includes('1 smoke check(s) failed'),
+      droppedRun.stderr,
+    );
+  }
 }
 
 function resizeRules(sandbox: Sandbox, quota: string, extra: readonly StubRule[] = []): void {
@@ -1607,6 +1744,7 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   eq('profile machine types are unique', new Set(machineTypes).size, machineTypes.length);
   const eventText = profiles.get('event') ?? '';
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
+  checkCaught('  red: a minimum build in a profile fails', profileProblems('event', `${eventText}WHIM_MIN_BUILD_IOS=382000\n`, readKeys), 'sets WHIM_MIN_BUILD_IOS, which no profile may set');
 }
 
 function scriptSyntaxTests(files: ReadonlyMap<string, string>): void {
@@ -1658,6 +1796,12 @@ export async function runDeployConfigTests(): Promise<void> {
   const serverSources = readFiles(listFilesUnder('server/src'));
   const playwrightVersion = lockfileVersion('playwright');
   const defaults = loadServerConfig({});
+  const defaultHealth = await realHealthBody({});
+  const health: HealthBodies = {
+    defaults: defaultHealth,
+    androidRaised: await realHealthBody({ WHIM_MIN_BUILD_ANDROID: '382000' }),
+    preGate: withoutMinBuild(defaultHealth),
+  };
   const egressSubnet = /^readonly SUBNET=(\S+)$/m.exec(files.get('deploy/vm/whim-egress.sh') ?? '')?.[1] ?? '(none)';
   const composeContext: ComposeContext = {
     playwrightVersion,
@@ -1681,8 +1825,8 @@ export async function runDeployConfigTests(): Promise<void> {
   deployPreflightTests();
   deploySecretTests();
   deploySiteOnlyTests();
-  deployFullTests();
-  smokeTests();
+  deployFullTests(health);
+  smokeTests(health);
   resizeTests();
   loadtestStartTests();
   loadtestDriveTests();

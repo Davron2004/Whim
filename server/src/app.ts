@@ -2,7 +2,7 @@
  * createApp — assembles the Hono application.
  *
  * Routes:
- *   GET  /healthz          — anonymous health check
+ *   GET  /healthz          — anonymous health check, with the live minimum builds (`minBuild`)
  *   GET  /healthz/sse      — anonymous stream probe (three spaced SSE comment frames, then close)
  *   POST /v1/generate      — SSE generation stream
  *   POST /v1/rewrite       — model-backed rewrite + optional plan rows
@@ -19,8 +19,9 @@
  * outside the prefix and anonymous.
  *
  * `/v1/*` middleware order (request-envelope): request id (`assignRequestId`) → device gate →
- * client envelope (`readEnvelope`) → the minimum-build gate → routes, each of which declares its
- * consent practice (`consentPractice`) before its own admission. See `./request-edge.ts`.
+ * client envelope (`readEnvelope`) → the minimum-build gate (`minimumBuildGate`) → routes, each of
+ * which declares its consent practice (`consentPractice`) before its own admission. See
+ * `./request-edge.ts` and `./min-build.ts`.
  */
 import { Hono } from 'hono';
 import type { ApiError, DevLogSinkPath } from '@whim/contract';
@@ -35,6 +36,7 @@ import { makeUsageRoute } from './routes/usage';
 import { makeDevLogsRoute, type DevLogSinkOptions } from './routes/dev-logs';
 import { log } from './logger';
 import { assignRequestId, envelopeLogFields, readEnvelope, type EdgeEnv } from './request-edge';
+import { minimumBuildGate, type MinimumBuilds } from './min-build';
 import { shapeOnlyVerifier, type DeviceVerifier } from './device-identity';
 import { loadServerConfig, type ServerConfig } from './config';
 import { createSlotController, type SlotController } from './admission/slots';
@@ -177,6 +179,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const resolveBounds = options.resolver?.bounds;
   const { creditTransport } = options;
   const inFlight = options.inFlight ?? new InFlightGenerations();
+  const minBuild: MinimumBuilds = Object.freeze({ ios: config.minBuildIos, android: config.minBuildAndroid });
 
   const app = new Hono<AppEnv>();
 
@@ -226,8 +229,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     return c.json(body, 500);
   });
 
-  // Health check — no auth
-  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server' }, 200));
+  // Health check — no auth. It also reports the live minimum builds, so the app can check them
+  // without a `/v1` call and the operator can confirm a deploy took.
+  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server', minBuild }, 200));
 
   // The anonymous stream probe — outside /v1, no device header, and counted against its OWN small
   // pool (`WHIM_LIMIT_PROBE_CONCURRENCY`), never the paid clarify/rewrite one: it is unauthenticated
@@ -274,7 +278,8 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // The client envelope, after identity and before any route admission (design D3).
   app.use('/v1/*', readEnvelope);
 
-  // The minimum-build gate (app-update-gate) mounts here: after the envelope, before the routes.
+  // The minimum-build gate (app-update-gate): after the envelope, before the routes.
+  app.use('/v1/*', minimumBuildGate(minBuild));
 
   // Mount routes under /v1
   app.route(
