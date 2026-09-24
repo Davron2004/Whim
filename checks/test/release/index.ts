@@ -10,6 +10,7 @@ import { run as runReleaseCli } from './release-cli.suite';
 import { run as runDomainLockstep } from './domain-lockstep.suite';
 import { run as runNativeNetworkDeny } from './native-network-deny.suite';
 import { run as runDisclosure } from './disclosure.suite';
+import { run as runSourceMaps } from './source-maps.suite';
 
 export async function runReleaseSuites(): Promise<void> {
   await runNativeConfig();
@@ -22,4 +23,5 @@ export async function runReleaseSuites(): Promise<void> {
   await runDomainLockstep();
   await runNativeNetworkDeny();
   await runDisclosure();
+  await runSourceMaps();
 }

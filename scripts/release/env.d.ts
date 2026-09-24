@@ -19,6 +19,21 @@ declare module 'node:path' {
   export function join(...parts: string[]): string;
   export function basename(path: string): string;
 }
+// Source maps (lib/source-map.ts): reading the stack from stdin, the operator's deploy.env under
+// the home directory, and running gcloud and metro-symbolicate (node:module is in node-module.d.ts).
+declare module 'node:fs' {
+  export function readFileSync(fd: 0, encoding: 'utf8'): string;
+}
+declare module 'node:os' {
+  export function homedir(): string;
+}
+declare module 'node:child_process' {
+  export function spawnSync(
+    file: string,
+    args: string[],
+    options: { encoding: 'utf8'; input?: string },
+  ): { readonly status: number | null; readonly stdout: string; readonly stderr: string; readonly error?: Error };
+}
 declare module 'node:child_process' {
   export function execFileSync(file: string, args: string[], options: { cwd?: string; encoding: 'utf8' }): string;
   // Used where the tool's output arrives on stderr (java -version); execFileSync returns stdout only.
@@ -35,6 +50,8 @@ declare global {
   interface WhimProcess {
     readonly stdout: { write(chunk: string): boolean };
     readonly stderr: { write(chunk: string): boolean };
+    // The Node binary that runs metro-symbolicate's own CLI (lib/source-map.ts).
+    readonly execPath: string;
   }
 }
 

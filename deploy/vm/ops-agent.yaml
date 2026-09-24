@@ -1,0 +1,47 @@
+# Whim: ship Docker json-file container logs to Cloud Logging (developer-observability, design D8).
+logging:
+  receivers:
+    docker:
+      type: files
+      include_paths: [/var/lib/docker/containers/*/*-json.log]
+      record_log_file_path: true
+      wildcard_refresh_interval: 10s
+  processors:
+    docker_envelope:
+      type: parse_json
+      time_key: time
+      time_format: "%Y-%m-%dT%H:%M:%S.%L%z"
+    level_text:
+      type: parse_regex
+      field: log
+      regex: '^(?<log>\{.*?"(?:level|severity)":"?(?<level_text>[A-Za-z0-9]+)"?[,}].*)$'
+    app_json:
+      type: parse_json
+      field: log
+    severity_and_labels:
+      type: modify_fields
+      fields:
+        severity:
+          move_from: jsonPayload.level_text
+          map_values_exclusive: true
+          map_values: {"10": DEBUG, "20": DEBUG, "30": INFO, "40": WARNING, "50": ERROR, "60": CRITICAL,
+            debug: DEBUG, info: INFO, warn: WARNING, error: ERROR, dpanic: CRITICAL, panic: CRITICAL,
+            fatal: CRITICAL, DEBUG: DEBUG, INFO: INFO, NOTICE: NOTICE, WARNING: WARNING, ERROR: ERROR,
+            CRITICAL: CRITICAL, ALERT: ALERT, EMERGENCY: EMERGENCY}
+        labels.compose_service:
+          copy_from: jsonPayload.attrs."com.docker.compose.service"
+        labels.stream:
+          copy_from: jsonPayload.stream
+        jsonPayload.attrs:
+          move_from: jsonPayload.attrs
+          omit_if: 'jsonPayload.attrs."com.docker.compose.service" =~ "."'
+  service:
+    pipelines:
+      default_pipeline: {receivers: []}
+      docker:
+        receivers: [docker]
+        processors: [docker_envelope, level_text, app_json, severity_and_labels]
+metrics:
+  service:
+    pipelines:
+      default_pipeline: {receivers: []}

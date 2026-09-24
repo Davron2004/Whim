@@ -311,7 +311,7 @@ $WHIM_COMPOSE pull
 $WHIM_COMPOSE up -d --wait --wait-timeout 1200
 $(remote_reload_caddy "$WHIM_COMPOSE")"
   echo "==> smoke"
-  bash "$WHIM_DEPLOY_DIR/smoke.sh"
+  bash "$WHIM_DEPLOY_DIR/smoke.sh" --commit "$tag"
 }
 
 preflight_values

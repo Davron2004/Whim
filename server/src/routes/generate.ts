@@ -310,7 +310,7 @@ async function admitWithSlot(
   );
   if (!checked) {
     if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
-    await usageStore.settle(requestId, { outcome: 'unavailable', usage: unavailable?.usage, now: clock() });
+    await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: unavailable?.usage, now: clock() });
     await usageStore.refund(requestId);
     handle.release();
     const ids = unavailable?.generationId ? [unavailable.generationId] : [];
@@ -322,7 +322,7 @@ async function admitWithSlot(
   if (checked.usage) await usageStore.credit(deviceId, checked.usage);
 
   if (checked.verdict !== 'allow') {
-    await usageStore.settle(requestId, { outcome: 'refused', usage: checked.usage, now: clock() });
+    await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: checked.usage, now: clock() });
     handle.release();
     const ids = checked.generationId ? [checked.generationId] : [];
     deps.resolveTracker.track(resolveRequestUsage(requestId, deviceId, ids, true, resolveDeps(deps)));
@@ -372,7 +372,8 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
     untrack();
     admitted.handle.release();
     const outcome = ledgerOutcome(trace, ending, controller.signal.aborted);
-    const settlement = { outcome, usage: ending.usage, now: deps.clock() };
+    const failureReason = outcome === 'failed' || outcome === 'expired' ? trace.failureCode : undefined;
+    const settlement = { outcome, failureReason, usage: ending.usage, now: deps.clock() };
     // Retry a transient write once. Ledger cleanup must neither replace a pipeline error nor
     // break a terminal event already delivered to the client, and reconciliation still runs.
     for (let attempt = 1; attempt <= 2; attempt++) {

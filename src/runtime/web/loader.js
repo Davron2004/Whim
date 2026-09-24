@@ -88,6 +88,27 @@
     } catch (e) {}
   }
 
+  // ── Uncaught realm errors (developer-observability D6) ───────────────────────
+  // A throw in an event handler, an uncaught React render error (React 19 reports it through
+  // reportError) and an unhandled rejection all surface on this window. Each is reported as the
+  // SAME nonce-authenticated `error` frame with the error's NAME only: the message and stack
+  // can carry user data and never leave the realm. Installed before any bundle runs; the
+  // listener refs live in this closure, so a bundle cannot remove them.
+  function errorName(x) {
+    try {
+      const n = x !== null && typeof x === 'object' ? x.name : undefined;
+      return typeof n === 'string' && n ? n : 'NonError';
+    } catch (e) {
+      return 'NonError';
+    }
+  }
+  window.addEventListener('error', function (ev) {
+    post('error', { where: 'runtime', name: errorName(ev.error) });
+  });
+  window.addEventListener('unhandledrejection', function (ev) {
+    post('error', { where: 'rejection', name: errorName(ev.reason) });
+  });
+
   // generation counter (T7 / constraint #5): how many bundles have run in THIS realm. The host
   // resets the realm (re-creates the iframe) per generation, so in practice this is 1 here;
   // the counter + the in-place re-injection path remain so the seam is real and measurable.

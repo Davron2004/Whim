@@ -45,6 +45,18 @@ function isFatalErrorWhere(where: unknown): boolean {
   return where === 'bundle' || where === 'mount' || where === 'deliver';
 }
 
+/** Uncaught errors the loader reports from inside the running realm (a handler or render throw,
+ *  an unhandled rejection). Not fatal -- the app keeps its WebView -- but each one is a failure. */
+function isRealmErrorWhere(where: unknown): boolean {
+  return where === 'runtime' || where === 'rejection';
+}
+
+/** The error's class name from a loader `error` frame. Frames never carry message or stack; a
+ *  frame without a name (loader.js's missing-AppSpec case) is a plain `Error`. */
+function frameErrorClass(payload: any): string {
+  return typeof payload?.name === 'string' && payload.name ? payload.name : 'Error';
+}
+
 /** An accepted delivery restarts the deadline so a normally delayed loader still receives the
  *  established full six-second paint allowance. A refused delivery has its fatal `error` frame. */
 function handleDeliveryFrame(payload: any, startupDeadline: StartupDeadline): void {
@@ -64,8 +76,22 @@ function handlePaintFrame(frame: any, startupDeadline: StartupDeadline, setS: (f
 
 /** An `error` frame only escalates to the recoverable-error surface for fatal `where`s -- a
  *  non-fatal diagnostic (e.g. a post-paint probes failure) never triggers a full-screen takeover
- *  on an otherwise-healthy running app. */
-function handleErrorFrame(payload: any, startupDeadline: StartupDeadline, setS: (fn: (p: HostState) => HostState) => void): void {
+ *  on an otherwise-healthy running app. Fatal frames and uncaught realm errors (`runtime`,
+ *  `rejection`) each emit an `error` record; `appId` stays on the device (the allowlist drops it). */
+function handleErrorFrame(
+  frame: any,
+  appId: string | null,
+  startupDeadline: StartupDeadline,
+  setS: (fn: (p: HostState) => HostState) => void,
+): void {
+  // Only the outer page's nonce-authenticated forward counts (F4): an unauthenticated frame is
+  // neither a failure screen nor an error record.
+  if (frame.trusted !== true) return;
+  const payload = frame.payload;
+  if (isRealmErrorWhere(payload?.where)) {
+    log.error(CHANNELS.page, 'mini-app error', { where: payload.where, errorClass: frameErrorClass(payload), appId });
+    return;
+  }
   if (!isFatalErrorWhere(payload?.where)) {
     // Record-don't-swallow (the same convention this file uses elsewhere): a non-fatal frame
     // never escalates to the product surface, but it must not vanish either -- DevProbeScreen's
@@ -75,6 +101,7 @@ function handleErrorFrame(payload: any, startupDeadline: StartupDeadline, setS: 
     return;
   }
   startupDeadline.cancel();
+  log.error(CHANNELS.page, 'mini-app failed', { where: payload.where, errorClass: frameErrorClass(payload), appId });
   setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error' }));
 }
 
@@ -151,15 +178,16 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
   const genCounter = useRef(1);
   const policy = useRef(new BackPolicy());
   const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
+  const engineId = useRef<string | null>(null);
   const startupDeadline = useRef(createStartupDeadline(() => {
+    log.error(CHANNELS.page, 'mini-app failed', { where: 'paint-timeout', errorClass: 'StartupDeadline', appId: engineId.current });
     setS((p) => (
       p.lastError || p.paintMs !== null
         ? p
         : { ...p, lastError: 'app never became visible' }
     ));
   }));
-  // The runtime engine appId for the live realm (the launcher id, #5 D8 — a fork's own data).
-  const engineId = useRef<string | null>(null);
   const onExitRef = useRef<(() => void) | undefined>(opts.onExit);
   onExitRef.current = opts.onExit;
   // Read fresh on every render (never re-subscribes the BackHandler listener below) — the same
@@ -214,6 +242,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         generation,
       );
       if (!launched.ok) {
+        log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: launched.error.kind, appId: engineAppId });
         setS((p) => ({ ...p, lastError: `launch ${displayName}: ${launched.error.kind} — ${launched.error.hint}`, launchFailed: true }));
         return null;
       }
@@ -233,6 +262,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     try {
       js = deliverBySourceJs({ name: record.name, source, generation: realm.generation, theme });
     } catch (e) {
+      log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: e instanceof Error ? e.name : typeof e, appId: id });
       setS((p) => ({ ...p, lastError: `deliver ${record.name}: ${(e as Error).message}` }));
       return;
     }
@@ -307,7 +337,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
         handleDeliveryFrame(m.payload, startupDeadline.current);
         return;
       case 'error':
-        handleErrorFrame(m.payload, startupDeadline.current, setS);
+        handleErrorFrame(m, engineId.current, startupDeadline.current, setS);
         return;
       default:
         return; // unknown kind → ignore (never act on a frame by its tag)

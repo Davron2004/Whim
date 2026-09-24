@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Post-deploy smoke checks for Whim (design D17, D20, D21, D22), run from the operator's machine:
 #
-#   deploy/smoke.sh               DNS, the API, the server container, the pages and association files
-#   deploy/smoke.sh --pages-only  DNS, the pages and association files
+#   deploy/smoke.sh                  DNS, the API, the server container, the pages and association files
+#   deploy/smoke.sh --commit <sha>   the same, and /healthz must report exactly that commit
+#   deploy/smoke.sh --pages-only     DNS, the pages and association files
+#
+# Standalone, /healthz may report any full 40-character commit SHA. deploy.sh passes --commit with
+# the SHA it just rolled out, so a container still serving the previous image fails, naming both.
 #
 # DNS is checked first. Until both hostnames resolve only to WHIM_STATIC_IP, with no AAAA record,
 # smoke stops there and makes no HTTPS request, so a DNS slip reads as a DNS error rather than a
@@ -10,20 +14,30 @@
 set -euo pipefail
 
 WHIM_SCRIPT=smoke.sh
-WHIM_USAGE='usage: deploy/smoke.sh [--pages-only]'
+WHIM_USAGE='usage: deploy/smoke.sh [--pages-only | --commit <full git commit sha>]'
 # shellcheck source=deploy/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 pages_only=0
+expected_commit=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --pages-only)
       pages_only=1
       shift
       ;;
+    --commit)
+      [ "$#" -ge 2 ] || whim_usage_error "--commit needs a commit sha"
+      expected_commit="$2"
+      shift 2
+      ;;
     *) whim_usage_error "unknown argument: $1" ;;
   esac
 done
+if [ -n "$expected_commit" ]; then
+  [ "$pages_only" -eq 0 ] || whim_usage_error "--pages-only checks no /healthz, so it takes no --commit"
+  [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] || whim_usage_error "--commit must be a full 40-character git commit sha"
+fi
 
 whim_load_values
 whim_require_values WHIM_GCP_PROJECT WHIM_GCP_ZONE WHIM_STATIC_IP WHIM_API_HOST WHIM_WEB_HOST
@@ -36,22 +50,26 @@ done
 # load-test server answers with a different service name.
 readonly MIN_BUILD_IOS="${WHIM_MIN_BUILD_IOS:-0}"
 readonly MIN_BUILD_ANDROID="${WHIM_MIN_BUILD_ANDROID:-0}"
-readonly EXPECTED_HEALTH="{\"ok\":true,\"service\":\"whim-server\",\"minBuild\":{\"ios\":$MIN_BUILD_IOS,\"android\":$MIN_BUILD_ANDROID}}"
-# Judges the /healthz body on stdin by structure, given the configured iOS and Android minimums as
-# arguments, and prints why. Exits 0 when ok is true, the service is whim-server and minBuild holds
-# exactly those minimums; 2 when minBuild is absent (a server from before the minimum-build gate,
-# e.g. after a rollback) and both minimums are 0, so there is nothing for it to enforce; 1 otherwise.
+readonly EXPECTED_HEALTH="{\"ok\":true,\"service\":\"whim-server\",\"commit\":\"${expected_commit:-<40-hex sha>}\",\"minBuild\":{\"ios\":$MIN_BUILD_IOS,\"android\":$MIN_BUILD_ANDROID}}"
+# Judges the /healthz body on stdin by structure, given the configured iOS and Android minimums and
+# the expected commit (empty: any full SHA) as arguments, and prints why. Exits 0 when ok is true,
+# the service is whim-server, commit is a full SHA (that one, when given) and minBuild holds exactly
+# those minimums; 2 when minBuild is absent (a server from before the minimum-build gate) and both
+# minimums are 0, so there is nothing for it to enforce; 1 otherwise.
 readonly HEALTH_JS='let healthText = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { healthText += chunk; });
 process.stdin.on("end", () => {
-  const [iosText, androidText] = process.argv.slice(1);
+  const [iosText, androidText, expectedCommit] = process.argv.slice(1);
   const ios = Number(iosText);
   const android = Number(androidText);
   const verdict = (code, reason) => { console.log(reason); process.exit(code); };
   let health;
   try { health = JSON.parse(healthText); } catch { verdict(1, "the body is not JSON"); }
   if (health?.ok !== true || health.service !== "whim-server") verdict(1, "expected ok true from service whim-server");
+  if (!Object.hasOwn(health, "commit")) verdict(1, "no commit: this server predates the commit report, so it cannot show which image it runs");
+  if (typeof health.commit !== "string" || !/^[0-9a-f]{40}$/.test(health.commit)) verdict(1, "commit " + JSON.stringify(health.commit) + " is not a full 40-character SHA: this image was not built by the release pipeline");
+  if (expectedCommit && health.commit !== expectedCommit) verdict(1, "commit is " + health.commit + ", but this deploy rolled out " + expectedCommit + ": the container still runs another image");
   const minimums = "iOS " + iosText + ", Android " + androidText;
   if (!Object.hasOwn(health, "minBuild")) {
     if (ios === 0 && android === 0) verdict(2, "no minBuild: this server predates the minimum-build gate; both configured minimums are 0, so it has nothing to enforce");
@@ -151,7 +169,7 @@ check_health() {
     flunk "api $url answered $PROBE_STATUS '$body', expected 200 $EXPECTED_HEALTH"
     return
   fi
-  verdict="$(node -e "$HEALTH_JS" "$MIN_BUILD_IOS" "$MIN_BUILD_ANDROID" <"$work/body")" || code=$?
+  verdict="$(node -e "$HEALTH_JS" "$MIN_BUILD_IOS" "$MIN_BUILD_ANDROID" "$expected_commit" <"$work/body")" || code=$?
   case "$code" in
     0) pass "api $url -> $body" ;;
     2) printf 'WARN  api %s answered %s: %s\n' "$url" "$body" "$verdict" >&2 ;;

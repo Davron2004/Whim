@@ -58,10 +58,10 @@ export const ORB_ROW_TINT: Record<OrbActionId, string> = {
 /** Per-action swatch glyph. `⌂` (U+2302) is pending Android glyph-coverage verification on the
  *  on-device screenshot pass — do not substitute a replacement before that check runs. */
 export const ORB_ROW_GLYPH: Record<OrbActionId, string> = {
-  change: '✎',
+  change: '✎︎',
   home: '⌂',
   versions: '↺',
-  report: '⚑',
+  report: '⚑︎',
 };
 
 /** Swatch glyph colour. The design's `m.glyphColor` (`i === 0 ? '#3f3d8f' : '#1c1917'`) is exactly

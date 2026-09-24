@@ -100,6 +100,21 @@ keytool -list -v -keystore ~/.config/whim/whim-upload.jks -alias whim-upload | \
 brew install bundletool
 ```
 
+### Source-map bucket
+
+Both lanes upload the build's Hermes source map to the private bucket
+`gs://<WHIM_GCP_PROJECT>-sourcemaps` (`gs://anycognition-whim-sourcemaps`; `deploy/provision.sh`
+creates it) and stop if that fails. The machine running the lanes needs the Google Cloud CLI
+(`gcloud`, the same one the deploy scripts use), signed in with an account that can write objects
+there:
+
+```sh
+gcloud auth login
+```
+
+The project comes from `deploy/defaults.env`, then `~/.config/whim/deploy.env`, then the
+environment, the same as the deploy scripts.
+
 ## The first manual Play upload
 
 1. Build a signed AAB without uploading:
@@ -107,7 +122,7 @@ brew install bundletool
    fastlane android closed upload:false
    ```
    This runs the preflight, builds `android/app/build/outputs/bundle/release/app-release.aab`,
-   and verifies it, printing the path.
+   verifies it and uploads its source map, printing the path.
 2. In Play Console, under the alpha (closed testing) track, upload that AAB by hand and publish
    the release.
 3. **Right after that upload**, get the Play signing certificate's SHA-256 from Play Console
@@ -122,7 +137,7 @@ brew install bundletool
 
 ```sh
 fastlane ios testflight
-# ⇒ preflight, archive, upload, prints the build number it used
+# ⇒ preflight, archive, source-map upload, TestFlight upload, prints the build number it used
 fastlane android closed build:<the number ios printed>
 ```
 
@@ -132,6 +147,31 @@ Passing the number the first platform's lane prints to the second gives both pla
 `fastlane ios testflight` first — recomputing the number twice a minute apart still gives each
 platform a different one, so always hand off the printed value rather than running both lanes
 bare.
+
+After verifying the build and before the store upload, each lane uploads its composed Hermes
+source map to `<platform>/<version>+<build>.map` in the source-map bucket
+(specs/device-diagnostics "Release builds keep a source map for every shipped bundle"). Android
+takes it from `android/app/build/generated/sourcemaps/react/release/index.android.bundle.map`;
+iOS passes `SOURCEMAP_FILE=ios/build/sourcemaps/main.jsbundle.map` to the archive's bundle phase.
+Each lane deletes that file before building, so a map from an earlier build is never uploaded. If
+the map is missing or the upload fails, the lane stops before the store upload, so no build ships
+without its map. Fix the cause (usually `gcloud auth login`) and rerun the lane with the same
+`build:<n>`; the retry overwrites the earlier map.
+
+## Reading a device stack
+
+A device record's `stack` names bytecode offsets in the release bundle
+(`at fn (address at index.android.bundle:1:650735)`). To turn them into `src/` files and lines,
+pipe the stack in with the record's platform, version and build:
+
+```sh
+node scripts/symbolicate.mjs android 1.0.0 369360 < stack.txt
+```
+
+Each bundle frame prints as `<source file>:<line>:<function>`. When the bucket has no map for that
+platform, version and build, the script exits non-zero and names the missing
+`<platform>/<version>+<build>.map`; it never uses another build's map. `--maps-dir <dir>` reads
+from a local directory laid out like the bucket (`<dir>/android/1.0.0+369360.map`) instead.
 
 Listing content, once `release/store/` has real copy and screenshots:
 
@@ -198,11 +238,13 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   fall back to Gradle directly: `cd android && ./gradlew installOffline`.
 - **A 32-bit Android native build fails during `fastlane android closed`.** Fall back to an
   arm64-only store build by running the Gradle step yourself with the narrower architecture list,
-  then resume from `verify-aab`:
+  then resume from `verify-aab` and upload the map yourself:
   ```sh
   fastlane run gradle project_dir:"$(pwd)/android" task:"bundle" build_type:"Release" \
     properties:'{"whimBuildNumber":"<n>","reactNativeArchitectures":"arm64-v8a"}'
   node scripts/release/run.mjs verify-aab android/app/build/outputs/bundle/release/app-release.aab --build <n>
+  node scripts/release/run.mjs upload-source-map --platform android --build <n> \
+    android/app/build/generated/sourcemaps/react/release/index.android.bundle.map
   ```
   This ships a store build that only 64-bit ARM devices can install (design D13) — use it only
   as a stopgap, and retry the three-ABI build for the next release.

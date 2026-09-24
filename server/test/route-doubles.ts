@@ -11,7 +11,9 @@ import {
   type CostState,
   type CostSweepCandidate,
   type CostSweepQuery,
+  type FailureReason,
   type RequestOutcome,
+  type SettleParams,
   type SummaryParams,
   type UsageStore,
   type UsageSummary,
@@ -53,6 +55,7 @@ export async function waitFor(predicate: () => boolean | Promise<boolean>, ms: n
 export interface SettleRecord {
   requestId: string;
   outcome: RequestOutcome;
+  failureReason?: FailureReason;
   usage?: Usage;
 }
 
@@ -93,7 +96,7 @@ export class RecordingUsageStore implements UsageStore {
     return this.inner.refund(requestId);
   }
 
-  settle(requestId: string, params: { outcome: RequestOutcome; usage?: Usage }): Promise<void> {
+  settle(requestId: string, params: SettleParams): Promise<void> {
     this.settles.push({ requestId, ...params });
     return this.inner.settle(requestId, params);
   }

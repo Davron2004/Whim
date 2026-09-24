@@ -9,6 +9,7 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { buildNumberAt } from './lib/build-number';
 import { generateAssets } from './lib/assets';
@@ -23,6 +24,16 @@ import { auditApp } from './lib/privacy-audit';
 import { buildAssociationFiles, UPLOAD_FINGERPRINT_PATH } from './lib/association-files';
 import { ensureReleaseTag, realGitRunner } from './lib/release-tag';
 import { checkDisclosureRelease } from './lib/disclosure-check';
+import {
+  fetchSourceMap,
+  makeScratchDir,
+  realCommandRunner,
+  resolveGcpProject,
+  sourceMapKey,
+  symbolicateStack,
+  uploadSourceMap,
+  type SourceMapStore,
+} from './lib/source-map';
 
 declare module 'node:fs' {
   export function writeFileSync(path: string, data: string, encoding: 'utf8'): void;
@@ -233,6 +244,51 @@ function runTag(args: string[]): number {
   }
 }
 
+function runUploadSourceMap(args: string[]): number {
+  const platform = readFlag(args, '--platform');
+  const buildNumber = parseIntegerFlag(args, '--build');
+  const mapPath = args.find((a, i) => !a.startsWith('--') && !['--platform', '--build'].includes(args[i - 1] ?? ''));
+  if (!isReleasePlatform(platform) || buildNumber === undefined || mapPath === undefined) {
+    process.stderr.write('upload-source-map: usage: upload-source-map --platform ios|android --build <n> <map-path>\n');
+    return 2;
+  }
+  try {
+    const repoRoot = process.cwd();
+    const key = sourceMapKey(platform, loadNativeReleaseConfig(repoRoot).WHIM_MARKETING_VERSION, buildNumber);
+    const url = uploadSourceMap(realCommandRunner, resolveGcpProject(repoRoot, process.env, os.homedir()), mapPath, key);
+    process.stdout.write(`upload-source-map: uploaded ${url}\n`);
+    return 0;
+  } catch (err) {
+    return reportError('upload-source-map', err);
+  }
+}
+
+function runSymbolicate(args: string[]): number {
+  const mapsDir = readFlag(args, '--maps-dir');
+  const [platform, version, build] = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--maps-dir');
+  const buildNumber = Number(build);
+  if (!isReleasePlatform(platform) || version === undefined || !Number.isInteger(buildNumber) || (hasFlag(args, '--maps-dir') && !mapsDir)) {
+    process.stderr.write('symbolicate: usage: symbolicate ios|android <version> <build> [--maps-dir <dir>] < stack\n');
+    return 2;
+  }
+  let scratchDir: string | undefined;
+  try {
+    const repoRoot = process.cwd();
+    const key = sourceMapKey(platform, version, buildNumber);
+    const store: SourceMapStore = mapsDir
+      ? { kind: 'dir', dir: mapsDir }
+      : { kind: 'bucket', project: resolveGcpProject(repoRoot, process.env, os.homedir()) };
+    scratchDir = makeScratchDir();
+    const mapPath = fetchSourceMap(realCommandRunner, store, key, scratchDir);
+    process.stdout.write(symbolicateStack(realCommandRunner, repoRoot, mapPath, fs.readFileSync(0, 'utf8')));
+    return 0;
+  } catch (err) {
+    return reportError('symbolicate', err);
+  } finally {
+    if (scratchDir !== undefined) fs.rmSync(scratchDir, { recursive: true, force: true });
+  }
+}
+
 export const COMMANDS: Record<string, CliCommand> = {
   'build-number': {
     summary: 'build-number [--at <iso>] — prints the release build number for an instant (default: now).',
@@ -273,6 +329,14 @@ export const COMMANDS: Record<string, CliCommand> = {
   tag: {
     summary: 'tag --build <n> — tags a successful upload on HEAD, reusing an existing tag there.',
     run: runTag,
+  },
+  'upload-source-map': {
+    summary: 'upload-source-map --platform ios|android --build <n> <map-path> — uploads a release build\'s Hermes source map to the private source-map bucket.',
+    run: runUploadSourceMap,
+  },
+  symbolicate: {
+    summary: 'symbolicate ios|android <version> <build> [--maps-dir <dir>] < stack — prints the stack with source frames from that build\'s map (scripts/symbolicate.mjs).',
+    run: runSymbolicate,
   },
 };
 

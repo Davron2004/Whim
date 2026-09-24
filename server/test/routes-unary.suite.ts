@@ -827,7 +827,8 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   const policy = cachedPolicy(
     new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
   );
-  const { app, usageStore } = testApp({ model, policy });
+  const usageStore = new InMemoryUsageStore();
+  const { app } = testApp({ model, policy, usageStore });
   const res = await post(app, '/v1/rewrite', { prompt: 'something bad' }, DEVICE_HEADER);
   eq('a policy-refused rewrite → 422', res.status, 422);
   const body = (await res.json()) as ApiError;
@@ -835,6 +836,7 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   eq('exactly one model call recorded (the classifier)', model.requests.length, 1);
   const total = await usageStore.read(DEVICE_ID);
   eq('a refused request still meters the classifier', total, CLASSIFIER_USAGE);
+  eq('the refused ledger row names the content_policy refusal', (await usageStore.deviceRecords(DEVICE_ID)).ledger.map((row) => row.failureReason), ['content_policy']);
 }
 
 /**
@@ -1125,12 +1127,14 @@ async function testBudgetExhaustedMidCall(): Promise<void> {
     invalidateCreditCache();
     const credit = countingCreditTransport(10);
     const model = budgetExhaustedModelClient();
-    const { app } = testApp({ model, creditTransport: credit.transport });
+    const usageStore = new InMemoryUsageStore();
+    const { app } = testApp({ model, creditTransport: credit.transport, usageStore });
 
     const res1 = await post(app, '/v1/clarify', { prompt: 'hi' }, DEVICE_HEADER);
     eq('a mid-call 402 on clarify → 503 budget_exhausted', res1.status, 503);
     const body1 = (await res1.json()) as ApiError;
     eq('refusal code is budget_exhausted', body1.error, 'budget_exhausted');
+    eq('the clarify ledger row names the budget_exhausted refusal', (await usageStore.deviceRecords(DEVICE_ID)).ledger.map((row) => row.failureReason), ['budget_exhausted']);
     eq('setup: exactly one credit lookup so far', credit.calls(), 1);
 
     // A second request, same TTL window, healthy model this time — the cache must have been
@@ -1148,12 +1152,14 @@ async function testBudgetExhaustedMidCall(): Promise<void> {
     invalidateCreditCache();
     const credit = countingCreditTransport(10);
     const model = budgetExhaustedModelClient();
-    const { app } = testApp({ model, creditTransport: credit.transport });
+    const usageStore = new InMemoryUsageStore();
+    const { app } = testApp({ model, creditTransport: credit.transport, usageStore });
 
     const res1 = await post(app, '/v1/rewrite', { prompt: 'hi' }, DEVICE_HEADER);
     eq('a mid-call 402 on rewrite → 503 budget_exhausted', res1.status, 503);
     const body1 = (await res1.json()) as ApiError;
     eq('refusal code is budget_exhausted', body1.error, 'budget_exhausted');
+    eq('the rewrite ledger row names the budget_exhausted refusal', (await usageStore.deviceRecords(DEVICE_ID)).ledger.map((row) => row.failureReason), ['budget_exhausted']);
 
     const healthyModel = new ScriptedModelClient(ROSTER, [
       {

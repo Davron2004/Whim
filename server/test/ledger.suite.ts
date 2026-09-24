@@ -14,7 +14,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { caught, check, eq, section } from './harness';
-import { InMemoryUsageStore, NodeSqliteUsageStore, type AdmitResult, type UsageStore } from '../src/usage-store';
+import { InMemoryUsageStore, NodeSqliteUsageStore, type AdmitResult, type SettleParams, type UsageStore } from '../src/usage-store';
 
 const DEVICE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const DEVICE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -611,6 +611,127 @@ async function testEmptyGlobalKinds(): Promise<void> {
   sqlite.close();
 }
 
+/** One `requests.failure_reason` value, read straight from the file (null when unset). */
+function readFailureReason(dbPath: string, requestId: string): string | null {
+  const raw = new DatabaseSync(dbPath);
+  try {
+    const row = raw.prepare('SELECT failure_reason FROM requests WHERE id = ?').get(requestId) as { failure_reason: string | null } | undefined;
+    if (!row) throw new Error(`setup: no ledger row ${requestId}`);
+    return row.failure_reason;
+  } finally {
+    raw.close();
+  }
+}
+
+/**
+ * specs/server-observability "The ledger records a closed failure code": a failed or refused row
+ * names its code, a value outside the terminal and refusal code sets is refused on write and the
+ * row keeps a null reason, and the operator summary counts rows per reason.
+ */
+async function testFailureReason(): Promise<void> {
+  section('Usage ledger — failure_reason is a closed code (developer-observability D9)');
+
+  const dbPath = tmpDbPath('failure-reason');
+  try {
+    const store = new NodeSqliteUsageStore(dbPath);
+    const admit = async (): Promise<string> => {
+      const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+      if (!admitted.ok) throw new Error('setup: admit refused');
+      return admitted.requestId;
+    };
+
+    const exhausted = await admit();
+    await store.settle(exhausted, { outcome: 'failed', failureReason: 'repair_exhausted', now: AT_22_00_UTC });
+    eq('a repair-exhausted row holds its code', readFailureReason(dbPath, exhausted), 'repair_exhausted');
+
+    const refused = await admit();
+    await store.settle(refused, { outcome: 'refused', failureReason: 'content_policy', now: AT_22_00_UTC });
+    eq('a refused row holds its refusal code', readFailureReason(dbPath, refused), 'content_policy');
+
+    const delivered = await admit();
+    await store.settle(delivered, { outcome: 'delivered', now: AT_22_00_UTC });
+    eq('a delivered row keeps a null reason', readFailureReason(dbPath, delivered), null);
+
+    const freeText = await admit();
+    const forged = { outcome: 'failed', failureReason: 'Could not produce a working app after several attempts.', now: AT_22_00_UTC } as unknown as SettleParams;
+    check('a free-text failure reason is refused', (await caught(() => store.settle(freeText, forged))) instanceof Error);
+    eq('  ... and the row keeps a null reason', readFailureReason(dbPath, freeText), null);
+    const again = await store.deviceRecords(DEVICE_A);
+    eq('  ... and the refused settle wrote nothing else either', again.ledger.find((row) => row.id === freeText)?.outcome, null);
+
+    const beside = await admit();
+    const mismatched = { outcome: 'delivered', failureReason: 'repair_exhausted', now: AT_22_00_UTC } as unknown as SettleParams;
+    check('a failure reason beside a delivered outcome is refused', (await caught(() => store.settle(beside, mismatched))) instanceof Error);
+    eq('  ... and that row keeps a null reason', readFailureReason(dbPath, beside), null);
+
+    const summary = await store.summary({ days: 1, now: AT_22_00_UTC });
+    eq('the summary counts rows per failure reason', summary.failureReasonCounts, { repair_exhausted: 1, content_policy: 1 });
+    store.close();
+  } finally {
+    fs.rmSync(dbPath, { force: true });
+  }
+
+  const memory = new InMemoryUsageStore();
+  const admitted = await memory.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'clarify', now: AT_22_00_UTC, deviceLimit: 15 });
+  if (!admitted.ok) throw new Error('setup: admit refused');
+  const forged = { outcome: 'error', failureReason: 'rate_limited', now: AT_22_00_UTC } as unknown as SettleParams;
+  check('in-memory: a code outside both sets is refused', (await caught(() => memory.settle(admitted.requestId, forged))) instanceof Error);
+  eq('in-memory: the row keeps a null reason', (await memory.deviceRecords(DEVICE_A)).ledger.map((row) => row.failureReason), [null]);
+  await memory.settle(admitted.requestId, { outcome: 'error', failureReason: 'budget_exhausted', now: AT_22_00_UTC });
+  eq('in-memory: a refusal code is stored', (await memory.deviceRecords(DEVICE_A)).ledger.map((row) => row.failureReason), ['budget_exhausted']);
+}
+
+/** A database from before `failure_reason` opens, gains the column once, and keeps its rows. */
+async function testFailureReasonColumnMigration(): Promise<void> {
+  section('Usage ledger — a pre-change database gains failure_reason without rewriting rows');
+
+  const dbPath = tmpDbPath('failure-reason-migration');
+  try {
+    const seed = new DatabaseSync(dbPath);
+    seed.exec(`
+      CREATE TABLE requests (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        utc_day TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        outcome TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL,
+        cost_state TEXT NOT NULL CHECK(cost_state IN ('pending','resolved','unresolved')),
+        generation_ids TEXT,
+        refunded INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    seed.prepare(`
+      INSERT INTO requests (id, device_id, kind, utc_day, started_at, ended_at, outcome, cost_state)
+      VALUES ('legacy-failed', ?, 'generate', '2026-01-15', ?, ?, 'failed', 'resolved')
+    `).run(DEVICE_A, AT_22_00_UTC, AT_22_00_UTC);
+    seed.close();
+
+    const store = new NodeSqliteUsageStore(dbPath);
+    eq('the legacy row keeps a null reason', readFailureReason(dbPath, 'legacy-failed'), null);
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_22_00_UTC, deviceLimit: 15 });
+    if (!admitted.ok) throw new Error('setup: admit refused');
+    await store.settle(admitted.requestId, { outcome: 'expired', failureReason: 'expired', now: AT_22_00_UTC });
+    eq('a new row on the migrated file stores its code', readFailureReason(dbPath, admitted.requestId), 'expired');
+    store.close();
+
+    const reopened = new NodeSqliteUsageStore(dbPath);
+    const records = await reopened.deviceRecords(DEVICE_A);
+    eq(
+      'reopening the migrated file keeps both rows and their reasons',
+      Object.fromEntries(records.ledger.map((row) => [row.id, row.failureReason])),
+      { 'legacy-failed': null, [admitted.requestId]: 'expired' },
+    );
+    reopened.close();
+  } finally {
+    fs.rmSync(dbPath, { force: true });
+  }
+}
+
 export async function runLedgerTests(): Promise<void> {
   await testRowKeyedByCallerId();
   await testDuplicateIdRejected();
@@ -625,6 +746,8 @@ export async function runLedgerTests(): Promise<void> {
   await testSweepMaxAge();
   await testSweepIgnoresPersistedEmptyIdsArray();
   await testGenerationIdsColumnMigration();
+  await testFailureReason();
+  await testFailureReasonColumnMigration();
   await testEmptyGlobalKinds();
   await testSettlesAgainstAdmissionDay();
   await testRetentionPurge();

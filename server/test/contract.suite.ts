@@ -9,6 +9,7 @@ import {
   ApiError,
   ClientEnvelope,
   Diagnostic,
+  DiagnosticsBatch,
   DeviceIdError,
   GenerateRequest,
   GenerationEvent,
@@ -26,6 +27,63 @@ const tinyRecord = {
   manifest: { capabilities: [] },
   schema: {},
 };
+
+/** A device error record carrying every field the spec's allowlist names
+ *  (device-diagnostics "Only an allowlisted projection of an error record leaves the device"). */
+const FULL_DIAGNOSTIC = {
+  at: 1_790_000_000_000,
+  level: 'error',
+  channel: 'whim:launcher',
+  message: 'generation failed',
+  screen: 'Home',
+  errorClass: 'TypeError',
+  where: 'runtime',
+  stage: 'generate',
+  reason: 'network',
+  kind: 'transport',
+  status: 502,
+  errorCode: 'server_busy',
+  domain: 'generation',
+  readyState: 4,
+  observedRepairAttempts: 2,
+  requestId: '0b7e3f5c-9c1a-4d2e-8f00-1a2b3c4d5e6f',
+  route: '/v1/generate',
+  count: 3,
+  stack: 'at render (index.bundle:1:2)\nat commit (index.bundle:3:4)',
+} as const;
+
+function runDiagnosticsBatchTests(): void {
+  section('Diagnostics batch (developer-observability D2)');
+  const batch = (records: readonly unknown[], extra: Record<string, unknown> = {}): unknown => ({ osVersion: '17.5', records, ...extra });
+  const accepts = (value: unknown): boolean => DiagnosticsBatch.safeParse(value).success;
+
+  check('a record with every allowlisted field parses', accepts(batch([FULL_DIAGNOSTIC])));
+  check('a record with only at, level, channel and message parses', accepts(batch([{ at: 1, level: 'warn', channel: 'whim', message: 'm' }])));
+  for (const field of ['detail', 'url', 'appId', 'deviceId', 'prompt']) {
+    check(`a record carrying an unknown key (${field}) is rejected`, !accepts(batch([{ ...FULL_DIAGNOSTIC, [field]: 'x' }])));
+  }
+  for (const field of ['platform', 'appVersion', 'build', 'deviceId']) {
+    check(`the body rejects an unknown key beside osVersion (${field})`, !accepts(batch([FULL_DIAGNOSTIC], { [field]: 'x' })));
+  }
+
+  const long = (n: number): string => 'x'.repeat(n);
+  check('a 128-character message parses', accepts(batch([{ ...FULL_DIAGNOSTIC, message: long(128) }])));
+  check('a 129-character message is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, message: long(129) }])));
+  check('a 129-character allowlisted field is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, errorClass: long(129) }])));
+  check('a 129-character channel is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, channel: long(129) }])));
+  check('a 129-character osVersion is rejected', !accepts({ osVersion: long(129), records: [FULL_DIAGNOSTIC] }));
+  check('a 4096-character stack parses', accepts(batch([{ ...FULL_DIAGNOSTIC, stack: long(4096) }])));
+  check('a 4097-character stack is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, stack: long(4097) }])));
+
+  check('a route that is a full URL is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, route: 'https://api.example/v1/generate' }])));
+  check('a route carrying a query is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, route: '/v1/generate?x=1' }])));
+  check('an unknown level is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, level: 'fatal' }])));
+  check('a nested object in an allowlisted field is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, reason: { detail: 'x' } }])));
+
+  check('a batch of 50 records parses', accepts(batch(Array.from({ length: 50 }, () => FULL_DIAGNOSTIC))));
+  check('a batch of 51 records is rejected', !accepts(batch(Array.from({ length: 51 }, () => FULL_DIAGNOSTIC))));
+  check('an empty batch is rejected', !accepts(batch([])));
+}
 
 export function runContractTests(): void {
   section('Contract round-trips (SPEC §1)');
@@ -175,6 +233,8 @@ export function runContractTests(): void {
   }
   check('an empty app version is rejected', !ClientEnvelope.safeParse({ ...envelopeHeaders, appVersion: '' }).success);
   check('a pre-release app version still parses', ClientEnvelope.safeParse({ ...envelopeHeaders, appVersion: '1.1.0-beta.2' }).success);
+
+  runDiagnosticsBatchTests();
 
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');

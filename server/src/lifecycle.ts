@@ -425,7 +425,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     const address = await listen(server, host, options.listen?.port ?? config.serverPort);
     const urlHost = host.includes(':') ? '[' + host + ']' : host;
     const url = `http://${urlHost}:${address.port}`;
-    bootLog.info({ url, pipeline: useStub ? 'stub' : 'real' }, 'whim-server listening');
+    bootLog.info({ url, pipeline: useStub ? 'stub' : 'real', commit: config.commit }, 'whim-server listening');
 
     return {
       url,

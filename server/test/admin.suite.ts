@@ -124,7 +124,7 @@ async function testUsageSummary(): Promise<void> {
     await usageStore.recordCost(genA.requestId, { state: 'resolved', costUsd: 0.2 });
   }
   if (genB.ok) {
-    await usageStore.settle(genB.requestId, { outcome: 'unavailable' });
+    await usageStore.settle(genB.requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable' });
     await usageStore.recordCost(genB.requestId, { state: 'unresolved' });
   }
   const deps = baseDeps({ usageStore });
@@ -135,10 +135,15 @@ async function testUsageSummary(): Promise<void> {
   check('top devices by cost are listed', text.output.includes(DEVICE_A));
   check('per-generation stats are listed', text.output.includes('count=2'));
   check('the unresolved row is counted separately', text.output.includes('unresolved=1'));
+  check('failures are counted per reason', text.output.includes('Failure reasons: policy_unavailable=1\n'), text.output);
 
   const asJson = await runAdminCli(['usage', '--days', '1', '--json'], deps);
-  const parsed = JSON.parse(asJson.output) as { generationStats: { unresolvedCount: number } };
+  const parsed = JSON.parse(asJson.output) as { generationStats: { unresolvedCount: number }; failureReasonCounts: unknown };
   eq('json summary carries the unresolved count', parsed.generationStats.unresolvedCount, 1);
+  eq('json summary carries the per-reason failure counts', parsed.failureReasonCounts, { policy_unavailable: 1 });
+
+  const quiet = await runAdminCli(['usage', '--days', '1'], baseDeps({ usageStore: new InMemoryUsageStore() }));
+  check('a window with no failures says so', quiet.output.includes('Failure reasons: (none)'), quiet.output);
 }
 
 /** Every `NodeSqlite*Store` method is a synchronous `DatabaseSync` call, so two stores driven from

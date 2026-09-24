@@ -276,18 +276,22 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   section('spec: the built tree starts without the checkout');
 
   const port = await freePort();
+  // What deploy/Dockerfile's ENV sets from the build arg.
+  const commit = 'fedcba9876543210fedcba9876543210fedcba98';
   const proc = new TreeProcess(fixture.tree, {
     WHIM_PIPELINE: 'stub',
     WHIM_DATA_DIR: fixture.dataDir('serves'),
     WHIM_SERVER_HOST: '127.0.0.1',
     WHIM_SERVER_PORT: String(port),
+    WHIM_COMMIT: commit,
   });
   try {
     check('the tree started and listened', await proc.waitForLog('whim-server listening', BOOT_MS), proc.text().slice(-2000));
     eq('it logs the bound URL', proc.logs('whim-server listening')[0]?.url, `http://127.0.0.1:${port}`);
+    eq('the boot line carries the commit the image was built from', proc.logs('whim-server listening')[0]?.commit, commit);
     const res = await fetch(`http://127.0.0.1:${port}/healthz`);
     eq('GET /healthz answers 200', res.status, 200);
-    eq('with the service identity and both minimum builds off', await res.json(), { ok: true, service: 'whim-server', minBuild: { ios: 0, android: 0 } });
+    eq('with the service identity, the same commit and both minimum builds off', await res.json(), { ok: true, service: 'whim-server', commit, minBuild: { ios: 0, android: 0 } });
 
     proc.signal('SIGTERM');
     const exit = await exitOf(proc);

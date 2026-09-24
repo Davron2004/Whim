@@ -202,5 +202,10 @@ async function usageSummary(
     '',
     `Generation cost stats: count=${g.count} mean=$${g.meanCostUsd.toFixed(4)} median=$${g.medianCostUsd.toFixed(4)} p95=$${g.p95CostUsd.toFixed(4)} max=$${g.maxCostUsd.toFixed(4)} unresolved=${g.unresolvedCount}`,
   );
+  const reasons = Object.entries(summary.failureReasonCounts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(' ');
+  lines.push(`Failure reasons: ${reasons || '(none)'}`);
   return { exitCode: 0, output: lines.join('\n') + '\n' };
 }

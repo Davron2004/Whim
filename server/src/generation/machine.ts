@@ -29,6 +29,7 @@ import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from '.
 import { type Plan, parsePlan, validatePlan } from './plan';
 import { unwrapSourceFence } from './source-block';
 import type { Summariser } from './summarise';
+import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
 import { log, type ServerLogger } from '../logger';
 
@@ -154,6 +155,9 @@ export interface RunTrace {
    *  consumer stops the run without either), `'delivered'`/`'failed'` just before the `result`/
    *  `failure` terminal is yielded. Absent while the run is still going. */
   outcome?: RunTraceOutcome;
+  /** Set as a `failure` terminal is yielded: the code for why the run failed, which the usage
+   *  ledger stores instead of the terminal's `reason` sentence. Absent for any other ending. */
+  failureCode?: TerminalFailureCode;
 }
 
 export interface PipelineBounds {
@@ -259,13 +263,13 @@ function errorsFirst(diagnostics: readonly Diagnostic[]): Diagnostic[] {
 type DiagnosticsDecision =
   | { action: 'proceed' }
   | { action: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
-  | { action: 'failed'; reason: string };
+  | { action: 'failed'; reason: string; code: TerminalFailureCode };
 
 function decideAfterDiagnostics(diagnostics: readonly Diagnostic[], budgets: RepairBudgetsSnapshot): DiagnosticsDecision {
   if (diagnostics.length === 0) return { action: 'proceed' };
 
   if (hasErrors(diagnostics)) {
-    if (budgets.repairsUsed >= budgets.repairAttempts) return { action: 'failed', reason: REPAIR_EXHAUSTED_REASON };
+    if (budgets.repairsUsed >= budgets.repairAttempts) return { action: 'failed', reason: REPAIR_EXHAUSTED_REASON, code: 'repair_exhausted' };
     return { action: 'repair', diagnostics: errorsFirst(diagnostics), warningsOnly: false };
   }
 
@@ -282,7 +286,7 @@ function outcomeFromDecision(decision: Exclude<DiagnosticsDecision, { action: 'p
   if (decision.action === 'repair') {
     return { kind: 'repair', diagnostics: decision.diagnostics, warningsOnly: decision.warningsOnly };
   }
-  return { kind: 'failed', reason: decision.reason };
+  return { kind: 'failed', reason: decision.reason, code: decision.code };
 }
 
 /** One breadcrumb for a `stage` transition — same fields the wire's `stage` event itself carries
@@ -436,10 +440,12 @@ class RunBudget {
     this.disarmDeadline();
   }
 
-  /** Records `delivered`/`failed` just before the terminal is yielded. A no-op when the run already
-   *  has an outcome: the expiry failure keeps `expired`. */
-  recordTerminal(outcome: 'delivered' | 'failed'): void {
+  /** Records `delivered`/`failed` just before the terminal is yielded. A no-op for the outcome when
+   *  the run already has one: the expiry failure keeps `expired`. A failure's code is recorded
+   *  either way, since it is the one terminal the run yields. */
+  recordTerminal(outcome: 'delivered' | 'failed', failureCode?: TerminalFailureCode): void {
     this.record(outcome);
+    if (failureCode !== undefined && this.trace) this.trace.failureCode = failureCode;
   }
 
   /** The run's generator is finishing: disarm, unlink, and name a run that stopped without any
@@ -504,7 +510,7 @@ type CandidateOutcome =
   | { kind: 'aborted' }
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
-  | { kind: 'failed'; reason: string }
+  | { kind: 'failed'; reason: string; code: TerminalFailureCode }
   | { kind: 'contained-failure' }
   | { kind: 'containment-unobserved' };
 
@@ -522,7 +528,12 @@ function unverifiedRunOutcome(contained: false | null): CandidateOutcome {
   }
 }
 
-type TerminalEvent = Extract<GenerationEvent, { type: 'result' | 'failure' }>;
+type FailureEvent = Extract<GenerationEvent, { type: 'failure' }>;
+
+/** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it. */
+type Completion =
+  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never }
+  | { terminal: FailureEvent; code: TerminalFailureCode };
 
 /** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
  *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
@@ -532,18 +543,18 @@ type TerminalEvent = Extract<GenerationEvent, { type: 'result' | 'failure' }>;
 function failureTerminalFor(
   outcome: Extract<CandidateOutcome, { kind: 'failed' | 'contained-failure' | 'containment-unobserved' }>,
   state: RunState,
-): TerminalEvent {
+): Completion {
   const attempts = state.candidatesProduced;
   switch (outcome.kind) {
     case 'contained-failure':
-      return { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] };
+      return { terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] }, code: 'containment_failed' };
     // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
     // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
     // prompt is built, and the candidate is never re-run.
     case 'containment-unobserved':
-      return { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] };
+      return { terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] }, code: 'run_unverified' };
     case 'failed':
-      return { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics };
+      return { terminal: { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics }, code: outcome.code };
   }
 }
 
@@ -587,10 +598,8 @@ export class GenerationMachine {
       // signal was aborted by the expiry itself.
       if (budget.expired) {
         yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: EXPIRED_REASON,
-          attempts: state.candidatesProduced,
-          diagnostics: state.diagnostics,
+          terminal: { type: 'failure', reason: EXPIRED_REASON, attempts: state.candidatesProduced, diagnostics: state.diagnostics },
+          code: 'expired',
         });
       }
     } finally {
@@ -639,10 +648,13 @@ export class GenerationMachine {
       creditExhausted ? 'provider credit exhausted' : 'run failed',
     );
     yield* this.emitCompletion(state, signal, {
-      type: 'failure',
-      reason: creditExhausted ? CREDIT_EXHAUSTED_REASON : GENERIC_INTERNAL_ERROR_REASON,
-      attempts: state.candidatesProduced,
-      diagnostics: state.diagnostics,
+      terminal: {
+        type: 'failure',
+        reason: creditExhausted ? CREDIT_EXHAUSTED_REASON : GENERIC_INTERNAL_ERROR_REASON,
+        attempts: state.candidatesProduced,
+        diagnostics: state.diagnostics,
+      },
+      code: creditExhausted ? 'credit_exhausted' : 'internal_error',
     });
   }
 
@@ -652,13 +664,13 @@ export class GenerationMachine {
   private async *emitCompletion(
     state: RunState,
     signal: AbortSignal | undefined,
-    terminal: TerminalEvent,
+    { terminal, code }: Completion,
   ): AsyncGenerator<GenerationEvent, void> {
     if (signal?.aborted) return;
     state.budget.beginCompletion();
     yield { type: 'usage', usage: state.usage };
     if (signal?.aborted) return;
-    state.budget.recordTerminal(terminal.type === 'result' ? 'delivered' : 'failed');
+    state.budget.recordTerminal(terminal.type === 'result' ? 'delivered' : 'failed', code);
     if (terminal.type === 'failure') {
       state.log.info({ reason: terminal.reason }, 'terminal failure');
     } else {
@@ -761,10 +773,8 @@ export class GenerationMachine {
       priorFailureReason = failureReason;
       if (attempt === this.bounds.planAttempts) {
         yield* this.emitCompletion(state, signal, {
-          type: 'failure',
-          reason: failureReason ?? PLAN_FAILURE_FALLBACK_REASON,
-          attempts: 0,
-          diagnostics: [],
+          terminal: { type: 'failure', reason: failureReason ?? PLAN_FAILURE_FALLBACK_REASON, attempts: 0, diagnostics: [] },
+          code: 'plan_failed',
         });
         return undefined;
       }
@@ -909,9 +919,7 @@ export class GenerationMachine {
   ): AsyncGenerator<GenerationEvent, void> {
     const summary = await this.summariseDelivery(request, record, state, signal);
     yield* this.emitCompletion(state, signal, {
-      type: 'result',
-      app: record,
-      ...(summary ? { summary } : {}),
+      terminal: { type: 'result', app: record, ...(summary ? { summary } : {}) },
     });
   }
 
@@ -1047,7 +1055,7 @@ export class GenerationMachine {
       roundDiagnostics.push(buildOutcome.diagnostic);
       return budgets.repairsUsed < budgets.repairAttempts
         ? { kind: 'repair', diagnostics: errorsFirst(roundDiagnostics), warningsOnly: false }
-        : { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON };
+        : { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON, code: 'repair_exhausted' };
     }
 
     const runOutcome = await this.deps.run.run(

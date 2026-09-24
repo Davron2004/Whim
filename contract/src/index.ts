@@ -360,3 +360,53 @@ export const ServiceRefusalCode = z.enum([
   'consent_required',
 ]);
 export type ServiceRefusalCode = z.infer<typeof ServiceRefusalCode>;
+
+/** The body of `POST /v1/diagnostics` may be at most this many bytes (developer-observability D2). */
+export const DIAGNOSTICS_MAX_BODY_BYTES = 32 * 1024;
+
+/** A string an allowlisted diagnostic field may carry: at most 128 characters. */
+const DiagnosticString = z.string().max(128);
+/** An allowlisted diagnostic field's value: a bounded string or a finite number. */
+const DiagnosticValue = z.union([DiagnosticString, z.number().finite()]);
+
+/** One device error record, projected onto the closed allowlist (developer-observability D2,
+ *  device-diagnostics "Only an allowlisted projection of an error record leaves the device").
+ *  `.strict()`: a field outside the allowlist is refused, never dropped, so an old or tampered
+ *  client cannot widen what the server logs. `route` is a path only — no host, no query, no
+ *  fragment. `stack` is capped at 4 KB and never starts with the error's message line (the
+ *  device drops it; the server cannot tell, so the cap is all it enforces). */
+export const DiagnosticRecord = z
+  .object({
+    at: z.number().finite(),
+    level: z.enum(['debug', 'info', 'warn', 'error']),
+    channel: DiagnosticString,
+    message: DiagnosticString,
+    screen: DiagnosticValue.optional(),
+    errorClass: DiagnosticValue.optional(),
+    where: DiagnosticValue.optional(),
+    stage: DiagnosticValue.optional(),
+    reason: DiagnosticValue.optional(),
+    kind: DiagnosticValue.optional(),
+    status: DiagnosticValue.optional(),
+    errorCode: DiagnosticValue.optional(),
+    domain: DiagnosticValue.optional(),
+    readyState: DiagnosticValue.optional(),
+    observedRepairAttempts: DiagnosticValue.optional(),
+    requestId: DiagnosticValue.optional(),
+    route: DiagnosticString.regex(/^\/[^?#]*$/).optional(),
+    count: DiagnosticValue.optional(),
+    stack: z.string().max(4096).optional(),
+  })
+  .strict();
+export type DiagnosticRecord = z.infer<typeof DiagnosticRecord>;
+
+/** `POST /v1/diagnostics`'s body: the OS version and 1–50 records, nothing else. Platform, app
+ *  version and build travel in the request envelope headers; the device id only in
+ *  `x-whim-device`, never in the body. */
+export const DiagnosticsBatch = z
+  .object({
+    osVersion: DiagnosticString,
+    records: z.array(DiagnosticRecord).min(1).max(50),
+  })
+  .strict();
+export type DiagnosticsBatch = z.infer<typeof DiagnosticsBatch>;

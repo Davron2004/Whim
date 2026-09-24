@@ -2,13 +2,14 @@
  * createApp — assembles the Hono application.
  *
  * Routes:
- *   GET  /healthz          — anonymous health check, with the live minimum builds (`minBuild`)
+ *   GET  /healthz          — anonymous health check: the image's `commit` and the live minimum builds (`minBuild`)
  *   GET  /healthz/sse      — anonymous stream probe (three spaced SSE comment frames, then close)
  *   POST /v1/generate      — SSE generation stream
  *   POST /v1/rewrite       — model-backed rewrite + optional plan rows
  *   POST /v1/clarify       — unary pre-stream clarify exchange (0–3 questions)
  *   POST /v1/report        — devices report objectionable or broken content
  *   GET  /v1/usage         — the calling device's accumulated token totals
+ *   POST /v1/diagnostics   — device error records, logged on scope `device` and never stored
  *   POST /dev/logs         — dev-only device log sink, mounted ONLY when `options.devLogSink` is
  *                            supplied (`main.ts`'s environment flag); absent ⇒ 404
  *
@@ -33,6 +34,7 @@ import { makeRewriteRoute } from './routes/rewrite';
 import { makeClarifyRoute } from './routes/clarify';
 import { makeReportRoute } from './routes/report';
 import { makeUsageRoute } from './routes/usage';
+import { makeDiagnosticsRoute } from './routes/diagnostics';
 import { makeDevLogsRoute, type DevLogSinkOptions } from './routes/dev-logs';
 import { log } from './logger';
 import { assignRequestId, envelopeLogFields, readEnvelope, type EdgeEnv } from './request-edge';
@@ -125,6 +127,20 @@ const PROBE_FRAME_COUNT = 3;
 const PROBE_FRAME_INTERVAL_MS = 1000;
 const probeEncoder = new TextEncoder();
 
+/** Whether a `c.json` body is shaped like `ApiError` (developer-observability 6.1/6b): an `error`
+ *  code and a `hint`, both strings — the same shape check `ApiError.safeParse` would make, done
+ *  inline so the per-request logging middleware need not depend on zod. Used only to pick the
+ *  `error` field off; `hint` is never read (design D8: no message, no user-provided text on the
+ *  per-request log line). */
+function isApiErrorBody(body: unknown): body is ApiError {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { error?: unknown }).error === 'string' &&
+    typeof (body as { hint?: unknown }).hint === 'string'
+  );
+}
+
 /** `GET /healthz/sse` (specs/server-deployment "An anonymous stream probe verifies proxy
  *  flushing"): three SSE comment frames `intervalMs` apart, then close — no model call, no stored
  *  state. `onSettled` fires exactly once, however the stream ends, so the caller can release its
@@ -190,8 +206,22 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // (`text/event-stream`) responses are excluded here: `await next()` returns as soon as the route
   // hands back its `Response`, before a streamed body has drained, so `/v1/generate` (and
   // `/healthz/sse`) log themselves once the stream actually settles.
+  //
+  // On a `4xx`/`5xx` response the line also carries `error`, the closed `ApiError.error` code the
+  // route answered with — never `hint` (guidance text) or anything else in the body, since `hint`
+  // is prose and could in principle carry something route-specific. It is captured at the seam
+  // where the response is actually written: `c.json` is overridden for the lifetime of this one
+  // request, so whichever refusal or route handler calls it downstream (the device gate, the
+  // envelope/build gates, or a route's own `ApiError` response) hands the code straight to this
+  // closure — never by re-parsing the serialized response body.
   app.use('*', async (c, next) => {
     const start = performance.now();
+    let apiErrorCode: string | undefined;
+    const originalJson = c.json.bind(c) as (...args: unknown[]) => Response;
+    c.json = ((body: unknown, ...rest: unknown[]) => {
+      if (isApiErrorBody(body)) apiErrorCode = body.error;
+      return originalJson(body, ...rest);
+    }) as unknown as typeof c.json;
     await next();
     const contentType = c.res.headers.get('content-type') ?? '';
     if (!contentType.startsWith('text/event-stream')) {
@@ -202,6 +232,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
           path: c.req.path,
           status: c.res.status,
           durationMs: Math.round(performance.now() - start),
+          ...(c.res.status >= 400 && apiErrorCode !== undefined ? { error: apiErrorCode } : {}),
           ...envelopeLogFields(c.get('envelope')),
         },
         'request',
@@ -229,9 +260,10 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     return c.json(body, 500);
   });
 
-  // Health check — no auth. It also reports the live minimum builds, so the app can check them
-  // without a `/v1` call and the operator can confirm a deploy took.
-  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server', minBuild }, 200));
+  // Health check — no auth. It also reports the commit the image was built from and the live
+  // minimum builds, so smoke can confirm a deploy took and the app can check the minimums without
+  // a `/v1` call.
+  app.get('/healthz', (c) => c.json({ ok: true, service: 'whim-server', commit: config.commit, minBuild }, 200));
 
   // The anonymous stream probe — outside /v1, no device header, and counted against its OWN small
   // pool (`WHIM_LIMIT_PROBE_CONCURRENCY`), never the paid clarify/rewrite one: it is unauthenticated
@@ -327,6 +359,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   );
   app.route('/v1/report', makeReportRoute(usageStore, reportStore, { config, clock, slots }));
   app.route('/v1/usage', makeUsageRoute(usageStore));
+  app.route('/v1/diagnostics', makeDiagnosticsRoute({ config, clock }));
 
   // The dev log sink, when enabled — deliberately not under `/v1` (see `DevLogSinkPath`).
   if (options.devLogSink) {

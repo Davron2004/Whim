@@ -14,10 +14,16 @@
  * records the UTC day it was last credited, rows idle past `WHIM_USAGE_IDLE_DAYS` are purged beside
  * the ledger's retention purge (`scheduleUsagePurge`), and `UsageRecordKeeping` gives the operator
  * command every record keyed by one device id, to export or delete.
+ *
+ * Extended by developer-observability chain-2 (design D9, specs/server-observability "The ledger
+ * records a closed failure code"): a nullable `failure_reason` holding the pipeline's terminal
+ * failure code or the refusal code a request ended with, validated against those closed sets on
+ * write so the ledger still holds no text.
  */
 import { DatabaseSync } from 'node:sqlite';
-import type { Usage } from '@whim/contract';
+import { ServiceRefusalCode, type Usage } from '@whim/contract';
 import { MANIFESTS, keepLimit } from '../../contract/src/disclosure-manifest';
+import { TERMINAL_FAILURE_CODES, type TerminalFailureCode } from './generation/failure-codes';
 
 export interface UsageStore {
   /** Add usage to the running total for a device. */
@@ -149,8 +155,20 @@ export interface AdmitParams {
   globalKinds?: readonly RequestKind[];
 }
 
+/** Why a request ended in failure or refusal: the pipeline's terminal failure code or the
+ *  refusal code it was answered with. Nothing else is ever stored. */
+export type FailureReason = TerminalFailureCode | ServiceRefusalCode;
+
+const FAILURE_REASONS: ReadonlySet<string> = new Set<string>([...TERMINAL_FAILURE_CODES, ...ServiceRefusalCode.options]);
+
+/** The outcomes a request can end in without failing: they never carry a failure reason. */
+const SUCCESS_OUTCOMES: ReadonlySet<RequestOutcome> = new Set<RequestOutcome>(['delivered', 'ok']);
+
 export interface SettleParams {
   outcome: RequestOutcome;
+  /** Set only when the request ended in failure or refusal. A value outside the closed code sets,
+   *  or any value beside a successful outcome, rejects the whole settle and writes nothing. */
+  failureReason?: FailureReason;
   usage?: Usage;
   /** Injected clock reading (ms since epoch) for `ended_at`; defaults to `Date.now()`. */
   now?: number;
@@ -219,6 +237,21 @@ export interface UsageSummary {
   days: UsageSummaryDay[];
   topDevicesByCost: UsageSummaryDevice[];
   generationStats: UsageSummaryGenerationStats;
+  /** Rows in the window that ended with each failure reason, refunded or not. */
+  failureReasonCounts: Partial<Record<FailureReason, number>>;
+}
+
+/** Rejects a settle whose failure reason is not a known code, or that names one for a successful
+ *  outcome — the one check both stores run before writing, so the ledger never holds free text. */
+function assertFailureReason(params: SettleParams): void {
+  const reason: unknown = params.failureReason;
+  if (reason === undefined) return;
+  if (typeof reason !== 'string' || !FAILURE_REASONS.has(reason)) {
+    throw new Error(`failure_reason must be a terminal failure or refusal code, got ${JSON.stringify(reason)}`);
+  }
+  if (SUCCESS_OUTCOMES.has(params.outcome)) {
+    throw new Error(`failure_reason ${reason} cannot settle a request whose outcome is ${params.outcome}`);
+  }
 }
 
 /** Reads back the JSON array `recordCost` persisted. A value that is not an array of strings (a
@@ -281,6 +314,7 @@ function computeSummary(
     costUsd: number | null;
     costState: CostState;
     refunded: boolean;
+    failureReason: FailureReason | null;
   }[],
   params: SummaryParams,
 ): UsageSummary {
@@ -328,7 +362,12 @@ function computeSummary(
     unresolvedCount,
   };
 
-  return { days, topDevicesByCost, generationStats };
+  const failureReasonCounts: Partial<Record<FailureReason, number>> = {};
+  for (const r of inWindow) {
+    if (r.failureReason !== null) failureReasonCounts[r.failureReason] = (failureReasonCounts[r.failureReason] ?? 0) + 1;
+  }
+
+  return { days, topDevicesByCost, generationStats, failureReasonCounts };
 }
 
 /** Whether a `recordCost` write in state `next` may land on a row currently in `current` — the ONE
@@ -356,6 +395,7 @@ export interface LedgerRow {
   startedAt: number;
   endedAt: number | null;
   outcome: RequestOutcome | null;
+  failureReason: FailureReason | null;
   promptTokens: number;
   completionTokens: number;
   costUsd: number | null;
@@ -426,6 +466,7 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
       startedAt: now,
       endedAt: null,
       outcome: null,
+      failureReason: null,
       promptTokens: 0,
       completionTokens: 0,
       costUsd: null,
@@ -442,10 +483,12 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   async settle(requestId: string, params: SettleParams): Promise<void> {
+    assertFailureReason(params);
     const row = this.ledger.get(requestId);
     if (!row || row.endedAt !== null) return;
     row.endedAt = params.now ?? Date.now();
     row.outcome = params.outcome;
+    row.failureReason = params.failureReason ?? null;
     row.promptTokens = params.usage?.promptTokens ?? 0;
     row.completionTokens = params.usage?.completionTokens ?? 0;
   }
@@ -565,7 +608,8 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
         cost_usd REAL,
         cost_state TEXT NOT NULL CHECK(cost_state IN ('pending','resolved','unresolved')),
         generation_ids TEXT,
-        refunded INTEGER NOT NULL DEFAULT 0
+        refunded INTEGER NOT NULL DEFAULT 0,
+        failure_reason TEXT
       )
     `);
     // Additive migration for a database written before `generation_ids` existed. `ALTER TABLE ADD
@@ -580,6 +624,29 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       ON requests (utc_day, kind, device_id)
     `);
     this.migrateLastCreditedDay(options.usageIdleDays);
+    this.migrateFailureReason();
+  }
+
+  /**
+   * Additive migration for a database written before `requests.failure_reason` existed
+   * (developer-observability D9): existing rows keep a null reason and nothing is rewritten. The
+   * column check is repeated inside one immediate transaction, so the server and a `whim-admin`
+   * opening the same file at once can't both add it; an already-migrated file is only read.
+   */
+  private migrateFailureReason(): void {
+    if (this.hasFailureReasonColumn()) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.hasFailureReasonColumn()) this.db.exec('ALTER TABLE requests ADD COLUMN failure_reason TEXT');
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private hasFailureReasonColumn(): boolean {
+    return (this.db.prepare('PRAGMA table_info(requests)').all() as { name: string }[]).some((c) => c.name === 'failure_reason');
   }
 
   /**
@@ -691,13 +758,15 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   async settle(requestId: string, params: SettleParams): Promise<void> {
+    assertFailureReason(params);
     this.db.prepare(`
       UPDATE requests
-      SET ended_at = ?, outcome = ?, prompt_tokens = ?, completion_tokens = ?
+      SET ended_at = ?, outcome = ?, failure_reason = ?, prompt_tokens = ?, completion_tokens = ?
       WHERE id = ? AND ended_at IS NULL
     `).run(
       params.now ?? Date.now(),
       params.outcome,
+      params.failureReason ?? null,
       params.usage?.promptTokens ?? 0,
       params.usage?.completionTokens ?? 0,
       requestId,
@@ -742,7 +811,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
 
   async summary(params: SummaryParams): Promise<UsageSummary> {
     const rows = this.db.prepare(
-      'SELECT device_id, kind, utc_day, cost_usd, cost_state, refunded FROM requests'
+      'SELECT device_id, kind, utc_day, cost_usd, cost_state, refunded, failure_reason FROM requests'
     ).all() as {
       device_id: string;
       kind: RequestKind;
@@ -750,6 +819,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       cost_usd: number | null;
       cost_state: CostState;
       refunded: number;
+      failure_reason: FailureReason | null;
     }[];
     return computeSummary(
       rows.map((r) => ({
@@ -759,6 +829,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
         costUsd: r.cost_usd,
         costState: r.cost_state,
         refunded: r.refunded !== 0,
+        failureReason: r.failure_reason,
       })),
       params,
     );
@@ -776,7 +847,7 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
 
   async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
     const ledger = this.db.prepare(`
-      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens,
+      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, failure_reason, prompt_tokens, completion_tokens,
              cost_usd, cost_state, generation_ids, refunded
       FROM requests WHERE device_id = ? ORDER BY started_at, id
     `).all(deviceId) as unknown as RawLedgerRow[];
@@ -824,6 +895,7 @@ interface RawLedgerRow {
   started_at: number;
   ended_at: number | null;
   outcome: RequestOutcome | null;
+  failure_reason: FailureReason | null;
   prompt_tokens: number;
   completion_tokens: number;
   cost_usd: number | null;
@@ -841,6 +913,7 @@ function fromRawLedgerRow(row: RawLedgerRow): LedgerRow {
     startedAt: row.started_at,
     endedAt: row.ended_at,
     outcome: row.outcome,
+    failureReason: row.failure_reason,
     promptTokens: row.prompt_tokens,
     completionTokens: row.completion_tokens,
     costUsd: row.cost_usd,

@@ -22,7 +22,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
-import type { UsageStore, RequestKind, RequestOutcome } from '../usage-store';
+import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
@@ -299,7 +299,7 @@ async function admitUnaryWithSlot(
       await usageStore.credit(deviceId, result.usage);
     }
     if (result.verdict !== 'allow') {
-      await usageStore.settle(requestId, { outcome: 'refused', usage: result.usage, now: clock() });
+      await usageStore.settle(requestId, { outcome: 'refused', failureReason: 'content_policy', usage: result.usage, now: clock() });
       handle.release();
       const ids = result.generationId ? [result.generationId] : [];
       resolveTracker.track(
@@ -330,7 +330,7 @@ async function settleUnavailablePolicyAdmission(
 ): Promise<UnaryAdmissionOutcome> {
   const { deviceId, usageStore, clock, resolveTransport, resolveBounds, resolveTracker } = deps;
   if (error.usage) await usageStore.credit(deviceId, error.usage);
-  await usageStore.settle(requestId, { outcome: 'unavailable', usage: error.usage, now: clock() });
+  await usageStore.settle(requestId, { outcome: 'unavailable', failureReason: 'policy_unavailable', usage: error.usage, now: clock() });
   await usageStore.refund(requestId);
   handle.release();
   const ids = error.generationId ? [error.generationId] : [];
@@ -431,9 +431,10 @@ export function makeClarifyRoute(
         usage: Usage | undefined,
         generationIds: string[],
         creditOwned: boolean,
+        failureReason?: FailureReason,
       ): Promise<void> => {
         settlementUsage = usage;
-        await usageStore.settle(requestId, { outcome, usage, now: clock() });
+        await usageStore.settle(requestId, { outcome, failureReason, usage, now: clock() });
         resolveUnaryUsage(requestId, deviceId, policyGenerationId, generationIds, creditOwned, resolveTracker, {
           transport: resolveTransport,
           usageStore,
@@ -460,6 +461,7 @@ type FinishFn = (
   usage: Usage | undefined,
   generationIds: string[],
   creditOwned: boolean,
+  failureReason?: FailureReason,
 ) => Promise<void>;
 
 /**
@@ -521,7 +523,7 @@ async function runClarifyWork(
     const ids = generationId ? [generationId] : [];
     if (isCreditExhaustedError(err)) {
       invalidateCreditCache();
-      await finish('error', undefined, ids, false);
+      await finish('error', undefined, ids, false, 'budget_exhausted');
       const r = budgetExhaustedRefusal();
       return Response.json(r.body, { status: r.status, headers: r.headers });
     }
