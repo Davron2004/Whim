@@ -203,7 +203,7 @@ def draw_lockup(canvas, x, top, tile):
                       fill(PAPER, 0.82))
 
 
-def draw_qr(canvas, url, label, right, center_y, size):
+def draw_qr(canvas, url, label, right, center_y, size, footer=None):
     qr = segno.make(url, error="m", micro=False)
     matrix = [list(row) for row in qr.matrix]
     n = len(matrix)
@@ -226,10 +226,15 @@ def draw_qr(canvas, url, label, right, center_y, size):
                                                    top + (r + quiet) * module, module, module), ink)
     lw = lab.measureText(label)
     canvas.drawString(label, left + (code - lw) / 2, top - gap, lab, fill(PAPER))
+    if footer:
+        foot = font("IBMPlexMono-Medium.ttf", 40)
+        fw = foot.measureText(footer)
+        canvas.drawString(footer, left + (code - fw) / 2,
+                          top + code + 38 + foot.getMetrics().fCapHeight, foot, fill(PAPER, 0.9))
     return qr.version, n, module, (left, top, code)
 
 
-def static_frame(url, label):
+def static_frame(url, label, footer=None):
     rng = np.random.default_rng(7)
     surface = skia.Surface.MakeRaster(skia.ImageInfo.Make(
         W, H, skia.ColorType.kRGBA_8888_ColorType, skia.AlphaType.kPremul_AlphaType))
@@ -238,7 +243,8 @@ def static_frame(url, label):
     background(canvas, head)
     draw_dandelion(canvas, head, radius, rng)
     draw_lockup(canvas, 150, 176, 150)
-    qr_info = draw_qr(canvas, url, label, right=W - 130, center_y=H / 2 + 6, size=660)
+    qr_info = draw_qr(canvas, url, label, right=W - 130,
+                      center_y=H / 2 + (-36 if footer else 6), size=660, footer=footer)
     arr = surface.makeImageSnapshot().toarray().copy()
     # Fixed grain, identical every frame: breaks gradient banding, costs nothing to encode.
     noise = np.random.default_rng(1).normal(0, 1.1, (H, W, 1))
@@ -379,12 +385,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--url", required=True, help="where the QR code points")
     ap.add_argument("--label", default="Get early access", help="line above the QR code")
+    ap.add_argument("--footer", default="github.com/Davron2004/Whim",
+                    help="line under the QR code; empty string for none")
     ap.add_argument("--minutes", type=float, default=5, help="video length (default 5)")
     ap.add_argument("--still", action="store_true", help="write PNG stills only")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
-    base, (version, n, module, _) = static_frame(args.url, args.label)
+    base, (version, n, module, _) = static_frame(args.url, args.label, args.footer or None)
     print(f"QR: version {version}, {n}x{n} modules at {module}px each -> {args.url}")
     for t in (0, 12, 19):
         save_png(base, t, OUT / f"still-{t:02d}s.png")
