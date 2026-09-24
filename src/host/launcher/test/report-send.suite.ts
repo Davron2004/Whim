@@ -2,8 +2,10 @@
  * report-send Node suite (store-launch-compliance review fix M6c; spec `content-reporting`, design
  * D13/D14): the rendered `ReportSheet` against a scripted server. A reason is required before Send
  * is enabled, a send in flight cannot be sent again, a refusal or failure returns to the same
- * resendable draft, a success shows thanks, and each outcome is logged with its status. Plus
- * `sendFailureOutcome`, which names the logged outcome of a failure.
+ * resendable draft, a success shows thanks, and each outcome is logged with its status. The preview
+ * shows exactly the body Send posts, and the sheet is the report's notice: the phone-ID line, the
+ * privacy link, and a thank-you that promises nothing. Plus `sendFailureOutcome`, which names the
+ * logged outcome of a failure.
  */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
@@ -19,6 +21,8 @@ import { GenerationClientError, reportClientOptions } from '../transport-shared'
 import { log } from '../../logging';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { testAppInfo } from './client-fixtures';
+import { Linking } from './native-host';
+import { RELEASE } from '../release-config';
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 const ACCESS = { activeDescription: async () => 'A tea timer', activeSource: async () => 'export default {}' } as unknown as StoreAccess;
@@ -73,6 +77,45 @@ export async function runReportSendTests(h: Harness): Promise<void> {
       h.ok(textOf(tree.root).includes(COPY.reportThanksTitle), 'a sent report shows thanks');
       await press(button(tree, COPY.reportThanksDone));
       h.eq(closed, 1, 'Done closes the sheet');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('report sheet: the preview shows exactly the body Send posts, and the sheet is the report’s notice', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return json({ reportId: 'r-1' }, 202);
+    }) as typeof fetch;
+    const tree = await renderScreen(React.createElement(ReportSheet, {
+      app: APP, access: ACCESS, options: { ...reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo), fetchImpl }, onClose: () => {}, onUpdateRequired: () => {},
+    }));
+    try {
+      await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
+      await press(button(tree, COPY.reportReasonWrongResult));
+      await TestRenderer.act(async () => tree.root.findByType('TextInput').props.onChangeText('  The total is off by one  '));
+      // Expand the code row, so the preview shows the code itself rather than its size.
+      const showMore = tree.root.findAll((node) => node.type === 'TouchableOpacity' && textOf(node) === COPY.reportShowMore);
+      for (const toggle of showMore) await press(toggle);
+      const preview = textOf(tree.root);
+      h.ok(preview.includes(COPY.reportDeviceIdLine), 'the sheet says this phone’s Whim ID goes with the report, to AnyCognition');
+      const opened = Linking.opened.length;
+      await press(button(tree, COPY.privacyPolicyLabel));
+      h.eq(Linking.opened.slice(opened), [RELEASE.privacyPolicyUrl], 'and carries a privacy policy link');
+      h.ok(!/anonymous/i.test(preview), 'no line calls the ID anonymous');
+
+      await press(button(tree, COPY.reportSend));
+      const body = bodies[0] ?? {};
+      h.eq(Object.keys(body).sort((a, b) => a.localeCompare(b)), ['appName', 'note', 'prompt', 'reason', 'source'], 'the body carries the five previewed fields');
+      h.eq(body.reason, 'wrong_result', 'the reason sent is the pill chosen');
+      for (const field of ['note', 'appName', 'prompt', 'source'] as const) {
+        h.ok(typeof body[field] === 'string' && preview.includes(body[field] as string), `the ${field} sent is the ${field} the preview showed`);
+      }
+      h.eq(body.note, 'The total is off by one', 'the note the preview showed was already the trimmed note');
+      const thanks = textOf(tree.root);
+      h.ok(thanks.includes(COPY.reportThanksTitle), 'a sent report shows thanks');
+      h.ok(!/every report/i.test(thanks), 'with no promise that every report is read');
     } finally {
       await unmountScreen(tree);
     }

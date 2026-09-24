@@ -14,11 +14,12 @@ import { AI_CONSENT_VERSION } from './release-config';
 const CONSENT_KEY = 'whim.ai-consent:v1';
 
 /** `granted` carries the grant's own version: the consent version a request made under it is sent
- *  under (`x-whim-consent`, request-envelope). */
+ *  under (`x-whim-consent`, request-envelope). `outdated` carries the stored grant's version too:
+ *  the consent screen shows the what's-new line written for it. */
 export type ConsentStatus =
   | { kind: 'granted'; version: number; grantedAt: string }
   | { kind: 'absent' }
-  | { kind: 'outdated' };
+  | { kind: 'outdated'; version: number };
 
 interface StoredGrant {
   version: number;
@@ -54,8 +55,14 @@ function readStoredGrant(kv: KVBackend): StoredGrant | undefined {
 export function consentStatus(kv: KVBackend): ConsentStatus {
   const stored = readStoredGrant(kv);
   if (stored == null) return { kind: 'absent' };
-  if (stored.version !== AI_CONSENT_VERSION) return { kind: 'outdated' };
+  if (stored.version !== AI_CONSENT_VERSION) return { kind: 'outdated', version: stored.version };
   return { kind: 'granted', version: stored.version, grantedAt: stored.grantedAt };
+}
+
+/** The stored grant's version when that grant is outdated, otherwise `undefined` — the consent
+ *  screen shows the outdated line and this version's what's-new line. */
+export function outdatedGrantVersion(status: ConsentStatus): number | undefined {
+  return status.kind === 'outdated' ? status.version : undefined;
 }
 
 /**

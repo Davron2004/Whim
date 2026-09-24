@@ -18,6 +18,7 @@ import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
+import { activeLegalLanguage, privacyPolicyUrl } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
@@ -191,7 +192,7 @@ export default function SettingsScreen({
           {COPY.settingsAboutSectionTitle}
         </Text>
         <TouchableOpacity
-          onPress={() => Linking.openURL(RELEASE.privacyPolicyUrl)}
+          onPress={() => Linking.openURL(privacyPolicyUrl(activeLegalLanguage()))}
           accessibilityRole="button"
           style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
         >

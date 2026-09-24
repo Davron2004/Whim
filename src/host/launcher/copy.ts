@@ -21,6 +21,7 @@
  * NOT the launcher surface and is out of this table's scope.)
  */
 import type { WideningId } from '@whim/contract';
+import type { LegalLanguage } from './legal-language';
 
 export const COPY = {
   // ── home (2a) ───────────────────────────────────────────────────────────────
@@ -198,12 +199,12 @@ export const COPY = {
   reportIncludePrompt: 'Include the prompt for this version',
   reportCodeDisclosure: 'Your report includes this app’s code so we can investigate what went wrong.',
   reportNoCodeDisclosure: 'This version has no saved code to include.',
-  reportAnonIdLine: 'An anonymous ID for this phone travels with this report, which goes to AnyCognition.',
+  reportDeviceIdLine: 'This phone’s Whim ID goes with your report. The report goes to AnyCognition, the company that makes Whim.',
   reportSend: 'Send report',
   reportSendBusy: 'One moment',
   reportShowMore: 'Show more',
   reportShowLess: 'Show less',
-  reportThanksTitle: 'Thanks. The Whim team reads every report.',
+  reportThanksTitle: 'Thanks. We’ll look into it.',
   reportThanksDone: 'Done',
   reportSendFailedGeneric: 'Couldn’t send the report. Check your connection and try again.',
   reportTooLarge: 'This report is too large to send. You can try leaving out the prompt.',
@@ -253,21 +254,38 @@ export const COPY = {
   failureRowLastVersionWorks: 'The version you already had still works and is still installed',
   failureRowSayItDifferently: 'Describing it differently usually gets past this',
 
-  // ── AI-data consent (ai-data-consent; design D4/D5) ─────────────────────────
+  // ── AI-data consent (ai-data-consent, consent version 2; legal-surface-v2) ───
   // The consent screen's disclosure, shared verbatim between ask and review mode (design D5) —
-  // only the bottom actions below differ by mode.
-  consentTitle: 'Before Whim makes apps for you',
+  // only the bottom actions below differ by mode. Screen order is `ConsentScreen.tsx`'s; which key
+  // carries each manifest category and recipient role is `CONSENT_SCREEN_COVERAGE` below.
+  consentTitle: 'Before Whim builds apps for you',
   consentLead:
-    'To make or change an app, Whim sends your request to AnyCognition’s server. The server uses AI models from other companies, reached through OpenRouter, to write the app.',
-  consentWhatSentTitle: 'What gets sent',
-  consentWhatSentRequest: 'What you ask for: your description, your answers to Whim’s questions, and the plan you approve',
-  consentWhatSentEdit: 'When you change an app: its name, its code, its current description, and the layout of its saved data',
-  consentWhatSentDevice: 'An anonymous ID for this phone, used for daily limits',
-  consentWhatNeverSentTitle: 'What never gets sent',
-  consentWhatNeverSent: 'Anything you save inside your apps',
-  consentFootnote: 'You can turn this off in Settings. Apps you already have keep working either way.',
-  // Shown above the disclosure only when the stored grant is outdated (spec "A policy change asks again").
-  consentOutdatedLine: 'What Whim sends has changed since you last agreed.',
+    'To build or change an app, Whim sends what you ask for to our server. AI companies that work for us write the code.',
+  consentSentTitle: 'What gets sent',
+  consentSentRequest: 'What you ask for: your description, your answers and the plan you approve',
+  consentSentEdit: 'When you change an app: its name, code and description, and the layout of its data, never the data itself',
+  consentSentDevice: 'An ID Whim makes for this phone, used for daily limits and usage totals.',
+  consentSentErrors: 'Error details when something goes wrong. They’re technical only, not what you typed or saved.',
+  consentWhyTitle: 'Why',
+  consentWhy: 'To build your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
+  consentWhoTitle: 'Who gets it',
+  // "Who gets it" is one paragraph on screen, kept as one key per screen-named recipient role so
+  // the coverage check can tell a dropped role from a reworded one.
+  consentWho:
+    'AnyCognition, the company that makes Whim, and companies that do work for us, like cloud hosting and AI providers. Some of them are outside Canada. They can’t train AI on it or use it for their own products, though some may keep it for a short time for security and legal reasons.',
+  consentWhoPlatform: 'Apple or Google may also check that requests come from the real Whim app.',
+  consentWhoAuthorities: 'We give information to authorities when the law requires it.',
+  consentStaysTitle: 'What you save in your apps',
+  consentStays:
+    'Nobody at Whim can read it. It stays on your phone, and anything Whim ever syncs or backs up for you is encrypted on your phone with a key Whim never has.',
+  consentNeverTitle: 'What we never do',
+  consentNever: 'Show ads, sell your data or share it for advertising, or track you across other apps and websites.',
+  consentAskFirst:
+    'If we ever want to collect a new kind of information, use it for a new purpose, keep it longer, or give it to a new kind of company, we’ll ask you first.',
+  consentFootnote: 'You can turn AI features and error details off in Settings. Apps you already have keep working either way.',
+  // Shown above the title only when the stored grant is outdated, followed by that grant version's
+  // `CONSENT_WHATS_NEW` line (spec "Consent grants are versioned").
+  consentOutdatedLine: 'This has changed since you last agreed.',
   consentAgree: 'Agree and continue',
   consentDecline: 'Not now',
   // ── refusals about this phone itself (request-envelope; design D5/D7) ──────
@@ -289,8 +307,8 @@ export const COPY = {
   consentReviewKeepOn: 'Keep AI features on',
   consentReviewTurnOff: 'Turn off AI features',
   consentReviewTurnOn: 'Turn on AI features',
-  // Shared between the consent screen's own link and the Settings About row (identical text, two
-  // surfaces) — one key, so the two can never read differently.
+  // Shared by every privacy policy link (the consent screen, the report sheet, the Settings About
+  // row) — one key, so they can never read differently.
   privacyPolicyLabel: 'Privacy policy',
   supportLabel: 'Support',
 
@@ -369,6 +387,73 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
     },
   },
 };
+
+/** The keys the consent screen reads from the active legal language's table (spec ai-data-consent
+ *  "The disclosure names what is sent…"; `legal-language.ts#activeLegalLanguage`). */
+type LegalCopyKey =
+  | 'consentTitle'
+  | 'consentLead'
+  | 'consentSentTitle'
+  | 'consentSentRequest'
+  | 'consentSentEdit'
+  | 'consentSentDevice'
+  | 'consentSentErrors'
+  | 'consentWhyTitle'
+  | 'consentWhy'
+  | 'consentWhoTitle'
+  | 'consentWho'
+  | 'consentWhoPlatform'
+  | 'consentWhoAuthorities'
+  | 'consentStaysTitle'
+  | 'consentStays'
+  | 'consentNeverTitle'
+  | 'consentNever'
+  | 'consentAskFirst'
+  | 'consentFootnote'
+  | 'consentOutdatedLine'
+  | 'consentAgree'
+  | 'consentDecline'
+  | 'consentReviewKeepOn'
+  | 'consentReviewTurnOff'
+  | 'consentReviewTurnOn'
+  | 'permissionRequiredLine'
+  | 'privacyPolicyLabel';
+
+/** One legal language's table: every legal key, as a string. English is `COPY` itself; another
+ *  language supplies a table of just these keys. */
+export type LegalCopyTable = { readonly [K in LegalCopyKey]: string };
+
+/** Every legal language's copy table. The screen reads `LEGAL_COPY[activeLegalLanguage()]`; the
+ *  consent coverage check (`checks/test/repo/consent-coverage.suite.ts`) reads every table here. */
+export const LEGAL_COPY: Readonly<Record<LegalLanguage, LegalCopyTable>> = { en: COPY };
+
+/** Which keys put each disclosure-manifest category and recipient role on the consent screen
+ *  (legal-surface-v2 design D4). Plain manifest ids: the app never imports the manifest. The
+ *  coverage check requires an entry for every on-screen category and screen-named role of the
+ *  current manifest, each key non-empty in every `LEGAL_COPY` table; the consent UI suite requires
+ *  the screen to render every key named here. */
+export const CONSENT_SCREEN_COVERAGE: {
+  readonly categories: Readonly<Record<string, readonly LegalCopyKey[]>>;
+  readonly roles: Readonly<Record<string, readonly LegalCopyKey[]>>;
+} = {
+  categories: {
+    'request-material': ['consentSentRequest', 'consentSentEdit'],
+    'phone-id': ['consentSentDevice'],
+    'error-details': ['consentSentErrors'],
+  },
+  roles: {
+    anycognition: ['consentWho'],
+    'service-providers': ['consentWho'],
+    platform: ['consentWhoPlatform'],
+    authorities: ['consentWhoAuthorities'],
+  },
+};
+
+/** The what's-new line for a grant given under `grantVersion`, in `language`, or `undefined` when
+ *  that version has none (a grant from a newer build than this one). */
+export function consentWhatsNewText(language: LegalLanguage, grantVersion: number): string | undefined {
+  return CONSENT_WHATS_NEW[language]?.[grantVersion]?.text;
+}
 
 /** The AI features row's status line (design D7): the date it was granted when on, or `Off` —
  *  `outdated` reads the same as `absent` here, since neither currently authorizes a request. */
