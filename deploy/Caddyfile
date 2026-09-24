@@ -31,10 +31,12 @@
 
 # The pages host: the published static site and nothing else. Routes rewrite internally to flat
 # files, so no answer is a redirect (Apple and Android refuse an association file behind one).
+# /assets/* serves the pages' self-hosted fonts as published; font-src 'self' lets only those load.
+# The /beta form posts to the API site's /beta/signup, which answers with a redirect back here.
 {$WHIM_WEB_HOST} {
 	root * /srv/site/current
 	header {
-		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'"
+		Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'"
 		X-Content-Type-Options nosniff
 	}
 
@@ -82,6 +84,29 @@
 	}
 	handle /support {
 		rewrite * /support.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta {
+		rewrite * /beta.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta/thanks {
+		rewrite * /beta-thanks.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /beta/retry {
+		rewrite * /beta-retry.html
+		file_server {
+			disable_canonical_uris
+		}
+	}
+	handle /assets/* {
 		file_server {
 			disable_canonical_uris
 		}

@@ -103,7 +103,7 @@ collect_profile_server_value() {
 # the operator values after its own (a later line wins). The VM's profile isn't known until its
 # machine type is read, and a resize can move it to any other, so every profile is checked.
 preflight_server_config() {
-  local -a values=("WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
+  local -a values=("WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL" "WHIM_WEB_ORIGIN=https://$WHIM_WEB_HOST")
   local key file
   for key in $server_optional_keys; do
     [[ -z "${!key}" ]] || values+=("$key=${!key}")
@@ -167,8 +167,10 @@ preflight_profile() {
 }
 
 build_site() {
+  # The /beta form posts to the API host's signup route (beta-waitlist D1).
   local -a site_env=(env -u WHIM_APP_STORE_URL -u WHIM_PLAY_STORE_URL
-    "WHIM_SUPPORT_EMAIL=$WHIM_SUPPORT_EMAIL" "WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
+    "WHIM_SUPPORT_EMAIL=$WHIM_SUPPORT_EMAIL" "WHIM_BETA_SIGNUP_URL=https://$WHIM_API_HOST/beta/signup"
+    "WHIM_ENGINEER_MODEL=$WHIM_ENGINEER_MODEL" "WHIM_REWRITE_MODEL=$WHIM_REWRITE_MODEL")
   [ -z "$WHIM_APP_STORE_URL" ] || site_env+=("WHIM_APP_STORE_URL=$WHIM_APP_STORE_URL")
   [ -z "$WHIM_PLAY_STORE_URL" ] || site_env+=("WHIM_PLAY_STORE_URL=$WHIM_PLAY_STORE_URL")
   echo "==> site build"
@@ -206,6 +208,8 @@ stage_server_files() {
   : >"$upload/config.env"
   whim_read_env_lines "$profile_file" append_server_key
   printf 'WHIM_ENGINEER_MODEL=%s\nWHIM_REWRITE_MODEL=%s\n' "$WHIM_ENGINEER_MODEL" "$WHIM_REWRITE_MODEL" >>"$upload/config.env"
+  # Where the beta signup route redirects: the pages host (beta-waitlist D1).
+  printf 'WHIM_WEB_ORIGIN=https://%s\n' "$WHIM_WEB_HOST" >>"$upload/config.env"
   local key
   for key in $server_optional_keys; do
     [[ -z "${!key}" ]] || append_server_key "$key" "${!key}"
