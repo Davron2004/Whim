@@ -43,7 +43,7 @@ chain-7, and both are also blocked outside this change until GitHub #63's rewrit
 
 - tasks: 4.1–4.5
 - rationale: all inside the device logging seam and its callers: the projection, the transport, the global handler and fatal slot, the request-id attachment, and the static check that locks the two exits.
-- reads: specs/device-diagnostics/spec.md §"Only an allowlisted projection…", §"Error-level records are uploaded…", §"Uploads require a current AI-data consent grant", §"Uncaught host errors and fatal JS errors are captured"; specs/host-observability/spec.md (the modified sink requirement); design.md D2–D5, D7; handoff: handoff/server-diagnostics.md, `openspec/changes/archive/2026-09-24-request-envelope/handoff/envelope.md`, `openspec/changes/legal-surface-v2/handoff/privacy-settings.md` (the error-details preference the transport reads)
+- reads: specs/device-diagnostics/spec.md §"Only an allowlisted projection…", §"Error-level records are uploaded…", §"Uploads require a current AI-data consent grant", §"Uncaught host errors and fatal JS errors are captured"; specs/host-observability/spec.md (the modified sink requirement); design.md D2–D5, D7; handoff: handoff/server-diagnostics.md, `openspec/changes/request-envelope/handoff/envelope.md`, `openspec/changes/legal-surface-v2/handoff/privacy-settings.md` (the error-details preference the transport reads)
 - writes-contract: none
 - after: chain-2; GitHub #63 merged (`legal-surface-v2` applied). The transport reads the error-details preference that change adds, and merging the upload before the disclosure check (chain-5) exists would leave `main` able to ship undisclosed diagnostics.
 
