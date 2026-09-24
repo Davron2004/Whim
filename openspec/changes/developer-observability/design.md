@@ -43,7 +43,7 @@ Add Sentry as that second transport when any of these holds: triage takes more t
 ### D2. An allowlist decides what leaves, not redaction
 Redaction by field name can't catch free text. A mini-app's error message, a host `detail`, or the first line of a Hermes stack can all embed user data (research.md, Risks). So a new pure function, `toDiagnostic(record)`, projects a redacted `DevLogRecord` onto a closed shape and drops everything else.
 
-- **Envelope** (once per batch): `platform`, `osVersion`, `appVersion`, `buildNumber`. No device id.
+- **Envelope:** the batch body carries `osVersion` only. Platform, app version and build arrive in the request envelope headers from `request-envelope`. No device id.
 - **Record:** `at`, `level`, `channel`, `message`. `message` is the call site's constant string, which the seam already requires.
 - **Allowlisted fields**, each a bounded string or number:
   - `screen`, `errorClass`, `where`, `stage`, `reason`, `kind`, `status`, `errorCode`, `domain`, `readyState`, `observedRepairAttempts`, `requestId`, `count`
@@ -87,15 +87,8 @@ This doesn't break the "ring buffer is not persisted" requirement. The buffer is
   - React 19's `createRoot` reports uncaught render errors through `reportError`, which fires `error` on `window`. This is **to be verified** with a scratch script against the built runtime (task 3.1).
 - **Containment.** The invariants suites must stay green (`npm run invariants`, `bridge:invariants`).
 
-### D7. One request id per `/v1` request, minted at the edge
-- **Minting.** A middleware in `createApp` mints a UUID before device-identity and admission. It sets `x-whim-request-id` on every `/v1` response, including refusals and SSE opens, and binds a pino child logger carrying `requestId` into the Hono context.
-- **Ledger.** `usageStore.admit` takes the id instead of minting one, so ledger `requests.id` equals the request id.
-- **Pipeline.** `pipeline.run` receives it through `RunTrace`/the logger, so `terminal failure` carries it.
-- **Device.** The client reads the header (XHR `getResponseHeader`) and attaches `requestId` to any error record about that request.
-
-Alternative: an id field in `GenerationEvent`. Rejected: it changes the stream contract, and refusals aren't events.
-
-The header name lives in `@whim/contract` as a constant. The device copies the literal, because values from the contract never enter Metro, and a static check keeps the two equal.
+### D7. The request id comes from `request-envelope`
+The per-request id moved to the `request-envelope` change (its D6): minted at the `/v1` edge, returned in `x-whim-request-id`, carried on every log line and the ledger row, and exposed by the phone's transport on results and errors. This change consumes it: device error records attach it (task 4.4), and the Logs Explorer queries use it (task 1.4).
 
 ### D8. Cloud Logging through the Ops Agent, not the gcplogs driver
 The Ops Agent's logging receiver tails `/var/lib/docker/containers/*/*-json.log`, parses the Docker envelope, then parses pino's JSON in `log` into `jsonPayload`, mapping `severity`.

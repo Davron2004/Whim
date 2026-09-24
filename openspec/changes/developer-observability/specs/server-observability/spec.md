@@ -23,25 +23,6 @@ Cloud Logging.
 - **WHEN** the boot self-test and smoke checks run after log shipping is installed
 - **THEN** the container still cannot reach the metadata server and the smoke checks pass
 
-### Requirement: One request id follows a /v1 request everywhere
-The server SHALL mint one UUID per `/v1` request before device identity and admission run. It
-SHALL return that id in an `x-whim-request-id` response header on every `/v1` response, including
-refusals and streamed responses, SHALL attach it as `requestId` to every log line emitted while
-serving that request, including the generation pipeline's terminal line, and SHALL use it as the
-usage ledger row's id when the request is admitted. The header name SHALL be a constant exported
-by `@whim/contract`. The device SHALL read the header and SHALL attach the id to any error record
-about that request.
-
-#### Scenario: A refusal carries the id
-- **WHEN** a `/v1/generate` request is refused with `429`
-- **THEN** the response has an `x-whim-request-id` header and the refusal's log line carries the same
-  `requestId`
-
-#### Scenario: A failed generation joins up
-- **WHEN** a generation ends in a terminal failure
-- **THEN** the terminal failure log line, the ledger row id, the response header, and the device's
-  error record for it all carry the same id
-
 ### Requirement: The ledger records a closed failure code
 The usage ledger SHALL gain a nullable `failure_reason` column, added without rewriting existing
 rows. For a request that ends in failure or refusal it SHALL hold the pipeline's terminal reason
