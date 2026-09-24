@@ -28,6 +28,8 @@ import { createServerLogger } from '../src/logger';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig, ServerConfigError } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
+import { InMemoryWaitlistStore } from '../src/waitlist/store';
+import { TRAP_FIELD } from '../src/routes/beta-signup';
 import { invalidateCreditCache, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult } from '../src/policy';
 import { defaultModelRoster } from '../src/generation/model';
@@ -1080,6 +1082,9 @@ const PAGES_UP: readonly StubRule[] = [
   [`*https://${WEB_HOST}/fr/terms`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/support`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/a/x`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/beta`, 0, `200|${HTML}||${PAGES_CSP}`, '<html>'],
+  [`*https://${WEB_HOST}/beta/thanks`, 0, `200|${HTML}|`, '<html>'],
+  [`*https://${WEB_HOST}/beta/retry`, 0, `200|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/nope`, 0, `404|${HTML}|`, '<html>'],
   [`*https://${WEB_HOST}/.well-known/*`, 0, '404|application/json|', ''],
 ];
@@ -1092,6 +1097,7 @@ const API_UP: readonly StubRule[] = [
   [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
   [`*https://${API_HOST}/healthz/sse`, 0, ': whim-healthz-probe\\n\\n'],
+  [`*https://${API_HOST}/beta/signup`, 0, `303|text/plain|https://${WEB_HOST}/beta/thanks`, ''],
 ];
 const VM_ANSWERS: readonly StubRule[] = [
   ['*compute ssh*169.254.169.254*', 0, 'blocked'],
@@ -1184,6 +1190,18 @@ function deployPreflightTests(): void {
     );
     eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
   });
+
+  // The beta signup limits are operator values (beta-waitlist D3's lever for a shared venue network):
+  // a value boot refuses is refused here first, before it could take the API down mid-deploy.
+  for (const variable of ['WHIM_BETA_LIMIT_PER_CLIENT_HOUR', 'WHIM_BETA_LIMIT_PER_DAY']) {
+    check(`setup: server boot refuses ${variable}=0`, configRefuses({ [variable]: '0' }, variable));
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, { [variable]: '0' });
+      const run = runScript(sandbox, 'deploy.sh', []);
+      check(`deploy.sh refuses ${variable}=0, naming it, as server boot does`, run.status === 1 && run.stderr.includes(variable) && run.stderr.includes('would refuse these values at boot'), run.stderr);
+      eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+    });
+  }
 
   // A profile's server lines reach config.env too, so the same boot parse covers them: every
   // profile, since a resize can move the VM to any of them (legal-surface-v2 review L4).
@@ -1369,7 +1387,7 @@ function headOf(sandbox: Sandbox): string {
 function deployFullTests(health: HealthBodies): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180' });
+    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180', WHIM_BETA_LIMIT_PER_CLIENT_HOUR: '200', WHIM_BETA_LIMIT_PER_DAY: '5000' });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
@@ -1377,6 +1395,9 @@ function deployFullTests(health: HealthBodies): void {
     eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /healthz', run.status, 0);
     check('  ... carrying WHIM_MIN_BUILD_ANDROID to config.env and leaving the unset iOS minimum out', config.includes('WHIM_MIN_BUILD_ANDROID=382000\n') && !config.includes('WHIM_MIN_BUILD_IOS'), config);
     check('  ... and carrying the operator\'s WHIM_USAGE_IDLE_DAYS, which passed the keep-period preflight', config.includes('WHIM_USAGE_IDLE_DAYS=180\n'), config);
+    check('  ... and the operator\'s beta signup limits', config.includes('WHIM_BETA_LIMIT_PER_CLIENT_HOUR=200\n') && config.includes('WHIM_BETA_LIMIT_PER_DAY=5000\n'), config);
+    const served = loadServerConfig(Object.fromEntries(envEntries(config)));
+    eq('  ... which the server reads as its limits', [served.betaLimitPerClientHour, served.betaLimitPerDay], [200, 5000]);
   });
 
   withSandbox((sandbox) => {
@@ -1405,6 +1426,7 @@ function deployFullTests(health: HealthBodies): void {
       'WHIM_REPAIR_REASONING=off',
     ]);
     check('  ... omitting an unset role override from config.env', !stubFile(sandbox, 'upload/config.env').includes('WHIM_SUMMARY_MODEL='));
+    check('  ... and unset beta signup limits, so the server keeps its defaults', !stubFile(sandbox, 'upload/config.env').includes('WHIM_BETA_LIMIT_'));
     const eventProfile = Object.fromEntries(envEntries(fs.readFileSync(path.join(ROOT, 'deploy', 'profiles', 'event.env'), 'utf8')));
     eq('  ... and the image, hosts and event container sizes to the compose .env', stubFile(sandbox, 'upload/compose.env').split('\n').filter((line) => line !== ''), [
       `WHIM_IMAGE=northamerica-northeast1-docker.pkg.dev/anycognition-whim/whim/server:${head}`,
@@ -1575,6 +1597,67 @@ function smokeTests(health: HealthBodies): void {
       droppedRun.stderr,
     );
   }
+}
+
+/** Runs smoke.sh against DNS_READY, the VM answers and `curlRules`; returns the run and its curl calls. */
+function smokeWith(curlRules: readonly StubRule[], args: readonly string[] = []): { readonly run: ScriptRun; readonly curls: string[] } {
+  let result: { run: ScriptRun; curls: string[] } = { run: { status: null, stdout: '', stderr: '' }, curls: [] };
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeRules(sandbox, 'gcloud', VM_ANSWERS);
+    writeRules(sandbox, 'dig', DNS_READY);
+    writeRules(sandbox, 'curl', curlRules);
+    result = { run: runScript(sandbox, 'smoke.sh', args), curls: toolLog(sandbox, 'curl') };
+  });
+  return result;
+}
+
+/** POSTs `form` to a real app's /beta/signup; the answer and how many rows the store then holds. */
+async function realSignupAnswer(form: string): Promise<readonly [number, string | null, number] | 'timed out'> {
+  const store = new InMemoryWaitlistStore();
+  const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), waitlistStore: store, config: loadServerConfig({ WHIM_WEB_ORIGIN: `https://${WEB_HOST}` }) });
+  const capture = captureLogs();
+  let res: Response | typeof TIMED_OUT;
+  try {
+    res = await within(Promise.resolve(app.request('/beta/signup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.1' },
+      body: form,
+    })));
+  } finally {
+    capture.stop();
+  }
+  return res === TIMED_OUT ? 'timed out' : [res.status, res.headers.get('location'), store.export().length];
+}
+
+async function smokeBetaTests(): Promise<void> {
+  section('Deploy scripts: smoke.sh checks the beta waitlist');
+  const thanks = `https://${WEB_HOST}/beta/thanks`;
+  const full = smokeWith([...API_UP, ...PAGES_UP]);
+  eq('smoke passes when /beta, its result pages and the signup trap answer as Caddy and the server do', full.run.status, 0);
+  check('  ... requesting /beta, /beta/thanks and /beta/retry on the pages host', ['/beta', '/beta/thanks', '/beta/retry'].every((page) => full.curls.some((line) => line.endsWith(`https://${WEB_HOST}${page}`))), full.curls.join(' / '));
+  const signupCall = full.curls.find((line) => line.endsWith(`https://${API_HOST}/beta/signup`)) ?? '';
+  const form = /--data (\S+)/.exec(signupCall)?.[1] ?? '';
+  check('  ... and posting a form to the API host\'s /beta/signup', form !== '', full.curls.join(' / '));
+  // The smoke's own post, replayed against the real route: it must trip the trap, or smoke would
+  // write a row into the production waitlist.
+  eq('  ... which the real route answers 303 to /beta/thanks, storing nothing', await realSignupAnswer(form), [303, thanks, 0]);
+  const person = new URLSearchParams(form);
+  person.delete(TRAP_FIELD);
+  eq('  ... carrying a valid email and platform (without the trap field, the real route stores it)', await realSignupAnswer(person.toString()), [303, thanks, 1]);
+
+  const noFontCsp = smokeWith([[`*https://${WEB_HOST}/beta`, 0, `200|${HTML}||${PAGES_CSP.replace("; font-src 'self'", '')}`, '<html>'], ...API_UP, ...PAGES_UP]);
+  check('smoke fails when /beta\'s CSP lacks font-src \'self\', naming /beta', noFontCsp.run.status === 1 && noFontCsp.run.stderr.includes(`https://${WEB_HOST}/beta answered 200`) && noFontCsp.run.stderr.includes('1 smoke check(s) failed'), noFontCsp.run.stderr);
+  const noThanks = smokeWith([[`*https://${WEB_HOST}/beta/thanks`, 0, `404|${HTML}|`, '<html>'], ...API_UP, ...PAGES_UP]);
+  check('smoke fails when /beta/thanks is not served', noThanks.run.status === 1 && noThanks.run.stderr.includes(`${WEB_HOST}/beta/thanks answered 404`), noThanks.run.stderr);
+  const trapToRetry = smokeWith([[`*https://${API_HOST}/beta/signup`, 0, `303|text/plain|https://${WEB_HOST}/beta/retry`, ''], ...API_UP, ...PAGES_UP]);
+  check('smoke fails when the trap post is redirected anywhere but /beta/thanks, naming both', trapToRetry.run.status === 1 && trapToRetry.run.stderr.includes('redirecting to https://' + WEB_HOST + '/beta/retry, expected 303 to ' + thanks), trapToRetry.run.stderr);
+  const missingRoute = smokeWith([[`*https://${API_HOST}/beta/signup`, 0, '404|text/plain|', ''], ...API_UP, ...PAGES_UP]);
+  check('smoke fails against a server without the signup route', missingRoute.run.status === 1 && missingRoute.run.stderr.includes(`https://${API_HOST}/beta/signup with the trap field filled answered 404`), missingRoute.run.stderr);
+
+  const pagesOnly = smokeWith(PAGES_UP, ['--pages-only']);
+  eq('smoke --pages-only passes, checking the beta pages', [pagesOnly.run.status, ['/beta', '/beta/thanks', '/beta/retry'].every((page) => pagesOnly.curls.some((line) => line.endsWith(`https://${WEB_HOST}${page}`)))], [0, true]);
+  check('  ... and makes no request to the API host', pagesOnly.curls.every((line) => !line.includes(API_HOST)), pagesOnly.curls.join(' / '));
 }
 
 function resizeRules(sandbox: Sandbox, quota: string, extra: readonly StubRule[] = []): void {
@@ -3228,6 +3311,7 @@ export async function runDeployConfigTests(): Promise<void> {
   deploySiteOnlyTests();
   deployFullTests(health);
   smokeTests(health);
+  await smokeBetaTests();
   resizeTests();
   loadtestStartTests();
   loadtestDriveTests();

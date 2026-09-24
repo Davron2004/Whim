@@ -13,6 +13,7 @@ import { LEGAL_IDENTITY_PATH, LEGAL_PAGES, pageText, renderLegalSite, statedKeep
 import { signupNoticeFindings, SIGNUP_PAGE } from '../src/site/notice-check';
 import { CURRENT_NOTICE_ID, NOTICES, noticeFingerprint } from '../src/waitlist/notices';
 import { WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
+import { TRAP_FIELD } from '../src/routes/beta-signup';
 import { MANIFESTS, RELEASED_SNAPSHOT_DIR, diffManifests, keepLimit, latestVersion, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
 import { AI_CONSENT_VERSION } from '../../src/host/launcher/release-config';
 
@@ -145,14 +146,39 @@ function optOutProblems(fields: FormFields): string[] {
 }
 
 function trapProblems(fields: FormFields): string[] {
-  const trap = single(fields, 'company');
+  const trap = single(fields, TRAP_FIELD);
   if (typeof trap === 'string') return [trap];
   const problems: string[] = [];
-  if (trap.name !== 'input' || trap.attrs.get('type') === 'hidden') problems.push('the company trap is type="hidden", which bots skip');
+  if (trap.name !== 'input' || trap.attrs.get('type') === 'hidden') problems.push(`the ${TRAP_FIELD} trap is type="hidden", which bots skip`);
   for (const [attr, value] of [['tabindex', '-1'], ['autocomplete', 'off'], ['aria-hidden', 'true']] as const) {
-    if (trap.attrs.get(attr) !== value) problems.push(`the company trap lacks ${attr}="${value}"`);
+    if (trap.attrs.get(attr) !== value) problems.push(`the ${TRAP_FIELD} trap lacks ${attr}="${value}"`);
   }
   return problems;
+}
+
+/** The fields a person fills; every other named field in the form is a bot trap. */
+const PERSON_FIELDS: readonly string[] = ['email', 'platform', 'updates_opt_out'];
+/** Words browser autofill reads as a person's details (Safari's contact card, Chrome's address
+ *  profiles): a trap named or labelled with one gets filled for a person, whose signup is dropped. */
+const AUTOFILL_WORDS = ['company', 'organization', 'organisation', 'business', 'website', 'url', 'name'] as const;
+
+/** Why a trap field in the form would be autofilled: its name, id or label text holds an autofill word. */
+function trapAutofillProblems(html: string): string[] {
+  const tags = startTags(html);
+  const form = tags.find((tag) => tag.name === 'form');
+  if (form === undefined) return ['the page has no form'];
+  const formEnd = html.indexOf('</form>', form.end);
+  const traps = tags.filter((tag) => tag.end > form.end && tag.end < formEnd && tag.attrs.has('name') && !PERSON_FIELDS.includes(tag.attrs.get('name') ?? ''));
+  if (traps.length === 0) return ['the form has no trap field'];
+  return traps.flatMap((trap) => {
+    const id = trap.attrs.get('id');
+    const label = tags.find((tag) => tag.name === 'label' && id !== undefined && tag.attrs.get('for') === id);
+    const parts: Array<readonly [string, string]> = [['name', trap.attrs.get('name') ?? ''], ['id', id ?? '']];
+    if (label !== undefined) parts.push(['label', pageText(html.slice(label.end, html.indexOf('</label>', label.end)))]);
+    return parts.flatMap(([where, text]) =>
+      AUTOFILL_WORDS.filter((word) => text.toLowerCase().includes(word)).map((word) => `the trap field's ${where} ${JSON.stringify(text)} holds "${word}", which autofill fills`),
+    );
+  });
 }
 
 /** The form contract (design-brief "Locked: the form contract"), as findings. */
@@ -171,7 +197,8 @@ function formContractProblems(html: string, action: string): string[] {
   const inForm = tags.filter((tag) => tag.end > form.end && tag.end < formEnd && tag.attrs.has('name'));
   const fields: FormFields = { tags, html, named: (name) => inForm.filter((tag) => tag.attrs.get('name') === name) };
   const names = [...new Set(inForm.map((tag) => tag.attrs.get('name') ?? ''))].sort((a, b) => a.localeCompare(b));
-  if (names.join(',') !== 'company,email,platform,updates_opt_out') problems.push(`the form's fields are ${names.join(', ')}`);
+  const expected = [...PERSON_FIELDS, TRAP_FIELD].sort((a, b) => a.localeCompare(b));
+  if (names.join(',') !== expected.join(',')) problems.push(`the form's fields are ${names.join(', ')}`);
   return [...problems, ...emailProblems(fields), ...platformProblems(fields), ...optOutProblems(fields), ...trapProblems(fields)];
 }
 
@@ -220,10 +247,21 @@ async function builtSiteTests(): Promise<void> {
       '  red: the contract check sees a pre-ticked opt-out, a type="hidden" trap and a second form',
       [
         ['updates_opt_out is checked by default', built('beta.html').replace('name="updates_opt_out" value="1"', 'name="updates_opt_out" value="1" checked')],
-        ['type="hidden"', built('beta.html').replace('<input type="text" id="company"', '<input type="hidden" id="company"')],
+        ['type="hidden"', built('beta.html').replace(`<input type="text" id="${TRAP_FIELD}"`, `<input type="hidden" id="${TRAP_FIELD}"`)],
         ['2 forms', built('beta.html').replace('</form>', '</form><form method="post" action="/x"></form>')],
       ].every(([needle, html]) => formContractProblems(html, SIGNUP_URL).some((problem) => problem.includes(needle))),
     );
+
+    eq('the /beta trap field is named, id\'d and labelled with no word browser autofill fills', trapAutofillProblems(built('beta.html')), []);
+    const trapLabel = /<label for="([^"]+)">[^<]*<\/label><input type="text" id="\1" name="\1"/.exec(built('beta.html'))?.[0] ?? '';
+    check('setup: the built /beta carries the trap field as its label and input', trapLabel !== '', trapLabel);
+    for (const [what, planted, word] of [
+      ['the old company trap', '<label for="company">Company</label><input type="text" id="company" name="company"', 'company'],
+      ['a label alone saying organization', `<label for="${TRAP_FIELD}">Your organization</label><input type="text" id="${TRAP_FIELD}" name="${TRAP_FIELD}"`, 'organization'],
+      ['an id alone holding url', `<label for="site_url">Leave this empty</label><input type="text" id="site_url" name="${TRAP_FIELD}"`, 'url'],
+    ] as const) {
+      check(`  red: the autofill check catches ${what}`, trapAutofillProblems(built('beta.html').replace(trapLabel, planted)).some((problem) => problem.includes(`"${word}"`)));
+    }
 
     for (const page of BETA_PAGES) check(`${page} is published and links /privacy`, built(page).includes('href="/privacy"'));
     check('the published /beta names the support address, rendered', built('beta.html').includes(`mailto:${ENV.WHIM_SUPPORT_EMAIL}`) && !built('beta.html').includes('{{'));

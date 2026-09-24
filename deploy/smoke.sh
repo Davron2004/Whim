@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Post-deploy smoke checks for Whim (design D17, D20, D21, D22), run from the operator's machine:
 #
-#   deploy/smoke.sh                  DNS, the API, the server container, the pages and association files
+#   deploy/smoke.sh                  DNS, the API, the server container, the pages and association files,
+#                                    and a trap post to the beta signup route (it stores nothing)
 #   deploy/smoke.sh --commit <sha>   the same, and /healthz must report exactly that commit
 #   deploy/smoke.sh --pages-only     DNS, the pages and association files
 #
@@ -147,18 +148,20 @@ check_dns() {
 }
 
 # GETs (or, with extra curl arguments, requests) an HTTPS URL without following redirects. Sets
-# PROBE_STATUS, PROBE_TYPE and PROBE_LOCATION; the body lands in $work/body.
+# PROBE_STATUS, PROBE_TYPE, PROBE_LOCATION and PROBE_CSP (the Content-Security-Policy header); the
+# body lands in $work/body.
 probe() {
   local url="$1" meta
   shift
-  if ! meta="$(curl -sS --proto '=https' --max-time 20 -o "$work/body" -w '%{http_code}|%{content_type}|%{redirect_url}' "$@" "$url")"; then
+  if ! meta="$(curl -sS --proto '=https' --max-time 20 -o "$work/body" -w '%{http_code}|%{content_type}|%{redirect_url}|%header{content-security-policy}' "$@" "$url")"; then
     PROBE_STATUS=000
     PROBE_TYPE=""
     PROBE_LOCATION=""
+    PROBE_CSP=""
     : >"$work/body"
     return
   fi
-  IFS='|' read -r PROBE_STATUS PROBE_TYPE PROBE_LOCATION <<<"$meta"
+  IFS='|' read -r PROBE_STATUS PROBE_TYPE PROBE_LOCATION PROBE_CSP <<<"$meta"
 }
 
 check_health() {
@@ -196,6 +199,17 @@ check_stream_probe() {
   fi
 }
 
+# A filled trap field answers thanks and stores nothing, so this post is safe against production.
+check_beta_signup_trap() {
+  local url="https://$WHIM_API_HOST/beta/signup" thanks="https://$WHIM_WEB_HOST/beta/thanks"
+  probe "$url" -H 'content-type: application/x-www-form-urlencoded' --data 'email=smoke%40example.com&platform=other&hp_ref=smoke'
+  if [ "$PROBE_STATUS" = 303 ] && [ "$PROBE_LOCATION" = "$thanks" ]; then
+    pass "api $url with the trap field filled -> 303 $thanks"
+  else
+    flunk "api $url with the trap field filled answered $PROBE_STATUS${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION}, expected 303 to $thanks"
+  fi
+}
+
 check_in_container() {
   local name="$1" script="$2" expected="$3" answer
   if answer="$(whim_vm_ssh "$WHIM_COMPOSE exec -T whim-server node -e $(printf '%q' "$script")")" && [ "$answer" = "$expected" ]; then
@@ -212,6 +226,17 @@ check_page() {
     pass "pages $path -> $expected HTML, no redirect"
   else
     flunk "pages $url answered $PROBE_STATUS ($PROBE_TYPE)${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION}, expected $expected HTML without a redirect"
+  fi
+}
+
+# The /beta page loads its self-hosted fonts, so its CSP must allow font-src 'self'.
+check_beta_page() {
+  local url="https://$WHIM_WEB_HOST/beta"
+  probe "$url"
+  if [ "$PROBE_STATUS" = 200 ] && [ -z "$PROBE_LOCATION" ] && [[ "$PROBE_TYPE" == text/html* ]] && [[ "$PROBE_CSP" == *"font-src 'self'"* ]]; then
+    pass "pages /beta -> 200 HTML, CSP allows font-src 'self'"
+  else
+    flunk "pages $url answered $PROBE_STATUS ($PROBE_TYPE)${PROBE_LOCATION:+ redirecting to $PROBE_LOCATION} with CSP '$PROBE_CSP', expected 200 HTML whose CSP has font-src 'self'"
   fi
 }
 
@@ -253,6 +278,7 @@ if [ "$pages_only" -eq 0 ]; then
   check_stream_probe
   check_in_container "metadata server egress" "$METADATA_JS" blocked
   check_in_container "react-native in node_modules" "$REACT_NATIVE_JS" absent
+  check_beta_signup_trap
 fi
 check_page /privacy 200
 check_page /privacy/v1 200
@@ -261,6 +287,9 @@ check_page /fr/privacy 200
 check_page /fr/terms 200
 check_page /support 200
 check_page /a/x 200
+check_beta_page
+check_page /beta/thanks 200
+check_page /beta/retry 200
 check_page /nope 404
 check_association_file apple-app-site-association
 check_association_file assetlinks.json
