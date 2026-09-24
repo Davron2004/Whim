@@ -44,7 +44,7 @@ const DIAGNOSTIC_STACK_MAX = 4096;
 
 /** The error names a mini-app's `errorClass` may travel as. A mini-app sets its own `name`, so a
  *  name outside this set could be built from saved data; it travels as `Other` (#63 B9). */
-const BUILTIN_ERROR_NAMES: readonly string[] = [
+const BUILTIN_ERROR_NAMES: ReadonlySet<string> = new Set([
   'Error',
   'TypeError',
   'RangeError',
@@ -53,7 +53,7 @@ const BUILTIN_ERROR_NAMES: readonly string[] = [
   'EvalError',
   'URIError',
   'AggregateError',
-];
+]);
 
 /** What a mini-app error name outside {@link BUILTIN_ERROR_NAMES} is sent as. */
 const OTHER_ERROR_CLASS = 'Other';
@@ -85,7 +85,7 @@ function closedReason(value: unknown): DiagnosticReason | undefined {
 /** The `where` values on the page channel that the HOST computes itself (the paint watchdog, a
  *  launch the host refused). Every other page-channel record is treated as coming from the
  *  mini-app, so a `where` added to the loader later is stripped by default, not sent. */
-const HOST_SITES_ON_PAGE_CHANNEL: readonly string[] = ['paint-timeout', 'launch'];
+const HOST_SITES_ON_PAGE_CHANNEL: ReadonlySet<string> = new Set(['paint-timeout', 'launch']);
 
 function capString(value: string, max = DIAGNOSTIC_STRING_MAX): string {
   return value.length > max ? value.slice(0, max) : value;
@@ -125,11 +125,11 @@ function framesOnly(value: unknown): string | undefined {
 function fromMiniApp(record: DevLogRecord): boolean {
   if (record.channel !== CHANNELS.page) return false;
   const where = record.fields.where;
-  return !(typeof where === 'string' && HOST_SITES_ON_PAGE_CHANNEL.includes(where));
+  return !(typeof where === 'string' && HOST_SITES_ON_PAGE_CHANNEL.has(where));
 }
 
 function miniAppErrorClass(value: unknown): string {
-  return typeof value === 'string' && BUILTIN_ERROR_NAMES.includes(value) ? value : OTHER_ERROR_CLASS;
+  return typeof value === 'string' && BUILTIN_ERROR_NAMES.has(value) ? value : OTHER_ERROR_CLASS;
 }
 
 /**
@@ -164,7 +164,7 @@ export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
   return { ...out, ...projected } as DiagnosticRecord;
 }
 
-const LEVELS: readonly string[] = ['debug', 'info', 'warn', 'error'];
+const LEVELS: ReadonlySet<string> = new Set(['debug', 'info', 'warn', 'error']);
 
 /**
  * Whether a value read back from storage is still a projection this device would send: the four
@@ -175,7 +175,7 @@ export function isDiagnosticRecord(value: unknown): value is DiagnosticRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   if (typeof record.at !== 'number' || !Number.isFinite(record.at)) return false;
-  if (typeof record.level !== 'string' || !LEVELS.includes(record.level)) return false;
+  if (typeof record.level !== 'string' || !LEVELS.has(record.level)) return false;
   for (const key of ['channel', 'message']) {
     const text = record[key];
     if (typeof text !== 'string' || text.length > DIAGNOSTIC_STRING_MAX) return false;

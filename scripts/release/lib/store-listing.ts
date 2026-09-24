@@ -723,7 +723,7 @@ function declarationDiagnosticsFindings(sources: readonly DeclarationSource[], b
 /** Both privacy pages list error details under what leaves the phone and under how long it's kept. */
 function privacyPageDiagnosticsFindings(repoRoot: string, because: string): StoreListingFinding[] {
   const listsCategory = (html: string, attribute: string): boolean =>
-    [...html.matchAll(new RegExp(`\\s${attribute}="([^"]*)"`, 'g'))].some((m) => m[1].split(/\s+/).includes(DIAGNOSTICS_CATEGORY));
+    [...html.matchAll(new RegExp(String.raw`\s${attribute}="([^"]*)"`, 'g'))].some((m) => m[1].split(/\s+/).includes(DIAGNOSTICS_CATEGORY));
   return PRIVACY_PAGES.flatMap((file): StoreListingFinding[] => {
     const html = readText(repoRoot, file);
     if (html === undefined) return [{ file, message: `is missing; ${because}` }];
@@ -749,16 +749,17 @@ export interface DiagnosticsDisclosureModules {
 /** Empty when the build can't send diagnostics or every declaration carries them. */
 export function checkDiagnosticsDisclosure(
   repoRoot: string,
-  modules: DiagnosticsDisclosureModules = { manifest: MANIFESTS[latestVersion()], consentText: liveConsentText() },
+  modules?: DiagnosticsDisclosureModules,
 ): StoreListingFinding[] {
   const transport = diagnosticsTransportFile(repoRoot);
   if (transport === undefined) return [];
+  const { manifest, consentText } = modules ?? { manifest: MANIFESTS[latestVersion()], consentText: liveConsentText() };
   const because = `the build sends crash logs and diagnostics (${transport})`;
-  const consentFindings = Object.entries(modules.consentText)
+  const consentFindings = Object.entries(consentText)
     .filter(([, text]) => text === '')
     .map(([language]) => ({ file: CONSENT_COPY_PATH, message: `the ${language} consent screen names no error details; ${because}` }));
   return [
-    ...manifestDiagnosticsFindings(modules.manifest, because),
+    ...manifestDiagnosticsFindings(manifest, because),
     ...declarationDiagnosticsFindings(readDeclarationSources(repoRoot), because),
     ...consentFindings,
     ...privacyPageDiagnosticsFindings(repoRoot, because),

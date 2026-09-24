@@ -98,7 +98,9 @@
     try {
       const n = x !== null && typeof x === 'object' ? x.name : undefined;
       return typeof n === 'string' && n ? n : 'NonError';
-    } catch (e) {
+    } catch {
+      // deliberately silent: x is a hostile thrown value from the mini-app realm, so reading
+      // `.name` off it (e.g. via a throwing getter) must never throw out of this listener.
       return 'NonError';
     }
   }

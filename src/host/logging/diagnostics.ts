@@ -108,10 +108,10 @@ async function fetchPost(
 function utf8Length(text: string): number {
   let bytes = 0;
   for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
+    const code = text.codePointAt(i) as number;
     if (code < 0x80) bytes += 1;
     else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+    else if (code >= 0x10000) {
       bytes += 4;
       i++;
     } else bytes += 3;
@@ -234,7 +234,7 @@ export class DiagnosticsTransport {
   }
 
   private discardWaiting(): void {
-    for (const key of [...this.waiting]) this.settle(key);
+    for (const key of this.waiting) this.settle(key);
   }
 
   private currentTarget(): DiagnosticsTarget | null {
@@ -278,7 +278,7 @@ export class DiagnosticsTransport {
     const records: DiagnosticRecord[] = [];
     const empty = utf8Length(JSON.stringify({ osVersion: this.options.osVersion.slice(0, DIAGNOSTIC_STRING_MAX), records: [] }));
     let bytes = empty;
-    for (const key of [...this.waiting]) {
+    for (const key of this.waiting) {
       const entry = this.entries.get(key);
       if (!entry) continue;
       const record: DiagnosticRecord = { ...entry.record, count: entry.total - entry.sent };

@@ -16,6 +16,7 @@ readonly DATA_MOUNT=/mnt/disks/whim-data
 readonly SERVER_UID=10001
 readonly DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 readonly OPS_AGENT_KEY_FINGERPRINT=35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3
+readonly HTTPS_ONLY='=https'
 
 fail() {
   printf 'bootstrap.sh: %s\n' "$1" >&2
@@ -51,7 +52,7 @@ install_docker() {
   apt-get update
   apt-get install -y ca-certificates curl gnupg
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL --proto '=https' --proto-redir '=https' https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  curl -fsSL --proto "$HTTPS_ONLY" --proto-redir "$HTTPS_ONLY" https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
   local fingerprint
   fingerprint="$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')"
   [ "$fingerprint" = "$DOCKER_KEY_FINGERPRINT" ] || fail "Docker's apt key has fingerprint '$fingerprint', expected $DOCKER_KEY_FINGERPRINT"
@@ -72,11 +73,11 @@ install_docker() {
 # runs its default config, which ships the host's syslog.
 install_ops_agent() {
   install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL --proto '=https' --proto-redir '=https' https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  curl -fsSL --proto "$HTTPS_ONLY" --proto-redir "$HTTPS_ONLY" https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     -o /etc/apt/keyrings/google-cloud-ops-agent.asc
   local fingerprint
   fingerprint="$(gpg --show-keys --with-colons /etc/apt/keyrings/google-cloud-ops-agent.asc | awk -F: '$1 == "fpr" { print $10; exit }')"
-  [ "$fingerprint" = "$OPS_AGENT_KEY_FINGERPRINT" ] || fail "Ops Agent apt key has fingerprint '$fingerprint', expected $OPS_AGENT_KEY_FINGERPRINT"
+  [[ "$fingerprint" = "$OPS_AGENT_KEY_FINGERPRINT" ]] || fail "Ops Agent apt key has fingerprint '$fingerprint', expected $OPS_AGENT_KEY_FINGERPRINT"
   chmod a+r /etc/apt/keyrings/google-cloud-ops-agent.asc
   local codename
   codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
