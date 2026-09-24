@@ -13,6 +13,7 @@ import AppLinkMissingScreen from '../AppLinkMissingScreen';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import ConsentScreen from '../ConsentScreen';
 import TermsScreen from '../TermsScreen';
+import AgeScreen from '../AgeScreen';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
@@ -35,6 +36,7 @@ const cases: Record<Exclude<ScreenKind, 'home' | 'app' | 'dev'>, { label: string
   history: { label: COPY.backLabel, render: leave => <HistoryScreen app={SCREEN_APP} access={access} onBack={leave} onReport={noop} /> },
   'link-missing': { label: COPY.appLinkMissingBack, render: leave => <AppLinkMissingScreen onBackToApps={leave} /> },
   'update-required': { label: COPY.updateNotNow, render: leave => <UpdateRequiredScreen onNotNow={leave} /> },
+  age: { label: COPY.ageBack, render: leave => <AgeScreen language="en" onLanguageChange={noop} blocked onClose={leave} /> },
   terms: { label: COPY.termsDecline, render: leave => <TermsScreen language="en" onLanguageChange={noop} onClose={leave} onAccept={noop} /> },
   consent: { label: COPY.consentDecline, render: leave => <ConsentScreen mode="ask" language="en" onLanguageChange={noop} onClose={leave} onAgree={noop} /> },
   compose: { label: COPY.backLabel, render: leave => <ComposeStep text="" editing={false} onChangeText={noop} onContinue={noop} onBack={leave} /> },

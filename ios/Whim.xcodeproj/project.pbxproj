@@ -14,6 +14,8 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		B710A007F44DCCC19222ED0B /* WhimAppInfoModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = 21BC26CEB5BD23B4CD7C6EDD /* WhimAppInfoModule.mm */; };
+		B4C6F9080BB22867A92B667F /* WhimAgeSignalModule.mm in Sources */ = {isa = PBXBuildFile; fileRef = 794B101B4D718490274E6312 /* WhimAgeSignalModule.mm */; };
+		F98DA5E8E1C03A4AC75B7D07 /* WhimAgeSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15CEF35278CE9413B0CB1B2D /* WhimAgeSignal.swift */; };
 		C6DB4F3B0998FAE27E772206 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		CC3C96E94BC80E349F59FD87 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E8A19775030A07CC348DC /* SceneDelegate.swift */; };
 		D67E223FF7FDBF935F8B1A72 /* WebViewNetworkDeny.json in Resources */ = {isa = PBXBuildFile; fileRef = 213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */; };
@@ -26,6 +28,8 @@
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = Whim/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */ = {isa = PBXFileReference; includeInIndex = 1; name = WebViewNetworkDeny.json; path = Whim/WebViewNetworkDeny.json; sourceTree = "<group>"; };
 		21BC26CEB5BD23B4CD7C6EDD /* WhimAppInfoModule.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = WhimAppInfoModule.mm; path = Whim/WhimAppInfoModule.mm; sourceTree = "<group>"; };
+		794B101B4D718490274E6312 /* WhimAgeSignalModule.mm */ = {isa = PBXFileReference; includeInIndex = 1; name = WhimAgeSignalModule.mm; path = Whim/WhimAgeSignalModule.mm; sourceTree = "<group>"; };
+		15CEF35278CE9413B0CB1B2D /* WhimAgeSignal.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WhimAgeSignal.swift; path = Whim/WhimAgeSignal.swift; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-Whim.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Whim.debug.xcconfig"; path = "Target Support Files/Pods-Whim/Pods-Whim.debug.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-Whim.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Whim.release.xcconfig"; path = "Target Support Files/Pods-Whim/Pods-Whim.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-Whim.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Whim.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -65,6 +69,8 @@
 				213EA7C36E1476FA9765A31A /* WebViewNetworkDeny.json */,
 				D06E8A19775030A07CC348DC /* SceneDelegate.swift */,
 				21BC26CEB5BD23B4CD7C6EDD /* WhimAppInfoModule.mm */,
+				794B101B4D718490274E6312 /* WhimAgeSignalModule.mm */,
+				15CEF35278CE9413B0CB1B2D /* WhimAgeSignal.swift */,
 			);
 			name = Whim;
 			sourceTree = "<group>";
@@ -279,6 +285,8 @@
 				239F45D2C45D6E52E6475397 /* WhimWebViewNetworkDeny.m in Sources */,
 				CC3C96E94BC80E349F59FD87 /* SceneDelegate.swift in Sources */,
 				B710A007F44DCCC19222ED0B /* WhimAppInfoModule.mm in Sources */,
+				B4C6F9080BB22867A92B667F /* WhimAgeSignalModule.mm in Sources */,
+				F98DA5E8E1C03A4AC75B7D07 /* WhimAgeSignal.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,6 +315,8 @@
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-weak_framework",
+					DeclaredAgeRange,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(WHIM_APP_ID)";
 				PRODUCT_NAME = Whim;
@@ -339,6 +349,8 @@
 					"$(inherited)",
 					"-ObjC",
 					"-lc++",
+					"-weak_framework",
+					DeclaredAgeRange,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(WHIM_APP_ID)";
 				PRODUCT_NAME = Whim;

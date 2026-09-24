@@ -75,6 +75,8 @@ import { runTermsFlowUiTests } from './terms-flow-ui.suite';
 import { runPrivacySettingsUiTests } from './privacy-settings-ui.suite';
 import { runLegalLanguageTests } from './legal-language.suite';
 import { runLegalLanguageUiTests } from './legal-language-ui.suite';
+import { runAgeCheckTests } from './age-check.suite';
+import { runAgeSignalUiTests } from './age-signal-ui.suite';
 
 const h = new Harness();
 
@@ -147,6 +149,8 @@ await runTermsFlowUiTests(h);
 await runPrivacySettingsUiTests(h);
 await runLegalLanguageTests(h);
 await runLegalLanguageUiTests(h);
+await runAgeCheckTests(h);
+await runAgeSignalUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

@@ -39,10 +39,10 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 6. French
 
-- [ ] 6.1 Write a non-RN `legal-language.ts`: a persisted choice (`whim.legal-language:v1`) wins; otherwise French when the device's preferred language subtag is `fr`, read through Hermes `Intl` with the platform locale constant as fallback. Tests with injected locales, including fr-CA, fr-FR, en-US, and a choice overriding the locale.
-- [ ] 6.2 Add a French copy table for every terms-step, consent-screen and what's-new key, including `consentWhatsNew[1]` with the same `covers`. Add the one-tap language switch to both screens, and make every legal link follow the active language. Tests for spec legal-text-localization §"Legal text is French first…".
-- [ ] 6.3 Extend the gate check so that every legal key exists and is non-empty in both tables (§"Every legal copy key exists in both languages"). Red-check with a key deleted from the French table.
-- [ ] 6.4 On the Android emulator, with the system language set to fr-CA, confirm the terms step and the consent screen render in French and that "Continue in English" persists. Record screenshots in `progress.md`.
+- [x] 6.1 Write a non-RN `legal-language.ts`: a persisted choice (`whim.legal-language:v1`) wins; otherwise French when the device's preferred language subtag is `fr`, read through Hermes `Intl` with the platform locale constant as fallback. Tests with injected locales, including fr-CA, fr-FR, en-US, and a choice overriding the locale.
+- [x] 6.2 Add a French copy table for every terms-step, consent-screen and what's-new key, including `consentWhatsNew[1]` with the same `covers`. Add the one-tap language switch to both screens, and make every legal link follow the active language. Tests for spec legal-text-localization §"Legal text is French first…".
+- [x] 6.3 Extend the gate check so that every legal key exists and is non-empty in both tables (§"Every legal copy key exists in both languages"). Red-check with a key deleted from the French table.
+- [x] 6.4 On the Android emulator, with the system language set to fr-CA, confirm the terms step and the consent screen render in French and that "Continue in English" persists. Record screenshots in `progress.md`.
 
 ## 7. Legal pages
 
@@ -61,11 +61,11 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 
 ## 9. Store age signals
 
-- [ ] 9.1 Add an iOS native module `WhimAgeSignal` over Declared Age Range (iOS 26+), with the entitlement. It returns `unavailable` on older iOS or on error.
-- [ ] 9.2 Add the Android counterpart over Play Age Signals (a Gradle dependency, no npm package). It returns `unavailable` without Play services or on error.
-- [ ] 9.3 Write a non-RN age-check module: reduce the native result to the four values, store only `{ outcome, checkedAt }`, and re-check when there's no outcome, when the outcome is more than 30 days old, or when it's blocked. Tests with an injected native result for both requirements of spec store-age-signals, including "no age field in any request".
-- [ ] 9.4 Run the check before the terms step in the flow. Add the parental-approval message in English and French. Tests for the three flow scenarios.
-- [ ] 9.5 Add draft-copy §5's age-signal sentence to the 4.7.5 review answer in both review-notes files, and recheck the 4,000-character limit.
+- [x] 9.1 Add an iOS native module `WhimAgeSignal` over Declared Age Range (iOS 26+), with the entitlement. It returns `unavailable` on older iOS or on error.
+- [x] 9.2 Add the Android counterpart over Play Age Signals (a Gradle dependency, no npm package). It returns `unavailable` without Play services or on error.
+- [x] 9.3 Write a non-RN age-check module: reduce the native result to the four values, store only `{ outcome, checkedAt }`, and re-check when there's no outcome, when the outcome is more than 30 days old, or when it's blocked. Tests with an injected native result for both requirements of spec store-age-signals, including "no age field in any request".
+- [x] 9.4 Run the check before the terms step in the flow. Add the parental-approval message in English and French. Tests for the three flow scenarios.
+- [x] 9.5 Add draft-copy §5's age-signal sentence to the 4.7.5 review answer in both review-notes files, and recheck the 4,000-character limit.
 - [ ] 9.6 On the Android emulator, confirm the flow reaches the terms step when the signal is unavailable. Record the result in `progress.md`.
 
 ## 10. Compliance documents

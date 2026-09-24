@@ -64,6 +64,7 @@ import DoneStep from './DoneStep';
 import FailureScreen from './FailureScreen';
 import ConsentScreen from './ConsentScreen';
 import TermsScreen from './TermsScreen';
+import AgeScreen from './AgeScreen';
 import AppLinkMissingScreen from './AppLinkMissingScreen';
 import UpdateRequiredScreen from './UpdateRequiredScreen';
 import { parseAppLink } from './app-link';
@@ -120,6 +121,8 @@ import { installedAppInfo, installedInternalBuild } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
+import { runAgeCheck, storedAgeGate, type AgeGate } from './age-check';
+import { installedAgeSignal } from './installed-age-signal';
 import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
 import { deviceLocale as installedDeviceLocale } from './device-locale';
 import { declineTarget, nextLegalStep } from './consent-flow';
@@ -161,7 +164,10 @@ type Screen =
   // terms acceptance / consent grant. Both carry the flow (`LegalFlow`): the continuation to
   // resume, the screen the flow replaced (`returnTo`, read by `declineTarget`), and `refused` — a
   // `consent_required` refusal started it (request-envelope), not an entry point.
+  // `age` comes first while the terms step is due (legal-surface-v2 D11; spec store-age-signals):
+  // the store's age signal is being read (`blocked` false), or it held the user (`blocked` true).
   // `outdated`: the stored acceptance is of another terms version.
+  | ({ kind: 'age'; blocked: boolean } & LegalFlow<Screen>)
   | ({ kind: 'terms'; outdated: boolean } & LegalFlow<Screen>)
   // The AI-data consent gate (design D1/D2/D5; spec ai-data-consent). `review` opens from
   // Settings' AI features row and shows the identical disclosure.
@@ -340,14 +346,21 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
 /** `appInfo` reads the installed app's platform, version and build for the request envelope;
  *  `internalBuild` says whether this is an internal build (only those show and honour a
  *  server-address override, legal-surface-v2 D10); `deviceLocale` reads the phone's preferred
- *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6). All
+ *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
+ *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11). All
  *  default to the native seam. Only a suite passes another (the launcher runner has no native
  *  module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   internalBuild,
   deviceLocale = installedDeviceLocale,
-}: Readonly<{ appInfo?: () => AppInfo; internalBuild?: boolean; deviceLocale?: () => string | undefined }>) {
+  ageSignal = installedAgeSignal,
+}: Readonly<{
+  appInfo?: () => AppInfo;
+  internalBuild?: boolean;
+  deviceLocale?: () => string | undefined;
+  ageSignal?: () => Promise<unknown>;
+}>) {
   // Read once: the installed binary can't change what kind of build it is while the process lives.
   const [internal] = useState(() => internalBuild ?? installedInternalBuild());
   // Construct the persistent host services once (device native modules — lazy under the hood).
@@ -379,6 +392,7 @@ export default function LauncherRoot({
       appInfo={appInfo}
       internalBuild={internal}
       deviceLocale={deviceLocale}
+      ageSignal={ageSignal}
     />
   );
 }
@@ -459,6 +473,52 @@ function ConsentScreenForShell({
   );
 }
 
+/** The legal flow's steps ahead of the consent screen: the store age check and the terms step. */
+type PreConsentStep = Extract<Screen, { kind: 'age' | 'terms' }>;
+
+function isPreConsentStep(screen: Screen): screen is PreConsentStep {
+  return screen.kind === 'age' || screen.kind === 'terms';
+}
+
+/**
+ * The age check and the terms step in one small switch, kept out of `LauncherShell`'s own
+ * screen-kind chain like `ConsentScreenForShell`. Both leave through `onDecline` with the screen
+ * the flow replaced; only the terms step can accept.
+ */
+function PreConsentStepForShell({
+  screen,
+  language,
+  onLanguageChange,
+  onTermsAccept,
+  onDecline,
+}: Readonly<{
+  screen: PreConsentStep;
+  language: LegalLanguage;
+  onLanguageChange: (language: LegalLanguage) => void;
+  onTermsAccept: (flow: LegalFlow<Screen>) => void;
+  onDecline: (returnTo: Screen) => void;
+}>) {
+  if (screen.kind === 'age') {
+    return (
+      <AgeScreen
+        language={language}
+        onLanguageChange={onLanguageChange}
+        blocked={screen.blocked}
+        onClose={() => onDecline(screen.returnTo)}
+      />
+    );
+  }
+  return (
+    <TermsScreen
+      language={language}
+      onLanguageChange={onLanguageChange}
+      outdated={screen.outdated}
+      onAccept={() => onTermsAccept(screen)}
+      onClose={() => onDecline(screen.returnTo)}
+    />
+  );
+}
+
 function LauncherShell({
   index,
   access,
@@ -468,6 +528,7 @@ function LauncherShell({
   appInfo,
   internalBuild,
   deviceLocale,
+  ageSignal,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -477,6 +538,7 @@ function LauncherShell({
   appInfo: () => AppInfo;
   internalBuild: boolean;
   deviceLocale: () => string | undefined;
+  ageSignal: () => Promise<unknown>;
 }>) {
   const palette = SHELL_PALETTE;
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -943,28 +1005,49 @@ function LauncherShell({
 
   /** The screen the legal flow shows next (`nextLegalStep`, read fresh from `kv`), carrying the
    *  flow unchanged, or `undefined` when the terms and consent are both current and the action may
-   *  run. The one place either legal screen is built, so every path into the flow — an entry point,
+   *  run. The one place any legal screen is built, so every path into the flow — an entry point,
    *  the terms step's `Accept`, a `consent_required` refusal — shows the same steps in the same
-   *  order. */
-  const legalScreen = (flow: LegalFlow<Screen>): Screen | undefined => {
+   *  order. `age` is the outcome of the age check that just ran; without one, the stored outcome
+   *  decides whether a check is due. */
+  const legalScreen = (flow: LegalFlow<Screen>, age: AgeGate = storedAgeGate(kv, new Date())): Screen | undefined => {
     const terms = termsStatus(kv);
     const consent = consentStatus(kv);
-    const step = nextLegalStep(terms, consent, flow.refused);
-    // Picked field by field: `flow` may be the terms screen itself, whose own `kind` and
-    // `outdated` must not ride along into the next step.
+    const step = nextLegalStep(age, terms, consent, flow.refused);
+    // Picked field by field: `flow` may be a legal screen itself, whose own `kind` and fields
+    // must not ride along into the next step.
     const carried: LegalFlow<Screen> = { continuation: flow.continuation, returnTo: flow.returnTo, refused: flow.refused };
+    if (step === 'age-check') return { kind: 'age', blocked: false, ...carried };
+    if (step === 'age-blocked') return { kind: 'age', blocked: true, ...carried };
     if (step === 'terms') return { kind: 'terms', outdated: terms.kind === 'outdated', ...carried };
     if (step === 'consent') return { kind: 'consent', mode: 'ask', outdatedFrom: outdatedGrantVersion(consent), ...carried };
     return undefined;
   };
 
   /** Moves the flow on: opens its next legal screen, or runs its continuation when nothing is left
-   *  to ask. */
-  const advanceLegalFlow = (flow: LegalFlow<Screen>) => {
-    const next = legalScreen(flow);
+   *  to ask. `age` is passed only by the age check, with the outcome it just stored. */
+  const advanceLegalFlow = (flow: LegalFlow<Screen>, age?: AgeGate) => {
+    const next = legalScreen(flow, age);
     if (next === undefined) runContinuation(flow.continuation);
     else setScreen(next);
   };
+
+  // The age check (legal-surface-v2 D11; spec store-age-signals): while the checking screen shows,
+  // ask the store, store only the outcome, and move the same flow on with it — to the terms step,
+  // or to the parental-approval message. Leaving the screen first (`Back`) drops the answer, so a
+  // late one never pulls the user back into the flow.
+  const checkingAge = screen.kind === 'age' && !screen.blocked ? screen : undefined;
+  const advanceLegalFlowRef = useRef(advanceLegalFlow);
+  advanceLegalFlowRef.current = advanceLegalFlow;
+  useEffect(() => {
+    if (checkingAge === undefined) return undefined;
+    let current = true;
+    runAgeCheck(kv, ageSignal, () => new Date()).then((outcome) => {
+      if (current) advanceLegalFlowRef.current(checkingAge, outcome);
+    });
+    return () => {
+      current = false;
+    };
+  }, [checkingAge, kv, ageSignal]);
 
   /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
    *  that would send data asks for consent at that moment"; spec terms-acceptance "Terms are
@@ -1031,7 +1114,7 @@ function LauncherShell({
    *  acceptance (spec terms-acceptance "Terms are accepted in their own step before the consent
    *  screen"); the flow ends back on Settings, and declining any step returns there too. */
   const onConsentReviewTurnOn = () => {
-    if (nextLegalStep(termsStatus(kv), consentStatus(kv), false) === 'consent') {
+    if (nextLegalStep(storedAgeGate(kv, new Date()), termsStatus(kv), consentStatus(kv), false) === 'consent') {
       onGrantConsent();
       setScreen({ kind: 'settings' });
     } else {
@@ -1837,15 +1920,14 @@ function LauncherShell({
           legalLanguage={legalLanguage}
         />
       );
-    } else if (screen.kind === 'terms') {
-      const flow = screen;
+    } else if (isPreConsentStep(screen)) {
       return (
-        <TermsScreen
+        <PreConsentStepForShell
+          screen={screen}
           language={legalLanguage}
           onLanguageChange={onLegalLanguageChange}
-          outdated={flow.outdated}
-          onAccept={() => onTermsAccept(flow)}
-          onClose={() => onLegalDecline(flow.returnTo)}
+          onTermsAccept={onTermsAccept}
+          onDecline={onLegalDecline}
         />
       );
     } else if (screen.kind === 'consent') {

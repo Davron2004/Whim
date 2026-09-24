@@ -18,9 +18,12 @@ No login, no account, nothing to sign in with. The home screen already has a few
 it.
 
 1. Tap `Describe an app…` (the composer row on Home).
-2. The first time this happens on a fresh install, it opens the AI-data consent screen instead of
-   the composer — that's expected, not a bug. Tap `Agree and continue` to proceed (`Not now`, or
-   system back, returns to Home with nothing sent and the examples still fully usable).
+2. The first time this happens on a fresh install, it opens two steps instead of the composer —
+   that's expected, not a bug. First `Terms of use`: tap `Accept`. Then the AI-data consent screen
+   (`Before Whim builds apps for you`): tap `Agree and continue`. `Not now` on either step, or
+   system back, returns to Home with nothing sent and the examples still fully usable. Just before
+   the terms step Whim reads the store's age signal: where an age law applies, iOS may ask to
+   share an age range with Whim; anywhere else nothing shows.
 3. Type a one-line description and tap `Continue`.
 4. Answer (or skip) the one to three clarifying questions Whim asks, and tap `Continue`.
 5. Review the plan and tap `Build it`. This takes about a minute; you can leave the screen and come
@@ -73,6 +76,7 @@ native leg lands.
   (whim.anycognition.ca/a/<id>) that opens it.
 - **4.7.5 (age limits for above-the-rating content).** Whim is rated 13+. The server's content
   check refuses requests for content above that rating, so no mini app needs a separate age gate.
+  Whim also reads the store's age range where the law requires it and keeps it on the device.
 
 ## 3. Guideline 2.5.2 context
 
