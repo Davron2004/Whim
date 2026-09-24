@@ -14,23 +14,33 @@
  * covers the report's own usage-records ledger row and connection-log line: a report sent under
  * consent `none` still writes both, under that same exception, although `permits('none', …)` is
  * false for every category.
+ *
+ * The table is computed from the disclosure manifest (legal-surface-v2 D2): a version covers
+ * exactly the categories its manifest lists, so the server and the published text can't drift.
  */
 import type { MiddlewareHandler } from 'hono';
 import type { ConsentVersion } from '@whim/contract';
+import { CATEGORY_IDS, MANIFESTS, type CategoryId, type DisclosureManifest } from '../../contract/src/disclosure-manifest';
 import { consentRequiredRefusal } from './admission/refusals';
 import type { V1Env } from './request-edge';
 
-/** The closed set of data categories a consent version can cover. */
-export const PRACTICE_CATEGORIES = ['request-material', 'usage-records', 'connection-logs', 'reports'] as const;
-export type PracticeCategory = (typeof PRACTICE_CATEGORIES)[number];
+/** The closed set of data categories a consent version can cover: the manifest's category ids. */
+export const PRACTICE_CATEGORIES = CATEGORY_IDS;
+export type PracticeCategory = CategoryId;
 
 export type PracticeTable = Readonly<Record<number, ReadonlySet<PracticeCategory>>>;
 
-/** Consent version → the categories it covers. APPEND-ONLY: a new version is a new key, and an
- *  existing version's set never changes — a phone's grant means what it meant when it was given. */
-export const PRACTICES: PracticeTable = Object.freeze({
-  1: new Set<PracticeCategory>(PRACTICE_CATEGORIES),
-});
+/** Consent version → the category ids that version's manifest lists. */
+export function practicesFrom(manifests: Readonly<Record<number, DisclosureManifest<PracticeCategory>>>): PracticeTable {
+  return Object.freeze(
+    Object.fromEntries(Object.entries(manifests).map(([version, manifest]) => [Number(version), new Set(manifest.categories.map((c) => c.id))])),
+  );
+}
+
+/** Consent version → the categories it covers. APPEND-ONLY, as the manifest is: a new version is a
+ *  new key, and an existing version never gains a category — a phone's grant means what it meant
+ *  when it was given. */
+export const PRACTICES: PracticeTable = practicesFrom(MANIFESTS);
 
 /** The highest consent version `table` knows. */
 export function highestConsentVersion(table: PracticeTable = PRACTICES): number {

@@ -60,6 +60,7 @@ function baseSnapshot(overrides: Partial<PreflightSnapshot> = {}): PreflightSnap
     androidProjectFindings: [],
     assetFindings: [],
     storeListingFindings: [],
+    disclosureFindings: [],
     ...overrides,
   };
 }
@@ -166,6 +167,15 @@ export async function run(): Promise<void> {
     assert(
       findings.some((f) => f.reason.includes('release/assets/generated.json') && f.fix.includes('generate-assets')),
       `expected the asset finding to surface, got ${JSON.stringify(findings)}`,
+    );
+  });
+
+  await test('preflight: a disclosure release-check refusal is passed through, pointing at the re-consent rule', () => {
+    const refusal = 'version 2 was released and has widened since contract/disclosure/released/v2.json: category:account-email; add a new version instead';
+    const findings = evaluatePreflight(baseSnapshot({ disclosureFindings: [refusal] }), PASS_OPTIONS);
+    assert(
+      findings.length === 1 && findings[0].reason.includes(refusal) && findings[0].fix.includes('re-consent rule'),
+      `expected exactly the disclosure refusal with its fix, got ${JSON.stringify(findings)}`,
     );
   });
 
