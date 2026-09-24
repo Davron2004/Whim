@@ -1,6 +1,7 @@
 /**
  * Acceptance for `scripts/release/lib/store-listing.ts` (chain-8, platform-release-readiness).
- * specs/store-listing/spec.md (all requirements); design.md D11; task 9.5.
+ * specs/store-listing/spec.md (all requirements); design.md D11; task 9.5. The privacy
+ * declaration cases cover legal-surface-v2 spec store-privacy-declarations (task 8.1).
  */
 
 import fs from 'node:fs';
@@ -20,55 +21,39 @@ const FIXTURE_CONFIG: NativeReleaseConfig = {
   WHIM_DOMAIN: 'example.com',
 };
 
-const APP_PRIVACY_JSON = JSON.stringify([
-  { category: 'OTHER_USER_CONTENT', purposes: ['APP_FUNCTIONALITY'], data_protections: ['DATA_NOT_LINKED_TO_YOU'] },
-  { category: 'DEVICE_ID', purposes: ['APP_FUNCTIONALITY'], data_protections: ['DATA_NOT_LINKED_TO_YOU'] },
-]);
-
 const AGE_RATING_JSON = JSON.stringify({ ageRatingOverrideV2: 'THIRTEEN_PLUS', contentDescriptors: {}, unrestrictedWebAccess: false, gambling: false });
 
-const DATA_SAFETY_JSON = JSON.stringify({
-  encryptedInTransit: true,
-  deletionRequestMechanism: 'no account exists',
-  types: [
-    { id: 'other_user_generated_content', collected: true, shared: true, sharedWith: 'AI model providers through OpenRouter', optional: true, ephemeral: false, purposes: ['app_functionality'] },
-    { id: 'device_or_other_ids', collected: true, shared: false, optional: true, ephemeral: false, purposes: ['app_functionality'] },
-  ],
-});
+const APP_PRIVACY_PATH = 'release/store/app-store/app-privacy.json';
+const DATA_SAFETY_PATH = 'release/store/play/data-safety.json';
+const PRIVACY_MANIFEST_PATH = 'ios/Whim/PrivacyInfo.xcprivacy';
+const ANSWERS_PATH = 'release/store/answers.md';
 
-function privacyManifestXml(opts: { includeDeviceId?: boolean } = {}): string {
-  const includeDeviceId = opts.includeDeviceId ?? true;
-  const deviceIdEntry = includeDeviceId
-    ? `
-		<dict>
-			<key>NSPrivacyCollectedDataType</key>
-			<string>NSPrivacyCollectedDataTypeDeviceID</string>
-			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<false/>
-			<key>NSPrivacyCollectedDataTypeTracking</key>
-			<false/>
-		</dict>`
-    : '';
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>NSPrivacyCollectedDataTypes</key>
-	<array>
-		<dict>
-			<key>NSPrivacyCollectedDataType</key>
-			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
-			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<false/>
-			<key>NSPrivacyCollectedDataTypeTracking</key>
-			<false/>
-		</dict>${deviceIdEntry}
-	</array>
-	<key>NSPrivacyTracking</key>
-	<false/>
-</dict>
-</plist>
-`;
+/** The committed privacy declarations, written from draft-copy §4 rather than from the checker's
+ *  own mapping code, so a misunderstanding in the checker can't be copied into its fixture. */
+function committed(relPath: string): string {
+  return fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+}
+
+/** `text` with the one match of `pattern` replaced; throws when there isn't exactly one match,
+ *  because a fixture that silently didn't change would prove nothing. */
+function replaceOnce(text: string, pattern: RegExp, replacement: string): string {
+  const matches = text.match(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`)) ?? [];
+  if (matches.length !== 1) throw new Error(`fixture setup bug: ${String(pattern)} matched ${matches.length} times, expected 1`);
+  return text.replace(pattern, replacement);
+}
+
+type AppPrivacyEntry = { category: string; purposes: string[]; data_protections: string[] };
+
+/** The committed `app-privacy.json` with `edit` applied to its entries. */
+function editedAppPrivacy(edit: (entries: AppPrivacyEntry[]) => AppPrivacyEntry[]): string {
+  return JSON.stringify(edit(JSON.parse(committed(APP_PRIVACY_PATH)) as AppPrivacyEntry[]));
+}
+
+function withProtections(category: string, protections: (had: string[]) => string[]): (entries: AppPrivacyEntry[]) => AppPrivacyEntry[] {
+  return (entries) => {
+    if (!entries.some((e) => e.category === category)) throw new Error(`fixture setup bug: app-privacy.json has no ${category}`);
+    return entries.map((e) => (e.category === category ? { ...e, data_protections: protections(e.data_protections) } : e));
+  };
 }
 
 /** A minimal PNG whose IHDR chunk declares `width`x`height` — the rest of the file is padding, since the checker reads only the header. */
@@ -93,16 +78,16 @@ function baselineFiles(): Record<string, string> {
     'release/store/app-store/copyright.txt': '2026 AnyCognition Inc.',
     'release/store/app-store/primary_category.txt': 'PRODUCTIVITY',
     'release/store/app-store/secondary_category.txt': 'UTILITIES',
-    'release/store/app-store/app-privacy.json': APP_PRIVACY_JSON,
+    [APP_PRIVACY_PATH]: committed(APP_PRIVACY_PATH),
     'release/store/app-store/age-rating.json': AGE_RATING_JSON,
     'release/store/play/en-US/title.txt': 'Whim: Small Apps You Describe',
     'release/store/play/en-US/short_description.txt': 'Describe an app out loud. Whim keeps it on your phone.',
     'release/store/play/en-US/full_description.txt': 'Whim turns a spoken description into a small app that stays on your phone.',
     'release/store/play/en-US/changelogs/default.txt': 'First release.',
-    'release/store/play/data-safety.json': DATA_SAFETY_JSON,
-    'release/store/answers.md': '# Draft answers\n\nSee the release for details.',
+    [DATA_SAFETY_PATH]: committed(DATA_SAFETY_PATH),
+    [ANSWERS_PATH]: committed(ANSWERS_PATH),
     'release/store/app-store/review_information/notes.txt': 'How to try Whim: describe an app, review the plan, build it.',
-    'ios/Whim/PrivacyInfo.xcprivacy': privacyManifestXml(),
+    [PRIVACY_MANIFEST_PATH]: committed(PRIVACY_MANIFEST_PATH),
   };
 }
 
@@ -193,14 +178,141 @@ export async function run(): Promise<void> {
     });
   });
 
-  await test('store-listing: a manifest that drops the device ID fails, naming app-privacy.json, PrivacyInfo.xcprivacy and the device ID type', () => {
-    withFixtureRepo({ text: { 'ios/Whim/PrivacyInfo.xcprivacy': privacyManifestXml({ includeDeviceId: false }) } }, (dir) => {
+  await test('store-privacy: declarations that mark every type Linked pass', () => {
+    const appPrivacy = JSON.parse(committed(APP_PRIVACY_PATH)) as AppPrivacyEntry[];
+    const manifest = committed(PRIVACY_MANIFEST_PATH);
+    const manifestTypes = manifest.match(/<key>NSPrivacyCollectedDataType<\/key>/g) ?? [];
+    const manifestLinked = manifest.match(/<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<true\/>/g) ?? [];
+    assert(appPrivacy.length > 0 && appPrivacy.every((e) => e.data_protections.includes('DATA_LINKED_TO_YOU')), 'fixture precondition: every app-privacy.json entry is DATA_LINKED_TO_YOU');
+    assert(manifestTypes.length > 0 && manifestLinked.length === manifestTypes.length, 'fixture precondition: every privacy-manifest type is Linked');
+    withFixtureRepo({}, (dir) => {
+      const messages = messagesFor(dir);
+      assert(messages.length === 0, `expected all-Linked declarations to pass, got ${JSON.stringify(messages)}`);
+    });
+  });
+
+  await test('store-privacy: the privacy manifest marking the device ID not Linked fails, naming the file and the type', () => {
+    const manifest = replaceOnce(
+      committed(PRIVACY_MANIFEST_PATH),
+      /(<string>NSPrivacyCollectedDataTypeDeviceID<\/string>\s*<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*)<true\/>/,
+      '$1<false/>',
+    );
+    withFixtureRepo({ text: { [PRIVACY_MANIFEST_PATH]: manifest } }, (dir) => {
       const messages = messagesFor(dir);
       assert(
-        messages.some((m) => m.includes('app-privacy.json') && m.includes('PrivacyInfo.xcprivacy') && m.includes('device ID')),
-        `expected a device-ID disagreement finding, got ${JSON.stringify(messages)}`,
+        messages.some((m) => m.startsWith(`${PRIVACY_MANIFEST_PATH}: `) && m.includes('NSPrivacyCollectedDataTypeDeviceID') && m.includes('linked=false')),
+        `expected a not-Linked finding naming ${PRIVACY_MANIFEST_PATH} and NSPrivacyCollectedDataTypeDeviceID, got ${JSON.stringify(messages)}`,
       );
     });
+  });
+
+  await test('store-privacy: app-privacy.json declaring DEVICE_ID not linked fails, naming the file and the type', () => {
+    const appPrivacy = editedAppPrivacy(withProtections('DEVICE_ID', () => ['DATA_NOT_LINKED_TO_YOU']));
+    withFixtureRepo({ text: { [APP_PRIVACY_PATH]: appPrivacy } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${APP_PRIVACY_PATH}: `) && m.includes('DEVICE_ID') && m.includes('linked=false')),
+        `expected a not-linked finding naming ${APP_PRIVACY_PATH} and DEVICE_ID, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: app-privacy.json marking a type DATA_USED_TO_TRACK_YOU fails, naming the file and the type', () => {
+    const appPrivacy = editedAppPrivacy(withProtections('DEVICE_ID', (had) => [...had, 'DATA_USED_TO_TRACK_YOU']));
+    withFixtureRepo({ text: { [APP_PRIVACY_PATH]: appPrivacy } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${APP_PRIVACY_PATH}: `) && m.includes('DEVICE_ID') && m.includes('tracking')),
+        `expected a tracking finding naming ${APP_PRIVACY_PATH} and DEVICE_ID, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: the privacy manifest marking a type used for tracking fails, naming the file and the type', () => {
+    const manifest = replaceOnce(
+      committed(PRIVACY_MANIFEST_PATH),
+      /(<string>NSPrivacyCollectedDataTypeProductInteraction<\/string>\s*<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<true\/>\s*<key>NSPrivacyCollectedDataTypeTracking<\/key>\s*)<false\/>/,
+      '$1<true/>',
+    );
+    withFixtureRepo({ text: { [PRIVACY_MANIFEST_PATH]: manifest } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${PRIVACY_MANIFEST_PATH}: `) && m.includes('NSPrivacyCollectedDataTypeProductInteraction') && m.includes('tracking')),
+        `expected a tracking finding naming ${PRIVACY_MANIFEST_PATH} and the product-interaction type, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: answers.md answering "Used to track you" Yes fails, naming the file and the type', () => {
+    const answers = replaceOnce(committed(ANSWERS_PATH), /(\| Crash Data \| Yes \| )No( \|)/, '$1Yes$2');
+    withFixtureRepo({ text: { [ANSWERS_PATH]: answers } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${ANSWERS_PATH}: `) && m.includes('Crash Data') && m.includes('tracking')),
+        `expected a tracking finding naming ${ANSWERS_PATH} and Crash Data, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: data-safety.json omitting error details fails, naming the file and the error-details category', () => {
+    const dataSafety = JSON.parse(committed(DATA_SAFETY_PATH)) as { types: { id: string }[] };
+    const kept = dataSafety.types.filter((t) => t.id !== 'crash_logs' && t.id !== 'diagnostics');
+    assert(kept.length === dataSafety.types.length - 2, 'fixture precondition: data-safety.json declares crash_logs and diagnostics');
+    withFixtureRepo({ text: { [DATA_SAFETY_PATH]: JSON.stringify({ ...dataSafety, types: kept }) } }, (dir) => {
+      const messages = messagesFor(dir).filter((m) => m.startsWith(`${DATA_SAFETY_PATH}: `) && m.includes('error-details'));
+      assert(
+        messages.some((m) => m.includes('crash_logs')) && messages.some((m) => m.includes('diagnostics')),
+        `expected missing-type findings naming ${DATA_SAFETY_PATH}, crash_logs, diagnostics and error-details, got ${JSON.stringify(messagesFor(dir))}`,
+      );
+    });
+  });
+
+  await test('store-privacy: answers.md calling error details Required fails, naming the file and the type (error details are optional)', () => {
+    const answers = replaceOnce(committed(ANSWERS_PATH), /(\| Crash logs \(error details\) \| Yes \| No \| No \| )Optional( \|)/, '$1Required$2');
+    withFixtureRepo({ text: { [ANSWERS_PATH]: answers } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${ANSWERS_PATH}: `) && m.includes('Crash logs') && m.includes('optional=false')),
+        `expected a required-or-optional finding naming ${ANSWERS_PATH} and Crash logs, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: app-privacy.json declaring a type the mapping does not give fails, naming the file and the type', () => {
+    const appPrivacy = editedAppPrivacy((entries) => [...entries, { category: 'EMAIL_ADDRESS', purposes: ['APP_FUNCTIONALITY'], data_protections: ['DATA_LINKED_TO_YOU'] }]);
+    withFixtureRepo({ text: { [APP_PRIVACY_PATH]: appPrivacy } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${APP_PRIVACY_PATH}: `) && m.includes('EMAIL_ADDRESS')),
+        `expected an unexpected-type finding naming ${APP_PRIVACY_PATH} and EMAIL_ADDRESS, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-privacy: a privacy manifest that drops the device ID fails, naming the file, the type and the phone-id category', () => {
+    const full = committed(PRIVACY_MANIFEST_PATH);
+    const anchor = full.indexOf('<string>NSPrivacyCollectedDataTypeDeviceID</string>');
+    assert(anchor !== -1, 'fixture precondition: the privacy manifest declares the device ID');
+    const manifest = full.slice(0, full.lastIndexOf('<dict>', anchor)) + full.slice(full.indexOf('</dict>', anchor) + '</dict>'.length);
+    withFixtureRepo({ text: { [PRIVACY_MANIFEST_PATH]: manifest } }, (dir) => {
+      const messages = messagesFor(dir);
+      assert(
+        messages.some((m) => m.startsWith(`${PRIVACY_MANIFEST_PATH}: `) && m.includes('NSPrivacyCollectedDataTypeDeviceID') && m.includes('phone-id')),
+        `expected a missing-type finding naming ${PRIVACY_MANIFEST_PATH}, the device ID type and phone-id, got ${JSON.stringify(messages)}`,
+      );
+    });
+  });
+
+  await test('store-listing: neither committed description says "analytics" or "anonymous", and the review notes name OpenRouter only in the reviewer paragraph', () => {
+    for (const file of ['release/store/app-store/en-US/description.txt', 'release/store/play/en-US/full_description.txt']) {
+      const text = committed(file);
+      assert(!/analytics|anonymous/i.test(text), `${file} must not say "analytics" or "anonymous"`);
+    }
+    const notes = committed('release/store/app-store/review_information/notes.txt');
+    const reviewerParagraph = notes.indexOf('WHAT LEAVES THE PHONE, AND WHEN');
+    assert(reviewerParagraph !== -1, 'notes.txt has no "WHAT LEAVES THE PHONE, AND WHEN" paragraph');
+    assert(notes.slice(reviewerParagraph).includes('OpenRouter'), 'the reviewer paragraph must name OpenRouter');
+    assert(!notes.slice(0, reviewerParagraph).includes('OpenRouter'), 'notes.txt must name OpenRouter only in the reviewer paragraph');
   });
 
   await test('store-listing: a 1080x2400 Play screenshot fails, naming the file and its 2.22 aspect ratio', () => {

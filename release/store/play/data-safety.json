@@ -1,23 +1,47 @@
 {
   "encryptedInTransit": true,
-  "deletionRequestMechanism": "There is no account to delete data from. The server keeps a content-free usage ledger and any submitted report for 90 days, then removes them automatically.",
+  "deletionRequestMechanism": "Email the privacy contact in the privacy policy with the ID shown in Whim's Settings, and we delete the records tied to it within 30 days. Reports and usage records are deleted automatically within 12 months, and error details and logs within 90 days.",
   "types": [
     {
       "id": "other_user_generated_content",
       "collected": true,
       "shared": true,
-      "sharedWith": "AI model providers through OpenRouter",
-      "optional": true,
+      "sharedWith": "AI providers acting for AnyCognition",
+      "optional": false,
       "ephemeral": false,
-      "purposes": ["app_functionality"]
+      "purposes": ["app_functionality", "fraud_prevention_security_compliance"]
     },
     {
       "id": "device_or_other_ids",
       "collected": true,
       "shared": false,
+      "optional": false,
+      "ephemeral": false,
+      "purposes": ["app_functionality", "analytics", "fraud_prevention_security_compliance"]
+    },
+    {
+      "id": "app_interactions",
+      "collected": true,
+      "shared": false,
+      "optional": false,
+      "ephemeral": false,
+      "purposes": ["app_functionality", "analytics", "fraud_prevention_security_compliance"]
+    },
+    {
+      "id": "crash_logs",
+      "collected": true,
+      "shared": false,
       "optional": true,
       "ephemeral": false,
-      "purposes": ["app_functionality", "fraud_prevention_security_compliance"]
+      "purposes": ["analytics", "app_functionality"]
+    },
+    {
+      "id": "diagnostics",
+      "collected": true,
+      "shared": false,
+      "optional": true,
+      "ephemeral": false,
+      "purposes": ["analytics", "app_functionality"]
     }
   ]
 }

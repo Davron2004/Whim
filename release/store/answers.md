@@ -30,8 +30,8 @@ store-content.md` for the schemas the sibling JSON files follow.
   treats as user-generated content requiring at least a 13+ floor, independent of Whim's own
   content.
 - **Play IARC questionnaire:** answer "yes" to "does the app allow users to generate content using
-  AI" and "no" to camera/location/contacts/personal-data collection questions beyond the anonymous
-  device ID described below. Target age group 13 and over. Google Play then computes the IARC
+  AI" and "no" to camera/location/contacts/personal-data collection questions beyond the random
+  per-install phone ID described below. Target age group 13 and over. Google Play then computes the IARC
   rating from those answers; there is no override field to set directly, unlike App Store Connect.
 
 ## AI-generated content declaration
@@ -42,42 +42,90 @@ store-content.md` for the schemas the sibling JSON files follow.
   server uses AI models from other companies, reached through OpenRouter, to write the app") and
   `docs/store/review-notes.md` §2's guideline 4.7.1 write-up.
 
-## Data safety / App Privacy (source: store-launch-compliance design D5, this change's design D11)
+## Data safety / App Privacy (source: `docs/research/legal-surface-2026-09/draft-copy.md` §4)
 
-- **What is collected:** user content (the request text, the user's answers to Whim's questions,
-  and the approved plan; for an edit of an existing app, also its name, code, current description
-  and data layout — never the rows the user has saved inside the app) and an anonymous per-install
-  device ID sent in `x-whim-device`.
-- **Why:** user content is sent to AnyCognition's server so it can call third-party AI models
-  through OpenRouter and write or change the app (app functionality). The device ID is used for
-  daily generation limits and abuse prevention (app functionality, fraud prevention).
-- **Sharing:** user content is shared with AI model providers through OpenRouter for app
-  functionality. The device ID is not shared with anyone.
-- **Linkage / tracking:** neither type is linked to an identity and neither is used for tracking —
-  there are no accounts, no login, and Whim never asks for a name, email or phone number.
+Every value here, in `release/store/app-store/app-privacy.json`, `release/store/play/
+data-safety.json` and `ios/Whim/PrivacyInfo.xcprivacy` follows the disclosure manifest's store
+mapping (`contract/src/disclosure-manifest.ts`, legal-surface-v2 design D8). `checkStoreListing`
+refuses the release when any of the four, including the two tables below, disagrees with it.
+Error details are declared now, before diagnostics ship: both stores present these answers as
+what the app may collect, so nothing changes in either console on diagnostics launch day.
+
+### Google Play Data safety
+
+| Data type (Play name) | Collected | Shared | Processed ephemerally | Required or optional | Purposes |
+|---|---|---|---|---|---|
+| Other user-generated content (requests, app material, reports) | Yes | Yes | No | Required | App functionality; Fraud prevention, security and compliance |
+| Device or other IDs (the random phone ID) | Yes | No | No | Required | App functionality; Analytics; Fraud prevention, security and compliance |
+| App interactions (usage records) | Yes | No | No | Required | App functionality; Analytics; Fraud prevention, security and compliance |
+| Crash logs (error details) | Yes | No | No | Optional | Analytics; App functionality |
+| Diagnostics (error details) | Yes | No | No | Optional | Analytics; App functionality |
+
+Security section: data is encrypted in transit, **Yes**. Users can ask for their data to be
+deleted, **Yes**.
+
+- **Shared** follows one rule, recorded with the manifest: a type is Shared when it goes to a
+  recipient whose service-provider status isn't confirmed. Today only user content goes to AI
+  providers, so only it is Yes. The phone ID, usage records and error details reach only Whim's
+  own server and its hosting and logging providers, which are service providers under Play's
+  exception, so moving logs or diagnostics to another such provider doesn't change an answer.
+  User content flips to No once the AI providers' role is confirmed; until then, the privacy
+  policy's "Who handles it right now" list names the parties.
+- **Required or optional** follows Play's definition: required when the app's primary
+  functionality needs the type. Building apps needs the request, the ID and a usage record, so
+  those are Required. Error details have their own Settings switch and are Optional. Reports are
+  sent by hand, but Play asks per type and user content is already Required.
+- **Analytics** is declared for the ID and usage records because the operator report looks at
+  cost per phone ID, and for error details because Play files crash logs and app-health
+  monitoring under Analytics. It isn't tracking and isn't shared. That's why no text anywhere
+  says "no analytics".
+- **IP addresses** aren't declared: Play says to declare them by how they're used, and Whim uses
+  them neither to work out location nor to set limits.
+- **The app-integrity check** rides with the phone ID, so "Device or other IDs" already covers it,
+  fraud prevention included. Whether Play expects Play Integrity itself to be declared wasn't
+  checked; look when device attestation (#65) ships. The app version header (#64) is part of the
+  request, not a new type.
+
+### App Store App Privacy
+
+| What it covers | Apple data type | Linked to you | Used to track you | Purpose |
+|---|---|---|---|---|
+| Requests, app material, reports | Other User Content | Yes | No | App Functionality |
+| The random phone ID | Device ID | Yes | No | App Functionality; Analytics |
+| Usage records | Product Interaction | Yes | No | App Functionality; Analytics |
+| Error details | Crash Data | Yes | No | App Functionality; Analytics |
+| Error details | Other Diagnostic Data | Yes | No | App Functionality; Analytics |
+
+- **Linked everywhere:** Apple counts linkage "via their account, device, or other details", and
+  says personal data under privacy law "is considered linked to the user". Everything here
+  travels with the phone ID or can be joined to it (error details carry a request number that
+  matches a usage record).
+- **Purposes:** Apple's App Functionality purpose includes preventing fraud, minimizing app
+  crashes and customer support, which covers limits, error details and reports. Analytics is
+  added wherever Play declares it, so the two stores tell the same story.
+- **No tracking:** nothing is combined with other companies' data, and there are no ads, so there
+  is no App Tracking Transparency prompt. `NSPrivacyTracking` stays false.
 - **Encryption in transit:** yes, for every request.
-- **Full schemas:** `release/store/app-store/app-privacy.json`, `release/store/play/
-  data-safety.json`, cross-checked against `ios/Whim/PrivacyInfo.xcprivacy` by
-  `checkStoreListing`.
 
 ## Reports (source: `openspec/changes/store-launch-compliance/specs/content-reporting/spec.md`)
 
 - A report is sent only when the user taps `Send report`, even if AI features are off. It carries
-  the selected reason, an optional note, the app name, and the anonymous device ID. The active
+  the selected reason, an optional note, the app name, and the random phone ID. The active
   version's original code is included when stored; there is no code switch. The user can turn off
   inclusion of the prompt that made that version. Older apps may have no saved code or prompt.
-  Reports go to AnyCognition, not to AI model providers, and are deleted after 90 days.
+  Reports go to AnyCognition, not to AI model providers, and are deleted within 12 months.
 
 ## Server persistence otherwise (source: generation-server / usage-ledger spec)
 
-- A content-free usage ledger: device ID, request kind, day, outcome, token counts and cost, kept
-  for 90 days. No prompt or generated code is kept in the ledger.
+- Usage records: per request, the phone ID, request kind, times, outcome, size and cost, plus
+  running lifetime totals per phone ID. Deleted automatically within 12 months (the totals, 12
+  months after the phone ID's last use). No prompt or generated code is kept in them.
 
 ## App access (for reviewer instructions)
 
 - **Login:** none. There are no accounts, so there is nothing for App Review or Play's reviewer to
   sign in with. `docs/store/review-notes.md` §1 walks through trying the app with no credentials.
-- **Ads:** none. Whim ships no ad SDK and no analytics or crash-reporting SDK.
+- **Ads:** none. Whim ships no ad or tracking SDK.
 - **User-to-user content / social features:** none. Nothing a user makes is visible to any other
   user.
 
