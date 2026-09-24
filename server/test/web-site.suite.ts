@@ -37,6 +37,7 @@ function readPage(name: string): string {
 // also satisfy `buildSite`'s `env: NodeJS.ProcessEnv` parameter without a cast.
 const FIXTURE_VALUES: Record<string, string> = {
   WHIM_SUPPORT_EMAIL: 'support@whim.anycognition.ca',
+  WHIM_BETA_SIGNUP_URL: 'https://api.whim.anycognition.ca/beta/signup',
 };
 
 const FIXTURE_VALUES_WITH_STORES: Record<string, string> = {

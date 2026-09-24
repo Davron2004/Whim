@@ -22,6 +22,7 @@ export const CATEGORY_IDS = [
   'error-details',
   'connection-logs',
   'reports',
+  'waitlist',
 ] as const;
 export type CategoryId = (typeof CATEGORY_IDS)[number];
 
@@ -407,6 +408,25 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
         ],
       },
     },
+    {
+      // Website-only (beta-waitlist D10): the app never sends it, so no store type maps to it, and
+      // signing up on the page is the act that consents to it. A new user-act category doesn't
+      // widen the manifest, so the app's consent version stays.
+      id: 'waitlist',
+      rows: [
+        {
+          name: 'Beta waitlist',
+          description: 'The email address, phone type and updates opt-out given on Whim’s website to join the beta, and the sign-up wording seen',
+        },
+      ],
+      excludes: { 'phone-id': 'The phone ID' },
+      keep: { kind: 'max-days', days: 730, after: 'collection' },
+      consent: 'user-act',
+      toggle: 'none',
+      onScreen: false,
+      savedData: 'none',
+      store: NO_STORE_TYPE,
+    },
   ],
   roles: [
     { id: 'anycognition', description: 'AnyCognition, the company that makes Whim', namedOnScreen: true },
@@ -439,6 +459,7 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     },
     { id: 'safety', description: 'Handle reports and keep Whim safe', advertisingOrTracking: false },
     { id: 'legal', description: 'Meet legal obligations', advertisingOrTracking: false },
+    { id: 'beta', description: 'Invite people to test Whim and, unless they opt out, email them about Whim', advertisingOrTracking: false },
   ],
   uses: [
     { category: 'request-material', roles: ['anycognition', 'ai-providers', 'hosting-providers'], purposes: ['build', 'operate'] },
@@ -462,6 +483,9 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
     { category: 'error-details', roles: SERVER_HOLDERS, purposes: OPERATE_ONLY },
     { category: 'error-details', roles: ['authorities'], purposes: ['legal'] },
     { category: 'error-details', roles: ['successor'], purposes: OPERATE_ONLY },
+    { category: 'waitlist', roles: [...SERVER_HOLDERS, 'platform'], purposes: ['beta'] },
+    { category: 'waitlist', roles: ['authorities'], purposes: ['legal'] },
+    { category: 'waitlist', roles: ['successor'], purposes: ['beta'] },
   ],
   promises: [
     {

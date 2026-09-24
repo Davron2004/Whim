@@ -32,6 +32,9 @@ import { runDeployConfigTests } from './deploy-config.suite';
 import { runFlowbenchTests } from './flowbench.suite';
 import { runRequestEdgeTests } from './request-edge.suite';
 import { runDiagnosticsTests } from './diagnostics.suite';
+import { runWaitlistTests } from './waitlist.suite';
+import { runBetaSignupTests } from './beta-signup.suite';
+import { runBetaSiteTests } from './beta-site.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -60,5 +63,8 @@ await runDeployConfigTests();
 await runFlowbenchTests();
 await runRequestEdgeTests();
 await runDiagnosticsTests();
+runWaitlistTests();
+await runBetaSignupTests();
+await runBetaSiteTests();
 
 report();

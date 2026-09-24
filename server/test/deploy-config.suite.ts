@@ -516,8 +516,10 @@ function byteSize(value: string): number | undefined {
 
 const API_FORBIDDEN = ['encode', 'log', 'file_server', 'root', 'try_files', 'templates', 'php_fastcgi'];
 const PAGES_FORBIDDEN = ['reverse_proxy', 'templates', 'encode', 'log', 'respond', 'redir', 'php_fastcgi', 'browse'];
-const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'";
+const PAGES_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'";
 const ASSOCIATION_ROUTES = ['/.well-known/apple-app-site-association', '/.well-known/assetlinks.json'];
+/** Served straight from the published files, never rewritten (the pages' self-hosted fonts). */
+const ASSET_ROUTES = ['/assets/*'];
 const PAGE_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ['/privacy', 'privacy.html'],
   ['/privacy/v1', 'privacy-v1.html'],
@@ -525,6 +527,9 @@ const PAGE_ROUTES: ReadonlyArray<readonly [string, string]> = [
   ['/fr/privacy', 'fr/privacy.html'],
   ['/fr/terms', 'fr/terms.html'],
   ['/support', 'support.html'],
+  ['/beta', 'beta.html'],
+  ['/beta/thanks', 'beta-thanks.html'],
+  ['/beta/retry', 'beta-retry.html'],
   ['/a/*', 'app-link.html'],
   ['', 'not-found.html'],
 ];
@@ -545,10 +550,21 @@ function apiSiteProblems(site: readonly CaddyNode[], maxBodyBytes: number): stri
   return problems;
 }
 
+/** Each asset route serves the published files under its prefix as they are: no rewrite, no header. */
+function assetRouteProblems(handles: ReadonlyMap<string, CaddyNode>, siteFiles: readonly string[]): string[] {
+  const problems: string[] = [];
+  for (const route of ASSET_ROUTES) {
+    const lines = childLines(handles.get(route));
+    if (!lines.includes('file_server') || lines.some((line) => line.startsWith('rewrite') || line.startsWith('header'))) problems.push(`${route} is not served straight from the published files`);
+    if (!siteFiles.some((file) => file.startsWith(`${route.slice(1, -2)}/`))) problems.push(`${route} serves nothing the site publishes`);
+  }
+  return problems;
+}
+
 function pagesRouteProblems(site: readonly CaddyNode[], siteFiles: readonly string[]): string[] {
   const problems: string[] = [];
   const handles = new Map(site.filter((node) => directiveOf(node) === 'handle').map((node) => [node.tokens.slice(1).join(' '), node]));
-  const expected = [...ASSOCIATION_ROUTES, ...PAGE_ROUTES.map(([route]) => route)];
+  const expected = [...ASSOCIATION_ROUTES, ...PAGE_ROUTES.slice(0, -2).map(([route]) => route), ...ASSET_ROUTES, ...PAGE_ROUTES.slice(-2).map(([route]) => route)];
   if (!sameList([...handles.keys()], expected)) {
     problems.push(`the pages routes are [${[...handles.keys()].map((route) => route || '(catch-all)').join(', ')}], not the D21 route table`);
   }
@@ -557,6 +573,7 @@ function pagesRouteProblems(site: readonly CaddyNode[], siteFiles: readonly stri
     if (!lines.includes('header Content-Type application/json')) problems.push(`${route} is not served with Content-Type: application/json`);
     if (!lines.includes('file_server') || lines.some((line) => line.startsWith('rewrite'))) problems.push(`${route} is not served straight from the published file`);
   }
+  problems.push(...assetRouteProblems(handles, siteFiles));
   for (const [route, file] of PAGE_ROUTES) {
     const lines = childLines(handles.get(route));
     if (!lines.includes(`rewrite * /${file}`) || !lines.includes('file_server')) problems.push(`${route || 'the catch-all'} does not rewrite to /${file}`);
@@ -933,6 +950,7 @@ const STUB_SCRIPT = [
   '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/config-check.mjs"*) cd "$STUB_REAL_ROOT" && exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
+  '    printf \'%s\\n\' "${WHIM_BETA_SIGNUP_URL:-}" >"$STUB_DIR/site-signup-url"',
   '    mkdir -p "${@: -1}"',
   '    for page in privacy support app-link not-found; do echo "<!doctype html><title>$page</title>" >"${@: -1}/$page.html"; done',
   '    echo "association files: absent (release/android-upload-cert.sha256); app link verification stays PENDING" ;;',
@@ -1293,6 +1311,7 @@ function deploySiteOnlyTests(): void {
     check('  ... and starting or reloading only Caddy', ssh.some((line) => line.includes('up -d --no-deps caddy') && line.includes('caddy reload')), ssh.join(' / '));
     check('  ... publishing the rendered site and the Caddyfile only', fs.existsSync(path.join(sandbox.stubs, 'upload', 'site', 'privacy.html')) && fs.existsSync(path.join(sandbox.stubs, 'upload', 'Caddyfile')) && !fs.existsSync(path.join(sandbox.stubs, 'upload', 'config.env')));
     check('  ... as a release swapped in with mv -T', ssh.some((line) => line.includes('mv -T')));
+    eq('  ... building the /beta form to post to the API host\'s signup route', stubFile(sandbox, 'site-signup-url'), `https://${API_HOST}/beta/signup\n`);
     const curls = toolLog(sandbox, 'curl');
     check('  ... then running the pages smoke checks only', curls.some((line) => line.includes(`${WEB_HOST}/privacy`)) && curls.every((line) => !line.includes(API_HOST)), curls.join(' / '));
   });
@@ -1374,12 +1393,13 @@ function deployFullTests(health: HealthBodies): void {
     const head = headOf(sandbox);
     eq('a full deploy on an e2-standard-8 VM succeeds', run.status, 0);
     check('  ... reading the key before Cloud Build builds HEAD', indexOfCall(calls, 'secrets versions access') !== -1 && indexOfCall(calls, 'secrets versions access') < indexOfCall(calls, `builds submit`) && calls.some((line) => line.includes(`COMMIT_SHA=${head}`)), calls.join(' / '));
-    eq('  ... writing the event profile\'s server limits and the model ids to config.env', stubFile(sandbox, 'upload/config.env').split('\n').filter((line) => line !== ''), [
+    eq('  ... writing the event profile\'s server limits, the model ids and the pages origin to config.env', stubFile(sandbox, 'upload/config.env').split('\n').filter((line) => line !== ''), [
       'WHIM_MAX_CONCURRENT_GENERATIONS=15',
       'WHIM_SYNTHRUN_CONCURRENCY=6',
       'WHIM_MAX_CONCURRENT_UNARY=32',
       'WHIM_ENGINEER_MODEL=vendor/engineer-1',
       'WHIM_REWRITE_MODEL=vendor/rewrite-1',
+      `WHIM_WEB_ORIGIN=https://${WEB_HOST}`,
       'WHIM_REPAIR_MODEL=vendor/repair-1',
       'WHIM_PLAN_REASONING=low',
       'WHIM_REPAIR_REASONING=off',
@@ -1408,7 +1428,7 @@ function deployFullTests(health: HealthBodies): void {
     const ssh = calls.filter((line) => line.includes('compute ssh'));
     eq('a rollback to a pushed tag succeeds, its smoke finding that tag\'s commit on /healthz', run.status, 0);
     check('  ... without building', indexOfCall(calls, 'builds submit') === -1, calls.join(' / '));
-    check('  ... deploying that tag with the standard profile', stubFile(sandbox, 'upload/compose.env').includes(`server:${TAG}\n`) && stubFile(sandbox, 'upload/compose.env').includes('WHIM_PROFILE=standard') && stubFile(sandbox, 'upload/config.env') === 'WHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\n');
+    check('  ... deploying that tag with the standard profile', stubFile(sandbox, 'upload/compose.env').includes(`server:${TAG}\n`) && stubFile(sandbox, 'upload/compose.env').includes('WHIM_PROFILE=standard') && stubFile(sandbox, 'upload/config.env') === `WHIM_ENGINEER_MODEL=vendor/engineer-1\nWHIM_REWRITE_MODEL=vendor/rewrite-1\nWHIM_WEB_ORIGIN=https://${WEB_HOST}\n`);
     check(
       '  ... and never building or publishing the site: no local site build, no site publish call over ssh',
       !fs.existsSync(path.join(sandbox.stubs, 'upload', 'site')) && ssh.every((line) => !/mv -T|releases\//.test(line)),
@@ -2466,6 +2486,10 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   checkClean('the API site proxies with flush_interval -1, no encode, no log and no file serving; the pages site serves exactly the D21 route table', caddyfileProblems(caddyfile, maxBodyBytes, siteFiles));
   const red = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyfileProblems(text, maxBodyBytes, siteFiles), needle);
   red('dropping flush_interval -1 fails', plant(caddyfile, '\t\tflush_interval -1\n', ''), 'flush_interval -1');
+  red('dropping font-src \'self\' fails', plant(caddyfile, "; font-src 'self'\"", '"'), 'Content-Security-Policy');
+  red('allowing a remote font origin fails', plant(caddyfile, "; font-src 'self'\"", "; font-src 'self' https://fonts.gstatic.com\""), 'Content-Security-Policy');
+  red('dropping the /beta/thanks route fails', plant(caddyfile, '\thandle /beta/thanks {\n\t\trewrite * /beta-thanks.html\n', '\thandle /beta/thanks-page {\n\t\trewrite * /beta-thanks.html\n'), 'not the D21 route table');
+  red('rewriting /assets/* to a page fails', plant(caddyfile, '\thandle /assets/* {\n', '\thandle /assets/* {\n\t\trewrite * /beta.html\n'), '/assets/* is not served straight');
 
   checkClean("Caddy's default logger deletes the request headers and the client's address from a real reverse-proxy line", caddyLogProblems(caddyfile, CADDY_PROXY_ABORT_LINE));
   const logRed = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyLogProblems(text, CADDY_PROXY_ABORT_LINE), needle);

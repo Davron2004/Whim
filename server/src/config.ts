@@ -60,6 +60,14 @@ export interface ServerConfig {
   readonly maxBodyBytesReport: number;
   readonly maxPromptBytes: number;
   readonly maxReportSourceBytes: number;
+  /** `POST /beta/signup` (beta-waitlist D3): the body cap, the signups one client address may make
+   *  in a sliding hour, and the signups everyone together may make per UTC day. */
+  readonly maxBodyBytesBeta: number;
+  readonly betaLimitPerClientHour: number;
+  readonly betaLimitPerDay: number;
+  /** `WHIM_WEB_ORIGIN`: the pages site's origin, which the signup route redirects to (`https://`
+   *  + `WHIM_WEB_HOST` on the VM). Required in production; a local default elsewhere. */
+  readonly webOrigin: string;
   readonly unaryModelTimeoutMs: number;
   readonly generationMaxMs: number;
   /** A non-negative decimal USD amount — the one limit that is NOT a positive integer. */
@@ -186,6 +194,19 @@ function readString(env: NodeJS.ProcessEnv, name: string, fallback: string): str
   return env[name] ?? fallback;
 }
 
+/** An origin and nothing more (no path, no trailing slash), over https — or http outside
+ *  production, for a local pages preview. */
+function readWebOrigin(env: NodeJS.ProcessEnv, name: string, production: boolean): string {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return 'http://localhost:8080';
+  const url = URL.canParse(raw) ? new URL(raw) : undefined;
+  const schemeAllowed = url?.protocol === 'https:' || (!production && url?.protocol === 'http:');
+  if (!schemeAllowed || url?.origin !== raw) {
+    throw new ServerConfigError(name, `${name} must be an origin such as https://example.com, with no path, got ${JSON.stringify(raw)}.`);
+  }
+  return raw;
+}
+
 const PROVIDER_SORTS: readonly ProviderSort[] = ['price', 'throughput', 'latency'];
 
 /** `WHIM_PROVIDER_SORT` (design D3): unset (or empty) means no provider preference; any other
@@ -240,6 +261,10 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     maxBodyBytesReport: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_REPORT', 524_288),
     maxPromptBytes: readPositiveInt(env, 'WHIM_MAX_PROMPT_BYTES', 16_384),
     maxReportSourceBytes: readPositiveInt(env, 'WHIM_MAX_REPORT_SOURCE_BYTES', 262_144),
+    maxBodyBytesBeta: readPositiveInt(env, 'WHIM_MAX_BODY_BYTES_BETA', 4096),
+    betaLimitPerClientHour: readPositiveInt(env, 'WHIM_BETA_LIMIT_PER_CLIENT_HOUR', 10),
+    betaLimitPerDay: readPositiveInt(env, 'WHIM_BETA_LIMIT_PER_DAY', 2000),
+    webOrigin: readWebOrigin(env, 'WHIM_WEB_ORIGIN', nodeEnv === 'production'),
     unaryModelTimeoutMs: readPositiveInt(env, 'WHIM_UNARY_MODEL_TIMEOUT_MS', 60_000),
     generationMaxMs,
     minCreditUsd: readNonNegativeDecimal(env, 'WHIM_MIN_CREDIT_USD', 0.5),
@@ -274,6 +299,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     }
     if (!config.engineerModel) {
       throw new ServerConfigError('WHIM_ENGINEER_MODEL', 'WHIM_ENGINEER_MODEL is required in production.');
+    }
+    if (!env.WHIM_WEB_ORIGIN) {
+      throw new ServerConfigError('WHIM_WEB_ORIGIN', 'WHIM_WEB_ORIGIN is required in production: the beta signup redirects there.');
     }
   }
 
