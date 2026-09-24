@@ -5,8 +5,9 @@ The pages site SHALL serve a signup page at `/beta` and result pages at `/beta/t
 The signup page SHALL contain one form that posts `application/x-www-form-urlencoded` to the
 build-time value `WHIM_BETA_SIGNUP_URL`, with fields `email` (type email, required, maxlength 254),
 `platform` (radios `ios`, `android`, `other`, labelled "iOS", "Android" and "Other"; one required),
-`updates_opt_out` (checkbox, value `1`, unchecked by default) and the trap field `company` (hidden
-from people, not `type="hidden"`).
+`updates_opt_out` (checkbox, value `1`, unchecked by default) and the trap field `hp_ref` (hidden
+from people, not `type="hidden"`, `autocomplete="off"`, and with a name, id and label that hold no
+word browser autofill fills: company, organization, business, website, url or name).
 
 #### Scenario: Pages are routed
 - **WHEN** a browser requests `/beta`, `/beta/thanks` or `/beta/retry` on the pages host
@@ -66,7 +67,7 @@ random salt, and held only in memory.
 - **THEN** the signups over the limit are not stored and redirect to retry, and a different client address is still accepted
 
 #### Scenario: Trap field
-- **WHEN** a post fills the `company` field
+- **WHEN** a post fills the `hp_ref` field
 - **THEN** nothing is stored and the response redirects to thanks
 
 ### Requirement: Emails never logged

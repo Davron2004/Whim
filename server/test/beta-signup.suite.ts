@@ -12,7 +12,7 @@ import { InMemoryUsageStore } from '../src/usage-store';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { shapeOnlyVerifier } from '../src/device-identity';
 import { createServerLogger, REDACTED } from '../src/logger';
-import { MAX_EMAIL_BYTES } from '../src/routes/beta-signup';
+import { MAX_EMAIL_BYTES, TRAP_FIELD } from '../src/routes/beta-signup';
 import { CURRENT_NOTICE_ID } from '../src/waitlist/notices';
 import { InMemoryWaitlistStore, type WaitlistStore } from '../src/waitlist/store';
 
@@ -174,12 +174,18 @@ async function abuseLimitTests(): Promise<void> {
 
   {
     const { app, store } = harness();
-    const res = await post(app, { ...VALID, company: 'Acme Corp' });
+    const res = await post(app, { ...VALID, [TRAP_FIELD]: 'Acme Corp' });
     eq('a filled trap field redirects to thanks and stores nothing', [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 0]);
-    const trappedInvalid = await post(app, { email: 'not-an-email', platform: 'nope', company: 'x' });
+    const trappedInvalid = await post(app, { email: 'not-an-email', platform: 'nope', [TRAP_FIELD]: 'x' });
     eq('  ... even when the rest of the form is invalid, so a bot learns nothing', redirectsTo(trappedInvalid), `303 ${THANKS}`);
-    const empty = await post(app, { ...VALID, company: '' });
+    const empty = await post(app, { ...VALID, [TRAP_FIELD]: '' });
     eq('an empty trap field is a person: stored', [redirectsTo(empty), store.export().length], [`303 ${THANKS}`, 1]);
+  }
+
+  {
+    const { app, store } = harness();
+    const res = await post(app, { ...VALID, [TRAP_FIELD]: '', company: 'Acme Corp', organization: 'Acme Corp' });
+    eq('a person whose browser autofilled an organization field is stored, not trapped', [redirectsTo(res), store.export().length], [`303 ${THANKS}`, 1]);
   }
 }
 
@@ -200,7 +206,7 @@ async function loggingTests(): Promise<void> {
     await post(app, { email: secretEmail, platform: 'android', updates_opt_out: '1' }, headers);
     await post(app, { email: secretEmail, platform: 'android' }, headers);
     await post(app, { email: `${secretEmail}.`, platform: 'android' }, headers);
-    await post(app, { email: secretEmail, platform: 'android', company: 'bot' }, headers);
+    await post(app, { email: secretEmail, platform: 'android', [TRAP_FIELD]: 'bot' }, headers);
     await post(app, { email: secretEmail, platform: 'android', padding: 'x'.repeat(5000) }, headers);
   } finally {
     capture.stop();
