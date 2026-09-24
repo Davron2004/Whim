@@ -28,6 +28,8 @@ import { buildRuntimeTree } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
+import { NodeSqliteWaitlistStore, WAITLIST_RETENTION_DAYS } from '../src/waitlist/store';
+import { CURRENT_NOTICE_ID } from '../src/waitlist/notices';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
 const ROOT = process.cwd();
@@ -211,6 +213,16 @@ function ledgerOutcomes(dataDir: string): string[] {
   }
 }
 
+/** The emails in a waitlist.db, sorted, read through a read-only connection of this process. */
+function waitlistEmails(dataDir: string): string[] {
+  const db = new DatabaseSync(path.join(dataDir, 'waitlist.db'), { readOnly: true });
+  try {
+    return (db.prepare('SELECT email FROM waitlist ORDER BY email').all() as { email: string }[]).map((row) => row.email);
+  } finally {
+    db.close();
+  }
+}
+
 function hasTerminal(stream: string): boolean {
   return stream.includes('event: result') || stream.includes('event: failure');
 }
@@ -287,6 +299,14 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
   const commit = 'fedcba9876543210fedcba9876543210fedcba98';
   const dataDir = fixture.dataDir('serves');
   const pagesOrigin = 'https://pages.example.test';
+  // Two signups written by the real store before boot, one last changed past the retention period
+  // the privacy policy publishes and one inside it: boot's scheduled purge must take only the first.
+  const dayMs = 86_400_000;
+  const seed = new NodeSqliteWaitlistStore(path.join(dataDir, 'waitlist.db'));
+  seed.upsert({ email: 'expired@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS + 1) * dayMs });
+  seed.upsert({ email: 'kept@example.com', platform: 'ios', updatesOptOut: false, noticeId: CURRENT_NOTICE_ID, now: Date.now() - (WAITLIST_RETENTION_DAYS - 1) * dayMs });
+  seed.close();
+  const waitlistWal = path.join(dataDir, 'waitlist.db-wal');
   const proc = new TreeProcess(fixture.tree, {
     WHIM_PIPELINE: 'stub',
     WHIM_DATA_DIR: dataDir,
@@ -315,10 +335,19 @@ async function testStubTreeServes(fixture: Fixture): Promise<void> {
       signup === TIMED_OUT ? 'timed out' : [signup.status, signup.headers.get('location')],
       [303, `${pagesOrigin}/beta/thanks`],
     );
+    eq(
+      'the waitlist purge ran at boot: the signup past the retention period is gone, the newer ones remain',
+      waitlistEmails(dataDir),
+      ['kept@example.com', 'tree.person@example.com'],
+    );
+    check('setup: while the server runs, waitlist.db has a write-ahead log', fs.existsSync(waitlistWal));
 
     proc.signal('SIGTERM');
     const exit = await exitOf(proc);
     eq('an idle server drains and exits 0 on SIGTERM', exit === TIMED_OUT ? 'timed out' : exit.code, 0);
+    // SQLite removes a WAL database's log when its last connection closes, and leaves it when the
+    // process exits with the connection open.
+    check('  ... closing waitlist.db on the way out: its write-ahead log is gone', !fs.existsSync(waitlistWal));
   } finally {
     await proc.dispose();
   }
