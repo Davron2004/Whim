@@ -3,6 +3,7 @@
  */
 
 import './src/host/platform/install-entry-polyfills';
+import './src/host/platform/install-diagnostics';
 
 import { AppRegistry } from 'react-native';
 import App from './App';

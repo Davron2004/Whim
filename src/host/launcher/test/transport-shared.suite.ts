@@ -179,7 +179,7 @@ export async function runTransportSharedTests(h: Harness): Promise<void> {
     h.ok(caught instanceof GenerationClientError, 'building the request throws a GenerationClientError, not a crash');
     h.eq((caught as GenerationClientError | undefined)?.kind, 'client', 'classified client: nothing was sent');
     h.eq((caught as GenerationClientError | undefined)?.hint, 'WhimAppInfo: the native module is missing from this build', 'carrying the reader’s own message');
-    const logged = log.buffer.snapshot().slice(before).find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/clarify');
+    const logged = log.buffer.snapshot().slice(before).find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
     h.eq(logged?.fields.kind, 'client', 'and it is recorded on the generation channel');
   });
 

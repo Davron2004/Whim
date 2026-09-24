@@ -422,7 +422,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       const logged = log.buffer
         .snapshot()
         .slice(before)
-        .find((r) => r.channel === CHANNELS.gen && r.fields.path === '/v1/generate');
+        .find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/generate');
       h.ok(logged !== undefined, 'records a breadcrumb at the transport-error mapping site');
       if (logged) {
         h.eq(logged.fields.kind, 'network', 'the mapped error kind is a named field');

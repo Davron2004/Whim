@@ -31,6 +31,7 @@ import { runReleaseSuites } from './release';
 import { run as runSourceScans } from './repo/source-scans.suite';
 import { run as runHeaderLockstep } from './repo/header-lockstep.suite';
 import { run as runConsentCoverage } from './repo/consent-coverage.suite';
+import { run as runLogEgress } from './repo/log-egress.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1206,6 +1207,7 @@ async function main(): Promise<void> {
   await runSourceScans();
   await runHeaderLockstep();
   await runConsentCoverage();
+  await runLogEgress();
 }
 
 main()
