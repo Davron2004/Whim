@@ -10,7 +10,7 @@ These are the only open items. Don't leave them for the day of a breach.
 
 - TODO(owner): add the OPC's breach report form link to Contacts. The research files don't cite one.
 - TODO(owner): add the Commission d'accès à l'information (CAI) link for reporting a confidentiality incident to Contacts.
-- TODO(owner): add the ICO's breach report link to Contacts, and decide with the EU Article 27 representative which EU authority or authorities to notify. Whim can't tell where a user is, so it can't tell which EU country is affected.
+- TODO(owner): add the ICO's breach report link to Contacts. Known risk, accepted by the owner (2026-09-24, no EU/UK representative will be appointed — solo, non-revenue project): Whim can't tell where a user is, so it can't tell which EU country is affected or route the question through a representative; notify the ICO for UK risk, and pick the most relevant EU authority on a best-effort basis for EU risk.
 - TODO(owner): add OpenRouter's security contact to Contacts, and check whether OpenRouter's terms or DPA promise to tell Whim about an incident (this belongs in the B3 written agreement).
 - TODO(owner): pick a private place for incident notes and evidence copies, encrypted and outside this repository. The repository is public (`openspec/changes/developer-observability/design.md`, the note on publishing the commit SHA).
 - TODO(owner): confirm the daily snapshot schedule for the `whim-data` disk exists (`docs/deploy.md` §"Persistent-disk snapshots" says no script creates it).
@@ -128,7 +128,7 @@ For likelihood of misuse, ask: who got it (a known party, or an unknown attacker
 
 **EU and UK.** Notify the authority within 72 hours unless the breach is unlikely to result in a risk to people. Tell the people themselves if the risk is high (GDPR and UK GDPR Art. 33 and 34; general knowledge, not in the research files). A late report is better than none: send what you have and add the rest later.
 
-**US.** State breach laws weren't researched. If US users are affected and report notes or prompts are involved, ask a lawyer.
+**US.** State breach laws weren't researched. Known risk, accepted by the owner: if US users are affected and report notes or prompts are involved, which state breach-notification duties apply is undetermined; no lawyer will be engaged to answer it.
 
 ## Notify
 
@@ -161,6 +161,6 @@ PIPEDA allows this kind of indirect notice when you have no contact details for 
 
 1. Fill in the breach-log entry completely, even if nothing was reportable (s.10.3).
 2. Fix the cause. Note the commit or config change in the log.
-3. Check that every promise in the policy and on the consent screen is still true. If one was false during the breach, that is a separate problem under Competition Act s.52 (canada.md §(e)) and a question for a lawyer.
+3. Check that every promise in the policy and on the consent screen is still true. If one was false during the breach, that is a separate problem under Competition Act s.52 (canada.md §(e)). Known risk, accepted by the owner: no lawyer will review that separate problem.
 4. Delete the evidence copies once nothing more needs them, and note the date in the log.
 5. If the breach showed a gap in this runbook, fix the runbook.

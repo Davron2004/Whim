@@ -82,11 +82,11 @@ Text sources: `docs/research/legal-surface-2026-09/draft-copy.md` (§1 consent, 
 - [x] 11.2 Set up the `privacy@anycognition.ca` mailbox (B2). *Resolved 2026-09-24 by owner decision: `support@anycognition.ca` (existing Zoho mailbox) is the privacy contact; a privacy@ alias is optional later.*
 - [ ] 11.3 In the OpenRouter account, exclude providers that train on or keep inputs, and confirm prompt logging is off (B1).
 - [ ] 11.4 Read and sign the Quebec s.17 assessment. Check whether OpenRouter's DPA serves as the written agreement and gives EU/UK transfer cover (SCCs or DPF) (B3).
-- [ ] 11.5 Appoint the EU and UK Article 27 representatives and record them in the identity file. Check whether the ICO fee applies, and read the UK DPIA.
+- [x] 11.5 Appoint the EU and UK Article 27 representatives and record them in the identity file. Check whether the ICO fee applies, and read the UK DPIA. — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)
 - [ ] 11.6 Confirm Apple's EU DSA trader status with the business address and phone. The Play trader declaration waits on the account question (decision 3).
-- [ ] 11.7 Have a fluent reader check the French pages and the French legal copy, and a Korean reader check the transfer section.
+- [x] 11.7 Have a fluent reader check the French pages and the French legal copy, and a Korean reader check the transfer section. — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)
 - [ ] 11.8 Run `platform-release-readiness` 13.6 (Android) and 13.7 (iPhone) and confirm both pass before any v2 copy ships (B7). Then remove the network-deny TODO from both review-notes files.
 - [ ] 11.9 Test the age signals on a real iPhone (iOS 26+) and a real Android phone with Play.
 - [ ] 11.10 Give each store the Texas §121.053 notice before the v2 terms and policy go live.
 - [ ] 11.11 Deploy in the design's migration order: server first, then site, then the app release. Submit App Privacy and Data safety in both consoles with the release, and upload the listings and review notes.
-- [ ] 11.12 After launch, engage a lawyer with `docs/legal/lawyer-brief.md` (decision 7).
+- [x] 11.12 After launch, engage a lawyer with `docs/legal/lawyer-brief.md` (decision 7). — declined by the owner 2026-09-24 (solo non-revenue project; AI text is final)

@@ -4,7 +4,7 @@
 
 ## 1. Why a DPIA
 
-Whim is rated 13+, so people aged 13 to 17 can use it. The code applies to services likely to be accessed by children, meaning anyone under 18, and its standard 2 asks for a DPIA. This draft assumes Whim is covered. Lawyer item 17 asks whether it is, and whether this DPIA supports error details on by default.
+Whim is rated 13+, so people aged 13 to 17 can use it. The code applies to services likely to be accessed by children, meaning anyone under 18, and its standard 2 asks for a DPIA. This draft assumes Whim is covered. Known risk, accepted by the owner (2026-09-24): whether Whim is actually covered, and whether this DPIA supports error details on by default, is undetermined; no lawyer will confirm either.
 
 ## 2. What Whim does with personal data
 
@@ -49,7 +49,7 @@ The code allows two approaches: establish age with enough certainty for the risk
 | 6. Policies and community standards | Terms of use with acceptable-use rules; the content check; the report sheet | The terms reserve the right to cut off a phone's ID, but there is no block list yet (README "Terms of service"). A block list by phone ID is the follow-up if needed. |
 | 7. Default settings | High privacy by default for everything optional, except error details, which are on (section 5) | The owner's decision in section 5 |
 | 8. Data minimisation | No account, no name, no age sent. Requests aren't kept. Error details are a separate choice with their own switch (B4). Keep-periods are capped by the manifest and enforced at server startup and deploy (design D9). | None found |
-| 9. Data sharing | Requests go to AI providers because that is the service the user asked for. The providers act for Whim and may not train on the data (B1). | Lawyer item 3 decides whether this counts as sharing with third parties or as use of service providers. |
+| 9. Data sharing | Requests go to AI providers because that is the service the user asked for. The providers act for Whim and may not train on the data (B1). | Known risk, accepted by the owner: whether this counts as sharing with third parties or use of service providers is undecided; no lawyer will confirm it. |
 | 10. Geolocation | No location feature. Whim can't tell which state or country anyone is in (README, US thresholds paragraph). | None |
 | 11. Parental controls | None in Whim. Where Texas-style laws apply, parental approval runs through the store (note 18). | None |
 | 12. Profiling | No profiling for content, recommendations or ads. Usage records per phone ID serve daily limits, abuse checks and cost (README verification item 23: the operator report lists top devices by cost). | Keep usage records to those purposes. |
@@ -79,7 +79,7 @@ The code sets high privacy as the default and asks for a compelling reason to di
 
 Whim has no reliable way to tell a UK user. It has no location, and IP addresses aren't looked up. The only signal on the phone is the phone's region setting, and using it would be a new rule in the error-details preference module (design D10), which today treats a missing value as on. The simpler alternative is off everywhere. Either change must happen before diagnostics ship, because turning a default on later counts as widening the manifest (README note 3).
 
-**Draft recommendation:** keep error details on, on three conditions: B9 and B4 ship before diagnostics do, the 90-day cap holds, and the consent screen names error details. Lawyer item 17 checks this after launch.
+**Draft recommendation:** keep error details on, on three conditions: B9 and B4 ship before diagnostics do, the 90-day cap holds, and the consent screen names error details. Known risk, accepted by the owner: no lawyer will check this after launch; the draft recommendation stands as final.
 
 TODO(owner): decide on or off for UK users, and record why: ______
 
@@ -97,11 +97,11 @@ TODO(owner): decide on or off for UK users, and record why: ______
 
 ## 7. Other UK items
 
-- TODO(owner): check whether the ICO data protection fee applies (tasks.md 11.5; lawyer item 6).
+- TODO(owner): check whether the ICO data protection fee applies (tasks.md 11.5).
 - The code's DPIA standard expects the views of children and parents to be sought where appropriate. TODO(owner): decide whether to ask a few teen users or parents before signing, and record the answer: ______
 
 ## 8. Sign-off
 
-Review this DPIA when a new data category, recipient role or purpose is added, when the error-details default changes, when a feature aimed at younger users ships, and after the lawyer review (decision 7).
+Review this DPIA when a new data category, recipient role or purpose is added, when the error-details default changes, or when a feature aimed at younger users ships.
 
 Signed: ______ (Privacy Officer, AnyCognition Inc.) Date: ______

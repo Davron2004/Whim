@@ -62,7 +62,7 @@ In this order. Server first, then site, then app: an app that sends a new consen
 
 ## 4. Wording, translation, narrowing
 
-1. Change the text in every language it appears in. A fluent reader checks French; a Korean reader checks the Korean transfer section.
+1. Change the text in every language it appears in. Known risk, accepted by the owner (2026-09-24): no fluent French or Korean reader checks the translation; the AI-drafted text is final.
 2. For the policy: change the effective date and add a line to "Changes to this policy". Quebec expects notice when the policy changes (P-39.1 s.8.2; canada.md §(d)), and the dated change log is that notice.
 3. Send the Texas notice if the change is significant (section 8).
 4. Deploy the site with `deploy/deploy.sh --site-only`.
@@ -101,7 +101,7 @@ Removing a provider needs steps 5, 6 and 9 only.
 
 While Texas's App Store Accountability Act applies, a developer must give each app store notice before making any significant change to the terms of service or the privacy policy (Texas Bus. & Com. Code §121.053(a); fact-check.md, claim 1; README summary 9). This is a standing step, not a one-time task. Utah, Louisiana and California follow in 2027 (README "Later, when triggered"); check whether their laws add similar duties.
 
-What counts as "significant" isn't settled (README "Where the research is thin", Texas mechanics; lawyer item 7).
+What counts as "significant" isn't settled (README "Where the research is thin", Texas mechanics). Known risk, accepted by the owner: no lawyer will resolve this before launch.
 
 How each store takes the notice:
 
@@ -113,7 +113,7 @@ How each store takes the notice:
 
 **File the notice before publishing, and set the pages' effective date to the notice's effective date or later** (`deploy/site/legal-identity.json`, `effectiveDates`). A page may go live early with a future effective date; what it says applies from that date.
 
-Until a lawyer answers, the draft's rule is:
+No lawyer will answer this; the draft's rule is treated as final:
 
 - **Send the notice** for any consent-version bump, any change to what the policy says Whim collects, keeps, shares or why, any provider-list change that adds a company or a country, and any terms change that gets the 30-day in-app notice.
 - **Skip it** for typo fixes, formatting, translations of unchanged text, removing a provider, and correcting a contact detail.
@@ -134,6 +134,6 @@ From README "Later, when triggered". Each one points back to a section above.
 - **Accounts:** a widening; everyone is asked again (section 3).
 - **Bring-your-own-key:** its own opt-in and a policy line (section 3).
 - **Device attestation (#65):** already in the v2 manifest. Add Apple and Google to the provider list (section 5), keep the integrity record under the B8 keep-period, and add it to `whim-admin device export|delete <id>`.
-- **A lawyer confirms the AI providers are service providers:** Play "Shared" flips to No (section 5, step 7).
+- **Provider role (whether the AI providers are service providers or a "shared" third party):** unresolved. Known risk, accepted by the owner: no lawyer will confirm this; Play "Shared" stays Yes for request material (section 5, step 7) until the owner decides otherwise.
 - **US users near 25,000:** Montana's privacy law applies from 25,000 of its residents; Whim can't tell states apart, so the US total is the trigger.
-- **Storefronts outside Canada, the US, the EU and the UK:** all stay open on law nobody has checked (decision 2). When the lawyer answers item 15, apply what it changes through the sections above.
+- **Storefronts outside Canada, the US, the EU and the UK:** all stay open on law nobody has checked (decision 2). Known risk, accepted by the owner: no lawyer will research these territories; the storefronts stay open regardless.
