@@ -550,6 +550,50 @@ async function testPlanReaskThenFailure(): Promise<void> {
   check('plan re-ask: no event carries plan payload (only the stage pair is evidence)', events.every((e) => !('plan' in e)));
 }
 
+/** The plan validator's sentence quotes model-written screen names, which echo the user's prompt:
+ *  the user is told it, but the server's log (shipped to Cloud Logging) holds only the code. */
+async function testPlanFailureLogsTheCodeNotTheSentence(): Promise<void> {
+  section('machine — a plan_failed terminal logs its closed code, never the model-written sentence');
+
+  const duplicatePlan = JSON.stringify({
+    screens: [
+      { name: "Alice's Lisbon Tab", purpose: 'split the trip' },
+      { name: "Alice's Lisbon Tab", purpose: 'split the trip again' },
+    ],
+    initial: "Alice's Lisbon Tab",
+    state: [],
+    capabilities: [],
+    storageKeys: [],
+  });
+  const model = new ScriptedModelClient(ROSTER, [planTurn([duplicatePlan]), planTurn([duplicatePlan])]);
+  const trace: RunTrace = { generationIds: [], requestId: 'req-plan-failed' };
+
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(baseDeps({ model })).run(NEW_APP_REQUEST, undefined, trace));
+  } finally {
+    capture.stop();
+  }
+
+  const terminal = events.at(-1);
+  check(
+    'plan_failed log: the user still gets the validator sentence naming the screen',
+    terminal?.type === 'failure' && terminal.reason.includes("Alice's Lisbon Tab"),
+  );
+  eq('plan_failed log: the run ended as plan_failed', trace.failureCode, 'plan_failed');
+  eq(
+    'plan_failed log: the terminal failure line carries the closed code as its reason',
+    withMessage(capture, 'terminal failure').map((r) => r.reason),
+    ['plan_failed'],
+  );
+  check('plan_failed log: lines were captured', capture.raw.length > 0);
+  check(
+    'plan_failed log: no line carries the model-written screen name',
+    capture.raw.every((line) => !line.includes('Alice') && !line.includes('Lisbon')),
+  );
+}
+
 async function testWarningsOnlyOneRepairThenDeliver(): Promise<void> {
   section('machine — warnings-only: at most one repair, then delivered with residual warnings');
 
@@ -1918,6 +1962,7 @@ export async function runMachineTests(): Promise<void> {
   await testRepairRoleSettings();
   await testRepairCapExhaustion();
   await testPlanReaskThenFailure();
+  await testPlanFailureLogsTheCodeNotTheSentence();
   await testWarningsOnlyOneRepairThenDeliver();
   await testRepairPromptGetsWholeCurrentRoundErrorsFirst();
   await testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord();

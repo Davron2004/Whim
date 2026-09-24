@@ -26,7 +26,8 @@ Cloud Logging.
 ### Requirement: The ledger records a closed failure code
 The usage ledger SHALL gain a nullable `failure_reason` column, added without rewriting existing
 rows. For a request that ends in failure or refusal it SHALL hold the pipeline's terminal reason
-code or the refusal code; for any other outcome it SHALL be null. A value outside those closed code
+code, a request failure code (`model_failure`, `internal_error`) or the refusal code; for any other
+outcome it SHALL be null. A value outside those closed code
 sets SHALL be rejected on write, so the ledger still holds no content. The operator `usage` command
 SHALL report counts per failure reason.
 

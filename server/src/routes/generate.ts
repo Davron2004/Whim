@@ -21,7 +21,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { GenerateRequest, GenerationEvent, type ApiError, type Usage } from '@whim/contract';
 import type { Pipeline } from '../pipeline';
-import type { RequestOutcome, UsageStore } from '../usage-store';
+import type { FailureReason, RequestOutcome, UsageStore } from '../usage-store';
 import type { RunTrace } from '../generation/machine';
 import type { ServerConfig } from '../config';
 import type { SlotController, SlotHandle } from '../admission/slots';
@@ -262,7 +262,7 @@ async function settleFailedAdmission(
   requestLog: ServerLogger,
 ): Promise<void> {
   try {
-    await usageStore.settle(requestId, { outcome: 'error', now: clock() });
+    await usageStore.settle(requestId, { outcome: 'error', failureReason: 'internal_error', now: clock() });
   } catch (settleErr) {
     requestLog.error(
       {
@@ -372,8 +372,7 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
     untrack();
     admitted.handle.release();
     const outcome = ledgerOutcome(trace, ending, controller.signal.aborted);
-    const failureReason = outcome === 'failed' || outcome === 'expired' ? trace.failureCode : undefined;
-    const settlement = { outcome, failureReason, usage: ending.usage, now: deps.clock() };
+    const settlement = { outcome, failureReason: ledgerFailureReason(outcome, trace), usage: ending.usage, now: deps.clock() };
     // Retry a transient write once. Ledger cleanup must neither replace a pipeline error nor
     // break a terminal event already delivered to the client, and reconciliation still runs.
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -425,6 +424,15 @@ async function* forwardEvents(
   } finally {
     await teardown();
   }
+}
+
+/** A failed or expired row's code: the run's own terminal code, or, when the run ended without one
+ *  (the pipeline threw, or the request was aborted after the run expired), the closed code for that
+ *  outcome. */
+function ledgerFailureReason(outcome: RequestOutcome, trace: RunTrace): FailureReason | undefined {
+  if (outcome === 'expired') return trace.failureCode ?? 'expired';
+  if (outcome === 'failed') return trace.failureCode ?? 'internal_error';
+  return undefined;
 }
 
 /** `RunTrace.outcome` when the pipeline recorded one; otherwise what the stream observed. */

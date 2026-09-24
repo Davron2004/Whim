@@ -585,6 +585,83 @@ function pagesSiteProblems(site: readonly CaddyNode[], siteFiles: readonly strin
   return [...problems, ...pagesRouteProblems(site, siteFiles)];
 }
 
+/** The address-less first block: Caddy's global options. */
+function globalOptionsOf(nodes: readonly CaddyNode[]): CaddyNode | undefined {
+  return nodes[0]?.tokens.length === 0 ? nodes[0] : undefined;
+}
+
+/** A real Caddy 2.11.4 line (the pinned image's version) for a reverse-proxy stream the upstream cut
+ *  short: the live Cloud Logging shape with the header and address values swapped for markers. */
+const CADDY_DEVICE_MARKER = 'e7e7e7e7-e7e7-4e7e-8e7e-e7e7e7e7e7e7';
+const CADDY_CLIENT_IP = '203.0.113.7';
+const CADDY_PROXY_ABORT_LINE = JSON.stringify({
+  level: 'warn',
+  ts: 1790258739.854872,
+  logger: 'http.handlers.reverse_proxy',
+  msg: 'aborting with incomplete response',
+  upstream: 'whim-server:8787',
+  duration: 0.003840542,
+  request: {
+    remote_ip: CADDY_CLIENT_IP,
+    remote_port: '55055',
+    client_ip: CADDY_CLIENT_IP,
+    proto: 'HTTP/1.1',
+    method: 'POST',
+    host: 'api.example.test',
+    uri: '/v1/generate',
+    headers: {
+      Accept: ['*/*'],
+      'X-Whim-Device': [CADDY_DEVICE_MARKER],
+      'X-Forwarded-For': [CADDY_CLIENT_IP],
+      'X-Forwarded-Proto': ['https'],
+      'X-Forwarded-Host': ['api.example.test'],
+      Via: ['1.1 Caddy'],
+      'User-Agent': ['okhttp/4.12.0'],
+    },
+  },
+  error: 'reading: unexpected EOF',
+});
+
+/** The fields a shipped line still carries that identify the device or the client. */
+function clientDataLeaks(payload: Readonly<Record<string, unknown>>): string[] {
+  const text = JSON.stringify(payload);
+  const request = payload.request as Record<string, unknown> | undefined;
+  return [
+    ...(text.includes(CADDY_DEVICE_MARKER) ? ['the X-Whim-Device value'] : []),
+    ...(text.includes(CADDY_CLIENT_IP) ? ['the client IP'] : []),
+    ...['remote_ip', 'client_ip', 'remote_port', 'headers'].filter((name) => request !== undefined && name in request).map((name) => `request.${name}`),
+  ];
+}
+
+/** Caddy's default logger, which writes `http.log.error` and the reverse proxy's lines, runs the
+ *  committed `format filter`: its `delete` paths are applied to the real line, which must keep its
+ *  level and message but lose everything naming the device or the client. */
+function caddyLogProblems(text: string, line: string): string[] {
+  let nodes: CaddyNode[];
+  try {
+    nodes = parseCaddyfile(text);
+  } catch (error) {
+    return [(error as Error).message];
+  }
+  const logs = globalOptionsOf(nodes)?.children.filter((node) => directiveOf(node) === 'log') ?? [];
+  const logger = logs.find((node) => node.tokens.length === 1 || node.tokens[1] === 'default');
+  if (!logger) return ['the global options configure no log for the default logger'];
+  const format = logger.children.find((node) => lineOf(node) === 'format filter');
+  if (!format) return ['the default logger has no format filter'];
+  const problems: string[] = [];
+  if (!childLines(format).includes('wrap json')) problems.push('the default logger\'s filter does not wrap json, which the Ops Agent parses');
+  const deletes = (format.children.find((node) => lineOf(node) === 'fields')?.children ?? [])
+    .filter((node) => node.tokens[1] === 'delete')
+    .map((node) => node.tokens[0]!.split('>'));
+  const payload = JSON.parse(line) as Record<string, unknown>;
+  for (const keys of deletes) {
+    const parent = keys.slice(0, -1).reduce<Record<string, unknown> | undefined>((at, key) => at?.[key] as Record<string, unknown> | undefined, payload);
+    if (parent) delete parent[keys.at(-1)!];
+  }
+  if (payload.level !== 'warn' || payload.msg !== 'aborting with incomplete response') problems.push('the filter drops the line\'s level or message');
+  return [...problems, ...clientDataLeaks(payload).map((leak) => `Caddy still writes ${leak}`)];
+}
+
 function caddyfileProblems(text: string, maxBodyBytes: number, siteFiles: readonly string[]): string[] {
   let sites: CaddyNode[];
   try {
@@ -592,7 +669,7 @@ function caddyfileProblems(text: string, maxBodyBytes: number, siteFiles: readon
   } catch (error) {
     return [(error as Error).message];
   }
-  const addresses = sites.map(lineOf);
+  const addresses = sites.filter((node) => node !== globalOptionsOf(sites)).map(lineOf);
   const api = sites.find((node) => lineOf(node) === '{$WHIM_API_HOST}');
   const pages = sites.find((node) => lineOf(node) === '{$WHIM_WEB_HOST}');
   return [
@@ -657,6 +734,22 @@ function associationWriteProblems(files: ReadonlyMap<string, string>): string[] 
 
 function retentionProblems(files: ReadonlyMap<string, string>): string[] {
   return [...files].filter(([, text]) => text.includes('RETENTION_DAYS')).map(([rel]) => `${rel} sets a retention variable`);
+}
+
+/** Deleted records outlive a deletion inside the disk snapshots, so each privacy page states the
+ *  snapshot schedule's own retention (`SNAPSHOT_KEEP_DAYS` in provision.sh). */
+const BACKUP_SENTENCES: ReadonlyArray<readonly [string, RegExp]> = [
+  ['deploy/site/privacy.html', /encrypted disk backups for up to (\d+) days/],
+  ['deploy/site/fr/privacy.html', /sauvegardes chiffrées du disque jusqu’à (\d+) jours/],
+];
+
+function backupWordingProblems(provisionText: string, pages: ReadonlyMap<string, string>): string[] {
+  const keepDays = /\bSNAPSHOT_KEEP_DAYS=(\d+)\b/.exec(provisionText)?.[1];
+  if (keepDays === undefined) return ['provision.sh sets no SNAPSHOT_KEEP_DAYS'];
+  return BACKUP_SENTENCES.flatMap(([rel, sentence]) => {
+    const stated = sentence.exec(pages.get(rel) ?? '')?.[1];
+    return stated === keepDays ? [] : [`${rel} says backups keep deleted records ${stated ?? 'for an unstated time'}, but snapshots are kept ${keepDays} days`];
+  });
 }
 
 function keySettingProblems(files: ReadonlyMap<string, string>): string[] {
@@ -2036,6 +2129,39 @@ async function realAlertSourceLines(): Promise<Record<string, unknown>[]> {
   return capture.records;
 }
 
+/** Every line the real server logs for one generation whose plan fails validation twice (a model
+ *  repeating the screen "Alice's Lisbon Tab"), through the route, the machine and the ledger. */
+async function planFailureLines(): Promise<Record<string, unknown>[]> {
+  const roster = defaultModelRoster('vendor/rewrite-g', 'vendor/engineer-g');
+  const screen = { name: "Alice's Lisbon Tab", purpose: 'split the trip' };
+  const plan = JSON.stringify({ screens: [screen, screen], initial: screen.name, state: [], capabilities: [], storageKeys: [] });
+  const model = new ScriptedModelClient(roster, [{ role: 'plan', deltas: [plan] }, { role: 'plan', deltas: [plan] }]);
+  const app = createApp({ pipeline: machinePipeline(model, { now: () => Date.now() }, roster), usageStore: new InMemoryUsageStore(), config: loadServerConfig({}) });
+  const capture = captureLogs();
+  try {
+    const res = await within(Promise.resolve(app.request('/v1/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-whim-device': 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5' },
+      body: JSON.stringify({ prompt: 'split the Lisbon trip costs' }),
+    })));
+    if (res === TIMED_OUT) throw new Error('setup: /v1/generate did not answer in time');
+    const drained = await within(readSseResponse(res));
+    if (drained === TIMED_OUT) throw new Error('setup: the /v1/generate stream did not settle in time');
+  } finally {
+    capture.stop();
+  }
+  return capture.records;
+}
+
+/** The runbook's "Terminal failures, by reason" saved query (docs/deploy.md), narrowed to `code`,
+ *  as one AND filter. */
+function runbookTerminalFailureFilter(code: string): string {
+  const row = readRepoFile('docs/deploy.md').split('\n').find((line) => line.trim().startsWith('| Terminal failures, by reason |')) ?? '';
+  const [base, narrow] = [...row.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+  if (!base?.startsWith('log_id("docker") ') || !narrow?.includes('<code>')) throw new Error(`setup: the runbook row is not base + narrowing filter: ${row}`);
+  return `log_id("docker") AND ${base.slice('log_id("docker") '.length)} AND ${narrow.replace('<code>', code)}`;
+}
+
 function policyFile(name: string): { conditions: Array<{ conditionMatchedLog?: { filter: string; labelExtractors?: Record<string, string> } }>; documentation: { content: string } } {
   return JSON.parse(readRepoFile(`deploy/monitoring/${name}`)) as ReturnType<typeof policyFile>;
 }
@@ -2060,6 +2186,14 @@ async function alertFilterTests(): Promise<void> {
   const deviceFilter = policyFile('policy-device-error.json').conditions[0]?.conditionMatchedLog?.filter ?? '';
   eq('the device-error alert matches the error diagnostic and not the warning', matching(deviceFilter).map((line) => line.msg), ['error probe']);
   eq('  red: at WARNING it would match both', matching(deviceFilter.replace('severity>=ERROR', 'severity>=WARNING')).map((line) => line.msg), ['error probe', 'warn probe']);
+
+  const failureLines = await planFailureLines();
+  const failureMatching = (filter: string): Array<Record<string, unknown>> => failureLines.filter((line) => filterMatches(filter, line));
+  const metricFilter = (JSON.parse(readRepoFile('deploy/monitoring/metric-whim-terminal-failures.json')) as { filter: string }).filter;
+  eq('the terminal-failure metric counts exactly the one terminal failure line a failed generation writes', failureMatching(metricFilter).map((line) => line.msg), ['terminal failure']);
+  eq("  ... and the runbook's query narrowed to plan_failed finds that line", failureMatching(runbookTerminalFailureFilter('plan_failed')).map((line) => line.msg), ['terminal failure']);
+  eq('  red: narrowed to another code it finds nothing', failureMatching(runbookTerminalFailureFilter('repair_exhausted')).length, 0);
+  check("  ... and no line of that generation names the model's screen", failureLines.length > 0 && failureLines.every((line) => !JSON.stringify(line).includes('Lisbon')));
 
   const creditLines = await creditAlertSourceLines();
   const creditMatching = (filter: string): Array<Record<string, unknown>> => creditLines.filter((line) => filterMatches(filter, line));
@@ -2142,6 +2276,11 @@ function provisionMonitoringTests(): void {
   checkClean("  ... in the billing account's currency", budgetCurrencyProblems(newBudget, '400'));
 
   const duplicated = stateAfter(first).map((rule): StubRule => (rule[0] === '*monitoring policies list*' ? [rule[0], rule[1], `${rule[2] ?? ''}${(rule[2] ?? '').split('\\n')[0]}\\n`] : rule));
+  const pages = readFiles(BACKUP_SENTENCES.map(([rel]) => rel));
+  checkClean('both privacy pages say deleted records stay in disk backups for as long as the snapshot schedule keeps them', backupWordingProblems(provisionScript, pages));
+  checkCaught('  red: a longer snapshot retention contradicts the pages', backupWordingProblems(plant(provisionScript, 'SNAPSHOT_KEEP_DAYS=14', 'SNAPSHOT_KEEP_DAYS=30'), pages), 'snapshots are kept 30 days');
+  checkCaught('  red: a French page without the sentence fails', backupWordingProblems(provisionScript, withFile(pages, 'deploy/site/fr/privacy.html', '')), 'fr/privacy.html says backups keep deleted records for an unstated time');
+
   const twice = provisionAgainst(duplicated);
   check('a policy display name held by two policies refuses, naming it, rather than guessing which to update', twice.status === 1 && twice.stderr.includes('two resources are named'), twice.stderr);
 }
@@ -2181,6 +2320,13 @@ function caddyTests(files: ReadonlyMap<string, string>, maxBodyBytes: number, si
   checkClean('the API site proxies with flush_interval -1, no encode, no log and no file serving; the pages site serves exactly the D21 route table', caddyfileProblems(caddyfile, maxBodyBytes, siteFiles));
   const red = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyfileProblems(text, maxBodyBytes, siteFiles), needle);
   red('dropping flush_interval -1 fails', plant(caddyfile, '\t\tflush_interval -1\n', ''), 'flush_interval -1');
+
+  checkClean("Caddy's default logger deletes the request headers and the client's address from a real reverse-proxy line", caddyLogProblems(caddyfile, CADDY_PROXY_ABORT_LINE));
+  const logRed = (name: string, text: string, needle: string): void => checkCaught(`  red: ${name}`, caddyLogProblems(text, CADDY_PROXY_ABORT_LINE), needle);
+  logRed('keeping the request headers ships the device id', plant(caddyfile, '\t\t\t\trequest>headers delete\n', ''), 'the X-Whim-Device value');
+  logRed('keeping client_ip ships the client IP', plant(caddyfile, '\t\t\t\trequest>client_ip delete\n', ''), 'request.client_ip');
+  logRed('a filter on a named logger misses the default one', plant(caddyfile, '\tlog default {', '\tlog proxy {'), 'no log for the default logger');
+  logRed('a console-wrapped filter fails', plant(caddyfile, 'wrap json', 'wrap console'), 'does not wrap json');
 }
 
 /** Knobs for the stubs: `STUB_DOCKER_OK=1` answers docker with success (Docker already installed),
@@ -2673,6 +2819,83 @@ function realPinoLines(): string[] {
   return lines;
 }
 
+/** A real Caddy 2.11.4 admin line (`caddy reload` inside the container), which names its caller's
+ *  address at the top level. */
+const CADDY_ADMIN_LINE = JSON.stringify({
+  level: 'info',
+  ts: 1790258832.973255,
+  logger: 'admin.api',
+  msg: 'received request',
+  method: 'POST',
+  host: 'localhost:2019',
+  uri: '/load',
+  remote_ip: CADDY_CLIENT_IP,
+  remote_port: '55190',
+  headers: { 'Content-Type': ['application/json'], 'User-Agent': ['Go-http-client/1.1'] },
+});
+
+/** A value at a filter path: `jsonPayload.a.b` or `jsonPayload.attrs."dotted.key"`. */
+function atFilterPath(payload: Readonly<Record<string, unknown>>, fieldPath: string): unknown {
+  const segments = fieldPath.match(/"[^"]*"|[^.]+/g) ?? [];
+  if (segments.shift() !== 'jsonPayload') throw new Error(`setup: filter path ${fieldPath} is not under jsonPayload`);
+  return segments.map(unquote).reduce<unknown>((at, key) => (at !== null && typeof at === 'object' ? (at as Record<string, unknown>)[key] : undefined), payload);
+}
+
+/** The agent's filter language, in the one form the config's omissions use: `path =~ "regex"`
+ *  terms joined by OR (a regex on a missing or non-string field never matches). Any other form
+ *  throws, so a new one gets a case here instead of passing unread. */
+function agentFilterMatches(filter: string, payload: Readonly<Record<string, unknown>>): boolean {
+  return filter.split(' OR ').some((term) => {
+    const match = /^(\S+) =~ "([^"]*)"$/.exec(term);
+    if (!match) throw new Error(`setup: agent filter term ${term} is not understood`);
+    const value = atFilterPath(payload, match[1]!);
+    return typeof value === 'string' && new RegExp(match[2]!).test(value);
+  });
+}
+
+/** The payload the agent ships for one container line: the line's JSON after every in-place
+ *  omission (`X: {move_from: X, omit_if: …}`) of the pipeline's modify_fields processors, in order.
+ *  Omissions are the only part emulated; the severity and labels are `agentSeverity`'s. */
+function agentShippedPayload(configText: string, line: string): Record<string, unknown> {
+  const logging = yamlChild(yamlEntries(configText.split('\n')), 'logging');
+  const processors = yamlChild(logging, 'processors');
+  const order = yamlList(yamlChild(yamlChild(yamlChild(logging, 'service'), 'pipelines'), 'docker').get('processors'));
+  const payload = JSON.parse(line) as Record<string, unknown>;
+  for (const name of order) {
+    const processor = yamlChild(processors, name);
+    if (yamlScalar(processor, 'type') !== 'modify_fields') continue;
+    const omitted = [...yamlChild(processor, 'fields')].filter(([field, entry]) => {
+      const options = yamlEntries(entry.body);
+      return field.startsWith('jsonPayload.') && yamlScalar(options, 'move_from') === field && options.has('omit_if') && agentFilterMatches(yamlScalar(options, 'omit_if'), payload);
+    });
+    for (const [field] of omitted) {
+      const keys = field.split('.').slice(1);
+      if (keys.length !== 1) throw new Error(`setup: omitting the nested field ${field} is not emulated`);
+      delete payload[keys[0]!];
+    }
+  }
+  return payload;
+}
+
+/** No Caddy line reaches Cloud Logging with the device id or a client address, even if Caddy's
+ *  own filter were gone: the agent's omissions run over the unfiltered real lines. */
+function opsAgentClientDataProblems(configText: string): string[] {
+  try {
+    return [CADDY_PROXY_ABORT_LINE, CADDY_ADMIN_LINE].flatMap((line) => {
+      const shipped = agentShippedPayload(configText, line);
+      const { msg } = JSON.parse(line) as { msg: string };
+      return [
+        ...(shipped.msg === msg ? [] : [`the agent drops the "${msg}" line's message`]),
+        ...(shipped.request === undefined ? [] : [`the agent ships the "${msg}" line's request object`]),
+        ...['remote_ip', 'client_ip'].filter((name) => name in shipped).map((name) => `the agent ships the "${msg}" line's ${name}`),
+        ...clientDataLeaks(shipped).map((leak) => `the agent ships ${leak} from the "${msg}" line`),
+      ];
+    });
+  } catch (error) {
+    return [`ops-agent.yaml does not parse: ${(error as Error).message}`];
+  }
+}
+
 function logShippingTests(files: ReadonlyMap<string, string>): void {
   section('Deploy artifacts: log shipping (Ops Agent)');
   const config = files.get('deploy/vm/ops-agent.yaml') ?? '';
@@ -2689,6 +2912,13 @@ function logShippingTests(files: ReadonlyMap<string, string>): void {
   red('tailing another path fails', plant(config, DOCKER_JSON_LOGS, '/var/log/syslog'), compose, 'include_paths');
   red('a server on the gcplogs driver fails', config, plant(compose, 'driver: json-file', 'driver: gcplogs'), 'whim-server logs with gcplogs');
   red('a server without the service label fails', config, plant(compose, '        labels: com.docker.compose.service\n', ''), 'whim-server logging options label');
+
+  checkClean("the agent drops a real Caddy line's request object and client address before shipping, keeping the line", opsAgentClientDataProblems(config));
+  const dropRed = (name: string, configText: string, needle: string): void => checkCaught(`  red: ${name}`, opsAgentClientDataProblems(configText), needle);
+  dropRed('a pipeline without the drop ships the device id', plant(config, ', severity_and_labels, client_data]', ', severity_and_labels]'), 'the X-Whim-Device value');
+  const requestDrop = config.slice(config.indexOf('        jsonPayload.request:\n'), config.indexOf('        jsonPayload.remote_ip:\n'));
+  dropRed('dropping only the top-level addresses ships the request', plant(config, requestDrop, ''), 'request object');
+  dropRed('keeping a top-level remote_ip ships it', plant(config, "          omit_if: 'jsonPayload.remote_ip =~ \".\"'\n", ''), 'line\'s remote_ip');
 }
 
 function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {

@@ -236,7 +236,7 @@ export async function settleFailedUnaryRequest(
   usage?: Usage,
 ): Promise<void> {
   try {
-    await usageStore.settle(requestId, { outcome: 'error', usage, now: clock() });
+    await usageStore.settle(requestId, { outcome: 'error', failureReason: 'internal_error', usage, now: clock() });
   } catch (settleErr) {
     requestLog.error(
       {
@@ -488,7 +488,7 @@ async function runClarifyWork(
   }
 
   if (!model || !roster) {
-    await finish('error', undefined, [], true);
+    await finish('error', undefined, [], true, 'internal_error');
     return Response.json(NOT_CONFIGURED, { status: 502 });
   }
 
@@ -527,7 +527,7 @@ async function runClarifyWork(
       const r = budgetExhaustedRefusal();
       return Response.json(r.body, { status: r.status, headers: r.headers });
     }
-    await finish('error', undefined, ids, false);
+    await finish('error', undefined, ids, false, 'model_failure');
     return Response.json(MODEL_FAILURE, { status: 502 });
   }
 
@@ -536,7 +536,7 @@ async function runClarifyWork(
   const ids = completedGenerationId ? [completedGenerationId] : [];
   const shaped = shapeClarify(raw);
   if (!shaped) {
-    await finish('error', usage, ids, true);
+    await finish('error', usage, ids, true, 'model_failure');
     return Response.json(MODEL_FAILURE, { status: 502 });
   }
   await finish('ok', usage, ids, true);

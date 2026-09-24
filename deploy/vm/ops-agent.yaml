@@ -35,12 +35,26 @@ logging:
         jsonPayload.attrs:
           move_from: jsonPayload.attrs
           omit_if: 'jsonPayload.attrs."com.docker.compose.service" =~ "."'
+    # Behind Caddy's own log filter (deploy/Caddyfile): a Caddy line's request object (headers with
+    # X-Whim-Device, client address) and any client address field never leave the VM.
+    client_data:
+      type: modify_fields
+      fields:
+        jsonPayload.request:
+          move_from: jsonPayload.request
+          omit_if: 'jsonPayload.request.method =~ "." OR jsonPayload.request.remote_ip =~ "." OR jsonPayload.request.client_ip =~ "."'
+        jsonPayload.remote_ip:
+          move_from: jsonPayload.remote_ip
+          omit_if: 'jsonPayload.remote_ip =~ "."'
+        jsonPayload.client_ip:
+          move_from: jsonPayload.client_ip
+          omit_if: 'jsonPayload.client_ip =~ "."'
   service:
     pipelines:
       default_pipeline: {receivers: []}
       docker:
         receivers: [docker]
-        processors: [docker_envelope, level_text, app_json, severity_and_labels]
+        processors: [docker_envelope, level_text, app_json, severity_and_labels, client_data]
 metrics:
   service:
     pipelines:

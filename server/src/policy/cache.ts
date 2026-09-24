@@ -5,6 +5,12 @@
  * route), and the ONE place that emits the "content policy check" log record. A base
  * `ModelContentPolicy`/`StubContentPolicy` used unwrapped emits no log record — composition MUST
  * always wrap the base policy in this so every check is observed.
+ *
+ * The logged `category` is closed to the policy document's own list (`CachedPolicyOptions.
+ * knownCategories`, `closedCategory` below) — `PolicyVerdict.refuse.category` is free text the
+ * classifier echoes from a user-derived rewritten prompt (`../policy/policy.ts`'s `parseVerdict`
+ * accepts any non-empty string, even one off the document's list), so logging it verbatim would let
+ * user content reach the log sink. An off-list or unlisted category logs as `'other'`.
  */
 import { createHash } from 'node:crypto';
 import { log, type ServerLogger } from '../logger';
@@ -23,7 +29,18 @@ export interface CachedPolicyOptions {
   ttlMs?: number;
   /** Injectable clock, for TTL tests — defaults to `Date.now`. */
   now?: () => number;
+  /** The policy document's own category list (`parseCategoryList` over its `## Categories`
+   *  section, `../policy`). A `refuse.category` outside this list is logged as `'other'` instead
+   *  of its own text — `category` is free text the classifier echoes from a user-derived rewritten
+   *  prompt (spec content-policy "the server SHALL treat a refuse verdict with an unknown category
+   *  as a refusal" — that decision governs the VERDICT only, never the log record). Membership is
+   *  case-insensitive; the logged value on a match is the classifier's own string, unchanged.
+   *  Omitted or empty treats every category as unknown, so `'other'` is the safe default absent a
+   *  list. */
+  knownCategories?: readonly string[];
 }
+
+const OTHER_CATEGORY = 'other';
 
 function digestOf(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
@@ -31,6 +48,17 @@ function digestOf(input: string): string {
 
 function describe(verdict: PolicyVerdict): { kind: 'allow' | 'refuse'; category?: string } {
   return verdict === 'allow' ? { kind: 'allow' } : { kind: 'refuse', category: verdict.refuse };
+}
+
+function knownCategorySet(categories: readonly string[] | undefined): ReadonlySet<string> {
+  return new Set((categories ?? []).map((category) => category.trim().toLowerCase()));
+}
+
+/** Folds `category` to `'other'` unless it case-insensitively matches an entry of `known` — the
+ *  ONLY point where a classifier-authored category string is allowed to reach `logCheck`. */
+function closedCategory(category: string | undefined, known: ReadonlySet<string>): string | undefined {
+  if (category === undefined) return undefined;
+  return known.has(category.trim().toLowerCase()) ? category : OTHER_CATEGORY;
 }
 
 function logCheck(
@@ -44,9 +72,12 @@ function logCheck(
   if (category !== undefined) fields.category = category;
   // Only route/verdict/category/duration ever reach this call — no checked text and no digest
   // (spec "The record SHALL NOT carry checked text"; "Only the digest and the verdict SHALL be
-  // held" for the cache, and even that pair is never logged together). `logger`, when present, is
-  // the request-bound logger (spec request-envelope) — falls back to the module logger otherwise,
-  // exactly as before this parameter existed.
+  // held" for the cache, and even that pair is never logged together). `category`, by the time it
+  // reaches this call, has already been through `closedCategory` — every caller of `logCheck`
+  // passes a value from the document's own list or the literal `'other'`, NEVER the classifier's
+  // raw string, so an off-list category can't carry user-derived text into the log. `logger`, when
+  // present, is the request-bound logger (spec request-envelope) — falls back to the module logger
+  // otherwise, exactly as before this parameter existed.
   (logger ?? log).info(fields, 'content policy check');
 }
 
@@ -61,6 +92,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
   const maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   const now = opts.now ?? Date.now;
+  const knownCategories = knownCategorySet(opts.knownCategories);
   // `Map` preserves insertion order; delete-then-set on a hit moves that key to the
   // most-recently-used end, so eviction below (from the front) always drops the true LRU entry.
   const entries = new Map<string, CacheEntry>();
@@ -75,7 +107,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
           entries.delete(digest);
           entries.set(digest, existing);
           const { kind, category } = describe(existing.verdict);
-          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', category, now() - startedAt, logger);
+          logCheck(route, kind === 'allow' ? 'cached-allow' : 'cached-refuse', closedCategory(category, knownCategories), now() - startedAt, logger);
           // A cache hit made no classifier call — no usage/generationId to carry.
           return { verdict: existing.verdict };
         }
@@ -98,7 +130,7 @@ export function cachedPolicy(inner: ContentPolicy, opts: CachedPolicyOptions = {
       }
 
       const { kind, category } = describe(result.verdict);
-      logCheck(route, kind, category, now() - startedAt, logger);
+      logCheck(route, kind, closedCategory(category, knownCategories), now() - startedAt, logger);
       return result;
     },
   };

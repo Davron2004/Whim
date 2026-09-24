@@ -2,6 +2,23 @@
 # which deploy/compose.yaml takes from /opt/whim/.env. Caddy redirects HTTP to HTTPS and keeps its
 # certificates under /data on the persistent disk. Neither site keeps an access log.
 
+# Every line Caddy still writes (errors, reverse-proxy aborts) ships to Cloud Logging, so the default
+# logger drops the request's headers (X-Whim-Device among them) and the client's address and port.
+{
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
 # The API: stream-safe reverse proxy to the server, with no compression and no file serving.
 {$WHIM_API_HOST} {
 	request_body {

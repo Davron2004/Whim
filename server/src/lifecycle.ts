@@ -34,7 +34,7 @@ import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRo
 import { loadContentPolicyDocument } from './generation/prompts/inputs';
 import { createSlotController, type SlotController } from './admission/slots';
 import { createOpenRouterCreditTransport, type CreditTransport } from './admission/credit';
-import { cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from './policy';
+import { cachedPolicy, ModelContentPolicy, parseCategoryList, StubContentPolicy, type ContentPolicy } from './policy';
 import { ResolveTracker, runCostResolutionSweep, type UsageAndCostTransport } from './usage/resolve';
 import { openRouterUsageAndCostTransport } from './usage/openrouter-stats';
 import { InFlightGenerations } from './routes/generate';
@@ -365,6 +365,9 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       return { usageStore: usage, reportStore: reports };
     });
 
+    const policyDocument = loadContentPolicyDocument();
+    const policyKnownCategories = parseCategoryList(policyDocument.categories);
+
     let pipeline: Pipeline;
     let basePolicy: ContentPolicy;
     if (useStub || !model) {
@@ -385,7 +388,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       basePolicy = new ModelContentPolicy({
         modelClient: model.client,
         rewriteModelId: model.roster.rewrite.model,
-        categories: loadContentPolicyDocument().categories,
+        categories: policyDocument.categories,
         timeoutMs: config.policyTimeoutMs,
       });
     }
@@ -412,7 +415,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       devLogSink: config.devLogSink ? { filePath: path.resolve(config.devLogFile) } : undefined,
       config,
       slots,
-      policy: cachedPolicy(basePolicy),
+      policy: cachedPolicy(basePolicy, { knownCategories: policyKnownCategories }),
       reportStore,
       resolver: { transport: statsTransport, tracker: resolveTracker },
       creditTransport: overrides.creditTransport ?? (apiKey ? createOpenRouterCreditTransport({ apiKey }) : undefined),

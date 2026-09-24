@@ -321,7 +321,7 @@ export function makeRewriteRoute(
         }
 
         if (!model || !roster) {
-          await finish('error', [], new Set());
+          await finish('error', [], new Set(), undefined, 'internal_error');
           return c.json(NOT_CONFIGURED, 502);
         }
 
@@ -340,7 +340,7 @@ export function makeRewriteRoute(
           return c.json(r.body, r.status, r.headers);
         }
         if (result.outcome === 'failed') {
-          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage);
+          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage, 'model_failure');
           return c.json(MODEL_FAILURE, 502);
         }
 

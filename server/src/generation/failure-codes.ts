@@ -15,3 +15,12 @@ export const TERMINAL_FAILURE_CODES = [
   'internal_error',
 ] as const;
 export type TerminalFailureCode = (typeof TERMINAL_FAILURE_CODES)[number];
+
+/**
+ * Why any other request failed (developer-observability F7): a clarify/rewrite model call that threw
+ * or answered nothing usable, or a server-side failure (a store that threw, a route with no model
+ * configured, a generation that ended without a terminal). Closed like the terminal codes, so the
+ * ledger never stores an error's text.
+ */
+export const REQUEST_FAILURE_CODES = ['model_failure', 'internal_error'] as const;
+export type RequestFailureCode = (typeof REQUEST_FAILURE_CODES)[number];
