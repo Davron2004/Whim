@@ -42,8 +42,9 @@ construction (research.md Constraints). The route has its own body limit and doe
 the device, envelope or minimum-build middlewares.
 
 **3. Abuse limits that need no identity.** In order: a small body cap (`WHIM_MAX_BODY_BYTES_BETA`,
-default 4 KiB); the honeypot (a filled `company` field gets a thanks redirect and stores nothing, so
-bots learn nothing); a per-client sliding-window limit (`WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, default
+default 4 KiB); the honeypot (a filled `hp_ref` field gets a thanks redirect and stores nothing, so
+bots learn nothing; its name matches no autofill heuristic, since a `company` field gets a person's
+organization autofilled); a per-client sliding-window limit (`WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, default
 10); a global daily cap (`WHIM_BETA_LIMIT_PER_DAY`, default 2000). The client key is the
 `X-Forwarded-For` value Caddy sets. Caddy replaces client-supplied forwarding headers from
 untrusted peers, so the value is the real peer address. It is hashed with a per-process random

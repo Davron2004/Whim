@@ -21,6 +21,10 @@ import type { SignupLimiter } from '../waitlist/limiter';
 /** The closed set of outcome codes a signup log line carries. */
 export type SignupOutcome = 'stored' | 'updated' | 'invalid' | 'limited' | 'trap' | 'error';
 
+/** The bot trap: a field people never see or fill. Its name matches no browser autofill heuristic
+ *  (a `company` field gets a person's organization autofilled, and their signup dropped). */
+export const TRAP_FIELD = 'hp_ref';
+
 /** The longest email the route accepts, in bytes (the form's `maxlength`). */
 export const MAX_EMAIL_BYTES = 254;
 
@@ -95,7 +99,7 @@ export function makeBetaSignupRoute(deps: BetaSignupDeps): Hono<EdgeEnv> {
       const text = await c.req.text();
       if (!contentType.toLowerCase().startsWith('application/x-www-form-urlencoded')) return answer('invalid', retry);
       const fields = new URLSearchParams(text);
-      if ((fields.get('company') ?? '') !== '') return answer('trap', thanks);
+      if ((fields.get(TRAP_FIELD) ?? '') !== '') return answer('trap', thanks);
       const form = readForm(fields);
       if (form === undefined) return answer('invalid', retry);
       const now = clock();

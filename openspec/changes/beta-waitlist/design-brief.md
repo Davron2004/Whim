@@ -114,7 +114,7 @@ That means:
 | `email` | `<input type="email" name="email" required maxlength="254" autocomplete="email">` | Visible label |
 | `platform` | three radios, `name="platform"`, values `ios`, `android`, `other`, one required | Labels read **iOS**, **Android**, **Other**. Not "iPhone". A `<fieldset>` with a `<legend>` |
 | `updates_opt_out` | `<input type="checkbox" name="updates_opt_out" value="1">`, **unchecked** by default | Label: "Don't email me about Whim updates". The owner may still change this wording |
-| `company` | a text input the server treats as a bot trap | Hidden from people (off-screen, `tabindex="-1"`, `autocomplete="off"`, `aria-hidden="true"`). Never `type="hidden"`, since bots skip those |
+| `hp_ref` | a text input the server treats as a bot trap | Hidden from people (off-screen, `tabindex="-1"`, `autocomplete="off"`, `aria-hidden="true"`). Never `type="hidden"`, since bots skip those. Its name, id and label hold no word autofill fills (company, organization, business, website, url, name), or a browser fills it for a person and their signup is dropped |
 
 `{{WHIM_BETA_SIGNUP_URL}}` and `{{WHIM_SUPPORT_EMAIL}}` are build-time placeholders. Leave them
 literally in the HTML, and use no other `{{…}}` or `<!--…-->` markers (the site build fails closed
