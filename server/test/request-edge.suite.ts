@@ -35,7 +35,8 @@ import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { InMemoryReportStore } from '../src/reports/store';
 import { cachedPolicy, ModelContentPolicy } from '../src/policy';
-import { defaultModelRoster, type ModelClient, type ModelRoster, type ModelStream } from '../src/generation/model';
+import { defaultModelRoster, openRouterModelClient, type ModelClient, type ModelRoster, type ModelStream } from '../src/generation/model';
+import { OpenRouterClient, type FetchFn } from '../src/openrouter';
 import { PRACTICE_CATEGORIES, PRACTICES, permits, type PracticeTable } from '../src/consent-practices';
 import { BENCH_APP_VERSION } from '../src/bench-envelope';
 import { runDevice } from '../src/loadtest/drive';
@@ -82,6 +83,23 @@ function testApp(options: Omit<Partial<AppOptions>, 'config'> & { config?: Parti
     ...rest,
     config: { ...loadServerConfig({}), now: () => AT_NOON_UTC, ...config },
   });
+}
+
+/** An app whose every model — the classifier, the route's own turn, the pipeline — is one
+ *  `ForbiddenModel`, over a recording ledger: for refusals that must land before any model work or
+ *  admission. */
+function forbiddenModelApp(config?: Partial<ServerConfig>): { app: ReturnType<typeof createApp>; model: ForbiddenModel; usageStore: RecordingUsageStore } {
+  const model = new ForbiddenModel();
+  const usageStore = new RecordingUsageStore();
+  const app = testApp({
+    usageStore,
+    model,
+    roster: ROSTER,
+    pipeline: machinePipeline(model, { now: () => AT_NOON_UTC }, ROSTER),
+    policy: cachedPolicy(new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 1000 })),
+    config,
+  });
+  return { app, model, usageStore };
 }
 
 async function send(
@@ -206,6 +224,145 @@ async function testFailedGenerationJoinsUp(): Promise<void> {
   eq('the run start line carries the request id', withMessage(capture, 'run start').map((r) => r.requestId), [id]);
 }
 
+/** One SSE `data:` line built from a frame object — avoids hand-escaping nested JSON. */
+function sseFrame(payload: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+/**
+ * A fetch double that answers successive calls IN ORDER (repeating the last reply once the list is
+ * exhausted), each over a real SSE stream — so calls made through the REAL `OpenRouterClient`
+ * (the classifier's own call, then the route's/pipeline's own model turn(s)) each still log their
+ * own "model call" line, unlike `ControlledModelClient`/`ScriptedModelClient`.
+ */
+function sequencedModelFetch(replies: ReadonlyArray<{ id: string; text: string }>): FetchFn {
+  let index = 0;
+  return (async () => {
+    const reply = replies[Math.min(index, replies.length - 1)]!;
+    index += 1;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseFrame({ id: reply.id, choices: [{ index: 0, delta: { content: reply.text } }] })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as FetchFn;
+}
+
+/** The REAL model client answering `replies` in order, and the policy cache classifying through it. */
+function realModelStack(replies: ReadonlyArray<{ id: string; text: string }>) {
+  const client = openRouterModelClient(new OpenRouterClient(sequencedModelFetch(replies)));
+  const policy = cachedPolicy(
+    new ModelContentPolicy({ modelClient: client, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 5000 }),
+  );
+  return { client, policy };
+}
+
+/** The captured `model call` lines as pino serialized them. pino writes a duplicate key twice and
+ *  `JSON.parse` keeps only the last, so only the raw text can show a second `scope`. */
+function rawModelCallLines(capture: LogCapture): string[] {
+  return capture.raw.filter((_, index) => capture.records[index]?.msg === 'model call');
+}
+
+/** Per raw `model call` line: how many `scope` keys it carries, and whether it carries `requestId`. */
+function scopeAndRequestId(capture: LogCapture, requestId: string | null): Array<[number, boolean]> {
+  return rawModelCallLines(capture).map((line) => [line.split('"scope":').length - 1, line.includes(`"requestId":"${requestId}"`)]);
+}
+
+/** Checks the model call lines and the policy line of one request against its `id`: every model
+ *  call line carries it and exactly one `scope` key, and the one policy line carries it. */
+function checkProviderAndPolicyLines(label: string, capture: LogCapture, id: string | null, modelCalls: number): void {
+  const modelCallLines = withMessage(capture, 'model call');
+  check(
+    `${label}: every model call line carries the request id`,
+    modelCallLines.every((r) => r.requestId === id),
+    JSON.stringify(modelCallLines.map((r) => r.requestId)),
+  );
+  eq(
+    `${label}: every raw model call line holds one scope key and the request id`,
+    scopeAndRequestId(capture, id),
+    Array.from({ length: modelCalls }, () => [1, true]),
+  );
+  const policyLines = withMessage(capture, 'content policy check');
+  eq(`${label}: exactly one content policy check line`, policyLines.length, 1);
+  eq(`${label}: the content policy check line carries the request id`, policyLines[0]?.requestId, id);
+}
+
+/**
+ * request-envelope chain-1b: OpenRouter's own "model call" line and the policy cache's "content
+ * policy check" line are emitted deep inside the model client and the policy cache respectively —
+ * chain-1 bound every OTHER line (the request line, the ledger row, every pipeline run line) to the
+ * request id but stopped at these two. Uses the REAL `OpenRouterClient`, not `ControlledModelClient`
+ * / `ScriptedModelClient`, since only the real adapter logs a "model call" line at all. Red-check:
+ * fails naming the line whose `requestId` is `undefined` if any one call site (the classifier, the
+ * clarify turn, the rewrite turn, the pipeline's plan turn, or `cachedPolicy`) stops forwarding its
+ * request-bound logger, and fails on the raw line if a caller hands the model client a logger that
+ * already carries a `scope` (the run logger did, so plan lines carried `"scope"` twice).
+ */
+async function testProviderAndPolicyLinesCarryRequestId(): Promise<void> {
+  section('Request id — the model client\'s "model call" line and the policy cache\'s "content policy check" line agree with the response header');
+
+  // Clarify and rewrite: the classifier's own call (admission) and the route's own model turn.
+  const unaryCases = [
+    ['/v1/clarify', 'clarify', '{"questions":[]}'],
+    ['/v1/rewrite', 'rewrite', JSON.stringify({ rewrittenPrompt: 'a timer', plan: [{ label: 'What', text: 'A timer.' }] })],
+  ] as const;
+  for (const [route, role, reply] of unaryCases) {
+    const { client, policy } = realModelStack([
+      { id: `gen-edge-policy-${role}`, text: '{"verdict":"allow"}' },
+      { id: `gen-edge-${role}`, text: reply },
+    ]);
+    const app = testApp({ model: client, roster: ROSTER, policy });
+    const capture = captureLogs();
+    let res: Response;
+    try {
+      res = await send(app, route, { 'x-whim-device': DEVICE_ID }, { prompt: 'a timer' });
+    } finally {
+      capture.stop();
+    }
+    const id = res.headers.get(REQUEST_ID_HEADER);
+    eq(`${route} setup: the route answered 200 on its first model turn`, res.status, 200);
+    check(`${route} setup: a real request id was minted`, UUID_RE.test(id ?? ''), String(id));
+    eq(
+      `${route}: exactly two model call lines, attributed to the classifier and the ${role} turn`,
+      withMessage(capture, 'model call').map((r) => r.role),
+      ['policy', role],
+    );
+    checkProviderAndPolicyLines(route, capture, id, 2);
+  }
+
+  // Generate: the classifier's own call (admission) and the pipeline's own plan turn(s), through
+  // `machinePipeline`'s real `GenerationMachine` (stages past the plan call are unreachable — an
+  // unparsable plan, twice, ends the run in a failure, which is all this needs to observe).
+  {
+    const { client, policy } = realModelStack([
+      { id: 'gen-edge-policy-generate', text: '{"verdict":"allow"}' },
+      { id: 'gen-edge-plan-1', text: 'not a plan' },
+      { id: 'gen-edge-plan-2', text: 'still not a plan' },
+    ]);
+    const app = testApp({ policy, pipeline: machinePipeline(client, { now: () => AT_NOON_UTC }, ROSTER) });
+    const capture = captureLogs();
+    let id: string | null;
+    try {
+      const res = await send(app, '/v1/generate', { 'x-whim-device': DEVICE_ID }, { prompt: 'a timer' });
+      id = res.headers.get(REQUEST_ID_HEADER);
+      const events = await drain('provider-lines generate', res);
+      eq('setup: the run ends in a failure (an unparsable plan, twice)', events.at(-1)?.type, 'failure');
+    } finally {
+      capture.stop();
+    }
+    eq(
+      '/v1/generate: exactly three model call lines, the classifier and two plan attempts',
+      withMessage(capture, 'model call').map((r) => r.role),
+      ['policy', 'plan', 'plan'],
+    );
+    checkProviderAndPolicyLines('/v1/generate', capture, id, 3);
+  }
+}
+
 // ─── The envelope, its legacy default, and the request line ──────────────────
 
 async function testEnvelopeOnTheRequestLine(): Promise<void> {
@@ -252,9 +409,7 @@ async function testEnvelopeRefusals(): Promise<void> {
   section('Envelope — a half or malformed envelope is refused 400 before any admission');
 
   const expectRefused = async (label: string, headers: Record<string, string>, names: string): Promise<void> => {
-    const usageStore = new RecordingUsageStore();
-    const model = new ForbiddenModel();
-    const app = testApp({ usageStore, policy: cachedPolicy(new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 1000 })) });
+    const { app, model, usageStore } = forbiddenModelApp();
     const res = await send(app, '/v1/generate', { 'x-whim-device': DEVICE_ID, ...headers }, { prompt: 'a timer' });
     const body = ApiError.safeParse(await res.json());
     eq(`${label}: refused 400`, res.status, 400);
@@ -330,16 +485,7 @@ async function testEveryV1RouteGated(): Promise<void> {
     ['/v1/usage', undefined],
   ] as const;
   for (const [route, body] of routes) {
-    const model = new ForbiddenModel();
-    const usageStore = new RecordingUsageStore();
-    const app = testApp({
-      usageStore,
-      model,
-      roster: ROSTER,
-      pipeline: machinePipeline(model, { now: () => AT_NOON_UTC }, ROSTER),
-      policy: cachedPolicy(new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 1000 })),
-      config: minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }),
-    });
+    const { app, model, usageStore } = forbiddenModelApp(minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }));
     const res = await send(app, route, { 'x-whim-device': DEVICE_ID, ...ANDROID_ENVELOPE }, body);
     eq(`${route}: an old Android build → 426 update_required`, [res.status, await refusalCode(res)], [426, 'update_required']);
     eq(`${route}: no model was called (classifier included)`, model.calls, 0);
@@ -413,15 +559,7 @@ async function testConsentBackstop(): Promise<void> {
 
   const noGrant = { 'x-whim-device': DEVICE_ID, ...ENVELOPE, [CONSENT_HEADER]: 'none' };
   for (const route of ['/v1/clarify', '/v1/rewrite', '/v1/generate']) {
-    const model = new ForbiddenModel();
-    const usageStore = new RecordingUsageStore();
-    const app = testApp({
-      usageStore,
-      model,
-      roster: ROSTER,
-      pipeline: machinePipeline(model, { now: () => AT_NOON_UTC }, ROSTER),
-      policy: cachedPolicy(new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 1000 })),
-    });
+    const { app, model, usageStore } = forbiddenModelApp();
     const res = await send(app, route, noGrant, { prompt: 'a timer' });
     eq(`${route}: consent none → 403`, res.status, 403);
     eq(`${route}: refused consent_required`, await refusalCode(res), 'consent_required');
@@ -514,6 +652,7 @@ async function testDriversSendAnEnvelope(): Promise<void> {
 export async function runRequestEdgeTests(): Promise<void> {
   await testRequestIdOnEveryResponse();
   await testFailedGenerationJoinsUp();
+  await testProviderAndPolicyLinesCarryRequestId();
   await testEnvelopeOnTheRequestLine();
   await testEnvelopeRefusals();
   await testOldBuildTurnedAway();
