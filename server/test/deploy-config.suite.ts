@@ -1808,11 +1808,11 @@ function provisionTests(): void {
     const run = runScript(sandbox, 'provision.sh', []);
     check(
       'provision.sh without the alert values names each, before any gcloud call',
-      run.status === 1 && ['WHIM_ALERT_EMAIL', 'WHIM_BILLING_ACCOUNT', 'WHIM_MONTHLY_BUDGET_USD'].every((key) => run.stderr.includes(`missing required value ${key}`)) && toolLog(sandbox, 'gcloud').length === 0,
+      run.status === 1 && ['WHIM_ALERT_EMAIL', 'WHIM_BILLING_ACCOUNT', 'WHIM_MONTHLY_BUDGET'].every((key) => run.stderr.includes(`missing required value ${key}`)) && toolLog(sandbox, 'gcloud').length === 0,
       run.stderr,
     );
   });
-  for (const [key, value] of [['WHIM_ALERT_EMAIL', 'owner@example.test", "type": "sms'], ['WHIM_BILLING_ACCOUNT', 'billingAccounts/0123AB'], ['WHIM_MONTHLY_BUDGET_USD', '250.50']] as const) {
+  for (const [key, value] of [['WHIM_ALERT_EMAIL', 'owner@example.test", "type": "sms'], ['WHIM_BILLING_ACCOUNT', 'billingAccounts/0123AB'], ['WHIM_MONTHLY_BUDGET', '250.50']] as const) {
     withSandbox((sandbox) => {
       const run = runScript(sandbox, 'provision.sh', [], { ...PROVISION_VALUES, [key]: value });
       check(`provision.sh refuses a malformed ${key}, naming it, before any gcloud call`, run.status === 1 && run.stderr.includes(key) && toolLog(sandbox, 'gcloud').length === 0, run.stderr);
@@ -1823,10 +1823,13 @@ function provisionTests(): void {
 // ---------------------------------------------------------------------------------------------
 // Alerts, budget, snapshots and the source-map bucket (developer-observability D10, D12)
 
-const PROVISION_VALUES = { WHIM_ALERT_EMAIL: 'owner@example.test', WHIM_BILLING_ACCOUNT: '0123AB-4567CD-89EF01', WHIM_MONTHLY_BUDGET_USD: '250' } as const;
+const PROVISION_VALUES = { WHIM_ALERT_EMAIL: 'owner@example.test', WHIM_BILLING_ACCOUNT: '0123AB-4567CD-89EF01', WHIM_MONTHLY_BUDGET: '250' } as const;
 const CHANNEL_NAME = 'projects/anycognition-whim/notificationChannels/7001';
 const UPTIME_NAME = 'projects/anycognition-whim/uptimeCheckConfigs/whim-api-healthz-x1';
 const BUDGET_NAME = `billingAccounts/${PROVISION_VALUES.WHIM_BILLING_ACCOUNT}/budgets/b-1`;
+/** The real billing account bills in CAD, and Cloud Billing refuses a budget in another currency. */
+const BILLING_CURRENCY = 'CAD';
+const BILLING_ACCOUNT_CURRENCY: StubRule = [`*beta billing accounts describe ${PROVISION_VALUES.WHIM_BILLING_ACCOUNT} *`, 0, `${BILLING_CURRENCY}\\n`];
 
 /** The rules every full provision run needs, whatever exists: the adopted address, the VM, Cloud
  *  Build's account. */
@@ -1848,6 +1851,7 @@ const NOTHING_PROVISIONED: readonly StubRule[] = [
   ['*monitoring policies list*', 0, ''],
   ['*monitoring policies create*', 0, 'projects/anycognition-whim/alertPolicies/9001\\n'],
   ['*billing budgets list*', 0, ''],
+  BILLING_ACCOUNT_CURRENCY,
 ];
 
 interface ProvisionRun extends ScriptRun {
@@ -1856,10 +1860,12 @@ interface ProvisionRun extends ScriptRun {
   readonly files: Map<string, Record<string, unknown>>;
 }
 
-function provisionAgainst(state: readonly StubRule[], values: Readonly<Record<string, string>> = PROVISION_VALUES): ProvisionRun {
+/** `script`, when given, replaces the sandbox's deploy/provision.sh (a planted weakening). */
+function provisionAgainst(state: readonly StubRule[], values: Readonly<Record<string, string>> = PROVISION_VALUES, script?: string): ProvisionRun {
   let result: ProvisionRun | undefined;
   withSandbox((sandbox) => {
     writeRules(sandbox, 'gcloud', [...PROVISION_BASE, ...state]);
+    if (script !== undefined) fs.writeFileSync(path.join(sandbox.repo, 'deploy', 'provision.sh'), script);
     const run = runScript(sandbox, 'provision.sh', [], values);
     const captured = path.join(sandbox.stubs, 'from-file');
     const names = fs.existsSync(captured) ? fs.readdirSync(captured).sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10)) : [];
@@ -1880,7 +1886,7 @@ function specOf(resource: Record<string, unknown> | undefined): string {
 
 /** The project as a finished run left it: every list and describe answers with what that run
  *  created, read back from its gcloud calls and the files they took. */
-function stateAfter(run: ProvisionRun, budgetAmount = PROVISION_VALUES.WHIM_MONTHLY_BUDGET_USD): StubRule[] {
+function stateAfter(run: ProvisionRun, budgetAmount = PROVISION_VALUES.WHIM_MONTHLY_BUDGET): StubRule[] {
   const row = (...fields: string[]): string => fields.join('\\t');
   const channel = run.files.get('channel-email.json');
   const uptimeCall = callMatching(run.calls, / monitoring uptime create /);
@@ -1906,6 +1912,13 @@ function stateAfter(run: ProvisionRun, budgetAmount = PROVISION_VALUES.WHIM_MONT
 }
 
 const CHANGING_CALL = / (?:create|update|add-resource-policies) /;
+
+/** Every budget create or update must state its amount in the billing account's own currency. */
+function budgetCurrencyProblems(run: ProvisionRun, amount: string): string[] {
+  const budgetCalls = run.calls.filter((line) => / billing budgets (?:create|update) /.test(line));
+  if (budgetCalls.length === 0) return ['no budget was created or updated'];
+  return budgetCalls.filter((line) => !line.includes(`--budget-amount ${amount}${BILLING_CURRENCY} `)).map((line) => `a budget amount is not ${amount} in the billing account's currency ${BILLING_CURRENCY}: ${line}`);
+}
 
 /** Cloud Logging's severity order. */
 const SEVERITY_ORDER = ['DEFAULT', 'DEBUG', 'INFO', 'NOTICE', 'WARNING', 'ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'];
@@ -2097,10 +2110,22 @@ function provisionMonitoringTests(): void {
   check(`  ... the uptime check probes https://${API_HOST}/healthz every 5 minutes from at least three regions`, uptimeCall.includes(`host=${API_HOST},`) && uptimeCall.includes('--protocol https') && uptimeCall.includes('--path /healthz') && uptimeCall.includes('--period 5') && regions.length >= 3, uptimeCall);
   const budgetCall = callMatching(first.calls, / billing budgets create /);
   check(
-    '  ... the budget covers WHIM_MONTHLY_BUDGET_USD on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
-    budgetCall.includes(`--billing-account ${PROVISION_VALUES.WHIM_BILLING_ACCOUNT}`) && budgetCall.includes('--budget-amount 250USD') && ['0.5', '0.9', '1.0'].every((percent) => budgetCall.includes(`--threshold-rule percent=${percent}`)) && budgetCall.includes(`--notifications-rule-monitoring-notification-channels ${CHANNEL_NAME}`),
+    '  ... the budget covers WHIM_MONTHLY_BUDGET on WHIM_BILLING_ACCOUNT at 50, 90 and 100 %, emailing the channel',
+    budgetCall.includes(`--billing-account ${PROVISION_VALUES.WHIM_BILLING_ACCOUNT}`) && ['0.5', '0.9', '1.0'].every((percent) => budgetCall.includes(`--threshold-rule percent=${percent}`)) && budgetCall.includes(`--notifications-rule-monitoring-notification-channels ${CHANNEL_NAME}`),
     budgetCall,
   );
+  checkClean("  ... in the billing account's own currency, read from the account", budgetCurrencyProblems(first, PROVISION_VALUES.WHIM_MONTHLY_BUDGET));
+  const provisionScript = readRepoFile('deploy/provision.sh');
+  const hardcodedUsd = provisionAgainst(NOTHING_PROVISIONED, PROVISION_VALUES, plant(provisionScript, '"${WHIM_MONTHLY_BUDGET}${currency}"', '"${WHIM_MONTHLY_BUDGET}USD"'));
+  checkCaught('  red: a budget hardcoded in USD fails against the CAD account', budgetCurrencyProblems(hardcodedUsd, PROVISION_VALUES.WHIM_MONTHLY_BUDGET), "not 250 in the billing account's currency");
+  for (const [how, rule] of [['fails', [BILLING_ACCOUNT_CURRENCY[0], 1, '']], ['answers no currency code', [BILLING_ACCOUNT_CURRENCY[0], 0, '\\n']]] as const) {
+    const unread = provisionAgainst([rule, ...NOTHING_PROVISIONED]);
+    check(
+      `  ... when reading the account's currency ${how}, provision stops naming the account, creating no budget`,
+      unread.status === 1 && unread.stderr.includes(PROVISION_VALUES.WHIM_BILLING_ACCOUNT) && unread.stderr.includes('currency') && !unread.calls.some((line) => / billing budgets (?:create|update) /.test(line)),
+      `${unread.stderr}\n${unread.calls.join(' / ')}`,
+    );
+  }
   check('  ... the source-map bucket is private', /storage buckets create \S+ .*--uniform-bucket-level-access --public-access-prevention/.test(callMatching(first.calls, / storage buckets create /)));
 
   // specs/server-observability "Rerunning provisioning is a no-op".
@@ -2111,9 +2136,10 @@ function provisionMonitoringTests(): void {
 
   const newEmail = provisionAgainst(stateAfter(first), { ...PROVISION_VALUES, WHIM_ALERT_EMAIL: 'someone-else@example.test' });
   eq('a rerun with a new alert address updates the one channel in place and nothing else', newEmail.calls.filter((line) => CHANGING_CALL.test(line)).map((line) => / (beta monitoring channels update) /.exec(line)?.[1] ?? line), ['beta monitoring channels update']);
-  const newBudget = provisionAgainst(stateAfter(first), { ...PROVISION_VALUES, WHIM_MONTHLY_BUDGET_USD: '400' });
+  const newBudget = provisionAgainst(stateAfter(first), { ...PROVISION_VALUES, WHIM_MONTHLY_BUDGET: '400' });
   const budgetChanges = newBudget.calls.filter((line) => CHANGING_CALL.test(line));
-  check('a rerun with a new monthly amount updates the one budget to it and nothing else', budgetChanges.length === 1 && budgetChanges[0]!.includes(`billing budgets update ${BUDGET_NAME} `) && budgetChanges[0]!.includes('--budget-amount 400USD'), budgetChanges.join(' / '));
+  check('a rerun with a new monthly amount updates the one budget to it and nothing else', budgetChanges.length === 1 && budgetChanges[0]!.includes(`billing budgets update ${BUDGET_NAME} `), budgetChanges.join(' / '));
+  checkClean("  ... in the billing account's currency", budgetCurrencyProblems(newBudget, '400'));
 
   const duplicated = stateAfter(first).map((rule): StubRule => (rule[0] === '*monitoring policies list*' ? [rule[0], rule[1], `${rule[2] ?? ''}${(rule[2] ?? '').split('\\n')[0]}\\n`] : rule));
   const twice = provisionAgainst(duplicated);
@@ -2274,49 +2300,149 @@ function writeAged(file: string, text: string, daysAgo: number): void {
   fs.utimesSync(file, at, at);
 }
 
-/** Runs `script` against a stand-in for /var/lib/docker/containers and reports every way the
- *  result breaks the age cap or touches what it must not. */
-function logAgeCapRunProblems(script: string): string[] {
+/** docker as the script sees it. Every call is logged. `inspect --format` fills each
+ *  `{{ index .Config.Labels "KEY" }}` from the container's labels in STUB_DOCKER_LABELS, and fails
+ *  for an unknown id (a removed container) or any other template. `compose` succeeds. */
+const LOG_AGE_CAP_DOCKER_STUB = `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + '\\n');
+if (args[0] === 'inspect') {
+  const labels = JSON.parse(process.env.STUB_DOCKER_LABELS)[args[args.length - 1]];
+  if (labels === undefined) process.exit(1);
+  const text = args[args.indexOf('--format') + 1].replace(/\\{\\{ index \\.Config\\.Labels "([^"]+)" \\}\\}/g, (_, key) => labels[key] ?? '');
+  if (text.includes('{{')) process.exit(3);
+  console.log(text);
+}
+`;
+
+/** Each fixture container's compose labels, by id: c1 is caddy with old lines in its active log, c2's
+ *  lines carry no readable time, c3 is the server with only recent lines. */
+const LOG_AGE_CAP_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  c1: { 'com.docker.compose.project': 'whim', 'com.docker.compose.service': 'caddy' },
+  c2: { 'com.docker.compose.project': 'whim', 'com.docker.compose.service': 'unreadable-times' },
+  c3: { 'com.docker.compose.project': 'whim', 'com.docker.compose.service': 'whim-server' },
+};
+
+/** Why a recreate of each fixture service other than caddy is wrong. */
+const WRONGLY_RECREATED: Readonly<Record<string, string>> = {
+  'unreadable-times': 'a container whose log could not be parsed was recreated',
+  'whim-server': 'a service whose log is under the cap was recreated',
+};
+
+interface LogAgeCapInputs {
+  readonly script: string;
+  /** The Ops Agent's include_paths, as absolute globs under /var/lib/docker/containers. */
+  readonly tailed: readonly string[];
+  /** deploy/lib.sh's WHIM_VM_APP_DIR: where the VM's compose.yaml and .env live. */
+  readonly appDir: string;
+  /** Adds c4, with old lines and no labels: not a compose service, so the run must fail over it. */
+  readonly unlabeled?: boolean;
+}
+
+/** The files matching `globs`, re-rooted from /var/lib/docker/containers to `root`, as bash expands them. */
+function tailedFiles(globs: readonly string[], root: string): Set<string> | string {
+  const prefix = '/var/lib/docker/containers/';
+  const outside = globs.find((glob) => !glob.startsWith(prefix));
+  if (outside !== undefined) return `the Ops Agent tails ${outside}, outside the containers directory`;
+  const matched = new Set<string>();
+  for (const glob of globs) {
+    const run = runFromPath('bash', ['-c', 'shopt -s nullglob; for f in $1; do printf "%s\\n" "$f"; done', 'glob', path.join(root, glob.slice(prefix.length))], { encoding: 'utf8' });
+    for (const file of run.stdout.split('\n').filter((line) => line !== '')) matched.add(file);
+  }
+  return matched;
+}
+
+/** The stand-in containers directory, as written before the run. */
+interface LogAgeCapFixture {
+  readonly root: string;
+  /** Each container's active log with its text and inode before the run. */
+  readonly active: ReadonlyMap<string, { readonly text: string; readonly inode: number }>;
+  readonly staleRotated: string;
+  readonly mixedRotated: string;
+  readonly mixedOld: string;
+  readonly mixedRecent: string;
+  readonly outside: readonly string[];
+}
+
+function writeLogAgeCapFixture(root: string, unlabeled: boolean): LogAgeCapFixture {
+  for (const id of ['c1', 'c2', 'c3', ...(unlabeled ? ['c4'] : [])]) fs.mkdirSync(path.join(root, id), { recursive: true });
+  const container = path.join(root, 'c1');
+  const oldLines = [dockerLogLine(caddyAccess('/v1/generate'), 'stderr', 100), dockerLogLine(caddyAccess('/v1/clarify'), 'stderr', 100)];
+  writeAged(path.join(container, 'c1-json.log'), [...oldLines, dockerLogLine(caddyAccess('/v1/clarify'), 'stderr', 0)].join(''), 0);
+  writeAged(path.join(root, 'c2', 'c2-json.log'), '{"log":"old\\n","stream":"stdout","time":"sometime"}\n{"log":"cut short', 120);
+  writeAged(path.join(root, 'c3', 'c3-json.log'), dockerLogLine(pinoLine('request completed'), 'stdout', 10) + dockerLogLine('listening on 8787\n', 'stdout', 0), 0);
+  if (unlabeled) writeAged(path.join(root, 'c4', 'c4-json.log'), dockerLogLine(pinoLine('booted'), 'stdout', 100), 100);
+  const activeLogs = fs.readdirSync(root).map((id) => path.join(root, id, `${id}-json.log`));
+  const active = new Map(activeLogs.map((log) => [log, { text: fs.readFileSync(log, 'utf8'), inode: fs.statSync(log).ino }]));
+  const staleRotated = path.join(container, 'c1-json.log.2');
+  writeAged(staleRotated, dockerLogLine(pinoLine('booted'), 'stdout', 125) + dockerLogLine(pinoLine('drained'), 'stdout', 120), 120);
+  const mixedRotated = path.join(container, 'c1-json.log.1');
+  const mixedOld = dockerLogLine(caddyAccess('/v1/rewrite'), 'stderr', 95);
+  const mixedRecent = dockerLogLine(caddyAccess('/v1/report'), 'stderr', 5);
+  writeAged(mixedRotated, mixedOld + mixedRecent, 5);
+  const outside = [path.join(container, 'config.v2.json'), path.join(root, 'stray-json.log.1')];
+  for (const file of outside) writeAged(file, dockerLogLine('not a container log\n', 'stdout', 120), 120);
+  return { root, active, staleRotated, mixedRotated, mixedOld, mixedRecent, outside };
+}
+
+/** Exactly caddy is recreated, once, with the VM's compose command, and the run says so. */
+function logAgeCapRecreateProblems(dockerCalls: readonly string[][], stdout: string, appDir: string): string[] {
+  const problems: string[] = [];
+  const recreates = dockerCalls.filter((call) => call[0] === 'compose');
+  const expected = ['compose', '--project-directory', appDir, '--file', `${appDir}/compose.yaml`, 'up', '-d', '--force-recreate', '--no-deps', 'caddy'];
+  const caddy = recreates.filter((call) => call.at(-1) === 'caddy');
+  if (!caddy.some((call) => call.includes('--force-recreate'))) problems.push('the over-cap service caddy was not recreated');
+  if (caddy.length > 1) problems.push('caddy was recreated more than once');
+  for (const call of caddy) if (JSON.stringify(call) !== JSON.stringify(expected)) problems.push(`the recreate is not \`docker ${expected.join(' ')}\`: docker ${call.join(' ')}`);
+  for (const call of recreates.filter((other) => other.at(-1) !== 'caddy')) {
+    problems.push(`${WRONGLY_RECREATED[call.at(-1) ?? ''] ?? 'an unknown service was recreated'}: ${call.at(-1) ?? ''}`);
+  }
+  if (!stdout.includes('recreated service caddy')) problems.push(`the run does not report the recreate: ${stdout}`);
+  return problems;
+}
+
+/** Active logs untouched; rotated ones trimmed or deleted, never a file the Ops Agent tails. */
+function logAgeCapFileProblems(fixture: LogAgeCapFixture, tailed: readonly string[]): string[] {
+  const { root, mixedRotated } = fixture;
+  const problems: string[] = [];
+  for (const [log, was] of fixture.active) {
+    const now = fs.existsSync(log) ? { text: fs.readFileSync(log, 'utf8'), inode: fs.statSync(log).ino } : undefined;
+    if (now?.text !== was.text || now.inode !== was.inode) problems.push(`an active log was deleted or changed in place: ${path.relative(root, log)}`);
+  }
+  if (fs.existsSync(fixture.staleRotated)) problems.push('a rotated log last written 120 days ago survived');
+  const mixedText = fs.existsSync(mixedRotated) ? fs.readFileSync(mixedRotated, 'utf8') : '';
+  if (mixedText.includes(fixture.mixedOld)) problems.push('a rotated log still holds a line older than the cap');
+  if (mixedText !== fixture.mixedRecent) problems.push('a rotated log lost its recent line');
+  for (const other of fixture.outside) if (!fs.existsSync(other)) problems.push(`${path.relative(root, other)}, outside the log glob, was deleted`);
+  const tailedNow = tailedFiles(tailed, root);
+  if (typeof tailedNow === 'string') problems.push(tailedNow);
+  else if (mixedText !== fixture.mixedOld + fixture.mixedRecent && tailedNow.has(mixedRotated)) problems.push(`the Ops Agent tails a file trimmed in place: ${path.relative(root, mixedRotated)}`);
+  return problems;
+}
+
+/** Runs the script against a stand-in for /var/lib/docker/containers with a stubbed docker on PATH,
+ *  and reports every way the result breaks the age cap or touches what it must not. */
+function logAgeCapRunProblems({ script, tailed, appDir, unlabeled = false }: LogAgeCapInputs): string[] {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-log-age-cap-'));
   try {
-    const root = path.join(dir, 'containers');
-    const container = path.join(root, 'c1');
-    const unreadable = path.join(root, 'c2');
-    fs.mkdirSync(container, { recursive: true });
-    fs.mkdirSync(unreadable);
-    const active = path.join(container, 'c1-json.log');
-    const oldLines = [dockerLogLine(caddyAccess('/v1/generate'), 'stderr', 100), dockerLogLine(pinoLine('request completed'), 'stdout', 100)];
-    const recentLines = [dockerLogLine(pinoLine('request completed'), 'stdout', 10), dockerLogLine(caddyAccess('/v1/clarify'), 'stderr', 0), dockerLogLine('listening on 8787\n', 'stdout', 0)];
-    writeAged(active, [...oldLines, ...recentLines].join(''), 0);
-    const inode = fs.statSync(active).ino;
-    const staleRotated = path.join(container, 'c1-json.log.2');
-    writeAged(staleRotated, dockerLogLine(pinoLine('booted'), 'stdout', 125) + dockerLogLine(pinoLine('drained'), 'stdout', 120), 120);
-    const mixedRotated = path.join(container, 'c1-json.log.1');
-    const mixedOld = dockerLogLine(caddyAccess('/v1/rewrite'), 'stderr', 95);
-    const mixedRecent = dockerLogLine(caddyAccess('/v1/report'), 'stderr', 5);
-    writeAged(mixedRotated, mixedOld + mixedRecent, 5);
-    const outside = [path.join(container, 'config.v2.json'), path.join(root, 'stray-json.log.1')];
-    for (const file of outside) writeAged(file, dockerLogLine('not a container log\n', 'stdout', 120), 120);
-    const noTime = path.join(unreadable, 'c2-json.log');
-    const noTimeText = '{"log":"old\\n","stream":"stdout","time":"sometime"}\n{"log":"cut short';
-    writeAged(noTime, noTimeText, 120);
-
+    const fixture = writeLogAgeCapFixture(path.join(dir, 'containers'), unlabeled);
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'docker'), LOG_AGE_CAP_DOCKER_STUB, { mode: 0o755 });
+    const dockerLog = path.join(dir, 'docker.jsonl');
     const file = path.join(dir, 'log-age-cap.sh');
     fs.writeFileSync(file, script);
-    const run = runFromPath('bash', [file], { encoding: 'utf8', timeout: 10_000, env: { PATH: process.env.PATH, LOG_AGE_CAP_ROOT: root } });
+    const run = runFromPath('bash', [file], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      env: { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`, LOG_AGE_CAP_ROOT: fixture.root, DOCKER_LOG: dockerLog, STUB_DOCKER_LABELS: JSON.stringify(LOG_AGE_CAP_LABELS) },
+    });
     if (run.error) throw run.error;
-    const problems: string[] = [];
-    if (run.status !== 0) problems.push(`the script exited ${run.status}: ${run.stderr}`);
-    const activeText = fs.readFileSync(active, 'utf8');
-    if (oldLines.some((line) => activeText.includes(line))) problems.push('the active log still holds a line older than the cap');
-    if (activeText !== recentLines.join('')) problems.push('the active log does not hold exactly its recent lines, in order');
-    if (fs.statSync(active).ino !== inode) problems.push('the active log was replaced, not rewritten in place');
-    if (fs.existsSync(staleRotated)) problems.push('a rotated log last written 120 days ago survived');
-    const mixedText = fs.existsSync(mixedRotated) ? fs.readFileSync(mixedRotated, 'utf8') : '';
-    if (mixedText.includes(mixedOld)) problems.push('a rotated log still holds a line older than the cap');
-    if (mixedText !== mixedRecent) problems.push('a rotated log lost its recent line');
-    for (const other of outside) if (!fs.existsSync(other)) problems.push(`${path.relative(root, other)}, outside the log glob, was deleted`);
-    if (!fs.existsSync(noTime) || fs.readFileSync(noTime, 'utf8') !== noTimeText) problems.push('a log with no readable time was changed');
+    const dockerCalls = fs.existsSync(dockerLog) ? fs.readFileSync(dockerLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]) : [];
+    const problems = [...logAgeCapRecreateProblems(dockerCalls, run.stdout, appDir), ...logAgeCapFileProblems(fixture, tailed)];
+    if (unlabeled && (run.status !== 1 || !run.stderr.includes('c4'))) problems.push(`an over-cap container outside the compose project did not fail the run naming it (exit ${run.status}): ${run.stderr}`);
+    if (!unlabeled && run.status !== 0) problems.push(`the script exited ${run.status}: ${run.stderr}`);
     return problems;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -2372,13 +2498,32 @@ function logAgeCapTests(files: ReadonlyMap<string, string>): void {
   checkCaught('  red: a cap of 90 days fails (the timer adds up to a day)', logAgeCapLimitProblems(plant(script, 'MAX_AGE_DAYS=89', 'MAX_AGE_DAYS=90'), timer, publishedDays), 'exceeds the published');
   checkCaught('  red: a weekly timer fails', logAgeCapLimitProblems(script, plant(timer, 'OnCalendar=daily', 'OnCalendar=weekly'), publishedDays), 'does not run daily');
 
-  checkClean('old lines leave the active and rotated logs in place, stale rotated logs go, recent lines and other files stay', logAgeCapRunProblems(script));
-  const loop = 'for log in "$CONTAINERS_ROOT"/*/*-json.log "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do';
-  const mtimeOnly = plant(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do'), "-name '*-json.log.[0-9]*'", "-name '*-json.log*'");
-  checkCaught('  red: judging the active log by its mtime fails', logAgeCapRunProblems(mtimeOnly), 'the active log still holds a line older than the cap');
-  checkCaught('  red: judging rotated logs by their mtime alone fails', logAgeCapRunProblems(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log; do')), 'a rotated log still holds a line older than the cap');
-  const rewrite = ': >"$log"\n  if [[ "$kept" -gt 0 ]]; then\n    dd if="$tail" bs="$kept" count=1 2>/dev/null >>"$log"\n  fi';
-  checkCaught('  red: replacing the active log with a new file fails', logAgeCapRunProblems(plant(script, rewrite, 'mv "$tail" "$log"')), 'the active log was replaced');
+  const tailed = yamlList(yamlChild(yamlChild(yamlChild(yamlEntries((files.get('deploy/vm/ops-agent.yaml') ?? '').split('\n')), 'logging'), 'receivers'), 'docker').get('include_paths'));
+  const appDir = /^readonly WHIM_VM_APP_DIR=(\S+)$/m.exec(files.get('deploy/lib.sh') ?? '')?.[1] ?? '';
+  const capRun = (text: string, overrides: Partial<LogAgeCapInputs> = {}): string[] => logAgeCapRunProblems({ script: text, tailed, appDir, ...overrides });
+  checkClean(
+    'an active log with old lines gets exactly its compose service recreated and is never edited; under-cap and unparseable containers stay; rotated logs are trimmed or deleted',
+    capRun(script),
+  );
+  checkClean('an over-cap container that is no compose service fails the run, naming it, and the rest is still capped', capRun(script, { unlabeled: true }));
+  const activeLoop = 'for log in "$CONTAINERS_ROOT"/*/*-json.log; do\n  if [[ -f "$log" ]] && [[ ! -L "$log" ]]; then\n    mark_over_cap "$log"';
+  checkCaught(
+    '  red: trimming the active log in place (the truncate-and-append variant) fails',
+    capRun(plant(script, activeLoop, activeLoop.replace('mark_over_cap', 'prune_old_lines'))),
+    'an active log was deleted or changed in place: c1/c1-json.log',
+  );
+  const regardless = capRun(plant(script, '  [[ "$drop" -gt 0 ]] || return 0\n  id=', '  id='));
+  checkCaught('  red: recreating every service, whatever its log holds, fails', regardless, 'a service whose log is under the cap was recreated');
+  checkCaught('  ... and names the container whose log could not be parsed', regardless, 'a container whose log could not be parsed was recreated');
+  checkCaught(
+    '  red: deleting stale active logs whole by their mtime fails',
+    capRun(plant(script, "-name '*-json.log.[0-9]*'", "-name '*-json.log*'")),
+    'an active log was deleted or changed in place: c2/c2-json.log',
+  );
+  const rotatedLoop = 'for log in "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do\n  if [[ -f "$log" ]] && [[ ! -L "$log" ]]; then\n    prune_old_lines "$log"\n  fi\ndone\n';
+  checkCaught('  red: judging rotated logs by their mtime alone fails', capRun(plant(script, rotatedLoop, '')), 'a rotated log still holds a line older than the cap');
+  checkCaught('  red: an Ops Agent that also tails rotated logs fails the in-place trim', capRun(script, { tailed: [`${DOCKER_JSON_LOGS}*`] }), 'the Ops Agent tails a file trimmed in place');
+  checkCaught('  red: a recreate outside the VM\'s compose project directory fails', capRun(script, { appDir: '/srv/whim' }), 'the recreate is not');
 
   const missing = runFromPath('bash', [path.join(ROOT, 'deploy/vm/log-age-cap.sh')], { encoding: 'utf8', env: { PATH: process.env.PATH, LOG_AGE_CAP_ROOT: path.join(os.tmpdir(), 'whim-no-such-containers-root') } });
   eq('the script succeeds when the containers directory does not exist', missing.status, 0);

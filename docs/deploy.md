@@ -17,8 +17,8 @@ the **empty** Secret Manager secret `whim-openrouter-api-key`, the private sourc
 Operating → Alerts). It adopts the reserved static IP whose value is `WHIM_STATIC_IP` and fails if
 none exists — it never creates one, because a wrong address would move DNS. It never adds a secret
 version; see "OpenRouter key" below. It needs `WHIM_ALERT_EMAIL`, `WHIM_BILLING_ACCOUNT` and
-`WHIM_MONTHLY_BUDGET_USD` in the values file, and gcloud's `beta` component for the notification
-channel (`gcloud components install beta`).
+`WHIM_MONTHLY_BUDGET` in the values file, and gcloud's `beta` component for the notification
+channel and the billing account's currency (`gcloud components install beta`).
 
 Each alert resource is found by display name (the log metric by name) and carries a fingerprint of
 its rendered definition, so a rerun creates what is missing, updates what changed and prints
@@ -113,7 +113,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 | `WHIM_ALERT_EMAIL` | for `provision.sh` | where every alert and the budget email go (Operating → Alerts) |
 | `WHIM_BILLING_ACCOUNT` | for `provision.sh` | the billing account id (`XXXXXX-XXXXXX-XXXXXX`) the spend budget is created on |
-| `WHIM_MONTHLY_BUDGET_USD` | for `provision.sh` | the budget's monthly amount in whole US dollars; it emails at 50, 90 and 100 % |
+| `WHIM_MONTHLY_BUDGET` | for `provision.sh` | the budget's monthly amount in whole units of the billing account's currency (Cloud Billing refuses any other; `provision.sh` reads it from the account, and stops if it can't); it emails at 50, 90 and 100 % |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).
 
@@ -262,7 +262,7 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `$C exec -T whim-server node server/whim-admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
   | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
   | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
-  | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET_USD` | once per threshold per month | the Billing reports page for the project, by service |
+  | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET` | once per threshold per month | the Billing reports page for the project, by service |
 
   "While it lasts" means one email when the condition starts and one when it clears. The budget
   also emails the billing account's admins.
@@ -287,13 +287,21 @@ string the deploy scripts use, from `deploy/lib.sh`).
 The privacy policy deletes connection data and logs within 90 days (the disclosure manifest's
 `connection-logs` maximum). `compose.yaml` rotates the containers' json-file logs by size only, so
 at low traffic lines holding IP addresses would stay for months. `deploy/vm/log-age-cap.sh` enforces
-the age: `whim-log-age-cap.timer` runs it daily (catching up after downtime), it removes every line
-older than 89 days from each container's log under `/var/lib/docker/containers` in place, and deletes
-rotated files last written before that. 89 days plus the one-day timer period stays within 90; the
-server acceptance suite fails if the cap outgrows the manifest. `bootstrap.sh` installs it, so on a
-VM bootstrapped earlier, rerun `bootstrap.sh` to add it. Check it with
-`sudo systemctl list-timers 'whim-log-age-cap*'` (next and last run) and
-`sudo journalctl -u whim-log-age-cap.service` (what each run removed).
+the age: `whim-log-age-cap.timer` runs it daily (catching up after downtime). Under
+`/var/lib/docker/containers` it deletes rotated files (`*-json.log.N`) last written more than 89
+days ago and removes older lines from the rest in place. It never edits a container's active
+`*-json.log`: the Ops Agent tails it, and a file that shrinks is re-read from the start, which would
+ship every kept line to Cloud Logging again (and could trip the log-based alerts). When an active log
+holds a line older than 89 days, the script recreates that compose service instead
+(`docker compose up -d --force-recreate --no-deps <service>` in `/opt/whim`): the new container
+starts a new log, and Docker removes the old container's directory, logs included. That service is
+down for a few seconds, and it only happens after 89 days without a deploy, since every deploy
+recreates the containers. A log whose lines carry no readable time never causes a recreate; a
+container with old lines that is no service of the `whim` project fails the run, naming it. 89 days
+plus the one-day timer period stays within 90; the server acceptance suite fails if the cap outgrows
+the manifest. `bootstrap.sh` installs it, so on a VM bootstrapped earlier, rerun `bootstrap.sh` to
+add it. Check it with `sudo systemctl list-timers 'whim-log-age-cap*'` (next and last run) and
+`sudo journalctl -u whim-log-age-cap.service` (what each run removed or recreated).
 
 This covers only the log files on the VM. Anything shipped to Cloud Logging keeps whatever retention
 its log bucket is set to, configured separately in the project.

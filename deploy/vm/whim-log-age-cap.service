@@ -1,4 +1,5 @@
-# Removes container log lines older than the published log age cap (deploy/vm/log-age-cap.sh).
+# Caps the age of the container log lines on the VM (deploy/vm/log-age-cap.sh): trims rotated logs,
+# recreates a compose service whose active log holds a line past the cap.
 # Started daily by whim-log-age-cap.timer; installed by deploy/vm/bootstrap.sh.
 [Unit]
 Description=Whim container log age cap

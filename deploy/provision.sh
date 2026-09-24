@@ -41,15 +41,15 @@ readonly machine_type="$WHIM_PROFILE_FOUND_VALUE"
 
 whim_load_values
 whim_require_values WHIM_GCP_PROJECT WHIM_GCP_REGION WHIM_GCP_ZONE WHIM_STATIC_IP WHIM_API_HOST WHIM_WEB_HOST \
-  WHIM_ALERT_EMAIL WHIM_BILLING_ACCOUNT WHIM_MONTHLY_BUDGET_USD
+  WHIM_ALERT_EMAIL WHIM_BILLING_ACCOUNT WHIM_MONTHLY_BUDGET
 whim_require_host_values
 # These land in JSON and in gcloud flags, so each is held to a shape that needs no escaping.
 readonly EMAIL_SHAPE='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
 [[ "$WHIM_ALERT_EMAIL" =~ $EMAIL_SHAPE ]] || whim_fail "WHIM_ALERT_EMAIL is not an email address: $WHIM_ALERT_EMAIL"
 [[ "$WHIM_BILLING_ACCOUNT" =~ ^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$ ]] \
   || whim_fail "WHIM_BILLING_ACCOUNT is not a billing account id (XXXXXX-XXXXXX-XXXXXX): $WHIM_BILLING_ACCOUNT"
-[[ "$WHIM_MONTHLY_BUDGET_USD" =~ ^[1-9][0-9]{0,6}$ ]] \
-  || whim_fail "WHIM_MONTHLY_BUDGET_USD must be a whole number of US dollars: $WHIM_MONTHLY_BUDGET_USD"
+[[ "$WHIM_MONTHLY_BUDGET" =~ ^[1-9][0-9]{0,6}$ ]] \
+  || whim_fail "WHIM_MONTHLY_BUDGET must be a whole number in the billing account's currency: $WHIM_MONTHLY_BUDGET"
 
 readonly project="$WHIM_GCP_PROJECT" region="$WHIM_GCP_REGION" zone="$WHIM_GCP_ZONE"
 readonly vm_service_account="$WHIM_VM_SERVICE_ACCOUNT_NAME@$project.iam.gserviceaccount.com"
@@ -314,8 +314,13 @@ for template in "$MONITORING_DIR"/policy-*.json; do
 done
 
 echo "==> billing budget '$BUDGET_DISPLAY_NAME' on $WHIM_BILLING_ACCOUNT"
+# Cloud Billing refuses a budget in any currency but the account's own, so the amount takes it.
+currency="$(whim_gcloud beta billing accounts describe "$WHIM_BILLING_ACCOUNT" --format='value(currencyCode)')" \
+  || whim_fail "cannot read the currency of billing account $WHIM_BILLING_ACCOUNT (gcloud beta billing accounts describe failed)"
+[[ "$currency" =~ ^[A-Z]{3}$ ]] \
+  || whim_fail "billing account $WHIM_BILLING_ACCOUNT reports no currency code (got '$currency'); no budget was created or changed"
 # Emails the channel (and the billing account's admins) at 50, 90 and 100 % of the month's amount.
-budget_settings=(--budget-amount "${WHIM_MONTHLY_BUDGET_USD}USD" --filter-projects "projects/$project"
+budget_settings=(--budget-amount "${WHIM_MONTHLY_BUDGET}${currency}" --filter-projects "projects/$project"
   --notifications-rule-monitoring-notification-channels "$channel")
 find_row "$BUDGET_DISPLAY_NAME" "$(whim_gcloud billing budgets list --billing-account "$WHIM_BILLING_ACCOUNT" \
   --format='value(displayName,name,amount.specifiedAmount.units,notificationsRule.monitoringNotificationChannels)')"
@@ -323,7 +328,7 @@ if [ -z "$ROW_NAME" ]; then
   whim_gcloud billing budgets create --billing-account "$WHIM_BILLING_ACCOUNT" --display-name "$BUDGET_DISPLAY_NAME" \
     "${budget_settings[@]}" --threshold-rule percent=0.5 --threshold-rule percent=0.9 --threshold-rule percent=1.0 >/dev/null
   echo "created budget '$BUDGET_DISPLAY_NAME'"
-elif [ "$ROW_SPEC" != "$WHIM_MONTHLY_BUDGET_USD" ] || [ "$ROW_EXTRA" != "$channel" ]; then
+elif [ "$ROW_SPEC" != "$WHIM_MONTHLY_BUDGET" ] || [ "$ROW_EXTRA" != "$channel" ]; then
   whim_gcloud billing budgets update "$ROW_NAME" --billing-account "$WHIM_BILLING_ACCOUNT" "${budget_settings[@]}" \
     --clear-threshold-rules --add-threshold-rule percent=0.5 --add-threshold-rule percent=0.9 \
     --add-threshold-rule percent=1.0 >/dev/null
