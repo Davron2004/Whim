@@ -9,6 +9,7 @@
  * clock) plus one real-sqlite read-while-writing proof per store.
  */
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -116,8 +117,8 @@ async function testUsageSummary(): Promise<void> {
   section('Operator command — usage summary over recent days (spec scenario)');
 
   const usageStore = new InMemoryUsageStore();
-  const genA = await usageStore.admit({ deviceId: DEVICE_A, kind: 'generate', now: NOW, deviceLimit: 15 });
-  const genB = await usageStore.admit({ deviceId: DEVICE_B, kind: 'generate', now: NOW, deviceLimit: 15 });
+  const genA = await usageStore.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: NOW, deviceLimit: 15 });
+  const genB = await usageStore.admit({ requestId: randomUUID(), deviceId: DEVICE_B, kind: 'generate', now: NOW, deviceLimit: 15 });
   if (genA.ok) {
     await usageStore.settle(genA.requestId, { outcome: 'delivered' });
     await usageStore.recordCost(genA.requestId, { state: 'resolved', costUsd: 0.2 });

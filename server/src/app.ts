@@ -17,6 +17,10 @@
  * an injectable `DeviceVerifier` (design D15) for the calling device's id — routes, admission and
  * metering read only what it returns, never the raw header. `/healthz` and `/healthz/sse` stay
  * outside the prefix and anonymous.
+ *
+ * `/v1/*` middleware order (request-envelope): request id (`assignRequestId`) → device gate →
+ * client envelope (`readEnvelope`) → the minimum-build gate → routes, each of which declares its
+ * consent practice (`consentPractice`) before its own admission. See `./request-edge.ts`.
  */
 import { Hono } from 'hono';
 import type { ApiError, DevLogSinkPath } from '@whim/contract';
@@ -30,6 +34,7 @@ import { makeReportRoute } from './routes/report';
 import { makeUsageRoute } from './routes/usage';
 import { makeDevLogsRoute, type DevLogSinkOptions } from './routes/dev-logs';
 import { log } from './logger';
+import { assignRequestId, envelopeLogFields, readEnvelope, type EdgeEnv } from './request-edge';
 import { shapeOnlyVerifier, type DeviceVerifier } from './device-identity';
 import { loadServerConfig, type ServerConfig } from './config';
 import { createSlotController, type SlotController } from './admission/slots';
@@ -48,7 +53,7 @@ const NO_OP_RESOLVE_TRANSPORT: UsageAndCostTransport = {
   fetchStats: async () => null,
 };
 
-type AppEnv = { Variables: { deviceId: string } };
+type AppEnv = EdgeEnv;
 
 export interface AppOptions {
   pipeline: Pipeline;
@@ -177,21 +182,24 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
 
   // Per-request logging: one record per request carrying method, path, status and duration as
   // named fields, once the response settles — distinguishes "arrived and completed" from "never
-  // arrived". SSE (`text/event-stream`) responses are excluded here: `await next()` returns as
-  // soon as the route hands back its `Response`, before a streamed body has drained, so
-  // `/v1/generate` (and `/healthz/sse`) log themselves once the stream actually settles.
-  const requestLog = log.child({ scope: 'request' });
+  // arrived". A `/v1` request's record goes through its request-scoped logger, so it carries
+  // `requestId`, plus the envelope once it was read (design D9) — never the device id. SSE
+  // (`text/event-stream`) responses are excluded here: `await next()` returns as soon as the route
+  // hands back its `Response`, before a streamed body has drained, so `/v1/generate` (and
+  // `/healthz/sse`) log themselves once the stream actually settles.
   app.use('*', async (c, next) => {
     const start = performance.now();
     await next();
     const contentType = c.res.headers.get('content-type') ?? '';
     if (!contentType.startsWith('text/event-stream')) {
-      requestLog.info(
+      (c.get('log') ?? log).info(
         {
+          scope: 'request',
           method: c.req.method,
           path: c.req.path,
           status: c.res.status,
           durationMs: Math.round(performance.now() - start),
+          ...envelopeLogFields(c.get('envelope')),
         },
         'request',
       );
@@ -204,7 +212,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // failure it can show. The real error goes to the log (with the method and path that produced
   // it), never to the client: an internal message can carry a file path, a query, or a key.
   app.onError((err, c) => {
-    log.error(
+    (c.get('log') ?? log).error(
       {
         scope: 'request',
         method: c.req.method,
@@ -248,6 +256,10 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     });
   });
 
+  // The request id comes first, so every `/v1` response — the device gate's refusals included —
+  // carries it.
+  app.use('/v1/*', assignRequestId);
+
   // Device-identity middleware for all /v1/* routes — an injectable verifier, never a raw header
   // read (design D15).
   app.use('/v1/*', async (c, next) => {
@@ -258,6 +270,11 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     c.set('deviceId', result.deviceId);
     await next();
   });
+
+  // The client envelope, after identity and before any route admission (design D3).
+  app.use('/v1/*', readEnvelope);
+
+  // The minimum-build gate (app-update-gate) mounts here: after the envelope, before the routes.
 
   // Mount routes under /v1
   app.route(

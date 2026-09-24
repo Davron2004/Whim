@@ -6,10 +6,12 @@ import path from 'node:path';
 import { check, caught, eq, section } from './harness';
 import { formatMarkdownReport, type EvalSet } from '../src/flowbench/report';
 import { parseArgs, runFlowBenchmark, writeJsonReport } from '../src/flowbench/drive';
+import { parseRequestEnvelope } from '../src/request-edge';
 
 interface SeenRequest {
   path: string;
   device: string | undefined;
+  headers: Headers;
   body: Record<string, unknown>;
 }
 
@@ -56,7 +58,9 @@ async function listenFake(handler: (request: SeenRequest, response: http.ServerR
     }
     const body = typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
     const header = req.headers['x-whim-device'];
-    const seen = { path: req.url ?? '', device: typeof header === 'string' ? header : undefined, body };
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) if (typeof value === 'string') headers.set(name, value);
+    const seen = { path: req.url ?? '', device: typeof header === 'string' ? header : undefined, headers, body };
     requests.push(seen);
     await handler(seen, res);
   });
@@ -124,6 +128,12 @@ async function testFlowAndReport(): Promise<void> {
     eq('rewrite received the original prompt and answers', fake.requests[1]?.body, { prompt: 'make one', clarifications: item.clarifications });
     eq('generate received the rewritten prompt and same answers', fake.requests[2]?.body, { prompt: 'rewritten make one', clarifications: item.clarifications });
     check('all three requests used one valid UUID-shaped device id', new Set(fake.requests.map((request) => request.device)).size === 1 && /^[0-9a-f-]{36}$/.test(fake.requests[0]?.device ?? ''));
+    // Read by the server's own envelope parser: a legacy (header-free) or half envelope fails here.
+    const platforms = fake.requests.map((request) => {
+      const envelope = parseRequestEnvelope(request.headers);
+      return envelope.ok ? envelope.envelope.platform : envelope.body.hint;
+    });
+    eq('every request carries a complete client envelope the server reads as the app', platforms, ['android', 'android', 'android']);
     check('stage durations are non-negative and ordered', item.phases.generate?.stages.every((stage) => stage.durationMs >= 0) === true && item.phases.generate?.stages.map((stage) => stage.stage).join(',') === 'plan,generate,check,run');
     check('the report records a non-negative tail', (item.phases.generate?.tailMs ?? -1) >= 0);
     eq('the saved source is byte-for-byte', fs.readFileSync(path.join(saveDir, 'one.ts'), 'utf8'), SOURCE);

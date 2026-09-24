@@ -9,6 +9,7 @@
  * (capturing generation ids, choosing `creditOwned`) belongs to chain-9/10's suites.
  */
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -86,7 +87,7 @@ async function testSummedCostCreditOwned(): Promise<void> {
   section('Resolver — a delivered run\'s cost is summed; tokens already credited are not re-credited');
 
   const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await store.settle(admitted.requestId, { outcome: 'delivered' });
 
@@ -123,7 +124,7 @@ async function testCancelledRunCostAndSingleCredit(): Promise<void> {
   section('Resolver — a cancelled run gets its cost and a single token credit');
 
   const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await store.settle(admitted.requestId, { outcome: 'aborted' });
 
@@ -148,7 +149,7 @@ async function testUnresolvableCostIsExplicit(): Promise<void> {
   section('Resolver — unresolvable cost is explicit, never invented, never a thrown error');
 
   const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await store.settle(admitted.requestId, { outcome: 'failed' });
 
@@ -194,7 +195,7 @@ async function testPartialResolutionIsNotStampedResolved(): Promise<void> {
   section('Resolver — a partial resolution is never stamped resolved with a partial cost');
 
   const store = new NodeSqliteUsageStore(':memory:');
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: Date.now(), deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await store.settle(admitted.requestId, { outcome: 'aborted' });
 
@@ -268,7 +269,7 @@ async function testEmptyGenerationIds(): Promise<void> {
   const dbPath = path.join(dir, 'usage.db');
   const store = new NodeSqliteUsageStore(dbPath);
   try {
-    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'report', now: Date.now(), deviceLimit: 300 });
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'report', now: Date.now(), deviceLimit: 300 });
     if (!admitted.ok) throw new Error('setup: admit should succeed');
     await store.settle(admitted.requestId, { outcome: 'ok' });
     await store.credit(DEVICE_A, usage(3, 4));
@@ -311,7 +312,7 @@ async function admitAndResolve(
   transport: UsageAndCostTransport,
   now: number,
 ): Promise<string> {
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await store.settle(admitted.requestId, { outcome: 'delivered', now });
   await resolveRequestUsage(admitted.requestId, DEVICE_A, generationIds, true, {
@@ -446,12 +447,12 @@ async function testSweepMaxAgePreventsStarvation(): Promise<void> {
   const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
 
   for (let i = 0; i < DEFAULT_SWEEP_LIMIT; i++) {
-    const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 25 * 60 * 60 * 1000 - i, deviceLimit: 1000 });
+    const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: now - 25 * 60 * 60 * 1000 - i, deviceLimit: 1000 });
     if (!admitted.ok) throw new Error('setup: admit should succeed');
     await store.settle(admitted.requestId, { outcome: 'delivered', now: now - 25 * 60 * 60 * 1000 - i });
     await store.recordCost(admitted.requestId, { state: 'unresolved', generationIds: [`gen-dead-${i}`] });
   }
-  const fresh = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now: now - 60 * 60 * 1000, deviceLimit: 1000 });
+  const fresh = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: now - 60 * 60 * 1000, deviceLimit: 1000 });
   if (!fresh.ok) throw new Error('setup: admit should succeed');
   await store.settle(fresh.requestId, { outcome: 'delivered', now: now - 60 * 60 * 1000 });
   await store.recordCost(fresh.requestId, { state: 'unresolved', generationIds: ['gen-fresh'] });
@@ -507,7 +508,7 @@ async function testFanOutIsBounded(): Promise<void> {
 
   const store = new InMemoryUsageStore();
   const now = Date.UTC(2026, 0, 15, 12, 0, 0, 0);
-  const admitted = await store.admit({ deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
+  const admitted = await store.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now, deviceLimit: 15 });
   if (!admitted.ok) throw new Error('setup: admit should succeed');
   await resolveRequestUsage(admitted.requestId, DEVICE_A, ids, true, {
     transport,

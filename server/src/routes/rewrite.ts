@@ -34,8 +34,9 @@ import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, ty
 import { buildRewriteMessages } from '../generation/prompts';
 import { parseJsonBlock } from '../generation/json-block';
 import { admitUnaryRequest, settleFailedUnaryRequest } from './clarify';
-
-type Env = { Variables: { deviceId: string } };
+import type { V1Env } from '../request-edge';
+import { consentPractice } from '../consent-practices';
+import type { ServerLogger } from '../logger';
 
 const NOT_CONFIGURED: ApiError = {
   error: 'rewrite_not_configured',
@@ -84,6 +85,16 @@ type RewriteAttemptOutcome = {
   | { outcome: 'failed' }
 );
 
+/** The pieces of `rewriteWithRetry`'s call that stay fixed across both attempts — grouped so the
+ *  function itself takes few enough parameters for S107 (max 7), never a behaviour change. */
+interface RewriteRetryContext {
+  model: ModelClient;
+  roster: ModelRoster;
+  usageStore: UsageStore;
+  deviceId: string;
+  requestLog: ServerLogger;
+}
+
 /**
  * Runs the rewrite turn, re-asking once when the reply shapes to no plan. The plan step cannot
  * render without rows, so any reply with no usable `plan` — an empty stream, JSON truncated before
@@ -99,14 +110,12 @@ type RewriteAttemptOutcome = {
  * can still recover its own usage without crediting an earlier successful attempt twice.
  */
 async function rewriteWithRetry(
-  model: ModelClient,
-  roster: ModelRoster,
+  ctx: RewriteRetryContext,
   messages: ModelMessage[],
   signal: AbortSignal | undefined,
-  usageStore: UsageStore,
-  deviceId: string,
   timeoutMs: number,
 ): Promise<RewriteAttemptOutcome> {
+  const { model, roster, usageStore, deviceId, requestLog } = ctx;
   let best: RewriteResponse | undefined;
   const generationIds: string[] = [];
   const creditedGenerationIds = new Set<string>();
@@ -117,7 +126,7 @@ async function rewriteWithRetry(
 
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedGenerationIds, usage);
+    const step = await applyRewriteAttempt(model, roster, messages, combined, usageStore, deviceId, generationIds, best, creditedGenerationIds, usage, requestLog);
     if (step.outcome) return step.outcome;
     best = step.best;
     if (step.stop) break;
@@ -153,8 +162,9 @@ async function applyRewriteAttempt(
   best: RewriteResponse | undefined,
   creditedGenerationIds: Set<string>,
   usage: Usage,
+  requestLog: ServerLogger,
 ): Promise<RewriteAttemptStep> {
-  const result = await runRewriteAttempt(model, roster, messages, combined);
+  const result = await runRewriteAttempt(model, roster, messages, combined, requestLog);
   if (result.generationId) generationIds.push(result.generationId);
 
   if (!result.ok) {
@@ -179,9 +189,10 @@ async function runRewriteAttempt(
   roster: ModelRoster,
   messages: ModelMessage[],
   signal: AbortSignal,
+  requestLog: ServerLogger,
 ): Promise<RewriteAttempt> {
   const stream = model.stream(
-    { model: roster.rewrite.model, messages, reasoning: roster.rewrite.reasoning, role: 'rewrite' },
+    { model: roster.rewrite.model, messages, reasoning: roster.rewrite.reasoning, role: 'rewrite', logger: requestLog },
     signal,
   );
   // See `../routes/clarify.ts`'s identical guard: a throw from `deltas` rejects `usage` too
@@ -224,12 +235,13 @@ export function makeRewriteRoute(
   roster: ModelRoster | undefined,
   usageStore: UsageStore,
   options: RewriteRouteOptions,
-): Hono<Env> {
-  const app = new Hono<Env>();
+): Hono<V1Env> {
+  const app = new Hono<V1Env>();
   const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
+    consentPractice('request-material', 'required'),
     bodyLimit({
       maxSize: config.maxBodyBytesUnary,
       onError: (c) => {
@@ -253,7 +265,10 @@ export function makeRewriteRoute(
         return c.json(r.body, r.status, r.headers);
       }
 
+      const requestLog = c.get('log');
       const admission = await admitUnaryRequest({
+        requestId: c.get('requestId'),
+        log: requestLog,
         deviceId,
         kind: 'rewrite',
         deviceLimit: config.limitRewritePerDeviceDay,
@@ -306,12 +321,9 @@ export function makeRewriteRoute(
 
         const messages = buildRewriteMessages({ request: parsed.data });
         const result = await rewriteWithRetry(
-          model,
-          roster,
+          { model, roster, usageStore, deviceId, requestLog },
           messages,
           c.req.raw.signal,
-          usageStore,
-          deviceId,
           config.unaryModelTimeoutMs,
         );
 
@@ -329,7 +341,7 @@ export function makeRewriteRoute(
         await finish('ok', result.generationIds, result.creditedGenerationIds, result.usage);
         return c.json(result.response, 200);
       } catch (err) {
-        await settleFailedUnaryRequest(usageStore, requestId, clock, err, settlementUsage);
+        await settleFailedUnaryRequest(usageStore, requestId, clock, err, requestLog, settlementUsage);
         throw err;
       } finally {
         release();

@@ -439,7 +439,7 @@ async function testSlotAndUnitOrder(): Promise<void> {
   {
     const pipeline = new HeldPipeline();
     const h = harness({ pipeline, config: { maxConcurrentGenerations: 1, limitGenerationsPerDeviceDay: 1 } });
-    await h.usageStore.admit({ deviceId: DEVICE_A, kind: 'generate', now: AT_2200_UTC, deviceLimit: 1 });
+    await h.usageStore.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_2200_UTC, deviceLimit: 1 });
     eq('setup: device B holds the only generation slot', (await postGenerate(h.app, PROMPT, DEVICE_B)).status, 200);
     await expectRefusal('at the cap + daily limit exhausted', await postGenerate(h.app, PROMPT, DEVICE_A), 429, 'server_busy', null);
     h.inFlight.abortAll();

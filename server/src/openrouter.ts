@@ -12,7 +12,7 @@
  */
 import { Usage } from '@whim/contract';
 import type { ModelCallLabel, ModelDelta, ReasoningSetting } from './generation/model';
-import { log } from './logger';
+import { log, type ServerLogger } from './logger';
 export { Usage };
 
 const routerLog = log.child({ scope: 'openrouter' });
@@ -84,6 +84,11 @@ export interface OpenRouterOptions {
   /** Attributes this call for the per-call `model call` log line (design D4) — never sent on the
    *  wire. Omitted from the log line when absent. */
   role?: ModelCallLabel;
+  /** The request-bound logger the `model call` line is emitted through when present (spec
+   *  request-envelope "One request id follows a /v1 request everywhere"), bound with `requestId`
+   *  only, never a `scope` of its own (this adapter binds `scope`) — falls back to this module's own
+   *  logger when absent, exactly as before this field existed. */
+  logger?: ServerLogger;
   /** Optional abort signal, forwarded to the injected transport's request-init. */
   signal?: AbortSignal;
 }
@@ -344,6 +349,9 @@ export class OpenRouterClient {
   stream(options: OpenRouterOptions): StreamResult {
     const { fetchFn, providerSort } = this;
     const apiKey = process.env.OPENROUTER_API_KEY ?? '';
+    // `options.logger`, when present, already carries `requestId` — rebinding `scope` on it keeps
+    // this call's `model call` line identical to the module-logger shape in every other field.
+    const callLog = options.logger ? options.logger.child({ scope: 'openrouter' }) : routerLog;
     const startedAt = Date.now();
     let firstDeltaAt: number | undefined;
     let capturedProvider: string | undefined;
@@ -377,7 +385,7 @@ export class OpenRouterClient {
       return options.signal?.aborted === true ? 'aborted' : 'failed';
     }
     function logSettle(outcome: 'completed' | 'failed' | 'aborted', usage: Usage | undefined): void {
-      routerLog.info(
+      callLog.info(
         {
           ...(options.role !== undefined ? { role: options.role } : {}),
           model: options.model,

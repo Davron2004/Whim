@@ -10,6 +10,10 @@
  * body validation, prompt/source byte caps, drain state, the device's daily report allowance then
  * the global daily ceiling, then storage. A refused report stores nothing and its log record
  * carries only the refusal code.
+ *
+ * Its consent practice is `reports`, declared exempt: a report is a user act on a screen that says
+ * what goes, so it needs no grant (ai-data-consent's report exception) — a request sent with
+ * consent `none` is accepted.
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -19,9 +23,9 @@ import type { ReportStore } from '../reports/store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
 import { dailyLimitRefusal, payloadTooLargeRefusal, serverBusyCeilingRefusal, serverBusyRefusal } from '../admission/refusals';
-import { log } from '../logger';
-
-type Env = { Variables: { deviceId: string } };
+import type { ServerLogger } from '../logger';
+import type { V1Env } from '../request-edge';
+import { consentPractice } from '../consent-practices';
 
 export interface ReportRouteOptions {
   config: ServerConfig;
@@ -29,13 +33,13 @@ export interface ReportRouteOptions {
   slots: SlotController;
 }
 
-export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore, options: ReportRouteOptions): Hono<Env> {
-  const app = new Hono<Env>();
+export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore, options: ReportRouteOptions): Hono<V1Env> {
+  const app = new Hono<V1Env>();
   const { config, clock, slots } = options;
-  const reportLog = log.child({ scope: 'report' });
 
   app.post(
     '/',
+    consentPractice('reports', 'exempt'),
     bodyLimit({
       maxSize: config.maxBodyBytesReport,
       onError: (c) => {
@@ -45,6 +49,7 @@ export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore
     }),
     async (c) => {
       const deviceId = c.get('deviceId');
+      const reportLog = c.get('log').child({ scope: 'report' });
       const body = await c.req.json().catch(() => null);
       const parsed = ReportRequest.safeParse(body);
       if (!parsed.success) {
@@ -68,6 +73,7 @@ export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore
       }
 
       const admitted = await usageStore.admit({
+        requestId: c.get('requestId'),
         deviceId,
         kind: 'report',
         now: clock(),
@@ -94,7 +100,7 @@ export function makeReportRoute(usageStore: UsageStore, reportStore: ReportStore
         });
         await usageStore.settle(requestId, { outcome: 'ok' });
       } catch (err) {
-        await settleFailedReportAdmission(usageStore, requestId, clock, err);
+        await settleFailedReportAdmission(usageStore, requestId, clock, err, reportLog);
         throw err;
       }
 
@@ -114,19 +120,19 @@ async function settleFailedReportAdmission(
   requestId: string,
   clock: () => number,
   cause: unknown,
+  reportLog: ServerLogger,
 ): Promise<void> {
   try {
     await usageStore.settle(requestId, { outcome: 'error', now: clock() });
   } catch (settleErr) {
-    reportLogError(requestId, settleErr, cause);
+    reportLogError(reportLog, settleErr, cause);
   }
 }
 
-function reportLogError(requestId: string, settleErr: unknown, cause: unknown): void {
-  log.error(
+/** `reportLog` is bound to the request id, which is also the ledger row's id. */
+function reportLogError(reportLog: ServerLogger, settleErr: unknown, cause: unknown): void {
+  reportLog.error(
     {
-      scope: 'report',
-      requestId,
       detail: settleErr instanceof Error ? settleErr.message : String(settleErr),
       cause: cause instanceof Error ? cause.message : String(cause),
     },
