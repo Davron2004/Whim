@@ -3,8 +3,8 @@
 // store-age-signals).
 // ─────────────────────────────────────────────────────────────────────────────
 // `check` resolves the store's age signal, already reduced by `WhimAgeSignal.swift` to one of
-// `adult`, `minor-approved`, `minor-not-approved` or `unavailable`. It never rejects: every failure
-// is `unavailable`, which lets the flow continue. The Swift side needs the main queue (Apple's
+// `adult`, `minor-approved`, `under-13` or `unavailable`. It never rejects: every failure is
+// `unavailable`, which lets the flow continue. The Swift side needs the main queue (Apple's
 // sheet is presented over the current screen), so the call hops there first.
 //
 // Registered with `RCT_EXPORT_MODULE`, like `WhimAppInfoModule`: the TurboModule manager falls

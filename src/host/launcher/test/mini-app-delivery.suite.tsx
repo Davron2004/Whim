@@ -23,7 +23,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
     index.put(app);
     const originalActiveBundle = StoreAccess.prototype.activeBundle;
     StoreAccess.prototype.activeBundle = async () => 'window.__WHIM_APP_MODULE__ = { marker: "timer-bundle-7f3a" };';
-    const tree = await renderScreen(<LauncherRoot />);
+    const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
     try {
       await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onOpen(app));
       h.eq(injectedScripts.length, 0, 'nothing is injected before the page reports it has loaded');

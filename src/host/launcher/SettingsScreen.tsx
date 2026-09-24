@@ -19,7 +19,7 @@ import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
-import { privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
+import { legalDateLabel, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
 import { probeServer } from './server-probe';
@@ -34,6 +34,9 @@ export interface SettingsScreenProps {
   onBack: () => void;
   /** The active legal language: the About section's privacy and terms links open its pages. */
   legalLanguage: LegalLanguage;
+  /** The phone's preferred locale, which writes the AI features row's date in English; without
+   *  one, `Intl`'s default. */
+  deviceLocale?: string;
   /** Whether this is an internal build (`installed-app-info.ts#installedInternalBuild`). A store
    *  build renders no Advanced section and no server address field at all (legal-surface-v2 D10). */
   internalBuild: boolean;
@@ -98,6 +101,7 @@ export default function SettingsScreen({
   deviceId,
   onResetDeviceId,
   legalLanguage,
+  deviceLocale,
 }: Readonly<SettingsScreenProps>) {
   const [serverUrlDraft, setServerUrlDraft] = useState(serverUrl ?? '');
   const [probeState, setProbeState] = useState<SettingsProbeState>('idle');
@@ -152,7 +156,7 @@ export default function SettingsScreen({
 
   const aiFeaturesSubtitle =
     consentStatus.kind === 'granted'
-      ? aiFeaturesStatusLine('granted', new Date(consentStatus.grantedAt).toLocaleDateString())
+      ? aiFeaturesStatusLine('granted', legalDateLabel(consentStatus.grantedAt, legalLanguage, deviceLocale))
       : aiFeaturesStatusLine(consentStatus.kind);
 
   // The save-time probe's inline result (design.md decision 3): the neutral line while AI

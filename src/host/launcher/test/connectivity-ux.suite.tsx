@@ -100,7 +100,7 @@ export async function runConnectivityUxTests(h: Harness): Promise<void> {
       }) as typeof fetch;
       let tree: TestRenderer.ReactTestRenderer | undefined;
       try {
-        tree = await renderScreen(<LauncherRoot />);
+        tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
         h.eq(requested.map(url => new URL(url).pathname), consented ? ['/healthz'] : [], 'only a current grant starts the failed health probe');
         h.eq(visibleTextCount(tree, COPY.homeOfflineIndicator), consented ? 1 : 0, 'failed probe is visible at Home; no consent stays unknown');
         await press(createButton(tree));

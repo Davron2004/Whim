@@ -1,7 +1,8 @@
 /** The store age check in the rendered launcher (legal-surface-v2 task 9.4; spec store-age-signals):
  *  a data-sending action with the terms step due asks the store first; an approved minor and a phone
- *  with no signal reach the terms step, an unapproved minor gets the parental-approval message with
- *  nothing sent and installed apps still working, and no request ever carries anything about age. */
+ *  with no signal reach the terms step, an unapproved minor gets the parental-approval message and a
+ *  user under 13 the 13-and-over message, each with nothing sent and installed apps still working,
+ *  and no request ever carries anything about age. */
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import HomeScreen from '../HomeScreen';
@@ -23,7 +24,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const home = (tree: Tree) => tree.root.findByType(HomeScreen);
-const blockedShown = (tree: Tree) => on(tree, AgeScreen) && tree.root.findByType(AgeScreen).props.blocked === true;
+const blockedShown = (tree: Tree) => on(tree, AgeScreen) && tree.root.findByType(AgeScreen).props.held !== undefined;
 
 /** The Tip Splitter example first-run seeding installs, once Home lists it. */
 function tipSplitter(tree: Tree): InstalledApp | undefined {
@@ -100,6 +101,7 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       await waitFor(() => blockedShown(tree), 'the parental-approval message');
       const text = textOf(tree.root);
       h.ok(text.includes(COPY.ageBlockedTitle) && text.includes(COPY.ageBlockedBody), 'the message says a parent can approve through the store');
+      h.ok(!text.includes(COPY.ageUnder13Title), 'not the 13-and-over message');
       h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
       h.eq(termsStatus(kv).kind, 'absent', 'no terms acceptance is stored');
       await press(button(tree, COPY.ageBack));
@@ -111,6 +113,37 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       await waitFor(() => on(tree, MiniAppView), 'the example to open');
       await loadAppPage(tree);
       h.ok(injectedScripts.length === 1 && injectedScripts[0].includes(JSON.stringify(APP_BUNDLES['tip-splitter'])), 'an installed app still opens and runs');
+    });
+  });
+
+  await h.test('age signal: a user under 13 is held — the 13-and-over message, no terms step, nothing sent, installed apps keep working', async () => {
+    await withLauncher({ examples: true, terms: false, consent: false, ageSignal: () => Promise.resolve('under-13'), server: clarifyServer }, async ({ tree, kv, sent, probes }) => {
+      await waitFor(() => on(tree, HomeScreen) && tipSplitter(tree) !== undefined, 'the example apps');
+      await describeAnApp(tree);
+      await waitFor(() => blockedShown(tree), 'the 13-and-over message');
+      const text = textOf(tree.root);
+      h.ok(text.includes(COPY.ageUnder13Title) && text.includes(COPY.ageUnder13Body), 'the message says Whim’s AI features are for people 13 and over');
+      h.ok(!text.includes(COPY.ageBlockedTitle) && !text.includes(COPY.ageBlockedBody), 'not the parental-approval message: a parent can’t approve this');
+      h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
+      h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'blocked', 'only "blocked" is stored');
+      await press(button(tree, COPY.ageBack));
+      h.ok(on(tree, HomeScreen), 'Back returns Home');
+      h.eq([sent.length, probes.length], [0, 0], 'no request was sent, not even a probe');
+
+      injectedScripts.length = 0;
+      await TestRenderer.act(async () => home(tree).props.onOpen(tipSplitter(tree)));
+      await waitFor(() => on(tree, MiniAppView), 'the example to open');
+      await loadAppPage(tree);
+      h.ok(injectedScripts.length === 1 && injectedScripts[0].includes(JSON.stringify(APP_BUNDLES['tip-splitter'])), 'an installed app still opens and runs');
+    });
+  });
+
+  await h.test('age signal: on a French phone the 13-and-over message is French', async () => {
+    await withLauncher({ locale: 'fr-CA', terms: false, consent: false, ageSignal: () => Promise.resolve('under-13'), server: clarifyServer }, async ({ tree }) => {
+      await describeAnApp(tree);
+      await waitFor(() => blockedShown(tree), 'the 13-and-over message');
+      const text = textOf(tree.root);
+      h.ok(text.includes(LEGAL_COPY.fr.ageUnder13Title) && text.includes(LEGAL_COPY.fr.ageUnder13Body), 'in the French table’s words');
     });
   });
 
@@ -129,6 +162,16 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       await describeAnApp(tree);
       await waitFor(() => on(tree, TermsScreen), 'the terms step');
       h.eq(store.calls, 1, 'the store was asked again');
+    });
+  });
+
+  await h.test('age signal: after a restart a stored "blocked" is asked again, and the fresh answer picks the message', async () => {
+    const store = scripted(() => 'under-13');
+    await withLauncher({ terms: false, consent: false, prepare: storedCheck('blocked', 0), ageSignal: store.ask, server: clarifyServer }, async ({ tree }) => {
+      await describeAnApp(tree);
+      await waitFor(() => blockedShown(tree), 'the held message');
+      h.eq(store.calls, 1, 'the store was asked again');
+      h.ok(textOf(tree.root).includes(COPY.ageUnder13Title), 'the 13-and-over message, from the fresh answer');
     });
   });
 

@@ -56,7 +56,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
       pending.create({ id: 'failed', prompt: 'Timer', workingTitle: 'Timer' });
       pending.setFailed('failed', { reason: 'Server stopped', diagnostics: '' });
       Linking.initialURL = cold ? appLinkFor('missing') : null;
-      const tree = await renderScreen(<LauncherRoot />);
+      const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
       try {
         h.eq(linkListenerCount(), 1, 'launcher owns one native URL subscription');
         if (!cold) await TestRenderer.act(async () => openLink(appLinkFor('missing')));
@@ -83,7 +83,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     const originalActiveBundle = StoreAccess.prototype.activeBundle;
     const opened: string[] = [];
     StoreAccess.prototype.activeBundle = async target => { opened.push(target.id); return 'window.__WHIM_APP_MODULE__ = {};'; };
-    const tree = await renderScreen(<LauncherRoot />);
+    const tree = await renderScreen(<LauncherRoot deviceLocale={() => 'en-US'} />);
     try {
       await TestRenderer.act(async () => openLink(appLinkFor(app.id)));
       const running = tree.root.findByType(MiniAppView);
@@ -110,7 +110,7 @@ export async function runAppLinkUiTests(h: Harness): Promise<void> {
     }) as typeof fetch;
     let tree: TestRenderer.ReactTestRenderer | undefined;
     try {
-      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} />);
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
       await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onCreate());
       await TestRenderer.act(async () => tree!.root.findByType(ComposeStep).props.onChangeText('Timer'));
       let request!: Promise<void>;
