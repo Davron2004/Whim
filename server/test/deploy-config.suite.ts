@@ -20,10 +20,11 @@ import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
 import { TIMED_OUT, within } from './route-doubles';
 import { createApp } from '../src/app';
-import { loadServerConfig, ServerConfigError } from '../src/config';
+import { KEEP_PERIOD_VARIABLES, loadServerConfig, ServerConfigError } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import * as releaseConfig from '../../src/host/launcher/release-config';
+import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
 const ROOT = process.cwd();
 
@@ -670,9 +671,17 @@ function keysReadByLoadServerConfig(): Set<string> {
 }
 
 /** A minimum build is an operator value: in a profile it would reach config.env beside the
- *  operator's own line, and a resize would silently move it (app-update-gate). */
+ *  operator's own line, and a resize would silently move it (app-update-gate). So is a keep-period,
+ *  which deploy.sh's preflight checks against the disclosure manifest before any profile is read. */
 function isForbiddenProfileKey(key: string): boolean {
-  return PROFILE_FORBIDDEN_NAMES.has(key) || key.startsWith('WHIM_LIMIT_') || key.startsWith('WHIM_MIN_BUILD_') || key.includes('RETENTION') || SECRET_NAME.test(key);
+  return (
+    PROFILE_FORBIDDEN_NAMES.has(key) ||
+    key.startsWith('WHIM_LIMIT_') ||
+    key.startsWith('WHIM_MIN_BUILD_') ||
+    key.includes('RETENTION') ||
+    (KEEP_PERIOD_VARIABLES as readonly string[]).includes(key) ||
+    SECRET_NAME.test(key)
+  );
 }
 
 function profileKeyProblems(name: string, keys: readonly string[], readKeys: ReadonlySet<string>): string[] {
@@ -777,6 +786,7 @@ const STUB_SCRIPT = [
   '  "node -p "*) echo "${STUB_NODE_VERSION:-22.11.0}" ;;',
   '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
+  '  "node server/config-check.mjs"*) cd "$STUB_REAL_ROOT" && exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node server/site.mjs "*)',
   '    mkdir -p "${@: -1}"',
   '    for page in privacy support app-link not-found; do echo "<!doctype html><title>$page</title>" >"${@: -1}/$page.html"; done',
@@ -858,6 +868,8 @@ function runScript(sandbox: Sandbox, script: string, args: readonly string[], en
       TMPDIR: os.tmpdir(),
       STUB_DIR: sandbox.stubs,
       STUB_REAL_NODE: process.execPath,
+      // The sandbox checkout holds deploy/ only; the server's config parse runs from this repo.
+      STUB_REAL_ROOT: ROOT,
       WHIM_WEB_HOST: WEB_HOST,
       WHIM_API_HOST: API_HOST,
       WHIM_STATIC_IP: STATIC_IP,
@@ -968,6 +980,34 @@ function deployPreflightTests(): void {
       }
     });
   }
+
+  // The keep-period preflight is the server's own boot parse (server/config-check.mjs), so deploy.sh
+  // refuses exactly what boot would (specs/device-records).
+  const idleMaximum = keepLimit(MANIFESTS[latestVersion()], 'usage-records')?.days ?? 0;
+  for (const value of [String(idleMaximum), String(idleMaximum + 1), '0']) {
+    const bootAccepts = !configRefuses({ WHIM_USAGE_IDLE_DAYS: value }, 'WHIM_USAGE_IDLE_DAYS');
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, { WHIM_USAGE_IDLE_DAYS: value });
+      const run = runScript(sandbox, 'deploy.sh', []);
+      const refused = run.status === 1 && run.stderr.includes('WHIM_USAGE_IDLE_DAYS') && run.stderr.includes('would refuse these values at boot');
+      const pastValueChecks = toolLog(sandbox, 'gcloud').length > 0;
+      if (bootAccepts) {
+        check(`deploy.sh accepts WHIM_USAGE_IDLE_DAYS=${value}, as server boot does`, !refused && pastValueChecks, run.stderr);
+      } else {
+        check(`deploy.sh refuses WHIM_USAGE_IDLE_DAYS=${value}, naming it before any gcloud call, as server boot does`, refused && !pastValueChecks, run.stderr);
+      }
+    });
+  }
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox, { WHIM_USAGE_IDLE_DAYS: '400' });
+    const run = runScript(sandbox, 'deploy.sh', []);
+    check(
+      `red: deploy.sh refuses WHIM_USAGE_IDLE_DAYS=400, naming the variable and the ${idleMaximum}-day manifest maximum`,
+      run.status === 1 && run.stderr.includes('WHIM_USAGE_IDLE_DAYS') && new RegExp(String.raw`\b${idleMaximum}\b`).test(run.stderr),
+      run.stderr,
+    );
+    eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+  });
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
@@ -1110,13 +1150,14 @@ function headOf(sandbox: Sandbox): string {
 function deployFullTests(health: HealthBodies): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000' });
+    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180' });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(health.androidRaised), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
     const config = stubFile(sandbox, 'upload/config.env');
     eq('a full deploy with a raised Android minimum succeeds, its smoke confirming the value on /healthz', run.status, 0);
     check('  ... carrying WHIM_MIN_BUILD_ANDROID to config.env and leaving the unset iOS minimum out', config.includes('WHIM_MIN_BUILD_ANDROID=382000\n') && !config.includes('WHIM_MIN_BUILD_IOS'), config);
+    check('  ... and carrying the operator\'s WHIM_USAGE_IDLE_DAYS, which passed the keep-period preflight', config.includes('WHIM_USAGE_IDLE_DAYS=180\n'), config);
   });
 
   withSandbox((sandbox) => {
@@ -1760,6 +1801,7 @@ function profileTests(files: ReadonlyMap<string, string>): void {
   const eventText = profiles.get('event') ?? '';
   checkCaught('  red: a retention variable in a profile fails', profileProblems('event', `${eventText}WHIM_REPORT_RETENTION_DAYS=30\n`, readKeys), 'WHIM_REPORT_RETENTION_DAYS');
   checkCaught('  red: a minimum build in a profile fails', profileProblems('event', `${eventText}WHIM_MIN_BUILD_IOS=382000\n`, readKeys), 'sets WHIM_MIN_BUILD_IOS, which no profile may set');
+  checkCaught('  red: a usage idle period in a profile fails', profileProblems('event', `${eventText}WHIM_USAGE_IDLE_DAYS=30\n`, readKeys), 'sets WHIM_USAGE_IDLE_DAYS, which no profile may set');
 }
 
 function scriptSyntaxTests(files: ReadonlyMap<string, string>): void {

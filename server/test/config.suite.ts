@@ -4,6 +4,7 @@
  * public-beta defaults" and specs/server-deployment "Production configuration refuses
  * dev-only modes".
  */
+import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
 import { loadServerConfig, ServerConfigError, type ServerConfig } from '../src/config';
 import {
   defaultModelRoster,
@@ -23,6 +24,17 @@ function throwsNaming(fn: () => unknown, variable: string): boolean {
     return false;
   } catch (err) {
     return err instanceof ServerConfigError && err.variable === variable;
+  }
+}
+
+/** The `ServerConfigError` `fn` throws, or `undefined` when it loads. */
+function configError(fn: () => unknown): ServerConfigError | undefined {
+  try {
+    fn();
+    return undefined;
+  } catch (err) {
+    if (err instanceof ServerConfigError) return err;
+    throw err;
   }
 }
 
@@ -60,6 +72,7 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_POLICY_TIMEOUT_MS', field: 'policyTimeoutMs', validValue: '11000', parsed: 11_000 },
   { key: 'WHIM_REPORT_RETENTION_DAYS', field: 'reportRetentionDays', validValue: '91', parsed: 91 },
   { key: 'WHIM_LEDGER_RETENTION_DAYS', field: 'ledgerRetentionDays', validValue: '92', parsed: 92 },
+  { key: 'WHIM_USAGE_IDLE_DAYS', field: 'usageIdleDays', validValue: '93', parsed: 93 },
   { key: 'WHIM_DRAIN_TIMEOUT_MS', field: 'drainTimeoutMs', validValue: '900000', parsed: 900_000 },
   { key: 'WHIM_MIN_BUILD_IOS', field: 'minBuildIos', validValue: '381500', parsed: 381_500 },
   { key: 'WHIM_MIN_BUILD_ANDROID', field: 'minBuildAndroid', validValue: '382000', parsed: 382_000 },
@@ -144,6 +157,38 @@ export function runConfigTests(): void {
     for (const key of ['WHIM_MIN_BUILD_IOS', 'WHIM_MIN_BUILD_ANDROID']) {
       check(`${key}: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ [key]: raw })), key));
     }
+  }
+
+  section('A configured keep-period never exceeds its published maximum (specs/device-records)');
+
+  // The pairings the disclosure contract states: report retention ≤ reports, ledger retention and
+  // the usage idle period ≤ usage-records. Each maximum is read from the current manifest.
+  const current = MANIFESTS[latestVersion()];
+  const keepPeriods: ReadonlyArray<readonly [string, keyof ServerConfig, CategoryId]> = [
+    ['WHIM_REPORT_RETENTION_DAYS', 'reportRetentionDays', 'reports'],
+    ['WHIM_LEDGER_RETENTION_DAYS', 'ledgerRetentionDays', 'usage-records'],
+    ['WHIM_USAGE_IDLE_DAYS', 'usageIdleDays', 'usage-records'],
+  ];
+  for (const [key, field, category] of keepPeriods) {
+    const maximum = keepLimit(current, category)?.days ?? 0;
+    eq(`${key}: exactly the ${category} maximum (${maximum} days) loads`, loadServerConfig(baseEnv({ [key]: String(maximum) }))[field], maximum);
+    const refusal = configError(() => loadServerConfig(baseEnv({ [key]: String(maximum + 1) })));
+    check(
+      `${key}: one day over the maximum fails startup, naming the variable and the maximum`,
+      refusal?.variable === key && new RegExp(String.raw`\b${maximum}\b`).test(refusal.message),
+      refusal?.message ?? 'no refusal',
+    );
+  }
+  {
+    // The spec's own scenarios.
+    const reportsMaximum = keepLimit(current, 'reports')?.days ?? 0;
+    const refusal = configError(() => loadServerConfig(baseEnv({ WHIM_REPORT_RETENTION_DAYS: '400' })));
+    check(
+      `WHIM_REPORT_RETENTION_DAYS=400 over the ${reportsMaximum}-day reports maximum refuses to start, naming both`,
+      reportsMaximum < 400 && refusal?.variable === 'WHIM_REPORT_RETENTION_DAYS' && new RegExp(String.raw`\b${reportsMaximum}\b`).test(refusal.message),
+      refusal?.message ?? 'no refusal',
+    );
+    eq('WHIM_LEDGER_RETENTION_DAYS=90, under the usage-records maximum, starts', loadServerConfig(baseEnv({ WHIM_LEDGER_RETENTION_DAYS: '90' })).ledgerRetentionDays, 90);
   }
 
   section('Production configuration refuses dev-only modes');

@@ -28,6 +28,7 @@ import { buildRuntimeTree } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
+import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
 
 const ROOT = process.cwd();
 const BUNDLES = ['server/main.mjs', 'server/main.mjs.map', 'server/whim-admin.mjs', 'server/whim-admin.mjs.map'];
@@ -346,6 +347,33 @@ async function testBootRefusals(fixture: Fixture): Promise<void> {
     { NODE_ENV: 'production', WHIM_PIPELINE: 'stub', WHIM_DATA_DIR: fixture.dataDir('prod-stub') },
     'WHIM_PIPELINE',
   );
+
+  // specs/device-records "Too long a report retention refuses to start": the process exits naming
+  // the variable and the maximum the current disclosure manifest publishes for reports.
+  {
+    const maximum = keepLimit(MANIFESTS[latestVersion()], 'reports')?.days ?? 0;
+    const proc = new TreeProcess(fixture.tree, {
+      WHIM_PIPELINE: 'stub',
+      WHIM_REPORT_RETENTION_DAYS: '400',
+      WHIM_DATA_DIR: fixture.dataDir('long-retention'),
+      WHIM_SERVER_HOST: '127.0.0.1',
+      WHIM_SERVER_PORT: String(await freePort()),
+    });
+    try {
+      const exit = await exitOf(proc);
+      const failure = proc.logs('boot failed')[0];
+      const detail = typeof failure?.detail === 'string' ? failure.detail : '';
+      check('WHIM_REPORT_RETENTION_DAYS=400: the process exits non-zero', exit !== TIMED_OUT && exit.code !== 0 && exit.code !== null, JSON.stringify(exit));
+      check(
+        `  ... at the config step, naming the variable and the ${maximum}-day reports maximum`,
+        failure?.reason === 'config' && detail.includes('WHIM_REPORT_RETENTION_DAYS') && new RegExp(String.raw`\b${maximum}\b`).test(detail),
+        proc.text().slice(-2000),
+      );
+      eq('  ... and it never listened', proc.logs('whim-server listening').length, 0);
+    } finally {
+      await proc.dispose();
+    }
+  }
 
   // Chromium cannot start from an empty browser directory: the real pipeline must stop at the launch
   // and never listen. No browser process starts and no request is made.

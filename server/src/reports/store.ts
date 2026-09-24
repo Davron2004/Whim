@@ -69,6 +69,14 @@ export interface ReportStore {
   purgeOlderThan(cutoffMs: number): Promise<number>;
 }
 
+/** The reports keyed by one device id (specs/device-records), for the operator command only. */
+export interface ReportRecordKeeping {
+  /** Every report `deviceId` sent, oldest first; empty for an unknown id. */
+  listByDevice(deviceId: string): Promise<ReportRow[]>;
+  /** Deletes exactly those reports and returns how many went; 0 for an unknown id. */
+  deleteByDevice(deviceId: string): Promise<number>;
+}
+
 export interface PurgeScheduleOptions {
   /** WHIM_REPORT_RETENTION_DAYS — rows older than this many days are purged. */
   retentionDays: number;
@@ -111,7 +119,7 @@ export function schedulePurge(store: ReportStore, options: PurgeScheduleOptions)
 }
 
 /** In-memory twin for tests — same semantics, no file on disk. */
-export class InMemoryReportStore implements ReportStore {
+export class InMemoryReportStore implements ReportStore, ReportRecordKeeping {
   private readonly rows = new Map<string, ReportRow>();
 
   async insert(params: InsertReportParams): Promise<string> {
@@ -152,6 +160,24 @@ export class InMemoryReportStore implements ReportStore {
     }
     return deleted;
   }
+
+  async listByDevice(deviceId: string): Promise<ReportRow[]> {
+    return [...this.rows.values()]
+      .filter((row) => row.deviceId === deviceId)
+      .sort((a, b) => a.receivedAt - b.receivedAt || a.reportId.localeCompare(b.reportId))
+      .map((row) => ({ ...row }));
+  }
+
+  async deleteByDevice(deviceId: string): Promise<number> {
+    let deleted = 0;
+    for (const [id, row] of this.rows) {
+      if (row.deviceId === deviceId) {
+        this.rows.delete(id);
+        deleted++;
+      }
+    }
+    return deleted;
+  }
 }
 
 function toListItem(row: ReportRow): ReportListItem {
@@ -171,7 +197,7 @@ function toListItem(row: ReportRow): ReportListItem {
  * Pass `:memory:` for a transient store (tests); pass a file path for the durable production
  * store. `close()` releases the handle (required before reopening the same file).
  */
-export class NodeSqliteReportStore implements ReportStore {
+export class NodeSqliteReportStore implements ReportStore, ReportRecordKeeping {
   private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
@@ -240,6 +266,19 @@ export class NodeSqliteReportStore implements ReportStore {
 
   async purgeOlderThan(cutoffMs: number): Promise<number> {
     const result = this.db.prepare('DELETE FROM reports WHERE received_at < ?').run(cutoffMs);
+    return Number(result.changes);
+  }
+
+  async listByDevice(deviceId: string): Promise<ReportRow[]> {
+    const rows = this.db.prepare(`
+      SELECT id, device_id, reason, received_at, note, app_name, prompt, source
+      FROM reports WHERE device_id = ? ORDER BY received_at, id
+    `).all(deviceId) as unknown as RawRow[];
+    return rows.map(fromRawRow);
+  }
+
+  async deleteByDevice(deviceId: string): Promise<number> {
+    const result = this.db.prepare('DELETE FROM reports WHERE device_id = ?').run(deviceId);
     return Number(result.changes);
   }
 

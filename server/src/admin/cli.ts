@@ -14,16 +14,24 @@
  *   reports show <id> [--json]
  *   reports purge
  *   usage [--days N] [--top N] [--json]
+ *   device export <id>
+ *   device delete <id>
  *
- * `list`/`show`/`usage` never call a mutating store method — only `purge` does. Device ids appear
- * only in this module's returned text (the operator's own terminal), never through `log`.
+ * `list`/`show`/`usage`/`device export` never call a mutating store method — only `purge` and
+ * `device delete` do. Device ids and the records they key appear only in this module's returned
+ * text (the operator's own terminal), never through `log`.
+ *
+ * `device export` prints one JSON object holding every server record keyed by that device id, and
+ * `device delete` removes exactly those and prints how many of each went (specs/device-records "The
+ * operator can export and delete one phone ID's records"). Both succeed, empty, for an unknown id. A
+ * record type later keyed by device id joins both here.
  */
-import type { ReportStore } from '../reports/store';
-import type { UsageStore } from '../usage-store';
+import type { ReportRecordKeeping, ReportRow, ReportStore } from '../reports/store';
+import type { DeviceUsageRecords, UsageRecordKeeping, UsageStore } from '../usage-store';
 
 export interface AdminCliDeps {
-  reportStore: ReportStore;
-  usageStore: UsageStore;
+  reportStore: ReportStore & ReportRecordKeeping;
+  usageStore: UsageStore & UsageRecordKeeping;
   /** Injected clock (ms since epoch) — drives `--since`/`--days` windows and `reports purge`. */
   now: () => number;
   /** WHIM_REPORT_RETENTION_DAYS — what `reports purge` applies "now" (spec). */
@@ -42,7 +50,23 @@ const USAGE_TEXT =
   '  reports list [--since N] [--limit N] [--json]\n' +
   '  reports show <id> [--json]\n' +
   '  reports purge\n' +
-  '  usage [--days N] [--top N] [--json]\n';
+  '  usage [--days N] [--top N] [--json]\n' +
+  '  device export <id>\n' +
+  '  device delete <id>\n';
+
+/** Everything `device export` prints: every server record keyed by one device id. */
+export interface DeviceExport {
+  deviceId: string;
+  reports: ReportRow[];
+  ledger: DeviceUsageRecords['ledger'];
+  usage: DeviceUsageRecords['usage'];
+}
+
+/** What `device delete` prints: how many records of each kind it removed. */
+export interface DeviceDeletion {
+  deviceId: string;
+  removed: { reports: number; ledger: number; usage: number };
+}
 
 interface ParsedArgs {
   positional: string[];
@@ -86,8 +110,26 @@ export async function runAdminCli(argv: readonly string[], deps: AdminCliDeps): 
   if (group === 'reports' && sub === 'show') return showReport(deps, rest[0], json);
   if (group === 'reports' && sub === 'purge') return purgeReports(deps);
   if (group === 'usage') return usageSummary(deps, flags, json);
+  if (group === 'device' && sub === 'export') return exportDevice(deps, rest[0]);
+  if (group === 'device' && sub === 'delete') return deleteDevice(deps, rest[0]);
 
   return { exitCode: 1, output: USAGE_TEXT };
+}
+
+async function exportDevice(deps: AdminCliDeps, deviceId: string | undefined): Promise<AdminCliResult> {
+  if (!deviceId) return { exitCode: 1, output: 'device export requires <id>\n' };
+  const reports = await deps.reportStore.listByDevice(deviceId);
+  const { ledger, usage } = await deps.usageStore.deviceRecords(deviceId);
+  const exported: DeviceExport = { deviceId, reports, ledger, usage };
+  return { exitCode: 0, output: JSON.stringify(exported) + '\n' };
+}
+
+async function deleteDevice(deps: AdminCliDeps, deviceId: string | undefined): Promise<AdminCliResult> {
+  if (!deviceId) return { exitCode: 1, output: 'device delete requires <id>\n' };
+  const reports = await deps.reportStore.deleteByDevice(deviceId);
+  const { ledger, usage } = await deps.usageStore.deleteDeviceRecords(deviceId);
+  const deletion: DeviceDeletion = { deviceId, removed: { reports, ledger, usage } };
+  return { exitCode: 0, output: JSON.stringify(deletion) + '\n' };
 }
 
 async function listReports(

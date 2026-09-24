@@ -8,8 +8,12 @@
  * an outcome, token counts, a resolved (or explicitly unresolved) USD cost, and the provider
  * generation ids that cost is summed from, kept until it resolves so a sweep can retry. `admit` is the
  * ONLY place a daily unit is consumed, and it counts + inserts in one immediate transaction so two
- * concurrent admits for the last unit can never both succeed. `credit`/`read` and the pre-existing
- * `usage` table are unchanged.
+ * concurrent admits for the last unit can never both succeed.
+ *
+ * Extended by legal-surface-v2 chain-2 (design D9, specs/device-records): the lifetime `usage` row
+ * records the UTC day it was last credited, rows idle past `WHIM_USAGE_IDLE_DAYS` are purged beside
+ * the ledger's retention purge (`scheduleUsagePurge`), and `UsageRecordKeeping` gives the operator
+ * command every record keyed by one device id, to export or delete.
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { Usage } from '@whim/contract';
@@ -65,6 +69,44 @@ export interface UsageStore {
   /** Deletes ledger rows whose `utc_day` is strictly before `beforeUtcDay` (an `'YYYY-MM-DD'`
    *  string, lexicographically comparable). Returns the number of rows deleted. */
   purgeLedger(beforeUtcDay: string): Promise<number>;
+}
+
+/** A device's lifetime totals row, as the operator's device export prints it. `lastCreditedDay` is
+ *  `null` only on a row a pre-change build wrote since the last open (the next open backfills it). */
+export interface UsageRecord extends Usage {
+  deviceId: string;
+  lastCreditedDay: string | null;
+}
+
+/** Every usage-database record keyed by one device id: its ledger rows, oldest first, and its
+ *  lifetime row. */
+export interface DeviceUsageRecords {
+  ledger: LedgerRow[];
+  usage: UsageRecord | null;
+}
+
+export interface DeviceUsageDeleted {
+  ledger: number;
+  usage: number;
+}
+
+/** What the store keeps keyed by one device id, and for how long (specs/device-records). Separate
+ *  from `UsageStore` because only the purge schedule and the operator command use it; the request
+ *  path never does. */
+export interface UsageRecordKeeping {
+  /** Deletes lifetime `usage` rows last credited strictly before `beforeUtcDay` (`'YYYY-MM-DD'`).
+   *  Returns the number of rows deleted. */
+  purgeIdleUsage(beforeUtcDay: string): Promise<number>;
+  /** Every record keyed by `deviceId`; empty (no ledger rows, no usage row) for an unknown id. */
+  deviceRecords(deviceId: string): Promise<DeviceUsageRecords>;
+  /** Deletes exactly the records `deviceRecords` returns and counts them; zeros for an unknown id. */
+  deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted>;
+}
+
+export interface UsageStoreOptions {
+  /** Injected clock (ms since epoch) for the UTC day `credit` stamps on the lifetime row and the day
+   *  the `last_credited_day` migration backfills. Defaults to `Date.now`. */
+  now?: () => number;
 }
 
 /** The four request kinds the ledger and daily-unit accounting distinguish. */
@@ -190,6 +232,8 @@ function parseGenerationIds(raw: string | null): readonly string[] {
   return parsed.filter((id): id is string => typeof id === 'string');
 }
 
+const DAY_MS = 86_400_000;
+
 /** Returns the request's UTC calendar day as `'YYYY-MM-DD'`. */
 function utcDayString(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -294,7 +338,8 @@ function effectiveGlobalKinds(kind: RequestKind, globalKinds: readonly RequestKi
   return globalKinds && globalKinds.length > 0 ? globalKinds : [kind];
 }
 
-interface LedgerRow {
+/** One `requests` ledger row, every column. */
+export interface LedgerRow {
   id: string;
   deviceId: string;
   kind: RequestKind;
@@ -311,9 +356,15 @@ interface LedgerRow {
 }
 
 /** In-memory implementation for tests and dev (non-durable; resets when the process exits). */
-export class InMemoryUsageStore implements UsageStore {
+export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
   private readonly store = new Map<string, Usage>();
+  private readonly lastCreditedDay = new Map<string, string>();
   private readonly ledger = new Map<string, LedgerRow>();
+  private readonly now: () => number;
+
+  constructor(options: UsageStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
+  }
 
   async credit(deviceId: string, usage: Usage): Promise<void> {
     const prev = this.store.get(deviceId) ?? {
@@ -326,6 +377,7 @@ export class InMemoryUsageStore implements UsageStore {
       completionTokens: prev.completionTokens + usage.completionTokens,
       totalTokens: prev.totalTokens + usage.totalTokens,
     });
+    this.lastCreditedDay.set(deviceId, utcDayString(this.now()));
   }
 
   async read(deviceId: string): Promise<Usage> {
@@ -426,6 +478,41 @@ export class InMemoryUsageStore implements UsageStore {
     }
     return deleted;
   }
+
+  async purgeIdleUsage(beforeUtcDay: string): Promise<number> {
+    let deleted = 0;
+    for (const [deviceId, day] of this.lastCreditedDay) {
+      if (day < beforeUtcDay) {
+        this.lastCreditedDay.delete(deviceId);
+        this.store.delete(deviceId);
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
+    const ledger = [...this.ledger.values()]
+      .filter((row) => row.deviceId === deviceId)
+      .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id))
+      .map((row) => ({ ...row }));
+    const totals = this.store.get(deviceId);
+    const usage = totals ? { deviceId, ...totals, lastCreditedDay: this.lastCreditedDay.get(deviceId) ?? null } : null;
+    return { ledger, usage };
+  }
+
+  async deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
+    let ledger = 0;
+    for (const [id, row] of this.ledger) {
+      if (row.deviceId === deviceId) {
+        this.ledger.delete(id);
+        ledger++;
+      }
+    }
+    const usage = this.store.delete(deviceId) ? 1 : 0;
+    this.lastCreditedDay.delete(deviceId);
+    return { ledger, usage };
+  }
 }
 
 /**
@@ -437,10 +524,12 @@ export class InMemoryUsageStore implements UsageStore {
  * store under WHIM_DATA_DIR (production). Calling `close()` releases the database
  * handle (required for restart-durability tests that open the same file twice).
  */
-export class NodeSqliteUsageStore implements UsageStore {
+export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   private readonly db: DatabaseSync;
+  private readonly now: () => number;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: UsageStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
     this.db = new DatabaseSync(dbPath);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA busy_timeout = 5000');
@@ -449,7 +538,8 @@ export class NodeSqliteUsageStore implements UsageStore {
         device_id TEXT PRIMARY KEY,
         prompt_tokens INTEGER NOT NULL DEFAULT 0,
         completion_tokens INTEGER NOT NULL DEFAULT 0,
-        total_tokens INTEGER NOT NULL DEFAULT 0
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        last_credited_day TEXT
       )
     `);
     this.db.exec(`
@@ -480,17 +570,51 @@ export class NodeSqliteUsageStore implements UsageStore {
       CREATE INDEX IF NOT EXISTS idx_requests_day_kind_device
       ON requests (utc_day, kind, device_id)
     `);
+    this.migrateLastCreditedDay();
+  }
+
+  /**
+   * Additive, idempotent migration for a database written before `usage.last_credited_day` existed
+   * (legal-surface-v2 D9), run on every open. Only rows with no day are touched: they get the day
+   * this runs, which keeps every pre-existing phone's totals for a full idle period from here. A row
+   * a pre-change build credited since (a rollback) is caught by the same backfill.
+   *
+   * With nothing to do (an already-migrated file) it only reads, so reopening never waits on a
+   * writer and changes nothing. Otherwise the column check and the `ALTER` are repeated inside one
+   * immediate transaction, so the server and a `whim-admin` opening the same file at once can't
+   * both add the column.
+   */
+  private migrateLastCreditedDay(): void {
+    if (this.hasLastCreditedDayColumn() && this.db.prepare('SELECT 1 FROM usage WHERE last_credited_day IS NULL LIMIT 1').get() === undefined) {
+      return;
+    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!this.hasLastCreditedDayColumn()) {
+        this.db.exec('ALTER TABLE usage ADD COLUMN last_credited_day TEXT');
+      }
+      this.db.prepare('UPDATE usage SET last_credited_day = ? WHERE last_credited_day IS NULL').run(utcDayString(this.now()));
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  private hasLastCreditedDayColumn(): boolean {
+    return (this.db.prepare('PRAGMA table_info(usage)').all() as { name: string }[]).some((c) => c.name === 'last_credited_day');
   }
 
   async credit(deviceId: string, usage: Usage): Promise<void> {
     this.db.prepare(`
-      INSERT INTO usage (device_id, prompt_tokens, completion_tokens, total_tokens)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO usage (device_id, prompt_tokens, completion_tokens, total_tokens, last_credited_day)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(device_id) DO UPDATE SET
         prompt_tokens = prompt_tokens + excluded.prompt_tokens,
         completion_tokens = completion_tokens + excluded.completion_tokens,
-        total_tokens = total_tokens + excluded.total_tokens
-    `).run(deviceId, usage.promptTokens, usage.completionTokens, usage.totalTokens);
+        total_tokens = total_tokens + excluded.total_tokens,
+        last_credited_day = excluded.last_credited_day
+    `).run(deviceId, usage.promptTokens, usage.completionTokens, usage.totalTokens, utcDayString(this.now()));
   }
 
   async read(deviceId: string): Promise<Usage> {
@@ -627,8 +751,121 @@ export class NodeSqliteUsageStore implements UsageStore {
     return Number(result.changes);
   }
 
+  async purgeIdleUsage(beforeUtcDay: string): Promise<number> {
+    const result = this.db.prepare('DELETE FROM usage WHERE last_credited_day < ?').run(beforeUtcDay);
+    return Number(result.changes);
+  }
+
+  async deviceRecords(deviceId: string): Promise<DeviceUsageRecords> {
+    const ledger = this.db.prepare(`
+      SELECT id, device_id, kind, utc_day, started_at, ended_at, outcome, prompt_tokens, completion_tokens,
+             cost_usd, cost_state, generation_ids, refunded
+      FROM requests WHERE device_id = ? ORDER BY started_at, id
+    `).all(deviceId) as unknown as RawLedgerRow[];
+    const usage = this.db.prepare(
+      'SELECT prompt_tokens, completion_tokens, total_tokens, last_credited_day FROM usage WHERE device_id = ?'
+    ).get(deviceId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number; last_credited_day: string | null } | undefined;
+    return {
+      ledger: ledger.map(fromRawLedgerRow),
+      usage: usage
+        ? {
+            deviceId,
+            promptTokens: usage.prompt_tokens,
+            completionTokens: usage.completion_tokens,
+            totalTokens: usage.total_tokens,
+            lastCreditedDay: usage.last_credited_day,
+          }
+        : null,
+    };
+  }
+
+  async deleteDeviceRecords(deviceId: string): Promise<DeviceUsageDeleted> {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const ledger = Number(this.db.prepare('DELETE FROM requests WHERE device_id = ?').run(deviceId).changes);
+      const usage = Number(this.db.prepare('DELETE FROM usage WHERE device_id = ?').run(deviceId).changes);
+      this.db.exec('COMMIT');
+      return { ledger, usage };
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
   /** Release the database handle. Required before re-opening the same file path. */
   close(): void {
     this.db.close();
   }
+}
+
+interface RawLedgerRow {
+  id: string;
+  device_id: string;
+  kind: RequestKind;
+  utc_day: string;
+  started_at: number;
+  ended_at: number | null;
+  outcome: RequestOutcome | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number | null;
+  cost_state: CostState;
+  generation_ids: string | null;
+  refunded: number;
+}
+
+function fromRawLedgerRow(row: RawLedgerRow): LedgerRow {
+  return {
+    id: row.id,
+    deviceId: row.device_id,
+    kind: row.kind,
+    utcDay: row.utc_day,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    outcome: row.outcome,
+    promptTokens: row.prompt_tokens,
+    completionTokens: row.completion_tokens,
+    costUsd: row.cost_usd,
+    costState: row.cost_state,
+    generationIds: row.generation_ids === null ? null : parseGenerationIds(row.generation_ids),
+    refunded: row.refunded !== 0,
+  };
+}
+
+export interface UsagePurgeOptions {
+  /** WHIM_LEDGER_RETENTION_DAYS: ledger rows from a UTC day more than this many days back go. */
+  ledgerRetentionDays: number;
+  /** WHIM_USAGE_IDLE_DAYS: a lifetime row last credited more than this many days back goes. */
+  usageIdleDays: number;
+  /** Injected clock (ms since epoch) both cut-offs are measured from. */
+  now: () => number;
+  /** Defaults to one hour: the purge runs at boot and hourly. */
+  intervalMs?: number;
+  /** Told of a failed purge; the next tick tries again. */
+  onError?: (message: string, err: unknown) => void;
+  /** Called once each run (the boot run and every tick) has settled, so a test can await a run. */
+  onTick?: () => void;
+}
+
+/** The usage database's keep-periods (design D7; legal-surface-v2 D9): at once, then every
+ *  `intervalMs` on an unref'd timer, delete the ledger rows past their retention and the lifetime
+ *  rows idle past the idle period. A failed purge goes to `onError`, never into the timer. */
+export function scheduleUsagePurge(
+  store: Pick<UsageStore, 'purgeLedger'> & Pick<UsageRecordKeeping, 'purgeIdleUsage'>,
+  options: UsagePurgeOptions,
+): { stop(): void } {
+  const runOnce = (): void => {
+    const now = options.now();
+    const ledger = store
+      .purgeLedger(utcDayString(now - options.ledgerRetentionDays * DAY_MS))
+      .catch((err: unknown) => options.onError?.('ledger purge failed', err));
+    const idle = store
+      .purgeIdleUsage(utcDayString(now - options.usageIdleDays * DAY_MS))
+      .catch((err: unknown) => options.onError?.('idle usage purge failed', err));
+    Promise.all([ledger, idle]).finally(() => options.onTick?.());
+  };
+  runOnce();
+  const timer = setInterval(runOnce, options.intervalMs ?? 3_600_000);
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
 }

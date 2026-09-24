@@ -10,7 +10,13 @@
  * offending variable. `opts.now` overrides the clock `ServerConfig.now` carries forward for the
  * UTC-day arithmetic admission and the ledger need (spec: "The time source used for UTC-day
  * arithmetic SHALL be injectable") — it does not affect parsing.
+ *
+ * Every keep-period is capped by the current disclosure manifest (legal-surface-v2 D9,
+ * specs/device-records "A configured keep-period never exceeds its published maximum"): a value
+ * above its category's published maximum refuses to load, naming the variable and the maximum.
+ * `server/config-check.mjs` runs this same parse for `deploy/deploy.sh`.
  */
+import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
 import type { ProviderSort } from './openrouter';
 
 export interface ServerConfig {
@@ -59,6 +65,9 @@ export interface ServerConfig {
   readonly policyTimeoutMs: number;
   readonly reportRetentionDays: number;
   readonly ledgerRetentionDays: number;
+  /** `WHIM_USAGE_IDLE_DAYS`: a lifetime usage row not credited for more than this many days is
+   *  purged (specs/device-records). */
+  readonly usageIdleDays: number;
   readonly drainTimeoutMs: number;
 
   /** The lowest build each platform may use `/v1` with (`WHIM_MIN_BUILD_IOS`/`_ANDROID`,
@@ -91,6 +100,36 @@ function readPositiveInt(env: NodeJS.ProcessEnv, name: string, fallback: number)
     throw new ServerConfigError(name, `${name} must be a positive integer, got ${JSON.stringify(raw)}.`);
   }
   return n;
+}
+
+/** Each keep-period variable and the manifest category whose published maximum caps it. Server log
+ *  retention is not here because the server sets none: Docker's size-rotated log files hold it. */
+const KEEP_PERIOD_CATEGORIES = {
+  WHIM_REPORT_RETENTION_DAYS: 'reports',
+  WHIM_LEDGER_RETENTION_DAYS: 'usage-records',
+  WHIM_USAGE_IDLE_DAYS: 'usage-records',
+} as const satisfies Readonly<Record<string, CategoryId>>;
+
+type KeepPeriodVariable = keyof typeof KEEP_PERIOD_CATEGORIES;
+
+/** Every environment variable that sets a keep-period. */
+export const KEEP_PERIOD_VARIABLES = Object.keys(KEEP_PERIOD_CATEGORIES) as readonly KeepPeriodVariable[];
+
+/** A positive number of days, no more than the current manifest publishes for the variable's
+ *  category. A category the manifest does not keep has a maximum of 0, so any value refuses. */
+function readKeepPeriod(env: NodeJS.ProcessEnv, name: KeepPeriodVariable, fallback: number): number {
+  const days = readPositiveInt(env, name, fallback);
+  const category = KEEP_PERIOD_CATEGORIES[name];
+  const version = latestVersion();
+  const maximum = keepLimit(MANIFESTS[version], category)?.days ?? 0;
+  if (days > maximum) {
+    const source = env[name] === undefined ? ' (its default)' : '';
+    throw new ServerConfigError(
+      name,
+      `${name} is ${days} days${source}, above the ${maximum}-day maximum disclosure manifest version ${version} publishes for ${category}.`,
+    );
+  }
+  return days;
 }
 
 function readNonNegativeDecimal(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -183,8 +222,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     creditCacheTtlMs: readPositiveInt(env, 'WHIM_CREDIT_CACHE_TTL_MS', 60_000),
 
     policyTimeoutMs: readPositiveInt(env, 'WHIM_POLICY_TIMEOUT_MS', 10_000),
-    reportRetentionDays: readPositiveInt(env, 'WHIM_REPORT_RETENTION_DAYS', 90),
-    ledgerRetentionDays: readPositiveInt(env, 'WHIM_LEDGER_RETENTION_DAYS', 90),
+    reportRetentionDays: readKeepPeriod(env, 'WHIM_REPORT_RETENTION_DAYS', 90),
+    ledgerRetentionDays: readKeepPeriod(env, 'WHIM_LEDGER_RETENTION_DAYS', 90),
+    usageIdleDays: readKeepPeriod(env, 'WHIM_USAGE_IDLE_DAYS', 365),
     drainTimeoutMs: readPositiveInt(env, 'WHIM_DRAIN_TIMEOUT_MS', generationMaxMs + 30_000),
 
     minBuildIos: readMinimumBuild(env, 'WHIM_MIN_BUILD_IOS'),
