@@ -28,10 +28,10 @@ Whim can't tell where a user is. Its server runs in Google Cloud's Montreal regi
 
 What doesn't go to OpenRouter or the model providers: the phone ID, the IP address, usage records, error details and reports. These reach only Whim's own server and its hosting and logging providers (draft-copy §4, note on "Shared"; README verification item 24). Reports aren't sent to AI providers (README "What goes", privacy policy row).
 
-**Model providers, checked 2026-09-24** (OpenRouter Activity, 2026-08-25 to 2026-09-24; full table, countries and sources in `openrouter-providers-2026-09-24.md`). About 1,389 requests went to 38 providers. By country of the provider's headquarters:
+**Model providers, checked 2026-09-24** (OpenRouter Activity, 2026-08-25 to 2026-09-24; full table, countries and sources in `openrouter-providers-2026-09-24.md`). About 1,389 requests went to 38 providers. The count includes model experiments run on the same OpenRouter key (the Qwen, Seed, GLM and MiMo models); production uses only `deepseek/deepseek-v4.1-flash` and `deepseek/deepseek-v4-flash-0731` (`WHIM_ENGINEER_MODEL`, `WHIM_REWRITE_MODEL`; the other roles fall back to these). By country of the provider's headquarters:
 
 - United States: most of the volume, led by Wafer, CoreWeave, Fireworks, Together and DeepInfra.
-- China: Alibaba (13% of requests, the only host of the Qwen models Whim uses), Baidu, StreamLake (Kuaishou), Seed (ByteDance), SiliconFlow, Xiaomi, DeepSeek.
+- China: Alibaba (13% of requests, mostly the Qwen experiments), Baidu, StreamLake (Kuaishou), Seed (ByteDance), SiliconFlow, Xiaomi, DeepSeek.
 - Canada: Cohere. Sweden: Inceptron. Spain: NextBit. Netherlands: Nebius.
 - Not determined: DekaLLM, Open Inference, Mancer, Ambient (no public company record), and Phala (sources disagree).
 
@@ -68,7 +68,7 @@ s.17 needs a written agreement with the recipient. Whim's contract is with OpenR
 
 Checked 2026-09-24. OpenRouter's Terms of Service (last updated 2026-08-31), Privacy Policy (2026-08-31) and Data Processing Agreement (2026-08-26) apply to Whim as they stand. Terms §10.2 incorporates the DPA by reference for commercial use, so there is nothing to sign. OpenRouter itself doesn't train on inputs or outputs, and keeps prompts only if the customer opts in.
 
-They **don't** bind the model providers. The DPA's subprocessor list covers only OpenRouter's own 18 infrastructure vendors. For model providers, DPA §2.4(b) offers only zero-data-retention-only routing, which rests on each provider's published policy "and does not constitute OpenRouter's guarantee". So the "onward transfer under the same limits" item below is not met in writing. The closest available step is to turn on zero-data-retention-only routing. Alibaba, which hosts the Qwen models, keeps prompts for an unknown period, so that change needs a model check first.
+They **don't** bind the model providers. The DPA's subprocessor list covers only OpenRouter's own 18 infrastructure vendors. For model providers, DPA §2.4(b) offers only zero-data-retention-only routing, which rests on each provider's published policy "and does not constitute OpenRouter's guarantee". So the "onward transfer under the same limits" item below is not met in writing. The closest available step is to turn on zero-data-retention-only routing. Both production models have several zero-retention hosts (CoreWeave, Together, DeepInfra, Fireworks, Wafer and others), so the change would drop only hosts that keep prompts, such as Alibaba.
 
 What the agreement should cover. This is a checklist drawn from the risks in section 6, not a statement of what the law requires. Known risk, accepted by the owner: no lawyer will confirm what the law actually requires here.
 
