@@ -6,7 +6,8 @@
  * The global handler logs, keeps a fatal error's projection for the next launch, and then calls
  * the handler that was installed before it, so a fatal error still ends the process exactly as it
  * did. The rejection hook logs, then defers to the tracking options it was given (React Native's
- * own, in a dev build; there are none in a release build).
+ * own, in a dev build; there are none in a release build). A render error that reaches the app's
+ * root error boundary is recorded the same way as a fatal error (`renderCrashRecorder`).
  *
  * No React Native import: the RN globals (`ErrorUtils`, `HermesInternal`) are injected by
  * `platform/install-diagnostics.ts`, so the Node suite drives this with fakes.
@@ -43,7 +44,7 @@ interface CrashCaptureDeps {
   hermes: RejectionTrackerHost | null | undefined;
   /** The tracking options to defer to after logging a rejection. */
   previousRejectionTracking?: Partial<RejectionTracking>;
-  seam: Pick<Seam, 'error'>;
+  seam: Pick<Seam, 'error' | 'warn'>;
   /** Called with a fatal error's projection before the previous handler runs. Must not throw. */
   keepFatal: (record: DiagnosticRecord) => void;
   now?: () => number;
@@ -52,6 +53,8 @@ interface CrashCaptureDeps {
 /** The constant messages the two hooks log under (the seam's message is never variable). */
 const UNCAUGHT_ERROR_MESSAGE = 'uncaught error';
 const UNHANDLED_REJECTION_MESSAGE = 'unhandled promise rejection';
+const NO_REJECTION_TRACKER_MESSAGE = 'promise rejection tracker unavailable';
+const RENDER_ERROR_MESSAGE = 'uncaught render error';
 
 /** A thrown value as named fields: its class and stack go to the diagnostics projection (which
  *  drops the stack's message line); its message stays in `detail`, which never leaves the phone. */
@@ -65,31 +68,56 @@ function thrownFields(where: string, thrown: unknown): Record<string, unknown> {
   };
 }
 
+/** Log `error` as an error record and, when it is fatal, keep its projection for the next launch.
+ *  Never throws: every caller still has to hand the error on to what ends the process. */
+function recordThrown(
+  deps: Pick<CrashCaptureDeps, 'seam' | 'keepFatal' | 'now'>,
+  message: string,
+  where: string,
+  error: unknown,
+  isFatal: boolean,
+): void {
+  try {
+    const fields = thrownFields(where, error);
+    deps.seam.error(CHANNELS.app, message, fields);
+    if (isFatal) {
+      const at = (deps.now ?? (() => Date.now()))();
+      deps.keepFatal(toDiagnostic({ at, level: 'error', channel: CHANNELS.app, message, fields: redactFields(fields) }));
+    }
+    // eslint-disable-next-line no-restricted-syntax -- intentional: recording the error must never stop it reaching the handler that ends the process on a fatal error.
+  } catch {
+    // deliberately silent — see the disable comment above
+  }
+}
+
 export function installCrashCapture(deps: CrashCaptureDeps): void {
-  const now = deps.now ?? (() => Date.now());
   const { errorUtils, hermes, seam } = deps;
 
   if (errorUtils) {
     const previous = errorUtils.getGlobalHandler();
     errorUtils.setGlobalHandler((error, isFatal) => {
-      try {
-        const fields = thrownFields(isFatal ? 'fatal' : 'uncaught', error);
-        seam.error(CHANNELS.app, UNCAUGHT_ERROR_MESSAGE, fields);
-        if (isFatal) {
-          deps.keepFatal(
-            toDiagnostic({ at: now(), level: 'error', channel: CHANNELS.app, message: UNCAUGHT_ERROR_MESSAGE, fields: redactFields(fields) }),
-          );
-        }
-        // eslint-disable-next-line no-restricted-syntax -- intentional: recording the error must never stop it reaching the previous handler, which is what ends the process on a fatal error.
-      } catch {
-        // deliberately silent — see the disable comment above
-      }
+      recordThrown(deps, UNCAUGHT_ERROR_MESSAGE, isFatal ? 'fatal' : 'uncaught', error, isFatal === true);
       previous(error, isFatal);
     });
   }
 
-  const previousTracking = deps.previousRejectionTracking;
-  hermes?.enablePromiseRejectionTracker?.({
+  installRejectionHook(hermes, deps.previousRejectionTracking, seam);
+}
+
+/** The Hermes rejection hook: log, then defer to `previousTracking`. On an engine without the
+ *  tracker, say so once, as a warning on the sink channel: never uploaded, but in the ring buffer,
+ *  so an engine that silently drops unhandled rejections is visible in the log. */
+function installRejectionHook(
+  hermes: RejectionTrackerHost | null | undefined,
+  previousTracking: Partial<RejectionTracking> | undefined,
+  seam: CrashCaptureDeps['seam'],
+): void {
+  const enableTracker = hermes?.enablePromiseRejectionTracker;
+  if (typeof enableTracker !== 'function') {
+    seam.warn(CHANNELS.sink, NO_REJECTION_TRACKER_MESSAGE, { engine: hermes == null ? 'no HermesInternal' : 'no tracker' });
+    return;
+  }
+  enableTracker.call(hermes, {
     allRejections: true,
     onUnhandled: (id, rejection) => {
       seam.error(CHANNELS.app, UNHANDLED_REJECTION_MESSAGE, thrownFields('unhandled-rejection', rejection));
@@ -99,4 +127,16 @@ export function installCrashCapture(deps: CrashCaptureDeps): void {
       previousTracking?.onHandled?.(id);
     },
   });
+}
+
+/**
+ * What the app's root error boundary does with a render error before rethrowing it (review F3).
+ * In React Native 0.85 a render error no boundary handles goes React 19 `onUncaughtError` →
+ * `ExceptionsManager.handleException(error, true)`, which never calls the `ErrorUtils` handler
+ * above, so without this such a crash would leave no record and no fatal slot. Records it as an
+ * error record on the container channel (`where: "render"`) and keeps it in the fatal slot, since
+ * the boundary rethrows it into that fatal path. Never throws.
+ */
+export function renderCrashRecorder(deps: Pick<CrashCaptureDeps, 'seam' | 'keepFatal' | 'now'>): (error: unknown) => void {
+  return error => recordThrown(deps, RENDER_ERROR_MESSAGE, 'render', error, true);
 }

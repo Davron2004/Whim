@@ -15,6 +15,9 @@
  *     `maxDistinct` entries per session; later distinct records are dropped.
  *   - A flush is one POST with no retry. A failure is reported once through `onFailure` (the seam
  *     records it on the sink channel, which this transport never takes), so it cannot recurse.
+ *   - A `429` stops uploads: until its `Retry-After` has passed, or for the rest of the app session
+ *     when it names no delta-seconds window. What is refused, waiting, or logged meanwhile is
+ *     discarded, never queued for later.
  *
  * No React Native import: the seam and the Node suite load this directly.
  */
@@ -35,13 +38,20 @@ export interface DiagnosticsTarget {
   readonly headers: Readonly<Record<string, string>>;
 }
 
+/** What the server answered: its status, and its `Retry-After` header when it sent one. */
+export interface DiagnosticsResponse {
+  ok: boolean;
+  status: number;
+  retryAfter?: string | null;
+}
+
 /** How a batch reaches the server. Injectable so the suite can run a refusing or unreachable
  *  server without a socket; defaults to the global `fetch`. */
 export type PostDiagnostics = (
   url: string,
   headers: Readonly<Record<string, string>>,
   body: string,
-) => Promise<{ ok: boolean; status: number }>;
+) => Promise<DiagnosticsResponse>;
 
 export interface DiagnosticsOptions {
   /** The upload gate: where to send, or `null` when no upload is allowed right now. */
@@ -59,6 +69,8 @@ export interface DiagnosticsOptions {
   maxBodyBytes: number;
   /** Reported once per failed upload. Must not throw and must not re-enter this transport. */
   onFailure: (message: string, fields: Record<string, unknown>) => void;
+  /** The clock a `Retry-After` window is measured on. */
+  now: () => number;
 }
 
 const DEFAULTS: Omit<DiagnosticsOptions, 'post' | 'onFailure'> = {
@@ -68,15 +80,28 @@ const DEFAULTS: Omit<DiagnosticsOptions, 'post' | 'onFailure'> = {
   flushIntervalMs: 30_000,
   maxDistinct: 50,
   maxBodyBytes: 32 * 1024,
+  now: () => Date.now(),
 };
+
+/** The status that stops uploads (the route's daily allowances, spec device-diagnostics). */
+const TOO_MANY_REQUESTS = 429;
+
+/** A `Retry-After` in HTTP's delta-seconds form, as milliseconds; `undefined` for anything else.
+ *  The HTTP-date form is deliberately not parsed, as in `transport-shared.ts`'s
+ *  `retryAfterSecondsOf` (`Date.parse` differs between Hermes and V8); here an unparsed window
+ *  means the stricter answer: no more uploads this session. */
+function retryAfterMs(value: string | null | undefined): number | undefined {
+  if (value == null || !/^\d+$/.test(value.trim())) return undefined;
+  return Number(value.trim()) * 1000;
+}
 
 async function fetchPost(
   url: string,
   headers: Readonly<Record<string, string>>,
   body: string,
-): Promise<{ ok: boolean; status: number }> {
+): Promise<DiagnosticsResponse> {
   const res = await fetch(url, { method: 'POST', headers: { ...headers }, body });
-  return { ok: res.ok, status: res.status };
+  return { ok: res.ok, status: res.status, retryAfter: res.headers.get('retry-after') };
 }
 
 /** The UTF-8 length of `text`, which is what the server's body limit counts. */
@@ -122,6 +147,8 @@ export class DiagnosticsTransport {
   private timer: ReturnType<typeof setTimeout> | undefined;
   /** Set while `target()` runs, so a record it logs cannot re-enter the gate. */
   private deciding = false;
+  /** When uploads may resume after a `429`; `Infinity` for the rest of the session. */
+  private pausedUntil: number | undefined;
   /** Uploads attempted, successful or not — the suite's evidence that a failure is not retried. */
   attempts = 0;
   /** Distinct records dropped because the session cap was reached. */
@@ -144,13 +171,13 @@ export class DiagnosticsTransport {
   /** Take one redacted seam record. Never throws. */
   enqueue(record: DevLogRecord): void {
     if (record.level !== 'error' || record.channel === CHANNELS.sink) return;
-    if (!this.allowed()) return;
+    if (this.paused() || !this.allowed()) return;
     this.add(toDiagnostic(record));
   }
 
   /** Take a record that is already projected (the fatal-error slot read back at launch). */
   enqueueDiagnostic(record: DiagnosticRecord): void {
-    if (!this.allowed()) return;
+    if (this.paused() || !this.allowed()) return;
     this.add(record);
   }
 
@@ -158,10 +185,10 @@ export class DiagnosticsTransport {
   async flush(): Promise<void> {
     this.cancelTimer();
     if (this.waiting.size === 0) return;
-    const target = this.currentTarget();
+    const target = this.paused() ? null : this.currentTarget();
     if (target === null) {
-      // Not allowed any more: what was waiting is discarded, not kept for a later grant.
-      for (const key of this.waiting) this.settle(key);
+      // Not allowed any more, or refused for now: what was waiting is discarded, not kept.
+      this.discardWaiting();
       return;
     }
     const records = this.takeBatch();
@@ -174,6 +201,7 @@ export class DiagnosticsTransport {
     this.attempts++;
     try {
       const res = await this.options.post(endpointOf(target.baseUrl), target.headers, JSON.stringify(batch));
+      if (res.status === TOO_MANY_REQUESTS) this.pause(res.retryAfter);
       if (!res.ok) {
         this.report('diagnostics upload rejected', { status: res.status, records: records.length });
       }
@@ -189,6 +217,24 @@ export class DiagnosticsTransport {
   /** Stop the timer (tests; a process that is going away). */
   stop(): void {
     this.cancelTimer();
+  }
+
+  /** Whether a `429` has stopped uploads right now. */
+  private paused(): boolean {
+    return this.pausedUntil !== undefined && this.options.now() < this.pausedUntil;
+  }
+
+  /** Stop uploading until `retryAfter` has passed (for the session when it names no window), and
+   *  discard what is waiting. */
+  private pause(retryAfter: string | null | undefined): void {
+    const windowMs = retryAfterMs(retryAfter);
+    this.pausedUntil = windowMs === undefined ? Infinity : this.options.now() + windowMs;
+    this.cancelTimer();
+    this.discardWaiting();
+  }
+
+  private discardWaiting(): void {
+    for (const key of [...this.waiting]) this.settle(key);
   }
 
   private currentTarget(): DiagnosticsTarget | null {

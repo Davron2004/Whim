@@ -15,6 +15,7 @@ import {
   type DiagnosticsDisclosureModules,
 } from '../../../scripts/release/lib/store-listing';
 import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
+import { DIAGNOSTICS_PATH } from '../../../src/host/logging/diagnostics';
 import { loadNativeReleaseConfig, type NativeReleaseConfig } from '../../../scripts/release/lib/native-config';
 
 const REPO_ROOT = process.cwd();
@@ -133,14 +134,14 @@ function messagesFor(dir: string): string[] {
 
 // ── Diagnostics disclosure (developer-observability task 5.2) ──
 
-const TRANSPORT_PATH = 'src/host/logging/diagnostics-transport.ts';
+const TRANSPORT_PATH = 'src/host/logging/diagnostics.ts';
 const PRIVACY_PAGE_PATHS = ['deploy/site/privacy.html', 'deploy/site/fr/privacy.html'];
 const DISCLOSURE_MANIFEST_PATH = 'contract/src/disclosure-manifest.ts';
 
-/** A device module that posts to the diagnostics route, plus the committed privacy pages the check then reads. */
+/** The committed diagnostics transport at its own path, plus the committed privacy pages the check then reads. */
 function withTransport(text: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   return {
-    [TRANSPORT_PATH]: 'export function send(base: string, body: string) { return fetch(`${base}/v1/diagnostics`, { method: "POST", body }); }\n',
+    [TRANSPORT_PATH]: committed(TRANSPORT_PATH),
     ...Object.fromEntries(PRIVACY_PAGE_PATHS.map((p) => [p, committed(p)])),
     ...text,
   };
@@ -358,15 +359,19 @@ export async function run(): Promise<void> {
     });
   });
 
-  await test('store-diagnostics: the transport is found by its route or its seam name, and a mention in a test is not a build that sends diagnostics', () => {
-    withFixtureRepo({ text: { 'src/host/logging/test/transport.suite.ts': 'post("/v1/diagnostics")\n' } }, (dir) => {
+  await test('store-diagnostics: the committed transport is found by its route, and neither a mention in a test nor a name without the route is a build that sends diagnostics', () => {
+    withFixtureRepo({ text: { 'src/host/logging/test/transport.suite.ts': committed(TRANSPORT_PATH) } }, (dir) => {
       assert(diagnosticsTransportFile(dir) === undefined, `a test file must not count as the transport, got ${String(diagnosticsTransportFile(dir))}`);
     });
     withFixtureRepo({ text: withTransport() }, (dir) => {
       assert(diagnosticsTransportFile(dir) === TRANSPORT_PATH, `expected the route to mark ${TRANSPORT_PATH}, got ${String(diagnosticsTransportFile(dir))}`);
     });
-    withFixtureRepo({ text: { 'src/host/logging/index.ts': 'export const seam = createSeam({ sinks: [devSink, diagnosticsTransport] });\n' } }, (dir) => {
-      assert(diagnosticsTransportFile(dir) === 'src/host/logging/index.ts', `expected the seam name to mark the file, got ${String(diagnosticsTransportFile(dir))}`);
+    // The transport with its route gone, and a module naming a variable after it: no route, no transport.
+    const withoutRoute = committed(TRANSPORT_PATH).replaceAll(DIAGNOSTICS_PATH, '/v1/elsewhere');
+    assert(withoutRoute !== committed(TRANSPORT_PATH), 'fixture precondition: the committed transport carries the route');
+    const namedOnly = { [TRANSPORT_PATH]: withoutRoute, 'src/host/platform/install-diagnostics.ts': 'const diagnosticsTransport = log.diagnostics;\n' };
+    withFixtureRepo({ text: namedOnly }, (dir) => {
+      assert(diagnosticsTransportFile(dir) === undefined, `a transport name without the route marks nothing, got ${String(diagnosticsTransportFile(dir))}`);
     });
   });
 

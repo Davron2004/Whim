@@ -16,28 +16,41 @@
  * body'` — mechanism, never a product sentence. All of these are scrubbed to the generic reason
  * instead, never shown verbatim.
  */
+import type { DiagnosticReason } from '../logging/diagnostic';
 import { GenerationClientError } from './transport-shared';
 import { EmptyBundleError } from './build-lifecycle';
 
 export const GENERIC_STREAM_ERROR = 'Something went wrong while building your app. Please try again.';
+
+/** The one decision both exports below read: which of the three failures a thrown error is, as
+ *  the closed code the log records and the sentence the screen shows. */
+function classify(err: unknown): { code: DiagnosticReason; reason: string } {
+  if (
+    err instanceof GenerationClientError &&
+    err.hint &&
+    (err.kind === 'device_id' || (err.kind === 'http' && (err.status ?? 0) >= 400))
+  ) {
+    return { code: 'server_refused', reason: err.hint };
+  }
+  // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
+  // no app is a failed generation, not a crash, so it reads with its own honest reason rather than
+  // the generic one.
+  if (err instanceof EmptyBundleError) {
+    return { code: 'empty_bundle', reason: err.message };
+  }
+  return { code: 'unexpected_error', reason: GENERIC_STREAM_ERROR };
+}
 
 /** Maps a thrown error from the client calls down to the failure screen's honest
  *  `{reason, diagnostics}` shape — never the raw error kind/status, matching the "failure shown
  *  honestly" requirement's hint-only discipline (diagnostics stay empty here; only a terminal
  *  `failure` event ever carries real per-diagnostic hints). */
 export function errorReason(err: unknown): { reason: string; diagnostics: readonly { hint: string }[] } {
-  if (
-    err instanceof GenerationClientError &&
-    err.hint &&
-    (err.kind === 'device_id' || (err.kind === 'http' && (err.status ?? 0) >= 400))
-  ) {
-    return { reason: err.hint, diagnostics: [] };
-  }
-  // The install-time bundle guard (build-lifecycle.ts's `deliverResult`): a delivery that defines
-  // no app is a failed generation, not a crash, so it reads with its own honest reason rather than
-  // the generic one.
-  if (err instanceof EmptyBundleError) {
-    return { reason: err.message, diagnostics: [] };
-  }
-  return { reason: GENERIC_STREAM_ERROR, diagnostics: [] };
+  return { reason: classify(err).reason, diagnostics: [] };
+}
+
+/** The closed code a failure record carries for the screen `errorReason` builds — never its
+ *  sentence, which may be the server's own text. */
+export function errorReasonCode(err: unknown): DiagnosticReason {
+  return classify(err).code;
 }

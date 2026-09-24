@@ -15,6 +15,8 @@ import VersionStoreProbeScreen from './src/host/VersionStoreProbeScreen';
 import StorageProbeScreen from './src/host/StorageProbeScreen';
 import BridgeProbeScreen from './src/host/BridgeProbeScreen';
 import NetworkDenyProbeScreen from './src/host/NetworkDenyProbeScreen';
+import RootErrorBoundary from './src/host/RootErrorBoundary';
+import { recordRenderCrash } from './src/host/platform/install-diagnostics';
 
 // Flip to true to run the network-deny reproduction probe (design D17 "Reproduce first, then
 // prove") against a canary started on the Mac (`node scripts/netdeny/run.mjs canary`). Default
@@ -38,5 +40,11 @@ export default function App() {
   else if (RUN_STORAGE_PROBE) content = <StorageProbeScreen />;
   else if (RUN_VSTORE_PROBE) content = <VersionStoreProbeScreen />;
 
-  return <SafeAreaProvider>{content}</SafeAreaProvider>;
+  // Around everything: a render error no inner boundary handles is recorded, then rethrown into
+  // React Native's own fatal handling (`RootErrorBoundary`).
+  return (
+    <RootErrorBoundary onError={recordRenderCrash}>
+      <SafeAreaProvider>{content}</SafeAreaProvider>
+    </RootErrorBoundary>
+  );
 }
