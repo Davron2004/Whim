@@ -1,7 +1,7 @@
 /**
  * server/src/admission/refusals.ts — the structured refusal bodies for size, admission,
- * content-policy and operator-budget refusals (design D8; specs/server-admission-control "Every
- * refusal is a structured, user-facing ApiError").
+ * content-policy, operator-budget, minimum-build and consent refusals (design D8; request-envelope;
+ * specs/server-admission-control "Every refusal is a structured, user-facing ApiError").
  *
  * Every body validates as `ApiError` with `error` a `ServiceRefusalCode` member, and every hint is
  * the server-owned user-facing text from design D8's table: no internal identifiers, limit names,
@@ -13,7 +13,7 @@ import type { ApiError, ServiceRefusalCode } from '@whim/contract';
 import type { SlotRefusalReason } from './slots';
 
 export interface ServiceRefusal {
-  readonly status: 413 | 422 | 429 | 503;
+  readonly status: 403 | 413 | 422 | 426 | 429 | 503;
   readonly body: ApiError & { error: ServiceRefusalCode };
   /** `{ 'Retry-After': '<integer seconds>' }` on `daily_limit` and the ceiling `server_busy`;
    *  empty on every other refusal. Pass straight to the response as headers. */
@@ -31,6 +31,8 @@ const REFUSAL_HINTS = Object.freeze({
   content_policy: "Whim can't make that kind of app. Try describing something else.",
   policy_unavailable: "We couldn't check this request right now. Please try again in a moment.",
   budget_exhausted: 'Whim has used up its generation budget for now. Try again later.',
+  update_required: 'Update Whim to the latest version to keep using its AI features.',
+  consent_required: 'Whim needs your permission to send requests to its AI service.',
 });
 
 const DAY_MS = 86_400_000;
@@ -95,6 +97,18 @@ export function policyUnavailableRefusal(): ServiceRefusal {
  *  mid-call `402`. No `Retry-After`: the refill time is unknowable. */
 export function budgetExhaustedRefusal(): ServiceRefusal {
   return refusal(503, 'budget_exhausted', REFUSAL_HINTS.budget_exhausted);
+}
+
+/** `426` — the request's build is below its platform's minimum (the `/v1` minimum-build gate).
+ *  No `Retry-After`: only an update clears it. */
+export function updateRequiredRefusal(): ServiceRefusal {
+  return refusal(426, 'update_required', REFUSAL_HINTS.update_required);
+}
+
+/** `403` — the request's consent version does not cover the route's data practice (a consent of
+ *  `none` on clarify, rewrite or generate), refused before any model work. */
+export function consentRequiredRefusal(): ServiceRefusal {
+  return refusal(403, 'consent_required', REFUSAL_HINTS.consent_required);
 }
 
 /** Maps a slot controller refusal to its body: `device_busy` → `device_busy`; `draining` and

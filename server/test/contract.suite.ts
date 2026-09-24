@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   ApiError,
+  ClientEnvelope,
   Diagnostic,
   DeviceIdError,
   GenerateRequest,
@@ -153,6 +154,27 @@ export function runContractTests(): void {
     'ApiError stays untouched: an arbitrary open error string still validates',
     ApiError.safeParse({ error: 'invalid_request', hint: 'fix the request and try again' }).success,
   );
+
+  // The client envelope: raw header text in, typed envelope out, each field failing on its own.
+  section('Client envelope (request-envelope D1)');
+  const envelopeHeaders = { platform: 'ios', appVersion: '1.0.0', build: '381500', consent: '1' };
+  const parsedEnvelope = ClientEnvelope.safeParse(envelopeHeaders);
+  eq(
+    'a complete envelope parses to typed values',
+    parsedEnvelope.success ? parsedEnvelope.data : parsedEnvelope.error.issues,
+    { platform: 'ios', appVersion: '1.0.0', build: 381500, consent: 1 },
+  );
+  const noGrant = ClientEnvelope.safeParse({ ...envelopeHeaders, platform: 'android', consent: 'none' });
+  eq('consent none parses as the literal none', noGrant.success ? noGrant.data.consent : undefined, 'none');
+  check('an unknown platform is rejected', !ClientEnvelope.safeParse({ ...envelopeHeaders, platform: 'windows' }).success);
+  for (const build of ['abc', '0', '-5', '12.5', '1e5', '0381500', '', '1234567890123456']) {
+    check(`a malformed build (${JSON.stringify(build)}) is rejected`, !ClientEnvelope.safeParse({ ...envelopeHeaders, build }).success);
+  }
+  for (const consent of ['0', 'yes', '']) {
+    check(`a malformed consent (${JSON.stringify(consent)}) is rejected`, !ClientEnvelope.safeParse({ ...envelopeHeaders, consent }).success);
+  }
+  check('an empty app version is rejected', !ClientEnvelope.safeParse({ ...envelopeHeaders, appVersion: '' }).success);
+  check('a pre-release app version still parses', ClientEnvelope.safeParse({ ...envelopeHeaders, appVersion: '1.1.0-beta.2' }).success);
 
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');
