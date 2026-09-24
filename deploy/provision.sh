@@ -58,6 +58,9 @@ readonly IAP_RANGE=35.235.240.0/20
 readonly SNAPSHOT_POLICY=whim-data-daily SNAPSHOT_KEEP_DAYS=14
 # Release builds' Hermes source maps (developer-observability D12): private, uploaded by the release scripts.
 readonly SOURCEMAP_BUCKET="gs://$project-sourcemaps"
+# Logs are stored in the region, not Cloud Logging's global default: the legal pages say Google keeps
+# them in Montreal (docs/legal/quebec-s17-assessment.md section 7).
+readonly LOG_BUCKET=whim-logs LOG_KEEP_DAYS=30
 readonly MONITORING_DIR="$WHIM_DEPLOY_DIR/monitoring"
 readonly BUDGET_DISPLAY_NAME="Whim monthly spend"
 readonly TAB=$'\t'
@@ -226,6 +229,28 @@ case "$attached" in
   *"/resourcePolicies/$SNAPSHOT_POLICY\""*) echo "unchanged: $SNAPSHOT_POLICY is attached to $WHIM_DATA_DISK_NAME" ;;
   *) whim_gcloud compute disks add-resource-policies "$WHIM_DATA_DISK_NAME" --zone "$zone" --resource-policies "$SNAPSHOT_POLICY" ;;
 esac
+
+echo "==> log bucket $LOG_BUCKET in $region (keep $LOG_KEEP_DAYS days), fed by the _Default sink"
+if log_keep_days="$(whim_gcloud logging buckets describe "$LOG_BUCKET" --location "$region" \
+  --format='value(retentionDays)' 2>/dev/null)"; then
+  if [[ "$log_keep_days" = "$LOG_KEEP_DAYS" ]]; then
+    echo "unchanged log bucket $LOG_BUCKET"
+  else
+    whim_gcloud logging buckets update "$LOG_BUCKET" --location "$region" --retention-days "$LOG_KEEP_DAYS"
+  fi
+else
+  whim_gcloud logging buckets create "$LOG_BUCKET" --location "$region" --retention-days "$LOG_KEEP_DAYS" \
+    --description "Whim server and VM logs, kept in the region (docs/deploy.md, Logs)"
+fi
+readonly log_destination="logging.googleapis.com/projects/$project/locations/$region/buckets/$LOG_BUCKET"
+if [[ "$(whim_gcloud logging sinks describe _Default --format='value(destination)')" = "$log_destination" ]]; then
+  echo "unchanged: _Default sink writes to $LOG_BUCKET"
+else
+  whim_gcloud logging sinks update _Default "$log_destination"
+fi
+# The global _Default bucket gets nothing new; keep what it already holds for the shortest time allowed.
+[[ "$(whim_gcloud logging buckets describe _Default --location global --format='value(retentionDays)')" = 1 ]] \
+  || whim_gcloud logging buckets update _Default --location global --retention-days 1
 
 echo "==> vm $WHIM_VM_NAME"
 if [ "$vm_exists" -eq 1 ]; then
