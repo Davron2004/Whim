@@ -378,7 +378,7 @@ def encode(base, out, minutes):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--url", required=True, help="where the QR code points")
-    ap.add_argument("--label", default="Try the beta", help="line above the QR code")
+    ap.add_argument("--label", default="Get early access", help="line above the QR code")
     ap.add_argument("--minutes", type=float, default=5, help="video length (default 5)")
     ap.add_argument("--still", action="store_true", help="write PNG stills only")
     args = ap.parse_args()

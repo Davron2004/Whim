@@ -7,7 +7,7 @@ uv run demo/tools/title-slide.py --url https://real-link
 ```
 
 - `--url` (required): where the QR code points.
-- `--label "…"`: line above the QR code. Default: `Try the beta`.
+- `--label "…"`: line above the QR code. Default: `Get early access`.
 - `--minutes N`: video length. Default: 5.
 - `--still`: write PNG stills only, no video.
 
