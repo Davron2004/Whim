@@ -9,7 +9,8 @@ this file first, writes what it learned back here (or into the sibling files), a
 keeps a decision only in its own context. Files:
 
 - `README.md` — constraints, decisions, open questions, log. This file.
-- `run-of-show.md` — the minute-by-minute plan and the script for the parts that are scripted.
+- `script.md` — what Davron says, word for word, plus the cheat-sheet notes and the Q&A timer prompt.
+- `run-of-show.md` — how the two apps get built beforehand, and answers for Q&A. Its minute table is superseded by `script.md`.
 - `checklist.md` — prep by day, and the kit for the night.
 - `formats.md` — alternative demo structures, competitor patterns, and how the ask collects feedback.
 - `agent-prompt.md` — paste this into a fresh agent to bring it up to speed.
@@ -57,6 +58,11 @@ Related, older material: `docs/demo/storyboard.md` (the 2:30 hero film plan),
   Originally: cooking show. Start a real generation in minute one, pitch over the wait, show a
   pre-built app plus History in the middle, come back to the finished app, then the ask.
   The organizer endorsed this on the vetting call.
+- Opening and flow (2026-09-24, draft 3, `script.md`): the TVs start on Whim's home grid and the first
+  30 seconds say what Whim is. No "you're reading a Whim app" reveal: a notes UI with no context
+  bores the room. The live build is a Q&A timer with an Answered button and stats, not a hand
+  tally: counting hands and typing numbers leaves Davron silent on stage. Supersedes the hand
+  tally everywhere below.
 - Rollback lives in the middle segment. It is the one thing nobody else in the room can show.
   In the UI it is History → expand a past version → **"Go back to this"** → confirm. It restores
   the same app in place with its data, and later versions stay listed for rolling forward
@@ -74,6 +80,10 @@ Related, older material: `docs/demo/storyboard.md` (the 2:30 hero film plan),
 - Slides (changed 2026-09-23): no deck. The pre-built cheat-sheet app is the deck: Davron's
   notes, in big type, on the TVs. The QR is an image in Photos. If the phone dies, the backup
   video on the laptop.
+- Slides reconsidered 2026-09-24, still no deck. A deck would compete with the cheat sheet, which
+  is both the slides and proof of the product, and the only extra thing slides would show is the
+  QR, which is already an image in Photos. A laptop deck would also mean switching the TV cable
+  mid-talk.
 - Fallbacks, in order: (1) a copy of the demo app generated that morning, kept on the phone;
   (2) the backup video on the laptop; (3) slides only.
 - The ask: join the beta. Play needs 12 opted-in testers for 14 days before production, so
@@ -82,6 +92,15 @@ Related, older material: `docs/demo/storyboard.md` (the 2:30 hero film plan),
 - Phone on cellular, not venue Wi-Fi. Do Not Disturb on, auto-lock off, full battery.
 
 ## Open questions
+
+- Before saying "open source" on stage (2026-09-24, script draft 6): main has no LICENSE file,
+  and public code without one is all-rights-reserved. Apache 2.0 chosen; LICENSE, NOTICE and a
+  README section are committed on branch `chore/apache-license` (worktree `../Whim-license`),
+  not pushed yet. It has to reach main on GitHub before the talk. Also confirm
+  github.com/Davron2004/Whim is public.
+- Where the QR points. It has to get an iPhone person to TestFlight (the public link opens only
+  after Beta App Review passes), an Android person onto the `Whim beta` list, and a developer to
+  GitHub. One small page does all three.
 
 - Which prompt. Candidates from the corpus (`docs/app-corpus.md`) that are known to build and
   are interesting to watch: habit tracker (filmed in August), tea timer (filmed in September).

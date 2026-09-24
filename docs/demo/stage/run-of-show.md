@@ -25,6 +25,8 @@ is in git history.
 
 ## Minute by minute
 
+Superseded 2026-09-24 by `script.md` (open on the home grid, no reveal, a Q&A timer built live instead of the hand tally).
+
 Each row: what's on the TVs → what he does. The note text is a draft (see "Cheat sheet notes").
 
 | Clock | TVs show | What happens |

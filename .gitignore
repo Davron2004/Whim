@@ -108,7 +108,7 @@ server/dist/
 evals/.reports/
 
 # Demo pipeline (demo/): raw Maestro takes and rendered cuts are OUTPUT, never committed —
-# the flows (demo/android/flows/), the cut/voiceover tools (demo/tools/) and demo/README.md stay tracked.
+# the flows (demo/android/flows/), the cut/voiceover tools (demo/tools/) and demo/*README.md stay tracked.
 demo/out/
 demo/raw/
 
