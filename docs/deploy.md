@@ -110,6 +110,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
+| `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 | `WHIM_ALERT_EMAIL` | for `provision.sh` | where every alert and the budget email go (Operating → Alerts) |
 | `WHIM_BILLING_ACCOUNT` | for `provision.sh` | the billing account id (`XXXXXX-XXXXXX-XXXXXX`) the spend budget is created on |
@@ -296,16 +297,18 @@ string the deploy scripts use, from `deploy/lib.sh`).
   A person who asks to leave the list: `remove <their email>`, which exits 1 if they aren't on it.
   Rows are also deleted 730 days after their last signup (the purge runs at boot and hourly), the
   period the privacy policy publishes. In dev, `node server/waitlist.mjs …` runs the same command
-  against the local `WHIM_DATA_DIR`. The route's limits are defaults in `server/src/config.ts`, like
-  every other limit: `WHIM_MAX_BODY_BYTES_BETA` (4096), `WHIM_BETA_LIMIT_PER_CLIENT_HOUR` (10, per
-  forwarded client address, held only in memory) and `WHIM_BETA_LIMIT_PER_DAY` (2000). A refused or
-  malformed signup lands on `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only
-  `outcome` (`stored`, `updated`, `invalid`, `limited`, `trap`, `error`) and `requestId`, never the
-  address.
-- **Tuning limits** — a capacity profile (below) is the only deploy-time lever, and it never carries
-  a daily limit, a retention period or `NODE_ENV` by construction. Changing a daily/global limit
-  (design.md D6's table) means editing its default in `server/src/config.ts` and deploying that
-  commit — a code change, not a runtime flag, so it goes through the same review as anything else.
+  against the local `WHIM_DATA_DIR`. The route's limits are `WHIM_MAX_BODY_BYTES_BETA` (4096, a
+  default in `server/src/config.ts`), `WHIM_BETA_LIMIT_PER_CLIENT_HOUR` (10, per forwarded client
+  address, held only in memory) and `WHIM_BETA_LIMIT_PER_DAY` (2000). The last two are operator
+  values: set them in `~/.config/whim/deploy.env` and run a full deploy. Before an event where many
+  people share one network (a venue's Wi-Fi reaches the server as one address), raise
+  `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, e.g. to 200. A refused or malformed signup lands on
+  `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only `outcome` (`stored`,
+  `updated`, `invalid`, `limited`, `trap`, `error`) and `requestId`, never the address.
+- **Tuning limits** — apart from the two beta signup limits above, a capacity profile (below) is the
+  only deploy-time lever, and it never carries a daily limit, a retention period or `NODE_ENV` by
+  construction. Changing a daily/global limit (design.md D6's table) means editing its default in
+  `server/src/config.ts` and deploying that commit — a code change, not a runtime flag, so it goes through the same review as anything else.
   Two global daily ceilings, not the per-device limits, are what actually bound a day's spend — a
   client can mint a fresh device id per request: `WHIM_LIMIT_GENERATIONS_PER_DAY` (400) for
   `/v1/generate`, and `WHIM_LIMIT_UNARY_PER_DAY` (2000) for `/v1/clarify` and `/v1/rewrite`
