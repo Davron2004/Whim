@@ -58,6 +58,30 @@ const BUILTIN_ERROR_NAMES: readonly string[] = [
 /** What a mini-app error name outside {@link BUILTIN_ERROR_NAMES} is sent as. */
 const OTHER_ERROR_CLASS = 'Other';
 
+/** The closed set a projected `reason` may hold: which kind of failure a failure screen showed,
+ *  as a code host code picks from constants. Never the sentence the screen shows: a terminal
+ *  failure's sentence is written from model output (a plan's screen names come from the user's
+ *  prompt), and a server hint is the server's text. A `reason` outside this set is dropped,
+ *  whoever logged it. The server's own failure code is on its log line for the same `requestId`. */
+export const DIAGNOSTIC_REASONS = [
+  /** The generation stream ended in a terminal `failure` event. */
+  'terminal_failure',
+  /** The generation stream ended with no terminal event. */
+  'no_terminal_event',
+  /** A request was refused with an error status whose server hint the screen shows. */
+  'server_refused',
+  /** The delivered bundle defines no app. */
+  'empty_bundle',
+  /** Anything else: the screen shows the generic reason. */
+  'unexpected_error',
+] as const;
+
+export type DiagnosticReason = (typeof DIAGNOSTIC_REASONS)[number];
+
+function closedReason(value: unknown): DiagnosticReason | undefined {
+  return (DIAGNOSTIC_REASONS as readonly unknown[]).includes(value) ? (value as DiagnosticReason) : undefined;
+}
+
 /** The `where` values on the page channel that the HOST computes itself (the paint watchdog, a
  *  launch the host refused). Every other page-channel record is treated as coming from the
  *  mini-app, so a `where` added to the loader later is stripped by default, not sent. */
@@ -110,7 +134,8 @@ function miniAppErrorClass(value: unknown): string {
 
 /**
  * Project a redacted seam record onto the diagnostic allowlist. Unknown fields are dropped,
- * strings capped, `route` reduced to a path and `stack` to its frames. A mini-app record keeps only
+ * strings capped, `route` reduced to a path, `stack` to its frames, and a `reason` outside
+ * {@link DIAGNOSTIC_REASONS} dropped. A mini-app record keeps only
  * its site (`where`) and its class (`errorClass`, mapped onto the built-in names).
  */
 export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
@@ -132,6 +157,7 @@ export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
     let value: string | number | undefined;
     if (field === 'route') value = pathOnly(raw);
     else if (field === 'stack') value = framesOnly(raw);
+    else if (field === 'reason') value = closedReason(raw);
     else value = boundedValue(raw);
     if (value !== undefined) projected[field] = value;
   }
@@ -159,6 +185,7 @@ export function isDiagnosticRecord(value: unknown): value is DiagnosticRecord {
     if (!(DIAGNOSTIC_FIELDS as readonly string[]).includes(key)) return false;
     if (key === 'stack') return typeof field === 'string' && field.length <= DIAGNOSTIC_STACK_MAX;
     if (key === 'route') return typeof field === 'string' && pathOnly(field) === field;
+    if (key === 'reason') return closedReason(field) !== undefined;
     return boundedValue(field) === field;
   });
 }

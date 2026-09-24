@@ -39,6 +39,10 @@ app name, generated source, report note or stored user data SHALL appear in a pr
 - **WHEN** a transport error on `https://api.example/v1/generate?x=1` is projected
 - **THEN** `route` is `/v1/generate`
 
+#### Scenario: A failure sentence built from model output travels only as a closed code
+- **WHEN** a generation ends in a failure whose sentence names screens from the user's plan (e.g. "repeated: Alice's Lisbon Tab")
+- **THEN** the uploaded record's `reason` is a closed code, and no word of the sentence appears in the body
+
 ### Requirement: Error-level records are uploaded, batched, deduplicated and capped
 The diagnostics transport SHALL be a transport of the logging seam and SHALL forward only
 `error`-level records. It SHALL deduplicate by `(channel, message, errorClass, where)` within one
@@ -64,6 +68,10 @@ on the sink channel, SHALL NOT surface to the user, and SHALL NOT recurse into a
 - **WHEN** the server is unreachable during a flush
 - **THEN** no alert or error screen appears, the batch is not retried, and a delivery-failure
   record is in the ring buffer
+
+#### Scenario: A refused upload pauses the session
+- **WHEN** the diagnostics route answers `429`
+- **THEN** no further upload is attempted until its delta-seconds `Retry-After` has passed, or for the rest of the session without one, and records produced meanwhile are discarded, not queued
 
 ### Requirement: Uploads require a current AI-data consent grant
 The diagnostics transport SHALL NOT make any request unless a current AI-data consent grant exists

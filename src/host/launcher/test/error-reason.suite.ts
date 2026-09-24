@@ -6,7 +6,7 @@
  * always scrub to the generic reason.
  */
 import { Harness } from './harness';
-import { errorReason, GENERIC_STREAM_ERROR } from '../error-reason';
+import { errorReason, errorReasonCode, GENERIC_STREAM_ERROR } from '../error-reason';
 import { GenerationClientError } from '../transport-shared';
 import { EmptyBundleError } from '../build-lifecycle';
 
@@ -63,5 +63,17 @@ export async function runErrorReasonTests(h: Harness): Promise<void> {
       { reason: GENERIC_STREAM_ERROR, diagnostics: [] },
       'an unrecognised error falls through to the generic reason',
     );
+  });
+
+  await h.test('errorReasonCode: each screen reason is logged as its closed code, never its sentence', () => {
+    const cases: Array<[unknown, string]> = [
+      [new GenerationClientError('http', { status: 429, hint: 'Whim is busy right now.' }), 'server_refused'],
+      [new GenerationClientError('device_id', { hint: 'This device could not be identified.' }), 'server_refused'],
+      [new GenerationClientError('http', { status: 200, hint: 'Unexpected rewrite response shape' }), 'unexpected_error'],
+      [new GenerationClientError('network', { hint: 'fetch failed: ECONNRESET' }), 'unexpected_error'],
+      [new EmptyBundleError(), 'empty_bundle'],
+      [new Error('Alice owes 40'), 'unexpected_error'],
+    ];
+    h.eq(cases.map(([err]) => errorReasonCode(err)), cases.map(([, code]) => code), 'the code follows the same decision as the screen’s reason');
   });
 }

@@ -32,7 +32,7 @@ import { CHANNELS } from '../channels';
 import { DIAGNOSTIC_FIELDS, toDiagnostic } from '../diagnostic';
 import { DIAGNOSTICS_PATH } from '../diagnostics';
 import type { DiagnosticsOptions, DiagnosticsTarget, PostDiagnostics } from '../diagnostics';
-import { installCrashCapture } from '../crash-capture';
+import { installCrashCapture, renderCrashRecorder } from '../crash-capture';
 import type { GlobalErrorHandler, RejectionTracking } from '../crash-capture';
 import { keepFatalRecord, readFatalRecord, sendFatalRecord } from '../fatal-slot';
 import { createSeam, log } from '../index';
@@ -136,6 +136,24 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     h.ok(DiagnosticRecordSchema.safeParse(projected).success, 'the projection is a record the server accepts');
   });
 
+  await h.test('projection: a reason travels only as a closed code; a sentence in it is dropped', () => {
+    const seam = createSeam({ console: false });
+    seam.error(CHANNELS.gen, 'failure screen shown', { reason: "Screen names must be unique — repeated: Alice's Lisbon Tab.", stage: 'terminal failure event' });
+    const sentence = toDiagnostic(lastRecord(seam));
+    seam.error(CHANNELS.gen, 'failure screen shown', { reason: 'terminal_failure', stage: 'terminal failure event' });
+    const code = toDiagnostic(lastRecord(seam));
+    h.ok(!('reason' in sentence) && !JSON.stringify(sentence).includes('Alice'), 'a sentence in reason never reaches the projection');
+    h.eq(code.reason, 'terminal_failure', 'a closed code does');
+  });
+
+  await h.test('fatal slot: a kept record whose reason is not a closed code is never sent', async () => {
+    const kv = consentedStore();
+    kv.set('whim.fatal-error:v1', JSON.stringify({ at: 1, level: 'error', channel: 'whim', message: 'uncaught error', reason: 'Alice owes 40' }));
+    const uploads: Upload[] = [];
+    await sendFatalRecord(kv, gatedSeam(kv, uploads).diagnostics);
+    h.eq(uploads.length, 0, 'nothing is sent');
+  });
+
   await h.test('projection: a host stack loses its message line, even a message spanning lines', () => {
     const seam = createSeam({ console: false });
     const single = new TypeError("cannot read 'total' of undefined");
@@ -152,9 +170,9 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
   await h.test('projection: strings are capped at 128 characters and a stack at 4 KB', () => {
     const seam = createSeam({ console: false });
     const frames = Array.from({ length: 400 }, (_, i) => `    at frame${i} (index.android.bundle:1:${i})`).join('\n');
-    seam.error(CHANNELS.gen, 'generation step failed', { reason: 'r'.repeat(300), stack: `Error: boom\n${frames}` });
+    seam.error(CHANNELS.gen, 'generation step failed', { stage: 's'.repeat(300), stack: `Error: boom\n${frames}` });
     const projected = toDiagnostic(lastRecord(seam));
-    h.eq(String(projected.reason).length, 128, 'reason is cut to 128 characters');
+    h.eq(String(projected.stage).length, 128, 'stage is cut to 128 characters');
     h.eq(String(projected.stack).length, 4096, 'the stack is cut to 4096 characters');
     h.ok(DiagnosticRecordSchema.safeParse(projected).success, 'and the result is within the server’s caps');
   });
@@ -289,6 +307,49 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     await seam.diagnostics.flush();
     const failure = seam.buffer.snapshot().find(r => r.channel === CHANNELS.sink);
     h.eq([failure?.message, failure?.fields.status], ['diagnostics upload rejected', 403], 'the refusal and its status are in the ring buffer');
+  });
+
+  await h.test('upload: a 429 with no delta-seconds Retry-After stops uploads for the rest of the session, discarding what it refused', async () => {
+    for (const retryAfter of [null, 'Wed, 21 Oct 2026 07:28:00 GMT']) {
+      const uploads: Upload[] = [];
+      let clock = 1_000_000;
+      const refuseFirst: PostDiagnostics = async (url, headers, body) => {
+        uploads.push({ url, headers, batch: JSON.parse(body) as DiagnosticsBatch, body });
+        return uploads.length === 1 ? { ok: false, status: 429, retryAfter } : { ok: true, status: 204 };
+      };
+      const seam = uploadingSeam(uploads, { post: refuseFirst, now: () => clock });
+      seam.error(CHANNELS.gen, 'transport failed', { where: 'refused' });
+      await seam.diagnostics.flush();
+      seam.error(CHANNELS.gen, 'transport failed', { where: 'after-429' });
+      await seam.diagnostics.flush();
+      clock += 24 * 60 * 60 * 1000;
+      seam.error(CHANNELS.gen, 'transport failed', { where: 'a-day-later' });
+      await seam.diagnostics.flush();
+      h.eq(uploads.length, 1, `Retry-After ${String(retryAfter)}: no request after the 429, however long the session runs`);
+      h.eq(seam.diagnostics.attempts, 1, `Retry-After ${String(retryAfter)}: one upload attempt in all: the refused batch was not retried`);
+      seam.diagnostics.stop();
+    }
+  });
+
+  await h.test('upload: a 429 with Retry-After stops uploads until the window has passed; nothing from the pause is sent after it', async () => {
+    const uploads: Upload[] = [];
+    let clock = 1_000_000;
+    const refuseFirst: PostDiagnostics = async (url, headers, body) => {
+      uploads.push({ url, headers, batch: JSON.parse(body) as DiagnosticsBatch, body });
+      return uploads.length === 1 ? { ok: false, status: 429, retryAfter: '60' } : { ok: true, status: 204 };
+    };
+    const seam = uploadingSeam(uploads, { post: refuseFirst, now: () => clock });
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'refused' });
+    await seam.diagnostics.flush();
+    clock += 59_000;
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'inside-window' });
+    await seam.diagnostics.flush();
+    h.eq(uploads.length, 1, 'no request inside the Retry-After window');
+    clock += 2_000;
+    seam.error(CHANNELS.gen, 'transport failed', { where: 'after-window' });
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads.slice(1)).map(r => r.where), ['after-window'], 'after it, only a record logged after the window is sent');
+    seam.diagnostics.stop();
   });
 
   await h.test('upload: a gate that logs an error itself neither recurses nor uploads', async () => {
@@ -434,6 +495,39 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     tracking?.onUnhandled(7, new TypeError('no'));
     h.eq([lastRecord(seam).level, lastRecord(seam).fields.where, lastRecord(seam).fields.errorClass], ['error', 'unhandled-rejection', 'TypeError'], 'an error-level record is emitted');
     h.eq(previous, [7], 'and the previous tracking is called with the same id');
+  });
+
+  await h.test('crash capture: an engine without the rejection tracker says so once, on a channel that is never uploaded', async () => {
+    const uploads: Upload[] = [];
+    for (const hermes of [undefined, null, {}]) {
+      const seam = uploadingSeam(uploads);
+      installCrashCapture({ errorUtils: undefined, hermes, seam, keepFatal: () => undefined });
+      const said = seam.buffer.snapshot().filter(r => r.message === 'promise rejection tracker unavailable');
+      h.eq(said.map(r => [r.level, r.channel]), [['warn', CHANNELS.sink]], `${JSON.stringify(hermes) ?? 'undefined'}: one warning on the sink channel`);
+      await seam.diagnostics.flush();
+    }
+    h.eq(uploads.length, 0, 'and none of them is uploaded');
+    const tracked = createSeam({ console: false });
+    installCrashCapture({ errorUtils: undefined, hermes: { enablePromiseRejectionTracker: () => undefined }, seam: tracked, keepFatal: () => undefined });
+    h.eq(tracked.buffer.size, 0, 'an engine with the tracker says nothing');
+  });
+
+  await h.test('crash capture: a render error the root boundary rethrows is recorded and kept like a fatal error', () => {
+    const seam = createSeam({ console: false });
+    const kept: DiagnosticRecord[] = [];
+    const record = renderCrashRecorder({ seam, keepFatal: r => kept.push(r) });
+    record(new TypeError("cannot read 'Alice' of undefined"));
+    h.eq([lastRecord(seam).level, lastRecord(seam).fields.where, lastRecord(seam).fields.errorClass], ['error', 'render', 'TypeError'], 'an error-level record names the site and class');
+    h.eq([kept.length, kept[0]?.where, kept[0]?.errorClass], [1, 'render', 'TypeError'], 'and its projection is kept for the next launch');
+    h.ok(!JSON.stringify(kept).includes('Alice'), 'without the message');
+    const failing = renderCrashRecorder({ seam, keepFatal: () => { throw new Error('store is gone'); } });
+    let thrown: unknown;
+    try {
+      failing(new Error('x'));
+    } catch (err) {
+      thrown = err;
+    }
+    h.eq(thrown, undefined, 'a failing record keeper never stops the boundary from rethrowing');
   });
 
   await h.test('fatal slot: a fatal error is uploaded on the next launch, then the stored copy is gone', async () => {

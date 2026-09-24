@@ -17,6 +17,7 @@ import type { NativeReleaseConfig } from './native-config';
 import { parseXmlPlist, type PlistValue } from './ios-project';
 import { MANIFESTS, latestVersion, type DisclosureManifest } from '../../../contract/src/disclosure-manifest';
 import { CONSENT_SCREEN_COVERAGE, LEGAL_COPY } from '../../../src/host/launcher/copy';
+import { DIAGNOSTICS_PATH } from '../../../src/host/logging/diagnostics';
 
 // `existsSync`/`readdirSync`/`Dirent` are already declared for 'node:fs' by
 // `synthrun/env.d.ts` (ambient module augmentations merge additively across the program —
@@ -667,8 +668,6 @@ const DISCLOSURE_MANIFEST_PATH = 'contract/src/disclosure-manifest.ts';
 const CONSENT_COPY_PATH = 'src/host/launcher/copy.ts';
 const PRIVACY_PAGES: readonly string[] = ['deploy/site/privacy.html', 'deploy/site/fr/privacy.html'];
 
-/** What marks the diagnostics transport in device code: the route it posts to, or its seam name. */
-const DIAGNOSTICS_TRANSPORT_MARKERS: readonly string[] = ['/v1/diagnostics', 'diagnosticsTransport'];
 
 function diagnosticsType(type: string, manifestType?: string): MappedType {
   return { type, manifestTypes: new Set(manifestType === undefined ? [] : [manifestType]), flags: {}, purposes: new Set(), categories: [DIAGNOSTICS_CATEGORY] };
@@ -681,12 +680,14 @@ const DIAGNOSTICS_STORE_TYPES: MappedStoreTypes = {
 };
 
 /** The first device source (`src/`, outside tests and generated output, or `index.js`) that
- *  carries a transport marker, or `undefined` when the build can't send diagnostics. */
+ *  carries the route the diagnostics transport posts to — its own `DIAGNOSTICS_PATH` constant,
+ *  imported, so the marker follows the route if it ever moves — or `undefined` when the build
+ *  can't send diagnostics. */
 export function diagnosticsTransportFile(repoRoot: string): string | undefined {
   const candidates = [...walkFiles(repoRoot, 'src').filter((f) => /\.(tsx?|js)$/.test(f) && !/\/(test|generated)\//.test(f)), 'index.js'];
   return candidates.find((file) => {
     const text = readText(repoRoot, file);
-    return text !== undefined && DIAGNOSTICS_TRANSPORT_MARKERS.some((marker) => text.includes(marker));
+    return text?.includes(DIAGNOSTICS_PATH) ?? false;
   });
 }
 

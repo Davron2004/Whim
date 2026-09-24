@@ -23,6 +23,7 @@ import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import { DEFAULT_THEME, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
+import type { DiagnosticReason } from '../logging/diagnostic';
 import type { AppRecord } from '../bridge';
 import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
@@ -132,7 +133,7 @@ import type { ServiceRefusal } from './service-refusal';
 import { rewriteRefusalTarget } from './refusal-target';
 import type { RefusalSentFrom } from './refusal-target';
 import { useNoticeWindowClear } from './ServiceNotice';
-import { errorReason, GENERIC_STREAM_ERROR } from './error-reason';
+import { errorReason, errorReasonCode, GENERIC_STREAM_ERROR } from './error-reason';
 import { liveClientOptions } from './consent-options';
 import { resolveOptions } from './resolve-options';
 import { probeGateFor } from './probe-gate';
@@ -296,9 +297,16 @@ function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal:
  *  "The failure is recoverable from the log"): the error class, message, stack and mapped kind,
  *  plus each diagnostic's `kind`/`symbol`/`message` — precisely the taxonomy the screen scrubs,
  *  since it may show nothing but a diagnostic's `hint`. A terminal `failure` event has no thrown
- *  error, so its own class name stands in for one and its `reason` for the message. */
+ *  error, so its own class name stands in for one and its `reason` for the message.
+ *
+ *  `reason` is the closed code (`DIAGNOSTIC_REASONS`), the one field of these the diagnostics
+ *  upload may carry; the sentence the screen shows stays in `detail`, on the phone. A terminal
+ *  failure's sentence is written from model output — a plan's screen names come from the user's
+ *  prompt — so it never goes in a field the upload projects. */
 function logGenFailureShown(input: {
   stage: string;
+  reasonCode: DiagnosticReason;
+  /** The sentence the failure screen shows. */
   reason: string;
   observedRepairAttempts: number;
   err?: unknown;
@@ -310,14 +318,13 @@ function logGenFailureShown(input: {
 }): void {
   log.error(CHANNELS.gen, 'failure screen shown', {
     stage: input.stage,
-    reason: input.reason,
+    reason: input.reasonCode,
+    detail: input.reason,
     observedRepairAttempts: input.observedRepairAttempts,
     ...(input.err === undefined
       ? {
           errorClass: input.failureClass ?? 'GenerationFailure',
-          kind: input.diagnostics?.[0]?.kind,
           requestId: input.streamRequestId,
-          message: input.reason,
           stack: undefined,
         }
       : errorFields(input.err, input.streamRequestId)),
@@ -1164,7 +1171,7 @@ function LauncherShell({
     streamRequestId?: string,
   ): Screen => {
     const reasoned = errorReason(err);
-    logGenFailureShown({ stage, reason: reasoned.reason, observedRepairAttempts: observed, err, streamRequestId });
+    logGenFailureShown({ stage, reasonCode: errorReasonCode(err), reason: reasoned.reason, observedRepairAttempts: observed, err, streamRequestId });
     return {
       kind: 'failure',
       editing,
@@ -1586,6 +1593,7 @@ function LauncherShell({
         log.error(CHANNELS.gen, 'stream ended with no terminal event', { ...counts, requestId: stream.requestId });
         logGenFailureShown({
           stage: 'stream ended with no terminal event',
+          reasonCode: 'no_terminal_event',
           reason: GENERIC_STREAM_ERROR,
           observedRepairAttempts: counts.repair,
           failureClass: 'StreamEndedWithoutTerminalEvent',
@@ -1605,6 +1613,7 @@ function LauncherShell({
       if (terminal.type === 'failure') {
         logGenFailureShown({
           stage: 'terminal failure event',
+          reasonCode: 'terminal_failure',
           reason: terminal.reason,
           observedRepairAttempts: counts.repair,
           failureClass: 'GenerationFailureEvent',
