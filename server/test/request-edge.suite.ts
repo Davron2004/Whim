@@ -2,11 +2,13 @@
  * The `/v1` request edge (request-envelope): one request id per request, on every response, every
  * log line and the ledger row; the client envelope and its legacy default; the envelope fields on
  * the request log line; the consent practice table and its `consent_required` backstop, with the
- * static check that every route calling a model or storing data declares its practice; and the
- * server's own traffic generators sending a real envelope.
+ * static check that every route calling a model or storing data declares its practice; the
+ * server's own traffic generators sending a real envelope; and the per-platform minimum-build gate
+ * with the `/healthz` field that reports it.
  *
- * Spec: specs/request-envelope/spec.md (all requirements). Every request and stream read is
- * bounded, so a regression fails its check by name instead of hanging the suite.
+ * Spec: specs/request-envelope/spec.md (all requirements); specs/app-update-gate/spec.md "The
+ * server refuses builds below a per-platform minimum". Every request and stream read is bounded,
+ * so a regression fails its check by name instead of hanging the suite.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -273,6 +275,117 @@ async function testEnvelopeRefusals(): Promise<void> {
   eq('the device gate runs before the envelope check', await refusalCode(noDevice), 'missing_device_id');
 }
 
+// ─── The minimum-build gate ──────────────────────────────────────────────────
+
+/** `ENVELOPE` (build 381500) from an Android phone. */
+const ANDROID_ENVELOPE: Readonly<Record<string, string>> = { ...ENVELOPE, [PLATFORM_HEADER]: 'android' };
+
+/** The minimums `loadServerConfig` reads from these operator variables — the same path production
+ *  takes, so a variable that stopped reaching the gate fails here too. */
+function minimumsFrom(env: NodeJS.ProcessEnv): Partial<ServerConfig> {
+  const { minBuildIos, minBuildAndroid } = loadServerConfig(env);
+  return { minBuildIos, minBuildAndroid };
+}
+
+async function testOldBuildTurnedAway(): Promise<void> {
+  section('Minimum build — an old build is refused 426 before admission; the other platform is served');
+
+  const usageStore = new RecordingUsageStore();
+  const app = testApp({ usageStore, stub: true, config: minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }) });
+  const device = { 'x-whim-device': DEVICE_ID };
+  const capture = captureLogs();
+  try {
+    const refused = await send(app, '/v1/clarify', { ...device, ...ANDROID_ENVELOPE }, { prompt: 'a timer' });
+    const id = refused.headers.get(REQUEST_ID_HEADER);
+    eq('Android build 381500 against an Android minimum of 382000 → 426', refused.status, 426);
+    eq('refused update_required', await refusalCode(refused), 'update_required');
+    eq('with no Retry-After (only an update clears it)', refused.headers.get('retry-after'), null);
+    check('the 426 carries a request id', UUID_RE.test(id ?? ''), String(id));
+    eq(
+      'its request line carries the same requestId and the refused envelope',
+      requestLines(capture, '/v1/clarify').map((r) => [r.status, r.requestId, r.platform, r.build]),
+      [[426, id, 'android', 381500]],
+    );
+    eq('no ledger row was admitted for it', usageStore.admitted, []);
+
+    const served = await send(app, '/v1/clarify', { ...device, ...ENVELOPE }, { prompt: 'a timer' });
+    eq('iOS build 381500 on the same server is served', served.status, 200);
+    eq('... and admitted, so admission was reachable all along', usageStore.admitted, [served.headers.get(REQUEST_ID_HEADER)]);
+
+    const atMinimum = await send(app, '/v1/clarify', { ...device, ...ANDROID_ENVELOPE, [BUILD_HEADER]: '382000' }, { prompt: 'a timer' });
+    eq('an Android build exactly at the minimum is served', atMinimum.status, 200);
+  } finally {
+    capture.stop();
+  }
+}
+
+async function testEveryV1RouteGated(): Promise<void> {
+  section('Minimum build — every /v1 route is gated by prefix, before any model work, after the device and envelope checks');
+
+  const routes = [
+    ['/v1/generate', { prompt: 'a timer' }],
+    ['/v1/rewrite', { prompt: 'a timer' }],
+    ['/v1/clarify', { prompt: 'a timer' }],
+    ['/v1/report', { reason: 'broken' }],
+    ['/v1/usage', undefined],
+  ] as const;
+  for (const [route, body] of routes) {
+    const model = new ForbiddenModel();
+    const usageStore = new RecordingUsageStore();
+    const app = testApp({
+      usageStore,
+      model,
+      roster: ROSTER,
+      pipeline: machinePipeline(model, { now: () => AT_NOON_UTC }, ROSTER),
+      policy: cachedPolicy(new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test', timeoutMs: 1000 })),
+      config: minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' }),
+    });
+    const res = await send(app, route, { 'x-whim-device': DEVICE_ID, ...ANDROID_ENVELOPE }, body);
+    eq(`${route}: an old Android build → 426 update_required`, [res.status, await refusalCode(res)], [426, 'update_required']);
+    eq(`${route}: no model was called (classifier included)`, model.calls, 0);
+    eq(`${route}: no ledger row was admitted`, usageStore.admitted, []);
+  }
+
+  const raised = minimumsFrom({ WHIM_MIN_BUILD_ANDROID: '382000' });
+  const noDevice = await send(testApp({ config: raised }), '/v1/clarify', ANDROID_ENVELOPE, { prompt: 'a timer' });
+  eq('the device gate runs before the minimum-build gate', [noDevice.status, await refusalCode(noDevice)], [400, 'missing_device_id']);
+  const halfEnvelope = await send(testApp({ config: raised }), '/v1/clarify', { 'x-whim-device': DEVICE_ID, [PLATFORM_HEADER]: 'android', [BUILD_HEADER]: '381500' }, { prompt: 'a timer' });
+  eq('the envelope check runs before the minimum-build gate', [halfEnvelope.status, await refusalCode(halfEnvelope)], [400, 'invalid_envelope']);
+}
+
+async function testLegacyAndDefaults(): Promise<void> {
+  section('Minimum build — a legacy client is build 0 on both platforms; minimums off by default');
+
+  const legacy = { 'x-whim-device': DEVICE_ID };
+  for (const variable of ['WHIM_MIN_BUILD_IOS', 'WHIM_MIN_BUILD_ANDROID']) {
+    const app = testApp({ stub: true, config: minimumsFrom({ [variable]: '1' }) });
+    const res = await send(app, '/v1/clarify', legacy, { prompt: 'a timer' });
+    eq(`only ${variable} raised (to 1): a legacy client is refused 426 update_required`, [res.status, await refusalCode(res)], [426, 'update_required']);
+    const enveloped = await send(app, '/v1/clarify', { ...legacy, ...ENVELOPE, [PLATFORM_HEADER]: variable === 'WHIM_MIN_BUILD_IOS' ? 'android' : 'ios', [BUILD_HEADER]: '1' }, { prompt: 'a timer' });
+    eq(`only ${variable} raised: build 1 of the other platform is served`, enveloped.status, 200);
+  }
+
+  const app = testApp({ stub: true, config: minimumsFrom({}) });
+  const legacyServed = await send(app, '/v1/clarify', legacy, { prompt: 'a timer' });
+  eq('neither minimum configured: a legacy client is served', legacyServed.status, 200);
+  for (const platform of ['ios', 'android']) {
+    const res = await send(app, '/v1/clarify', { ...legacy, ...ENVELOPE, [PLATFORM_HEADER]: platform, [BUILD_HEADER]: '1' }, { prompt: 'a timer' });
+    eq(`neither minimum configured: ${platform} build 1 is served`, res.status, 200);
+  }
+  eq('neither minimum configured: /healthz reports both as 0', await (await send(app, '/healthz', {})).json(), { ok: true, service: 'whim-server', minBuild: { ios: 0, android: 0 } });
+}
+
+async function testHealthzReportsMinimums(): Promise<void> {
+  section('Minimum build — /healthz reports the live minimums, anonymously and outside /v1');
+
+  const app = testApp({ config: minimumsFrom({ WHIM_MIN_BUILD_IOS: '381000', WHIM_MIN_BUILD_ANDROID: '382000' }) });
+  const res = await send(app, '/healthz', {});
+  eq('no device header or envelope needed: 200', res.status, 200);
+  eq('the body carries both minimums, every other field unchanged', await res.json(), { ok: true, service: 'whim-server', minBuild: { ios: 381000, android: 382000 } });
+  const junkEnvelope = await send(app, '/healthz', { [BUILD_HEADER]: 'junk' });
+  eq('a malformed envelope header does not reach /healthz (no envelope is read there)', junkEnvelope.status, 200);
+}
+
 // ─── Consent practices ───────────────────────────────────────────────────────
 
 function testPermits(): void {
@@ -403,6 +516,10 @@ export async function runRequestEdgeTests(): Promise<void> {
   await testFailedGenerationJoinsUp();
   await testEnvelopeOnTheRequestLine();
   await testEnvelopeRefusals();
+  await testOldBuildTurnedAway();
+  await testEveryV1RouteGated();
+  await testLegacyAndDefaults();
+  await testHealthzReportsMinimums();
   testPermits();
   await testConsentBackstop();
   testEveryDataRouteDeclaresAPractice();

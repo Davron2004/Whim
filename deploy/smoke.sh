@@ -32,8 +32,35 @@ for tool in dig curl; do
   command -v "$tool" >/dev/null 2>&1 || whim_fail "$tool is not on PATH; smoke needs dig and curl"
 done
 
-# The exact production identity. A load-test server answers with a different service name.
-readonly EXPECTED_HEALTH='{"ok":true,"service":"whim-server"}'
+# The minimum builds these values deploy (unset is 0), and the production identity carrying them. A
+# load-test server answers with a different service name.
+readonly MIN_BUILD_IOS="${WHIM_MIN_BUILD_IOS:-0}"
+readonly MIN_BUILD_ANDROID="${WHIM_MIN_BUILD_ANDROID:-0}"
+readonly EXPECTED_HEALTH="{\"ok\":true,\"service\":\"whim-server\",\"minBuild\":{\"ios\":$MIN_BUILD_IOS,\"android\":$MIN_BUILD_ANDROID}}"
+# Judges the /healthz body on stdin by structure, given the configured iOS and Android minimums as
+# arguments, and prints why. Exits 0 when ok is true, the service is whim-server and minBuild holds
+# exactly those minimums; 2 when minBuild is absent (a server from before the minimum-build gate,
+# e.g. after a rollback) and both minimums are 0, so there is nothing for it to enforce; 1 otherwise.
+readonly HEALTH_JS='let healthText = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { healthText += chunk; });
+process.stdin.on("end", () => {
+  const [iosText, androidText] = process.argv.slice(1);
+  const ios = Number(iosText);
+  const android = Number(androidText);
+  const verdict = (code, reason) => { console.log(reason); process.exit(code); };
+  let health;
+  try { health = JSON.parse(healthText); } catch { verdict(1, "the body is not JSON"); }
+  if (health?.ok !== true || health.service !== "whim-server") verdict(1, "expected ok true from service whim-server");
+  const minimums = "iOS " + iosText + ", Android " + androidText;
+  if (!Object.hasOwn(health, "minBuild")) {
+    if (ios === 0 && android === 0) verdict(2, "no minBuild: this server predates the minimum-build gate; both configured minimums are 0, so it has nothing to enforce");
+    verdict(1, "no minBuild: this server predates the minimum-build gate, so it cannot enforce the configured minimums (" + minimums + "); rolling back below the gate dropped it");
+  }
+  const got = health.minBuild;
+  if (got?.ios === ios && got?.android === android) verdict(0, "minBuild matches");
+  verdict(1, "minBuild should hold the configured minimums (" + minimums + ")");
+});'
 # Reads the stream probe from stdin and passes when three comment frames span at least 1.5 s.
 readonly SSE_TIMING_JS='const times = []; let buffer = "";
 process.stdin.setEncoding("utf8");
@@ -117,14 +144,19 @@ probe() {
 }
 
 check_health() {
-  local url="https://$WHIM_API_HOST/healthz" body
+  local url="https://$WHIM_API_HOST/healthz" body verdict code=0
   probe "$url"
   body="$(head -c 300 "$work/body")"
-  if [ "$PROBE_STATUS" = 200 ] && [ "$body" = "$EXPECTED_HEALTH" ]; then
-    pass "api $url -> $EXPECTED_HEALTH"
-  else
+  if [[ "$PROBE_STATUS" != 200 ]]; then
     flunk "api $url answered $PROBE_STATUS '$body', expected 200 $EXPECTED_HEALTH"
+    return
   fi
+  verdict="$(node -e "$HEALTH_JS" "$MIN_BUILD_IOS" "$MIN_BUILD_ANDROID" <"$work/body")" || code=$?
+  case "$code" in
+    0) pass "api $url -> $body" ;;
+    2) printf 'WARN  api %s answered %s: %s\n' "$url" "$body" "$verdict" >&2 ;;
+    *) flunk "api $url answered 200 '$body': ${verdict:-node gave no verdict}; expected $EXPECTED_HEALTH" ;;
+  esac
 }
 
 check_device_header_required() {

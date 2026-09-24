@@ -81,6 +81,7 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL`, `WHIM_REPAIR_MODEL` | no | optional per-role model overrides; see the roster table below |
 | `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
+| `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_APP_STORE_URL`, `WHIM_PLAY_STORE_URL` | no | the app-link fallback page's store-links block, dropped when both are unset |
 
 Loaded after the committed `deploy/defaults.env` and before the process environment (later wins).
@@ -139,9 +140,13 @@ deploy/smoke.sh --pages-only  # DNS + pages only
 What each check means:
 
 - **DNS** — both hostnames resolve to `WHIM_STATIC_IP` only, no `AAAA`.
-- **`/healthz`** — `200` with body byte-equal to `{"ok":true,"service":"whim-server"}`: the boot
-  self-test (a real generation through the sandbox) passed, and this isn't a stray load-test
-  container (its `/healthz` would name `whim-server-loadtest`).
+- **`/healthz`** — `200` with a JSON body holding `"ok":true`, `"service":"whim-server"` and
+  `"minBuild":{"ios":0,"android":0}`, with the two minimums your values file sets in place of the
+  zeros: the boot self-test (a real generation through the sandbox) passed, this isn't a stray
+  load-test container (its `/healthz` would name `whim-server-loadtest`), and the minimum builds you
+  deployed are the ones the server enforces. A server from before the minimum-build gate answers
+  with no `minBuild` at all: smoke passes it with one `WARN` line when both minimums are `0`, and
+  fails when either is raised, since that server cannot enforce it.
 - **`/v1/generate` without a device header → `400`** — the identity gate is live.
 - **`/healthz/sse` frame spacing** — the proxy isn't buffering the stream.
 - **metadata-server fetch blocked from inside the container** — the synthetic run's egress lock is
@@ -200,6 +205,51 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `429 server_busy` with `Retry-After` set to the next UTC midnight. The anonymous stream probe has
   its own tiny pool, `WHIM_LIMIT_PROBE_CONCURRENCY` (2), so probe traffic can never crowd the paid
   routes; like the other limits it is a default in `server/src/config.ts`, not a profile setting.
+
+## Minimum supported build
+
+The server turns away any `/v1` request whose build is below its platform's minimum with
+`426 update_required` ("Update Whim to the latest version to keep using its AI features."), before
+any admission, ledger row or model call. It covers every `/v1` route. `/healthz` stays open and
+reports the live values as `minBuild`. There is one value per platform, because a bug usually
+belongs to one:
+
+| Variable | Compared with |
+|---|---|
+| `WHIM_MIN_BUILD_IOS` | the iOS build number (`CFBundleVersion`) the app sends |
+| `WHIM_MIN_BUILD_ANDROID` | the Android `versionCode` the app sends |
+
+Both default to `0`, which serves every build. A value is `0` or a positive whole number with no
+leading zero. `deploy/deploy.sh` refuses anything else before it builds or changes anything; the
+server would refuse to boot on it.
+
+**A legacy client is refused as soon as either minimum is above `0`.** A build from before the
+client envelope (TestFlight build 381237, for one) sends no platform and no build number, so the
+server counts it as build `0` on both platforms. Raising only the iOS minimum also turns away every
+legacy Android install, and the other way round.
+
+To raise or lower a minimum:
+
+1. **Check the build the stores currently serve on that platform.** iOS: App Store Connect → Whim →
+   TestFlight (and the App Store tab once the app is live), the newest build testers and users can
+   install. Android: Play Console → Whim → Test and release → each track in use, its newest version
+   code. Never set a minimum above that number: nobody on that platform could install a build that
+   passes, and every AI feature would stay locked for all of them until the rollback below.
+2. **Set the value** in `~/.config/whim/deploy.env`, for example `WHIM_MIN_BUILD_IOS=382000`.
+3. **Deploy.** From the commit production runs, `deploy/deploy.sh` reuses that commit's image,
+   writes the new value to `/etc/whim/config.env` and restarts the server through the drain.
+   `deploy/deploy.sh --tag <that commit's sha>` does the same from any clean, pushed checkout.
+4. **Confirm on `/healthz`.** The deploy's smoke fails unless `/healthz` reports exactly the values
+   in your values file. To check by hand:
+
+   ```sh
+   curl -s https://api.whim.anycognition.ca/healthz
+   # {"ok":true,"service":"whim-server","minBuild":{"ios":382000,"android":0}}
+   ```
+
+**Rollback:** set the value back (its previous number, or `0` or no line at all to switch that
+platform's gate off), redeploy the same way, and confirm on `/healthz`. It takes effect on the next
+request, with no app update involved.
 
 ## Capacity profiles, resizing, and the load test
 
@@ -262,6 +312,18 @@ deploy/deploy.sh --tag <40-hex sha>   # redeploys a known-good image; never buil
 checkout's pages (privacy's model-id copy, for one) alongside a rolled-back server would serve pages
 that describe a server the rollback just replaced. Run `deploy/deploy.sh --site-only` separately if
 the site also needs to move.
+
+Roll back with the **current** checkout's `deploy/deploy.sh --tag <sha>`, never by checking out the
+older commit and running its `deploy.sh`: an older `deploy/lib.sh` refuses any `deploy.env` line it
+doesn't know (`unknown variable WHIM_MIN_BUILD_IOS`), even an empty one.
+
+Rolling back to an image from before the minimum-build gate drops the gate: that server answers
+`/healthz` without `minBuild` and serves every build. With both minimums at `0` nothing is lost,
+and smoke passes with one `WARN` line saying so. With either minimum raised, the rollback is live
+but smoke fails for exactly that reason (the server "cannot enforce the configured minimums"), so
+`deploy.sh` exits 1 without `done`. Roll forward to an image with the gate as soon as you can; if
+serving every build is acceptable until then, set both minimums back to `0` in your values file so
+`deploy/smoke.sh` passes again (with the warning).
 
 Rotating the OpenRouter key: add a new version to `whim-openrouter-api-key` in Secret Manager, then
 run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version and recreates

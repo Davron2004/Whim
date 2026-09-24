@@ -61,6 +61,8 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_REPORT_RETENTION_DAYS', field: 'reportRetentionDays', validValue: '91', parsed: 91 },
   { key: 'WHIM_LEDGER_RETENTION_DAYS', field: 'ledgerRetentionDays', validValue: '92', parsed: 92 },
   { key: 'WHIM_DRAIN_TIMEOUT_MS', field: 'drainTimeoutMs', validValue: '900000', parsed: 900_000 },
+  { key: 'WHIM_MIN_BUILD_IOS', field: 'minBuildIos', validValue: '381500', parsed: 381_500 },
+  { key: 'WHIM_MIN_BUILD_ANDROID', field: 'minBuildAndroid', validValue: '382000', parsed: 382_000 },
 ];
 
 export function runConfigTests(): void {
@@ -121,6 +123,28 @@ export function runConfigTests(): void {
     'WHIM_MIN_CREDIT_USD rejects a negative amount',
     throwsNaming(() => loadServerConfig(baseEnv({ WHIM_MIN_CREDIT_USD: '-1' })), 'WHIM_MIN_CREDIT_USD'),
   );
+
+  section('Minimum supported builds (app-update-gate): default 0, anything but a build number fails by name');
+
+  eq('unset: both minimums are 0 (the gate is off)', [defaults.minBuildIos, defaults.minBuildAndroid], [0, 0]);
+  const oneRaised = loadServerConfig(baseEnv({ WHIM_MIN_BUILD_IOS: '0', WHIM_MIN_BUILD_ANDROID: '382000' }));
+  eq('an explicit 0 is accepted, and each variable reaches only its own platform', [oneRaised.minBuildIos, oneRaised.minBuildAndroid], [0, 382_000]);
+  // Each of these would read as a number (often 0, which silently turns the gate off) under a
+  // plain `Number()` parse, so each must fail instead.
+  for (const [what, raw] of [
+    ['a negative value', '-1'],
+    ['a fraction', '381500.5'],
+    ['an empty value', ''],
+    ['an exponent', '1e5'],
+    ['a hex value', '0x10'],
+    ['surrounding spaces', ' 382000'],
+    ['a leading zero', '0382000'],
+    ['more digits than any build number', '1234567890123456'],
+  ] as const) {
+    for (const key of ['WHIM_MIN_BUILD_IOS', 'WHIM_MIN_BUILD_ANDROID']) {
+      check(`${key}: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ [key]: raw })), key));
+    }
+  }
 
   section('Production configuration refuses dev-only modes');
 
