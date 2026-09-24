@@ -10,3 +10,4 @@
 - 16:14 fix-1 dispatched: BASE `a08828ef3f0286ac622a5b4eff311224186e1185`, worktree `.claude/worktrees/beta-waitlist-fix1`, branch `chain/beta-waitlist-fix1`.
 - 16:32 fix-1 report: complete, GATE PASS (server:test 3637/0), commits c8783f58 f9d72978 fd5fcfca 8f9ee6d8; class A only (trap POST runs in the full smoke only; design D3 renamed too; operator.env.example; curl >= 7.84 for %header, local is 8.7.1). Trap is now `hp_ref`; notice fingerprint and AI_CONSENT_VERSION unchanged. Integrity OK; merged onto staging.
 - 16:38 gate-full on the fix-1 merge: FULL GATE PASSED. Worktrees and chain branches removed. Closure: /git-cleanup skipped by owner direction (merge and deploy tonight); history stays as proposal + chain commits.
+- 16:42 closure: PR #116; CI isolation-suite + quality-gate pass (checkverdict 0); Sonar round 1: 0 issues (exit 0). Merging by owner direction.
