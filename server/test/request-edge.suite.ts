@@ -550,9 +550,9 @@ function testPermits(): void {
   section('Consent practices — permits() reads the table derived from the disclosure manifest');
 
   // Version 1 keeps every category request-envelope gave it, plus the phone ID v1 disclosed;
-  // version 2 adds error details and the app-integrity check.
+  // version 2 adds error details, the app-integrity check and the website's beta waitlist.
   const versionOne: readonly PracticeCategory[] = ['request-material', 'usage-records', 'connection-logs', 'reports', 'phone-id'];
-  const versionTwo: readonly PracticeCategory[] = [...versionOne, 'error-details', 'app-integrity'];
+  const versionTwo: readonly PracticeCategory[] = [...versionOne, 'error-details', 'app-integrity', 'waitlist'];
   for (const category of PRACTICE_CATEGORIES) {
     eq(`version 1 covers ${category} exactly when v1 disclosed it`, permits(1, category), versionOne.includes(category));
     eq(`version 2 covers ${category} exactly when v2 discloses it`, permits(2, category), versionTwo.includes(category));
