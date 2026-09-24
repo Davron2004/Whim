@@ -34,8 +34,10 @@ kind with a declared exit.
 - **THEN** the update screen shows, and the prompt they typed is not lost
 
 #### Scenario: Launch check catches it first
-- **WHEN** the app launches below the minimum for its platform
-- **THEN** the update screen shows before the user can type a prompt
+- **WHEN** the app launches below the minimum for its platform and the launch-time check reads the minimum
+- **THEN** the update screen replaces home or compose, keeping any typed prompt, without waiting for the user to
+  send a request
+- **AND** a request sent before the check lands is refused `update_required` and shows the same screen
 
 #### Scenario: Not now keeps the phone's apps
 - **WHEN** the user taps "Not now"
