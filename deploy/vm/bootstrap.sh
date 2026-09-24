@@ -6,8 +6,8 @@
 #
 # Installs Docker Engine and the compose plugin, the Artifact Registry credential helper, mounts the
 # persistent data disk (formatting it only when it has no filesystem), creates the owned data
-# directories, asserts unprivileged user namespaces work (Chromium's sandbox needs them) and installs
-# the egress firewall. Safe to rerun.
+# directories, asserts unprivileged user namespaces work (Chromium's sandbox needs them), installs
+# the egress firewall and the daily container-log age cap. Safe to rerun.
 set -euo pipefail
 
 readonly DATA_DEVICE=/dev/disk/by-id/google-whim-data
@@ -133,6 +133,15 @@ assert_bridge_no_ipv6() {
   [ "$enabled" != "true" ] || fail "the whim Docker bridge has IPv6 enabled; compose requires an IPv4-only bridge"
 }
 
+# compose.yaml rotates the containers' logs by size only; this daily job enforces the policy's 90 days.
+install_log_age_cap() {
+  install -m 0755 -o root -g root "$here/log-age-cap.sh" /usr/local/sbin/whim-log-age-cap.sh
+  install -m 0644 -o root -g root "$here/whim-log-age-cap.service" /etc/systemd/system/whim-log-age-cap.service
+  install -m 0644 -o root -g root "$here/whim-log-age-cap.timer" /etc/systemd/system/whim-log-age-cap.timer
+  systemctl daemon-reload
+  systemctl enable --now whim-log-age-cap.timer
+}
+
 install_docker
 configure_registry
 mount_data_disk
@@ -140,4 +149,5 @@ create_directories
 assert_user_namespaces
 assert_bridge_no_ipv6
 install_egress_firewall
+install_log_age_cap
 echo "bootstrap.sh: done"

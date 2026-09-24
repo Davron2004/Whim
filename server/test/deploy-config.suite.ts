@@ -1693,7 +1693,7 @@ if (tool === 'id') console.log('0');
 if (tool === 'curl') process.exit(71);
 if (tool === 'docker' || args.includes('-L') || args.includes('-D')) process.exit(1);
 `;
-    for (const tool of ['modprobe', 'iptables', 'ip6tables', 'id', 'docker', 'apt-get', 'install', 'curl']) {
+    for (const tool of ['modprobe', 'iptables', 'ip6tables', 'id', 'docker', 'apt-get', 'install', 'curl', 'systemctl']) {
       fs.writeFileSync(path.join(dir, tool), stub, { mode: 0o755 });
     }
     const file = path.join(dir, 'script.sh');
@@ -1757,6 +1757,150 @@ function bootstrapDownloadTests(files: ReadonlyMap<string, string>): void {
     const index = curl.indexOf(option);
     check(`Docker signing key constrains ${option} to HTTPS`, index >= 0 && curl[index + 1] === '=https', JSON.stringify(curl));
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Container log age cap (legal-surface-v2 review H2): the policy deletes connection data and logs
+// within 90 days, and compose.yaml rotates Docker's json-file logs by size only.
+
+const DAY_MS = 86_400_000;
+const LOG_AGE_CAP_UNIT = 'whim-log-age-cap';
+
+/** One line as Docker's json-file driver writes it: `log`, `stream`, then `time` in RFC 3339 UTC
+ *  with nanoseconds. */
+function dockerLogLine(log: string, stream: 'stdout' | 'stderr', daysAgo: number): string {
+  const time = new Date(Date.now() - daysAgo * DAY_MS).toISOString().replace(/Z$/, '417302Z');
+  return `${JSON.stringify({ log, stream, time })}\n`;
+}
+
+/** A Caddy access-log entry and a pino server entry, the two containers' real line shapes. Pino's
+ *  own `time` key sits escaped inside `log`. */
+function caddyAccess(uri: string): string {
+  return `${JSON.stringify({ level: 'info', ts: 1_758_700_000.25, logger: 'http.log.access', msg: 'handled request', request: { remote_ip: '198.51.100.23', proto: 'HTTP/2.0', method: 'POST', uri } })}\n`;
+}
+
+function pinoLine(msg: string): string {
+  return `${JSON.stringify({ level: 30, time: 1_758_700_000_000, pid: 1, msg, req: { remoteAddress: '203.0.113.9' } })}\n`;
+}
+
+function writeAged(file: string, text: string, daysAgo: number): void {
+  fs.writeFileSync(file, text);
+  const at = new Date(Date.now() - daysAgo * DAY_MS);
+  fs.utimesSync(file, at, at);
+}
+
+/** Runs `script` against a stand-in for /var/lib/docker/containers and reports every way the
+ *  result breaks the age cap or touches what it must not. */
+function logAgeCapRunProblems(script: string): string[] {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-log-age-cap-'));
+  try {
+    const root = path.join(dir, 'containers');
+    const container = path.join(root, 'c1');
+    const unreadable = path.join(root, 'c2');
+    fs.mkdirSync(container, { recursive: true });
+    fs.mkdirSync(unreadable);
+    const active = path.join(container, 'c1-json.log');
+    const oldLines = [dockerLogLine(caddyAccess('/v1/generate'), 'stderr', 100), dockerLogLine(pinoLine('request completed'), 'stdout', 100)];
+    const recentLines = [dockerLogLine(pinoLine('request completed'), 'stdout', 10), dockerLogLine(caddyAccess('/v1/clarify'), 'stderr', 0), dockerLogLine('listening on 8787\n', 'stdout', 0)];
+    writeAged(active, [...oldLines, ...recentLines].join(''), 0);
+    const inode = fs.statSync(active).ino;
+    const staleRotated = path.join(container, 'c1-json.log.2');
+    writeAged(staleRotated, dockerLogLine(pinoLine('booted'), 'stdout', 125) + dockerLogLine(pinoLine('drained'), 'stdout', 120), 120);
+    const mixedRotated = path.join(container, 'c1-json.log.1');
+    const mixedOld = dockerLogLine(caddyAccess('/v1/rewrite'), 'stderr', 95);
+    const mixedRecent = dockerLogLine(caddyAccess('/v1/report'), 'stderr', 5);
+    writeAged(mixedRotated, mixedOld + mixedRecent, 5);
+    const outside = [path.join(container, 'config.v2.json'), path.join(root, 'stray-json.log.1')];
+    for (const file of outside) writeAged(file, dockerLogLine('not a container log\n', 'stdout', 120), 120);
+    const noTime = path.join(unreadable, 'c2-json.log');
+    const noTimeText = '{"log":"old\\n","stream":"stdout","time":"sometime"}\n{"log":"cut short';
+    writeAged(noTime, noTimeText, 120);
+
+    const file = path.join(dir, 'log-age-cap.sh');
+    fs.writeFileSync(file, script);
+    const run = runFromPath('bash', [file], { encoding: 'utf8', timeout: 10_000, env: { PATH: process.env.PATH, LOG_AGE_CAP_ROOT: root } });
+    if (run.error) throw run.error;
+    const problems: string[] = [];
+    if (run.status !== 0) problems.push(`the script exited ${run.status}: ${run.stderr}`);
+    const activeText = fs.readFileSync(active, 'utf8');
+    if (oldLines.some((line) => activeText.includes(line))) problems.push('the active log still holds a line older than the cap');
+    if (activeText !== recentLines.join('')) problems.push('the active log does not hold exactly its recent lines, in order');
+    if (fs.statSync(active).ino !== inode) problems.push('the active log was replaced, not rewritten in place');
+    if (fs.existsSync(staleRotated)) problems.push('a rotated log last written 120 days ago survived');
+    const mixedText = fs.existsSync(mixedRotated) ? fs.readFileSync(mixedRotated, 'utf8') : '';
+    if (mixedText.includes(mixedOld)) problems.push('a rotated log still holds a line older than the cap');
+    if (mixedText !== mixedRecent) problems.push('a rotated log lost its recent line');
+    for (const other of outside) if (!fs.existsSync(other)) problems.push(`${path.relative(root, other)}, outside the log glob, was deleted`);
+    if (!fs.existsSync(noTime) || fs.readFileSync(noTime, 'utf8') !== noTimeText) problems.push('a log with no readable time was changed');
+    return problems;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The cap plus the timer's period is the longest a line lives; it must fit the published maximum. */
+function logAgeCapLimitProblems(script: string, timer: string, publishedDays: number): string[] {
+  const cap = Number(/^readonly MAX_AGE_DAYS=(\d+)$/m.exec(script)?.[1] ?? Number.NaN);
+  const daily = /^OnCalendar=daily$/m.test(timer);
+  const problems: string[] = [];
+  if (!daily) problems.push('the timer does not run daily');
+  if (!/^Persistent=true$/m.test(timer)) problems.push('the timer does not catch up runs missed while the VM was down');
+  if (!Number.isInteger(cap) || cap < 1) problems.push('the script declares no MAX_AGE_DAYS');
+  else if (cap + 1 > publishedDays) problems.push(`MAX_AGE_DAYS ${cap} plus the one-day timer period exceeds the published ${publishedDays} days`);
+  return problems;
+}
+
+/** Runs bootstrap's install step against stubbed install/systemctl and checks the installed units. */
+function logAgeCapInstallProblems(bootstrap: string, service: string): string[] {
+  const problems: string[] = [];
+  if (!/^install_log_age_cap$/m.test(bootstrap)) problems.push('bootstrap never calls install_log_age_cap');
+  const step = /^install_log_age_cap\(\) \{\n[\s\S]*?\n\}$/m.exec(bootstrap)?.[0];
+  if (!step) return [...problems, 'bootstrap defines no install_log_age_cap'];
+  const vm = path.join(ROOT, 'deploy', 'vm');
+  const run = runVmFixture(`set -euo pipefail\nhere='${vm}'\n${step}\ninstall_log_age_cap\n`);
+  if (run.status !== 0) problems.push(`the install step exited ${run.status}`);
+  const installed = new Map(run.calls.filter((call) => call[0] === 'install').map((call) => [call[call.length - 2], call[call.length - 1]]));
+  const execStart = /^ExecStart=(\S+)$/m.exec(service)?.[1];
+  if (!execStart || installed.get(path.join(vm, 'log-age-cap.sh')) !== execStart) problems.push('the service does not start the installed script');
+  for (const unit of [`${LOG_AGE_CAP_UNIT}.service`, `${LOG_AGE_CAP_UNIT}.timer`]) {
+    if (installed.get(path.join(vm, unit)) !== `/etc/systemd/system/${unit}`) problems.push(`${unit} is not installed`);
+  }
+  const systemctl = run.calls.filter((call) => call[0] === 'systemctl').map((call) => call.slice(1).join(' '));
+  const reload = systemctl.indexOf('daemon-reload');
+  const enable = systemctl.indexOf(`enable --now ${LOG_AGE_CAP_UNIT}.timer`);
+  if (enable < 0) problems.push('the timer is not enabled and started');
+  else if (reload < 0 || reload > enable) problems.push('systemd is not reloaded before the timer is enabled');
+  return problems;
+}
+
+function logAgeCapTests(files: ReadonlyMap<string, string>): void {
+  section('Deploy scripts: container log age cap');
+  const script = files.get('deploy/vm/log-age-cap.sh') ?? '';
+  const timer = files.get(`deploy/vm/${LOG_AGE_CAP_UNIT}.timer`) ?? '';
+  const service = files.get(`deploy/vm/${LOG_AGE_CAP_UNIT}.service`) ?? '';
+  const bootstrap = files.get('deploy/vm/bootstrap.sh') ?? '';
+  const published = keepLimit(MANIFESTS[latestVersion()], 'connection-logs');
+  check('the live manifest publishes a maximum for connection logs, counted from collection', published?.after === 'collection' && published.days > 0, JSON.stringify(published));
+  const publishedDays = published?.days ?? 0;
+  checkClean('the cap plus the daily timer fits the manifest\'s connection-logs maximum', logAgeCapLimitProblems(script, timer, publishedDays));
+  checkCaught('  red: a cap of 91 days fails', logAgeCapLimitProblems(plant(script, 'MAX_AGE_DAYS=89', 'MAX_AGE_DAYS=91'), timer, publishedDays), 'exceeds the published');
+  checkCaught('  red: a cap of 90 days fails (the timer adds up to a day)', logAgeCapLimitProblems(plant(script, 'MAX_AGE_DAYS=89', 'MAX_AGE_DAYS=90'), timer, publishedDays), 'exceeds the published');
+  checkCaught('  red: a weekly timer fails', logAgeCapLimitProblems(script, plant(timer, 'OnCalendar=daily', 'OnCalendar=weekly'), publishedDays), 'does not run daily');
+
+  checkClean('old lines leave the active and rotated logs in place, stale rotated logs go, recent lines and other files stay', logAgeCapRunProblems(script));
+  const loop = 'for log in "$CONTAINERS_ROOT"/*/*-json.log "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do';
+  const mtimeOnly = plant(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log.[0-9]*; do'), "-name '*-json.log.[0-9]*'", "-name '*-json.log*'");
+  checkCaught('  red: judging the active log by its mtime fails', logAgeCapRunProblems(mtimeOnly), 'the active log still holds a line older than the cap');
+  checkCaught('  red: judging rotated logs by their mtime alone fails', logAgeCapRunProblems(plant(script, loop, 'for log in "$CONTAINERS_ROOT"/*/*-json.log; do')), 'a rotated log still holds a line older than the cap');
+  const rewrite = ': >"$log"\n  if [ "$kept" -gt 0 ]; then\n    dd if="$tail" bs="$kept" count=1 2>/dev/null >>"$log"\n  fi';
+  checkCaught('  red: replacing the active log with a new file fails', logAgeCapRunProblems(plant(script, rewrite, 'mv "$tail" "$log"')), 'the active log was replaced');
+
+  const missing = runFromPath('bash', [path.join(ROOT, 'deploy/vm/log-age-cap.sh')], { encoding: 'utf8', env: { PATH: process.env.PATH, LOG_AGE_CAP_ROOT: path.join(os.tmpdir(), 'whim-no-such-containers-root') } });
+  eq('the script succeeds when the containers directory does not exist', missing.status, 0);
+
+  checkClean('bootstrap installs the script, the service and the daily timer, and enables the timer', logAgeCapInstallProblems(bootstrap, service));
+  checkCaught('  red: bootstrap without the install step fails', logAgeCapInstallProblems(plant(bootstrap, 'install_egress_firewall\ninstall_log_age_cap\n', 'install_egress_firewall\n'), service), 'never calls install_log_age_cap');
+  checkCaught('  red: an install step that never enables the timer fails', logAgeCapInstallProblems(plant(bootstrap, `  systemctl enable --now ${LOG_AGE_CAP_UNIT}.timer\n`, ''), service), 'the timer is not enabled');
 }
 
 function scanTests(files: ReadonlyMap<string, string>, serverSources: ReadonlyMap<string, string>): void {
@@ -1881,6 +2025,7 @@ export async function runDeployConfigTests(): Promise<void> {
   caddyTests(files, maxBodyBytes, siteFiles);
   egressIpv6Tests(files);
   bootstrapDownloadTests(files);
+  logAgeCapTests(files);
   scanTests(files, serverSources);
   valuesTests(files);
   profileTests(files);
