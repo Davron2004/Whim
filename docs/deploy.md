@@ -43,7 +43,7 @@ work (Chromium's sandbox needs them), and installs the egress firewall and the d
 
 ### Persistent-disk snapshots
 
-The disk holds the usage ledger, reports and the published site — the only durable state.
+The disk holds the usage ledger, reports, the beta waitlist and the published site — the only durable state.
 `provision.sh` creates the snapshot schedule `whim-data-daily` (daily at 07:00 UTC, each snapshot
 kept 14 days) and attaches it to `whim-data`. A resource policy can't be edited, so if one by that
 name keeps a different number of days it stops: detach and delete that policy, then rerun.
@@ -154,11 +154,16 @@ deploy/deploy.sh --site-only   # once DNS resolves — publishes the pages, buil
 deploy/deploy.sh               # once the OpenRouter secret has a version — the full deploy
 ```
 
-`--site-only` publishes `/privacy`, `/privacy/v1`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/*`, uploads the
-Caddyfile and reloads Caddy; it never touches the server container. Both deploys refuse before
-anything is uploaded when a legal page fails its check: an empty required value in
-`deploy/site/legal-identity.json`, a `{{…}}` left unresolved, a draft marker such as `[B9]`, or a
-retention row that disagrees with the disclosure manifest (`server/src/site/legal-pages.ts`). The
+`--site-only` publishes `/privacy`, `/privacy/v1`, `/terms`, `/fr/privacy`, `/fr/terms`, `/support`, `/a/*`, the beta
+waitlist pages `/beta`, `/beta/thanks` and `/beta/retry` with their fonts under `/assets/*`, uploads the
+Caddyfile and reloads Caddy; it never touches the server container. The `/beta` form posts to
+`https://<WHIM_API_HOST>/beta/signup`, which the full deploy's server answers; the server redirects
+back to `WHIM_WEB_ORIGIN`, which the deploy writes into `config.env` as `https://<WHIM_WEB_HOST>`.
+Both deploys refuse before anything is uploaded when a legal page fails its check: an empty required
+value in `deploy/site/legal-identity.json`, a `{{…}}` left unresolved, a draft marker such as `[B9]`,
+or a retention row that disagrees with the disclosure manifest (`server/src/site/legal-pages.ts`).
+They also refuse when the `/beta` consent wording (its `data-notice` elements) isn't the notice
+`server/src/waitlist/notices.ts` registers as current: register the new wording there first. The
 full deploy builds the image via Cloud Build (unless `--tag` names one that already exists), uploads
 compose/seccomp/config, writes the secret into `/etc/whim/server.env`, recreates `whim-server`, and
 runs smoke.
@@ -271,6 +276,32 @@ string the deploy scripts use, from `deploy/lib.sh`).
   `reports show <id> [--json]`, `reports purge`.
 - **Usage and cost** — `$C exec -T whim-server node server/whim-admin.mjs usage [--days N] [--top N] [--json]`
   — cost per generation, per device and per day, from the ledger.
+- **Beta waitlist** — the signups from `/beta`, in `waitlist.db` under `WHIM_DATA_DIR`. No HTTP route
+  reads it; the waitlist command inside the container is the only way in. It prints CSV
+  (`email,platform,updates_opt_out,created_at,updated_at`, times in UTC) to stdout:
+
+  ```sh
+  $C exec -T whim-server node server/whim-waitlist.mjs export                        # everyone
+  $C exec -T whim-server node server/whim-waitlist.mjs export --platform android     # ios | android | other
+  $C exec -T whim-server node server/whim-waitlist.mjs export --updates-ok           # without the opt-out
+  $C exec -T whim-server node server/whim-waitlist.mjs remove someone@example.com    # any casing
+  ```
+
+  **Android testers for Play closed testing:** run the `--platform android` export through
+  `gcloud compute ssh` into a file on your laptop, keep the `email` column
+  (`cut -d, -f1 android.csv | tail -n +2 > testers.txt`), and paste the addresses into Play Console →
+  Testing → Closed testing → the track → Testers → the email list. Google invites each one; that
+  address is why the `/beta` page asks Android people for their phone's Google account. Only mail
+  the rows with `updates_opt_out=false` (`--updates-ok`) about anything other than the beta.
+  A person who asks to leave the list: `remove <their email>`, which exits 1 if they aren't on it.
+  Rows are also deleted 730 days after their last signup (the purge runs at boot and hourly), the
+  period the privacy policy publishes. In dev, `node server/waitlist.mjs …` runs the same command
+  against the local `WHIM_DATA_DIR`. The route's limits are defaults in `server/src/config.ts`, like
+  every other limit: `WHIM_MAX_BODY_BYTES_BETA` (4096), `WHIM_BETA_LIMIT_PER_CLIENT_HOUR` (10, per
+  forwarded client address, held only in memory) and `WHIM_BETA_LIMIT_PER_DAY` (2000). A refused or
+  malformed signup lands on `/beta/retry`; its log line (`jsonPayload.msg="beta signup"`) carries only
+  `outcome` (`stored`, `updated`, `invalid`, `limited`, `trap`, `error`) and `requestId`, never the
+  address.
 - **Tuning limits** — a capacity profile (below) is the only deploy-time lever, and it never carries
   a daily limit, a retention period or `NODE_ENV` by construction. Changing a daily/global limit
   (design.md D6's table) means editing its default in `server/src/config.ts` and deploying that

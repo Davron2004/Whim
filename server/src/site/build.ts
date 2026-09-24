@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { LEGAL_IDENTITY_PATH, LEGAL_PAGES, renderLegalSite, type LegalPage } from './legal-pages';
 import { looksLikeEmail, RenderPageError, renderTemplate, type Resolver } from './template';
+import { SIGNUP_PAGE, signupNoticeFindings } from './notice-check';
 
 export { RenderPageError } from './template';
 
@@ -22,18 +23,27 @@ export { RenderPageError } from './template';
 export type PlaceholderName =
   | 'WHIM_SUPPORT_EMAIL'
   | 'WHIM_APP_STORE_URL'
-  | 'WHIM_PLAY_STORE_URL';
+  | 'WHIM_PLAY_STORE_URL'
+  | 'WHIM_BETA_SIGNUP_URL';
 
 export type PlaceholderValues = { readonly [K in PlaceholderName]?: string };
 
 const REQUIRED_PLACEHOLDERS: ReadonlySet<PlaceholderName> = new Set([
   'WHIM_SUPPORT_EMAIL',
+  'WHIM_BETA_SIGNUP_URL',
 ]);
 const ALL_PLACEHOLDERS: ReadonlySet<string> = new Set<PlaceholderName>([
   'WHIM_SUPPORT_EMAIL',
   'WHIM_APP_STORE_URL',
   'WHIM_PLAY_STORE_URL',
+  'WHIM_BETA_SIGNUP_URL',
 ]);
+
+/** The signup form's action: the API's `POST /beta/signup`, over https, and nothing else. */
+function isBetaSignupUrl(value: string): boolean {
+  const url = URL.canParse(value) ? new URL(value) : undefined;
+  return url?.protocol === 'https:' && url.pathname === '/beta/signup' && url.href === value && url.search === '' && url.hash === '';
+}
 
 const STORE_URL_RULES: { readonly [K in 'WHIM_APP_STORE_URL' | 'WHIM_PLAY_STORE_URL']: RegExp } = {
   WHIM_APP_STORE_URL: /^https:\/\/apps\.apple\.com\//,
@@ -43,6 +53,9 @@ const STORE_URL_RULES: { readonly [K in 'WHIM_APP_STORE_URL' | 'WHIM_PLAY_STORE_
 function placeholderValueProblem(name: PlaceholderName, value: string): string | undefined {
   if (name === 'WHIM_SUPPORT_EMAIL' && !looksLikeEmail(value)) {
     return `${name} must be a valid email address, got ${JSON.stringify(value)}.`;
+  }
+  if (name === 'WHIM_BETA_SIGNUP_URL' && !isBetaSignupUrl(value)) {
+    return `${name} must be the API's https URL ending in /beta/signup, got ${JSON.stringify(value)}.`;
   }
   if ((name === 'WHIM_APP_STORE_URL' || name === 'WHIM_PLAY_STORE_URL') && !STORE_URL_RULES[name].test(value)) {
     return `${name} must be an https URL on ${name === 'WHIM_APP_STORE_URL' ? 'apps.apple.com' : 'play.google.com'}, got ${JSON.stringify(value)}.`;
@@ -122,7 +135,19 @@ export type BuildSiteResult =
  *  `/privacy/v1` until the version-2 policy takes effect. It is deliberately not a `LEGAL_PAGES`
  *  entry: it predates the identity file, and the legal-pages deploy check describes the current
  *  manifest, which it never did. */
-const DEPLOY_VALUE_PAGES = ['support.html', 'app-link.html', 'not-found.html', 'privacy-v1.html'] as const;
+export const DEPLOY_VALUE_PAGES = [
+  'support.html',
+  'app-link.html',
+  'not-found.html',
+  'privacy-v1.html',
+  'beta.html',
+  'beta-thanks.html',
+  'beta-retry.html',
+] as const;
+
+/** Copied into the output as they are (the pages' self-hosted fonts and their licences), served at
+ *  `/assets/*`. */
+const ASSETS_DIR = 'assets';
 
 function siteSource(repoRoot: string, file: string): string {
   return fs.readFileSync(path.join(repoRoot, 'deploy', 'site', file), 'utf8');
@@ -168,8 +193,9 @@ function writeDeployValuePages(dir: string, repoRoot: string, values: Placeholde
 
 /**
  * Renders every page into a temp directory — the legal pages through the legal-pages deploy check,
- * which refuses the whole build on any finding — adds `.well-known/` association files when
- * `associationState(repoRoot)` is `present` (via the injected runner, copying exactly the two
+ * which refuses the whole build on any finding, and the signup page only when its consent wording is
+ * the current registered notice (`notice-check.ts`) — copies `deploy/site/assets/`, adds
+ * `.well-known/` association files when `associationState(repoRoot)` is `present` (via the injected runner, copying exactly the two
  * `handoff/release-cli.md` output files byte for byte), and moves the temp directory to `outDir`
  * only on success. Never touches `outDir` on failure. Prints nothing and never calls
  * `process.exit` — `server/site.mjs` owns stdout and the exit code.
@@ -180,16 +206,20 @@ export async function buildSite(options: BuildSiteOptions): Promise<BuildSiteRes
     WHIM_SUPPORT_EMAIL: env.WHIM_SUPPORT_EMAIL,
     WHIM_APP_STORE_URL: env.WHIM_APP_STORE_URL,
     WHIM_PLAY_STORE_URL: env.WHIM_PLAY_STORE_URL,
+    WHIM_BETA_SIGNUP_URL: env.WHIM_BETA_SIGNUP_URL,
   };
 
   const legal = renderLegalPages(repoRoot);
   if ('reason' in legal) return { ok: false, reason: legal.reason };
+  const [noticeFinding] = signupNoticeFindings(siteSource(repoRoot, SIGNUP_PAGE));
+  if (noticeFinding !== undefined) return { ok: false, reason: noticeFinding };
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-site-build-'));
   try {
     for (const page of LEGAL_PAGES) writePage(tempDir, page, legal.pages[page]);
     const renderError = writeDeployValuePages(tempDir, repoRoot, values);
     if (renderError !== undefined) return { ok: false, reason: renderError };
+    fs.cpSync(path.join(repoRoot, 'deploy', 'site', ASSETS_DIR), path.join(tempDir, ASSETS_DIR), { recursive: true });
 
     const state = associationState(repoRoot);
     if (state.kind === 'present') {
