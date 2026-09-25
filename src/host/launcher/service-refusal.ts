@@ -63,13 +63,9 @@ export interface ServiceRefusal {
  *  an OWN key of `REFUSAL_RULES`, and whose `hint` is non-empty. Every other error, including an
  *  identifier outside the vocabulary, returns `undefined` and keeps its existing handling.
  *
- *  A message whose fallback is `update` (`GenerationClientError{kind:'fallback'}`, beta-1 D16)
- *  reads as an `update_required` refusal, so it takes the update screen's existing path from every
- *  sender; its notice is carried as the hint, which the update screen does not show yet. */
+ *  A message this build can't use (`GenerationClientError{kind:'fallback'}`, beta-1 D16) is never a
+ *  refusal, whatever its fallback: callers read it with `wire-fallback.ts#terminalFallbackOf`. */
 export function serviceRefusalOf(err: unknown): ServiceRefusal | undefined {
-  if (err instanceof GenerationClientError && err.kind === 'fallback' && err.fallback?.kind === 'update') {
-    return { code: 'update_required', hint: err.fallback.notice ?? COPY.updateRequiredLine, status: err.status };
-  }
   if (!(err instanceof GenerationClientError) || err.kind !== 'http') {
     return undefined;
   }

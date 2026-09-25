@@ -83,6 +83,16 @@ export const COPY = {
   clarifyHeadlineTwo: 'Two quick things',
   clarifyHeadlineThree: 'Three quick things',
   clarifyHelper: 'Skip these and Whim will pick sensible answers.',
+  /** Under a question that takes several picks (beta-1 D18). */
+  clarifyPickMany: 'Pick any that fit.',
+  /** The pill every question carries, which hands that question to Whim (beta-1 D18). */
+  clarifyDecide: 'Decide for me',
+  /** The typed "Other" answer's placeholder, on a question that allows one. */
+  clarifyOtherPlaceholder: 'Or type your own answer',
+  /** The clarify step when the request can't be built as asked (beta-1 D9): the reason follows in
+   *  the server's own words, then the alternative to build instead (`clarifyBuildInstead`). */
+  clarifyLimitHeadline: 'Whim can’t build this as asked',
+  clarifyLimitChangeIdea: 'Change my idea',
   /** The one-line liveness phrase under the clarify skeleton (`WorkingLine`, `flow-working.tsx`). */
   workingClarify: 'Thinking about what to ask',
   planHeadline: 'Here’s the plan',
@@ -106,6 +116,9 @@ export const COPY = {
   buildStepChecking: 'Checking it runs safely',
   buildStepInstalling: 'Putting it on your home screen',
   buildLeaveRunning: 'Leave it running',
+  /** The build screen while every build slot is taken and this one is first in line (beta-1 D8);
+   *  further back, `buildQueuedLine` counts the builds ahead. */
+  buildQueuedNext: 'You’re next in line.',
   /** Opens the run timeline for the attempt on screen. */
   buildDetails: 'Details',
   // ── the run timeline (generation-observability, design D7) ──────────────────
@@ -745,6 +758,19 @@ export function timelineGrowthLine(chars: number, thinkingChars = 0): string {
   if (thinkingChars <= 0) return written;
   const thinking = thinkingChars === 1 ? '1 character' : `${thinkingChars} characters`;
   return `${written} after thinking through ${thinking}`;
+}
+
+/** The build screen's place in line (beta-1 D8), from the `queued` event's `position` — the builds
+ *  ahead plus one: "You’re next in line." at the front, otherwise how many builds are ahead. */
+export function buildQueuedLine(position: number): string {
+  const ahead = position - 1;
+  if (ahead < 1) return COPY.buildQueuedNext;
+  return ahead === 1 ? 'You’re in line, 1 build ahead.' : `You’re in line, ${ahead} builds ahead.`;
+}
+
+/** The limit step's primary action (beta-1 D9): the alternative clarify suggested, as plain words. */
+export function clarifyBuildInstead(alternative: string): string {
+  return `Build ${alternative} instead`;
 }
 
 /** The clarify step's headline, counted: one, two or three quick things. */

@@ -14,10 +14,10 @@
  * Metro bundle graph (the discipline `generation-client.ts` documents).
  */
 
-import type { Clarification, ClarifyQuestion, GenerationEvent, PlanRow, RewriteResponse } from '@whim/contract';
+import type { Clarification, ClarifyQuestion, ClarifyResponse, GenerationEvent, PlanRow, RewriteResponse } from '@whim/contract';
 import type { InstalledApp } from './app-index';
 import type { RunAggregates, RunJournalEntry } from './run-journal';
-import { COPY } from './copy';
+import { COPY, buildQueuedLine } from './copy';
 import { GenerationClientError } from './transport-shared';
 import { appColor } from '../../sdk/theme';
 
@@ -30,15 +30,47 @@ export const MAX_CLARIFY_QUESTIONS = 3;
 
 export type FlowStep = 'compose' | 'clarify' | 'plan' | 'build' | 'done';
 
-/** One clarifying question as the screen renders it: single-select pills over `options`. */
+/** One clarifying question as the screen renders it: pills over `options` — one pick for
+ *  `select: 'one'`, several for `'many'` — plus a typed "Other" answer when `other` is true. */
 export interface FlowQuestion {
   id: string;
   question: string;
   options: readonly string[];
+  select: 'one' | 'many';
+  other: boolean;
 }
 
-/** Answers by question id. A question the user skipped simply has no entry. */
-export type FlowAnswers = Readonly<Record<string, string>>;
+/** The longest typed "Other" answer, in characters — the contract's `CLARIFICATION_OTHER_MAX_CHARS`,
+ *  mirrored because no contract value may enter the Metro bundle (zod). */
+export const OTHER_ANSWER_MAX_CHARS = 200;
+
+/**
+ * One question's answer as the step holds it (beta-1 D18): the options picked, the "Other" field's
+ * text exactly as typed (trimmed only when it is sent), and whether the user asked Whim to decide.
+ * `decide` is exclusive — while it is set there are no picks and no typed text.
+ */
+export interface FlowAnswer {
+  readonly choices: readonly string[];
+  readonly other: string;
+  readonly decide: boolean;
+}
+
+/** Answers by question id. A question the user never touched simply has no entry. */
+export type FlowAnswers = Readonly<Record<string, FlowAnswer>>;
+
+/** One thing the user did to a question: tapped an option pill, typed into its "Other" field, or
+ *  tapped "Decide for me". */
+export type AnswerChange =
+  | { readonly kind: 'pick'; readonly option: string }
+  | { readonly kind: 'type'; readonly text: string }
+  | { readonly kind: 'decide' };
+
+/** What clarify answered in place of questions when the request can't be built as asked (beta-1
+ *  D9): the reason, and the nearest thing Whim can build instead. Both are shown as plain text. */
+export interface FlowLimit {
+  readonly reason: string;
+  readonly alternative: string;
+}
 
 /**
  * A service refusal's notice, carried on the step it landed on (design D9/D12; spec
@@ -92,6 +124,9 @@ export interface ClarifyScreen {
   /** A service refusal that landed here — always `sender`-tone: a `text`-landing refusal never
    *  lands on clarify (it always returns to compose, where the refused words are edited). */
   notice?: FlowNotice;
+  /** Clarify answered that the request can't be built as asked (`withLimit`): the step shows the
+   *  reason and offers the alternative instead of questions, and starts nothing on its own. */
+  limit?: FlowLimit;
 }
 
 export interface PlanScreen {
@@ -135,6 +170,9 @@ export interface BuildScreen {
   stage: Stage | null;
   /** The stream produced its record and delivery is running — the last named step. */
   delivering: boolean;
+  /** Set while the stream's latest event is `queued`: the build is waiting its turn, at this
+   *  position (generations ahead + 1). Absent once any other event arrives (`withStreamEvent`). */
+  queuedPosition?: number;
 }
 
 export interface DoneScreen {
@@ -172,11 +210,17 @@ export function acceptClarifyQuestions(questions: readonly ClarifyQuestion[] | u
   return questions
     .filter((q) => q.options.length > 0)
     .slice(0, MAX_CLARIFY_QUESTIONS)
-    .map((q) => ({ id: q.id, question: q.question, options: q.options }));
+    .map((q) => ({ id: q.id, question: q.question, options: q.options, select: q.select, other: q.other }));
+}
+
+/** The response's `limit`, when it carried one. */
+export function clarifyLimitOf(response: Pick<ClarifyResponse, 'limit'>): FlowLimit | undefined {
+  return response.limit ? { reason: response.limit.reason, alternative: response.limit.alternative } : undefined;
 }
 
 /** Zero questions is the one "nothing to ask" signal: the flow goes straight to the plan step and
- *  the clarify step is never shown (`prompt-flow` "No questions skips the step"). */
+ *  the clarify step is never shown (`prompt-flow` "No questions skips the step"). A `limit` is
+ *  decided before this — it carries no questions, and it never reaches the plan step. */
 export function stepAfterClarifyExchange(questions: readonly FlowQuestion[]): 'clarify' | 'plan' {
   return questions.length > 0 ? 'clarify' : 'plan';
 }
@@ -216,14 +260,52 @@ export function withQuestions(screen: ClarifyScreen, questions: readonly FlowQue
   return { ...screen, questions, loading: false };
 }
 
-/** Single-select: tapping an option only ever SETS that question's answer, never clears it. */
-export function withAnswer(screen: ClarifyScreen, questionId: string, answer: string): ClarifyScreen {
-  return { ...screen, answers: { ...screen.answers, [questionId]: answer } };
+/** The clarify exchange answered with a `limit`: the step leaves loading and shows it, with no
+ *  questions and no answers — there is nothing to ask about a request that can't be built. */
+export function withLimit(screen: ClarifyScreen, limit: FlowLimit): ClarifyScreen {
+  return { ...screen, questions: [], answers: {}, limit, loading: false };
 }
 
-/** The answers as the wire carries them — by value, only for questions actually answered, each
- *  as its one picked option. An empty result and an absent field mean the same thing: the user
- *  answered nothing. */
+const NO_ANSWER: FlowAnswer = { choices: [], other: '', decide: false };
+
+/**
+ * One question's answer after one change (beta-1 D18). A pick on a `select: 'one'` question MOVES
+ * the pick (radio-like: tapping the picked option again keeps it), which is where "at most one
+ * choice" is enforced; on `'many'` it toggles. Typing sets the "Other" text, capped like the field
+ * itself. "Decide for me" clears every pick and the typed text; picking or typing afterwards clears
+ * it again. A change the question cannot take (an option it doesn't list, typing where it has no
+ * "Other" field) leaves the answer as it was.
+ */
+export function answerAfter(question: FlowQuestion, prev: FlowAnswer | undefined, change: AnswerChange): FlowAnswer {
+  const current = prev ?? NO_ANSWER;
+  if (change.kind === 'decide') return { choices: [], other: '', decide: true };
+  if (change.kind === 'type') {
+    if (!question.other) return current;
+    return { choices: current.choices, other: change.text.slice(0, OTHER_ANSWER_MAX_CHARS), decide: false };
+  }
+  if (!question.options.includes(change.option)) return current;
+  if (question.select === 'one') return { choices: [change.option], other: current.other, decide: false };
+  const picked = current.choices.includes(change.option)
+    ? current.choices.filter((choice) => choice !== change.option)
+    : [...current.choices, change.option];
+  // Kept in the order the question lists them, whatever order they were tapped in.
+  return { choices: question.options.filter((option) => picked.includes(option)), other: current.other, decide: false };
+}
+
+/** Apply one answer change to the question it names; an id the step isn't showing changes nothing. */
+export function withAnswer(screen: ClarifyScreen, questionId: string, change: AnswerChange): ClarifyScreen {
+  const question = screen.questions.find((q) => q.id === questionId);
+  if (!question) return screen;
+  return { ...screen, answers: { ...screen.answers, [questionId]: answerAfter(question, screen.answers[questionId], change) } };
+}
+
+/**
+ * The answers as the wire carries them (beta-1 D18) — by value, only for questions actually
+ * answered: `decide: true` alone for a delegated question, otherwise the picked `choices` (at most
+ * one for `select: 'one'`) and the trimmed, capped `other` text, which is absent when empty. A
+ * question left untouched, or whose answer was emptied again, is omitted — an empty result and an
+ * absent field mean the same thing: the user answered nothing.
+ */
 export function clarificationsFrom(
   questions: readonly FlowQuestion[],
   answers: FlowAnswers,
@@ -231,9 +313,16 @@ export function clarificationsFrom(
   const out: Clarification[] = [];
   for (const q of questions) {
     const answer = answers[q.id];
-    if (typeof answer === 'string' && answer.length > 0) {
-      out.push({ id: q.id, question: q.question, choices: [answer] });
+    if (!answer) continue;
+    if (answer.decide) {
+      out.push({ id: q.id, question: q.question, choices: [], decide: true });
+      continue;
     }
+    const picked = q.options.filter((option) => answer.choices.includes(option));
+    const choices = q.select === 'one' ? picked.slice(0, 1) : picked;
+    const other = q.other ? answer.other.trim().slice(0, OTHER_ANSWER_MAX_CHARS) : '';
+    if (choices.length === 0 && other.length === 0) continue;
+    out.push({ id: q.id, question: q.question, choices, ...(other.length > 0 ? { other } : {}) });
   }
   return out;
 }
@@ -318,9 +407,31 @@ export function buildStep(prev: PlanScreen): BuildScreen {
   };
 }
 
-/** A `stage` event — the ONLY event that ever reaches this screen's state. */
+/** The build screen out of the line: its place in line is gone, everything else untouched. */
+function outOfLine(screen: BuildScreen): BuildScreen {
+  if (screen.queuedPosition === undefined) return screen;
+  const next = { ...screen };
+  delete next.queuedPosition;
+  return next;
+}
+
+/** A `stage` event: the build's turn has come (if it was waiting), and the step moves on. */
 export function withStage(screen: BuildScreen, stage: Stage): BuildScreen {
-  return { ...screen, stage };
+  return { ...outOfLine(screen), stage };
+}
+
+/**
+ * One stream event folded into the build screen's state (the only two that carry any are `stage`
+ * and `queued`): `queued` records the build's place in line, `stage` moves the step, and any other
+ * event ends the waiting state — "in line" holds only while the latest event is `queued`. Returns
+ * the same object when nothing changes, so the shell sets no state for a token.
+ */
+export function withStreamEvent(screen: BuildScreen, event: GenerationEvent): BuildScreen {
+  if (event.type === 'stage') return withStage(screen, event.stage);
+  if (event.type === 'queued') {
+    return screen.queuedPosition === event.position ? screen : { ...screen, queuedPosition: event.position };
+  }
+  return outOfLine(screen);
 }
 
 /** The stream produced its record; the last named step is now the live one. */
@@ -454,6 +565,29 @@ export function currentActionSentence(stage: Stage | null, delivering = false): 
   return BUILD_STEPS[activeBuildStepIndex(stage, delivering)];
 }
 
+/** Everything the build screen's progress reads: the named steps, the bar and the sentence. */
+export interface BuildProgressView {
+  statuses: BuildStepStatus[];
+  fraction: number;
+  sentence: string;
+}
+
+/**
+ * The build screen's progress (beta-1 D8). While the build waits in line nothing has started, so
+ * no step is live, the bar is empty and the sentence says where the build is in line. From the
+ * first `stage` on it is the stage-driven progress above.
+ */
+export function buildProgressView(stage: Stage | null, delivering: boolean, queuedPosition?: number): BuildProgressView {
+  if (queuedPosition !== undefined) {
+    return { statuses: BUILD_STEPS.map(() => 'todo'), fraction: 0, sentence: buildQueuedLine(queuedPosition) };
+  }
+  return {
+    statuses: buildStepStatuses(stage, delivering),
+    fraction: buildProgressFraction(stage, delivering),
+    sentence: currentActionSentence(stage, delivering),
+  };
+}
+
 /** A pending-build ghost tile's working title (`pending-builds` design D2): the first ~28 chars
  *  of the prompt, truncated at the nearest word boundary at or before the limit so a word is
  *  never cut mid-way. Internal whitespace runs collapse to a single space; a prompt already at or
@@ -500,6 +634,31 @@ export interface RunSignals {
   lastTokenAt: number | null;
   lastThinkingAt: number | null;
   lastFrameAt: number;
+  /** The written-output counts when the current model turn began (its `stage` start), which a
+   *  `restart` returns to (beta-1 D10). Absent means the attempt's own start: nothing written. */
+  turnStart?: { readonly chars: number; readonly tokens: number };
+}
+
+/** A `stage` start begins a new model turn: the counts so far are where a restart of it returns. */
+export function withTurnStart(signals: RunSignals): RunSignals {
+  return { ...signals, turnStart: { chars: signals.aggregates.chars, tokens: signals.aggregates.tokens } };
+}
+
+/**
+ * A `restart` (beta-1 D10): the current model turn is being resent and the tokens it streamed are
+ * void, so everything counted from them goes back to where the turn began — the characters and
+ * tokens written, and the "writing" clock — while the build carries on as the same build. The
+ * reasoning tally is not counted from tokens and stays. The frame itself is liveness, like any
+ * other event.
+ */
+export function withRestart(signals: RunSignals, at: number): RunSignals {
+  const start = signals.turnStart ?? { chars: 0, tokens: 0 };
+  return {
+    ...signals,
+    aggregates: { ...signals.aggregates, chars: start.chars, tokens: start.tokens },
+    lastTokenAt: null,
+    lastFrameAt: at,
+  };
 }
 
 /** How often the shell re-renders a live build screen so its derived clock moves (design D6/D8):

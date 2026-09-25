@@ -32,7 +32,7 @@ export type TerminalFallback = Exclude<WireFallback, { kind: 'skip' }>;
 export type WireGate = { readonly kind: 'decode' } | { readonly kind: 'fallback'; readonly fallback: WireFallback };
 
 /** The contract's `COMPAT_NOTICE_MAX_CHARS`. */
-const COMPAT_NOTICE_MAX_CHARS = 200;
+export const COMPAT_NOTICE_MAX_CHARS = 200;
 
 /** Every `ApiError` code the wire had at `PROTOCOL_LEVEL`: the contract's refusal and
  *  device-identity codes and the ones the server's routes set themselves. A code outside this list
