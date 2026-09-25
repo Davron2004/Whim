@@ -9,6 +9,7 @@
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import type { WhimTheme } from '../../sdk/theme';
@@ -23,6 +24,7 @@ import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
 import Orb from './Orb';
+import { chromeInsetBottom } from './orb-geometry';
 import ReportSheet from './ReportSheet';
 import type { InstalledApp } from './app-index';
 import type { StoreAccess } from './store-access';
@@ -90,7 +92,9 @@ export default function MiniAppView({
   // (keyed by launcher id), and every Retry remount (a bumped webKey, i.e. a RECREATED realm,
   // spike2 §5) -- while a repeat for the same key is dropped. Theme is re-captured at each real
   // delivery, matching the "theme applies at delivery" model (design sdk-design-system Non-Goals):
-  // a running realm never re-themes live.
+  // a running realm never re-themes live. The theme carries how much of the app's bottom edge the
+  // orb covers (beta-1 D5), computed from this delivery's bottom safe-area inset.
+  const bottomInset = useSafeAreaInsets().bottom;
   const deliveredKey = useRef<number | null>(null);
   const handleLoadEnd = useCallback(() => {
     if (loadEndAction(deliveredKey.current, webKey) === 'duplicate') {
@@ -101,9 +105,9 @@ export default function MiniAppView({
       return;
     }
     deliveredKey.current = webKey;
-    host.deliverBySource(record, bundleSource, engineAppId, theme);
+    host.deliverBySource(record, bundleSource, engineAppId, { ...theme, chromeInsetBottom: chromeInsetBottom(bottomInset) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [webKey]);
+  }, [webKey, bottomInset]);
 
   // Which of the four container surfaces this render belongs to. The precedence (both failure
   // surfaces above the boot state) is decided by the pure `miniAppSurface` -- a launch that fails

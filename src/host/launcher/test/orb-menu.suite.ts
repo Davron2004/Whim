@@ -18,6 +18,7 @@ import {
   loadOrbActionCounts,
   type OrbActionId,
 } from '../orb-actions';
+import { chromeInsetBottom } from '../orb-geometry';
 import { resetNativeStorage } from './native-storage';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
@@ -74,6 +75,25 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
     }
     h.ok(!threw, 'recordOrbAction never throws on a corrupt prior value');
     h.eq(loadOrbActionCounts(kv).home, 1, 'a corrupt prior value resets the effective count to zero before the bump');
+  });
+
+  // ── the footprint the realm is told (beta-1 D5) ─────────────────────────────
+  // That it matches where the orb is drawn is asserted on the rendered mini-app container
+  // (mini-app-host-ui.suite.tsx); these cover the arithmetic at the edges a device can hand it.
+  await h.test('orb-menu: the orb footprint grows with the bottom safe-area inset, in whole pixels', async () => {
+    const bare = chromeInsetBottom(0);
+    h.ok(bare > 0, 'the orb covers some of the bottom edge even with no inset');
+    h.eq(chromeInsetBottom(34), bare + 34, 'each pixel of inset adds a pixel of footprint');
+    h.eq(chromeInsetBottom(10.4), bare + 10, 'a fractional inset rounds down below the half');
+    h.eq(chromeInsetBottom(10.5), bare + 11, 'and up from it');
+  });
+
+  await h.test('orb-menu: the orb footprint is clamped to 0–200, and a footprint that is not a number is 0', async () => {
+    h.eq(chromeInsetBottom(1000), 200, 'an absurd inset is capped at 200');
+    h.eq(chromeInsetBottom(-1000), 0, 'a negative result is 0');
+    h.eq(chromeInsetBottom(Number.NaN), 0, 'NaN is 0');
+    h.eq(chromeInsetBottom(Number.POSITIVE_INFINITY), 0, 'Infinity is 0, not the cap');
+    h.eq(chromeInsetBottom(Number.NEGATIVE_INFINITY), 0, '-Infinity is 0');
   });
 
   // ── the rendered orb: each action reaches its own callback, and only an action is counted ──

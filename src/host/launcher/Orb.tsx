@@ -33,8 +33,8 @@ import {
   recordOrbAction,
   type OrbActionId,
 } from './orb-actions';
+import { ORB_BOTTOM_MARGIN, ORB_SIZE } from './orb-geometry';
 
-const ORB_SIZE = 54;
 // The menu rises from the bottom edge — the edge it collapses back to on close/dismiss (design
 // doc "Sheet rise": "Sheets enter from the edge they will return to").
 const MENU_RISE_DISTANCE = 24;
@@ -92,7 +92,7 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
     <>
       <Pressable
         onPress={onOrbPress}
-        style={[styles.btn, { bottom: insets.bottom + SPACING.lg }, menuOpen && styles.btnMenuOpen]}
+        style={[styles.btn, { bottom: insets.bottom + ORB_BOTTOM_MARGIN }, menuOpen && styles.btnMenuOpen]}
         accessibilityRole="button"
         accessibilityLabel={menuOpen ? COPY.orbMenuCloseLabel : COPY.orbMenuOpenLabel}
       >
@@ -103,7 +103,7 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
 
       {menuOpen && (
         <Pressable
-          style={[styles.scrim, { paddingBottom: insets.bottom + SPACING.lg + ORB_SIZE + SPACING.sm }]}
+          style={[styles.scrim, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
           onPress={closeAll}
           accessibilityRole="none"
           accessibilityLabel={COPY.orbMenuDismissLabel}
