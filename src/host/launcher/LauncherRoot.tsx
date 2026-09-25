@@ -381,8 +381,8 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
  *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11), and
  *  `significantUpdate` asks a supervised minor's guardian to acknowledge a terms change (beta-1
- *  D2; none on Android). All default to the native seam. Only a suite passes another (the launcher runner has no native
- *  module), to give the shell a build or a phone of its choosing. */
+ *  D2; none on Android). All default to the native seam. Only a suite passes another (the
+ *  launcher runner has no native module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   internalBuild,
