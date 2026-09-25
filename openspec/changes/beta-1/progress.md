@@ -65,3 +65,10 @@
   Red-checks: a "Decide for me" that keeps picks → 2 tests fail; `update` sent to the failure screen → 4 fail. The live heartbeat spec says ~8 s but the code checks 40 s (#123, not reconciled here).
 - chain-4 merged (integrity OK); tasks 4.1–4.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. chain-6's block now names `OtherAnswerField` (`ClarifyStep.tsx`).
 - 17:27 chain-5 dispatched: BASE `63940e4df4b5986e5116c2f67c4c4285da500b13`, worktree `.claude/worktrees/beta-1-5`, branch `chain/beta-1-5`, block `dispatch/chain-5.md`, model Opus (R9).
+- chain-5 (Opus) report: STATUS complete, GATE PASS (knip clean), commits `efcead2a` `e038ddc8` `1ef22acb` `0a4f2937` `8d574c67` `f20b55d6`. Class A:
+  - 5.2 is split into `requiresSignificantUpdateAcknowledgment()` (3 s) and `acknowledgeSignificantUpdate(description)` (60 s), because one native promise can carry only one JS deadline. It was my block's tension, and the split is accepted.
+  - With consent on, the Settings row still opens review mode (so a user can turn AI off without new terms); with consent off it enters the legal flow.
+  - The guardian text reuses `termsUpdatedLine`; "older" = `outdated && version < TERMS_VERSION`; a decline stores `blocked`, so it's asked again.
+  - Two #104-encoding tests replaced.
+  Native: `WhimAgeSignal.swift` passes a standalone `swiftc -typecheck`, and codegen into scratch matches the `.mm`/`.kt` signatures; the `.mm` and `.kt` themselves are uncompiled until 10.4 (iOS needs `pod install`). Red-checks all fail by name (5.1 unbounded → 3; 5.3 no acknowledgment → 24, 3 s guardian → 3; 5.4 old #104 code → 4).
+- chain-5 merged (integrity OK, 13 files); tasks 5.1–5.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. Archive-order note on #69 (ai-data-consent's Settings-row text vs D6); filed #124 (acknowledgment skipped while the age outcome is fresh).
