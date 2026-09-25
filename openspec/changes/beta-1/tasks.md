@@ -1,58 +1,72 @@
-## 1. Age check and legal flow (app)
+## 1. Wire protocol that can grow (contract, request edge, device decoder)
 
-- [ ] 1.1 Bound `runAgeCheck` with a 3 s deadline that resolves `unavailable` through the existing reduction (design D1). Test in `age-check.suite.ts` with a `read` that never settles and a fake clock: the check ends `unavailable` and `nextLegalStep` lands on the terms step. Red-check against the unbounded version.
-- [ ] 1.2 Add `acknowledgeSignificantUpdate(description)` to the `WhimAgeSignal` native module: Swift on iOS 26.2+ via `AgeRangeService.showSignificantUpdateAcknowledgment`, the `.mm` binding and the TS spec. It resolves `acknowledged | declined | unavailable`. Older iOS and Android resolve `unavailable` (D2).
-- [ ] 1.3 Request the acknowledgment in the age-check phase only for `minor-approved` with an older accepted terms version, bounded by the D1 deadline. `declined` keeps AI features off, `unavailable` proceeds. Store only the outcome keyed by terms version. Tests for every `store-age-signals` scenario.
-- [ ] 1.4 Route Settings "Turn on AI features" through `nextLegalStep` from its first step (D6). Tests: outdated terms → terms then one consent; current terms → one consent; no pass shows a legal screen twice.
-- [ ] 1.5 Reword `openspec/changes/developer-observability/tasks.md` 8.2(a): an up-to-date consent grant is not re-asked, and a grant older than `AI_CONSENT_VERSION` is.
+- [ ] 1.1 Contract: export `PROTOCOL_LEVEL = 1`, the `compat` envelope schema (`min`, `fallback` ∈ skip|fail|update, `notice` ≤ 200 chars), a permissive `WireEnvelope` (type/error string + optional compat, unknown fields tolerated), the `queued{position}` and `restart` events, the clarify `limit{reason, alternative}` arm (a `limit` with non-empty `questions` is rejected), `compat` on `ApiError`, and the `queue_timeout` terminal failure code. Every object schema strips unknown fields rather than rejecting them. Contract tests for every `generation-contract` scenario (design D16).
+- [ ] 1.2 Server request edge: parse `x-whim-protocol` beside the request envelope. Missing or non-integer → `426 update_required` through the existing update-gate response. Expose the level on the request context. Add a server-side registry of messages/codes with the level each was introduced at, plus an emitter helper that attaches `compat` to anything above level 1 and refuses to send above the client's level. Test: every registry entry above level 1 carries `compat`, and a level-N client never receives a level-N+1 message.
+- [ ] 1.3 Device: send `x-whim-protocol: PROTOCOL_LEVEL` on every `/v1` request. Decode every SSE frame and unary body in two phases (envelope first, full schema only for known types/codes with `min ≤ PROTOCOL_LEVEL`). Surface a typed fallback outcome (`skip` → continue, `fail{notice}`, `update{notice}`) to callers; the UI wiring is 4.4. Replace the "unknown type throws `stream_parse`" path and the closed-refusal-code lookup accordingly.
+- [ ] 1.4 "Future frames" fixture suite on the device decoder: an unknown event with each fallback, an unknown event with no `compat` (→ fail), an unknown fallback value (→ fail), `min` above the level (→ fallback), an extra field on a known event (used, field ignored), an unknown `ApiError` code with `compat`. Red-check against the pre-change strict decoder.
 
-## 2. Keyboard in the host shell (app)
+## 2. The line for generation slots (server)
 
-- [ ] 2.1 Build the shared keyboard-safe screen wrapper from React Native built-ins (D3): an inset-adjusting ScrollView, platform dismiss modes, a footer slot for the primary action above the keyboard, tap-empty-space to dismiss, and an iOS `InputAccessoryView` "Done" for multiline fields. Put any pure logic in a non-RN sibling so a Node suite can test it.
-- [ ] 2.2 Compose: adopt the wrapper, pin Continue in the footer, remove `autoFocus`, add Done on the description field.
-- [ ] 2.3 Adopt the wrapper on every other screen and sheet with a TextInput (plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s existing `KeyboardAvoidingView` is kept or folded into the wrapper, not doubled.
+- [ ] 2.1 `SlotController`: an async FIFO acquire for `generate` with abort. `release()` stays idempotent and hands the slot to the head of the line. Position tracking and change notifications. Bounded by `WHIM_QUEUE_MAX` (default 50). Tests: order, abort mid-line moves everyone up, drain empties the line, overflow refused. All bounded by timeouts (see the `whim-node-suite-bare-await-hang` memory).
+- [ ] 2.2 `routes/generate.ts`: keep credit, daily-limit and content-policy checks pre-stream. When no slot is free, open the stream and emit `queued{position}` on entry, on every move and at least every 5 s. Start the pipeline on a slot, and spend the daily unit only then. `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → one terminal `failure` (`queue_timeout`). Line full → pre-stream `429 server_busy`. Tests for every `server-admission-control` line scenario, including "no daily unit spent" on timeout and abort.
+- [ ] 2.3 Config: parse `WHIM_QUEUE_MAX`, `WHIM_QUEUE_MAX_WAIT_MS` and `WHIM_PROVIDER_QUANTIZATIONS`. `requestBody` sends `provider.quantizations` when it's set, and the provider object is byte-identical when unset (test). Add the three rows to `docs/deploy.md` (D8, D12).
 
-## 3. Realm and host runtime (app runtime + SDK)
+## 3. Generation quality (server)
 
-- [ ] 3.1 In `src/runtime/web/loader.js`, scroll a focused editable element into view on focus and on viewport resize while it has focus (D3). The runtime does this, not generated code.
-- [ ] 3.2 Mount the mini-app inside a runtime-owned error boundary that posts a nonce-authenticated error frame with `where:'render'` on catch. Add `render` to the host's `isFatalErrorWhere` (D4). Tests in `mini-app-host-ui.suite.tsx`: a trusted `render` frame shows FailureScreen, an untrusted one is ignored.
-- [ ] 3.3 Extend the theme payload with `chromeInsetBottom` (sanitized, clamped 0–200). The host computes it from the orb size, margin and bottom safe-area inset, and sends it on every mount (D5).
-- [ ] 3.4 SDK `Screen` adds `chromeInsetBottom` to its scrollable content's bottom padding; generated code can't read the value. `sdk:test` covers both with-inset and no-inset.
-- [ ] 3.5 `npm run build`, then `npm run invariants` and `npm run bridge:invariants` green against the new build.
+- [ ] 3.1 One list of mini-app limits interpolated into `CLARIFY_SYSTEM` and `REWRITE_SYSTEM`. Clarify returns `limit{reason, alternative}` (no questions) when the request's core needs a listed capability. For a partly impossible request, no option is offered for the extra and the plan says it's left out (D9). The prompts suite pins both prompts to the list, and fails when the capability registry gains a capability the list names as missing. The clarify route validates the `limit` arm.
+- [ ] 3.2 Retry a generate/repair turn once on an upstream failure. If the turn already yielded `token` events, emit `restart` first (D10). Tests: a failure before the first token retries without `restart`; a failure mid-turn emits exactly one `restart` and can deliver; a second failure is terminal; the failed attempt's usage is metered.
+- [ ] 3.3 `stages/run.ts` passes a content-free `{kind, check}`. The machine logs it at info with `requestId` on `containment_failed`/`run_unverified` (D11). A test asserts the fields and that no source/DOM/console text appears.
+- [ ] 3.4 Reproduce #106 and locate the path. Enforce: no-change only for byte-identical source, and a neutral line otherwise (D13). Test with a generated-output-shaped fixture.
 
-## 4. Diagnostics and polish (app)
+## 4. Prompt-flow screens for the new messages (app)
 
-- [ ] 4.1 `crash-capture.ts#thrownFields` reduces each frame location to file name + line:column on every platform (D7). Test with an iOS-shaped stack (with the `Bundle/Application/<UUID>` path). Check that a trimmed stack still symbolicates to the same source lines.
-- [ ] 4.2 Orb: the menu scrim covers the status bar on both platforms, and the Android grey disc is gone (D14; see the `rn-style-platform-gaps` memory on shadow/elevation).
-- [ ] 4.3 Re-check #48 on the current build. Fix the watermark only if it still clips or truncates. Give the built-in examples distinct declared tile colours without touching `appColor`, and add a test that example colours are pairwise distinct.
-- [ ] 4.4 `copy.ts` counts use `toLocaleString('en-CA')`. `run-signals.suite.ts` passes under `LANG=fr_CA.UTF-8`.
+- [ ] 4.1 Build screen: while the latest event is `queued`, show "in line, N ahead" with Cancel and "Leave it running". Switch to progress at the first `stage`. The stall heartbeat counts `queued` and `restart` (modified `prompt-flow` requirement).
+- [ ] 4.2 On `restart`, discard the current turn's activity signals (characters written, etc.) and continue without a failure state. Test against a stream fixture that writes, restarts, then delivers.
+- [ ] 4.3 Clarify `limit`: a screen with the reason, "Build <alternative> instead" (the alternative becomes the prompt and re-enters clarify) and "Change my idea". No generation starts on its own.
+- [ ] 4.4 Wire the decoder's fallback outcomes (1.3) into the flow. `fail` → failure screen with the notice as plain text; `update` → the update screen with the notice. The pending record resolves as failed, and nothing is installed or updated. Tests for mid-build and unary (clarify/rewrite) cases.
 
-## 5. Server admission and routing config (server)
+## 5. Age check and legal flow (app)
 
-- [ ] 5.1 `SlotController`: an async acquire for `generate` with a FIFO waiter list bounded by `WHIM_ADMISSION_WAIT_MS` and `WHIM_ADMISSION_MAX_WAITERS`. `release()` stays idempotent and hands the slot to the head waiter. A waiter leaves on abort or drain. Overflow and expiry → `server_busy`. Check order unchanged (D8). Tests for every `server-admission-control` scenario, bounded by timeouts (see the `whim-node-suite-bare-await-hang` memory).
-- [ ] 5.2 Config: parse both new keys with defaults (10000; 2× the generation cap) and refuse a wait ≥ 14000 at boot. Add the rows to `docs/deploy.md`.
-- [ ] 5.3 `WHIM_PROVIDER_QUANTIZATIONS` → `provider.quantizations` in `requestBody`, through the config/roster seam. Unset leaves the provider object byte-identical (test). Add the row to `docs/deploy.md` (D12).
+- [ ] 5.1 Bound `runAgeCheck` with a 3 s deadline that resolves `unavailable` through the existing reduction (D1). Test with a never-settling `read` and a fake clock: the flow ends on the terms step. Red-check against the unbounded version.
+- [ ] 5.2 `WhimAgeSignal.acknowledgeSignificantUpdate(description)`: Swift via `AgeRangeService.showSignificantUpdateAcknowledgment` on iOS 26.2+, the `.mm` binding and the TS spec, resolving `acknowledged | declined | unavailable`. Older iOS and Android → `unavailable` (D2).
+- [ ] 5.3 Request it only for `minor-approved` with an older accepted terms version, bounded by D1. `declined` keeps AI off, `unavailable` proceeds, and only the outcome is stored, per terms version. Tests for every `store-age-signals` scenario.
+- [ ] 5.4 Route Settings "Turn on AI features" through `nextLegalStep` (D6). Tests: outdated terms → terms then one consent; current terms → one consent; no legal screen twice in a pass.
+- [ ] 5.5 Reword `openspec/changes/developer-observability/tasks.md` 8.2(a): an up-to-date grant isn't re-asked, and a grant older than `AI_CONSENT_VERSION` is.
 
-## 6. Generation quality (server)
+## 6. Keyboard in the host shell (app)
 
-- [ ] 6.1 One list of mini-app limits interpolated into `CLARIFY_SYSTEM` and `REWRITE_SYSTEM`, with the instructions not to offer them and to substitute the nearest buildable version, stated in the plan (D9). A prompts-suite test pins both prompts to the list and fails when the capability registry gains a capability the list names as missing.
-- [ ] 6.2 Retry a generate/repair turn once on an upstream failure before its first token event (D10). Tests: a failure before the first token retries and can deliver; a failure after tokens stays terminal; usage of the failed attempt is metered.
-- [ ] 6.3 `stages/run.ts` passes a content-free `{kind, check}` verdict summary. The machine logs it at info with `requestId` on `containment_failed`/`run_unverified` (D11). A test asserts the log line's fields and that no source/DOM/console text appears.
-- [ ] 6.4 Reproduce #106 (a "Change it" whose summary says no changes while the saved source changed) and locate the path. Enforce: a no-change claim only when the delivered source is byte-identical to the starting source, with a neutral line otherwise (D13). Test with a generated-output-shaped fixture.
+- [ ] 6.1 Build the shared keyboard-safe wrapper from React Native built-ins (D3). Put pure logic in a non-RN sibling so a Node suite can test it.
+- [ ] 6.2 Compose: the wrapper, Continue pinned in the footer, no `autoFocus`, and Done on the description field.
+- [ ] 6.3 Adopt the wrapper on every other screen and sheet with a TextInput (plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s `KeyboardAvoidingView` is kept or folded in, not doubled.
 
-## 7. Release upgrade check (tooling)
+## 7. Realm and host runtime (app runtime + SDK)
 
-- [ ] 7.1 Maestro seed flow: on the previous release, open an example with saved data (write a value) and a generated app with two versions. Record what was seeded in a machine-readable file.
-- [ ] 7.2 `scripts/release/upgrade-check.sh --platform android|ios --from <old> --to <new>`: fresh emulator/simulator, install old, seed, install new over it (`adb install -r` / `simctl install`), assert tiles, versions, data, consent state and device id with a Maestro flow. Exit non-zero on any difference.
-- [ ] 7.3 `docs/release/mobile.md`: the upgrade check is a required step before any beta build ships; where the evidence goes.
+- [ ] 7.1 In `loader.js`, scroll a focused editable element into view on focus and on viewport resize (D3).
+- [ ] 7.2 A runtime-owned root error boundary posts a nonce-authenticated `render` error frame, and the host treats `render` as fatal (D4). Tests: trusted `render` → FailureScreen; untrusted → ignored.
+- [ ] 7.3 The theme payload gains the sanitized, clamped `chromeInsetBottom`, computed by the host from the orb size, margin and bottom safe-area inset on every mount (D5).
+- [ ] 7.4 SDK `Screen` adds `chromeInsetBottom` to its scrollable content's bottom padding; generated code can't read it. `sdk:test` covers with and without an inset.
+- [ ] 7.5 `npm run build`, then `npm run invariants` and `npm run bridge:invariants` green.
 
-## 8. Acceptance and rollout (orchestrator, attended)
+## 8. Diagnostics and polish (app)
 
-- [ ] 8.1 `gate-full.sh` green on the staging tip, then the reviewer pass.
-- [ ] 8.2 Load-test `e2-standard-2` with the replay image (`deploy/loadtest/run.sh drive`). Set the highest caps with p95 CPU < 70 % and no failed runs in `deploy/profiles/standard.env`, and record the run in `docs/deploy.md`.
-- [ ] 8.3 Flowbench before and after 6.1 on the visible set plus a weather-app case. Record the results in `progress.md`.
-- [ ] 8.4 After merge: server deploy from `../Whim-deploy`, smoke, one real generation, a concurrency check (cap + 2 simultaneous generations: the extras wait, then run or get refused as specified). Legacy client check with 381237/382511. Roll back on failure.
-- [ ] 8.5 iOS and Android release builds → a newly created simulator and a fresh emulator: every tier-0 scenario (age check, keyboard on every input screen, inside a mini-app, render failure, orb inset, Settings legal flow, trimmed stacks).
-- [ ] 8.6 Run the upgrade check from 382511 to the candidate on both platforms; record the evidence.
-- [ ] 8.7 Owner: demo-phone check of the same build (real-device age signals, keyboard, a generation).
-- [ ] 8.8 Add the build to TestFlight `Public beta` and the Play closed track; close the issues this change fixes, with evidence.
+- [ ] 8.1 `thrownFields` reduces frames to file name + line:column on every platform (D7). Test with an iOS-shaped stack. A trimmed stack still symbolicates to the same lines.
+- [ ] 8.2 The orb scrim covers the status bar, and the Android grey disc is gone (D14).
+- [ ] 8.3 Re-check #48 and fix only if it reproduces. Examples get distinct declared tile colours, with a test that they're pairwise distinct.
+- [ ] 8.4 `toLocaleString('en-CA')`. `run-signals.suite.ts` passes under `LANG=fr_CA.UTF-8`.
+
+## 9. Release upgrade check (tooling)
+
+- [ ] 9.1 Maestro seed flow for the previous release: an example with saved data, and a generated app with two versions. It records what was seeded.
+- [ ] 9.2 `scripts/release/upgrade-check.sh --platform android|ios --from <old> --to <new>`: fresh device, install old, seed, install new over it, assert tiles, versions, data, consent state and device id, and exit non-zero on any difference.
+- [ ] 9.3 `docs/release/mobile.md`: the upgrade check is required before any beta build ships, and the doc says where the evidence goes.
+
+## 10. Acceptance and rollout (orchestrator, attended)
+
+- [ ] 10.1 `gate-full.sh` green on the staging tip, then the reviewer pass.
+- [ ] 10.2 Load-test `e2-standard-2` (`deploy/loadtest/run.sh drive`). Put the highest caps with p95 CPU < 70 % and no failed runs into `deploy/profiles/standard.env`, and record the run in `docs/deploy.md`.
+- [ ] 10.3 Flowbench before and after 3.1 (visible set plus weather and roommate-ping cases), recorded in `progress.md`.
+- [ ] 10.4 iOS and Android builds → a newly created simulator and a fresh emulator against a local server at the staging tip: every tier-0 scenario, the line (cap + 2), the `limit` screen, and a fallback smoke (a dev-only injected future frame).
+- [ ] 10.5 Upgrade check 382511 → beta-1 on both platforms, with evidence recorded.
+- [ ] 10.6 After merge: server deploy from `../Whim-deploy`, smoke, one real generation, and a line check. Confirm 381237/382511 now get 426. Roll back by `--tag` on failure.
+- [ ] 10.7 Upload to TestFlight `Public beta` and the Play closed track. Owner's demo-phone check (real-device age signals, keyboard, a generation).
+- [ ] 10.8 Raise `WHIM_MIN_BUILD_IOS`/`_ANDROID` to beta-1's builds (D17), and close the issues this change fixes, with evidence.

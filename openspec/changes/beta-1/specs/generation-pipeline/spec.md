@@ -1,25 +1,33 @@
 ## ADDED Requirements
 
 ### Requirement: Clarify and plan writing stay inside what a mini-app can do
-The clarify and plan-writing prompts SHALL be built from one list of things a mini-app cannot do (at least: network and live data, notifications while closed, other people's devices), SHALL instruct the model not to offer them, and SHALL instruct it to turn an impossible request into the nearest buildable version stated plainly in the plan.
+The clarify and plan-writing prompts SHALL be built from one list of things a mini-app cannot do (at least: network and live data, notifications while closed, other people's devices), SHALL instruct the model not to offer them, and clarify SHALL answer a request whose core needs one of them with a `limit` naming the reason and the nearest buildable alternative instead of questions.
 
 #### Scenario: Weather request
 - **WHEN** a user asks for a weather app
-- **THEN** clarify offers no live-data option and the plan describes a buildable alternative and says live weather isn't possible
+- **THEN** clarify returns a `limit` whose alternative is buildable without live data, and no questions
+
+#### Scenario: Partly impossible request
+- **WHEN** a request is buildable except for one impossible extra (e.g. reminders while the app is closed)
+- **THEN** clarify offers no option for the extra and the plan says plainly it is left out
 
 #### Scenario: List and registry agree
 - **WHEN** the capability registry gains a capability that the list names as missing
 - **THEN** the server suite fails until the list is updated
 
-### Requirement: An engineer turn is retried once before anything reached the device
-The pipeline SHALL retry a generate or repair turn once with the same messages when the provider fails with an upstream error (5xx, 429, network or stream error) before the turn yielded any token event, and SHALL keep today's terminal failure otherwise; the failed attempt's usage SHALL still be metered.
+### Requirement: A model turn that loses its provider is retried once
+The pipeline SHALL retry a generate or repair turn once with the same messages when the provider fails with an upstream error (5xx, 429, network or stream error), emitting a `restart` event first when the turn had already yielded token events, and SHALL end with today's terminal failure if the retry also fails; the failed attempt's usage SHALL still be metered.
 
 #### Scenario: Provider drops before the first token
 - **WHEN** the provider closes the stream before the turn's first token
-- **THEN** the turn is sent once more and the build can complete
+- **THEN** the turn is sent once more without a `restart` event and the build can complete
 
-#### Scenario: Provider drops after tokens were streamed
+#### Scenario: Provider drops mid-turn
 - **WHEN** the provider fails after the turn yielded tokens
+- **THEN** one `restart` event is emitted, the turn is sent once more, and the build can complete
+
+#### Scenario: Second failure
+- **WHEN** the retried turn fails too
 - **THEN** the run ends with the same terminal failure as today
 
 ### Requirement: An unverified or failed containment verdict is logged without content
