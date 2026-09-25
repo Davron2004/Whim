@@ -198,6 +198,36 @@ export const PLAN_ROW_LABELS: readonly string[] = [
   'What it remembers',
 ];
 
+// ─── What a mini-app cannot do (beta-1 D9) ───────────────────────────────────
+
+/** One thing a mini-app cannot do: the plain words the clarify and plan-writing prompts state it
+ *  in, and the capability ids that would make it possible. None of those ids is in the capability
+ *  registry (`checks/contract.ts#CAPABILITY_EXPORTS`); the prompts suite fails the day one is, so
+ *  the prompts cannot go on calling something impossible after it became possible. */
+export interface MiniAppLimit {
+  readonly words: string;
+  readonly missingCapabilities: readonly string[];
+}
+
+/** The one list both prompts are built from. */
+export const MINI_APP_LIMITS: readonly MiniAppLimit[] = [
+  {
+    words: 'go online or show live data from outside the phone (weather, news, prices, scores, maps, search)',
+    missingCapabilities: ['network'],
+  },
+  { words: 'send notifications or reminders while the app is closed', missingCapabilities: ['notifications', 'background'] },
+  {
+    words: "reach other people's phones or share anything between people (messages, pings, shared lists, multiplayer)",
+    missingCapabilities: ['sharing'],
+  },
+  { words: 'use the camera, photos, microphone or files', missingCapabilities: ['camera', 'photos', 'microphone', 'files'] },
+  { words: "know where the phone is, or read the phone's contacts, calendar or other apps", missingCapabilities: ['location', 'contacts', 'calendar'] },
+  { words: 'take payments or sign in to an account', missingCapabilities: ['payments', 'accounts'] },
+];
+
+/** `MINI_APP_LIMITS` as the sentence both system prompts carry. */
+const MINI_APP_LIMITS_TEXT = `A mini-app runs on this one phone only. It cannot ${MINI_APP_LIMITS.map((limit) => limit.words).join('; ')}.`;
+
 const REWRITE_SYSTEM = [
   "You rewrite a user's casual request into one clear, specific product description for generating a",
   'tiny app. Reply with ONLY a JSON object (optionally inside a ```json fenced block) shaped exactly',
@@ -209,6 +239,9 @@ const REWRITE_SYSTEM = [
   'track of are stated with it: keep that name unless the request explicitly asks to rename it, keep',
   'every concept it already has, and describe ONLY what this request changes — never describe the',
   'app as if it were being built from nothing.',
+  MINI_APP_LIMITS_TEXT,
+  'When the request asks for any of that, describe the rest of the app, never describe it doing the',
+  'impossible part, and say plainly in the plan what is left out.',
 ].join(' ');
 
 export function buildRewriteMessages(ctx: RewriteTurnContext): ModelMessage[] {
@@ -243,6 +276,13 @@ const CLARIFY_SYSTEM = [
   'what the app is, what kind of app it is, or who it is for: that is settled. Ask only about the',
   'change itself, and only if the answer would change what gets built. If the change is clear,',
   'return an empty list.',
+  MINI_APP_LIMITS_TEXT,
+  'Never ask about any of that and never offer it as an option. When only an extra needs it, ask',
+  'about the rest and leave the extra out. When the core of the request needs it (the app would be',
+  'pointless without it), ask nothing and reply instead with',
+  '{ "questions": [], "limit": { "reason": string, "alternative": string } }: "reason" says in one',
+  'short sentence what a mini-app cannot do here, and "alternative" is the nearest app that CAN be',
+  'built, written as a short request the user could send instead. Each is at most 200 characters.',
 ].join(' ');
 
 export function buildClarifyMessages(ctx: ClarifyTurnContext): ModelMessage[] {

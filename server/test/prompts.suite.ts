@@ -43,8 +43,11 @@ import {
   SOURCE_INCLUDED_CLAIM,
   STORAGE_LOCATIONS_HEADING,
   IDENTITY_CONTINUITY,
+  MINI_APP_LIMITS,
+  type MiniAppLimit,
   type PromptPlan,
 } from '../src/generation/prompts';
+import { CAPABILITY_EXPORTS, type CapabilityExportRow } from '../../checks/contract';
 import { GenerationMachine, type CheckContext, type CheckStage } from '../src/generation/machine';
 import { parseJsonBlock } from '../src/generation/json-block';
 import { runStaticChecks } from '../../checks/index';
@@ -732,6 +735,42 @@ function testJsonBlockParsing(): void {
   check('parseJsonBlock: empty input yields undefined', parseJsonBlock('   ') === undefined);
 }
 
+// ── §What a mini-app cannot do (beta-1 D9) ───────────────────────────────────
+
+/** Every capability id a limit names as missing that the registry nevertheless has. */
+function limitsTheRegistryHas(limits: readonly MiniAppLimit[], registry: readonly CapabilityExportRow[]): string[] {
+  const present = new Set(registry.map((row) => row.capability));
+  return limits.flatMap((limit) => limit.missingCapabilities.filter((capability) => present.has(capability)));
+}
+
+function testMiniAppLimits(): void {
+  section('Tripwire: clarify and plan writing are built from one list of mini-app limits, and it agrees with the registry');
+
+  const systemOf = (messages: { role: string; content: string }[]): string =>
+    messages.find((m) => m.role === 'system')?.content ?? '';
+  const clarifySystem = systemOf(buildClarifyMessages({ request: { prompt: 'a weather app' } }));
+  const rewriteSystem = systemOf(buildRewriteMessages({ request: { prompt: 'a weather app' } }));
+
+  for (const limit of MINI_APP_LIMITS) {
+    check(`the clarify system prompt states "${limit.words}"`, clarifySystem.includes(limit.words));
+    check(`the rewrite system prompt states "${limit.words}"`, rewriteSystem.includes(limit.words));
+    check(`"${limit.words}" names at least one capability id that would make it possible`, limit.missingCapabilities.length > 0);
+  }
+
+  const offenders = limitsTheRegistryHas(MINI_APP_LIMITS, CAPABILITY_EXPORTS);
+  check(
+    'no capability the list calls missing is in the capability registry (checks/contract.ts#CAPABILITY_EXPORTS)',
+    offenders.length === 0,
+    offenders.length > 0 ? `update MINI_APP_LIMITS: the registry now has ${offenders.join(', ')}` : undefined,
+  );
+  const firstMissing = MINI_APP_LIMITS[0]?.missingCapabilities[0] ?? '';
+  eq(
+    'non-vacuity: a registry that gains a capability the list calls missing is caught',
+    limitsTheRegistryHas(MINI_APP_LIMITS, [...CAPABILITY_EXPORTS, { sdkExport: firstMissing, capability: firstMissing }]),
+    [firstMissing],
+  );
+}
+
 // ── Entry point ────────────────────────────────────────────────────────────
 
 export async function runPromptsTests(): Promise<void> {
@@ -748,4 +787,5 @@ export async function runPromptsTests(): Promise<void> {
   await testEveryAuthoringPromptCarriesTheRatingRule();
   await testContentPolicyNotDuplicatedInSource();
   testJsonBlockParsing();
+  testMiniAppLimits();
 }

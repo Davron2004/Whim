@@ -220,6 +220,8 @@ async function testClarifyEndpoint(): Promise<void> {
     );
   }
 
+  await testClarifyLimit();
+
   // Structural rejection before any model call.
   {
     const { app, model } = appWithModel([]);
@@ -243,6 +245,55 @@ async function testClarifyEndpoint(): Promise<void> {
     const res = await post(app, '/v1/clarify', { prompt: 'a water tracker' }, DEVICE_HEADER);
     eq('unconfigured clarify → 502', res.status, 502);
   }
+}
+
+/** One clarify call answered with `reply`, read back as a validated `ClarifyResponse`. */
+async function clarifyWith(reply: unknown): Promise<{ status: number; body: ClarifyResponse | undefined; logs: Record<string, unknown>[] }> {
+  const { app } = appWithModel([{ role: 'clarify', deltas: ['```json\n', JSON.stringify(reply), '\n```'], usage: TURN_USAGE }]);
+  const capture = captureLogs();
+  let res: Response;
+  try {
+    res = await post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER);
+  } finally {
+    capture.stop();
+  }
+  const parsed = res.status === 200 ? ClarifyResponse.safeParse(await res.json()) : undefined;
+  return { status: res.status, body: parsed?.success ? parsed.data : undefined, logs: withMessage(capture, 'clarify limit kept, questions dropped') };
+}
+
+async function testClarifyLimit(): Promise<void> {
+  section('Wire v2 — clarify answers a limit when the request’s core needs what a mini-app cannot do (beta-1 D9)');
+
+  const limit = { reason: 'A mini-app cannot get live weather.', alternative: 'A bike-or-train checklist you fill in each morning' };
+  const question = { id: 'when', question: 'When do you ride?', options: ['Mornings', 'Evenings'] };
+
+  const alone = await clarifyWith({ questions: [], limit });
+  eq('a limit reply → 200', alone.status, 200);
+  eq('the limit is returned as the model wrote it, with no questions', alone.body, { questions: [], limit });
+
+  const both = await clarifyWith({ questions: [question], limit: { reason: `  ${limit.reason}  `, alternative: limit.alternative } });
+  eq('a limit beside questions keeps the limit (trimmed) and drops the questions', both.body, { questions: [], limit });
+  eq('the dropped questions are logged once, by count only', both.logs.map((r) => r.droppedQuestions), [1]);
+  check('the log line carries no question or limit text', !JSON.stringify(both.logs).includes('ride') && !JSON.stringify(both.logs).includes('weather'));
+
+  const noQuestionsKey = await clarifyWith({ limit });
+  eq('a limit with no questions key at all is still a limit', noQuestionsKey.body, { questions: [], limit });
+
+  const malformed = [
+    { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative } },
+    { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) } },
+    { label: 'a missing alternative', limit: { reason: limit.reason } },
+    { label: 'a string instead of an object', limit: 'no weather' },
+  ];
+  for (const entry of malformed) {
+    const read = await clarifyWith({ questions: [question], limit: entry.limit });
+    eq(`${entry.label}: the reply is read as its questions, with no limit`, read.body, { questions: [{ ...question, select: 'one', other: false }] });
+  }
+  const malformedAlone = await clarifyWith({ limit: { reason: '', alternative: '' } });
+  eq('a malformed limit with no questions is an unusable reply → 502, as without a limit', malformedAlone.status, 502);
+
+  const boundary = await clarifyWith({ questions: [], limit: { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) } });
+  eq('200 characters after trimming is still a limit', boundary.body?.limit, { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) });
 }
 
 // ── §4 Rewrite: clarifications in, plan rows out (C8) ────────────────────────

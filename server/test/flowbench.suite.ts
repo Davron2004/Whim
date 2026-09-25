@@ -199,6 +199,43 @@ async function testFailureRetryAndMissingSource(): Promise<void> {
   }
 }
 
+async function testLimitIsItsOwnOutcome(): Promise<void> {
+  section('flow benchmark records a clarify limit as its own outcome, stops the case, and counts it apart from failures');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-limit-'));
+  const limit = { reason: 'A mini-app cannot get live weather.', alternative: 'A bike-or-train checklist' };
+  const evalSet = manifestFile(root, [
+    { caseId: 'weather', appSlug: 'weather', prompt: 'a weather app', assertions: [] },
+    { caseId: 'counter', appSlug: 'counter', prompt: 'a counter', assertions: [] },
+  ]);
+  const fake = await listenFake((request, res) => {
+    const prompt = String(request.body.prompt ?? '');
+    if (request.path === '/v1/clarify' && prompt === 'a weather app') response(res, 200, { questions: [], limit });
+    else if (request.path === '/v1/clarify') response(res, 200, { questions: [{ ...QUESTION, select: 'many', other: true }] });
+    else if (request.path === '/v1/rewrite') response(res, 200, { rewrittenPrompt: prompt, plan: [] });
+    else if (request.path === '/v1/generate') sse(res, [{ type: 'result', app: { name: 'counter', source: SOURCE, bundle: '', manifest: {}, schema: {} } }]);
+    else response(res, 404, { error: 'not_found', hint: 'unknown test route' });
+  });
+  try {
+    const jsonPath = path.join(root, 'report.json');
+    const report = await runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0 });
+    writeJsonReport(report, jsonPath);
+    const weather = report.cases.find((item) => item.caseId === 'weather');
+    const counter = report.cases.find((item) => item.caseId === 'counter');
+    eq('the limited case ends in the limit, reason and alternative intact', weather?.outcome, { type: 'limit', ...limit });
+    eq('the limited case ran clarify only', weather === undefined ? [] : Object.keys(weather.phases), ['clarify']);
+    const weatherPaths = fake.requests.filter((request) => request.body.prompt === 'a weather app').map((request) => request.path);
+    eq('no rewrite or generate was sent for the limited case', weatherPaths, ['/v1/clarify']);
+    eq('auto-answering still picks the first option, never other or decide', counter?.clarifications, [{ id: QUESTION.id, question: QUESTION.question, choices: [QUESTION.options[0]] }]);
+    eq('the summary counts the limit apart from failures', [report.summary.results, report.summary.limits, report.summary.failures], [1, 1, 0]);
+    check('the markdown table shows the limit', formatMarkdownReport(report).includes(`limit: ${limit.reason} → ${limit.alternative}`));
+    const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as { cases: { caseId: string; outcome: unknown }[]; summary: { limits: number } };
+    eq('the JSON report carries the limit outcome and count', [json.cases.find((item) => item.caseId === 'weather')?.outcome, json.summary.limits], [{ type: 'limit', ...limit }, 1]);
+  } finally {
+    await fake.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testArgumentsAndJson(): Promise<void> {
   section('flow benchmark refuses missing arguments and writes JSON reports');
   const missingUrl = await caught(() => { parseArgs(['--eval-set', path.join(process.cwd(), 'missing-eval-set')]); });
@@ -207,7 +244,7 @@ async function testArgumentsAndJson(): Promise<void> {
   check('missing eval set is an argument error', missingEvalSet instanceof Error && missingEvalSet.message.includes('--eval-set'));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-json-'));
   try {
-    const report = { setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [], summary: { phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } }, results: 0, failures: 0 } };
+    const report = { setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [], summary: { phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } }, results: 0, failures: 0, limits: 0 } };
     const jsonPath = path.join(root, 'report.json');
     writeJsonReport(report, jsonPath);
     check('JSON report is written as valid JSON', JSON.parse(fs.readFileSync(jsonPath, 'utf8')).setId === 'set');
@@ -287,6 +324,7 @@ async function testFlowbenchEntry(): Promise<void> {
 export async function runFlowbenchTests(): Promise<void> {
   await testFlowAndReport();
   await testFailureRetryAndMissingSource();
+  await testLimitIsItsOwnOutcome();
   await testArgumentsAndJson();
   await testFlowbenchEntry();
 }
