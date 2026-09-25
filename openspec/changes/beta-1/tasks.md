@@ -43,11 +43,11 @@
 
 ## 7. Realm and host runtime (app runtime + SDK)
 
-- [ ] 7.1 In `loader.js`, scroll a focused editable element into view on focus and on viewport resize (D3).
-- [ ] 7.2 A runtime-owned root error boundary posts a nonce-authenticated `render` error frame, and the host treats `render` as fatal (D4). Tests: trusted `render` → FailureScreen; untrusted → ignored.
-- [ ] 7.3 The theme payload gains the sanitized, clamped `chromeInsetBottom`, computed by the host from the orb size, margin and bottom safe-area inset on every mount (D5).
-- [ ] 7.4 SDK `Screen` adds `chromeInsetBottom` to its scrollable content's bottom padding; generated code can't read it. `sdk:test` covers with and without an inset.
-- [ ] 7.5 `npm run build`, then `npm run invariants` and `npm run bridge:invariants` green.
+- [x] 7.1 In `loader.js`, scroll a focused editable element into view on focus and on viewport resize (D3).
+- [x] 7.2 A runtime-owned root error boundary posts a nonce-authenticated `render` error frame, and the host treats `render` as fatal (D4). Tests: trusted `render` → FailureScreen; untrusted → ignored.
+- [x] 7.3 The theme payload gains the sanitized, clamped `chromeInsetBottom`, computed by the host from the orb size, margin and bottom safe-area inset on every mount (D5).
+- [x] 7.4 SDK `Screen` adds `chromeInsetBottom` to its scrollable content's bottom padding; generated code can't read it. `sdk:test` covers with and without an inset.
+- [x] 7.5 `npm run build`, then `npm run invariants` and `npm run bridge:invariants` green.
 
 ## 8. Diagnostics and polish (app)
 
