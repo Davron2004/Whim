@@ -10,7 +10,7 @@
  * was already produced by an earlier, checked generation, so sending it would multiply cost
  * without adding user intent).
  */
-import type { ClarifyRequest, GenerateRequest, RewriteRequest } from '@whim/contract';
+import type { Clarification, ClarifyRequest, GenerateRequest, RewriteRequest } from '@whim/contract';
 
 interface CanonicalFields {
   prompt: string;
@@ -28,6 +28,12 @@ function canonicalize(fields: CanonicalFields): string {
   });
 }
 
+/** One answered question as the classifier reads it: the question and the picked options, joined
+ *  the way the prompt turns render them (`generation/prompts`). */
+function canonicalClarification(c: Clarification): { question: string; answer: string } {
+  return { question: c.question, answer: c.choices.join(', ') };
+}
+
 /** `/v1/clarify`: only the prompt is user-authored free text at this point in the flow — no
  *  clarification answers exist yet, and the spec scopes app-name/collection-name checking to
  *  rewrite alone. */
@@ -42,7 +48,7 @@ export function buildRewritePolicyInput(request: RewriteRequest): string {
   const collections = request.app?.collections ?? [];
   return canonicalize({
     prompt: request.prompt,
-    clarifications: (request.clarifications ?? []).map((c) => ({ question: c.question, answer: c.answer })),
+    clarifications: (request.clarifications ?? []).map(canonicalClarification),
     appName: request.app?.name ?? null,
     fields: collections.flatMap((c) => [c.name, ...c.fields]),
   });
@@ -54,7 +60,7 @@ export function buildRewritePolicyInput(request: RewriteRequest): string {
 export function buildGeneratePolicyInput(request: GenerateRequest): string {
   return canonicalize({
     prompt: request.prompt,
-    clarifications: (request.clarifications ?? []).map((c) => ({ question: c.question, answer: c.answer })),
+    clarifications: (request.clarifications ?? []).map(canonicalClarification),
     appName: null,
     fields: [],
   });

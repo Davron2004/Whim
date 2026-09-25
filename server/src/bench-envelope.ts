@@ -5,7 +5,7 @@
  * legacy default. Deliberately free of the logger and of Hono values, because both drivers are
  * bundled into standalone CLIs.
  */
-import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER } from '@whim/contract';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, PROTOCOL_HEADER, PROTOCOL_LEVEL } from '@whim/contract';
 import { buildNumberAt } from '../../scripts/release/lib/build-number';
 import { highestConsentVersion } from './consent-practices';
 
@@ -13,12 +13,14 @@ import { highestConsentVersion } from './consent-practices';
  *  `WHIM_MARKETING_VERSION`, which the server suite holds this equal to. */
 export const BENCH_APP_VERSION = '1.0.0';
 
-/** The four envelope headers for a driver request sent at `now`. */
+/** The four envelope headers for a driver request sent at `now`, and the protocol level this
+ *  server's own contract describes (every `/v1` request needs one, beta-1 D16). */
 export function benchEnvelopeHeaders(now: Date = new Date()): Record<string, string> {
   return {
     [PLATFORM_HEADER]: 'android',
     [APP_VERSION_HEADER]: BENCH_APP_VERSION,
     [BUILD_HEADER]: String(buildNumberAt(now)),
     [CONSENT_HEADER]: String(highestConsentVersion()),
+    [PROTOCOL_HEADER]: String(PROTOCOL_LEVEL),
   };
 }

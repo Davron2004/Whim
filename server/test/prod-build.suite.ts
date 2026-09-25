@@ -22,7 +22,7 @@ import { createRequire, isBuiltin } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { check, eq, section } from './harness';
-import { TIMED_OUT, waitFor, within } from './route-doubles';
+import { PROTOCOL_HEADER_LINE, TIMED_OUT, waitFor, within } from './route-doubles';
 import { productionEntryInputs } from './build-fixtures';
 import { buildRuntimeTree } from '../build.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
@@ -189,6 +189,7 @@ function generateHead(deviceId: string, payload: string, extra: string[] = []): 
     'Content-Type: application/json',
     `Content-Length: ${Buffer.byteLength(payload)}`,
     `x-whim-device: ${deviceId}`,
+    PROTOCOL_HEADER_LINE,
     ...extra,
   ];
 }

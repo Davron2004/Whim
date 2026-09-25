@@ -11,6 +11,10 @@
  * The envelope is the four client headers. None of them present is a legacy client, served exactly
  * as before the envelope existed (`LEGACY_ENVELOPE`); some but not all, or any malformed value, is
  * refused `400` before any route admission — only a buggy client sends that.
+ *
+ * Beside the envelope, `PROTOCOL_HEADER` declares the protocol level the client understands (beta-1
+ * D16). A request without a positive-integer level predates the protocol, so it is below every
+ * level this server supports and gets the minimum-build gate's own `426 update_required`.
  */
 import { randomUUID } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
@@ -20,10 +24,13 @@ import {
   ClientEnvelope,
   CONSENT_HEADER,
   PLATFORM_HEADER,
+  PROTOCOL_HEADER,
+  ProtocolLevelHeader,
   REQUEST_ID_HEADER,
   type ApiError,
 } from '@whim/contract';
 import { log, type ServerLogger } from './logger';
+import { updateRequiredRefusal } from './admission/refusals';
 
 /** What a request with none of the four envelope headers is treated as (design D3). A client
  *  envelope always names `ios` or `android` and a positive build, so `platform: 'unknown'` (and
@@ -44,6 +51,9 @@ export interface RequestVariables {
   deviceId: string;
   /** Set by the envelope middleware. */
   envelope: RequestEnvelope;
+  /** The protocol level the client declared in `PROTOCOL_HEADER` (a positive integer), set by
+   *  `readProtocolLevel`. Anything a route sends above level 1 goes through `wire-level.ts` with it. */
+  protocolLevel: number;
 }
 
 /** The env every `/v1` route module is typed with. */
@@ -111,6 +121,26 @@ export const readEnvelope: MiddlewareHandler<EdgeEnv> = async (c, next) => {
   const result = parseRequestEnvelope(c.req.raw.headers);
   if (!result.ok) return c.json(result.body, 400);
   c.set('envelope', result.envelope);
+  await next();
+};
+
+/** `PROTOCOL_HEADER` as a level, or `undefined` when the request declares none a server supports:
+ *  the header is missing, empty, or not a positive integer. */
+export function parseProtocolLevel(headers: Headers): number | undefined {
+  const parsed = ProtocolLevelHeader.safeParse(headers.get(PROTOCOL_HEADER));
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Mounted on `/v1/*` right AFTER `readEnvelope` and before the minimum-build gate: a request with
+ *  no level ends here with the gate's own `426 update_required`, before any admission, ledger row
+ *  or model call. */
+export const readProtocolLevel: MiddlewareHandler<EdgeEnv> = async (c, next) => {
+  const level = parseProtocolLevel(c.req.raw.headers);
+  if (level === undefined) {
+    const r = updateRequiredRefusal();
+    return c.json(r.body, r.status, r.headers);
+  }
+  c.set('protocolLevel', level);
   await next();
 };
 

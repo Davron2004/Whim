@@ -38,6 +38,7 @@ import {
 } from '../src/generation/summarise';
 import { defaultModelRoster, openRouterModelClient, type ModelDelta, type ModelRoster } from '../src/generation/model';
 import { OpenRouterClient, type FetchFn } from '../src/openrouter';
+import { PROTOCOL_HEADERS } from './route-doubles';
 import type { DeviceVerifier } from '../src/device-identity';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
@@ -52,7 +53,7 @@ import {
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
-const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
+const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID, ...PROTOCOL_HEADERS };
 const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const TURN_USAGE = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
 
@@ -95,14 +96,14 @@ async function testWholeRouteTableIsGated(): Promise<void> {
   const routeLevelMiddleware = app.routes.filter((r) => r.path.startsWith('/v1/') && r.path !== '/v1/*' && r.method === 'ALL');
 
   check('the /v1 route table is non-trivial', mounted.length >= 4, `found ${mounted.length}`);
-  eq('the four /v1 edge middlewares are mounted by prefix: request id, device gate, envelope, minimum build', prefixMiddleware.length, 4);
+  eq('the five /v1 edge middlewares are mounted by prefix: request id, device gate, envelope, protocol level, minimum build', prefixMiddleware.length, 5);
   eq('no /v1 route mounts middleware of its own', routeLevelMiddleware.map((r) => r.path), []);
   check('the clarify route is mounted', mounted.some((r) => r.path === '/v1/clarify'));
 
   for (const route of mounted) {
     const res = await app.request(route.path, {
       method: route.method,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...PROTOCOL_HEADERS },
       ...(route.method === 'POST' ? { body: JSON.stringify({ prompt: 'hello' }) } : {}),
     });
     eq(`${route.method} ${route.path} without a device header → 400`, res.status, 400);
@@ -152,7 +153,7 @@ async function testSubstitutedVerifier(): Promise<void> {
   for (const route of mounted) {
     const res = await app.request(route.path, {
       method: route.method,
-      headers: { 'content-type': 'application/json', 'x-whim-device': VERIFIER_REFUSED_UUID },
+      headers: { 'content-type': 'application/json', 'x-whim-device': VERIFIER_REFUSED_UUID, ...PROTOCOL_HEADERS },
       ...(route.method === 'POST' ? { body: JSON.stringify({ prompt: 'hello' }) } : {}),
     });
     eq(`${route.method} ${route.path} with the refused UUID → 403`, res.status, 403);
@@ -163,7 +164,7 @@ async function testSubstitutedVerifier(): Promise<void> {
   eq('the substituted verifier made no model call', model.requests.length, 0);
 
   // Every other UUID is served as before, with no route change.
-  const res = await app.request('/v1/usage', { headers: { 'x-whim-device': VERIFIER_OTHER_UUID } });
+  const res = await app.request('/v1/usage', { headers: { 'x-whim-device': VERIFIER_OTHER_UUID, ...PROTOCOL_HEADERS } });
   eq('a non-refused UUID is served as before', res.status, 200);
 }
 
@@ -191,9 +192,32 @@ async function testClarifyEndpoint(): Promise<void> {
     const parsed = ClarifyResponse.safeParse(await res.json());
     eq('model clarify body validates as ClarifyResponse', parsed.success, true);
     eq('a fourth question is dropped, not returned', parsed.success ? parsed.data.questions.length : -1, 3);
+    eq(
+      'a question the model gives no answer mode is single-select with no typed answer',
+      parsed.success ? parsed.data.questions.map((q) => [q.select, q.other]) : [],
+      [['one', false], ['one', false], ['one', false]],
+    );
     eq('clarify used the clarify role\'s model', model.requests[0]?.request.model, ROSTER.clarify.model);
     const usage = await usageStore.read(DEVICE_ID);
     eq('clarify is metered to the calling device', usage.totalTokens, TURN_USAGE.totalTokens);
+  }
+
+  // The model's own answer modes are kept; anything else it writes there reads as the default.
+  {
+    const modes = {
+      questions: [
+        { id: 'days', question: 'Which days?', options: ['Mon', 'Tue'], select: 'many', other: true },
+        { id: 'time', question: 'What time?', options: ['Morning', 'Evening'], select: 'several', other: 'yes' },
+      ],
+    };
+    const { app } = appWithModel([{ role: 'clarify', deltas: [JSON.stringify(modes)], usage: TURN_USAGE }]);
+    const res = await post(app, '/v1/clarify', { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    const parsed = ClarifyResponse.safeParse(await res.json());
+    eq(
+      'the model’s select and other are kept, and a value outside the contract reads as the default',
+      parsed.success ? parsed.data.questions.map((q) => [q.id, q.select, q.other]) : parsed.error.issues,
+      [['days', 'many', true], ['time', 'one', false]],
+    );
   }
 
   // Structural rejection before any model call.
@@ -244,7 +268,7 @@ async function testRewriteClarificationsAndPlan(): Promise<void> {
       '/v1/rewrite',
       {
         prompt: 'a water tracker',
-        clarifications: [{ id: 'reset', question: 'When does it reset?', answer: 'Every morning' }],
+        clarifications: [{ id: 'reset', question: 'When does it reset?', choices: ['Every morning', 'At noon'] }],
       },
       DEVICE_HEADER,
     );
@@ -252,6 +276,7 @@ async function testRewriteClarificationsAndPlan(): Promise<void> {
     const body = RewriteResponse.parse(await res.json());
     const sent = model.requests[0]?.request.messages.map((m) => m.content).join('\n') ?? '';
     check('the answer text reaches the model', sent.includes('Every morning'));
+    check('every picked option reaches the model, joined', sent.includes('Every morning, At noon'));
     check('the question text reaches the model', sent.includes('When does it reset?'));
     eq('plan rows come back', body.plan?.length, 2);
     eq('plan row label', body.plan?.[0]?.label, 'What it is');

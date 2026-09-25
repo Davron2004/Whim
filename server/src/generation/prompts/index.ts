@@ -152,10 +152,12 @@ function ratingRuleAppendix(): string {
 }
 
 /** The clarify exchange's answers, rendered for any turn that should reflect them. Empty (and
- *  absent) mean the same thing — the user answered nothing — and render as no section at all. */
+ *  absent) mean the same thing — the user answered nothing — and render as no section at all. Only
+ *  picked options render: an entry with no choices adds no row. */
 function clarificationsSection(clarifications: Clarification[] | undefined): string {
-  if (!clarifications || clarifications.length === 0) return '';
-  const rows = clarifications.map((c) => `- ${c.question} → ${c.answer}`).join('\n');
+  const picked = (clarifications ?? []).filter((c) => c.choices.length > 0);
+  if (picked.length === 0) return '';
+  const rows = picked.map((c) => `- ${c.question} → ${c.choices.join(', ')}`).join('\n');
   return `The user already answered these questions — honour every answer:\n${rows}`;
 }
 

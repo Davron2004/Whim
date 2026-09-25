@@ -38,7 +38,7 @@ import { log } from '../../logging';
 import { toDiagnostic } from '../../logging/diagnostic';
 
 const ENVELOPE = [PLATFORM_HEADER, APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER];
-const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'] };
+const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
 /** A refusal as the server's own builder makes it and its route answers it

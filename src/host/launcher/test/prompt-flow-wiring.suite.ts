@@ -133,7 +133,7 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('clarify: a request/response exchange, never a stream', async () => {
     const captured: CapturedRequest[] = [];
     const response = await clarifyPrompt(
-      OPTS(stubFetch(200, { questions: [{ id: 'alert', question: 'How?', options: ['Sound', 'Buzz'] }] }, captured)),
+      OPTS(stubFetch(200, { questions: [{ id: 'alert', question: 'How?', options: ['Sound', 'Buzz'], select: 'one', other: false }] }, captured)),
       'a brew timer',
     );
     h.eq(captured[0].url, 'http://server.test/v1/clarify', 'the exchange is its own unary route');
@@ -173,11 +173,11 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('rewrite: the clarify answers ride with the rewrite request', async () => {
     const captured: CapturedRequest[] = [];
     await rewritePrompt(OPTS(stubFetch(200, { rewrittenPrompt: 'a brew timer' }, captured)), 'a timer', [
-      { id: 'alert', question: 'How?', answer: 'Both' },
+      { id: 'alert', question: 'How?', choices: ['Both'] },
     ]);
     h.eq(
       captured[0].body,
-      { prompt: 'a timer', clarifications: [{ id: 'alert', question: 'How?', answer: 'Both' }] },
+      { prompt: 'a timer', clarifications: [{ id: 'alert', question: 'How?', choices: ['Both'] }] },
       'the answers travel by value with the prompt',
     );
   });
@@ -191,11 +191,11 @@ export async function runPromptFlowWiringTests(h: Harness): Promise<void> {
   await h.test('generate: the request carries the clarifications for a new app', async () => {
     const noAccess = {} as unknown as StoreAccess;
     const withAnswers = await buildGenerateRequest(noAccess, () => ({}) as never, undefined, 'a brew timer', [
-      { id: 'alert', question: 'How?', answer: 'Both' },
+      { id: 'alert', question: 'How?', choices: ['Both'] },
     ]);
     h.eq(
       withAnswers,
-      { prompt: 'a brew timer', clarifications: [{ id: 'alert', question: 'How?', answer: 'Both' }] },
+      { prompt: 'a brew timer', clarifications: [{ id: 'alert', question: 'How?', choices: ['Both'] }] },
       'the answers reach generation',
     );
     const without = await buildGenerateRequest(noAccess, () => ({}) as never, undefined, 'a brew timer');

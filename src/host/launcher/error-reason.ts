@@ -25,6 +25,12 @@ export const GENERIC_STREAM_ERROR = 'Something went wrong while building your ap
 /** The one decision both exports below read: which of the three failures a thrown error is, as
  *  the closed code the log records and the sentence the screen shows. */
 function classify(err: unknown): { code: DiagnosticReason; reason: string } {
+  // A message whose fallback ends the flow (beta-1 D16): its notice is plain text the server wrote
+  // for this screen; without one, the generic reason.
+  if (err instanceof GenerationClientError && err.kind === 'fallback') {
+    const notice = err.fallback?.notice;
+    return notice ? { code: 'server_refused', reason: notice } : { code: 'unexpected_error', reason: GENERIC_STREAM_ERROR };
+  }
   if (
     err instanceof GenerationClientError &&
     err.hint &&

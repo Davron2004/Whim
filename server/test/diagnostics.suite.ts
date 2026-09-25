@@ -24,7 +24,7 @@ import { NodeSqliteUsageStore } from '../src/usage-store';
 import { NodeSqliteReportStore } from '../src/reports/store';
 import { check, eq, section } from './harness';
 import { captureLogs, type LogCapture } from './log-capture';
-import { TIMED_OUT, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, within } from './route-doubles';
 
 const DEVICE_A = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
 const DEVICE_B = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
@@ -89,7 +89,7 @@ async function post(h: Harness, body: string, deviceId = DEVICE_A, envelope: Rea
     Promise.resolve(
       h.app.request('/v1/diagnostics', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...envelope },
+        headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...PROTOCOL_HEADERS, ...envelope },
         body,
       }),
     ),

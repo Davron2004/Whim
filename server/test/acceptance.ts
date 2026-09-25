@@ -35,6 +35,7 @@ import { runDiagnosticsTests } from './diagnostics.suite';
 import { runWaitlistTests } from './waitlist.suite';
 import { runBetaSignupTests } from './beta-signup.suite';
 import { runBetaSiteTests } from './beta-site.suite';
+import { runWireLevelTests } from './wire-level.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -66,5 +67,6 @@ await runDiagnosticsTests();
 runWaitlistTests();
 await runBetaSignupTests();
 await runBetaSiteTests();
+await runWireLevelTests();
 
 report();

@@ -31,6 +31,7 @@ import { SynthRunSession } from '../../synthrun/session';
 import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunReport } from '../../synthrun/contract';
 import { containedDetail } from './run-stage-fixtures';
+import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
 import { leakProbe, runDevice, feedSseBuffer, isRealFrame, parseGenerationEvent } from '../src/loadtest/drive';
 
@@ -475,6 +476,7 @@ function rawGenerate(port: number, deviceId: string, prompt: string): { socket: 
       'Content-Type: application/json',
       `Content-Length: ${Buffer.byteLength(payload)}`,
       `x-whim-device: ${deviceId}`,
+      PROTOCOL_HEADER_LINE,
       'Connection: close',
       '',
       payload,
@@ -602,7 +604,7 @@ async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
       Array.from({ length: 3 }, (_, i) =>
         testFetch(`${handle!.url}/v1/generate`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID() },
+          headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS },
           body: JSON.stringify({ prompt: `whim e2e loadtest device ${i} ${randomUUID()}` }),
         }),
       ),

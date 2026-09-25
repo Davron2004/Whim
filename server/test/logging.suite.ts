@@ -14,11 +14,12 @@ import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { createServerLogger, log as rootLog, REDACTED } from '../src/logger';
 import { captureLogs } from './log-capture';
+import { PROTOCOL_HEADERS } from './route-doubles';
 import { type DevLogSinkOptions } from '../src/routes/dev-logs';
 import type { DevLogBatch, DevLogRecord, DevLogSinkPath } from '@whim/contract';
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
+const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID, ...PROTOCOL_HEADERS };
 const SINK_PATH: DevLogSinkPath = '/dev/logs';
 
 /** Collect what a logger serializes, without touching the process's real stdout. */

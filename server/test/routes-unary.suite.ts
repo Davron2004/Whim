@@ -32,11 +32,12 @@ import { CLASSIFIER_SYSTEM_MARKER, cachedPolicy, ModelContentPolicy, StubContent
 import { defaultModelRoster, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import { ScriptedModelClient } from './scripted-model';
+import { PROTOCOL_HEADERS } from './route-doubles';
 import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
 
 const DEVICE_ID = '99999999-9999-4999-8999-999999999999';
-const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
-const OTHER_DEVICE_HEADER = { 'x-whim-device': '88888888-8888-4888-8888-888888888888' };
+const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID, ...PROTOCOL_HEADERS };
+const OTHER_DEVICE_HEADER = { 'x-whim-device': '88888888-8888-4888-8888-888888888888', ...PROTOCOL_HEADERS };
 const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-1', 'vendor/engineer-1');
 const FIXED_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 /** Whole seconds from `FIXED_NOW` (noon UTC) to the next 00:00 UTC — every ceiling refusal's
@@ -135,7 +136,7 @@ function statsTransport(byId: Record<string, GenerationStats>): UsageAndCostTran
 
 /** A device header nobody has used before — how a script defeats every per-device limit. */
 function freshDeviceHeader(): Record<string, string> {
-  return { 'x-whim-device': randomUUID() };
+  return { 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS };
 }
 
 /** A store that admits and settles normally but cannot `credit` — the shape of a store blip

@@ -37,6 +37,7 @@ import type { Clock, RunTrace } from '../src/generation/machine';
 import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
 import {
   ControlledModelClient,
+  PROTOCOL_HEADERS,
   RecordingUsageStore,
   STALL,
   TIMED_OUT,
@@ -275,7 +276,7 @@ async function postJson(app: Harness['app'], route: string, body: unknown, devic
     Promise.resolve(
       app.request(route, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-whim-device': deviceId },
+        headers: { 'content-type': 'application/json', 'x-whim-device': deviceId, ...PROTOCOL_HEADERS },
         body: typeof body === 'string' ? body : JSON.stringify(body),
         signal,
       }),

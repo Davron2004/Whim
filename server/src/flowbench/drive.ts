@@ -326,7 +326,7 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, sav
     ...(clarifyResponse.status !== 200 || clarifyBody === undefined ? { error: clarifyResponse.status === 200 ? { error: 'invalid_response', hint: 'The clarify response did not match the contract.' } : apiErrorFrom(clarifyResponse.body, clarifyResponse.status) } : {}),
   };
   if (clarifyBody === undefined) return phaseFailure('clarify', clarify, [], caseInfo, deviceId);
-  const clarifications = clarifyBody.questions.map((question) => ({ id: question.id, question: question.question, answer: question.options[0]! }));
+  const clarifications = clarifyBody.questions.map((question) => ({ id: question.id, question: question.question, choices: [question.options[0]!] }));
 
   const rewriteBody = { prompt: caseInfo.prompt, ...(clarifications.length > 0 ? { clarifications } : {}) };
   const rewriteResponse = await postWithRetries(`${baseUrl}/v1/rewrite`, rewriteBody, deviceId, retries, timeoutMs);

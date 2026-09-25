@@ -22,7 +22,7 @@ import { hardwareBack } from './native-host';
 import { button, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, hasInstalled, json, planLoaded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 
-const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'] };
+const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
@@ -84,7 +84,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(paths(), ['/v1/clarify', '/v1/rewrite', '/v1/generate'], 'Build it sends the one generation request');
       const generate = sent.find((r) => r.path === '/v1/generate');
       h.eq(generate?.body?.prompt, 'A tea timer that buzzes', 'generation builds the rewritten prompt');
-      h.eq(generate?.body?.clarifications, [{ id: 'alert', question: QUESTION.question, answer: 'Buzz' }], 'with the answer given on the clarify step');
+      h.eq(generate?.body?.clarifications, [{ id: 'alert', question: QUESTION.question, choices: ['Buzz'] }], 'with the answer given on the clarify step');
       streams[0].push(resultEvent('Tea Timer'));
       streams[0].end();
       await waitFor(() => on(tree, DoneStep), 'the delivered app to land on the done step');

@@ -26,7 +26,16 @@ import type { ConsentVersion, DeviceIdError, GenerateRequest } from '@whim/contr
 import type { ConsentStatus } from './ai-consent';
 import type { TermsStatus } from './terms-acceptance';
 import type { AppInfo } from './app-info';
-import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, REQUEST_ID_HEADER } from './wire-headers';
+import { gateMessage, isKnownErrorCode, type TerminalFallback } from './wire-compat';
+import {
+  APP_VERSION_HEADER,
+  BUILD_HEADER,
+  CONSENT_HEADER,
+  PLATFORM_HEADER,
+  PROTOCOL_HEADER,
+  PROTOCOL_LEVEL,
+  REQUEST_ID_HEADER,
+} from './wire-headers';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -42,7 +51,7 @@ declare global {
 }
 
 /** Shared with `generation-client.ts`'s own `@whim/contract`-mirroring structural guards
- *  (`isRewriteResponse`/`isDiagnostic`/`isUsage`/`isWireAppRecord`/`isGenerationEvent`), which
+ *  (`isRewriteResponse`/`isDiagnostic`/`isUsage`/`isWireAppRecord`/`EVENT_GUARDS`), which
  *  import these back from here rather than duplicating them. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -204,16 +213,20 @@ export function connectTimeoutOf(opts: ClientOptions): number {
  *  connect window expires — a hung connect is a network failure, never an in-progress stream. */
 export const CONNECT_TIMEOUT_HINT = 'The generate request timed out before the first event';
 
-export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse' | 'client';
+export type GenerationClientErrorKind = 'network' | 'device_id' | 'http' | 'stream_parse' | 'client' | 'fallback';
 
 /**
  * - `network`    — the request itself failed (fetch threw, not an abort).
  * - `device_id`  — the server rejected the `x-whim-device` header (400, `DeviceIdError` body).
  * - `http`       — any other non-2xx response.
- * - `stream_parse` — a `generateApp` SSE frame failed JSON parsing or `GenerationEvent`
- *   validation.
+ * - `stream_parse` — a `generateApp` SSE frame failed JSON parsing, was not a wire envelope, or
+ *   was a known event that failed `GenerationEvent` validation.
  * - `client`     — the request could not be built, so nothing was sent: the installed app's
  *   version could not be read (`requestHeaders`). `hint` is the reader's own message.
+ * - `fallback`   — the server sent a message this build cannot use, and its `compat` (or the lack
+ *   of one) says to end the flow (`wire-compat.ts`, beta-1 D16): `fallback` is `fail` or `update`,
+ *   with the message's notice. An SSE event, an error body or a success body can raise it; `status`
+ *   and `requestId` are set when a unary response carried them.
  *
  * `code` and `retryAfterSeconds` are `http`-only (store-launch-compliance design D8/D11):
  * `code` is the body's `ApiError.error` identifier, present only when the body structurally
@@ -229,10 +242,18 @@ export class GenerationClientError extends Error {
   readonly code?: string;
   readonly retryAfterSeconds?: number;
   readonly requestId?: string;
+  readonly fallback?: TerminalFallback;
 
   constructor(
     kind: GenerationClientErrorKind,
-    opts?: { status?: number; hint?: string; code?: string; retryAfterSeconds?: number; requestId?: string },
+    opts?: {
+      status?: number;
+      hint?: string;
+      code?: string;
+      retryAfterSeconds?: number;
+      requestId?: string;
+      fallback?: TerminalFallback;
+    },
   ) {
     super(opts?.hint ?? kind);
     this.name = 'GenerationClientError';
@@ -242,12 +263,19 @@ export class GenerationClientError extends Error {
     this.code = opts?.code;
     this.retryAfterSeconds = opts?.retryAfterSeconds;
     this.requestId = opts?.requestId;
+    this.fallback = opts?.fallback;
   }
 }
 
-/** Build the headers of a `/v1` request — `content-type`, `x-whim-device` and the four envelope
- *  headers — shared by every `/v1` call and both stream transports, so no path can drift in how it
- *  builds them (design D2 mitigation). Only `/v1` calls use this; `/healthz` sends none of it.
+/** The `GenerationClientError{kind:'fallback'}` for a message whose fallback ends the flow. */
+export function fallbackError(fallback: TerminalFallback, detail?: { status?: number; requestId?: string }): GenerationClientError {
+  return new GenerationClientError('fallback', { fallback, status: detail?.status, requestId: detail?.requestId });
+}
+
+/** Build the headers of a `/v1` request — `content-type`, `x-whim-device`, the four envelope
+ *  headers and the protocol level (beta-1 D16) — shared by every `/v1` call and both stream
+ *  transports, so no path can drift in how it builds them (design D2 mitigation). Only `/v1` calls
+ *  use this; `/healthz` sends none of it.
  *
  *  The installed app's version is read here, per request. A reader that throws fails the request
  *  before anything is sent — `GenerationClientError{kind:'client'}`, with a breadcrumb for `path`
@@ -268,6 +296,7 @@ export function requestHeaders(opts: ClientOptions, path: string): Record<string
     [APP_VERSION_HEADER]: app.version,
     [BUILD_HEADER]: String(app.build),
     [CONSENT_HEADER]: String(opts.consent),
+    [PROTOCOL_HEADER]: String(PROTOCOL_LEVEL),
   };
 }
 
@@ -300,14 +329,30 @@ export function logMappedError(
   });
 }
 
-/** Build the `GenerationClientError` for a non-ok `Response`: `device_id` when the body matches
- *  the device-identity middleware's `DeviceIdError` shape, `http` otherwise (carrying `hint`
- *  when the body has one, e.g. the `invalid_request` shape the route handlers return). Logs a
- *  generation-channel dev breadcrumb immediately before returning either mapped error (`logMappedError`
+/** Phase one of the error body's decode (beta-1 D16): the fallback that ends the flow, when the
+ *  body is an `ApiError` envelope whose code this build does not know, or whose `compat.min` is
+ *  above its level, and its fallback is not `skip`. A `skip` reads the body the way this build
+ *  always has; so does a body that is no `ApiError` envelope at all (a proxy's HTML page). */
+function errorBodyFallback(bodyJson: unknown): TerminalFallback | undefined {
+  if (!isRecord(bodyJson) || typeof bodyJson.error !== 'string') return undefined;
+  const gate = gateMessage(bodyJson, isKnownErrorCode(bodyJson.error));
+  return gate.kind === 'fallback' && gate.fallback.kind !== 'skip' ? gate.fallback : undefined;
+}
+
+/** Build the `GenerationClientError` for a non-ok `Response`: `fallback` when phase one of the
+ *  body's decode says so (`errorBodyFallback`), `device_id` when the body matches the
+ *  device-identity middleware's `DeviceIdError` shape, `http` otherwise (carrying `hint` when the
+ *  body has one, e.g. the `invalid_request` shape the route handlers return). Logs a
+ *  generation-channel dev breadcrumb immediately before returning any mapped error (`logMappedError`
  *  above), attributed to `path`/`baseUrl` so both transports' call sites are traceable. */
 export async function httpErrorFrom(response: Response, path: string, baseUrl: string): Promise<GenerationClientError> {
   const bodyJson: unknown = await response.json().catch(() => null);
   const requestId = requestIdOf(response.headers);
+  const fallback = errorBodyFallback(bodyJson);
+  if (fallback) {
+    logMappedError(path, baseUrl, 'fallback', { status: response.status, message: fallback.kind, requestId });
+    return fallbackError(fallback, { status: response.status, requestId });
+  }
   if (isDeviceIdError(bodyJson)) {
     logMappedError(path, baseUrl, 'device_id', { status: response.status, message: bodyJson.hint, requestId });
     return new GenerationClientError('device_id', { status: response.status, hint: bodyJson.hint, requestId });

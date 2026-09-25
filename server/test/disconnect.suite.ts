@@ -14,6 +14,7 @@ import { serve, type ServerType } from '@hono/node-server';
 import { check, eq, section } from './harness';
 import {
   ControlledModelClient,
+  PROTOCOL_HEADER_LINE,
   RecordingUsageStore,
   STALL,
   TIMED_OUT,
@@ -95,6 +96,7 @@ function rawPost(port: number, route: string, body: unknown): RawClient {
       'Content-Type: application/json',
       `Content-Length: ${Buffer.byteLength(payload)}`,
       `x-whim-device: ${DEVICE_ID}`,
+      PROTOCOL_HEADER_LINE,
       'Connection: close',
       '',
       payload,

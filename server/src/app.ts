@@ -22,9 +22,9 @@
  * `/beta/signup` stay outside the prefix and anonymous.
  *
  * `/v1/*` middleware order (request-envelope): request id (`assignRequestId`) → device gate →
- * client envelope (`readEnvelope`) → the minimum-build gate (`minimumBuildGate`) → routes, each of
- * which declares its consent practice (`consentPractice`) before its own admission. See
- * `./request-edge.ts` and `./min-build.ts`.
+ * client envelope (`readEnvelope`) → protocol level (`readProtocolLevel`, `426` without one) → the
+ * minimum-build gate (`minimumBuildGate`) → routes, each of which declares its consent practice
+ * (`consentPractice`) before its own admission. See `./request-edge.ts` and `./min-build.ts`.
  */
 import { Hono } from 'hono';
 import type { ApiError, DevLogSinkPath } from '@whim/contract';
@@ -39,7 +39,7 @@ import { makeUsageRoute } from './routes/usage';
 import { makeDiagnosticsRoute } from './routes/diagnostics';
 import { makeDevLogsRoute, type DevLogSinkOptions } from './routes/dev-logs';
 import { log } from './logger';
-import { assignRequestId, envelopeLogFields, readEnvelope, type EdgeEnv } from './request-edge';
+import { assignRequestId, envelopeLogFields, readEnvelope, readProtocolLevel, type EdgeEnv } from './request-edge';
 import { minimumBuildGate, type MinimumBuilds } from './min-build';
 import { shapeOnlyVerifier, type DeviceVerifier } from './device-identity';
 import { loadServerConfig, type ServerConfig } from './config';
@@ -330,6 +330,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
 
   // The client envelope, after identity and before any route admission (design D3).
   app.use('/v1/*', readEnvelope);
+
+  // The protocol level beside it (beta-1 D16): no level is a pre-protocol build, refused 426.
+  app.use('/v1/*', readProtocolLevel);
 
   // The minimum-build gate (app-update-gate): after the envelope, before the routes.
   app.use('/v1/*', minimumBuildGate(minBuild));

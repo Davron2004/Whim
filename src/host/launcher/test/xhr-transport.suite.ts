@@ -318,7 +318,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     const fakeXhr = new FakeXMLHttpRequest();
     const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
     fakeXhr.respondHeaders(500);
-    fakeXhr.respondIncremental(JSON.stringify({ error: 'server_error', hint: 'boom' }));
+    fakeXhr.respondIncremental(JSON.stringify({ error: 'internal_error', hint: 'boom' }));
     fakeXhr.respondComplete();
     const caught = await expectThrow(first);
     h.ok(caught instanceof GenerationClientError, 'throws GenerationClientError');
@@ -371,7 +371,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
     const fakeXhr = new FakeXMLHttpRequest();
     const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }).next();
     fakeXhr.respondHeaders(200);
-    fakeXhr.respondIncremental('event: stage\ndata: {"type":"not-a-real-type"}\nid: 1\n\n');
+    fakeXhr.respondIncremental('event: token\ndata: {"type":"token"}\nid: 1\n\n');
     fakeXhr.respondComplete();
     const caught = await expectThrow(first);
     h.ok(caught instanceof GenerationClientError, 'throws GenerationClientError');
@@ -392,7 +392,7 @@ export async function runXhrTransportTests(h: Harness): Promise<void> {
       const controller = new AbortController();
       const first = generateApp(withFakeXhr(fakeXhr), { prompt: 'p' }, controller.signal).next();
       fakeXhr.respondHeaders(500);
-      fakeXhr.respondIncremental(JSON.stringify({ error: 'server_error', hint: 'boom' }));
+      fakeXhr.respondIncremental(JSON.stringify({ error: 'internal_error', hint: 'boom' }));
       // `httpErrorFrom`'s classification is asynchronous (an `async` function wrapping the fake's
       // own synchronous `.json()`), so it resolves on a later microtask even though the response
       // is already known complete here. Aborting synchronously, right after `respondComplete()`,
