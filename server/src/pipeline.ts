@@ -4,6 +4,7 @@
  */
 import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
 import { buildCandidateSource } from '../../synthrun/builder';
+import { stubFutureFallback, stubFutureFrame } from './stub-markers';
 
 const STUB_APP_SOURCE =
   "import { defineApp, Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hello</Text></Screen> });";
@@ -131,6 +132,7 @@ async function* stubRun(
   signal?: AbortSignal,
 ): AsyncIterable<GenerationEvent> {
   const isFailure = request.prompt.includes('[[fail]]');
+  const future = stubFutureFallback(request.prompt);
 
   // Stages: plan → generate (with tokens) → check → run
   const stages: Array<'plan' | 'generate' | 'check' | 'run'> = [
@@ -143,6 +145,14 @@ async function* stubRun(
   for (const stage of stages) {
     const aborted = yield* emitStage(stage, delayMs, isFailure, signal);
     if (aborted) return;
+    if (stage === 'plan' && future !== undefined) {
+      // A `[[future:*]]` marker (`stub-markers.ts`): after the plan stage, one event of a type the
+      // app can't know, then the stream carries on as the stub always does — the app follows the
+      // event's fallback. Outside `GenerationEvent` on purpose, so it is cast rather than typed.
+      await delay(delayMs, signal);
+      if (signal?.aborted) return;
+      yield stubFutureFrame(future) as unknown as GenerationEvent;
+    }
   }
 
   yield* emitTerminal(delayMs, isFailure, signal);

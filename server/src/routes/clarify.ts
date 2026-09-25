@@ -51,6 +51,7 @@ import { parseJsonBlock } from '../generation/json-block';
 import type { ServerLogger } from '../logger';
 import type { V1Env } from '../request-edge';
 import { consentPractice } from '../consent-practices';
+import { STUB_LIMIT, STUB_LIMIT_MARKER } from '../stub-markers';
 
 /** The kinds the ONE global unary daily ceiling (`ServerConfig.limitUnaryPerDay`) is counted
  *  across. Clarify and rewrite share it rather than getting a ceiling each, so the pair's total
@@ -72,14 +73,22 @@ const MODEL_FAILURE: ApiError = {
 const STUB_NO_QUESTIONS_MARKER = '[[noclarify]]';
 
 /** The stub's canned questions: fixed, prompt-independent, and deliberately generic — this exists
- *  so LAN UI work can drive the clarify screen without spending tokens, not to be a clarifier. */
+ *  so LAN UI work can drive the clarify screen without spending tokens, not to be a clarifier.
+ *  Between them they carry every answer mode (beta-1 D18): one pick, several picks, a typed answer. */
 const STUB_QUESTIONS: ClarifyResponse = {
   questions: [
     { id: 'scope', question: 'How much should it hold?', options: ['Just today', 'A few weeks', 'Everything'], select: 'one', other: false },
-    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'], select: 'one', other: false },
-    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'], select: 'one', other: false },
+    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'], select: 'many', other: false },
+    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'], select: 'one', other: true },
   ],
 };
+
+/** What the stub clarify answers for `prompt`: the `limit` for `[[limit]]` (`stub-markers.ts`),
+ *  nothing to ask for `[[noclarify]]`, else the canned questions. */
+function stubClarifyResponse(prompt: string): ClarifyResponse {
+  if (prompt.includes(STUB_LIMIT_MARKER)) return STUB_LIMIT;
+  return prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
+}
 
 /** The longest `limit.reason` or `limit.alternative` clarify returns, in characters after trimming. */
 const LIMIT_FIELD_MAX_CHARS = 200;
@@ -514,7 +523,7 @@ async function runClarifyWork(
   requestLog: ServerLogger,
 ): Promise<Response> {
   if (stub) {
-    const stubbed = parsed.prompt.includes(STUB_NO_QUESTIONS_MARKER) ? { questions: [] } : STUB_QUESTIONS;
+    const stubbed = stubClarifyResponse(parsed.prompt);
     await finish('ok', undefined, [], true);
     return Response.json(stubbed satisfies ClarifyResponse, { status: 200 });
   }
