@@ -21,6 +21,7 @@ import type {
 } from '@whim/contract';
 import { scanStorageSurface } from '../../../checks/index';
 import type { StorageSurface } from '../../../checks/index';
+import type { DiagnosticKind } from '../../../checks/contract';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
 import {
@@ -140,9 +141,17 @@ export interface RunInput {
  *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
  *  on `diagnostics[].severity` (design D6). */
 export type RunOutcome =
-  | { contained: false; diagnostics: Diagnostic[] }
-  | { contained: null; diagnostics: Diagnostic[] }
+  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'> }
+  | { contained: null; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'> }
   | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
+
+/** A non-affirmative verdict, content-free (beta-1 D11): which one, and the closed diagnostic kind
+ *  of the check that tripped it. Logged once with the run's terminal failure, never fed back to
+ *  the model, and never carrying source, DOM or console text. */
+export interface RunVerdict<K extends 'breach' | 'unobserved' = 'breach' | 'unobserved'> {
+  kind: K;
+  check: DiagnosticKind;
+}
 
 export interface RunStage {
   run(input: RunInput, signal?: AbortSignal): Promise<RunOutcome> | RunOutcome;
@@ -556,29 +565,30 @@ type CandidateOutcome =
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
   | { kind: 'failed'; reason: string; code: TerminalFailureCode }
-  | { kind: 'contained-failure' }
-  | { kind: 'containment-unobserved' };
+  | { kind: 'contained-failure'; verdict: RunVerdict }
+  | { kind: 'containment-unobserved'; verdict: RunVerdict };
 
 /** Maps a non-affirmative containment verdict onto its own terminal outcome — the one place the
  *  three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over the
  *  verdict's literal type (design D8-local): `contained` is the discriminant, so a fourth
  *  `RunOutcome` arm makes this a compile error at the call site instead of silently reusing one of
  *  these two. Never collapse the two — `null` is absence of evidence, `false` is evidence. */
-function unverifiedRunOutcome(contained: false | null): CandidateOutcome {
-  switch (contained) {
+function unverifiedRunOutcome(outcome: Exclude<RunOutcome, { contained: true }>): CandidateOutcome {
+  switch (outcome.contained) {
     case false:
-      return { kind: 'contained-failure' };
+      return { kind: 'contained-failure', verdict: outcome.verdict };
     case null:
-      return { kind: 'containment-unobserved' };
+      return { kind: 'containment-unobserved', verdict: outcome.verdict };
   }
 }
 
 type FailureEvent = Extract<GenerationEvent, { type: 'failure' }>;
 
-/** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it. */
+/** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it and,
+ *  for a containment ending, the verdict its log line names. */
 type Completion =
-  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never }
-  | { terminal: FailureEvent; code: TerminalFailureCode };
+  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never; verdict?: never }
+  | { terminal: FailureEvent; code: TerminalFailureCode; verdict?: RunVerdict };
 
 /** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
  *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
@@ -592,12 +602,20 @@ function failureTerminalFor(
   const attempts = state.candidatesProduced;
   switch (outcome.kind) {
     case 'contained-failure':
-      return { terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] }, code: 'containment_failed' };
+      return {
+        terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] },
+        code: 'containment_failed',
+        verdict: outcome.verdict,
+      };
     // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
     // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
     // prompt is built, and the candidate is never re-run.
     case 'containment-unobserved':
-      return { terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] }, code: 'run_unverified' };
+      return {
+        terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] },
+        code: 'run_unverified',
+        verdict: outcome.verdict,
+      };
     case 'failed':
       return { terminal: { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics }, code: outcome.code };
   }
@@ -709,7 +727,7 @@ export class GenerationMachine {
   private async *emitCompletion(
     state: RunState,
     signal: AbortSignal | undefined,
-    { terminal, code }: Completion,
+    { terminal, code, verdict }: Completion,
   ): AsyncGenerator<GenerationEvent, void> {
     if (signal?.aborted) return;
     state.budget.beginCompletion();
@@ -719,8 +737,9 @@ export class GenerationMachine {
     if (terminal.type === 'failure') {
       // The closed code, never `terminal.reason`: a plan_failed sentence quotes model-written
       // screen names that echo the prompt, and this line ships to Cloud Logging. The field is
-      // `reason` because the logger redacts any field named `code`.
-      state.log.info({ reason: code }, 'terminal failure');
+      // `reason` because the logger redacts any field named `code`. A containment ending adds its
+      // content-free verdict (beta-1 D11): two closed-vocabulary values, nothing the candidate wrote.
+      state.log.info({ reason: code, ...(verdict ? { verdict: verdict.kind, check: verdict.check } : {}) }, 'terminal failure');
     } else {
       state.log.info('terminal result');
     }
@@ -1161,7 +1180,7 @@ export class GenerationMachine {
     if (runOutcome.contained !== true) {
       logStage(state, 'run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
-      return unverifiedRunOutcome(runOutcome.contained);
+      return unverifiedRunOutcome(runOutcome);
     }
 
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);

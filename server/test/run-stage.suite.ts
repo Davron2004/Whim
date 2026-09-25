@@ -26,6 +26,7 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   check('contained:false short-circuits without needing a manifest', outcome.contained === false);
   if (outcome.contained) return;
   eq('nothing is fed back — diagnostics is empty regardless of what the harness itself reported', outcome.diagnostics, []);
+  eq('the verdict the machine logs is the probes’ breach, not the earlier throw', outcome.verdict, { kind: 'breach', check: 'containment_failure' });
 
   // red-check (non-vacuity): the adapter is a real conditional, not hardcoded to always report a
   // containment failure — a positive verdict from the harness must still deliver.
@@ -78,6 +79,17 @@ async function testUnobservedVerdictShortCircuit(): Promise<void> {
     'nothing is fed back — diagnostics is empty, so no containment_unobserved detail can reach a prompt',
     outcome.diagnostics,
     [],
+  );
+  if (outcome.contained === null) {
+    eq('with nothing else recorded, the unverified verdict names containment_unobserved itself', outcome.verdict, { kind: 'unobserved', check: 'containment_unobserved' });
+  }
+  const afterMountTimeout = await createRunStage(
+    stubRunCandidate(fakeReport({ ok: false, contained: null, diagnostics: [{ kind: 'mount_timeout', severity: 'error', message: 'never mounted', hint: 'h' }, UNOBSERVED_DIAG] })),
+  ).run({ source: 's', build: { bundle: '' } });
+  eq(
+    'an unverified run names the first check that kept the verdict away',
+    afterMountTimeout.contained === null ? afterMountTimeout.verdict : afterMountTimeout.contained,
+    { kind: 'unobserved', check: 'mount_timeout' },
   );
 
   // red-check (non-vacuity): the null mapping is a real conditional on the report's verdict, not a
