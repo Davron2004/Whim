@@ -16,12 +16,13 @@
  */
 
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyBuildInstead, clarifyHeadline } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
+import KeyboardShell from './KeyboardShell';
 import {
   OTHER_ANSWER_MAX_CHARS,
   type AnswerChange,
@@ -89,49 +90,51 @@ export default function ClarifyStep({
   useSystemBack(onBack);
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="clarify" onBack={onBack} />
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      header={<FlowHeader step="clarify" onBack={onBack} />}
+      footer={
+        <>
+          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
+              action mounts once the real questions have landed; `WorkingLine` is the only liveness
+              element while loading. No validation gate of its own — the retry window is the only
+              thing that can disable it. */}
+          {limit && <LimitActions alternative={limit.alternative} enabled={!gated} onBuildInstead={onBuildInstead} onChangeIdea={onBack} />}
+          {!limit && !loading && <PrimaryAction step="clarify" enabled={!gated} editing={editing} onPress={onContinue} />}
+        </>
+      }
+    >
+      {editing && editingName != null && <EditingEyebrow name={editingName} />}
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {editing && editingName != null && <EditingEyebrow name={editingName} />}
-
-        {/* The counted headline ("One/Two/Three quick things") depends on data that does not
-            exist yet while loading — it appears only once the real questions have landed. */}
-        {!loading && (
-          <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>
-            {limit ? COPY.clarifyLimitHeadline : clarifyHeadline(questions.length)}
-          </Text>
-        )}
-
-        {/*
-          The echoed prompt is a standalone block of the user's own words (design doc "`yours` —
-          the brown": "Upright brown when the user's words stand alone as a block"), NOT the
-          Newsreader-italic inline form the shared renderer applies mid-sentence. Rendered as
-          plain `Text` — not through `WhimProse` — so the renderer never gets a second chance to
-          mark this block up.
-        */}
-        <Text
-          style={[
-            TYPE_SCALE.body,
-            styles.echo,
-            { fontFamily: FONT_FAMILY.sansRegular, color: SHELL_COLORS.yours },
-          ]}
-        >
-          {prompt}
+      {/* The counted headline ("One/Two/Three quick things") depends on data that does not
+          exist yet while loading — it appears only once the real questions have landed. */}
+      {!loading && (
+        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>
+          {limit ? COPY.clarifyLimitHeadline : clarifyHeadline(questions.length)}
         </Text>
+      )}
 
-        <ClarifyBody loading={loading} startedAt={startedAt} limit={limit} questions={questions} answers={answers} onAnswer={onAnswer} />
-      </ScrollView>
+      {/*
+        The echoed prompt is a standalone block of the user's own words (design doc "`yours` —
+        the brown": "Upright brown when the user's words stand alone as a block"), NOT the
+        Newsreader-italic inline form the shared renderer applies mid-sentence. Rendered as
+        plain `Text` — not through `WhimProse` — so the renderer never gets a second chance to
+        mark this block up.
+      */}
+      <Text
+        style={[
+          TYPE_SCALE.body,
+          styles.echo,
+          { fontFamily: FONT_FAMILY.sansRegular, color: SHELL_COLORS.yours },
+        ]}
+      >
+        {prompt}
+      </Text>
 
-      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-      {/* A disabled button under a skeleton is noise — there is nothing to confirm yet. The
-          action mounts once the real questions have landed; `WorkingLine` is the only liveness
-          element while loading. No validation gate of its own — the retry window is the only
-          thing that can disable it. */}
-      {limit && <LimitActions alternative={limit.alternative} enabled={!gated} onBuildInstead={onBuildInstead} onChangeIdea={onBack} />}
-      {!limit && !loading && <PrimaryAction step="clarify" enabled={!gated} editing={editing} onPress={onContinue} />}
-    </View>
+      <ClarifyBody loading={loading} startedAt={startedAt} limit={limit} questions={questions} answers={answers} onAnswer={onAnswer} />
+    </KeyboardShell>
   );
 }
 
@@ -238,8 +241,8 @@ function AnswerPill({
 
 /**
  * The typed "Other" answer (beta-1 D18): one line, capped at the contract's 200 characters, holding
- * exactly what was typed (it is trimmed only when sent). Chain-6's keyboard wrapper keeps it above
- * the keyboard.
+ * exactly what was typed (it is trimmed only when sent). The step's `KeyboardShell` keeps it above
+ * the keyboard; being one line, Return puts the keyboard away.
  */
 function OtherAnswerField({ value, onChangeText }: Readonly<{ value: string; onChangeText: (text: string) => void }>) {
   const p = SHELL_PALETTE;
@@ -285,7 +288,6 @@ function LimitActions({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
   // paddingTop 28: design `Whim Mobile.dc.html:442` — no SPACING counterpart (ruling R9).
   content: { paddingHorizontal: SPACING.lg, paddingTop: 28, paddingBottom: SPACING.xl },
   echo: { marginTop: SPACING.sm },

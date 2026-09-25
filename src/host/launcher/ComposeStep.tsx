@@ -10,10 +10,11 @@
  */
 
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import type { FlowNotice } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
@@ -61,69 +62,66 @@ export default function ComposeStep({
   const trimmed = text.trim();
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="compose" onBack={onBack} />
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      header={<FlowHeader step="compose" onBack={onBack} />}
+      footer={
+        <>
+          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
+              clarify step's own loading screen (C2), so this action is never anything but live. */}
+          <PrimaryAction step="compose" enabled={trimmed.length > 0 && !gated} onPress={onContinue} />
+        </>
+      }
+    >
+      {editing && editingName != null && <EditingEyebrow name={editingName} />}
+      <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{composeHeadline(editing)}</Text>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {editing && editingName != null && <EditingEyebrow name={editingName} />}
-        <Text style={[TYPE_SCALE.headline, { color: p.text }]}>{composeHeadline(editing)}</Text>
+      {/* Advisory only (spec "does not gate submission"): compose opens only once AI-data
+          consent is granted, so there is nothing else to configure — this is the one notice the
+          step can show. Neither the field's `editable` nor the primary action's `enabled` below
+          reads this prop. */}
+      {serverUnreachable && (
+        <View style={[styles.notice, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.promptServerUnreachable}</Text>
+        </View>
+      )}
 
-        {/* Advisory only (spec "does not gate submission"): compose opens only once AI-data
-            consent is granted, so there is nothing else to configure — this is the one notice the
-            step can show. Neither the field's `editable` nor the primary action's `enabled` below
-            reads this prop. */}
-        {serverUnreachable && (
-          <View style={[styles.notice, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-            <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.promptServerUnreachable}</Text>
-          </View>
-        )}
-
-        <TextInput
-          value={text}
-          onChangeText={onChangeText}
-          placeholder={composePlaceholder(editing)}
-          placeholderTextColor={p.textMuted}
-          style={[TYPE_SCALE.body, styles.field, { color: p.text, backgroundColor: p.card, borderColor: p.cardBorder }]}
-          multiline
-          autoFocus
-          textAlignVertical="top"
-        />
-
-        <Text style={[TYPE_SCALE.caption, styles.helper, { color: p.textMuted }]}>{COPY.composeHelper}</Text>
-
-        {!editing && (
-          <>
-            <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>
-              {COPY.composeChipsEyebrow}
-            </Text>
-            {CHIPS.map((chip) => (
-              <TouchableOpacity
-                key={chip}
-                onPress={() => onChangeText(chip)}
-                style={[styles.chip, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
-              >
-                <Text style={[TYPE_SCALE.body, { color: p.text }]}>{chip}</Text>
-              </TouchableOpacity>
-            ))}
-          </>
-        )}
-      </ScrollView>
-
-      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-      {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
-          clarify step's own loading screen (C2), so this action is never anything but live. */}
-      <PrimaryAction
-        step="compose"
-        enabled={trimmed.length > 0 && !gated}
-        onPress={onContinue}
+      {/* Not focused on open: the suggestions below stay in view until the user taps the field. */}
+      <KeyboardTextInput
+        value={text}
+        onChangeText={onChangeText}
+        placeholder={composePlaceholder(editing)}
+        placeholderTextColor={p.textMuted}
+        style={[TYPE_SCALE.body, styles.field, { color: p.text, backgroundColor: p.card, borderColor: p.cardBorder }]}
+        multiline
+        textAlignVertical="top"
       />
-    </View>
+
+      <Text style={[TYPE_SCALE.caption, styles.helper, { color: p.textMuted }]}>{COPY.composeHelper}</Text>
+
+      {!editing && (
+        <>
+          <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>
+            {COPY.composeChipsEyebrow}
+          </Text>
+          {CHIPS.map((chip) => (
+            <TouchableOpacity
+              key={chip}
+              onPress={() => onChangeText(chip)}
+              style={[styles.chip, { backgroundColor: p.bg, borderColor: p.cardBorder }]}
+            >
+              <Text style={[TYPE_SCALE.body, { color: p.text }]}>{chip}</Text>
+            </TouchableOpacity>
+          ))}
+        </>
+      )}
+    </KeyboardShell>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
   content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
   notice: { borderWidth: 1, borderRadius: RADIUS.card, padding: SPACING.md, marginTop: SPACING.md },
   field: {

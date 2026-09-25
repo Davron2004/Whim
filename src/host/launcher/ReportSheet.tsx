@@ -3,7 +3,8 @@
  * `content-reporting`). Reason pills, an optional note, the include-prompt switch,
  * a preview rendered from the SAME `ReportRequest` value Send posts, the phone-ID-and-AnyCognition
  * line plus a privacy-policy link, Send (`One moment` while in flight) and Cancel, the thanks
- * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`.
+ * state, and inline failures through the shared `ServiceNotice`/`useRetryGate`. Send, Cancel and
+ * the notice are pinned below the scrolling draft, so the note's keyboard never hides Send.
  *
  * `app == null` closes the sheet: `SheetModal` stays mounted (so its rise animation survives a
  * close/reopen, the same contract `RunDetailsSheet.tsx` keeps) but the draft, phase and notice are
@@ -12,7 +13,7 @@
  * `reportDraftFor`.
  */
 import React, { useEffect, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Linking, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
@@ -29,6 +30,7 @@ import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
 import SheetModal from './SheetModal';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { COPY, reportCodeSizeLabel } from './copy';
 import { privacyPolicyUrl, type LegalLanguage } from './legal-language';
 import { SHELL_PALETTE } from './theme';
@@ -187,7 +189,28 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
         </View>
       )}
       {draft && phase !== 'thanks' && (
-        <ScrollView style={styles.scroller} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <KeyboardShell
+          host="sheet"
+          footer={
+            <>
+              {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+              <TouchableOpacity
+                onPress={handleSend}
+                disabled={sendDisabled}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: sendDisabled }}
+                style={[styles.primary, sendDisabled && styles.primaryDisabled, { backgroundColor: p.accent }]}
+              >
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
+                  {phase === 'sending' ? COPY.reportSendBusy : COPY.reportSend}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleClose} accessibilityRole="button" style={styles.plainAction}>
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.cancel}</Text>
+              </TouchableOpacity>
+            </>
+          }
+        >
           <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.reportSheetTitle}</Text>
 
           <Text style={[TYPE_SCALE.eyebrow, styles.eyebrow, { color: p.textMuted }]}>{COPY.reportReasonEyebrow}</Text>
@@ -208,7 +231,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             })}
           </View>
 
-          <TextInput
+          <KeyboardTextInput
             value={draft.note}
             onChangeText={(text) => setDraft({ ...draft, note: text })}
             placeholder={COPY.reportNotePlaceholder}
@@ -258,24 +281,7 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
           <TouchableOpacity onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))} hitSlop={10} style={styles.privacyLink}>
             <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{COPY.privacyPolicyLabel}</Text>
           </TouchableOpacity>
-
-          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-          <TouchableOpacity
-            onPress={handleSend}
-            disabled={sendDisabled}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: sendDisabled }}
-            style={[styles.primary, sendDisabled && styles.primaryDisabled, { backgroundColor: p.accent }]}
-          >
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>
-              {phase === 'sending' ? COPY.reportSendBusy : COPY.reportSend}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleClose} accessibilityRole="button" style={styles.plainAction}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.textMuted }]}>{COPY.cancel}</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        </KeyboardShell>
       )}
     </SheetModal>
   );
@@ -349,8 +355,6 @@ function PreviewRow({
 }
 
 const styles = StyleSheet.create({
-  scroller: { flexShrink: 1 },
-  content: { paddingBottom: SPACING.lg },
   eyebrow: { marginTop: SPACING.md, marginBottom: SPACING.xs },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
   pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },

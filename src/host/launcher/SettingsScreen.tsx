@@ -14,11 +14,12 @@
 // policy, terms of use, support, this phone's ID), and — in internal builds only (legal-surface-v2
 // D10) — Advanced (the server address override, collapsed unless one is saved).
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Linking, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Easing, Linking, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { RADIUS, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { ConsentStatus } from './ai-consent';
 import { aiFeaturesStatusLine, COPY, serverProbeLabel } from './copy';
 import { RELEASE } from './release-config';
+import KeyboardShell from './KeyboardShell';
 import { legalDateLabel, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 import { sanitizeServerUrl } from './server-address';
 import type { ProbeResult } from './server-probe';
@@ -173,173 +174,174 @@ export default function SettingsScreen({
   }
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-        <TouchableOpacity
-          onPress={onBack}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={COPY.backLabel}
-          style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <View style={[styles.backChevron, { borderColor: p.text }]} />
-        </TouchableOpacity>
-        {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
-            retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
-            screen has no mockup and no design basis for shrinking. `stepTitle` holds the numbers
-            `screenTitle` used to, so this renders exactly as it does today. */}
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
-      </View>
-
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* AI features (ai-data-consent "Settings shows consent and can review or turn it off") */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.settingsAISectionTitle}
-        </Text>
-        <TouchableOpacity
-          onPress={onOpenAIFeatures}
-          accessibilityRole="button"
-          style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
-          <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
-        </TouchableOpacity>
-        <View style={[styles.row, styles.rowFollowing, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsErrorDetailsTitle}</Text>
-          <Switch
-            value={errorDetails}
-            onValueChange={onErrorDetailsChange}
-            accessibilityLabel={COPY.settingsErrorDetailsTitle}
-            trackColor={{ false: p.cardBorder, true: p.accent }}
-            thumbColor={p.onAccent}
-          />
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsErrorDetailsHint}</Text>
-
-        {/* Highlighting (unchanged) */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.highlightingSectionTitle}
-        </Text>
-        <View style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.highlightingSectionTitle}</Text>
-          <Switch
-            value={highlighting}
-            onValueChange={onHighlightingChange}
-            accessibilityLabel={COPY.highlightingSectionTitle}
-            trackColor={{ false: p.cardBorder, true: p.accent }}
-            thumbColor={p.onAccent}
-          />
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.highlightingHint}</Text>
-
-        {/* About */}
-        <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-          {COPY.settingsAboutSectionTitle}
-        </Text>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(termsUrl(legalLanguage))}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.termsOfUseLabel}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => Linking.openURL(RELEASE.supportUrl)}
-          accessibilityRole="button"
-          style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-        >
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
-        </TouchableOpacity>
-        <View style={[styles.idCard, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
-          <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsDeviceIdTitle}</Text>
-          <Text selectable style={[TYPE_SCALE.caption, { color: p.text }]}>
-            {deviceId}
-          </Text>
-        </View>
-        <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
-        <TouchableOpacity onPress={confirmResetDeviceId} hitSlop={10} accessibilityRole="button">
-          <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
-            {COPY.settingsDeviceIdReset}
-          </Text>
-        </TouchableOpacity>
-
-        {/* Advanced (app-launcher "Settings groups its controls...with the server address under
-            Advanced") — internal builds only; one row that expands inline; already open while an
-            override is saved. */}
-        {internalBuild && (
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      header={
+        <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
           <TouchableOpacity
-            onPress={() => setAdvancedOpen((open) => !open)}
+            onPress={onBack}
+            hitSlop={10}
             accessibilityRole="button"
-            style={styles.advancedHeader}
+            accessibilityLabel={COPY.backLabel}
+            style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
           >
-            <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
-            <Animated.View
-              style={[
-                styles.advancedChevron,
-                { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
-              ]}
-            />
+            <View style={[styles.backChevron, { borderColor: p.text }]} />
           </TouchableOpacity>
-        )}
+          {/* `stepTitle` (26/29.9/-0.65/700), NOT `screenTitle`: ruling R12. `screenTitle` was
+              retargeted 26 -> 22 on the strength of the history/confirm-sheet mockups, and this
+              screen has no mockup and no design basis for shrinking. `stepTitle` holds the numbers
+              `screenTitle` used to, so this renders exactly as it does today. */}
+          <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{COPY.settingsTitle}</Text>
+        </View>
+      }
+    >
+      {/* AI features (ai-data-consent "Settings shows consent and can review or turn it off") */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.settingsAISectionTitle}
+      </Text>
+      <TouchableOpacity
+        onPress={onOpenAIFeatures}
+        accessibilityRole="button"
+        style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsAISectionTitle}</Text>
+        <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{aiFeaturesSubtitle}</Text>
+      </TouchableOpacity>
+      <View style={[styles.row, styles.rowFollowing, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsErrorDetailsTitle}</Text>
+        <Switch
+          value={errorDetails}
+          onValueChange={onErrorDetailsChange}
+          accessibilityLabel={COPY.settingsErrorDetailsTitle}
+          trackColor={{ false: p.cardBorder, true: p.accent }}
+          thumbColor={p.onAccent}
+        />
+      </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsErrorDetailsHint}</Text>
 
-        {internalBuild && advancedOpen && (
-          <>
-            <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
-              {COPY.serverAddressSectionTitle}
-            </Text>
-            <TextInput
-              value={serverUrlDraft}
-              onChangeText={(next) => {
-                // Save is unchanged: immediate and unconditional, regardless of the probe below.
-                setServerUrlDraft(next);
-                onServerUrlChange(next);
-                // The informational probe is BOTH debounced (design.md decision 3) AND gated on
-                // consent (server-connectivity "Without a current consent grant the system SHALL
-                // NOT probe" — design D2/D7) — the same normalization `saveServerUrl` applies
-                // before persisting, so the probe never trips over a trailing slash the save
-                // itself would have stripped.
-                if (canProbe) {
-                  debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
-                }
-              }}
-              placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
-              placeholderTextColor={p.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              style={[
-                TYPE_SCALE.body,
-                styles.serverInput,
-                { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
-              ]}
-            />
-            <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
-            {probeLine != null && (
-              <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
-            )}
-            {serverUrlDraft.trim().length > 0 && (
-              <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
-                <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
-                  {COPY.settingsUseDefaultServer}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </ScrollView>
-    </View>
+      {/* Highlighting (unchanged) */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.highlightingSectionTitle}
+      </Text>
+      <View style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.highlightingSectionTitle}</Text>
+        <Switch
+          value={highlighting}
+          onValueChange={onHighlightingChange}
+          accessibilityLabel={COPY.highlightingSectionTitle}
+          trackColor={{ false: p.cardBorder, true: p.accent }}
+          thumbColor={p.onAccent}
+        />
+      </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.highlightingHint}</Text>
+
+      {/* About */}
+      <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+        {COPY.settingsAboutSectionTitle}
+      </Text>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(privacyPolicyUrl(legalLanguage))}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.privacyPolicyLabel}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(termsUrl(legalLanguage))}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.termsOfUseLabel}</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(RELEASE.supportUrl)}
+        accessibilityRole="button"
+        style={[styles.row, styles.rowStacked, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+      >
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.supportLabel}</Text>
+      </TouchableOpacity>
+      <View style={[styles.idCard, { backgroundColor: p.card, borderColor: p.cardBorder }]}>
+        <Text style={[TYPE_SCALE.body, { color: p.text }]}>{COPY.settingsDeviceIdTitle}</Text>
+        <Text selectable style={[TYPE_SCALE.caption, { color: p.text }]}>
+          {deviceId}
+        </Text>
+      </View>
+      <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.settingsDeviceIdHint}</Text>
+      <TouchableOpacity onPress={confirmResetDeviceId} hitSlop={10} accessibilityRole="button">
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+          {COPY.settingsDeviceIdReset}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Advanced (app-launcher "Settings groups its controls...with the server address under
+          Advanced") — internal builds only; one row that expands inline; already open while an
+          override is saved. */}
+      {internalBuild && (
+        <TouchableOpacity
+          onPress={() => setAdvancedOpen((open) => !open)}
+          accessibilityRole="button"
+          style={styles.advancedHeader}
+        >
+          <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{COPY.settingsAdvancedSectionTitle}</Text>
+          <Animated.View
+            style={[
+              styles.advancedChevron,
+              { borderColor: p.textMuted, transform: [{ rotate: chevronRotate }] },
+            ]}
+          />
+        </TouchableOpacity>
+      )}
+
+      {internalBuild && advancedOpen && (
+        <>
+          <Text style={[TYPE_SCALE.eyebrow, styles.sectionTitle, { color: p.textMuted }]}>
+            {COPY.serverAddressSectionTitle}
+          </Text>
+          <TextInput
+            value={serverUrlDraft}
+            onChangeText={(next) => {
+              // Save is unchanged: immediate and unconditional, regardless of the probe below.
+              setServerUrlDraft(next);
+              onServerUrlChange(next);
+              // The informational probe is BOTH debounced (design.md decision 3) AND gated on
+              // consent (server-connectivity "Without a current consent grant the system SHALL
+              // NOT probe" — design D2/D7) — the same normalization `saveServerUrl` applies
+              // before persisting, so the probe never trips over a trailing slash the save
+              // itself would have stripped.
+              if (canProbe) {
+                debouncedProbe.schedule(sanitizeServerUrl(next) ?? '');
+              }
+            }}
+            placeholder={RELEASE.serverUrl.replace(/^https?:\/\//, '')}
+            placeholderTextColor={p.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            style={[
+              TYPE_SCALE.body,
+              styles.serverInput,
+              { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card },
+            ]}
+          />
+          <Text style={[TYPE_SCALE.caption, styles.hint, { color: p.textMuted }]}>{COPY.serverAddressHint}</Text>
+          {probeLine != null && (
+            <Text style={[TYPE_SCALE.caption, styles.hint, { color: probeLineColor }]}>{probeLine}</Text>
+          )}
+          {serverUrlDraft.trim().length > 0 && (
+            <TouchableOpacity onPress={onUseDefault} hitSlop={10}>
+              <Text style={[TYPE_SCALE.bodyEmphatic, styles.textAction, { color: p.accent }]}>
+                {COPY.settingsUseDefaultServer}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
+    </KeyboardShell>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
