@@ -56,15 +56,31 @@ const UNHANDLED_REJECTION_MESSAGE = 'unhandled promise rejection';
 const NO_REJECTION_TRACKER_MESSAGE = 'promise rejection tracker unavailable';
 const RENDER_ERROR_MESSAGE = 'uncaught render error';
 
+/** A frame's location as Hermes/V8 print it: an install or build path immediately followed by
+ *  `:line:column`. Requires at least one `/` before the location, so a bare `file:line:column`
+ *  (what Android frames already are) is left untouched. */
+const FRAME_PATH = /[^\s()]*\/([^\s/()]+:\d+:\d+)/g;
+
+/** Reduces every frame's location in a stack to its file name plus line:column, on every
+ *  platform (spec device-diagnostics "Diagnostic stacks carry file names, not install paths").
+ *  Android frames already have no path to strip, so this is a no-op there; an iOS frame's
+ *  `…/Whim.app/main.jsbundle:1:234567` becomes `main.jsbundle:1:234567`. Only the path is
+ *  dropped — line and column, which is all symbolication reads from a single flat map, are
+ *  untouched, so a trimmed stack still symbolicates to the same source lines. */
+export function trimFrameLocations(stack: string): string {
+  return stack.replace(FRAME_PATH, '$1');
+}
+
 /** A thrown value as named fields: its class and stack go to the diagnostics projection (which
  *  drops the stack's message line); its message stays in `detail`, which never leaves the phone. */
 function thrownFields(where: string, thrown: unknown): Record<string, unknown> {
   const isErr = thrown instanceof Error;
+  const stack = isErr ? thrown.stack : undefined;
   return {
     where,
     errorClass: isErr ? thrown.name : typeof thrown,
     detail: isErr ? thrown.message : undefined,
-    stack: isErr ? thrown.stack : undefined,
+    stack: stack === undefined ? undefined : trimFrameLocations(stack),
   };
 }
 
