@@ -485,7 +485,7 @@ function openGenerationStream(deps: StreamDeps): ReadableStream<Uint8Array> {
 
 /** The pipeline run of a generation holding its slot and its ledger row, ending in the stream's ONE
  *  teardown: it releases the slot, settles the row and resolves the usage. */
-function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: AbortSignal, detach: () => void): AsyncGenerator<GenerationEvent> {
+function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: AbortSignal, detach: () => void): AsyncGenerator<WireEvent> {
   const { pipeline, usageStore, deviceId, request } = deps;
 
   // The pipeline appends each model call's provider generation id and the run's outcome here, and
@@ -513,11 +513,11 @@ function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: Abo
         }, 'generation ledger settlement failed');
       }
     }
-    resolveGenerationUsage(deps, running, trace.generationIds, ending.creditOwned);
+    resolveGenerationUsage(deps, running, trace, ending.creditOwned);
   };
 
   const run = (): AsyncIterable<GenerationEvent> => (pipeline.run as PipelineRun)(request, signal, trace);
-  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown);
+  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown, deps.protocolLevel);
 }
 
 /** A generation admitted into the line: its wait, then, once it holds a slot and its daily unit,
@@ -692,7 +692,8 @@ async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: L
  * Forwards the pipeline's events and runs `teardown` exactly once, when iteration ends for any
  * reason. Nothing is forwarded once the request was aborted, and nothing after the first terminal
  * event, so a stream carries at most one terminal and none after an abort. A `usage` event is
- * credited before it is forwarded, which is before the terminal event.
+ * credited before it is forwarded, which is before the terminal event. A `restart` (beta-1 D10)
+ * goes out through `eventForLevel` at the client's level, like every event this route makes.
  */
 async function* forwardEvents(
   run: () => AsyncIterable<GenerationEvent>,
@@ -700,7 +701,8 @@ async function* forwardEvents(
   ending: StreamEnding,
   credit: (usage: Usage) => Promise<void>,
   teardown: () => Promise<void>,
-): AsyncGenerator<GenerationEvent> {
+  protocolLevel: number,
+): AsyncGenerator<WireEvent> {
   try {
     for await (const event of run()) {
       if (event.type === 'usage') {
@@ -710,7 +712,7 @@ async function* forwardEvents(
       }
       if (signal.aborted) return;
       if (event.type === 'result' || event.type === 'failure') ending.terminal = event.type;
-      yield event;
+      yield event.type === 'restart' ? eventForLevel(event, protocolLevel) : event;
       if (ending.terminal) return;
     }
   } finally {
@@ -741,20 +743,35 @@ function ledgerOutcome(trace: RunTrace, ending: StreamEnding, aborted: boolean):
  * the classifier's tokens were credited when the check returned, so they never go through
  * reconciliation a second time.
  */
-function resolveGenerationUsage(deps: StreamDeps, running: RunningGeneration, pipelineIds: readonly string[], creditOwned: boolean): void {
+function resolveGenerationUsage(deps: StreamDeps, running: RunningGeneration, trace: RunTrace, creditOwned: boolean): void {
   const { deviceId, resolveTracker } = deps;
   const { requestId, policyGenerationId } = running;
   const rDeps = resolveDeps(deps);
+  const pipelineIds = trace.generationIds;
+  const pipelineCredited = creditedPipelineCalls(pipelineIds, trace.uncreditedGenerationIds, creditOwned);
 
   if (policyGenerationId === undefined) {
-    resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, creditOwned, rDeps));
+    resolveTracker.track(resolveRequestUsage(requestId, deviceId, pipelineIds, pipelineCredited, rDeps));
     return;
   }
   resolveTracker.track(resolveRequestUsage(requestId, deviceId, [policyGenerationId, ...pipelineIds], true, rDeps));
-  if (!creditOwned && pipelineIds.length > 0) {
+  if (pipelineCredited !== true && pipelineIds.length > 0) {
     // requestId '' is the resolver's no-ledger sentinel: tokens only, the cost is recorded above.
-    resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, false, rDeps));
+    resolveTracker.track(resolveRequestUsage('', deviceId, pipelineIds, pipelineCredited, rDeps));
   }
+}
+
+/** Which pipeline calls' tokens were credited in-stream, in `resolveRequestUsage`'s terms: none
+ *  without a `usage` event; all of them when it carries every call; otherwise the set it carries,
+ *  leaving out the calls that failed before their usage arrived (a retried attempt, beta-1 D10). */
+function creditedPipelineCalls(
+  pipelineIds: readonly string[],
+  uncredited: readonly string[] | undefined,
+  creditOwned: boolean,
+): boolean | ReadonlySet<string> {
+  if (!creditOwned) return false;
+  if (uncredited === undefined || uncredited.length === 0) return true;
+  return new Set(pipelineIds.filter((id) => !uncredited.includes(id)));
 }
 
 function resolveDeps(deps: GenerateRouteOptions & { usageStore: UsageStore }): ResolveDeps {

@@ -83,6 +83,18 @@ export function isCreditExhaustedError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 402;
 }
 
+/** True when a model call failed upstream, at the provider or on the way to it, rather than on the
+ *  request itself (beta-1 D10): a 5xx, a 429, or a network or stream failure with no status. A
+ *  401, a 402, any other 4xx and every non-provider error are not. Structural, like
+ *  `isCreditExhaustedError`: an adapter signals it with `kind: 'rate_limit'`, or `kind: 'network'`
+ *  and a `status` that is absent or at least 500, as `../openrouter.ts`'s errors do. */
+export function isUpstreamModelFailure(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const { kind, status } = err as { kind?: unknown; status?: unknown };
+  if (kind === 'rate_limit') return true;
+  return kind === 'network' && (status === undefined || (typeof status === 'number' && status >= 500));
+}
+
 // ─── Roster: per-role model ids and reasoning settings, read from the environment ──
 
 /** The roster's own roles (design D2) — the keys of `ModelRoster`. The content-policy classifier

@@ -37,7 +37,7 @@ import {
 } from '../src/generation/machine';
 import { defaultModelRoster, modelRosterFromEnv, openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
-import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
+import { OpenRouterClient, OpenRouterCreditError, OpenRouterNetworkError, OpenRouterRateLimitError, type FetchFn } from '../src/openrouter';
 import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
 import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
 import { budgetExhaustedRefusal } from '../src/admission/refusals';
@@ -1890,6 +1890,164 @@ async function testA402InTheExpiryTurnStillInvalidates(): Promise<void> {
   invalidateCreditCache();
 }
 
+// ── §A model turn that loses its provider is retried once (beta-1 D10) ───────
+
+/** Every stage past the model delivers, and the check stage records each source it is handed. */
+function deliveringDeps(model: ModelClient, checked: string[], checkReports: CheckReport[] = [{ diagnostics: [], manifest: MANIFEST }]): GenerationPipelineDeps {
+  let call = 0;
+  return baseDeps({
+    model,
+    check: {
+      check: (source) => {
+        checked.push(source);
+        const report = checkReports[Math.min(call, checkReports.length - 1)];
+        call += 1;
+        return report;
+      },
+    },
+    build: { build: () => ({ ok: true, result: BUILD_RESULT }) },
+    run: { run: () => ({ contained: true, diagnostics: [], record: WIRE_RECORD }) },
+  });
+}
+
+async function runLogged(deps: GenerationPipelineDeps, trace: RunTrace): Promise<{ events: GenerationEvent[]; retried: Record<string, unknown>[]; failed: Record<string, unknown>[] }> {
+  const capture = captureLogs();
+  try {
+    const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
+    return { events, retried: withMessage(capture, 'model turn retried'), failed: withMessage(capture, 'run failed') };
+  } finally {
+    capture.stop();
+  }
+}
+
+function messagesOf(model: ScriptedModelClient, role: 'engineer' | 'repair'): string[] {
+  return model.requests.filter((r) => r.role === role).map((r) => JSON.stringify(r.request.messages));
+}
+
+/** The token and restart events, in order, as `token:<text>` / `restart`. */
+function tokenFlow(events: GenerationEvent[]): string[] {
+  return events.flatMap((e) => {
+    if (e.type === 'token') return [`token:${e.text}`];
+    return e.type === 'restart' ? ['restart'] : [];
+  });
+}
+
+async function testProviderDropBeforeFirstTokenIsResent(): Promise<void> {
+  section('machine — a generate turn whose provider drops before its first token is resent once, with no restart (beta-1 D10)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'plan', deltas: [VALID_PLAN_JSON], usage: ONE_TOKEN_USAGE, id: 'gen-plan' },
+    // A reasoning delta only: the device saw the model thinking, but no token of this turn.
+    { role: 'engineer', deltas: [{ reasoning: 'thinking' }], error: new OpenRouterNetworkError('fetch failed'), id: 'gen-dropped' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-resent' },
+  ]);
+  const checked: string[] = [];
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried } = await runLogged(deliveringDeps(model, checked), trace);
+
+  assertCompletedEnvelope('drop before first token', events);
+  eq('drop before first token: the build is delivered', events.at(-1)?.type, 'result');
+  eq('drop before first token: no restart event', tokenFlow(events), ['token:export default {};']);
+  const [first, resent] = messagesOf(model, 'engineer');
+  check('drop before first token: the turn was sent exactly twice, with the same messages', messagesOf(model, 'engineer').length === 2 && first === resent);
+  eq('drop before first token: the check stage saw only the resent turn', checked, ['export default {};']);
+  eq('drop before first token: usage sums the calls that completed', events.find((e) => e.type === 'usage'), { type: 'usage', usage: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } });
+  eq('drop before first token: every call is traced', trace.generationIds, ['gen-plan', 'gen-dropped', 'gen-resent']);
+  eq('drop before first token: the dropped call is left for reconciliation, since its usage never arrived', trace.uncreditedGenerationIds, ['gen-dropped']);
+  eq('drop before first token: one retry line, naming the turn and no restart', retried.map((r) => [r.role, r.errorClass, r.restart]), [['generate', 'OpenRouterNetworkError', false]]);
+}
+
+async function testProviderDropMidTurnRestarts(): Promise<void> {
+  section('machine — a turn whose provider drops after its tokens emits one restart, is resent and can deliver (beta-1 D10)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    { role: 'engineer', deltas: ['export ', 'default {'], error: new OpenRouterNetworkError('OpenRouter: stream error (502)', undefined, 502), id: 'gen-dropped' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-resent' },
+  ]);
+  const checked: string[] = [];
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried } = await runLogged(deliveringDeps(model, checked), trace);
+
+  assertCompletedEnvelope('drop mid-turn', events);
+  eq('drop mid-turn: the build is delivered', events.at(-1)?.type, 'result');
+  eq('drop mid-turn: exactly one restart, after the voided tokens and before the resent ones', tokenFlow(events), ['token:export ', 'token:default {', 'restart', 'token:export default {};']);
+  eq('drop mid-turn: the partial text never reaches the check stage', checked, ['export default {};']);
+  eq('drop mid-turn: the generate bracket opens and closes once', stageEvents(events, 'generate').map((e) => e.status), ['start', 'done']);
+  eq('drop mid-turn: the dropped call is left for reconciliation', trace.uncreditedGenerationIds, ['gen-dropped']);
+  eq('drop mid-turn: the retry line says a restart was sent', retried.map((r) => r.restart), [true]);
+
+  // A repair turn is resent on the same terms.
+  const repairModel = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-1']),
+    { role: 'repair', deltas: ['candidate-'], error: new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)'), id: 'gen-repair-dropped' },
+    { role: 'repair', deltas: ['candidate-2'], usage: ONE_TOKEN_USAGE, id: 'gen-repair-resent' },
+  ]);
+  const repairChecked: string[] = [];
+  const repairTrace: RunTrace = { generationIds: [] };
+  const repair = await runLogged(
+    deliveringDeps(repairModel, repairChecked, [{ diagnostics: [ERROR_DIAG], manifest: MANIFEST }, { diagnostics: [], manifest: MANIFEST }]),
+    repairTrace,
+  );
+  eq('repair drop (429): the build is delivered', repair.events.at(-1)?.type, 'result');
+  eq('repair drop (429): one restart voids the repair turn’s tokens', tokenFlow(repair.events), ['token:candidate-1', 'token:candidate-', 'restart', 'token:candidate-2']);
+  eq('repair drop (429): the repair turn was resent with the same messages', new Set(messagesOf(repairModel, 'repair')).size === 1 && messagesOf(repairModel, 'repair').length === 2, true);
+  eq('repair drop (429): the check stage saw the first candidate and the resent repair only', repairChecked, ['candidate-1', 'candidate-2']);
+  eq('repair drop (429): the dropped repair call is left for reconciliation', repairTrace.uncreditedGenerationIds, ['gen-repair-dropped']);
+}
+
+async function testSecondProviderDropIsTerminal(): Promise<void> {
+  section('machine — a resent turn that fails too ends the run as it does today (beta-1 D10)');
+
+  // A third engineer turn is scripted and would deliver: only a second resend could reach it.
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    { role: 'engineer', deltas: ['export '], error: new OpenRouterNetworkError('stream read failed'), id: 'gen-dropped-1' },
+    { role: 'engineer', deltas: ['export '], error: new OpenRouterNetworkError('stream read failed'), id: 'gen-dropped-2' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-never' },
+  ]);
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried, failed } = await runLogged(deliveringDeps(model, []), trace);
+
+  assertCompletedEnvelope('second drop', events);
+  eq('second drop: the run ends in the generic failure', lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+  eq('second drop: the trace records internal_error', trace.failureCode, 'internal_error');
+  eq('second drop: the turn was sent twice, never a third time', model.requests.length, 3);
+  eq('second drop: one restart only — the second failure sends none', tokenFlow(events), ['token:export ', 'restart', 'token:export ']);
+  eq('second drop: one retry line, and the run failure logged as before', [retried.length, failed.map((r) => r.errorClass)], [1, ['OpenRouterNetworkError']]);
+  eq('second drop: both dropped calls are left for reconciliation', trace.uncreditedGenerationIds, ['gen-dropped-1', 'gen-dropped-2']);
+}
+
+async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<void> {
+  section('machine — only a generate/repair turn failing upstream is resent: a plan turn, a 4xx or a non-provider error is not (beta-1 D10)');
+
+  const cases: { label: string; turns: ScriptedTurn[]; calls: number }[] = [
+    {
+      label: 'a plan turn that drops',
+      turns: [{ role: 'plan', deltas: [], error: new OpenRouterNetworkError('fetch failed') }, planTurn([VALID_PLAN_JSON])],
+      calls: 1,
+    },
+    {
+      label: 'a generate turn refused with a 400',
+      turns: [planTurn([VALID_PLAN_JSON]), { role: 'engineer', deltas: [], error: new OpenRouterNetworkError('OpenRouter: HTTP 400', undefined, 400) }, engineerTurn(['export default {};'])],
+      calls: 2,
+    },
+    {
+      label: 'a generate turn failing with a non-provider error',
+      turns: [planTurn([VALID_PLAN_JSON]), { role: 'engineer', deltas: ['export '], error: new Error('parse failure') }, engineerTurn(['export default {};'])],
+      calls: 2,
+    },
+  ];
+  for (const { label, turns, calls } of cases) {
+    const model = new ScriptedModelClient(ROSTER, turns);
+    const { events, retried } = await runLogged(deliveringDeps(model, []), { generationIds: [] });
+    eq(`${label}: ends in one failure`, lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+    eq(`${label}: is not resent`, [model.requests.length, retried.length], [calls, 0]);
+    eq(`${label}: sends no restart`, events.filter((e) => e.type === 'restart').length, 0);
+  }
+}
+
 async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
   section('machine — RunTrace.outcome for every ending, and the budget\'s default and validation');
 
@@ -1994,5 +2152,9 @@ export async function runMachineTests(): Promise<void> {
   await testA402InTheExpiryTurnStillInvalidates();
   await testMidStreamCreditFrameEndsTheRun();
   await testSummariserCreditErrorStillInvalidatesTheCache();
+  await testProviderDropBeforeFirstTokenIsResent();
+  await testProviderDropMidTurnRestarts();
+  await testSecondProviderDropIsTerminal();
+  await testOnlyUpstreamGenerateAndRepairFailuresAreResent();
   await testRunTraceOutcomeAndBudgetDefaults();
 }

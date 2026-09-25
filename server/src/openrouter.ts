@@ -61,10 +61,17 @@ export class OpenRouterCreditError extends Error {
   }
 }
 
-/** Network/transport failure (fetch threw, connection error, etc.). */
+/** Network/transport failure (fetch threw, connection error, etc.), or an HTTP or mid-stream
+ *  failure no other class covers. `status` is the provider's HTTP(-equivalent) status when it
+ *  gave one: a 5xx is the provider failing, a 4xx is the request failing (`isUpstreamModelFailure`,
+ *  `./generation/model.ts`). */
 export class OpenRouterNetworkError extends Error {
   readonly kind = 'network' as const;
-  constructor(message: string, public readonly cause?: unknown) {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+    public readonly status?: number,
+  ) {
     super(message);
     this.name = 'OpenRouterNetworkError';
   }
@@ -208,14 +215,14 @@ function statusError(status: number | undefined, message: string): TypedOpenRout
   if (status === 401) return new OpenRouterAuthError(message);
   if (status === 402) return new OpenRouterCreditError(message);
   if (status === 429) return new OpenRouterRateLimitError(message);
-  return new OpenRouterNetworkError(message);
+  return new OpenRouterNetworkError(message, undefined, status);
 }
 
 function responseError(response: Response): TypedOpenRouterError | null {
   if (response.status === 401) return statusError(401, 'OpenRouter: unauthorized (401)');
   if (response.status === 402) return statusError(402, 'OpenRouter: payment required (402)');
   if (response.status === 429) return statusError(429, 'OpenRouter: rate limit exceeded (429)');
-  if (!response.ok) return new OpenRouterNetworkError(`OpenRouter: HTTP ${response.status}`);
+  if (!response.ok) return statusError(response.status, `OpenRouter: HTTP ${response.status}`);
   if (!response.body) return new OpenRouterNetworkError('OpenRouter: response body is null');
   return null;
 }

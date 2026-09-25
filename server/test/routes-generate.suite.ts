@@ -42,7 +42,8 @@ import { InFlightGenerations, type LineClock } from '../src/routes/generate';
 import { serverBusyCeilingRefusal, serverBusyRefusal } from '../src/admission/refusals';
 import { captureLogs, withMessage } from './log-capture';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
-import type { Clock, RunTrace } from '../src/generation/machine';
+import { GenerationMachine, type Clock, type RunTrace } from '../src/generation/machine';
+import { OpenRouterNetworkError } from '../src/openrouter';
 import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
 import {
   ControlledModelClient,
@@ -1290,6 +1291,59 @@ async function testCostAndReconciliation(): Promise<void> {
   }
 }
 
+/** The real machine behind the route, every stage past the model delivering `RESULT_APP`. */
+function deliveringMachinePipeline(model: ModelClient): Pipeline {
+  const machine = new GenerationMachine({
+    model,
+    roster: ROSTER,
+    promptInputs: { sdkReference: 'fake sdk reference', fewShotExamples: [] },
+    check: { check: () => ({ diagnostics: [], manifest: { name: RESULT_APP.name, manifest: RESULT_APP.manifest, schema: RESULT_APP.schema } }) },
+    build: { build: () => ({ ok: true, result: { bundle: RESULT_APP.bundle } }) },
+    run: { run: () => ({ contained: true, diagnostics: [], record: RESULT_APP }) },
+    clock: new ManualTimerClock(),
+  });
+  return { run: (request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace) => machine.run(request, signal, trace) };
+}
+
+async function testProviderDropIsResentAndMetered(): Promise<void> {
+  section('Generate: a provider drop mid-turn reaches the device as one restart, and the dropped attempt is still metered (beta-1 D10)');
+
+  const PLAN_USAGE: Usage = { promptTokens: 5, completionTokens: 3, totalTokens: 8 };
+  const RESENT_USAGE: Usage = { promptTokens: 20, completionTokens: 30, totalTokens: 50 };
+  const model = new ScriptedModelClient(ROSTER, [
+    {
+      role: 'plan',
+      deltas: [JSON.stringify({ screens: [{ name: 'Home', purpose: 'the only screen' }], initial: 'Home', state: [], capabilities: [], storageKeys: [] })],
+      usage: PLAN_USAGE,
+      id: 'gen-plan',
+    },
+    { role: 'engineer', deltas: ['import '], error: new OpenRouterNetworkError('stream read failed'), id: 'gen-dropped' },
+    { role: 'engineer', deltas: [RESULT_APP.source], usage: RESENT_USAGE, id: 'gen-resent' },
+  ]);
+  const stats = statsTransport({
+    'gen-plan': { usage: PLAN_USAGE, totalCostUsd: 0.001 },
+    'gen-dropped': { usage: STATS_USAGE, totalCostUsd: 0.002 },
+    'gen-resent': { usage: RESENT_USAGE, totalCostUsd: 0.004 },
+  });
+  const h = harness({ pipeline: deliveringMachinePipeline(model), resolveTransport: stats.transport });
+
+  const events = await readEvents('provider drop', await postGenerate(h.app, PROMPT, DEVICE_A));
+  eq(
+    'provider drop: the stream voids the dropped tokens with one restart, then delivers',
+    events.filter((e) => ['token', 'restart', 'result'].includes(e.type)).map((e) => e.type),
+    ['token', 'restart', 'token', 'result'],
+  );
+  await expectTornDown('provider drop', h, 'delivered');
+  await drained('provider drop', h.tracker);
+  eq(
+    'provider drop: the device is credited the usage event once, plus the dropped attempt reconciled from the provider',
+    await h.usageStore.read(DEVICE_A),
+    sumUsage(sumUsage(PLAN_USAGE, RESENT_USAGE), STATS_USAGE),
+  );
+  const cost = h.usageStore.costFor(h.usageStore.admitted[0]);
+  check('provider drop: all three calls are costed', cost?.state === 'resolved' && Math.abs((cost.costUsd ?? 0) - 0.007) < 1e-9, JSON.stringify(cost));
+}
+
 // ─── Server state ────────────────────────────────────────────────────────────
 
 function fileContains(filePath: string, marker: string): boolean {
@@ -1446,6 +1500,7 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testErrorExpiryAndDrain();
   await testMidRunCreditExhaustion();
   await testCostAndReconciliation();
+  await testProviderDropIsResentAndMetered();
   await testThrowingStoreSettlesTheLedgerRow();
   await testDataDirectoryHoldsOnlyTheTwoStores();
 }

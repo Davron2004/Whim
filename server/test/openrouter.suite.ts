@@ -14,7 +14,7 @@ import {
   OpenRouterRateLimitError,
   OpenRouterNetworkError,
 } from '../src/openrouter';
-import { isCreditExhaustedError, type ReasoningSetting } from '../src/generation/model';
+import { isCreditExhaustedError, isUpstreamModelFailure, type ReasoningSetting } from '../src/generation/model';
 import type { FetchFn, ProviderSort } from '../src/openrouter';
 import { loadServerConfig, providerRouting } from '../src/config';
 
@@ -476,7 +476,39 @@ export async function runOpenRouterTests(): Promise<void> {
   }
 
   await testMidStreamErrorFrames();
+  await testUpstreamFailureClassification();
   await testModelCallLogLine();
+}
+
+/** beta-1 D10: the machine resends a generate/repair turn only on an upstream failure. What the
+ *  adapter actually raises for each provider ending, read by the machine's own classifier. */
+async function testUpstreamFailureClassification(): Promise<void> {
+  section('OpenRouter wrapper — which failures read as upstream (5xx, 429, network, stream) and which do not (beta-1 D10)');
+
+  const frames = (errorFrame: string): string[] => [
+    'data: {"id":"chatcmpl-u1","choices":[{"index":0,"delta":{"content":"export "}}]}\n\n',
+    errorFrame,
+  ];
+  const cases: { label: string; fetchFn: FetchFn; upstream: boolean }[] = [
+    { label: 'HTTP 500', fetchFn: makeSseFetch([], 500), upstream: true },
+    { label: 'HTTP 503', fetchFn: makeSseFetch([], 503), upstream: true },
+    { label: 'HTTP 429', fetchFn: makeSseFetch([], 429), upstream: true },
+    { label: 'the fetch itself throwing', fetchFn: makeThrowingFetch(new TypeError('socket hang up')), upstream: true },
+    { label: 'a mid-stream 502 frame', fetchFn: makeSseFetch(frames('data: {"error":{"code":502,"message":"provider down"}}\n\n')), upstream: true },
+    { label: 'a mid-stream frame with no code', fetchFn: makeSseFetch(frames('data: {"error":{"message":"upstream exploded"}}\n\n')), upstream: true },
+    { label: 'HTTP 400', fetchFn: makeSseFetch([], 400), upstream: false },
+    { label: 'HTTP 404', fetchFn: makeSseFetch([], 404), upstream: false },
+    { label: 'HTTP 401', fetchFn: makeSseFetch([], 401), upstream: false },
+    { label: 'HTTP 402', fetchFn: makeSseFetch([], 402), upstream: false },
+    { label: 'a mid-stream 400 frame', fetchFn: makeSseFetch(frames('data: {"error":{"code":400,"message":"context too long"}}\n\n')), upstream: false },
+  ];
+  for (const c of cases) {
+    const { deltas, usage } = new OpenRouterClient(c.fetchFn).stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+    usage.catch(() => undefined);
+    const err = await caught(async () => { await drain(deltas); });
+    check(`${c.label}: the stream fails`, err !== undefined);
+    eq(`${c.label}: ${c.upstream ? 'reads as upstream' : 'does not read as upstream'}`, isUpstreamModelFailure(err), c.upstream);
+  }
 }
 
 /** A fetch double whose response body's read loop REJECTS once `signal` aborts — the shape a real

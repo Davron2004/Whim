@@ -23,7 +23,15 @@ import { scanStorageSurface } from '../../../checks/index';
 import type { StorageSurface } from '../../../checks/index';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
-import { isCreditExhaustedError, type ModelCallLabel, type ModelClient, type ModelMessage, type ModelRoster, type RoleSetting } from './model';
+import {
+  isCreditExhaustedError,
+  isUpstreamModelFailure,
+  type ModelCallLabel,
+  type ModelClient,
+  type ModelMessage,
+  type ModelRoster,
+  type RoleSetting,
+} from './model';
 import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
@@ -147,6 +155,10 @@ export type RunTraceOutcome = 'delivered' | 'failed' | 'expired' | 'aborted';
  *  generation id as it resolves. A stub that ignores it stays conforming. */
 export interface RunTrace {
   generationIds: string[];
+  /** The ids, among `generationIds`, of model calls that failed before their usage arrived (a
+   *  retried attempt among them, beta-1 D10). The run's `usage` event does not carry their tokens,
+   *  so the caller reconciles those from the provider. Absent while every call's usage arrived. */
+  uncreditedGenerationIds?: string[];
   /** The request this run serves (`x-whim-request-id`, also its ledger row id). Set by the caller
    *  before the run starts; every run log line carries it as `requestId`. */
   requestId?: string;
@@ -214,7 +226,9 @@ export const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and 
 /** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
  *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
  *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
- *  rather than promising an automatic retry (design D3 declines to add one). */
+ *  rather than promising an automatic retry: an unverified candidate is never re-run (design D3).
+ *  The run's one automatic retry is a generate or repair turn resent once after a provider failure
+ *  (`runModelTurn`, beta-1 D10), which voids that turn's partial output and re-runs no candidate. */
 export const UNVERIFIED_RUN_REASON = "We couldn't verify this app ran safely. Please try again.";
 export const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while generating this app. Please try again.';
 /** Design D13, verbatim. */
@@ -295,19 +309,50 @@ function logStage(state: RunState, stage: string, status: string, attempt?: numb
   state.log.info({ stage, status, ...(attempt !== undefined ? { attempt } : {}) }, 'stage');
 }
 
-/** Logs a model stream's rejected `usage`/`id` promise before re-throwing it, at the exact point
- *  `runModelTurn` would otherwise `throw settledUsage.error;` / `throw settledId.error;` — never
- *  called from inside the delta iteration loop (design D5 scope). */
-function throwLoggedModelCallFailure(state: RunState, which: 'usage' | 'id', error: unknown): never {
+/** Logs a model stream's rejected `usage`/`id` promise at the point it is observed, before the
+ *  turn reports the failure — never called from inside the delta iteration loop (design D5 scope). */
+function logModelCallFailure(state: RunState, which: 'usage' | 'id', error: unknown): void {
   state.log.error(
     {
       which,
-      errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      errorClass: errorClassOf(error),
       detail: error instanceof Error ? error.message : String(error),
     },
     'model call failed',
   );
-  throw error;
+}
+
+function errorClassOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+/** How many times a generate or repair turn is resent after an upstream failure (beta-1 D10). */
+const MODEL_TURN_RETRIES = 1;
+
+/** One model call's ending: its text, or the error it failed with and whether it had already
+ *  streamed `token` events (which a resend has to void with `restart`). */
+type TurnAttempt =
+  | { ok: true; text: string; aborted: boolean }
+  | { ok: false; error: unknown; yieldedTokens: boolean };
+
+/** A failed call, with its generation id recorded as uncredited: its usage never arrived, so the
+ *  run's `usage` event cannot carry its tokens (`RunTrace.uncreditedGenerationIds`). An aborted
+ *  call records nothing more: an aborted run emits no `usage`, so every id is reconciled anyway. */
+async function failedAttempt(
+  error: unknown,
+  yieldedTokens: boolean,
+  idResult: Promise<Settled<string | undefined>>,
+  signal: AbortSignal | undefined,
+  trace: RunTrace | undefined,
+): Promise<TurnAttempt> {
+  if (!signal?.aborted && trace) {
+    const settledId = await idResult;
+    if (settledId.ok && settledId.value !== undefined) {
+      trace.uncreditedGenerationIds ??= [];
+      trace.uncreditedGenerationIds.push(settledId.value);
+    }
+  }
+  return { ok: false, error, yieldedTokens };
 }
 
 /** The wire's applied schema, structurally narrowed to the engine's type. The field is a free-form
@@ -689,7 +734,13 @@ export class GenerationMachine {
    *  both, never this shared helper. Reasoning deltas surface as `thinking` events (length only,
    *  never the reasoning text) in EVERY turn regardless of `emitTokens`, whenever the role's own
    *  reasoning setting actually streams one: the device needs to know the model is working during
-   *  the plan turn just as much as during generate/repair — it is the silent one otherwise. */
+   *  the plan turn just as much as during generate/repair — it is the silent one otherwise.
+   *
+   *  A generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429, network or
+   *  stream error) is sent once more with the same messages (beta-1 D10). When the failed attempt
+   *  had already streamed `token` events, `restart` goes first, so the device voids them. Any other
+   *  failure, a failure after the run was stopped, and the resend's own failure are thrown to
+   *  `endOnThrow` exactly as before. */
   private async *runModelTurn(
     messages: ModelMessage[],
     roleSetting: RoleSetting,
@@ -699,6 +750,27 @@ export class GenerationMachine {
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
+    const retries = label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
+    for (let resends = 0; ; resends++) {
+      const turn = yield* this.streamModelTurn(messages, roleSetting, label, signal, trace, state, emitTokens);
+      if (turn.ok) return { text: turn.text, aborted: turn.aborted };
+      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) throw turn.error;
+      state.log.info({ role: label, errorClass: errorClassOf(turn.error), restart: turn.yieldedTokens }, 'model turn retried');
+      if (turn.yieldedTokens) yield { type: 'restart' };
+    }
+  }
+
+  /** One model call of a turn: `runModelTurn`'s stream consumption, reporting a failure instead of
+   *  throwing it so the turn can decide whether to resend. */
+  private async *streamModelTurn(
+    messages: ModelMessage[],
+    roleSetting: RoleSetting,
+    label: ModelCallLabel,
+    signal: AbortSignal | undefined,
+    trace: RunTrace | undefined,
+    state: RunState,
+    emitTokens: boolean,
+  ): AsyncGenerator<GenerationEvent, TurnAttempt> {
     const stream = this.deps.model.stream(
       { model: roleSetting.model, messages, reasoning: roleSetting.reasoning, role: label, logger: state.modelLog },
       signal,
@@ -712,22 +784,36 @@ export class GenerationMachine {
       return result;
     });
     let text = '';
-    for await (const delta of stream.deltas) {
-      if (signal?.aborted) return { text, aborted: true };
-      if (delta.kind === 'reasoning') {
-        yield { type: 'thinking', chars: delta.text.length };
-        continue;
+    let yieldedTokens = false;
+    try {
+      for await (const delta of stream.deltas) {
+        if (signal?.aborted) return { ok: true, text, aborted: true };
+        if (delta.kind === 'reasoning') {
+          yield { type: 'thinking', chars: delta.text.length };
+          continue;
+        }
+        text += delta.text;
+        if (emitTokens) {
+          yieldedTokens = true;
+          yield { type: 'token', text: delta.text };
+        }
       }
-      text += delta.text;
-      if (emitTokens) yield { type: 'token', text: delta.text };
+    } catch (error) {
+      return failedAttempt(error, yieldedTokens, idResult, signal, trace);
     }
-    if (signal?.aborted) return { text, aborted: true };
+    if (signal?.aborted) return { ok: true, text, aborted: true };
     const settledUsage = await usageResult;
-    if (!settledUsage.ok) throwLoggedModelCallFailure(state, 'usage', settledUsage.error);
+    if (!settledUsage.ok) {
+      logModelCallFailure(state, 'usage', settledUsage.error);
+      return failedAttempt(settledUsage.error, yieldedTokens, idResult, signal, trace);
+    }
     state.usage = sumUsage(state.usage, settledUsage.value);
     const settledId = await idResult;
-    if (!settledId.ok) throwLoggedModelCallFailure(state, 'id', settledId.error);
-    return { text, aborted: signal?.aborted ?? false };
+    if (!settledId.ok) {
+      logModelCallFailure(state, 'id', settledId.error);
+      return { ok: false, error: settledId.error, yieldedTokens };
+    }
+    return { ok: true, text, aborted: signal?.aborted ?? false };
   }
 
   private resolvePlan(text: string, request: GenerateRequest): { plan?: Plan; failureReason?: string } {
