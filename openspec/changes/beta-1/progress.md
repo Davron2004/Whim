@@ -20,3 +20,4 @@
 - 14:05 chain-2 dispatched: BASE `e2fe33a90df6b2e238e2e702db6c052e22fd072b`, worktree `.claude/worktrees/beta-1-2`, branch `chain/beta-1-2`, @whim symlinks pre-created, model Opus.
 - 14:25 FREEZE (owner, usage limit): no further dispatches; chain-2 allowed to finish. Resume steps in docs/handoff-2026-09-25.md.
 - 14:37 chain-2 TERMINATED by the session limit before its report (no resume file written). Orchestrator committed its uncommitted work as WIP `6eb0e3d3` on `chain/beta-1-2` (14 server files, +1171/−122; its last words were "Lint clean. Re-running the gate."). Not in the diff: the `docs/deploy.md` rows (2.3) and the load-test driver (block decision 11). Gate state unknown. No harness feedback from chain-2 (it died before reporting).
+- 14:37 UNFREEZE (owner: continue). chain-2 redispatched fresh into the same worktree to continue from WIP `6eb0e3d3` (block: `dispatch/chain-2.md`), model Opus.
