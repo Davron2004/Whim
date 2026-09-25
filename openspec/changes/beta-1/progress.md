@@ -20,6 +20,10 @@
   - The spec delta, D2, and tasks 5.2/5.3 were amended to match.
 - R8. The load-tested caps (10.2) go into the `server/src/config.ts` defaults, not `deploy/profiles/standard.env`. The deploy-config suite's `profileProblems` rule ("standard must not override server limits") keeps `config.ts` the one source of defaults, and the standard profile runs with them. The spec delta and task 10.2 were amended to match.
 - R9. Dispatch is paused until the usage limit resets (17:00). While the session runs at low-priority capacity, subagent streams can wait on capacity past the 600 s stall watchdog. chain-3 stalled twice (15:12 and 15:22 dispatches) with zero writes each time. The worktree stays clean at BASE `74573b7b`, and chain-3 is redispatched with the same prompt after 17:00.
+- R10. chain-6's two device risks, found by reading RN source, are merged as built and checked in 10.4 before any fix (reproduce first).
+  - iOS: `automaticallyAdjustKeyboardInsets` is computed once from the pre-avoider frame (`RCTScrollViewComponentView.mm:187-266`), so with the footer `KeyboardAvoidingView` a low focused field can be clipped by the footer's height (~76pt). Check plan row 4+ and clarify "Other" on question 2–3.
+  - Android: targetSdk 36 with `edgeToEdgeEnabled=false`, so Android 15+ enforces edge-to-edge and `adjustResize` may stop resizing, leaving nothing to lift Continue. Check on the API 36 emulator.
+  - A confirmed risk becomes a fix chain.
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -73,3 +77,5 @@
   Native: `WhimAgeSignal.swift` passes a standalone `swiftc -typecheck`, and codegen into scratch matches the `.mm`/`.kt` signatures; the `.mm` and `.kt` themselves are uncompiled until 10.4 (iOS needs `pod install`). Red-checks all fail by name (5.1 unbounded → 3; 5.3 no acknowledgment → 24, 3 s guardian → 3; 5.4 old #104 code → 4).
 - chain-5 merged (integrity OK, 13 files); tasks 5.1–5.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. Archive-order note on #69 (ai-data-consent's Settings-row text vs D6); filed #124 (acknowledgment skipped while the age outcome is fresh).
 - 17:58 chain-6 dispatched: BASE `56f19f58005a3fdd2b4b96e9c9ae9242d2bec522`, worktree `.claude/worktrees/beta-1-6`, branch `chain/beta-1-6`, block `dispatch/chain-6.md`, model Opus (R9).
+- chain-6 (Opus) report: STATUS complete, GATE PASS, commits `cc0e6fc5` `d747cc96` `633baf3b`. Class A: report-sheet Send/Cancel moved into the pinned footer (visible layout change); inside a sheet the wrapper adds no avoider and no auto inset (SheetModal's KAV stays the only one); Settings (no footer) doesn't pad; plan row editing keeps `autoFocus`; `COPY.keyboardDone`. New `keyboard-shell.ts` + `KeyboardShell.tsx` + `keyboard-shell-ui.suite.tsx` (8 tests; the old screens fail 27 checks). Per-screen 10.4 checklist: Compose (+ Change it/Prompt again), Plan editing, Clarify Other, Report sheet, Settings server address.
+- chain-6 merged (integrity OK); tasks 6.1–6.3 ticked. Regate: FAST GATE PASSED. Worktree and branch removed.

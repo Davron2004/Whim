@@ -37,9 +37,9 @@
 
 ## 6. Keyboard in the host shell (app)
 
-- [ ] 6.1 Build the shared keyboard-safe wrapper from React Native built-ins (D3). Put pure logic in a non-RN sibling so a Node suite can test it.
-- [ ] 6.2 Compose: the wrapper, Continue pinned in the footer, no `autoFocus`, and Done on the description field.
-- [ ] 6.3 Adopt the wrapper on every other screen and sheet with a TextInput (clarify "Other", plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s `KeyboardAvoidingView` is kept or folded in, not doubled.
+- [x] 6.1 Build the shared keyboard-safe wrapper from React Native built-ins (D3). Put pure logic in a non-RN sibling so a Node suite can test it.
+- [x] 6.2 Compose: the wrapper, Continue pinned in the footer, no `autoFocus`, and Done on the description field.
+- [x] 6.3 Adopt the wrapper on every other screen and sheet with a TextInput (clarify "Other", plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s `KeyboardAvoidingView` is kept or folded in, not doubled.
 
 ## 7. Realm and host runtime (app runtime + SDK)
 
