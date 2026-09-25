@@ -24,7 +24,7 @@ The server SHALL run the credit check, the daily-limit checks and the content po
 - **THEN** the generation leaves the line, holds no slot, spends no daily unit, and everyone behind it moves up
 
 ### Requirement: The production caps come from a load test of the production machine type
-The standard capacity profile SHALL set the generation and synthetic-run concurrency caps to the highest pair a recorded load test on that machine type sustained with p95 CPU under 70 % and no failed runs, and the operator runbook SHALL record the measurement.
+The server's default generation and synthetic-run concurrency caps, which the standard capacity profile runs with (the profile sets no server limit of its own), SHALL be the highest pair a recorded load test on the standard machine type sustained with p95 CPU under 70 % and no failed runs, and the operator runbook SHALL record the measurement.
 
 #### Scenario: Profile applied
 - **WHEN** the standard profile is deployed

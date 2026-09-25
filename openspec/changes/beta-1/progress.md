@@ -18,6 +18,7 @@
   - It gets its own 60 s deadline: it waits on a person, so the 3 s age-read deadline would always cut it off. The feature query keeps the 3 s bound.
   - Parental consent (`significantAppChangeRequiresParentalConsent`, PermissionKit's `PermissionQuestion`) stays out of scope, as in D2.
   - The spec delta, D2, and tasks 5.2/5.3 were amended to match.
+- R8. The load-tested caps (10.2) go into the `server/src/config.ts` defaults, not `deploy/profiles/standard.env`. The deploy-config suite's `profileProblems` rule ("standard must not override server limits") keeps `config.ts` the one source of defaults, and the standard profile runs with them. The spec delta and task 10.2 were amended to match.
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -28,3 +29,11 @@
 - 14:25 FREEZE (owner, usage limit): no further dispatches; chain-2 allowed to finish. Resume steps in docs/handoff-2026-09-25.md.
 - 14:37 chain-2 TERMINATED by the session limit before its report (no resume file written). Orchestrator committed its uncommitted work as WIP `6eb0e3d3` on `chain/beta-1-2` (14 server files, +1171/−122; its last words were "Lint clean. Re-running the gate."). Not in the diff: the `docs/deploy.md` rows (2.3) and the load-test driver (block decision 11). Gate state unknown. No harness feedback from chain-2 (it died before reporting).
 - 14:37 UNFREEZE (owner: continue). chain-2 redispatched fresh into the same worktree to continue from WIP `6eb0e3d3` (block: `dispatch/chain-2.md`), model Opus.
+- chain-2 (resumed) report: STATUS complete, GATE PASS (knip clean; `server:e2e` 56/0 in the worktree), commits `6eb0e3d3` (WIP) + `614f9650`. Class A:
+  - the three keys are routed through the deploy plumbing (`lib.sh` WHIM_VALUE_KEYS, `deploy.sh` optional keys, the operator example);
+  - `run.sh drive`/`server/loadtest.mjs` take `--queue-max`, and the driver's per-device limit is 300 s;
+  - the load-test verdict also checks that the queued count equals min(devices − cap, queue-max);
+  - a `providerRouting(config)` helper;
+  - `e2e.ts`'s "fourth is refused" became "fourth waits then completes, fifth refused".
+  Decision 4 finding: the daily unit IS the ledger row (`usage-store.ts#admit`, one `BEGIN IMMEDIATE`), so waiters have no row and no new code was added; the contract's "ledger stores queue_timeout" is corrected. Red-checks: no handoff on release → 38 checks fail; abort not moving others up → 5 fail (names in the report). Orchestrator check: the IDE's "declared but never read" on the new line tests was stale (the functions are called at `admission.suite.ts:685-688` and `routes-generate.suite.ts:1438`).
+- chain-2 merged (integrity OK, 25 files); tasks 2.1–2.3 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. Filed #120 (classifier calls from the line are bounded by no daily limit).

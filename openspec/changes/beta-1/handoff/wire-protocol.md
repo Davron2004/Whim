@@ -68,7 +68,7 @@ unregistered code as unknown → `fail` (lockstep: `wire-future-frames.suite.ts`
 level 1 has no helper: its route adapts it. Raising the level: bump `PROTOCOL_LEVEL` in the contract and in
 `src/host/launcher/wire-headers.ts` together (`header-lockstep.suite.ts`).
 
-**Failure code.** `'queue_timeout'` is in `TERMINAL_FAILURE_CODES` (`generation/failure-codes.ts`); the ledger stores it.
+**Failure code.** `'queue_timeout'` is in `TERMINAL_FAILURE_CODES` (`generation/failure-codes.ts`). Corrected after chain-2: a waiter has no ledger row, because the daily unit IS the row (`usage-store.ts#admit`), so the ledger never stores it; it labels the terminal log line.
 No reason constant exists yet (no consumer): the `failure.reason` for it is the `server_busy` capacity hint,
 `serverBusyRefusal().body.hint` = "Whim is busy right now. Please try again in a few minutes." (same pattern as
 `CREDIT_EXHAUSTED_REASON` reusing the `budget_exhausted` hint).

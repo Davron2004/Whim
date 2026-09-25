@@ -7,9 +7,9 @@
 
 ## 2. The line for generation slots (server)
 
-- [ ] 2.1 `SlotController`: an async FIFO acquire for `generate` with abort. `release()` stays idempotent and hands the slot to the head of the line. Position tracking and change notifications. Bounded by `WHIM_QUEUE_MAX` (default 50). Tests: order, abort mid-line moves everyone up, drain empties the line, overflow refused. All bounded by timeouts (see the `whim-node-suite-bare-await-hang` memory).
-- [ ] 2.2 `routes/generate.ts`: keep credit, daily-limit and content-policy checks pre-stream. When no slot is free, open the stream and emit `queued{position}` on entry, on every move and at least every 5 s. Start the pipeline on a slot, and spend the daily unit only then. `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → one terminal `failure` (`queue_timeout`). Line full → pre-stream `429 server_busy`. Tests for every `server-admission-control` line scenario, including "no daily unit spent" on timeout and abort.
-- [ ] 2.3 Config: parse `WHIM_QUEUE_MAX`, `WHIM_QUEUE_MAX_WAIT_MS` and `WHIM_PROVIDER_QUANTIZATIONS`. `requestBody` sends `provider.quantizations` when it's set, and the provider object is byte-identical when unset (test). Add the three rows to `docs/deploy.md` (D8, D12).
+- [x] 2.1 `SlotController`: an async FIFO acquire for `generate` with abort. `release()` stays idempotent and hands the slot to the head of the line. Position tracking and change notifications. Bounded by `WHIM_QUEUE_MAX` (default 50). Tests: order, abort mid-line moves everyone up, drain empties the line, overflow refused. All bounded by timeouts (see the `whim-node-suite-bare-await-hang` memory).
+- [x] 2.2 `routes/generate.ts`: keep credit, daily-limit and content-policy checks pre-stream. When no slot is free, open the stream and emit `queued{position}` on entry, on every move and at least every 5 s. Start the pipeline on a slot, and spend the daily unit only then. `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → one terminal `failure` (`queue_timeout`). Line full → pre-stream `429 server_busy`. Tests for every `server-admission-control` line scenario, including "no daily unit spent" on timeout and abort.
+- [x] 2.3 Config: parse `WHIM_QUEUE_MAX`, `WHIM_QUEUE_MAX_WAIT_MS` and `WHIM_PROVIDER_QUANTIZATIONS`. `requestBody` sends `provider.quantizations` when it's set, and the provider object is byte-identical when unset (test). Add the three rows to `docs/deploy.md` (D8, D12).
 
 ## 3. Generation quality (server)
 
@@ -65,7 +65,7 @@
 ## 10. Acceptance and rollout (orchestrator, attended)
 
 - [ ] 10.1 `gate-full.sh` green on the staging tip, then the reviewer pass.
-- [ ] 10.2 Load-test `e2-standard-2` (`deploy/loadtest/run.sh drive`). Put the highest caps with p95 CPU < 70 % and no failed runs into `deploy/profiles/standard.env`, and record the run in `docs/deploy.md`.
+- [ ] 10.2 Load-test `e2-standard-2` (`deploy/loadtest/run.sh drive`). Put the highest caps with p95 CPU < 70 % and no failed runs into the `server/src/config.ts` defaults (R8; the standard profile sets no server limit), and record the run in `docs/deploy.md`.
 - [ ] 10.3 Flowbench before and after 3.1 (visible set plus weather and roommate-ping cases), recorded in `progress.md`.
 - [ ] 10.4 iOS and Android builds → a newly created simulator and a fresh emulator against a local server at the staging tip: every tier-0 scenario, the line (cap + 2), the `limit` screen, and a fallback smoke (a dev-only injected future frame).
 - [ ] 10.5 Upgrade check 382511 → beta-1 on both platforms, with evidence recorded.
