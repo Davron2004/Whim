@@ -37,7 +37,7 @@ import type { PromptInputs } from './prompts/inputs';
 import { buildGenerateMessages, buildPlanMessages, buildRepairMessages } from './prompts';
 import { type Plan, parsePlan, validatePlan } from './plan';
 import { unwrapSourceFence } from './source-block';
-import type { Summariser } from './summarise';
+import { claimsNoChange, neutralSummary, type SourceChange, type Summariser, type SummariserInput } from './summarise';
 import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
 import { log, type ServerLogger } from '../logger';
@@ -621,6 +621,22 @@ function failureTerminalFor(
   }
 }
 
+/** Whether the delivered source is byte-identical to the source the request started from
+ *  (beta-1 D13). A request without `app.source` gives nothing to compare with. */
+function sourceChangeOf(request: GenerateRequest, record: WireAppRecord): SourceChange {
+  const before = request.app?.source;
+  if (before === undefined) return 'unknown';
+  return record.source === before ? 'unchanged' : 'changed';
+}
+
+/** A summary may say the app did not change only when its source did not (beta-1 D13, #106);
+ *  anywhere else that claim is replaced by the neutral line. */
+function honestSummary(summary: RunSummary | undefined, input: SummariserInput, state: RunState): RunSummary | undefined {
+  if (summary === undefined || input.sourceChange === 'unchanged' || !claimsNoChange(summary.text)) return summary;
+  state.log.info({ sourceChange: input.sourceChange }, 'no-change summary replaced');
+  return neutralSummary(input);
+}
+
 // ─── The machine ─────────────────────────────────────────────────────────────
 
 export class GenerationMachine {
@@ -1051,21 +1067,19 @@ export class GenerationMachine {
     const summariser = this.deps.summariser;
     if (!summariser || signal?.aborted) return undefined;
     const capabilities = record.manifest.capabilities;
+    const input: SummariserInput = {
+      prompt: request.prompt,
+      isEdit: request.app !== undefined,
+      appName: record.name,
+      capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
+      attempts: state.candidatesProduced,
+      diagnostics: [...state.diagnostics],
+      sourceChange: sourceChangeOf(request, record),
+    };
     try {
-      const result = await summariser.summarise(
-        {
-          prompt: request.prompt,
-          isEdit: request.app !== undefined,
-          appName: record.name,
-          capabilities: Array.isArray(capabilities) ? capabilities.filter((c): c is string => typeof c === 'string') : [],
-          attempts: state.candidatesProduced,
-          diagnostics: [...state.diagnostics],
-        },
-        signal,
-        state.modelLog,
-      );
+      const result = await summariser.summarise(input, signal, state.modelLog);
       if (result.usage) state.usage = sumUsage(state.usage, result.usage);
-      return result.summary;
+      return honestSummary(result.summary, input, state);
     } catch (err) {
       // The summariser's failure still cannot fail the run — but a `402` is authoritative about
       // the operator's credit wherever it is raised, so the next admission must re-query rather

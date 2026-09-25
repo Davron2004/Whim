@@ -29,6 +29,7 @@ import {
   type RunTrace,
 } from '../src/generation/machine';
 import {
+  claimsNoChange,
   createModelSummariser,
   resolveMarks,
   shapeSummary,
@@ -522,6 +523,21 @@ function testSummaryShaping(): void {
   );
   check('only the first sentence survives', twoSentences?.text === 'It counts glasses.');
 
+  // beta-1 D13: which sentences claim the app did not change. "No longer" is a change.
+  const claims: [string, boolean][] = [
+    ['No changes were needed, the counter already works this way.', true],
+    ['No change was made to the app.', true],
+    ['Nothing was changed.', true],
+    ['The app is unchanged.', true],
+    ["The timer didn't need to change.", true],
+    ['It already does what you asked.', true],
+    ['The count stays the same.', true],
+    ['The dot no longer changes colour when paused.', false],
+    ['The glass count is now larger.', false],
+    ['It now also resets each morning.', false],
+  ];
+  eq('claimsNoChange reads each sentence as expected', claims.map(([text]) => [text, claimsNoChange(text)]), claims);
+
   eq('an unknown kind falls back', shapeSummary({ text: 'It works.', kind: 'Refactor' }, 'Changed')?.kind, 'Changed');
   eq('empty prose yields no summary', shapeSummary({ text: '   ' }, 'Start'), undefined);
   eq('a non-object yields no summary', shapeSummary('nope', 'Start'), undefined);
@@ -576,7 +592,7 @@ function summaryWireFetch(captured: { body?: Record<string, unknown> }): FetchFn
 async function testSummariserWireReasoningIsExplicitlyOff(): Promise<void> {
   section("Wire v2 — the summariser's OWN wire request explicitly disables reasoning by default (design D1)");
 
-  const input: SummariserInput = { prompt: 'a water tracker', isEdit: false, appName: 'demo', capabilities: [], attempts: 1, diagnostics: [] };
+  const input: SummariserInput = { prompt: 'a water tracker', isEdit: false, appName: 'demo', capabilities: [], attempts: 1, diagnostics: [], sourceChange: 'unknown' };
   const captured: { body?: Record<string, unknown> } = {};
   const model = openRouterModelClient(new OpenRouterClient(summaryWireFetch(captured)));
   const summariser = createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 });
@@ -632,6 +648,7 @@ async function testModelSummariser(): Promise<void> {
     capabilities: [],
     attempts: 1,
     diagnostics: [],
+    sourceChange: 'unknown',
   };
 
   {

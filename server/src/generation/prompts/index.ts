@@ -17,7 +17,7 @@
  */
 import type { AppContext, Clarification, ClarifyRequest, GenerateRequest, RewriteRequest, Diagnostic } from '@whim/contract';
 import type { ModelMessage } from '../model';
-import type { SummariserInput } from '../summarise';
+import type { SourceChange, SummariserInput } from '../summarise';
 import type { PromptInputs } from './inputs';
 import { loadContentPolicyDocument } from './inputs';
 
@@ -311,6 +311,18 @@ const SUMMARY_SYSTEM = [
   'no longer than the plain wording.',
 ].join(' ');
 
+/** The source-change fact (beta-1 D13), stated only when the caller knows it. */
+function sourceChangeSection(change: SourceChange): string {
+  switch (change) {
+    case 'changed':
+      return "The app's code changed in this run, so never say that nothing changed: say what it now does differently.";
+    case 'unchanged':
+      return "The app's code is exactly what it was before this run.";
+    case 'unknown':
+      return '';
+  }
+}
+
 export function buildSummaryMessages(input: SummariserInput): ModelMessage[] {
   const learned =
     input.diagnostics.length > 0
@@ -323,6 +335,7 @@ export function buildSummaryMessages(input: SummariserInput): ModelMessage[] {
       content: nonEmptySections(
         `The user asked: ${input.prompt}`,
         input.isEdit ? 'This changed an app they already had.' : 'This built them a new app.',
+        sourceChangeSection(input.sourceChange),
         `The app is called "${input.appName}".`,
         input.capabilities.length > 0 ? `It can use: ${input.capabilities.join(', ')}.` : '',
         input.attempts > 1 ? `It took ${input.attempts} tries to get right.` : '',

@@ -13,6 +13,8 @@
  * unsupported dynamic require). The real check PIPELINE still never runs here: `CheckStage` is a
  * fake, exactly as before.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { caught, check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
@@ -2129,6 +2131,93 @@ async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<voi
   }
 }
 
+// ── §A no-change summary requires unchanged source (beta-1 D13, #106) ─────────
+
+/** A real curated app, standing in for the installed app a "Change it" request starts from. */
+const STARTING_SOURCE = fs.readFileSync(path.join(process.cwd(), 'fixtures', 'water-counter.app.tsx'), 'utf8');
+
+/** What the engineer sent back in #106: the app it was given plus timer code nobody asked for. */
+function withUnrelatedTimer(source: string): string {
+  return source
+    .replace('  storage,\n', '  storage,\n  interval,\n')
+    .replace(
+      "  const [status, setStatus] = useState('loading…');\n",
+      "  const [status, setStatus] = useState('loading…');\n  const [seconds, setSeconds] = useState(0);\n  interval(() => setSeconds((s) => s + 1), 1000);\n",
+    );
+}
+
+/** A model reply as the engineer writes it: the whole file in a fence. */
+function fencedReply(source: string): string {
+  return '```tsx\n' + source + '\n```';
+}
+
+/** A summary reply as the summary model writes it, JSON in a fence. */
+function summaryReply(text: string): string {
+  return '```json\n' + JSON.stringify({ text, kind: 'Changed', touched: ['glass counter'], chg: '', hedge: '' }) + '\n```';
+}
+
+const NO_CHANGE_TEXT = 'No changes were needed, the counter already works this way.';
+
+/** One edit run through the real run-stage adapter (the record is assembled from the candidate
+ *  the machine hands it) and the real model-backed summariser. */
+async function editRun(appSource: string | undefined, engineerReply: string, summaryText: string): Promise<{ result: Extract<GenerationEvent, { type: 'result' }> | undefined; summaryPrompt: string }> {
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn([engineerReply]),
+    { role: 'summary', deltas: [summaryReply(summaryText)], usage: ONE_TOKEN_USAGE },
+  ]);
+  const deps = baseDeps({
+    model,
+    summariser: createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 }),
+    check: scriptedCheck([{ diagnostics: [], manifest: { name: 'Water Counter', manifest: { capabilities: ['storage'] }, schema: {} } }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: createRunStage(stubRunCandidate(fakeReport({ contained: true, diagnostics: [] }))),
+  });
+  const request: GenerateRequest = {
+    prompt: 'make the glass count bigger',
+    app: { ...(appSource === undefined ? {} : { source: appSource }), manifest: { capabilities: ['storage'] }, schema: {} },
+  };
+  const events = await collect(new GenerationMachine(deps).run(request));
+  const result = events.find((e): e is Extract<GenerationEvent, { type: 'result' }> => e.type === 'result');
+  const summaryRequest = model.requests.find((r) => r.role === 'summary');
+  return { result, summaryPrompt: summaryRequest?.request.messages.find((m) => m.role === 'user')?.content ?? '' };
+}
+
+/** Independent of the implementation's own detector: the wording #106 showed. */
+const SAYS_NO_CHANGE = /\bno changes?\b|\bnothing (?:was |has been )?changed\b|\bunchanged\b|\balready works\b/i;
+
+async function testNoChangeSummaryNeedsUnchangedSource(): Promise<void> {
+  section('machine — a no-change summary is delivered only when the source is byte-identical (beta-1 D13, #106)');
+
+  const changedSource = withUnrelatedTimer(STARTING_SOURCE);
+  check('setup: the fixture edit really changed the source', changedSource !== STARTING_SOURCE && changedSource.includes('interval(() =>'));
+
+  // #106: the saved source gained timer code, and the summary said nothing changed.
+  const changed = await editRun(STARTING_SOURCE, fencedReply(changedSource), NO_CHANGE_TEXT);
+  eq('changed source: the delivered record carries the changed source', changed.result?.app.source, changedSource);
+  check('changed source: a summary is still delivered', changed.result?.summary !== undefined);
+  check('changed source: the delivered summary does not claim no change', !SAYS_NO_CHANGE.test(changed.result?.summary?.text ?? ''), changed.result?.summary?.text);
+
+  const unchanged = await editRun(STARTING_SOURCE, fencedReply(STARTING_SOURCE), NO_CHANGE_TEXT);
+  eq('byte-identical source: the delivered record is the starting source', unchanged.result?.app.source, STARTING_SOURCE);
+  eq('byte-identical source: the no-change summary is delivered as written', unchanged.result?.summary?.text, NO_CHANGE_TEXT);
+
+  const trailingNewline = await editRun(STARTING_SOURCE, fencedReply(`${STARTING_SOURCE}\n`), NO_CHANGE_TEXT);
+  check('one byte more (a trailing newline) is a change', !SAYS_NO_CHANGE.test(trailingNewline.result?.summary?.text ?? ''), trailingNewline.result?.summary?.text);
+
+  const untracked = await editRun(undefined, fencedReply(changedSource), NO_CHANGE_TEXT);
+  check('no starting source on file (a pre-tracking install): no-change cannot be verified, so it is not claimed', !SAYS_NO_CHANGE.test(untracked.result?.summary?.text ?? ''), untracked.result?.summary?.text);
+
+  const described = await editRun(STARTING_SOURCE, fencedReply(changedSource), 'The glass count now also shows a running seconds timer.');
+  eq('changed source: an ordinary summary of the change is delivered as written', described.result?.summary?.text, 'The glass count now also shows a running seconds timer.');
+
+  eq(
+    'the summariser is told whether the source changed: its prompt differs for changed, unchanged and unknown',
+    new Set([changed.summaryPrompt, unchanged.summaryPrompt, untracked.summaryPrompt]).size,
+    3,
+  );
+}
+
 async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
   section('machine — RunTrace.outcome for every ending, and the budget\'s default and validation');
 
@@ -2238,5 +2327,6 @@ export async function runMachineTests(): Promise<void> {
   await testProviderDropMidTurnRestarts();
   await testSecondProviderDropIsTerminal();
   await testOnlyUpstreamGenerateAndRepairFailuresAreResent();
+  await testNoChangeSummaryNeedsUnchangedSource();
   await testRunTraceOutcomeAndBudgetDefaults();
 }
