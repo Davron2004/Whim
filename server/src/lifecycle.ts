@@ -23,7 +23,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { getRequestListener, type Http2Bindings, type HttpBindings } from '@hono/node-server';
 import { createApp } from './app';
-import { loadServerConfig, type ServerConfig } from './config';
+import { loadServerConfig, providerRouting, type ServerConfig } from './config';
 import { runPreflight } from './preflight';
 import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
@@ -333,7 +333,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const model = atStep('model', () => {
     if (overrides.model) return overrides.model;
     try {
-      const deps = buildModelDepsFromEnv(options.env, { sort: config.providerSort, quantizations: config.providerQuantizations });
+      const deps = buildModelDepsFromEnv(options.env, providerRouting(config));
       return { client: deps.model, roster: deps.roster };
     } catch (err) {
       if (!useStub || (!(err instanceof ModelRosterEnvError) && !(err instanceof MissingApiKeyError))) throw err;

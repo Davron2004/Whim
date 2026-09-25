@@ -17,7 +17,7 @@
  * `server/config-check.mjs` runs this same parse for `deploy/deploy.sh`.
  */
 import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
-import type { ProviderQuantization, ProviderSort } from './openrouter';
+import type { ProviderQuantization, ProviderRouting, ProviderSort } from './openrouter';
 
 export interface ServerConfig {
   readonly nodeEnv: string;
@@ -252,6 +252,11 @@ function readProviderQuantizations(env: NodeJS.ProcessEnv, name: string): readon
     throw new ServerConfigError(name, `${name} entries must each be one of ${PROVIDER_QUANTIZATIONS.join(', ')}, got ${JSON.stringify(unknown)}.`);
   }
   return Object.freeze(entries as ProviderQuantization[]);
+}
+
+/** The provider routing the composition root hands the OpenRouter client (design D3, beta-1 D12). */
+export function providerRouting(config: Pick<ServerConfig, 'providerSort' | 'providerQuantizations'>): ProviderRouting {
+  return { sort: config.providerSort, quantizations: config.providerQuantizations };
 }
 
 export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => number }): ServerConfig {

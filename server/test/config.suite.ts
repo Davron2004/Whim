@@ -6,6 +6,7 @@
  */
 import { MANIFESTS, keepLimit, latestVersion, type CategoryId } from '../../contract/src/disclosure-manifest';
 import { loadServerConfig, ServerConfigError, type ServerConfig } from '../src/config';
+import { DEFAULT_MAX_QUEUED_GENERATIONS } from '../src/admission/slots';
 import {
   defaultModelRoster,
   modelRosterFromEnv,
@@ -53,6 +54,8 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_LIMIT_GENERATIONS_PER_DEVICE_DAY', field: 'limitGenerationsPerDeviceDay', validValue: '7', parsed: 7 },
   { key: 'WHIM_LIMIT_GENERATIONS_PER_DAY', field: 'limitGenerationsPerDay', validValue: '500', parsed: 500 },
   { key: 'WHIM_MAX_CONCURRENT_GENERATIONS', field: 'maxConcurrentGenerations', validValue: '9', parsed: 9 },
+  { key: 'WHIM_QUEUE_MAX', field: 'queueMax', validValue: '12', parsed: 12 },
+  { key: 'WHIM_QUEUE_MAX_WAIT_MS', field: 'queueMaxWaitMs', validValue: '90000', parsed: 90_000 },
   { key: 'WHIM_SYNTHRUN_CONCURRENCY', field: 'synthrunConcurrency', validValue: '4', parsed: 4 },
   { key: 'WHIM_LIMIT_CLARIFY_PER_DEVICE_DAY', field: 'limitClarifyPerDeviceDay', validValue: '99', parsed: 99 },
   { key: 'WHIM_LIMIT_REWRITE_PER_DEVICE_DAY', field: 'limitRewritePerDeviceDay', validValue: '98', parsed: 98 },
@@ -82,6 +85,35 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_MIN_BUILD_IOS', field: 'minBuildIos', validValue: '381500', parsed: 381_500 },
   { key: 'WHIM_MIN_BUILD_ANDROID', field: 'minBuildAndroid', validValue: '382000', parsed: 382_000 },
 ];
+
+function runProviderQuantizationTests(): void {
+  section('WHIM_PROVIDER_QUANTIZATIONS (beta-1 D12): a trimmed comma list of OpenRouter quantizations');
+
+  for (const [what, raw] of [['unset', undefined], ['empty', ''], ['only commas and spaces', ' , ,']] as const) {
+    check(`${what}: no quantization preference`, loadServerConfig(baseEnv({ WHIM_PROVIDER_QUANTIZATIONS: raw })).providerQuantizations === undefined);
+  }
+  eq(
+    'entries are trimmed, empty ones dropped, and the order kept',
+    loadServerConfig(baseEnv({ WHIM_PROVIDER_QUANTIZATIONS: ' fp8, bf16 ,,fp16' })).providerQuantizations,
+    ['fp8', 'bf16', 'fp16'],
+  );
+  for (const raw of ['fp8,int3', 'FP8', 'fp8 bf16']) {
+    check(`${JSON.stringify(raw)} fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PROVIDER_QUANTIZATIONS: raw })), 'WHIM_PROVIDER_QUANTIZATIONS'));
+  }
+}
+
+function runGenerationLineTests(defaults: ServerConfig): void {
+  section('The generation line (beta-1 D8): WHIM_QUEUE_MAX and WHIM_QUEUE_MAX_WAIT_MS');
+
+  eq('defaults: a line of 50 and a longest wait of 180 s', [defaults.queueMax, defaults.queueMaxWaitMs], [50, 180_000]);
+  eq('the slot controller\'s own default line length is the configured one', DEFAULT_MAX_QUEUED_GENERATIONS, defaults.queueMax);
+  eq('WHIM_QUEUE_MAX=0, the rollback lever, loads as no line', loadServerConfig(baseEnv({ WHIM_QUEUE_MAX: '0' })).queueMax, 0);
+  // An empty value must not read as 0: a blank line in a values file would silently turn the line off.
+  for (const [what, raw] of [['a negative value', '-1'], ['a fraction', '2.5'], ['an empty value', ''], ['spaces', '  ']] as const) {
+    check(`WHIM_QUEUE_MAX: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_QUEUE_MAX: raw })), 'WHIM_QUEUE_MAX'));
+  }
+  check('WHIM_QUEUE_MAX_WAIT_MS=0 fails startup naming the variable', throwsNaming(() => loadServerConfig(baseEnv({ WHIM_QUEUE_MAX_WAIT_MS: '0' })), 'WHIM_QUEUE_MAX_WAIT_MS'));
+}
 
 export function runConfigTests(): void {
   section('Admission limits are environment-configurable with public-beta defaults');
@@ -311,6 +343,9 @@ export function runConfigTests(): void {
     'an unrecognized value fails startup naming the variable',
     throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PROVIDER_SORT: 'cheapest' })), 'WHIM_PROVIDER_SORT'),
   );
+
+  runProviderQuantizationTests();
+  runGenerationLineTests(defaults);
 
   section('modelRosterFromEnv (design D2) — the roster of per-role models and reasoning settings');
 

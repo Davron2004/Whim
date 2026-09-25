@@ -16,6 +16,7 @@ import {
 } from '../src/openrouter';
 import { isCreditExhaustedError, type ReasoningSetting } from '../src/generation/model';
 import type { FetchFn, ProviderSort } from '../src/openrouter';
+import { loadServerConfig, providerRouting } from '../src/config';
 
 // ─── Fake fetch helpers ───────────────────────────────────────────────────────
 
@@ -134,6 +135,38 @@ const HTTP_ERROR_CTORS = {
 /** §7.4a-c — pre-stream HTTP failures each map to their own typed error, and to no other one —
  *  one table instead of three near-identical blocks, now including 402 (previously only exercised
  *  mid-stream, never as the pre-stream HTTP status OpenRouter also uses for it). */
+/** The raw request body of one call from a client routed as the composition root routes it for
+ *  `env` (`providerRouting(loadServerConfig(env))`), or, with `env` absent, a client given no
+ *  routing at all. */
+async function requestBodyFor(env?: NodeJS.ProcessEnv): Promise<string> {
+  let captured: CapturedCall | undefined;
+  const fetchFn = makeSseFetch(SUCCESS_FRAMES, 200, (call) => { captured = call; });
+  const client = env === undefined ? new OpenRouterClient(fetchFn) : new OpenRouterClient(fetchFn, providerRouting(loadServerConfig(env)));
+  const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+  await drain(deltas);
+  return (captured?.init?.body as string | undefined) ?? '';
+}
+
+async function testProviderQuantizations(): Promise<void> {
+  section('provider.quantizations (beta-1 D12): sent when WHIM_PROVIDER_QUANTIZATIONS is set, routing unchanged when not');
+
+  const set = JSON.parse(await requestBodyFor({ WHIM_PROVIDER_QUANTIZATIONS: 'fp8, bf16' })) as Record<string, unknown>;
+  eq('set: the provider object carries the quantizations in order and still denies data collection', set.provider, { data_collection: 'deny', quantizations: ['fp8', 'bf16'] });
+  const withSort = JSON.parse(await requestBodyFor({ WHIM_PROVIDER_SORT: 'throughput', WHIM_PROVIDER_QUANTIZATIONS: 'fp8' })) as Record<string, unknown>;
+  eq('set with a sort: both reach the provider object', withSort.provider, { data_collection: 'deny', sort: 'throughput', quantizations: ['fp8'] });
+
+  // The provider bytes before D12, key order included, with and without a sort.
+  for (const [what, env, provider] of [
+    ['unset', {}, '"provider":{"data_collection":"deny"},'],
+    ['empty', { WHIM_PROVIDER_QUANTIZATIONS: '' }, '"provider":{"data_collection":"deny"},'],
+    ['unset with a sort', { WHIM_PROVIDER_SORT: 'throughput' }, '"provider":{"data_collection":"deny","sort":"throughput"},'],
+  ] as const) {
+    const raw = await requestBodyFor(env);
+    check(`${what}: the provider object is byte-identical to the one sent before D12`, raw.includes(provider), raw);
+  }
+  eq('unset: the whole body equals that of a client given no routing', await requestBodyFor({ WHIM_PROVIDER_QUANTIZATIONS: ' , ' }), await requestBodyFor());
+}
+
 async function testPreStreamHttpErrors(): Promise<void> {
   const httpCases: { label: string; status: number; expected: keyof typeof HTTP_ERROR_CTORS }[] = [
     { label: '401', status: 401, expected: 'auth' },
@@ -306,6 +339,8 @@ export async function runOpenRouterTests(): Promise<void> {
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
     eq('provider sort unset: request only denies data collection', body.provider, { data_collection: 'deny' });
   }
+
+  await testProviderQuantizations();
 
   await testPreStreamHttpErrors();
 

@@ -404,8 +404,8 @@ async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<A
     if (unavailable?.usage) await usageStore.credit(deviceId, unavailable.usage);
     ticket.leave();
     // requestId '' is the resolver's no-ledger sentinel: tokens only, for a call whose usage never arrived.
-    if (unavailable?.generationId) {
-      deps.resolveTracker.track(resolveRequestUsage('', deviceId, [unavailable.generationId], unavailable.usage !== undefined, resolveDeps(deps)));
+    if (unavailable?.generationId && unavailable.usage === undefined) {
+      deps.resolveTracker.track(resolveRequestUsage('', deviceId, [unavailable.generationId], false, resolveDeps(deps)));
     }
     return { ok: false, refusal: policyUnavailableRefusal() };
   }

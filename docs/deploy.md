@@ -108,6 +108,9 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_CLARIFY_MODEL`, `WHIM_SUMMARY_MODEL`, `WHIM_PLAN_MODEL`, `WHIM_REPAIR_MODEL` | no | optional per-role model overrides; see the roster table below |
 | `WHIM_CLARIFY_REASONING`, `WHIM_REWRITE_REASONING`, `WHIM_SUMMARY_REASONING`, `WHIM_PLAN_REASONING`, `WHIM_ENGINEER_REASONING`, `WHIM_REPAIR_REASONING` | no | per-role reasoning setting: `off`, `on`, `low`, `medium`, `high` or `default` |
 | `WHIM_PROVIDER_SORT` | no | OpenRouter provider order: `price`, `throughput` or `latency` |
+| `WHIM_PROVIDER_QUANTIZATIONS` | no | the quantizations OpenRouter may route to, comma-separated from `int4`, `int8`, `fp4`, `fp6`, `fp8`, `fp16`, `bf16`, `fp32`, `unknown`; unset sends no preference. Set it only after a flowbench comparison |
+| `WHIM_QUEUE_MAX` | no | how many generations may wait in line for a slot; unset is `50`. `0` turns the line off: a generation that finds every slot busy is refused `server_busy` at once, as before the line (see "Rolling back and rotating the key") |
+| `WHIM_QUEUE_MAX_WAIT_MS` | no | how long a generation may wait in line before its stream ends in a `failure` saying Whim is busy; unset is `180000` |
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
@@ -147,6 +150,11 @@ Rule out a candidate `WHIM_REWRITE_MODEL` against this before deploying it.
 
 `WHIM_PROVIDER_SORT` (optional) is `price`, `throughput`, or `latency`; when set, every request
 asks OpenRouter to route by it. Unset (default) sends no provider preference.
+
+`WHIM_PROVIDER_QUANTIZATIONS` (optional) limits every request to providers serving one of the
+listed quantizations (`provider.quantizations`). Entries are trimmed and empty ones dropped; a name
+outside the list above fails server boot, naming the variable. Unset or empty leaves the `provider`
+object exactly as it was without it.
 
 ## First deploy
 
@@ -420,22 +428,31 @@ naming the step — the service never sits on a half-applied resize.
 **Load test** (`deploy/loadtest/run.sh`, no OpenRouter key reachable from its image — design.md D26):
 
 ```sh
-deploy/loadtest/run.sh start                              # swaps in the replay-model image
-deploy/loadtest/run.sh drive --devices 15 --cap 15         # at capacity
-deploy/loadtest/run.sh drive --devices 16 --cap 15         # one over, expect one refusal
-deploy/loadtest/run.sh stop                                # restores production and runs smoke
+deploy/loadtest/run.sh start                                        # swaps in the replay-model image
+deploy/loadtest/run.sh drive --devices 15 --cap 15 --queue-max 50   # at capacity
+deploy/loadtest/run.sh drive --devices 16 --cap 15 --queue-max 50   # one over: it waits in line, then completes
+deploy/loadtest/run.sh stop                                         # restores production and runs smoke
 ```
+
+`--queue-max` is the server's `WHIM_QUEUE_MAX`: `50` unless the operator values file sets it, since
+the load-test server reads the same `config.env`. With `WHIM_QUEUE_MAX=0`, pass `--queue-max 0`, and
+every device past the cap is refused.
 
 `run.sh start` passes the replay image to the VM's compose command through one effective `sudo`
 transition. If startup or its health check fails after production is stopped, it restores the base
 compose service, runs production smoke, and returns the original failure. A restoration or smoke
 failure is reported alongside that original failure; the load-test service is never left running.
 
-`drive` prints a report: `timeToFirstEventMs`/`totalMs` as p50/p95; `terminals` (`result`/`failure`/
-`none` counts); `refusals` by `ApiError` code (`server_busy` is expected once `devices` exceeds
-`cap`, not otherwise); `leakProbe.ok` (two rounds of fresh devices proving no slot leaked); and
-`peak.peakCpuPercent`/`peakMemoryPercent` from the VM's `docker stats` sampler. It exits non-zero on
-any `failure` terminal, an unexpected refusal, or a failed leak probe.
+`drive` prints a report: `timeToFirstEventMs`/`totalMs` as p50/p95 (a `queued` event counts as a
+device's first event); `queued`, the devices that waited in line, and `waitMs`, their wait as
+p50/p95/max; `terminals` (`result`/`failure`/`none` counts); `refusals` by `ApiError` code
+(`server_busy` is expected only once `devices` exceeds `cap` + `queue-max`); `leakProbe.ok` (two
+rounds of `cap` fresh devices that must each get a slot at once, proving no slot leaked and the line
+is empty); and `peak.peakCpuPercent`/`peakMemoryPercent` from the VM's `docker stats` sampler. It
+exits non-zero on any `failure` terminal (a device that waited past `WHIM_QUEUE_MAX_WAIT_MS` is one),
+an unexpected refusal, a number of waiting devices other than the ones past the cap that fit in the
+line, or a failed leak probe. Each device gets 300 seconds before the driver gives up on it: a run's
+own 120 plus the default longest wait in line.
 
 ## Rolling back and rotating the key
 
@@ -462,6 +479,13 @@ Rolling back to an image from before the minimum-build gate drops the gate: that
 report, so smoke fails on `commit` as above whatever the minimums; with either minimum raised it
 also fails because the server "cannot enforce the configured minimums". Roll forward to an image
 with the gate as soon as you can.
+
+**Rolling back the generation line** needs no older image. Set `WHIM_QUEUE_MAX=0` in
+`~/.config/whim/deploy.env` and redeploy the running image with `deploy/deploy.sh --tag <sha>`, where
+`<sha>` is the `commit` that `/healthz` reports. From then on a generation that finds every slot busy
+gets `429 server_busy` before any stream opens, as it did before the line. The redeploy drains the
+old server, so anyone still waiting in line gets the busy `failure` on their stream. To bring the line
+back, remove the line (or set a positive number) and redeploy the same way.
 
 Rotating the OpenRouter key: add a new version to `whim-openrouter-api-key` in Secret Manager, then
 run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version and recreates
