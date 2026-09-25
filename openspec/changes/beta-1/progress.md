@@ -93,3 +93,4 @@
 - regate after the build bootstrap: FAST GATE PASSED
 - 19:44 fix-8b dispatched (producer-side test for the example tile colours): BASE `c1047184e89671fd5e17f957ef298e59c354491e`, worktree `.claude/worktrees/beta-1-fix8b`, model Sonnet.
 - fix-8b report: complete, GATE PASS, commit `cac698a5` (`tile-colour.suite.ts`: reads the generated `APP_RECORDS`, resolves each example through `tiles.ts#tileColor`, checks pairwise distinct). Red-check: reverting the build hunk fails 3 named checks plus the distinctness check. Merged (integrity OK); regate: FAST GATE PASSED.
+- 19:53 chain-9 dispatched: BASE `ab8288b69eea90ab2df5ccf8d0a8e60f2d074480`, worktree `.claude/worktrees/beta-1-9`, branch `chain/beta-1-9`, block `dispatch/chain-9.md`, model Opus (device-environment tooling, design open).
