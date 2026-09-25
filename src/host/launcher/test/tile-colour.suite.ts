@@ -18,6 +18,7 @@ import {
 import { appColor, STATUS_COLORS, STATUS_COLORS_ON_INK, SHELL_COLORS } from '../../../sdk/theme';
 import { lexProse } from '../../ui/whim-prose/lex';
 import type { AppManifest } from '../../bridge/contract';
+import { APP_RECORDS } from '../../../runtime/generated/app-records';
 
 
 export async function runTileColourTests(h: Harness): Promise<void> {
@@ -99,6 +100,30 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     const lifted = liftManifestTileColor({ tileColor: STATUS_COLORS.broken });
     h.eq(lifted, { tileColor: STATUS_COLORS.broken }, 'lift is a straight passthrough');
     h.eq(tileColor('Budget', lifted), appColor('Budget'), 'the resolution helper still falls back');
+  });
+
+  // ── seeded examples — the shipped build output, not a re-parse of source ──
+  await h.test('tileColor: the three seeded examples\' shipped records resolve to distinct declared colours', async () => {
+    // `defaultSeeds()` in LauncherRoot.tsx installs these three ids on first run. Reads the real
+    // producer, the generated APP_RECORDS build.mjs#extractAppRecord emits (never a hand-typed
+    // hex), so a regression that drops `tileColor` on the wire from source to shipped record
+    // (as build.mjs did before commit 9a79c9c9) fails this test, not just the source-level one in
+    // checks/test/acceptance.ts.
+    const seededIds = ['tip-splitter', 'water-counter', 'style-gallery'];
+    const resolved = seededIds.map((id) => {
+      const record = APP_RECORDS[id];
+      h.ok(!!record, `${id}: expected a shipped app record`);
+      const declared = record?.manifest.tileColor;
+      h.ok(typeof declared === 'string', `${id}: expected a declared tileColor on the shipped manifest`);
+      // Goes through the same resolution path every render surface uses, so a declared value that
+      // the shipped manifest carries but that tileColor() would reject (malformed, or a reserved
+      // shell hue) is caught here too, not just a bad/missing literal.
+      return tileColor(record?.name ?? id, { tileColor: declared });
+    });
+    for (const [i, id] of seededIds.entries()) {
+      h.eq(resolved[i], APP_RECORDS[id]?.manifest.tileColor, `${id}: the shipped declared colour is not rejected by tileColor()`);
+    }
+    h.eq(new Set(resolved).size, resolved.length, `expected ${resolved.length} pairwise-distinct seeded tile colours, got ${JSON.stringify(resolved)}`);
   });
 
   // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────
