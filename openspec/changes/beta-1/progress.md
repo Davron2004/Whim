@@ -19,6 +19,7 @@
   - Parental consent (`significantAppChangeRequiresParentalConsent`, PermissionKit's `PermissionQuestion`) stays out of scope, as in D2.
   - The spec delta, D2, and tasks 5.2/5.3 were amended to match.
 - R8. The load-tested caps (10.2) go into the `server/src/config.ts` defaults, not `deploy/profiles/standard.env`. The deploy-config suite's `profileProblems` rule ("standard must not override server limits") keeps `config.ts` the one source of defaults, and the standard profile runs with them. The spec delta and task 10.2 were amended to match.
+- R9. Dispatch is paused until the usage limit resets (17:00). While the session runs at low-priority capacity, subagent streams can wait on capacity past the 600 s stall watchdog. chain-3 stalled twice (15:12 and 15:22 dispatches) with zero writes each time. The worktree stays clean at BASE `74573b7b`, and chain-3 is redispatched with the same prompt after 17:00.
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -39,3 +40,4 @@
 - chain-2 merged (integrity OK, 25 files); tasks 2.1–2.3 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. Filed #120 (classifier calls from the line are bounded by no daily limit).
 - 15:12 chain-3 dispatched: BASE `74573b7b023c1543d2829bcbcab751ddeedfb6b0`, worktree `.claude/worktrees/beta-1-3`, branch `chain/beta-1-3`, block `dispatch/chain-3.md`, model Sonnet (R3).
 - 15:23 chain-3 agent STALLED (stream watchdog: no progress for 600 s) with nothing written (no commit, no diff, no resume file; no stray processes). ENV, not a gate failure. Redispatched fresh into the same worktree, same block, Sonnet.
+- 15:33 chain-3 redispatch STALLED again (600 s watchdog), nothing written. Paused until 17:00 (R9).
