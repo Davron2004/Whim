@@ -12,6 +12,9 @@ export const Pressable = host('Pressable');
 export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
+export const InputAccessoryView = host('InputAccessoryView');
+/** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting. */
+export const Keyboard = { dismissed: 0, dismiss: () => { Keyboard.dismissed += 1; } };
 export const SafeAreaView = host('SafeAreaView');
 export const StatusBar = host('StatusBar');
 /** Every script the host injected into a rendered WebView, oldest first. */

@@ -400,6 +400,11 @@ export const COPY = {
     'Apps made with Whim stay on the phone that made them, so this link only opens there.',
   appLinkMissingBack: 'Back to your apps',
   appLinkSheetClose: 'Done',
+
+  // ── the keyboard (beta-1 D3) ────────────────────────────────────────────────
+  /** The iOS keyboard bar's one action on a multiline field: puts the keyboard away and submits
+   *  nothing. */
+  keyboardDone: 'Done',
 } as const;
 
 /** One what's-new line (legal-surface-v2 design D4): shown under `consentOutdatedLine` when the
