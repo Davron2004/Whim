@@ -43,3 +43,13 @@
 - 15:33 chain-3 redispatch STALLED again (600 s watchdog), nothing written. Paused until 17:00 (R9).
 - 15:52 R9 lifted by owner: chain-3 redispatched on Opus now, which also tests whether Opus subagents stall at low-priority capacity (chain-2's Opus resume ran 14:37–15:08 in this window without stalling; both Sonnet chain-3 runs stalled).
 - 16:05 stall test: the Opus chain-3 was progressing at 12 min (7 files, +229, no stall) in the same low-priority window where both Sonnet runs stalled with zero writes. R9 amended: at low-priority capacity, dispatch implementers on Opus, one at a time. Bug report drafted for the owner to send (/feedback).
+- chain-3 (Opus) report: STATUS complete, GATE PASS (`server:test` 4134/0, `server:e2e` 56/0), one commit per task (`7928d646` `83d1e9a5` `eb446f85` `a17c68ad` `5f761728`). Class A:
+  - server-side "at most one choice for `select:'one'`" can't be enforced (no mode, no state), so the device enforces it;
+  - the `machine.ts:217` comment is about re-running an unverified candidate (D3), so it was reworded to cover both rules, not deleted;
+  - every failed non-aborted model call is now recorded in `uncreditedGenerationIds`, so its provider tokens are credited back (previously never);
+  - `OpenRouterNetworkError.status`, so a 4xx isn't retried;
+  - `restart` goes out through `eventForLevel`;
+  - `RunOutcome`'s false/null arms carry `verdict` (a breach's `check` is always `containment_failure`: `RunReport` doesn't name the probe);
+  - the neutral lines "Your app was updated." / "Your app is ready." are not owner-reviewed.
+  #106 root cause: `machine.ts:950-963` gave the summariser no source-change fact and passed its text straight through; the device save path is fine. Red-checks: a resend without `restart` → 4 checks fail; resending twice → 5; `other` left out of the policy input → 6; a failed attempt not recorded as uncredited → 4 + metering. Orchestrator check: the IDE's "sourceChange missing" was stale (`machine.ts:1077` sets it).
+- chain-3 merged (integrity OK, 20 files); tasks 3.1–3.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. chain-4's block gains decision 9 (stub markers `[[limit]]` and `[[future:*]]`, for 10.4), from chain-3's note that the stub can't produce `limit`.

@@ -57,3 +57,14 @@ tsconfig (the gate doesn't, #79), and say how. Red-check the answer reducer agai
 "Decide for me" that doesn't clear picks) and the fallback wiring against one (e.g. `update` routed to the
 failure screen), naming the failing tests. End the report with HARNESS FEEDBACK (template in
 docs/harness-feedback/README.md).
+
+Added after chain-3 (orchestrator):
+9. **Stub markers for the orchestrator's device acceptance (10.4).** The stub pipeline (dev server with no model
+   key; production refuses to boot without one) needs markers so a simulator/emulator can reach the new screens
+   without a model:
+   - a prompt containing `[[limit]]` → the stub clarify returns `limit{reason, alternative}` with no questions;
+   - `[[future:skip]]`, `[[future:fail]]`, `[[future:update]]` → the stub generate stream emits an unknown event
+     type carrying that `compat` fallback (with a notice for fail/update), then continues or ends the way the
+     stub would.
+   Add tests that the markers do nothing on the model-backed path. The stub already has markers; find how they
+   are parsed and follow the same idiom.
