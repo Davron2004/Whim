@@ -15,12 +15,23 @@
  * The store gets 3 seconds to answer (beta-1 D1, #100): a native call still unsettled by then
  * counts as `unavailable`, through the same reduction as any other answer.
  *
+ * A guardian acknowledges a significant terms change (beta-1 D2; spec store-age-signals "A
+ * supervised minor's guardian acknowledges a significant terms change"): when this check's signal
+ * is `minor-approved`, the stored terms acceptance is for an older terms version, and the platform
+ * has the acknowledgment (iOS), the check asks the store whether it is required (3 seconds) and,
+ * if so, the guardian (60 seconds: it waits on a person). `declined` holds the user as
+ * `minor-not-approved` does. `acknowledged` is kept as `{ outcome, termsVersion }` under
+ * `whim.significant-update:v1`, so it isn't asked again for that terms version. Anything else
+ * continues for this check only and keeps nothing.
+ *
  * No React Native import — this module must load under the Node acceptance suite. The native
  * module is read by `installed-age-signal.ts` and passed in.
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import type { TimerLike } from './connectivity';
+import { TERMS_VERSION } from './release-config';
+import { termsStatus } from './terms-acceptance';
 
 /** What the store says about the user, reduced to what Whim acts on. `under-13` is a store age
  *  range whose upper bound is below 13; `unavailable` covers an unsupported OS, a region without a
@@ -49,14 +60,35 @@ const RECHECK_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 /** How long the store may take to answer before the check stops waiting for it. */
 const STORE_ANSWER_DEADLINE_MS = 3000;
 
+/** How long the guardian may take over the significant-change acknowledgment. */
+const GUARDIAN_DEADLINE_MS = 60_000;
+
+const ACKNOWLEDGMENT_KEY = 'whim.significant-update:v1';
+
+/** The one acknowledgment record that counts: this terms version's. Anything else asks again. */
+const ACKNOWLEDGED_RECORD = JSON.stringify({ outcome: 'acknowledged', termsVersion: TERMS_VERSION });
+
 const REAL_TIMERS: TimerLike = {
   setTimeout: (cb, ms) => setTimeout(cb, ms),
   clearTimeout: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
 };
 
+/** The platform's significant-change acknowledgment (Apple Declared Age Range, iOS 26.4+). */
+export interface SignificantUpdateSheet {
+  /** Whether the store requires a guardian to be told of a significant change. Only `true`
+   *  means it does. */
+  required: () => Promise<unknown>;
+  /** Shows the guardian the acknowledgment with `description`: `acknowledged`, `declined` or
+   *  `unavailable`. Anything else counts as `unavailable`. */
+  acknowledge: (description: string) => Promise<unknown>;
+}
+
 export interface AgeCheckOptions {
-  /** The timers the deadline runs on (default: the real ones). */
+  /** The timers the deadlines run on (default: the real ones). */
   timers?: TimerLike;
+  /** The platform's acknowledgment and the line it shows the guardian. Absent where the platform
+   *  has none (Android), which continues as `unavailable` does. */
+  significantUpdate?: { sheet: SignificantUpdateSheet; description: string };
 }
 
 /** What `ask` answers, or `undefined` when it throws, rejects or hasn't settled within `ms`: what
@@ -122,14 +154,40 @@ export function storedAgeGate(kv: KVBackend, now: Date): AgeGate {
   return age >= 0 && age <= RECHECK_AFTER_MS ? 'allowed' : 'unchecked';
 }
 
+/** Whether a guardian has to acknowledge the terms change first: the stored acceptance is for an
+ *  older terms version, and no acknowledgment of the current one is kept. */
+function acknowledgmentDue(kv: KVBackend): boolean {
+  const terms = termsStatus(kv);
+  return terms.kind === 'outdated' && terms.version < TERMS_VERSION && kv.getString(ACKNOWLEDGMENT_KEY) !== ACKNOWLEDGED_RECORD;
+}
+
+/** The guardian's answer: `unavailable` unless the store says, within 3 seconds, that the
+ *  acknowledgment is required and the guardian then acknowledges or declines within 60. */
+async function guardianAnswer(sheet: SignificantUpdateSheet, description: string, timers: TimerLike): Promise<'acknowledged' | 'declined' | 'unavailable'> {
+  if ((await answerWithin(sheet.required, STORE_ANSWER_DEADLINE_MS, timers)) !== true) return 'unavailable';
+  const answer = await answerWithin(() => sheet.acknowledge(description), GUARDIAN_DEADLINE_MS, timers);
+  return answer === 'acknowledged' || answer === 'declined' ? answer : 'unavailable';
+}
+
+/** The result of an approved minor's check: held as `minor-not-approved` when the guardian
+ *  declines the terms change, allowed otherwise. Keeps an acknowledgment for this terms version. */
+async function approvedMinorResult(kv: KVBackend, options: AgeCheckOptions, timers: TimerLike): Promise<AgeCheckResult> {
+  if (options.significantUpdate === undefined || !acknowledgmentDue(kv)) return 'allowed';
+  const answer = await guardianAnswer(options.significantUpdate.sheet, options.significantUpdate.description, timers);
+  if (answer === 'acknowledged') kv.set(ACKNOWLEDGMENT_KEY, ACKNOWLEDGED_RECORD);
+  return answer === 'declined' ? 'minor-not-approved' : 'allowed';
+}
+
 /**
  * Asks the platform through `read`, reduces its answer, stores `{ outcome, checkedAt }` (a held
  * result as `blocked`) and returns the result. A `read` that throws, rejects or hasn't settled
- * within 3 seconds counts as `unavailable`, so it continues.
+ * within 3 seconds counts as `unavailable`, so it continues. An approved minor whose accepted terms
+ * are older than the current ones is asked for the guardian's acknowledgment first.
  */
 export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date, options: AgeCheckOptions = {}): Promise<AgeCheckResult> {
-  const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, options.timers ?? REAL_TIMERS));
-  const result = ageResultOf(signal);
+  const timers = options.timers ?? REAL_TIMERS;
+  const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, timers));
+  const result = signal === 'minor-approved' ? await approvedMinorResult(kv, options, timers) : ageResultOf(signal);
   const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
   kv.set(AGE_CHECK_KEY, JSON.stringify(stored));
   return result;

@@ -14,6 +14,7 @@ import AgeScreen from '../AgeScreen';
 import { COPY, LEGAL_COPY } from '../copy';
 import type { InstalledApp } from '../app-index';
 import { termsStatus } from '../terms-acceptance';
+import { TERMS_VERSION } from '../release-config';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { button, press, textOf } from './react-screen';
 import { json, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
@@ -52,6 +53,21 @@ function scripted(signal: () => unknown) {
 /** An age check stored `daysAgo` days ago with this outcome, as an earlier launch left it. */
 const storedCheck = (outcome: string, daysAgo: number) => (kv: { set: (k: string, v: string) => void }) =>
   kv.set(AGE_CHECK_KEY, JSON.stringify({ outcome, checkedAt: new Date(Date.now() - daysAgo * DAY_MS).toISOString() }));
+
+/** A terms acceptance for the version before the current one, as an earlier build left it. */
+const olderTerms = (kv: { set: (k: string, v: string) => void }) =>
+  kv.set('whim.terms:v1', JSON.stringify({ version: TERMS_VERSION - 1, acceptedAt: '2026-01-01T00:00:00.000Z' }));
+
+/** The platform's significant-change acknowledgment, required by the store, with `answer` as the
+ *  guardian's; `shown` holds every line the guardian was shown. */
+function guardianSheet(answer: () => Promise<unknown>) {
+  const sheet = {
+    shown: [] as string[],
+    required: () => Promise.resolve(true),
+    acknowledge: (description: string) => { sheet.shown.push(description); return answer(); },
+  };
+  return sheet;
+}
 
 /** Every header name and every body key, at any depth, of one request. */
 function fieldNames(request: SentRequest): string[] {
@@ -197,6 +213,49 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => clock.fire(3000));
       await waitFor(() => on(tree, TermsScreen), 'the terms step');
       h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'allowed', 'the outcome stored is allowed, as for no signal');
+    });
+  });
+
+  // ── store-age-signals "A supervised minor's guardian acknowledges a significant terms change" ──
+
+  await h.test('age signal: an approved minor with older terms — the guardian acknowledges, the terms step opens, and a later check does not ask again', async () => {
+    const sheet = guardianSheet(() => Promise.resolve('acknowledged'));
+    await withLauncher({ consent: false, prepare: olderTerms, ageSignal: () => Promise.resolve('minor-approved'), significantUpdate: sheet, server: clarifyServer }, async ({ tree, kv, sent }) => {
+      await describeAnApp(tree);
+      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      h.eq(sheet.shown, [LEGAL_COPY.en.termsUpdatedLine], 'the guardian was shown the updated-terms line, in the active legal language');
+      await press(button(tree, COPY.termsDecline));
+      storedCheck('blocked', 0)(kv);
+      await describeAnApp(tree);
+      await waitFor(() => on(tree, TermsScreen), 'the terms step, after a fresh age check');
+      h.eq(sheet.shown.length, 1, 'the guardian is not asked again for these terms');
+      h.eq(sent.length, 0, 'nothing was sent');
+    });
+  });
+
+  await h.test('age signal: the guardian declines — the parental-approval message, no terms step, nothing sent', async () => {
+    const sheet = guardianSheet(() => Promise.resolve('declined'));
+    await withLauncher({ consent: false, prepare: olderTerms, ageSignal: () => Promise.resolve('minor-approved'), significantUpdate: sheet, server: clarifyServer }, async ({ tree, kv, sent, probes }) => {
+      await describeAnApp(tree);
+      await waitFor(() => blockedShown(tree), 'the parental-approval message');
+      h.ok(textOf(tree.root).includes(COPY.ageBlockedTitle), 'the same message as for an unapproved minor');
+      h.ok(!on(tree, TermsScreen) && !on(tree, ConsentScreen), 'neither the terms step nor the consent screen opens');
+      h.eq(termsStatus(kv).kind, 'outdated', 'the older acceptance is left as it was');
+      await press(button(tree, COPY.ageBack));
+      h.ok(on(tree, HomeScreen), 'Back returns Home');
+      h.eq([sent.length, probes.length], [0, 0], 'no request was sent, not even a probe');
+    });
+  });
+
+  await h.test('age signal: a guardian who never answers is waited on for 60 seconds, then the flow goes on to the terms step', async () => {
+    const sheet = guardianSheet(() => new Promise<unknown>(() => {}));
+    await withLauncher({ consent: false, prepare: olderTerms, ageSignal: () => Promise.resolve('minor-approved'), significantUpdate: sheet, server: clarifyServer }, async ({ tree, clock }) => {
+      await describeAnApp(tree);
+      await waitFor(() => sheet.shown.length === 1, 'the acknowledgment');
+      h.ok(on(tree, AgeScreen) && !blockedShown(tree), 'the check screen stays while the guardian decides');
+      h.eq(clock.count(3000), 0, 'no 3-second deadline cuts the guardian off');
+      await TestRenderer.act(async () => clock.fire(60000));
+      await waitFor(() => on(tree, TermsScreen), 'the terms step');
     });
   });
 
