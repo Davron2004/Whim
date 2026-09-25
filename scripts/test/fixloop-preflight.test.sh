@@ -663,7 +663,9 @@ REAL_GATE="$REPO/scripts/gate.sh"
 
 # resolve_from <dir> — the realpath @whim/contract resolves to, the way a suite in <dir> sees it.
 resolve_from() {
-  (cd "$1" && node -e 'console.log(require("fs").realpathSync(require.resolve("@whim/contract")))' 2>&1)
+  local dir="$1"
+  (cd "$dir" && node -e 'console.log(require("fs").realpathSync(require.resolve("@whim/contract")))' 2>&1)
+  return 0
 }
 
 new_nm_fixture() {
@@ -699,6 +701,7 @@ JSON
   echo 'module.exports = 1;' > "$fx/node_modules/leftpad/index.js"
   ln -s ../leftpad/index.js "$fx/node_modules/.bin/leftpad"
   printf '%s' "$fx"
+  return 0
 }
 
 # Where copy-on-write clones are impossible (Linux without reflinks), `create` must refuse loudly;
@@ -709,10 +712,11 @@ cow_available() {
   FIXTURES+=("$probe")
   echo x > "$probe/a"
   case "$(uname -s)" in
-    Darwin) cp -c "$probe/a" "$probe/b" 2>/dev/null ;;
-    Linux)  cp --reflink=always "$probe/a" "$probe/b" 2>/dev/null ;;
+    Darwin) cp -c "$probe/a" "$probe/b" 2>/dev/null || return 1 ;;
+    Linux)  cp --reflink=always "$probe/a" "$probe/b" 2>/dev/null || return 1 ;;
     *)      return 1 ;;
   esac
+  return 0
 }
 NM_COPY=""
 cow_available || NM_COPY=full
@@ -725,7 +729,7 @@ case_worktree_create_resolves_inside() {
   fgit -C "$fx" worktree add -q --detach "$fx/.claude/worktrees/plain" base >/dev/null 2>&1 \
     || { fail "case 10 fixture" "plain worktree add failed"; return; }
   real="$(resolve_from "$fx/.claude/worktrees/plain")"
-  if [ "$real" = "$fx/contract/index.js" ]; then
+  if [[ "$real" = "$fx/contract/index.js" ]]; then
     pass "control: a plain worktree resolves @whim/contract to the primary tree"
   else
     fail "control: a plain worktree resolves @whim/contract to the primary tree" \
@@ -737,32 +741,33 @@ case_worktree_create_resolves_inside() {
   assert_rc_zero  "create provisions a worktree"                 "$rc"  "$out"
   assert_contains "create reports the BASE it pinned"            "$out" "BASE $(fgit -C "$fx" rev-parse base)"
   real="$(resolve_from "$wt")"
-  if [ "$real" = "$wt/contract/index.js" ]; then
+  if [[ "$real" = "$wt/contract/index.js" ]]; then
     pass "a created worktree resolves @whim/contract to its OWN contract/"
   else
     fail "a created worktree resolves @whim/contract to its OWN contract/" "resolved to '$real'"
   fi
-  if [ -d "$wt/node_modules" ] && [ ! -L "$wt/node_modules" ]; then
+  if [[ -d "$wt/node_modules" ]] && [[ ! -L "$wt/node_modules" ]]; then
     pass "a created worktree's node_modules is a real directory"
   else
     fail "a created worktree's node_modules is a real directory" "$(ls -ld "$wt/node_modules" 2>&1)"
   fi
   : > "$wt/node_modules/leftpad/written-in-worktree"
-  if [ -e "$fx/node_modules/leftpad/written-in-worktree" ]; then
+  if [[ -e "$fx/node_modules/leftpad/written-in-worktree" ]]; then
     fail "a write into the worktree's node_modules stays in the worktree" "it appeared in the primary tree"
   else
     pass "a write into the worktree's node_modules stays in the worktree"
   fi
-  if [ -e "$wt/BUILD-RAN" ]; then pass "create builds the worktree"; else fail "create builds the worktree" "$out"; fi
+  if [[ -e "$wt/BUILD-RAN" ]]; then pass "create builds the worktree"; else fail "create builds the worktree" "$out"; fi
 
   out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
   assert_rc_zero "check accepts a created worktree" "$rc" "$out"
 
-  if [ "$NM_COPY" = full ]; then
+  if [[ "$NM_COPY" = full ]]; then
     out="$(cd "$fx" && ./scripts/worktree.sh create wt2 base 2>&1)"; rc=$?
     assert_rc_nonzero "without copy-on-write, create refuses instead of silently copying" "$rc" "$out"
     assert_contains   "the refusal names the explicit full-copy opt-in" "$out" "WHIM_WORKTREE_COPY=full"
   fi
+  return 0
 }
 
 case_symlinked_node_modules_refused() {
@@ -778,7 +783,7 @@ case_symlinked_node_modules_refused() {
   assert_contains   "the refusal says it is a symlink"           "$out" "is a symlink"
   assert_contains   "the refusal says how to remove only the link" "$out" "no trailing slash"
   # The danger being refused: copying through the link would write into the PRIMARY tree.
-  if [ -e "$fx/node_modules/node_modules" ] || [ ! -L "$wt/node_modules" ]; then
+  if [[ -e "$fx/node_modules/node_modules" ]] || [[ ! -L "$wt/node_modules" ]]; then
     fail "a refused provision writes nothing through the link" "$(ls -la "$fx/node_modules" "$wt" 2>&1)"
   else
     pass "a refused provision writes nothing through the link"
@@ -787,6 +792,7 @@ case_symlinked_node_modules_refused() {
   out="$(cd "$fx" && ./scripts/worktree.sh check "$wt" 2>&1)"; rc=$?
   assert_rc_nonzero "check rejects a symlinked node_modules" "$rc" "$out"
   assert_contains   "check names the symlink"                "$out" "is a symlink to $fx/node_modules"
+  return 0
 }
 
 case_check_rejects_unowned_node_modules() {
@@ -821,6 +827,7 @@ case_check_rejects_unowned_node_modules() {
   out="$(cd "$fx" && ./scripts/worktree.sh check "$fx" 2>&1)"; rc=$?
   assert_rc_zero  "check accepts the primary tree's own node_modules" "$rc" "$out"
   assert_contains "check reports the workspace links it verified"      "$out" "1 workspace link(s) resolve inside it"
+  return 0
 }
 
 case_gate_refuses_unowned_node_modules() {
@@ -833,6 +840,7 @@ case_gate_refuses_unowned_node_modules() {
   assert_rc_is      "gate.sh refuses (exit 2) in a worktree without its own node_modules" 2 "$rc" "$out"
   assert_contains   "the gate names the node_modules cause"          "$out" "node_modules is not its own"
   assert_not_contains "the gate stops before running any check"     "$out" "== build"
+  return 0
 }
 
 case_redcheck_ignores_primary_tree_checkout() {
@@ -852,6 +860,7 @@ case_redcheck_ignores_primary_tree_checkout() {
   else
     pass "redcheck removes its worktree"
   fi
+  return 0
 }
 
 case_incomplete_checkout
