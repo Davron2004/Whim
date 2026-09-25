@@ -19,6 +19,7 @@
 import type { DiagnosticReason } from '../logging/diagnostic';
 import { GenerationClientError } from './transport-shared';
 import { EmptyBundleError } from './build-lifecycle';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 
 export const GENERIC_STREAM_ERROR = 'Something went wrong while building your app. Please try again.';
 
@@ -26,9 +27,10 @@ export const GENERIC_STREAM_ERROR = 'Something went wrong while building your ap
  *  the closed code the log records and the sentence the screen shows. */
 function classify(err: unknown): { code: DiagnosticReason; reason: string } {
   // A message whose fallback ends the flow (beta-1 D16): its notice is plain text the server wrote
-  // for this screen; without one, the generic reason.
-  if (err instanceof GenerationClientError && err.kind === 'fallback') {
-    const notice = err.fallback?.notice;
+  // for this screen, capped as the contract caps it; without one, the generic reason.
+  const fallback = terminalFallbackOf(err);
+  if (fallback) {
+    const notice = fallbackNotice(fallback);
     return notice ? { code: 'server_refused', reason: notice } : { code: 'unexpected_error', reason: GENERIC_STREAM_ERROR };
   }
   if (

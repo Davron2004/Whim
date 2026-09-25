@@ -24,6 +24,7 @@ import type { ReportDraft, ReportPreviewRow } from './report-payload';
 import { sendReport } from './generation-client';
 import type { ClientOptions } from './generation-client';
 import { REFUSAL_RULES, refusalText, retryAtOf, serviceRefusalOf } from './service-refusal';
+import { terminalFallbackOf } from './wire-fallback';
 import type { ServiceRefusal } from './service-refusal';
 import { sendDisabled as computeSendDisabled, sendFailureOutcome, settleSend } from './report-send';
 import ServiceNotice, { useNoticeWindowClear, useRetryGate } from './ServiceNotice';
@@ -138,6 +139,13 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
       setPhase(settled.phase);
       setNotice(settled.notice);
     } catch (err) {
+      // A reply this build can't use whose fallback is `update` opens the update screen, as an
+      // `update_required` refusal does (beta-1 D16); a `fail` one is an ordinary failed send below.
+      if (terminalFallbackOf(err)?.kind === 'update') {
+        log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, 'update_required') });
+        onUpdateRequired();
+        return;
+      }
       const refusal = serviceRefusalOf(err);
       if (refusal) {
         log.warn(CHANNELS.gen, 'report refused', { ...reportLogFields(request, refusal.code) });

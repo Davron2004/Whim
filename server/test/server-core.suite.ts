@@ -12,11 +12,12 @@ import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
 import { createSlotController } from '../src/admission/slots';
 import { ScriptedModelClient } from './scripted-model';
-import { PROTOCOL_HEADERS, TIMED_OUT, waitFor, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, waitFor, within } from './route-doubles';
 import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
-import type { GenerateRequest, GenerationEvent, Usage, WireAppRecord } from '@whim/contract';
+import { COMPAT_NOTICE_MAX_CHARS, ClarifyResponse, GenerationEvent, PROTOCOL_LEVEL, WireEnvelope } from '@whim/contract';
+import type { GenerateRequest, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
 // §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
@@ -561,6 +562,90 @@ async function testStubRewritePreservesFailMarker(): Promise<void> {
   eq('F5: terminal event for the rewritten prompt is failure', lastType, 'failure');
 }
 
+/** Every `data:` payload of an SSE response, read to its end and parsed as plain JSON — unlike
+ *  `readSseResponse`, it keeps frames outside `GenerationEvent`, which is the point below. */
+async function sseData(response: Response): Promise<Record<string, unknown>[]> {
+  const text = await response.text();
+  return text
+    .split(/\n\n+/)
+    .flatMap((block) => block.split('\n').filter((line) => line.startsWith('data: ')))
+    .map((line) => JSON.parse(line.slice('data: '.length)) as Record<string, unknown>);
+}
+
+/**
+ * beta-1 decision 9 — the stub's markers for the new flow screens (`src/stub-markers.ts`): under
+ * the stub, `[[limit]]` makes clarify answer with a `limit`, and `[[future:skip|fail|update]]`
+ * puts one event of a type no app knows into the generate stream (surviving the stub rewrite on
+ * the way). On the model-backed path the same prompts are ordinary words.
+ */
+async function testStubFlowMarkers(): Promise<void> {
+  section('Stub markers for the beta-1 flow screens: [[limit]] and [[future:*]]');
+
+  const stubApp = () => createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), stub: true });
+
+  {
+    const res = await post(stubApp(), '/v1/clarify', { prompt: 'what should I wear today [[limit]]' }, DEVICE_HEADER);
+    eq('[[limit]]: stub clarify answers 200', res.status, 200);
+    const body = ClarifyResponse.safeParse(await res.json());
+    check('[[limit]]: the answer is a contract ClarifyResponse', body.success);
+    check('[[limit]]: it carries a limit with a reason and an alternative', body.success && body.data.limit !== undefined);
+    eq('[[limit]]: and no questions', body.success ? body.data.questions.length : -1, 0);
+    const plain = ClarifyResponse.safeParse(await (await post(stubApp(), '/v1/clarify', { prompt: 'a packing list' }, DEVICE_HEADER)).json());
+    check('[[limit]]: a prompt without it gets the canned questions and no limit', plain.success && plain.data.limit === undefined && plain.data.questions.length > 0);
+  }
+
+  {
+    const reply = { questions: [{ id: 'q', question: 'Where are you going?', options: ['Beach', 'City'] }] };
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'clarify', deltas: [JSON.stringify(reply)] }]);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER });
+    const body = (await (await post(app, '/v1/clarify', { prompt: 'what should I wear today [[limit]]' }, DEVICE_HEADER)).json()) as ClarifyResponse;
+    eq('[[limit]] model-backed: the model is asked', model.requests.length, 1);
+    eq('[[limit]] model-backed: its questions are the answer', body.questions.map((q) => q.id), ['q']);
+    eq('[[limit]] model-backed: and the marker adds no limit', body.limit, undefined);
+  }
+
+  for (const fallback of ['skip', 'fail', 'update'] as const) {
+    const marked = `a tip splitter [[future:${fallback}]]`;
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, []);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER, stub: true });
+    const rewritten = (await (await post(app, '/v1/rewrite', { prompt: marked }, DEVICE_HEADER)).json()) as { rewrittenPrompt: string };
+    eq(`[[future:${fallback}]]: the stub rewrite passes the prompt through raw`, rewritten.rewrittenPrompt, marked);
+    eq(`[[future:${fallback}]]: with no model call`, model.requests.length, 0);
+
+    const frames = await sseData(await post(app, '/v1/generate', { prompt: rewritten.rewrittenPrompt }, DEVICE_HEADER));
+    const unknown = frames.filter((frame) => !GenerationEvent.safeParse(frame).success);
+    eq(`[[future:${fallback}]]: the stream carries exactly one event outside the vocabulary`, unknown.length, 1);
+    const envelope = WireEnvelope.safeParse(unknown[0]);
+    check(`[[future:${fallback}]]: it is a readable envelope`, envelope.success);
+    const compat = envelope.success ? envelope.data.compat : undefined;
+    eq(`[[future:${fallback}]]: from a level above this one, with the named fallback`, [compat?.min, compat?.fallback], [PROTOCOL_LEVEL + 1, fallback]);
+    const notice = compat?.notice ?? '';
+    check(`[[future:${fallback}]]: a notice exactly when the fallback ends the flow`, fallback === 'skip' ? notice === '' : notice.length > 0 && notice.length <= COMPAT_NOTICE_MAX_CHARS);
+    const types = frames.map((frame) => frame.type);
+    check(`[[future:${fallback}]]: it comes after the plan stage`, types.indexOf(unknown[0].type) > types.indexOf('stage'));
+    eq(`[[future:${fallback}]]: the stream then ends as the stub's does`, types.at(-1), 'result');
+  }
+
+  {
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [
+      { role: 'rewrite', deltas: ['Split a bill with tip.'] },
+      { role: 'rewrite', deltas: ['Split a bill with tip.'] },
+    ]);
+    const app = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER });
+    const rewritten = (await (await post(app, '/v1/rewrite', { prompt: 'a tip splitter [[future:update]]' }, DEVICE_HEADER)).json()) as { rewrittenPrompt: string };
+    check('[[future:*]] model-backed rewrite: the model is asked', model.requests.length > 0);
+    check('[[future:*]] model-backed rewrite: the marker does not survive as is', !rewritten.rewrittenPrompt.includes('[[future:update]]'));
+  }
+
+  {
+    const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'plan', deltas: [], error: new Error('provider down') }]);
+    const app = createApp({ pipeline: machinePipeline(model, { now: () => Date.now() }, REWRITE_TEST_ROSTER), usageStore: new InMemoryUsageStore() });
+    const frames = await sseData(await post(app, '/v1/generate', { prompt: 'a tip splitter [[future:update]]' }, DEVICE_HEADER));
+    check('[[future:*]] model-backed generate: the stream ran', frames.length > 0);
+    eq('[[future:*]] model-backed generate: every event is in the vocabulary', frames.filter((frame) => !GenerationEvent.safeParse(frame).success).length, 0);
+  }
+}
+
 export async function runServerCoreTests(): Promise<void> {
   await testDeviceIdentity();
   await testSseFraming();
@@ -570,4 +655,5 @@ export async function runServerCoreTests(): Promise<void> {
   await testRequestLogging();
   await testStubBundleDefinesAppModule();
   await testStubRewritePreservesFailMarker();
+  await testStubFlowMarkers();
 }

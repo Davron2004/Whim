@@ -87,6 +87,7 @@ import {
   backFrom,
   buildBackAction,
   buildStep,
+  clarifyLimitOf,
   clarifyStep,
   clarificationsFrom,
   composeStep,
@@ -99,11 +100,13 @@ import {
   withAnswer,
   withDelivering,
   withKeepalive,
+  withLimit,
   withPlan,
   withQuestions,
-  withStage,
+  withStreamEvent,
 } from './prompt-flow';
-import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import type { BuildScreen, ClarifyScreen, ComposeScreen, FlowLimit, FlowNotice, FlowQuestion, FlowScreen, PlanScreen, RunSignals } from './prompt-flow';
+import { fallbackNotice, terminalFallbackOf } from './wire-fallback';
 import { FlowRequests, onlyOnStep } from './flow-request';
 import { SHELL_PALETTE } from './theme';
 import { clearServerUrl, effectiveServerUrl, saveServerUrl, serverOverride } from './server-address';
@@ -158,8 +161,9 @@ type Screen =
   // The update screen (request-envelope D5; spec app-update-gate): an `update_required` refusal, or
   // the launch-time check finding this build below its platform's minimum. `heldPrompt` is the
   // prompt typed on the flow step it replaced: `Not now` goes Home (D5), so the next compose for
-  // the same app picks it back up rather than losing it.
-  | { kind: 'update-required'; heldPrompt?: HeldPrompt }
+  // the same app picks it back up rather than losing it. `updateNotice` is the plain-text notice
+  // of a message this build can't use whose fallback opened the screen (beta-1 D16).
+  | { kind: 'update-required'; heldPrompt?: HeldPrompt; updateNotice?: string }
   // The legal flow (legal-surface-v2 design D5; `consent-flow.ts`): the terms step, then the
   // ask-mode consent screen, each open in place of a data-sending action taken without a current
   // terms acceptance / consent grant. Both carry the flow (`LegalFlow`): the continuation to
@@ -211,12 +215,14 @@ type Screen =
     };
 
 /** The update screen in place of `from`, holding the prompt typed there when `from` is a flow step
- *  that has one. Pure, so it can run inside a `setScreen` updater. */
-function updateScreenFrom(from: Screen): Screen {
+ *  that has one, and showing `notice` when a fallback opened it. Pure, so it can run inside a
+ *  `setScreen` updater. */
+function updateScreenFrom(from: Screen, notice?: string): Screen {
+  const shown = notice === undefined ? {} : { updateNotice: notice };
   if ((from.kind === 'compose' || from.kind === 'clarify' || from.kind === 'plan') && from.text !== '') {
-    return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text } };
+    return { kind: 'update-required', heldPrompt: { editing: from.editing, text: from.text }, ...shown };
   }
-  return { kind: 'update-required' };
+  return { kind: 'update-required', ...shown };
 }
 
 /** Where the update screen may open when the user's current action did not ask for it — the
@@ -291,6 +297,18 @@ function noticeFrom(refusal: ServiceRefusal): FlowNotice {
  *  request it refused (`service-refusals` "The refusal is recoverable from the log"). */
 function logServiceRefusal(request: 'clarify' | 'rewrite' | 'generate', refusal: ServiceRefusal): void {
   log.warn(CHANNELS.gen, 'service refusal', { request, code: refusal.code, status: refusal.status });
+}
+
+/** A reply this build can't use ended a request on its `update` fallback (beta-1 D16), recorded
+ *  with the request it ended and its id — never the notice, which is the server's own text. (A
+ *  `fail` fallback is recorded by the failure screen's own log record.) */
+function logUpdateFallback(request: 'clarify' | 'rewrite' | 'generate', err: unknown, streamRequestId?: string): void {
+  const clientError = err instanceof GenerationClientError ? err : undefined;
+  log.warn(CHANNELS.gen, 'update fallback applied', {
+    request,
+    status: clientError?.status,
+    requestId: clientError?.requestId ?? streamRequestId,
+  });
 }
 
 /** Every failure screen this shell shows is ALSO recorded on the generation channel (prompt-flow
@@ -1253,6 +1271,17 @@ function LauncherShell({
     } catch (e) {
       // A request the user walked away from fails as an abort: no failure screen, no breadcrumb.
       if (request.cancelled) return;
+      // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
+      // with its notice, holding the prompt — and no build started. A `fail` fallback is the
+      // generic failure below, whose reason is its notice.
+      const fallback = terminalFallbackOf(e);
+      if (fallback?.kind === 'update') {
+        markOnline();
+        logUpdateFallback('rewrite', e);
+        const update = updateScreenFrom(plan, fallbackNotice(fallback));
+        setScreen(onlyOnStep<Screen, 'plan'>('plan', () => update));
+        return;
+      }
       // A structured service refusal proves the server answered — proof of connectivity
       // equivalent to a successful dedicated probe (spec "A real generation or rewrite call
       // succeeding, and any service refusal those paths receive... SHALL be treated as proof of
@@ -1280,6 +1309,39 @@ function LauncherShell({
     }
   };
 
+  /** Where a clarify exchange that threw lands (an abort never gets here — the caller swallows it),
+   *  or `'skip'` for a clarify `502`, which goes on to the plan step. Called outside any `setScreen`
+   *  updater, since the failure screen's construction logs. */
+  const clarifyThrewTo = (from: ComposeScreen, e: unknown, markOnline: () => void): Screen | 'skip' => {
+    const back = composeStep(from.editing, from.text);
+    // A reply this build can't use, whose fallback is `update` (beta-1 D16): the update screen,
+    // with its notice, holding the typed prompt. A `fail` fallback is the failure below, whose
+    // reason is its notice (it is never a clarify skip, which is a 502 alone).
+    const fallback = terminalFallbackOf(e);
+    if (fallback?.kind === 'update') {
+      markOnline();
+      logUpdateFallback('clarify', e);
+      return updateScreenFrom(back, fallbackNotice(fallback));
+    }
+    // A structured service refusal proves the server answered (spec "A real generation or
+    // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
+    // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
+    // reads as one (that path is 502-only).
+    const refusal = serviceRefusalOf(e);
+    if (refusal) {
+      markOnline();
+      // Never the failure screen (service-refusals "never opens the failure screen"): a
+      // clarify request's only sender is compose, and a refusal about the words themselves
+      // lands there too, so the landing is always compose. A refusal that opens a screen of its
+      // own goes there, with the compose step (the typed prompt intact) to come back to.
+      logServiceRefusal('clarify', refusal);
+      return refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
+    }
+    if (isClarifySkip(e)) return 'skip';
+    logGenError('clarify failed', e);
+    return failure(from.editing, from.text, e, 'clarify failed');
+  };
+
   /** compose → clarify, or straight past it when the exchange has nothing to ask. The clarify step
    *  opens IMMEDIATELY, under its own loading state — the wait is that screen, never a grey compose
    *  button (C2) — and the request that fills it in is fired straight after. A clarify `502` means
@@ -1292,20 +1354,19 @@ function LauncherShell({
     setScreen(loading);
     const request = flowRequests.start('compose');
     let questions: FlowQuestion[] = [];
+    let limit: FlowLimit | undefined;
     try {
-      questions = acceptClarifyQuestions(
-        (
-          await clarifyPrompt(
-            options,
-            from.text,
-            // The same context a rewrite would carry (name, collections, description) — so the
-            // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
-            // `from.about` — see `aboutRef`'s doc comment.
-            buildRewriteAppContext(from.editing, aboutFor(from.editing)),
-            request.controller.signal,
-          )
-        ).questions,
+      const response = await clarifyPrompt(
+        options,
+        from.text,
+        // The same context a rewrite would carry (name, collections, description) — so the
+        // clarifier never re-asks what kind of app it is talking to. `aboutFor`, not
+        // `from.about` — see `aboutRef`'s doc comment.
+        buildRewriteAppContext(from.editing, aboutFor(from.editing)),
+        request.controller.signal,
       );
+      questions = acceptClarifyQuestions(response.questions);
+      limit = clarifyLimitOf(response);
       // A resolved `clarifyPrompt` is a real server response — proof of connectivity equivalent
       // to a successful dedicated probe (spec "A real generation or rewrite call succeeding...").
       markOnline();
@@ -1314,34 +1375,21 @@ function LauncherShell({
       // Home): the abort surfaces here as a plain `AbortError`, and it is swallowed — no failure
       // screen, no breadcrumb.
       if (request.cancelled) return;
-      // A structured service refusal proves the server answered (spec "A real generation or
-      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
-      // as proof of connectivity") — checked regardless of `isClarifySkip`, since a refusal never
-      // reads as one (that path is 502-only).
-      const refusal = serviceRefusalOf(e);
-      if (refusal) markOnline();
-      if (refusal) {
-        // Never the failure screen (service-refusals "never opens the failure screen"): a
-        // clarify request's only sender is compose, and a refusal about the words themselves
-        // lands there too, so the landing is always compose. A refusal that opens a screen of its
-        // own goes there, with the compose step (the typed prompt intact) to come back to.
-        logServiceRefusal('clarify', refusal);
-        const back = composeStep(from.editing, from.text);
-        const target = refusalScreen(refusal, back, { kind: 'resume', screen: back }) ?? { ...from, notice: noticeFrom(refusal) };
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => target));
-        return;
-      }
-      if (!isClarifySkip(e)) {
-        logGenError('clarify failed', e);
-        const failed = failure(from.editing, from.text, e, 'clarify failed');
-        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => failed));
+      const landing = clarifyThrewTo(from, e, markOnline);
+      if (landing !== 'skip') {
+        setScreen(onlyOnStep<Screen, 'clarify'>('clarify', () => landing));
         return;
       }
     } finally {
       flowRequests.release('compose', request);
     }
     if (request.cancelled) return;
-    if (stepAfterClarifyExchange(questions) === 'clarify') {
+    if (limit) {
+      // Clarify says this can't be built as asked (beta-1 D9): the step shows why and what could
+      // be built instead, and nothing more happens until the user picks one.
+      const shown = limit;
+      setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withLimit(s, shown)));
+    } else if (stepAfterClarifyExchange(questions) === 'clarify') {
       setScreen(onlyOnStep<Screen, 'clarify'>('clarify', (s) => withQuestions(s, questions)));
     } else {
       // Zero questions (or a clarify skip): the loading clarify screen goes straight to the plan
@@ -1395,9 +1443,10 @@ function LauncherShell({
     refresh();
   };
 
-  /** The abort + record deletion behind an explicit cancel — today reachable only from a Cancel
-   *  chosen on a `building` ghost's quick actions (`onCancelPending`, below). Hardware back on the
-   *  build screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
+  /** The abort + record deletion behind an explicit cancel — reachable only from a Cancel chosen on
+   *  a `building` ghost's quick actions (`onCancelPending`, below) and from the build screen's
+   *  `Cancel build` while the build waits in line (`onCancelBuild`). Hardware back on the build
+   *  screen no longer calls this (bug fix: it used to, and cancelled the whole run) — see
    *  `prompt-flow.ts#buildBackAction`. */
   const abortLiveAttempt = () => {
     const ctl = genRef.current;
@@ -1490,6 +1539,44 @@ function LauncherShell({
   };
 
   /**
+   * A generate request the server ended with something other than a failed build — an `update`
+   * fallback or a service refusal — settled and routed; `false` for every other error, which the
+   * caller settles as a failure (a `fail` fallback among them: its notice is the failure's reason).
+   *
+   * An `update` fallback (beta-1 D16) ends the build `failed` — nothing installed, nothing updated,
+   * its ghost kept for a Retry, its reason the notice (else the update line) — and the update screen
+   * shows the notice: in place of the build screen, or for a build left running only where it
+   * interrupts nothing, like the update refusal. A refusal never opens the failure screen
+   * (service-refusals); design D10's three-way split lives in `handleGenerateRefusal`. Either proves
+   * the server answered (spec "…any service refusal those paths receive... SHALL be treated as
+   * proof of connectivity").
+   */
+  const settleServerEnding = (
+    e: unknown,
+    ctl: NonNullable<typeof genRef.current>,
+    attempt: { attemptId: string; isRetry: boolean; fromPlan?: PlanScreen; counts: RunTerminalCounts; streamRequestId?: string },
+    markOnline: () => void,
+  ): boolean => {
+    const fallback = terminalFallbackOf(e);
+    if (fallback?.kind === 'update') {
+      markOnline();
+      releaseGenRef(ctl);
+      logUpdateFallback('generate', e, attempt.streamRequestId);
+      const notice = fallbackNotice(fallback);
+      const detached = ctl.detached;
+      settleFailed(attempt.attemptId, notice ?? COPY.updateRequiredLine, [], attempt.counts);
+      setScreen((prev) => (!detached || updateMayInterrupt(prev) ? updateScreenFrom(prev, notice) : prev));
+      return true;
+    }
+    const refusal = serviceRefusalOf(e);
+    if (!refusal) return false;
+    markOnline();
+    releaseGenRef(ctl);
+    handleGenerateRefusal(attempt.attemptId, refusal, attempt.isRetry, ctl.detached, attempt.fromPlan, attempt.counts);
+    return true;
+  };
+
+  /**
    * ONE generation attempt, end to end: the launcher id and its `building` record are written
    * BEFORE the request goes out (design D3/D4), the stream runs, and exactly one of three
    * settlements follows — delivered (record deleted, after the store and index are both written),
@@ -1561,24 +1648,28 @@ function LauncherShell({
       );
       let terminal: GenerationEvent | null = null;
 
-      // Only `stage` ever reaches UI state (never `token.text` or `diagnostic.kind`/`symbol` —
-      // spec "Generation progress is shown without exposing internals"); `result`/`failure` are
-      // held until the stream ends so the terminal-event handling below stays in one place.
+      // Only `stage` and `queued` ever reach UI state (never `token.text` or
+      // `diagnostic.kind`/`symbol` — spec "Generation progress is shown without exposing
+      // internals"); `result`/`failure` are held until the stream ends so the terminal-event
+      // handling below stays in one place.
       stream = generateApp({ ...options, onKeepalive }, request, controller.signal);
       for await (const event of stream) {
         countEvent(counts, event);
         // The journal write and the signal fold for this event, in one place and at one clock
         // reading: `stage` journals immediately, `token` goes through the store's own ~5s
-        // throttle, everything else writes nothing (`build-lifecycle#journalStreamEvent`).
+        // throttle, a `restart` voids the turn's counts, everything else writes nothing
+        // (`build-lifecycle#journalStreamEvent`).
         signals = journalStreamEvent(journal, attemptId, signals, event, Date.now());
         signalsRef.current = signals;
-        if (event.type === 'stage') {
-          live = withStage(live, event.stage);
+        // `stage` moves the step and `queued` the place in line; any other event ends the
+        // waiting state (`prompt-flow.ts#withStreamEvent`), and a token alone changes nothing.
+        const next = withStreamEvent(live, event);
+        if (next !== live) {
+          live = next;
           liveRef.current = { id: attemptId, screen: live };
-          setScreen((s) => (s.kind === 'build' ? withStage(s, event.stage) : s));
-        } else if (event.type === 'result' || event.type === 'failure') {
-          terminal = event;
+          setScreen((s) => (s.kind === 'build' ? withStreamEvent(s, event) : s));
         }
+        if (event.type === 'result' || event.type === 'failure') terminal = event;
       }
       // The stream loop completed without throwing a transport-classified error — a real server
       // response, proof of connectivity equivalent to a successful dedicated probe (spec "A real
@@ -1659,18 +1750,8 @@ function LauncherShell({
       setScreen((s) => (s.kind === 'build' ? doneStep(s, delivered) : s));
     } catch (e) {
       if (ctl.cancelled) return;
-      // A structured service refusal proves the server answered (spec "A real generation or
-      // rewrite call succeeding, and any service refusal those paths receive... SHALL be treated
-      // as proof of connectivity").
-      const refusal = serviceRefusalOf(e);
-      if (refusal) {
-        markOnline();
-        releaseGenRef(ctl);
-        // Never the failure screen (service-refusals "never opens the failure screen") — design
-        // D10's three-way split lives in `handleGenerateRefusal`.
-        handleGenerateRefusal(attemptId, refusal, reuseId !== undefined, ctl.detached, fromPlan, terminalCounts());
-        return;
-      }
+      const attempt = { attemptId, isRetry: reuseId !== undefined, fromPlan, counts: terminalCounts(), streamRequestId: stream?.requestId };
+      if (settleServerEnding(e, ctl, attempt, markOnline)) return;
       releaseGenRef(ctl);
       logGenError('build failed', e, stream?.requestId);
       const reasoned = errorReason(e);
@@ -1691,6 +1772,22 @@ function LauncherShell({
     const ctl = genRef.current;
     if (ctl) ctl.detached = true;
     goHome();
+  };
+
+  /** `Cancel build`, offered on the build screen while the build waits in line (beta-1 D8): the
+   *  request is aborted and the attempt deleted, exactly as a ghost's Cancel does — no ghost is
+   *  left behind — and the user lands on Home. */
+  const onCancelBuild = () => {
+    abortLiveAttempt();
+    goHome();
+  };
+
+  /** The limit step's `Build <alternative> instead` (beta-1 D9): the alternative becomes the prompt
+   *  and clarify is asked about it afresh — its own questions, never the old ones. Nothing is built
+   *  until the user approves a plan, as always. */
+  const onBuildInstead = async (from: ClarifyScreen) => {
+    if (!from.limit) return;
+    await onComposeContinue(composeStep(from.editing, from.limit.alternative));
   };
 
   // `onBuildBack` reads the latest `timeline`/`onLeaveRunning` through refs so its identity never
@@ -1992,7 +2089,7 @@ function LauncherShell({
       return <AppLinkMissingScreen onBackToApps={goHome} />;
     } else if (screen.kind === 'update-required') {
       const held = screen.heldPrompt;
-      return <UpdateRequiredScreen onNotNow={() => onUpdateNotNow(held)} />;
+      return <UpdateRequiredScreen notice={screen.updateNotice} onNotNow={() => onUpdateNotNow(held)} />;
     } else if (screen.kind === 'compose') {
       const from = screen;
       return (
@@ -2017,10 +2114,12 @@ function LauncherShell({
           loading={from.loading}
           startedAt={from.startedAt}
           notice={from.notice}
+          limit={from.limit}
           editing={from.editing != null}
           editingName={from.editing?.name}
-          onAnswer={(id, answer) => setScreen(withAnswer(from, id, answer))}
+          onAnswer={(id, change) => setScreen(withAnswer(from, id, change))}
           onContinue={() => openPlan(from, 'clarify')}
+          onBuildInstead={() => onBuildInstead(from)}
           onBack={() => goBack(from)}
         />
       );
@@ -2046,6 +2145,8 @@ function LauncherShell({
           <BuildStep
             stage={from.stage}
             delivering={from.delivering}
+            queuedPosition={from.queuedPosition}
+            onCancel={onCancelBuild}
             signals={signalsRef.current}
             now={Date.now()}
             editing={from.editing != null}

@@ -81,9 +81,10 @@ export interface AppOptions {
    *  and no ungated product surface is created. */
   devLogSink?: DevLogSinkOptions;
   /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. It makes `/v1/clarify`
-   *  deterministic and model-free, and makes `/v1/rewrite` pass a `[[fail]]`-marked prompt
-   *  through raw (no model call) so the marker survives into `/v1/generate`; the pipeline's own
-   *  stub is selected by passing `createStubPipeline()` above, not by this flag. */
+   *  deterministic and model-free, and makes `/v1/rewrite` pass a prompt carrying a stub pipeline
+   *  marker (`[[fail]]`, `[[future:*]]`) through raw (no model call) so the marker survives into
+   *  `/v1/generate`; the pipeline's own stub is selected by passing `createStubPipeline()` above,
+   *  not by this flag. */
   stub?: boolean;
 
   /** Verifies `x-whim-device` and resolves a device id (design D15). Defaults to

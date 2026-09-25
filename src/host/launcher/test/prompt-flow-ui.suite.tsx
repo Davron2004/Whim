@@ -74,7 +74,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     }, async ({ tree, paths, sent }) => {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Buzz'));
+      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
       await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
       await waitFor(() => planLoaded(tree), 'the plan');
       await settle();
@@ -165,7 +165,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         await composeAndContinue(tree, 'A dice roller');
         if (from === 'clarify') {
           await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-          await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Sound'));
+          await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Sound' }));
           await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
         }
         await waitFor(() => textOf(tree.root).includes('Whim is busy right now.'), 'the refusal to land');
@@ -174,7 +174,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
         h.ok(on(tree, landed), `the refusal lands on ${from}`);
         h.eq(tree.root.findAllByType(other).length + tree.root.findAllByType(PlanStep).length, 0, 'not on a step that did not send it');
         if (from === 'compose') h.eq(tree.root.findByType(ComposeStep).props.text, 'A dice roller', 'the user’s words are kept');
-        else h.eq(tree.root.findByType(ClarifyStep).props.answers, { alert: 'Sound' }, 'the answers are kept');
+        else h.eq(tree.root.findByType(ClarifyStep).props.answers, { alert: { choices: ['Sound'], other: '', decide: false } }, 'the answers are kept');
       });
     });
   }

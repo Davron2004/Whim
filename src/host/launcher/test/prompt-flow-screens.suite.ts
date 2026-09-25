@@ -12,12 +12,15 @@ import { Harness } from './harness';
 import { COPY } from '../copy';
 import { GenerationClientError } from '../transport-shared';
 import {
+  OTHER_ANSWER_MAX_CHARS,
   acceptClarifyQuestions,
   backFrom,
   buildProgressFraction,
+  buildProgressView,
   buildStep,
   buildStepStatuses,
   clarificationsFrom,
+  clarifyLimitOf,
   clarifyStep,
   composeStep,
   composeTextChanged,
@@ -32,14 +35,16 @@ import {
   updatePlanRow,
   withAnswer,
   withDelivering,
+  withLimit,
   withPlan,
   withQuestions,
   withStage,
+  withStreamEvent,
   workingLineText,
 } from '../prompt-flow';
-import type { ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
+import type { AnswerChange, ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
-import type { ClarifyQuestion } from '@whim/contract';
+import { CLARIFICATION_OTHER_MAX_CHARS, Clarification, type ClarifyQuestion, type GenerationEvent } from '@whim/contract';
 
 
 /** A stand-in installed app: the machine only ever carries it through, never reads into it. */
@@ -49,6 +54,13 @@ const QUESTIONS: ClarifyQuestion[] = [
   { id: 'history', question: 'Should it remember past brews?', options: ['Keep a history', 'Just the last one'], select: 'one', other: false },
   { id: 'alert', question: 'How should it tell you a step is done?', options: ['Sound', 'Buzz', 'Both'], select: 'one', other: false },
 ];
+
+/** A question that takes several picks and a typed answer (beta-1 D18). */
+const EXTRAS: ClarifyQuestion = { id: 'extras', question: 'What goes in it?', options: ['Honey', 'Lemon', 'Milk'], select: 'many', other: true };
+
+const pick = (option: string): AnswerChange => ({ kind: 'pick', option });
+const type = (text: string): AnswerChange => ({ kind: 'type', text });
+const DECIDE: AnswerChange = { kind: 'decide' };
 
 function composedFlow(text = 'a timer for my pour-over'): ComposeScreen {
   return composeStep(EDITED, text);
@@ -147,23 +159,88 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(acceptClarifyQuestions(undefined), [], 'an absent list is an empty one');
   });
 
-  await h.test('flow: answering is single-select and never clears', () => {
-    const first = withAnswer(clarifiedFlow(), 'alert', 'Sound');
-    h.eq(first.answers.alert, 'Sound', 'the tapped option is set');
-    const second = withAnswer(first, 'alert', 'Both');
-    h.eq(second.answers.alert, 'Both', 'tapping another option replaces the answer');
-    const third = withAnswer(second, 'alert', 'Both');
-    h.eq(third.answers.alert, 'Both', 'tapping the selected option again never clears it');
+  await h.test('flow: a select-one question keeps one pick — a second tap moves it, the same tap keeps it', () => {
+    const first = withAnswer(clarifiedFlow(), 'alert', pick('Sound'));
+    h.eq(first.answers.alert?.choices, ['Sound'], 'the tapped option is picked');
+    const second = withAnswer(first, 'alert', pick('Both'));
+    h.eq(second.answers.alert?.choices, ['Both'], 'tapping another option moves the pick');
+    const third = withAnswer(second, 'alert', pick('Both'));
+    h.eq(third.answers.alert?.choices, ['Both'], 'tapping the picked option again keeps it');
+    h.eq(withAnswer(third, 'alert', pick('Loud')).answers.alert, third.answers.alert, 'an option the question does not list changes nothing');
+    h.eq(clarificationsFrom(third.questions, third.answers).map((c) => c.choices), [['Both']], 'at most one choice is sent');
+  });
+
+  await h.test('flow: several picks — a select-many question toggles, and sends every pick in the question’s order', () => {
+    const many = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([EXTRAS]));
+    const both = withAnswer(withAnswer(many, 'extras', pick('Milk')), 'extras', pick('Honey'));
+    h.eq(clarificationsFrom(both.questions, both.answers), [{ id: 'extras', question: EXTRAS.question, choices: ['Honey', 'Milk'] }],
+      'both picks are the question’s choices, in the order it lists them');
+    const untoggled = withAnswer(both, 'extras', pick('Honey'));
+    h.eq(clarificationsFrom(untoggled.questions, untoggled.answers).map((c) => c.choices), [['Milk']], 'a second tap takes a pick back');
+    const emptied = withAnswer(untoggled, 'extras', pick('Milk'));
+    h.eq(clarificationsFrom(emptied.questions, emptied.answers), [], 'a question whose picks were all taken back is left out');
+  });
+
+  await h.test('flow: a typed answer is sent trimmed as `other`, empty is absent, and it is capped', () => {
+    const many = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([EXTRAS]));
+    const typed = withAnswer(many, 'extras', type('  oat milk  '));
+    h.eq(typed.answers.extras?.other, '  oat milk  ', 'the field holds exactly what was typed');
+    h.eq(clarificationsFrom(typed.questions, typed.answers), [{ id: 'extras', question: EXTRAS.question, choices: [], other: 'oat milk' }],
+      'the request carries it trimmed, as that question’s `other`');
+    const blank = withAnswer(typed, 'extras', type('   '));
+    h.eq(clarificationsFrom(blank.questions, blank.answers), [], 'only spaces is no answer');
+    const long = withAnswer(many, 'extras', type('x'.repeat(OTHER_ANSWER_MAX_CHARS + 50)));
+    h.eq(clarificationsFrom(long.questions, long.answers)[0]?.other?.length, CLARIFICATION_OTHER_MAX_CHARS, 'never longer than the contract allows');
+    const noField = withAnswer(clarifiedFlow(), 'alert', type('a whistle'));
+    h.eq(clarificationsFrom(noField.questions, noField.answers), [], 'a question with no Other field takes no typed answer');
+  });
+
+  await h.test('flow: Decide for me clears the picks and the typed answer, and picking or typing clears it again', () => {
+    const many = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([EXTRAS]));
+    const answered = withAnswer(withAnswer(many, 'extras', pick('Milk')), 'extras', type('cinnamon'));
+    const decided = withAnswer(answered, 'extras', DECIDE);
+    h.eq(decided.answers.extras, { choices: [], other: '', decide: true }, 'the picks and the typed text are cleared');
+    h.eq(clarificationsFrom(decided.questions, decided.answers), [{ id: 'extras', question: EXTRAS.question, choices: [], decide: true }],
+      'the request carries decide: true alone for it');
+    const picked = withAnswer(decided, 'extras', pick('Honey'));
+    h.eq(clarificationsFrom(picked.questions, picked.answers), [{ id: 'extras', question: EXTRAS.question, choices: ['Honey'] }], 'a pick afterwards clears it');
+    const typedAfter = withAnswer(decided, 'extras', type('c'));
+    h.eq(typedAfter.answers.extras?.decide, false, 'and so does typing');
+  });
+
+  await h.test('flow: every clarification the step sends is one the contract accepts', () => {
+    const many = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([EXTRAS, QUESTIONS[1]]));
+    const states = [
+      withAnswer(many, 'extras', DECIDE),
+      withAnswer(withAnswer(many, 'extras', pick('Milk')), 'extras', type('  and cinnamon ')),
+      withAnswer(many, 'extras', type('x'.repeat(OTHER_ANSWER_MAX_CHARS))),
+      withAnswer(withAnswer(many, 'alert', pick('Sound')), 'alert', pick('Buzz')),
+    ];
+    for (const state of states) {
+      for (const clarification of clarificationsFrom(state.questions, state.answers)) {
+        h.ok(Clarification.safeParse(clarification).success, `${JSON.stringify(clarification)} parses as a contract Clarification`);
+      }
+    }
   });
 
   await h.test('flow: only answered questions become clarifications, by value', () => {
-    const answered = withAnswer(clarifiedFlow(), 'alert', 'Both');
+    const answered = withAnswer(clarifiedFlow(), 'alert', pick('Both'));
     h.eq(
       clarificationsFrom(answered.questions, answered.answers),
       [{ id: 'alert', question: 'How should it tell you a step is done?', choices: ['Both'] }],
       'the answered question travels with its own text',
     );
     h.eq(clarificationsFrom(answered.questions, {}), [], 'skipping answers nothing');
+  });
+
+  await h.test('flow: a clarify limit replaces the questions and is carried as plain words', () => {
+    const limit = clarifyLimitOf({ limit: { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' } });
+    h.eq(limit, { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' }, 'the limit is read off the response');
+    h.eq(clarifyLimitOf({}), undefined, 'a response without one has none');
+    const shown = withLimit(withAnswer(clarifiedFlow(), 'alert', pick('Sound')), limit!);
+    h.eq([shown.loading, shown.questions, shown.answers], [false, [], {}], 'the step leaves loading, with nothing to answer');
+    const back = backFrom(shown);
+    h.eq(back && typeof back === 'object' && back.kind === 'compose' ? back.text : null, shown.text, 'back (Change my idea) is compose with the original words');
   });
 
   await h.test('flow: the plan step opens under a skeleton and goes live when its rows land', () => {
@@ -271,7 +348,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   });
 
   await h.test('flow: the build step starts from the plan and carries the answers with it', () => {
-    const plan = withPlan(planStep(withAnswer(clarifiedFlow(), 'alert', 'Buzz')), { rewrittenPrompt: 'a brew timer' });
+    const plan = withPlan(planStep(withAnswer(clarifiedFlow(), 'alert', pick('Buzz'))), { rewrittenPrompt: 'a brew timer' });
     const build = buildStep(plan);
     h.eq(build.kind, 'build', 'Build it moves to the build step');
     h.eq(build.stage, null, 'no stage has arrived yet');
@@ -306,7 +383,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   await h.test('flow: back is immediate and lossless at every step', () => {
     h.eq(backFrom(composedFlow()), 'home', 'back from compose is the home grid');
 
-    const clarify = withAnswer(clarifiedFlow(), 'alert', 'Sound');
+    const clarify = withAnswer(clarifiedFlow(), 'alert', pick('Sound'));
     const toCompose = backFrom(clarify);
     h.eq(toCompose && typeof toCompose === 'object' ? toCompose.kind : toCompose, 'compose', 'back from clarify is compose');
     h.eq(
@@ -320,7 +397,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(toClarify && typeof toClarify === 'object' ? toClarify.kind : toClarify, 'clarify', 'back from plan is clarify');
     h.eq(
       toClarify && typeof toClarify === 'object' && toClarify.kind === 'clarify' ? toClarify.answers : null,
-      { alert: 'Sound' },
+      clarify.answers,
       'the answers survive the back move',
     );
   });
@@ -385,11 +462,39 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('build: only a stage event ever changes the screen’s state', () => {
+  await h.test('build: only stage and queued events change the screen’s state', () => {
     const build = buildStep(plannedFlow());
     h.eq(withStage(build, 'check').stage, 'check', 'a stage event lands');
     h.eq(withDelivering(build).delivering, true, 'delivery flips the last step on');
     h.eq(withStage(build, 'check').text, build.text, 'nothing else about the step moves');
+    const token: GenerationEvent = { type: 'token', text: 'const x = 1;' };
+    h.ok(withStreamEvent(build, token) === build, 'a token outside the line changes nothing');
+  });
+
+  await h.test('build: waiting behind two builds says the build is in line with 2 ahead, and no step is live', () => {
+    const waiting = withStreamEvent(buildStep(plannedFlow()), { type: 'queued', position: 3 });
+    h.eq(waiting.queuedPosition, 3, 'the place in line is held');
+    const view = buildProgressView(waiting.stage, waiting.delivering, waiting.queuedPosition);
+    h.ok(view.sentence.includes('2 builds ahead'), `the sentence counts the two builds ahead (got "${view.sentence}")`);
+    h.eq(view.statuses, ['todo', 'todo', 'todo', 'todo'], 'nothing has started, so no step is live');
+    h.eq(view.fraction, 0, 'and the bar claims no progress');
+    const next = withStreamEvent(waiting, { type: 'queued', position: 1 });
+    h.eq(buildProgressView(next.stage, next.delivering, next.queuedPosition).sentence, COPY.buildQueuedNext, 'at the front it says the build is next');
+    const one = withStreamEvent(waiting, { type: 'queued', position: 2 });
+    h.ok(buildProgressView(one.stage, one.delivering, one.queuedPosition).sentence.includes('1 build ahead'), 'one build ahead is counted in the singular');
+  });
+
+  await h.test('build: the first stage after queued events replaces the in-line message with normal progress', () => {
+    const waiting = withStreamEvent(buildStep(plannedFlow()), { type: 'queued', position: 2 });
+    const started = withStreamEvent(waiting, { type: 'stage', stage: 'plan', status: 'start' });
+    h.eq(started.queuedPosition, undefined, 'the build is out of the line');
+    h.eq(buildProgressView(started.stage, started.delivering, started.queuedPosition), {
+      statuses: buildStepStatuses('plan'),
+      fraction: buildProgressFraction('plan'),
+      sentence: currentActionSentence('plan'),
+    }, 'the screen reads the stage-driven progress');
+    const ended = withStreamEvent(waiting, { type: 'failure', reason: 'Waited too long.', attempts: 0, diagnostics: [] });
+    h.eq(ended.queuedPosition, undefined, 'any other event ends the waiting state too — in line only while the latest event is queued');
   });
 
 }

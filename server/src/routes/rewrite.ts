@@ -37,6 +37,7 @@ import { admitUnaryRequest, settleFailedUnaryRequest } from './clarify';
 import type { V1Env } from '../request-edge';
 import { consentPractice } from '../consent-practices';
 import type { ServerLogger } from '../logger';
+import { carriesStubPipelineMarker } from '../stub-markers';
 
 const NOT_CONFIGURED: ApiError = {
   error: 'rewrite_not_configured',
@@ -212,8 +213,9 @@ async function runRewriteAttempt(
 
 export interface RewriteRouteOptions {
   /** True when the server was started under the stub selector (`WHIM_PIPELINE=stub`): a prompt
-   *  carrying the stub pipeline's `[[fail]]` marker is passed through raw, with no model call —
-   *  mirroring `/v1/clarify`'s stub short-circuit — so the marker survives into `/v1/generate`. */
+   *  carrying a marker the stub pipeline reads (`[[fail]]`, `[[future:*]]`) is passed through raw,
+   *  with no model call — mirroring `/v1/clarify`'s stub short-circuit — so the marker survives
+   *  into `/v1/generate`. */
   stub?: boolean;
   config: ServerConfig;
   clock: () => number;
@@ -315,7 +317,7 @@ export function makeRewriteRoute(
       };
 
       try {
-        if (options.stub && parsed.data.prompt.includes('[[fail]]')) {
+        if (options.stub && carriesStubPipelineMarker(parsed.data.prompt)) {
           await finish('ok', [], new Set());
           return c.json({ rewrittenPrompt: parsed.data.prompt } satisfies RewriteResponse, 200);
         }

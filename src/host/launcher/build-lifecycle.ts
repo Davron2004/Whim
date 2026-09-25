@@ -32,7 +32,7 @@ import type { StoreAccess } from './store-access';
 import type { PendingBuildFailure, PendingBuildRecord, PendingBuildStore } from './pending-builds';
 import type { BuildScreen, RunSignals } from './prompt-flow';
 import type { RunJournalStore, RunTerminalCounts } from './run-journal';
-import { accumulateRunAggregates, ghostTileColorFor, workingTitleFromPrompt } from './prompt-flow';
+import { accumulateRunAggregates, ghostTileColorFor, withRestart, withTurnStart, workingTitleFromPrompt } from './prompt-flow';
 import { promptEnvelope } from './prompt-envelope';
 import { liftManifestTileColor } from './manifest-tile-color';
 import { isAtTip } from './history-logic';
@@ -160,8 +160,17 @@ export function journalStreamEvent(
     // also the edge the shell's own repair tally counts, so the timeline's repair-attempt count and
     // the failure screen's can never disagree. A `done` edge is still LIVENESS — it moves the
     // any-frame clock, it just writes nothing.
-    if (event.status === 'start') journal.appendStage(launcherId, event.stage);
+    // A `start` edge also begins the model turn a later `restart` returns to (beta-1 D10).
+    if (event.status === 'start') {
+      journal.appendStage(launcherId, event.stage);
+      return { ...withTurnStart(signals), lastFrameAt: at };
+    }
     return { ...signals, lastFrameAt: at };
+  }
+  if (event.type === 'restart') {
+    // The turn's tokens are void: its counts go back to where it began. No journal entry — the
+    // build carries on as the same build, with nothing to add to its history.
+    return withRestart(signals, at);
   }
   if (event.type === 'token') {
     const aggregates = accumulateRunAggregates(signals.aggregates, event);
@@ -175,9 +184,10 @@ export function journalStreamEvent(
     journal.appendAggregate(launcherId, aggregates);
     return { ...signals, aggregates, lastThinkingAt: at, lastFrameAt: at };
   }
-  // `diagnostic`, `usage`, and the terminal events (handled by the caller, not here) still count
-  // as liveness — the stream is plainly still alive if the server just sent one of these — but
-  // none of them writes a journal entry or moves a counter.
+  // `queued` (the build waiting its turn, beta-1 D8), `diagnostic`, `usage`, and the terminal
+  // events (handled by the caller, not here) still count as liveness — the stream is plainly still
+  // alive if the server just sent one of these — but none of them writes a journal entry or moves
+  // a counter.
   return { ...signals, lastFrameAt: at };
 }
 

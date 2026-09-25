@@ -242,12 +242,12 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Buzz'));
+      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
       await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
       await waitFor(() => on(tree, ConsentScreen), 'the consent screen');
       await press(button(tree, COPY.consentDecline));
       h.ok(on(tree, ClarifyStep), 'back on the clarify step that sent it');
-      h.eq([tree.root.findByType(ClarifyStep).props.prompt, tree.root.findByType(ClarifyStep).props.answers], ['A tea timer', { alert: 'Buzz' }], 'prompt and answers intact');
+      h.eq([tree.root.findByType(ClarifyStep).props.prompt, tree.root.findByType(ClarifyStep).props.answers], ['A tea timer', { alert: { choices: ['Buzz'], other: '', decide: false } }], 'prompt and answers intact');
     });
   });
 
@@ -335,7 +335,7 @@ export async function runRequestEnvelopeUiTests(h: Harness): Promise<void> {
     }, async ({ tree }) => {
       await composeAndContinue(tree, 'A tea timer');
       await waitFor(() => on(tree, ClarifyStep) && !tree.root.findByType(ClarifyStep).props.loading, 'the question');
-      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', 'Buzz'));
+      await TestRenderer.act(async () => tree.root.findByType(ClarifyStep).props.onAnswer('alert', { kind: 'pick', option: 'Buzz' }));
       await tap(() => tree.root.findByType(ClarifyStep).props.onContinue());
       await waitFor(() => updateShown(tree), 'the update screen');
       await press(button(tree, COPY.updateNotNow));

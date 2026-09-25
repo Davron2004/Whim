@@ -20,9 +20,10 @@ import { grantedOptions } from './client-fixtures';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
-import { acceptClarifyQuestions, stepAfterClarifyExchange } from '../prompt-flow';
+import { acceptClarifyQuestions, clarifyLimitOf } from '../prompt-flow';
+import { fallbackNotice, terminalFallbackOf } from '../wire-fallback';
 import { PROTOCOL_LEVEL } from '../wire-headers';
-import { KNOWN_ERROR_CODES } from '../wire-compat';
+import { COMPAT_NOTICE_MAX_CHARS as COMPAT_NOTICE_MAX_CHARS_DEVICE, KNOWN_ERROR_CODES } from '../wire-compat';
 import { buildSseStream } from '../../../../server/src/sse';
 import { WIRE_REGISTRY, errorForLevel, eventForLevel, type WireEvent, type WireRegistry } from '../../../../server/src/wire-level';
 
@@ -148,8 +149,9 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     const { events, error } = await drain(sseFromServer([STAGE, update, RESULT]));
     h.eq(outcomeOf(error), 'update', 'the stream ends with the update outcome');
     h.ok(!events.some((event) => event.type === 'result'), 'the result after it is never yielded');
-    h.eq(serviceRefusalOf(error)?.code, 'update_required', 'the shell reads it as the update refusal, so the update screen opens');
-    h.eq(serviceRefusalOf(error)?.hint, NOTICE, 'carrying the notice');
+    h.eq(terminalFallbackOf(error)?.kind, 'update', 'the shell reads it as an update fallback, so the update screen opens');
+    h.eq(terminalFallbackOf(error)?.notice, NOTICE, 'carrying the notice');
+    h.eq(serviceRefusalOf(error), undefined, 'and not as a refusal, which would drop the attempt instead of failing it');
   });
 
   await h.test('future frames: a known event whose compat.min is above this build takes its fallback', async () => {
@@ -241,7 +243,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   await h.test('future frames: an unknown error code marked update opens the update path', async () => {
     const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelTwo({ min: 2, fallback: 'update', notice: NOTICE }));
     const error = await unaryError('clarify', json(body, 403));
-    h.eq(serviceRefusalOf(error)?.code, 'update_required', 'the shell reads it as the update refusal');
+    h.eq(terminalFallbackOf(error), { kind: 'update', notice: NOTICE }, 'the shell reads it as an update fallback, with its notice');
   });
 
   await h.test('future frames: an unknown error code marked skip keeps the handling of a code this build doesn’t know', async () => {
@@ -259,7 +261,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
 
   await h.test('future frames: a success body whose compat.min is above this build takes its fallback', async () => {
     const update = await unaryError('clarify', json({ questions: [], compat: { min: PROTOCOL_LEVEL + 1, fallback: 'update' } }, 200));
-    h.eq(serviceRefusalOf(update)?.code, 'update_required', 'update: the update path');
+    h.eq(terminalFallbackOf(update), { kind: 'update' }, 'update: the update path, with no notice');
     const skip = await unaryError('clarify', json({ questions: [], compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip' } }, 200));
     h.eq(outcomeOf(skip), 'none', 'skip: the body is read the way this build reads it');
   });
@@ -290,7 +292,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     }
   });
 
-  // ── Level-1 additions this build handles before their own UI exists ─────────────────────────
+  // ── Level-1 additions, as the flow receives them ─────────────────────────────────────────────
 
   await h.test('future frames: queued and restart are non-terminal activity, and the stream runs on to its result', async () => {
     const line: GenerationEvent[] = [{ type: 'queued', position: 2 }, { type: 'queued', position: 1 }, STAGE, TOKEN, { type: 'restart' }, TOKEN, RESULT];
@@ -299,10 +301,18 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     h.eq(events, line, 'every event arrives in order, the result last');
   });
 
-  await h.test('future frames: a clarify limit falls through to the zero-question path', async () => {
+  await h.test('future frames: a clarify limit reaches the flow as the limit, with no questions', async () => {
     const limit = { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' };
     const fetchImpl = (async () => json({ questions: [], limit }, 200)) as typeof fetch;
     const response = await bounded(clarifyPrompt({ ...OPTS, fetchImpl }, 'what to wear today'), 'clarify');
-    h.eq(stepAfterClarifyExchange(acceptClarifyQuestions(response.questions)), 'plan', 'the flow goes straight to the plan step');
+    h.eq(clarifyLimitOf(response), limit, 'the flow reads the reason and the alternative');
+    h.eq(acceptClarifyQuestions(response.questions), [], 'and there is nothing to ask');
+  });
+
+  await h.test('future frames: a notice is shown at most the contract’s length, whatever the error carries', async () => {
+    h.eq(COMPAT_NOTICE_MAX_CHARS_DEVICE, COMPAT_NOTICE_MAX_CHARS, 'the device’s cap is the contract’s');
+    const forged = new GenerationClientError('fallback', { fallback: { kind: 'fail', notice: 'n'.repeat(COMPAT_NOTICE_MAX_CHARS + 40) } });
+    h.eq(errorReason(forged).reason.length, COMPAT_NOTICE_MAX_CHARS, 'a notice longer than the decoder lets through is still cut to the cap');
+    h.eq(fallbackNotice({ kind: 'update', notice: 'Update Whim.' }), 'Update Whim.', 'a notice inside the cap is shown as sent');
   });
 }
