@@ -17,7 +17,8 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { injectedScripts } from './native-host';
+import { injectedScripts, StyleSheet } from './native-host';
+import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { grantedOptions } from './client-fixtures';
@@ -87,6 +88,16 @@ const FIRST_PAINT = { kind: 'paint', trusted: true, payload: { generation: 1, mo
  *  `npm run bridge:invariants` (INV-ERRFRAME) records for the error-raiser fixture. */
 const RUNTIME_ERROR_FRAME = { kind: 'error', trusted: true, payload: { where: 'runtime', name: 'LedgerError' } };
 const REJECTION_ERROR_FRAME = { kind: 'error', trusted: true, payload: { where: 'rejection', name: 'SettleError' } };
+// RENDER_ERROR_FRAME (render-error-frame.json) is a render error no boundary in the app caught,
+// as the outer page forwards it; `npm run launcher:deliver-verify` asserts the built loader and
+// page emit exactly that frame for a mini-app whose re-render throws a `LedgerError`.
+
+/** The theme a delivery script hands the realm (`deliverBySourceJs` appends it last, just before
+ *  the `reinject({...})` call closes). */
+function deliveredTheme(script: string | undefined): { colors?: unknown; chromeInsetBottom?: unknown } {
+  const json = /,theme:(\{.*\})\}\)/.exec(script ?? '')?.[1];
+  return json ? JSON.parse(json) : {};
+}
 
 interface ErrorRecordFields { where?: unknown; errorClass?: unknown; appId?: unknown }
 
@@ -207,6 +218,63 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       await frame({ kind: 'error', trusted: false, payload: { where: 'mount', name: 'ForgedError' } });
       h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
       h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
+    });
+  });
+
+  await h.test('mini-app: a render error after the first paint shows the recovery screen instead of a blank app', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
+      await loadEnd();
+      await frame(FIRST_PAINT);
+      log.buffer.clear();
+      await frame(RENDER_ERROR_FRAME);
+      h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the unmounted app');
+      h.ok(webView() == null, 'and the failed realm’s WebView is gone, so Retry recreates it');
+      h.eq(
+        miniAppErrorRecords(),
+        [{ message: 'mini-app failed', fields: { where: 'render', errorClass: 'LedgerError', appId: TIP.appId } }],
+        'one error record, with the site and the class',
+      );
+    });
+  });
+
+  await h.test('mini-app: a render error before the first paint is one failure, not a boot surface that later times out', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, shown, clock }) => {
+      await loadEnd();
+      log.buffer.clear();
+      await frame(RENDER_ERROR_FRAME);
+      h.ok(shown().includes(COPY.appErrorTitle) && !shown().includes(COPY.appBootLabel), 'the recovery screen shows at once');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'the startup deadline is disarmed, so it cannot report the same failure again');
+      h.eq(miniAppErrorRecords().map((r) => r.fields.where), ['render'], 'one error record');
+    });
+  });
+
+  await h.test('mini-app: a render error frame the page did not authenticate is ignored', async () => {
+    await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown }) => {
+      await loadEnd();
+      await frame(FIRST_PAINT);
+      log.buffer.clear();
+      // The outer page's forward of a bundle-posted render frame that failed the nonce check.
+      await frame({ kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: RENDER_ERROR_FRAME.payload });
+      // Frames claiming a render failure without the page's authentication: marked untrusted, and
+      // carrying no mark at all.
+      await frame({ ...RENDER_ERROR_FRAME, trusted: false });
+      await frame({ kind: RENDER_ERROR_FRAME.kind, payload: RENDER_ERROR_FRAME.payload });
+      h.ok(webView() != null && !shown().includes(COPY.appErrorTitle), 'the app keeps running');
+      h.eq(miniAppErrorRecords(), [], 'and no mini-app error record is emitted');
+    });
+  });
+
+  await h.test('mini-app: every delivery tells the realm how much of its bottom edge the orb covers, bottom safe-area inset included', async () => {
+    await withMiniApp(TIP, async ({ loadEnd, frame, tree }) => {
+      await loadEnd();
+      const orb = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as { bottom: number; height: number };
+      const first = deliveredTheme(injectedScripts[0]);
+      h.eq(first.chromeInsetBottom, orb.bottom + orb.height, 'the footprint reaches exactly the top of the orb as drawn over the inset');
+      h.eq(first.colors, DEFAULT_THEME.colors, 'beside the theme’s colours, unchanged');
+      await frame({ kind: 'error', trusted: true, payload: { where: 'bundle' } });
+      await press(button(tree, COPY.appErrorRetry));
+      await loadEnd();
+      h.eq(deliveredTheme(injectedScripts[1]).chromeInsetBottom, orb.bottom + orb.height, 'the recreated realm is told again');
     });
   });
 

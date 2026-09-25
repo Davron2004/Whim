@@ -89,11 +89,11 @@
   }
 
   // ── Uncaught realm errors (developer-observability D6) ───────────────────────
-  // A throw in an event handler, an uncaught React render error (React 19 reports it through
-  // reportError) and an unhandled rejection all surface on this window. Each is reported as the
-  // SAME nonce-authenticated `error` frame with the error's NAME only: the message and stack
-  // can carry user data and never leave the realm. Installed before any bundle runs; the
-  // listener refs live in this closure, so a bundle cannot remove them.
+  // A throw in an event handler or a timer and an unhandled rejection surface on this window.
+  // Each is reported as the SAME nonce-authenticated `error` frame with the error's NAME only:
+  // the message and stack can carry user data and never leave the realm. Installed before any
+  // bundle runs; the listener refs live in this closure, so a bundle cannot remove them. A
+  // render error that escapes the app is reported by the root instead (below), as `render`.
   function errorName(x) {
     try {
       const n = x !== null && typeof x === 'object' ? x.name : undefined;
@@ -104,11 +104,37 @@
       return 'NonError';
     }
   }
+  // The render error the root is passing on to reportError right now: already reported as
+  // `render`, so the window listener must not report it a second time as `runtime`.
+  let forwardingRenderError = false;
   window.addEventListener('error', function (ev) {
+    if (forwardingRenderError) return;
     post('error', { where: 'runtime', name: errorName(ev.error) });
   });
   window.addEventListener('unhandledrejection', function (ev) {
     post('error', { where: 'rejection', name: errorName(ev.reason) });
+  });
+
+  // ── A focused input stays visible (beta-1 D3) ────────────────────────────────
+  // The keyboard opening shrinks the viewport, which can leave the field the user just tapped
+  // underneath it. The focused editable element is scrolled into view when it gains focus, and
+  // again one frame after each viewport resize while it keeps focus (the frame lets the resized
+  // layout settle first). The listeners live in this closure: nothing new is reachable on window.
+  function isEditable(el) {
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true);
+  }
+  function reveal(el) {
+    if (!isEditable(el)) return;
+    try {
+      el.scrollIntoView({ block: 'nearest' });
+    } catch {
+      // deliberately silent: `el` is an element the mini-app rendered; failing to scroll it must
+      // never throw out of this listener.
+    }
+  }
+  document.addEventListener('focusin', function (ev) { reveal(ev.target); });
+  (window.visualViewport || window).addEventListener('resize', function () {
+    requestAnimationFrame(function () { reveal(document.activeElement); });
   });
 
   // generation counter (T7 / constraint #5): how many bundles have run in THIS realm. The host
@@ -117,6 +143,28 @@
   window.__whimGeneration = 0;
   let whimRoot = null;      // reused across any same-realm re-injection
   let mountedGen = -1;      // guard: mount each generation at most once
+
+  // ── Render failures (beta-1 D4) ───────────────────────────────────────────────
+  // The runtime-owned root boundary: React hands this root option every error that no boundary
+  // inside the app caught, during render, a commit or an effect, and unmounts the app, which
+  // leaves the realm blank. It lives in this closure and is passed to createRoot, so a bundle
+  // can neither reach nor replace it. The host treats `render` as fatal, so it is posted once per
+  // realm, name only. The error is then passed on to reportError, as React does by default, so
+  // developer tooling still sees its message and stack; the window listener above skips it.
+  let renderFailureReported = false;
+  function onUncaughtRenderError(error) {
+    if (!renderFailureReported) {
+      renderFailureReported = true;
+      post('error', { where: 'render', name: errorName(error) });
+    }
+    if (typeof window.reportError !== 'function') return;
+    forwardingRenderError = true;
+    try {
+      window.reportError(error);
+    } finally {
+      forwardingRenderError = false;
+    }
+  }
 
   // ── Mount + paint + TRUSTED verdict (tasks 5.1 / 5.4 / 6.2) ──────────────────
   window.__whimAfterBundle = function () {
@@ -131,9 +179,11 @@
     const spec = appModule.default;
     const gen = window.__whimGeneration;
     try {
-      if (!whimRoot) whimRoot = ReactDOM.createRoot(document.getElementById('whim-root'));
+      if (!whimRoot) {
+        whimRoot = ReactDOM.createRoot(document.getElementById('whim-root'), { onUncaughtError: onUncaughtRenderError });
+      }
       // The bundle does not know it is in an iframe/WebView — it just described screens.
-      whimRoot.render(React.createElement(trustedNavRoot, { spec: spec }));
+      whimRoot.render(React.createElement(trustedNavRoot, { spec: spec, chromeInsetBottom: chromeInsetBottom }));
     } catch (e) {
       post('error', { where: 'mount', name: e && e.name, message: e && String(e.message) });
       return;
@@ -156,10 +206,22 @@
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
   let deliveryBusy = false;
 
+  // How much of the realm's bottom edge the host's orb covers (beta-1 D5), from the init frame's
+  // theme. It stays in this closure and reaches the SDK only as a prop of its trusted root: it is
+  // kept off `window` and out of the theme global, so no global or SDK API hands it to generated
+  // code. The host already clamps it; it is sanitized again here because the frame is data.
+  let chromeInsetBottom = 0;
+  function sanitizeChromeInset(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return Math.min(200, Math.max(0, Math.round(value)));
+  }
+
   function installTheme(theme) {
     if (theme === null || typeof theme !== 'object') return false;
     try {
-      globalThis.__WHIM_THEME__ = Object.freeze(theme);
+      const { chromeInsetBottom: inset, ...colorTheme } = theme;
+      chromeInsetBottom = sanitizeChromeInset(inset);
+      globalThis.__WHIM_THEME__ = Object.freeze(colorTheme);
       return true;
     } catch {
       // A malformed or non-extensible theme must leave the SDK fallback available for delivery.

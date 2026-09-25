@@ -38,14 +38,15 @@ import { tearDownLiveRealm } from './teardown';
 const REGISTRY = createDefaultRegistry({ cueBackend: createCueBackend() });
 
 // The `error` frame's `where` values a bundle can never recover a paint from (loader.js: no
-// AppSpec export, a render throw, or the delivery wrapper itself throwing before any script even
-// runs) -- distinct from post-paint diagnostics (e.g. `where: 'probes'`), which stay
+// AppSpec export, a mount throw, the delivery wrapper itself throwing before any script even
+// runs, or a render error no boundary in the app caught, which unmounts the app before or after
+// its first paint) -- distinct from post-paint diagnostics (e.g. `where: 'probes'`), which stay
 // diagnostic-only and never escalate into the product's full-screen recovery surface.
 function isFatalErrorWhere(where: unknown): boolean {
-  return where === 'bundle' || where === 'mount' || where === 'deliver';
+  return where === 'bundle' || where === 'mount' || where === 'deliver' || where === 'render';
 }
 
-/** Uncaught errors the loader reports from inside the running realm (a handler or render throw,
+/** Uncaught errors the loader reports from inside the running realm (a handler or timer throw,
  *  an unhandled rejection). Not fatal -- the app keeps its WebView -- but each one is a failure. */
 function isRealmErrorWhere(where: unknown): boolean {
   return where === 'runtime' || where === 'rejection';

@@ -150,11 +150,12 @@ export default defineApp({ name: 'Harmless', initial: 'Home', screens: { Home },
 // One uncaught throw and one unhandled rejection, each with a distinctive message, both after
 // mount. Each reaches the collector twice: through CDP (message-bearing) and through `loader.js`'s
 // realm-window listeners as a nonce-authenticated `error` frame (`where: 'runtime' | 'rejection'`,
-// name only — never the message).
+// name only — never the message). The throw is in a timer, outside React: one thrown by an effect
+// escapes through the React root and is reported as `render` (FIXTURE_THROW_ON_MOUNT covers it).
 const FIXTURE_REALM_ERRORS = `import { defineApp, Screen, Stack, Heading, useEffect } from 'vc-sdk';
 function Home() {
   useEffect(() => { Promise.reject(new Error('realm-rejection-7f3a')); }, []);
-  useEffect(() => { throw new Error('realm-throw-7f3a'); }, []);
+  useEffect(() => { setTimeout(() => { throw new Error('realm-throw-7f3a'); }, 0); }, []);
   return <Screen><Stack><Heading size="title">Realm errors</Heading></Stack></Screen>;
 }
 export default defineApp({ name: 'RealmErrors', initial: 'Home', screens: { Home }, capabilities: [] });
@@ -451,6 +452,19 @@ async function testObservers(): Promise<void> {
         ok(!!thrown, 'a runtime_throw diagnostic was recorded');
         ok(thrown?.hint != null && thrown.hint.length > 0, 'the diagnostic carries a non-empty hint');
         ok(thrown?.line === 4, `the diagnostic's line resolves through the source map to original line 4 (got ${thrown?.line})`);
+        // The loader's root reports the render error the app never caught once, as the fatal
+        // `render` frame, and not a second time through its window listener as `runtime`.
+        const loaderErrors = (): string[] =>
+          obs.state.events.filter((e) => e.kind === 'error' && e.trusted).map((e) => String(framePayload(e).where));
+        await waitUntil(() => loaderErrors().includes('render'), 3000);
+        ok(
+          JSON.stringify(loaderErrors()) === JSON.stringify(['render']),
+          `the loader posted exactly one trusted error frame, where:render (got ${JSON.stringify(loaderErrors())})`,
+        );
+        ok(
+          obs.state.diagnostics.filter((d) => d.kind === 'runtime_throw').length === 1,
+          'and the collector keeps one message-bearing diagnostic for the throw, not a second from that frame',
+        );
       } finally {
         obs.detach();
         await dispose();

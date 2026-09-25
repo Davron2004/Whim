@@ -33,6 +33,7 @@ import {
 } from './tokens';
 import { emitUiEvent } from './events';
 import { TAP_RESET, usePressed } from './press';
+import { chromeInsetContext } from './chrome-inset';
 
 // The theme model (design sdk-design-system D1/D4) — type-only, so nothing executable
 // crosses this seam beyond the resolvers above, which already read the active theme. `shape`
@@ -252,14 +253,26 @@ export interface ScreenProps {
   padding?: SpaceToken;
   children?: React.ReactNode;
 }
+/** `Screen`'s padding: the token on every side, plus the host chrome inset (beta-1 D5) at the
+ *  bottom so the last element can scroll clear of the orb. No inset: exactly the token. */
+function screenPadding(pad: string, chromeInset: number): string {
+  if (chromeInset > 0) {
+    // Every calc() term needs a unit, and the `none` token is a bare `0`.
+    const withUnit = pad === '0' ? '0px' : pad;
+    return `${pad} ${pad} calc(${withUnit} + ${chromeInset}px)`;
+  }
+  return pad;
+}
 export function Screen({ padding = 'lg', children }: ScreenProps) {
+  const insetContext = chromeInsetContext();
+  const chromeInset = React.useContext(insetContext);
   return React.createElement(
     'div',
     {
       style: {
         boxSizing: 'border-box',
         minHeight: '100%',
-        padding: space(padding),
+        padding: screenPadding(space(padding), chromeInset),
         background: color('bg'),
         color: color('text'),
         font: `16px ${FONT}`,
@@ -270,7 +283,8 @@ export function Screen({ padding = 'lg', children }: ScreenProps) {
         WebkitUserSelect: 'none',
       },
     },
-    children,
+    // Only the outermost Screen is the scrollable content: one nested inside it pads as before.
+    React.createElement(insetContext.Provider, { value: 0 }, children),
   );
 }
 
