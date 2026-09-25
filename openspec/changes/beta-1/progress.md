@@ -8,4 +8,8 @@
 - R2. The untracked `openspec/changes/beta-waitlist/findings-sonar-1.md` (PR #116 Sonar round 1, 0 issues) is committed on the staging branch with this ledger so the primary tree is clean for the gates.
 - R3. Implementer models: Opus for chain-1 (the oldest reader every later server must serve), chain-2 (a concurrent FIFO with abort) and chain-4 (the prompt-flow state machine); Sonnet for the rest. One chain at a time, so never more than one Opus agent running.
 
+- R4. Flowbench (10.3) runs against production, before now (production image `0fb65d51` has the same server code as the pre-change staging tip) and after the beta-1 deploy, so both runs share one machine and roster (owner's pick after the local-server probes were denied). Cases: `evals/sets/visible` (22) plus `flowbench/limits` (4 new cases: 2 weather, 2 roommate-ping; the weather cases carry the placeholder slug `habit-tracker` because the tier-0 corpus has no weather slug and flowbench doesn't score by slug). Reports: `flowbench/{before,after}-{visible,limits}.json`.
+- R5. Chain-block notes decided ahead of dispatch: chain-2 updates the load-test driver's expectations for the line (`devices > cap` now queues, and only `devices > cap + WHIM_QUEUE_MAX` refuses); chain-3 makes flowbench record a clarify `limit` as its own outcome (not a failure) and thread the new answer shape.
+
 ## Ledger
+- 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
