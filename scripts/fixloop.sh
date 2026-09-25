@@ -54,6 +54,7 @@ INTEGRATION_BRANCH="${FIXLOOP_INTEGRATION_BRANCH:-main}"
 #            change that is ⊆ the declared allowlist is SANCTIONED (needs human ratification), not tamper.
 CLASS2=(
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
+  scripts/worktree.sh   # executed by gate.sh (check) and by redcheck (create) — same reason as build/
   .claude/hooks .claude/settings.json .claude/agents .claude/commands .claude/fixloop/grants
   .codex   # Codex mirror — its hooks are SYMLINKS to .claude/hooks, so an edit via this path IS a control-plane edit
   invariants
@@ -169,9 +170,12 @@ case "$cmd" in
     [ "${#prod[@]}" -gt 0 ] || die "no prod files after --"
     base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
     wt="$ROOT/.claude/worktrees/redcheck-$$"
-    git worktree add --detach "$wt" "$branch" >&2 2>&1 || die "worktree add failed"
     # shellcheck disable=SC2064
     trap "git worktree remove --force '$wt' >/dev/null 2>&1; git worktree prune >/dev/null 2>&1" EXIT
+    # Provisioned like every worktree (scripts/worktree.sh): with no node_modules of its own the
+    # test would resolve @whim/* to the PRIMARY tree's contract/ and server/, so the verdict would
+    # describe whatever the primary tree has checked out, not this branch with its fix reverted.
+    "$ROOT/scripts/worktree.sh" create "redcheck-$$" "$branch" >&2 || die "could not create a provisioned red-check worktree (diagnostics above)"
     for f in "${prod[@]}"; do
       if git cat-file -e "$base:$f" 2>/dev/null; then
         ( cd "$wt" && git checkout "$base" -- "$f" ) || die "revert failed: $f"
@@ -197,15 +201,16 @@ case "$cmd" in
     # BEFORE anything else happens. Each was previously assumed; each produced a confident wrong
     # answer when the assumption did not hold (openspec: harden-gate-preconditions).
 
-    # 1. Primary working tree. A linked worktree has no node_modules (gitignored) and Metro
-    #    (guard:metro) does not walk up to the repo-root copy the way Node does — so a run from a
-    #    worktree either fails deep inside the gate as an unrelated dependency-resolution error, or
-    #    (measured) sails through and reports a pass for a tree the gate could not fully verify.
+    # 1. Primary working tree. gatefull checks the branch out into the tree it runs in, and the
+    #    point is that this tree is NOT an agent's worktree: untracked or ignored files there
+    #    (poisoned src/runtime/generated/*, build/ output) are invisible to the integrity diff but
+    #    would be executed by the gate. Run from a linked worktree, it would check the branch out
+    #    on top of exactly those files.
     gitdir="$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
     commondir="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
     [ -n "$gitdir" ] && [ -n "$commondir" ] || die "not inside a git repository"
     [ "$gitdir" = "$commondir" ] || \
-      die "refusing: this is not the primary working tree (running in a linked worktree at $ROOT). 'gatefull' must run in the repo-root checkout — it is the only one with node_modules, which Metro cannot resolve from anywhere else."
+      die "refusing: this is not the primary working tree (running in a linked worktree at $ROOT). 'gatefull' must run in the repo-root checkout: it checks the branch's committed tip out there, so untracked or ignored files in a worktree never reach the gate."
 
     # 2. Baseline. GATE_BASE pins the gate's tamper tripwire, so a wrong or empty baseline yields a
     #    verdict about the wrong change. base_of returns non-zero rather than dying (it runs in a
@@ -215,10 +220,7 @@ case "$cmd" in
 
     # Run the FULL gate from the branch's COMMITTED tip, checked out into the PRIMARY working tree
     # (the repo-root checkout — "primary" is about the tree, not the branch named main; under the
-    # staging lane the checked-out branch is integration/<run-id>) — NOT a linked worktree. Why not
-    # a worktree: a fresh worktree has no node_modules (gitignored) and Metro (guard:metro) does NOT
-    # walk up to the repo-root copy the way Node does, so it cannot resolve the RN dependency graph
-    # there (Unable to resolve @babel/runtime/...). The primary tree has the real node_modules. We
+    # staging lane the checked-out branch is integration/<run-id>) — NOT a linked worktree. We
     # check out the branch's committed OBJECTS here (detached, NOT the fixer's worktree directory),
     # so untracked/gitignored poison in the fixer's worktree never reaches the gate — the §4.7
     # "verified == tested" property holds. (Residual Threat-C: shared node_modules tampering — the
