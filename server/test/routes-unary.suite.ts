@@ -858,6 +858,36 @@ async function testRefusedRewriteMakesOnlyTheClassifierCall(): Promise<void> {
   eq('the refused ledger row names the content_policy refusal', (await usageStore.deviceRecords(DEVICE_ID)).ledger.map((row) => row.failureReason), ['content_policy']);
 }
 
+/** specs/content-policy "Typed clarify answers are checked like the prompt" (beta-1 D18): the
+ *  deterministic policy refuses on text it finds anywhere in the one canonical input, so a harmful
+ *  typed `other` answer must meet the refusal the same text meets in the prompt. */
+async function testTypedAnswerIsCheckedLikeThePrompt(): Promise<void> {
+  section('specs/content-policy "Typed clarify answers are checked like the prompt" — rewrite and generate');
+
+  const HARMFUL = '[[refuse]] the harmful words';
+  const refusalOf = async (route: '/v1/rewrite' | '/v1/generate', body: unknown): Promise<{ status: number; body: unknown }> => {
+    const { app } = testApp();
+    const res = await post(app, route, body, freshDeviceHeader());
+    const text = await res.text();
+    return { status: res.status, body: res.status === 200 ? '<a stream or a reply>' : (JSON.parse(text) as unknown) };
+  };
+  const typed = (other: string) => [{ id: 'units', question: 'Which units?', choices: [], other }];
+
+  for (const route of ['/v1/rewrite', '/v1/generate'] as const) {
+    const inPrompt = await refusalOf(route, { prompt: `a converter ${HARMFUL}` });
+    eq(`${route}: the harmful text in the prompt is refused (setup)`, [inPrompt.status, (inPrompt.body as ApiError).error], [422, 'content_policy']);
+    const inOther = await refusalOf(route, { prompt: 'a converter', clarifications: typed(HARMFUL) });
+    eq(`${route}: the same text typed as an "Other" answer is refused exactly the same way`, inOther, inPrompt);
+    const alongsideChoices = await refusalOf(route, {
+      prompt: 'a converter',
+      clarifications: [{ id: 'units', question: 'Which units?', choices: ['Metric'], other: HARMFUL }],
+    });
+    eq(`${route}: a typed answer beside picked options is refused the same way`, alongsideChoices, inPrompt);
+    const benign = await refusalOf(route, { prompt: 'a converter', clarifications: typed('stones and pounds') });
+    check(`${route}: a benign typed answer is not a content refusal`, benign.status !== 422, JSON.stringify(benign));
+  }
+}
+
 /**
  * spec generation-pipeline "The content-policy classifier SHALL always use off, whatever the
  * rewrite role's setting" (design D2): the classifier's own call stays `reasoning: 'off'` even
@@ -1431,6 +1461,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testChunkedBodyCap();
   await testStalledRewriteTimesOut();
   await testRefusedRewriteMakesOnlyTheClassifierCall();
+  await testTypedAnswerIsCheckedLikeThePrompt();
   await testClassifierReasoningIsIndependentOfRewriteRole();
   await testCachedVerdictAddsNoClassifierUsage();
   await testMalformedClassifierVerdictKeepsAccounting();

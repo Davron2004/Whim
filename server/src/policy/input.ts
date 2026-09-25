@@ -12,9 +12,17 @@
  */
 import type { Clarification, ClarifyRequest, GenerateRequest, RewriteRequest } from '@whim/contract';
 
+/** One answered question as the classifier reads it. `other` is present only when the user typed
+ *  an answer; a question they asked Whim to decide adds no text of theirs. */
+interface CanonicalClarification {
+  question: string;
+  answer: string;
+  other?: string;
+}
+
 interface CanonicalFields {
   prompt: string;
-  clarifications: { question: string; answer: string }[];
+  clarifications: CanonicalClarification[];
   appName: string | null;
   fields: string[];
 }
@@ -28,10 +36,12 @@ function canonicalize(fields: CanonicalFields): string {
   });
 }
 
-/** One answered question as the classifier reads it: the question and the picked options, joined
- *  the way the prompt turns render them (`generation/prompts`). */
-function canonicalClarification(c: Clarification): { question: string; answer: string } {
-  return { question: c.question, answer: c.choices.join(', ') };
+/** One answered question as the classifier reads it: the question, every picked option joined
+ *  the way the prompt turns render them (`generation/prompts`), and the typed `other` answer, which
+ *  reaches those turns too and so is judged in the same input as the prompt (beta-1 D18). */
+function canonicalClarification(c: Clarification): CanonicalClarification {
+  const picked = { question: c.question, answer: c.choices.join(', ') };
+  return c.other === undefined ? picked : { ...picked, other: c.other };
 }
 
 /** `/v1/clarify`: only the prompt is user-authored free text at this point in the flow — no
@@ -41,7 +51,7 @@ export function buildClarifyPolicyInput(request: ClarifyRequest): string {
   return canonicalize({ prompt: request.prompt, clarifications: [], appName: null, fields: [] });
 }
 
-/** `/v1/rewrite`: the prompt, every clarification's question and answer, and — because a rewrite
+/** `/v1/rewrite`: the prompt, every clarification's question and answers, and — because a rewrite
  *  can carry a user-typed app name and collection/field names — those display names too (spec "App
  *  names in a rewrite are checked"). */
 export function buildRewritePolicyInput(request: RewriteRequest): string {
@@ -54,7 +64,7 @@ export function buildRewritePolicyInput(request: RewriteRequest): string {
   });
 }
 
-/** `/v1/generate`: the prompt and every clarification's question and answer. `GenerateRequest.app`
+/** `/v1/generate`: the prompt and every clarification's question and answers. `GenerateRequest.app`
  *  carries no display names (only `source`/`manifest`/`schema`, all excluded on purpose), so there
  *  is nothing else to add. */
 export function buildGeneratePolicyInput(request: GenerateRequest): string {
