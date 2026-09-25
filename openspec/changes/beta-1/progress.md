@@ -64,3 +64,4 @@
   - LauncherRoot catch bodies were extracted into `clarifyThrewTo`/`settleServerEnding` for lint.
   Red-checks: a "Decide for me" that keeps picks → 2 tests fail; `update` sent to the failure screen → 4 fail. The live heartbeat spec says ~8 s but the code checks 40 s (#123, not reconciled here).
 - chain-4 merged (integrity OK); tasks 4.1–4.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. chain-6's block now names `OtherAnswerField` (`ClarifyStep.tsx`).
+- 17:27 chain-5 dispatched: BASE `63940e4df4b5986e5116c2f67c4c4285da500b13`, worktree `.claude/worktrees/beta-1-5`, branch `chain/beta-1-5`, block `dispatch/chain-5.md`, model Opus (R9).
