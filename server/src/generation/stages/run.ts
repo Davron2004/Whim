@@ -12,12 +12,21 @@
  * adapter only maps the harness's own verdict onto the machine's `RunOutcome` shape.
  */
 import { assembleRecord } from '../record';
-import type { CheckedManifest, RunInput, RunOutcome, RunStage } from '../machine';
+import type { CheckedManifest, RunInput, RunOutcome, RunStage, RunVerdict } from '../machine';
 import type { Diagnostic } from '@whim/contract';
-import type { RunCandidate, RuntimeDiagnostic } from '../../../../synthrun/contract';
+import type { RunCandidate, RunReport, RuntimeDiagnostic } from '../../../../synthrun/contract';
 
 function toWireDiagnostic(d: RuntimeDiagnostic): Diagnostic {
   return { kind: d.kind, severity: d.severity, message: d.message, symbol: d.symbol, line: d.line, hint: d.hint };
+}
+
+/** The check that kept an unverified run from reporting a verdict (beta-1 D11): the kind of the
+ *  first diagnostic the harness recorded besides `containment_unobserved` itself (a
+ *  `mount_timeout`, a `runtime_throw` before the probes ran), or `containment_unobserved` when it
+ *  recorded nothing else. A kind only, from the closed vocabulary: no message, hint or symbol. */
+function unobservedVerdict(report: RunReport): RunVerdict<'unobserved'> {
+  const cause = report.diagnostics.find((d) => d.kind !== 'containment_unobserved');
+  return { kind: 'unobserved', check: cause?.kind ?? 'containment_unobserved' };
 }
 
 /** The machine only ever reaches `RUN` once `CHECK` is clean (design D6's errors-block gate),
@@ -59,9 +68,11 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
       // short-circuits with its own reason"; design D3 — it is never re-run). In both branches
       // `diagnostics` is explicitly `[]`, not a copy of the harness's report: nothing about the
       // escape attempt, and no `containment_unobserved` detail, is even carried this far, so
-      // "feeds nothing back to the model" holds at the type level too.
-      if (report.contained === false) return { contained: false, diagnostics: [] };
-      if (report.contained === null) return { contained: null, diagnostics: [] };
+      // "feeds nothing back to the model" holds at the type level too. What does travel is the
+      // content-free verdict the machine logs (beta-1 D11): an authenticated breach is the probes'
+      // own `containment_failure`, and an unverified run names what kept the verdict away.
+      if (report.contained === false) return { contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' } };
+      if (report.contained === null) return { contained: null, diagnostics: [], verdict: unobservedVerdict(report) };
 
       const diagnostics: Diagnostic[] = report.diagnostics.map(toWireDiagnostic);
 

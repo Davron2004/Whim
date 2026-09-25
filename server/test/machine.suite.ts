@@ -13,6 +13,8 @@
  * unsupported dynamic require). The real check PIPELINE still never runs here: `CheckStage` is a
  * fake, exactly as before.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { caught, check, eq, section } from './harness';
 import { captureLogs, withMessage } from './log-capture';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
@@ -37,10 +39,13 @@ import {
 } from '../src/generation/machine';
 import { defaultModelRoster, modelRosterFromEnv, openRouterModelClient, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import type { PromptInputs } from '../src/generation/prompts/inputs';
-import { OpenRouterClient, OpenRouterCreditError, type FetchFn } from '../src/openrouter';
+import { OpenRouterClient, OpenRouterCreditError, OpenRouterNetworkError, OpenRouterRateLimitError, type FetchFn } from '../src/openrouter';
 import { createModelSummariser, type SummariseResult, type Summariser } from '../src/generation/summarise';
 import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../src/admission/credit';
 import { budgetExhaustedRefusal } from '../src/admission/refusals';
+import { createRunStage } from '../src/generation/stages/run';
+import { fakeReport, stubRunCandidate } from './run-stage-fixtures';
+import type { RunReport } from '../../synthrun/contract';
 import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 
 // ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -731,7 +736,7 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
-    run: scriptedRun([{ contained: false, diagnostics: [] }]),
+    run: scriptedRun([{ contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' } }]),
   });
   const machine = new GenerationMachine(deps);
   const trace: RunTrace = { generationIds: [] };
@@ -765,7 +770,7 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
     // One outcome only: a second `run` call — a re-run of the same candidate — exhausts the script
     // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
-    run: scriptedRun([{ contained: null, diagnostics: [] }]),
+    run: scriptedRun([{ contained: null, diagnostics: [], verdict: { kind: 'unobserved', check: 'mount_timeout' } }]),
   });
   const trace: RunTrace = { generationIds: [] };
   const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
@@ -799,6 +804,84 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
   for (const leak of ['containment_unobserved', 'unobserved', 'forger']) {
     check(`unobserved verdict: no assembled prompt mentions "${leak}"`, !assembled.includes(leak));
   }
+}
+
+/** Strings planted in everything a run touches — the prompt, the candidate source, and the
+ *  harness's own DOM/console-derived diagnostic text — that must never reach a log line. */
+const PLANTED = {
+  prompt: 'PLANTED-PROMPT-7f3a',
+  source: 'PLANTED-SOURCE-7f3a',
+  dom: 'PLANTED-DOM-TEXT-7f3a',
+  console: 'PLANTED-CONSOLE-7f3a',
+} as const;
+
+async function verdictLogFor(report: RunReport): Promise<{ events: GenerationEvent[]; terminal: Record<string, unknown>[]; raw: string[] }> {
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn([`export default {}; // ${PLANTED.source}`])]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    // The real adapter over a hand-built harness report: the mapping and the logging together.
+    run: createRunStage(stubRunCandidate(report)),
+  });
+  const trace: RunTrace = { generationIds: [], requestId: 'req-verdict-1' };
+  const capture = captureLogs();
+  try {
+    const events = await collect(new GenerationMachine(deps).run({ prompt: `a timer ${PLANTED.prompt}` }, undefined, trace));
+    return { events, terminal: withMessage(capture, 'terminal failure'), raw: [...capture.raw] };
+  } finally {
+    capture.stop();
+  }
+}
+
+async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
+  section('machine — a containment_failed or run_unverified ending logs its verdict kind and check once, with no content (beta-1 D11)');
+
+  const cases: { label: string; report: RunReport; expected: Record<string, unknown> }[] = [
+    {
+      label: 'run_unverified after a mount timeout',
+      report: fakeReport({
+        ok: false,
+        contained: null,
+        diagnostics: [
+          { kind: 'mount_timeout', severity: 'error', message: `the page showed "${PLANTED.dom}"`, hint: `console said ${PLANTED.console}` },
+          { kind: 'containment_unobserved', severity: 'error', message: 'no authenticated verdict', hint: 'rerun' },
+        ],
+      }),
+      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'mount_timeout', requestId: 'req-verdict-1', level: 30 },
+    },
+    {
+      label: 'run_unverified with nothing else recorded',
+      report: fakeReport({ ok: false, contained: null, diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }] }),
+      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'containment_unobserved', requestId: 'req-verdict-1', level: 30 },
+    },
+    {
+      label: 'containment_failed',
+      report: fakeReport({
+        ok: false,
+        contained: false,
+        diagnostics: [
+          { kind: 'runtime_throw', severity: 'error', message: PLANTED.console, hint: PLANTED.dom },
+          { kind: 'containment_failure', severity: 'error', message: 'probes reported a breach', hint: 'none' },
+        ],
+      }),
+      expected: { reason: 'containment_failed', verdict: 'breach', check: 'containment_failure', requestId: 'req-verdict-1', level: 30 },
+    },
+  ];
+  for (const { label, report, expected } of cases) {
+    const { events, terminal, raw } = await verdictLogFor(report);
+    eq(`${label}: the run ends in one failure`, terminals(events).map((e) => e.type), ['failure']);
+    eq(
+      `${label}: one terminal line carries the request id, the verdict kind and the check`,
+      terminal.map((r) => ({ reason: r.reason, verdict: r.verdict, check: r.check, requestId: r.requestId, level: r.level })),
+      [expected],
+    );
+    const leaked = Object.values(PLANTED).filter((planted) => raw.some((line) => line.includes(planted)));
+    eq(`${label}: no prompt, source, DOM or console text appears in any log line`, leaked, []);
+  }
+
+  const delivered = await verdictLogFor(fakeReport({ contained: true, diagnostics: [] }));
+  eq('a delivered run logs no terminal failure line', delivered.terminal.length, 0);
 }
 
 async function testStageThrowYieldsOneFailure(): Promise<void> {
@@ -1890,6 +1973,251 @@ async function testA402InTheExpiryTurnStillInvalidates(): Promise<void> {
   invalidateCreditCache();
 }
 
+// ── §A model turn that loses its provider is retried once (beta-1 D10) ───────
+
+/** Every stage past the model delivers, and the check stage records each source it is handed. */
+function deliveringDeps(model: ModelClient, checked: string[], checkReports: CheckReport[] = [{ diagnostics: [], manifest: MANIFEST }]): GenerationPipelineDeps {
+  let call = 0;
+  return baseDeps({
+    model,
+    check: {
+      check: (source) => {
+        checked.push(source);
+        const report = checkReports[Math.min(call, checkReports.length - 1)];
+        call += 1;
+        return report;
+      },
+    },
+    build: { build: () => ({ ok: true, result: BUILD_RESULT }) },
+    run: { run: () => ({ contained: true, diagnostics: [], record: WIRE_RECORD }) },
+  });
+}
+
+async function runLogged(deps: GenerationPipelineDeps, trace: RunTrace): Promise<{ events: GenerationEvent[]; retried: Record<string, unknown>[]; failed: Record<string, unknown>[] }> {
+  const capture = captureLogs();
+  try {
+    const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
+    return { events, retried: withMessage(capture, 'model turn retried'), failed: withMessage(capture, 'run failed') };
+  } finally {
+    capture.stop();
+  }
+}
+
+function messagesOf(model: ScriptedModelClient, role: 'engineer' | 'repair'): string[] {
+  return model.requests.filter((r) => r.role === role).map((r) => JSON.stringify(r.request.messages));
+}
+
+/** The token and restart events, in order, as `token:<text>` / `restart`. */
+function tokenFlow(events: GenerationEvent[]): string[] {
+  return events.flatMap((e) => {
+    if (e.type === 'token') return [`token:${e.text}`];
+    return e.type === 'restart' ? ['restart'] : [];
+  });
+}
+
+async function testProviderDropBeforeFirstTokenIsResent(): Promise<void> {
+  section('machine — a generate turn whose provider drops before its first token is resent once, with no restart (beta-1 D10)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'plan', deltas: [VALID_PLAN_JSON], usage: ONE_TOKEN_USAGE, id: 'gen-plan' },
+    // A reasoning delta only: the device saw the model thinking, but no token of this turn.
+    { role: 'engineer', deltas: [{ reasoning: 'thinking' }], error: new OpenRouterNetworkError('fetch failed'), id: 'gen-dropped' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-resent' },
+  ]);
+  const checked: string[] = [];
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried } = await runLogged(deliveringDeps(model, checked), trace);
+
+  assertCompletedEnvelope('drop before first token', events);
+  eq('drop before first token: the build is delivered', events.at(-1)?.type, 'result');
+  eq('drop before first token: no restart event', tokenFlow(events), ['token:export default {};']);
+  const [first, resent] = messagesOf(model, 'engineer');
+  check('drop before first token: the turn was sent exactly twice, with the same messages', messagesOf(model, 'engineer').length === 2 && first === resent);
+  eq('drop before first token: the check stage saw only the resent turn', checked, ['export default {};']);
+  eq('drop before first token: usage sums the calls that completed', events.find((e) => e.type === 'usage'), { type: 'usage', usage: { promptTokens: 2, completionTokens: 2, totalTokens: 4 } });
+  eq('drop before first token: every call is traced', trace.generationIds, ['gen-plan', 'gen-dropped', 'gen-resent']);
+  eq('drop before first token: the dropped call is left for reconciliation, since its usage never arrived', trace.uncreditedGenerationIds, ['gen-dropped']);
+  eq('drop before first token: one retry line, naming the turn and no restart', retried.map((r) => [r.role, r.errorClass, r.restart]), [['generate', 'OpenRouterNetworkError', false]]);
+}
+
+async function testProviderDropMidTurnRestarts(): Promise<void> {
+  section('machine — a turn whose provider drops after its tokens emits one restart, is resent and can deliver (beta-1 D10)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    { role: 'engineer', deltas: ['export ', 'default {'], error: new OpenRouterNetworkError('OpenRouter: stream error (502)', undefined, 502), id: 'gen-dropped' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-resent' },
+  ]);
+  const checked: string[] = [];
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried } = await runLogged(deliveringDeps(model, checked), trace);
+
+  assertCompletedEnvelope('drop mid-turn', events);
+  eq('drop mid-turn: the build is delivered', events.at(-1)?.type, 'result');
+  eq('drop mid-turn: exactly one restart, after the voided tokens and before the resent ones', tokenFlow(events), ['token:export ', 'token:default {', 'restart', 'token:export default {};']);
+  eq('drop mid-turn: the partial text never reaches the check stage', checked, ['export default {};']);
+  eq('drop mid-turn: the generate bracket opens and closes once', stageEvents(events, 'generate').map((e) => e.status), ['start', 'done']);
+  eq('drop mid-turn: the dropped call is left for reconciliation', trace.uncreditedGenerationIds, ['gen-dropped']);
+  eq('drop mid-turn: the retry line says a restart was sent', retried.map((r) => r.restart), [true]);
+
+  // A repair turn is resent on the same terms.
+  const repairModel = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn(['candidate-1']),
+    { role: 'repair', deltas: ['candidate-'], error: new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)'), id: 'gen-repair-dropped' },
+    { role: 'repair', deltas: ['candidate-2'], usage: ONE_TOKEN_USAGE, id: 'gen-repair-resent' },
+  ]);
+  const repairChecked: string[] = [];
+  const repairTrace: RunTrace = { generationIds: [] };
+  const repair = await runLogged(
+    deliveringDeps(repairModel, repairChecked, [{ diagnostics: [ERROR_DIAG], manifest: MANIFEST }, { diagnostics: [], manifest: MANIFEST }]),
+    repairTrace,
+  );
+  eq('repair drop (429): the build is delivered', repair.events.at(-1)?.type, 'result');
+  eq('repair drop (429): one restart voids the repair turn’s tokens', tokenFlow(repair.events), ['token:candidate-1', 'token:candidate-', 'restart', 'token:candidate-2']);
+  eq('repair drop (429): the repair turn was resent with the same messages', new Set(messagesOf(repairModel, 'repair')).size === 1 && messagesOf(repairModel, 'repair').length === 2, true);
+  eq('repair drop (429): the check stage saw the first candidate and the resent repair only', repairChecked, ['candidate-1', 'candidate-2']);
+  eq('repair drop (429): the dropped repair call is left for reconciliation', repairTrace.uncreditedGenerationIds, ['gen-repair-dropped']);
+}
+
+async function testSecondProviderDropIsTerminal(): Promise<void> {
+  section('machine — a resent turn that fails too ends the run as it does today (beta-1 D10)');
+
+  // A third engineer turn is scripted and would deliver: only a second resend could reach it.
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    { role: 'engineer', deltas: ['export '], error: new OpenRouterNetworkError('stream read failed'), id: 'gen-dropped-1' },
+    { role: 'engineer', deltas: ['export '], error: new OpenRouterNetworkError('stream read failed'), id: 'gen-dropped-2' },
+    { role: 'engineer', deltas: ['export default {};'], usage: ONE_TOKEN_USAGE, id: 'gen-never' },
+  ]);
+  const trace: RunTrace = { generationIds: [] };
+  const { events, retried, failed } = await runLogged(deliveringDeps(model, []), trace);
+
+  assertCompletedEnvelope('second drop', events);
+  eq('second drop: the run ends in the generic failure', lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+  eq('second drop: the trace records internal_error', trace.failureCode, 'internal_error');
+  eq('second drop: the turn was sent twice, never a third time', model.requests.length, 3);
+  eq('second drop: one restart only — the second failure sends none', tokenFlow(events), ['token:export ', 'restart', 'token:export ']);
+  eq('second drop: one retry line, and the run failure logged as before', [retried.length, failed.map((r) => r.errorClass)], [1, ['OpenRouterNetworkError']]);
+  eq('second drop: both dropped calls are left for reconciliation', trace.uncreditedGenerationIds, ['gen-dropped-1', 'gen-dropped-2']);
+}
+
+async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<void> {
+  section('machine — only a generate/repair turn failing upstream is resent: a plan turn, a 4xx or a non-provider error is not (beta-1 D10)');
+
+  const cases: { label: string; turns: ScriptedTurn[]; calls: number }[] = [
+    {
+      label: 'a plan turn that drops',
+      turns: [{ role: 'plan', deltas: [], error: new OpenRouterNetworkError('fetch failed') }, planTurn([VALID_PLAN_JSON])],
+      calls: 1,
+    },
+    {
+      label: 'a generate turn refused with a 400',
+      turns: [planTurn([VALID_PLAN_JSON]), { role: 'engineer', deltas: [], error: new OpenRouterNetworkError('OpenRouter: HTTP 400', undefined, 400) }, engineerTurn(['export default {};'])],
+      calls: 2,
+    },
+    {
+      label: 'a generate turn failing with a non-provider error',
+      turns: [planTurn([VALID_PLAN_JSON]), { role: 'engineer', deltas: ['export '], error: new Error('parse failure') }, engineerTurn(['export default {};'])],
+      calls: 2,
+    },
+  ];
+  for (const { label, turns, calls } of cases) {
+    const model = new ScriptedModelClient(ROSTER, turns);
+    const { events, retried } = await runLogged(deliveringDeps(model, []), { generationIds: [] });
+    eq(`${label}: ends in one failure`, lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+    eq(`${label}: is not resent`, [model.requests.length, retried.length], [calls, 0]);
+    eq(`${label}: sends no restart`, events.filter((e) => e.type === 'restart').length, 0);
+  }
+}
+
+// ── §A no-change summary requires unchanged source (beta-1 D13, #106) ─────────
+
+/** A real curated app, standing in for the installed app a "Change it" request starts from. */
+const STARTING_SOURCE = fs.readFileSync(path.join(process.cwd(), 'fixtures', 'water-counter.app.tsx'), 'utf8');
+
+/** What the engineer sent back in #106: the app it was given plus timer code nobody asked for. */
+function withUnrelatedTimer(source: string): string {
+  return source
+    .replace('  storage,\n', '  storage,\n  interval,\n')
+    .replace(
+      "  const [status, setStatus] = useState('loading…');\n",
+      "  const [status, setStatus] = useState('loading…');\n  const [seconds, setSeconds] = useState(0);\n  interval(() => setSeconds((s) => s + 1), 1000);\n",
+    );
+}
+
+/** A model reply as the engineer writes it: the whole file in a fence. */
+function fencedReply(source: string): string {
+  return '```tsx\n' + source + '\n```';
+}
+
+/** A summary reply as the summary model writes it, JSON in a fence. */
+function summaryReply(text: string): string {
+  return '```json\n' + JSON.stringify({ text, kind: 'Changed', touched: ['glass counter'], chg: '', hedge: '' }) + '\n```';
+}
+
+const NO_CHANGE_TEXT = 'No changes were needed, the counter already works this way.';
+
+/** One edit run through the real run-stage adapter (the record is assembled from the candidate
+ *  the machine hands it) and the real model-backed summariser. */
+async function editRun(appSource: string | undefined, engineerReply: string, summaryText: string): Promise<{ result: Extract<GenerationEvent, { type: 'result' }> | undefined; summaryPrompt: string }> {
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn([engineerReply]),
+    { role: 'summary', deltas: [summaryReply(summaryText)], usage: ONE_TOKEN_USAGE },
+  ]);
+  const deps = baseDeps({
+    model,
+    summariser: createModelSummariser({ model, roster: ROSTER, timeoutMs: 2_000 }),
+    check: scriptedCheck([{ diagnostics: [], manifest: { name: 'Water Counter', manifest: { capabilities: ['storage'] }, schema: {} } }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: createRunStage(stubRunCandidate(fakeReport({ contained: true, diagnostics: [] }))),
+  });
+  const request: GenerateRequest = {
+    prompt: 'make the glass count bigger',
+    app: { ...(appSource === undefined ? {} : { source: appSource }), manifest: { capabilities: ['storage'] }, schema: {} },
+  };
+  const events = await collect(new GenerationMachine(deps).run(request));
+  const result = events.find((e): e is Extract<GenerationEvent, { type: 'result' }> => e.type === 'result');
+  const summaryRequest = model.requests.find((r) => r.role === 'summary');
+  return { result, summaryPrompt: summaryRequest?.request.messages.find((m) => m.role === 'user')?.content ?? '' };
+}
+
+/** Independent of the implementation's own detector: the wording #106 showed. */
+const SAYS_NO_CHANGE = /\bno changes?\b|\bnothing (?:was |has been )?changed\b|\bunchanged\b|\balready works\b/i;
+
+async function testNoChangeSummaryNeedsUnchangedSource(): Promise<void> {
+  section('machine — a no-change summary is delivered only when the source is byte-identical (beta-1 D13, #106)');
+
+  const changedSource = withUnrelatedTimer(STARTING_SOURCE);
+  check('setup: the fixture edit really changed the source', changedSource !== STARTING_SOURCE && changedSource.includes('interval(() =>'));
+
+  // #106: the saved source gained timer code, and the summary said nothing changed.
+  const changed = await editRun(STARTING_SOURCE, fencedReply(changedSource), NO_CHANGE_TEXT);
+  eq('changed source: the delivered record carries the changed source', changed.result?.app.source, changedSource);
+  check('changed source: a summary is still delivered', changed.result?.summary !== undefined);
+  check('changed source: the delivered summary does not claim no change', !SAYS_NO_CHANGE.test(changed.result?.summary?.text ?? ''), changed.result?.summary?.text);
+
+  const unchanged = await editRun(STARTING_SOURCE, fencedReply(STARTING_SOURCE), NO_CHANGE_TEXT);
+  eq('byte-identical source: the delivered record is the starting source', unchanged.result?.app.source, STARTING_SOURCE);
+  eq('byte-identical source: the no-change summary is delivered as written', unchanged.result?.summary?.text, NO_CHANGE_TEXT);
+
+  const trailingNewline = await editRun(STARTING_SOURCE, fencedReply(`${STARTING_SOURCE}\n`), NO_CHANGE_TEXT);
+  check('one byte more (a trailing newline) is a change', !SAYS_NO_CHANGE.test(trailingNewline.result?.summary?.text ?? ''), trailingNewline.result?.summary?.text);
+
+  const untracked = await editRun(undefined, fencedReply(changedSource), NO_CHANGE_TEXT);
+  check('no starting source on file (a pre-tracking install): no-change cannot be verified, so it is not claimed', !SAYS_NO_CHANGE.test(untracked.result?.summary?.text ?? ''), untracked.result?.summary?.text);
+
+  const described = await editRun(STARTING_SOURCE, fencedReply(changedSource), 'The glass count now also shows a running seconds timer.');
+  eq('changed source: an ordinary summary of the change is delivered as written', described.result?.summary?.text, 'The glass count now also shows a running seconds timer.');
+
+  eq(
+    'the summariser is told whether the source changed: its prompt differs for changed, unchanged and unknown',
+    new Set([changed.summaryPrompt, unchanged.summaryPrompt, untracked.summaryPrompt]).size,
+    3,
+  );
+}
+
 async function testRunTraceOutcomeAndBudgetDefaults(): Promise<void> {
   section('machine — RunTrace.outcome for every ending, and the budget\'s default and validation');
 
@@ -1968,6 +2296,7 @@ export async function runMachineTests(): Promise<void> {
   await testVerbTimeRunDiagnosticRoutesToRepairAndDeliversNoRecord();
   await testContainmentFailureShortCircuit();
   await testUnobservedVerdictIsTerminalWithItsOwnReason();
+  await testUnverifiedVerdictIsLoggedWithoutContent();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();
   await testAbortDuringGenerateTokens();
@@ -1994,5 +2323,10 @@ export async function runMachineTests(): Promise<void> {
   await testA402InTheExpiryTurnStillInvalidates();
   await testMidStreamCreditFrameEndsTheRun();
   await testSummariserCreditErrorStillInvalidatesTheCache();
+  await testProviderDropBeforeFirstTokenIsResent();
+  await testProviderDropMidTurnRestarts();
+  await testSecondProviderDropIsTerminal();
+  await testOnlyUpstreamGenerateAndRepairFailuresAreResent();
+  await testNoChangeSummaryNeedsUnchangedSource();
   await testRunTraceOutcomeAndBudgetDefaults();
 }

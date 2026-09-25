@@ -27,6 +27,11 @@ import { buildSummaryMessages } from './prompts';
 import { parseJsonBlock } from './json-block';
 import type { ServerLogger } from '../logger';
 
+/** Whether the delivered source is byte-identical to the one the request started from (beta-1
+ *  D13), as the caller computed it: `unknown` when the request carried no starting source (a new
+ *  app, or an install from before source tracking). */
+export type SourceChange = 'changed' | 'unchanged' | 'unknown';
+
 /** Everything the summariser is allowed to see. Deliberately record-free (see the header). */
 export interface SummariserInput {
   /** The user's own request for this run. */
@@ -41,6 +46,8 @@ export interface SummariserInput {
   attempts: number;
   /** Diagnostics accumulated on the way to delivery — what the run *learned*. Copied. */
   diagnostics: Diagnostic[];
+  /** Whether the delivered source changed — a fact the caller decided, never the model. */
+  sourceChange: SourceChange;
 }
 
 /** `summary` absent = "no summary for this run", a legitimate state. `usage` is the summariser's
@@ -171,6 +178,28 @@ export function shapeSummary(raw: unknown, fallbackKind: SummaryKind): RunSummar
  *  kind or named one outside the closed set. */
 export function fallbackKindFor(input: SummariserInput): SummaryKind {
   return input.isEdit ? 'Changed' : 'Start';
+}
+
+/** Wordings of "the app did not change" (#106: "No changes…"). "no longer" is a change, so it is
+ *  not one of them. */
+const NO_CHANGE_CLAIMS: readonly RegExp[] = [
+  /\bno\s+(?:(?!longer\b)\w+\s+){0,2}changes?\b/i,
+  /\bnothing\s+(?:\w+\s+){0,3}chang/i,
+  /\bunchanged\b/i,
+  /\b(?:did|does|do|was|were|is|has|have|had)(?:n['’]t|\s+not)\s+(?:\w+\s+){0,2}chang/i,
+  /\balready\s+(?:does|did|works|worked|handles|handled|covers|covered)\b/i,
+  /\b(?:stays|stayed|remains|remained|is|looks)\s+(?:exactly\s+)?the\s+same\b/i,
+];
+
+/** True when a summary sentence says the app did not change. */
+export function claimsNoChange(text: string): boolean {
+  return NO_CHANGE_CLAIMS.some((pattern) => pattern.test(text));
+}
+
+/** What a no-change claim is replaced with when the source is not shown to be unchanged (beta-1
+ *  D13): a line that claims no change and names none. */
+export function neutralSummary(input: SummariserInput): RunSummary {
+  return { text: input.isEdit ? 'Your app was updated.' : 'Your app is ready.', kind: fallbackKindFor(input), touched: [], marks: [] };
 }
 
 // ─── The model-backed summariser ─────────────────────────────────────────────

@@ -36,8 +36,11 @@ export interface GenerateReport extends PhaseReport {
     | { type: 'failure'; reason: string; attempts: number };
 }
 
+/** `limit` is clarify saying the request's core needs something a mini-app cannot do (beta-1 D9):
+ *  the case stops before rewrite, and it is not a failure. */
 export type CaseOutcome =
   | { type: 'result' }
+  | { type: 'limit'; reason: string; alternative: string }
   | { type: 'failure'; phase: 'clarify' | 'rewrite' | 'generate'; reason: string; attempts: number };
 
 export interface CaseReport {
@@ -68,7 +71,9 @@ export interface FlowBenchmarkReport {
   summary: {
     phases: Record<'clarify' | 'rewrite' | 'generate', PhaseSummary>;
     results: number;
+    /** Real failures only: a `limit` outcome is counted in `limits`. */
     failures: number;
+    limits: number;
   };
 }
 
@@ -102,6 +107,7 @@ export function buildReport(setId: string, url: string, startedAt: string, cases
       },
       results: cases.filter((item) => item.outcome.type === 'result').length,
       failures: cases.filter((item) => item.outcome.type === 'failure').length,
+      limits: cases.filter((item) => item.outcome.type === 'limit').length,
     },
   };
 }
@@ -112,6 +118,12 @@ function durationText(durationMs: number | undefined): string {
 
 function statusText(report: PhaseReport | GenerateReport | undefined): string {
   return report === undefined ? '-' : `${report.status} / ${durationText(report.durationMs)}`;
+}
+
+function outcomeText(outcome: CaseOutcome): string {
+  if (outcome.type === 'result') return 'result';
+  if (outcome.type === 'limit') return `limit: ${outcome.reason} → ${outcome.alternative}`;
+  return `failure: ${outcome.reason}`;
 }
 
 export function formatMarkdownReport(report: FlowBenchmarkReport): string {
@@ -125,7 +137,7 @@ export function formatMarkdownReport(report: FlowBenchmarkReport): string {
       const attempt = stage.attempt === undefined ? '' : `#${stage.attempt}`;
       return `${stage.stage}${attempt}: ${stage.durationMs} ms`;
     }).join('<br>') ?? '-';
-    const outcome = item.outcome.type === 'result' ? 'result' : `failure: ${item.outcome.reason}`;
+    const outcome = outcomeText(item.outcome);
     lines.push(`| ${item.caseId} | ${statusText(item.phases.clarify)} | ${statusText(item.phases.rewrite)} | ${statusText(generate)} | ${stages} | ${outcome} |`);
   }
   lines.push('', '| Phase | Median | Maximum |', '| --- | ---: | ---: |');

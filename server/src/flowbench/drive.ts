@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ApiError, Clarification, ClarifyResponse, GenerationEvent, RewriteResponse } from '@whim/contract';
+import type { ApiError, Clarification, ClarifyLimit, ClarifyResponse, GenerationEvent, RewriteResponse } from '@whim/contract';
 import { benchEnvelopeHeaders } from '../bench-envelope';
 import { buildReport, type CaseOutcome, type CaseReport, type EvalCase, type EvalSet, type FlowBenchmarkReport, type GenerateReport, type PhaseReport, type StageTiming } from './report';
 
@@ -156,7 +156,14 @@ function parseClarify(text: string): ClarifyResponse | undefined {
   if (questions.length !== parsed.questions.length) return undefined;
   const valid = questions.every((question) => typeof question.id === 'string' && typeof question.question === 'string' && Array.isArray(question.options) && question.options.length > 0 && question.options.every((option) => typeof option === 'string'));
   if (!valid || questions.length > 3) return undefined;
-  return { questions: questions as ClarifyResponse['questions'] };
+  const limit = parseLimit(parsed.limit);
+  return limit === undefined ? { questions: questions as ClarifyResponse['questions'] } : { questions: [], limit };
+}
+
+function parseLimit(value: unknown): ClarifyLimit | undefined {
+  const limit = asRecord(value);
+  if (typeof limit?.reason !== 'string' || typeof limit.alternative !== 'string') return undefined;
+  return { reason: limit.reason, alternative: limit.alternative };
 }
 
 function parseRewrite(text: string): RewriteResponse | undefined {
@@ -326,6 +333,10 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, sav
     ...(clarifyResponse.status !== 200 || clarifyBody === undefined ? { error: clarifyResponse.status === 200 ? { error: 'invalid_response', hint: 'The clarify response did not match the contract.' } : apiErrorFrom(clarifyResponse.body, clarifyResponse.status) } : {}),
   };
   if (clarifyBody === undefined) return phaseFailure('clarify', clarify, [], caseInfo, deviceId);
+  if (clarifyBody.limit !== undefined) {
+    const { reason, alternative } = clarifyBody.limit;
+    return { caseId: caseInfo.caseId, appSlug: caseInfo.appSlug, prompt: caseInfo.prompt, deviceId, clarifications: [], phases: { clarify }, outcome: { type: 'limit', reason, alternative } };
+  }
   const clarifications = clarifyBody.questions.map((question) => ({ id: question.id, question: question.question, choices: [question.options[0]!] }));
 
   const rewriteBody = { prompt: caseInfo.prompt, ...(clarifications.length > 0 ? { clarifications } : {}) };

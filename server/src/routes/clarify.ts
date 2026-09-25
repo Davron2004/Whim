@@ -1,7 +1,8 @@
 /**
  * POST /v1/clarify — the pre-stream clarify exchange (design D1, spec "Clarify endpoint").
  *
- * Unary by construction: prompt in, at most three questions out. It is NOT a generation stage, it
+ * Unary by construction: prompt in, at most three questions out, or a `limit` instead when the
+ * request's core needs something a mini-app cannot do (beta-1 D9). It is NOT a generation stage, it
  * opens no stream, and it holds no per-device state — the device carries the answers forward by
  * value inside the rewrite/generate request that follows. `GenerationEvent` is untouched.
  *
@@ -20,7 +21,7 @@
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { ClarifyRequest, ClarifyResponse, type ApiError, type Usage } from '@whim/contract';
+import { ClarifyRequest, ClarifyResponse, type ApiError, type ClarifyLimit, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
@@ -80,17 +81,44 @@ const STUB_QUESTIONS: ClarifyResponse = {
   ],
 };
 
+/** The longest `limit.reason` or `limit.alternative` clarify returns, in characters after trimming. */
+const LIMIT_FIELD_MAX_CHARS = 200;
+
+function limitField(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= LIMIT_FIELD_MAX_CHARS ? trimmed : undefined;
+}
+
+/** The model's `limit` (beta-1 D9), when both fields are usable. Anything else is no limit. */
+function shapeLimit(raw: unknown): ClarifyLimit | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const reason = limitField((raw as Record<string, unknown>).reason);
+  const alternative = limitField((raw as Record<string, unknown>).alternative);
+  return reason !== undefined && alternative !== undefined ? { reason, alternative } : undefined;
+}
+
 /**
  * Model output → a conforming `ClarifyResponse`, or `undefined` when it is unusable. Defensive
  * normalization only, never fabrication: a question past the third is dropped, as is one with no
  * options — both are the model exceeding a bound the contract sets, not content to invent. A
  * question the model gives no answer mode is single-select with no typed answer (`select: 'one'`,
  * `other: false`), the mode every question had before the model could choose one.
+ *
+ * A usable `limit` wins: it is returned with no questions, and questions the model sent beside it
+ * are dropped and logged, since the contract refuses the pair. A malformed `limit` is ignored, so
+ * the reply is read as questions exactly as it would be without one.
  */
-function shapeClarify(text: string): ClarifyResponse | undefined {
+function shapeClarify(text: string, log: ServerLogger): ClarifyResponse | undefined {
   const parsed = parseJsonBlock(text);
   if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const raw = (parsed as Record<string, unknown>).questions;
+  const reply = parsed as Record<string, unknown>;
+  const raw = reply.questions;
+  const limit = shapeLimit(reply.limit);
+  if (limit !== undefined) {
+    if (Array.isArray(raw) && raw.length > 0) log.info({ droppedQuestions: raw.length }, 'clarify limit kept, questions dropped');
+    return { questions: [], limit };
+  }
   if (!Array.isArray(raw)) return undefined;
 
   const questions = raw
@@ -538,7 +566,7 @@ async function runClarifyWork(
   // Store failures must reach the app's 500 handler, not be retried as model failures.
   await usageStore.credit(deviceId, usage);
   const ids = completedGenerationId ? [completedGenerationId] : [];
-  const shaped = shapeClarify(raw);
+  const shaped = shapeClarify(raw, requestLog);
   if (!shaped) {
     await finish('error', usage, ids, true, 'model_failure');
     return Response.json(MODEL_FAILURE, { status: 502 });
