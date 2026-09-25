@@ -24,6 +24,7 @@ CONFIG_SET=(
   package.json package-lock.json tsconfig*.json
   eslint.config.* .eslintrc* .eslintignore knip.json knip.config.*
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
+  scripts/worktree.sh   # executed below (the node_modules precondition)
   .claude/hooks .claude/settings.json .claude/agents .claude/commands
   .codex   # Codex mirror — hook symlinks into .claude/hooks + generated agent TOMLs
   babel.config.js metro.config.js
@@ -34,6 +35,14 @@ if ! git diff --quiet "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null; then
   echo "GATE REFUSING TO RUN: verification config (or a harness hook) differs from baseline ($BASE)."
   echo "These are human-edited and must be a deliberate human change before the gate will run:"
   git --no-pager diff --name-only "$BASE" -- "${CONFIG_SET[@]}" 2>/dev/null
+  exit 2
+fi
+
+# node_modules tripwire: this checkout must have its OWN node_modules (scripts/worktree.sh). With
+# none, or a symlinked one, Node/tsc/esbuild resolve @whim/* to another checkout's contract/ and
+# server/, so every suite below would test the wrong tree's code and could still pass.
+if ! ./scripts/worktree.sh check; then
+  echo "GATE REFUSING TO RUN: this checkout's node_modules is not its own (see above)."
   exit 2
 fi
 

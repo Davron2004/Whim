@@ -33,7 +33,7 @@ Derived lane names (`ID = TARGET with / → -`; the hooks derive the same names 
    ```
    The gate judges against these pins; they are recorded BEFORE the agent exists and the file is agent-unwritable (pinned-BASE philosophy). The bash-policy lane (`cleanup_lane()`) derives the lane worktree name from `target_branch` — grant and lane cannot drift apart.
 3. **Backup ref**: `git branch backup/pre-cleanup-<ID> <TARGET>` — the undo button. The agent cannot destroy it (`reflog`/`gc`/forced branch ops are tier-1 denied even in-lane).
-4. **Lane worktree**: `git worktree add <abs-repo-root>/.claude/worktrees/<ID>-squashed -b cleanup/<ID>-squashed <TARGET>`. **Run this with the sandbox disabled** — the checkout materializes `.claude/` copies inside the worktree and sandboxed bash gets "Operation not permitted" on them (verified 2026-07-06). This is the one expected sandbox override in the flow; it needs an attended session.
+4. **Lane worktree**: `git worktree add <abs-repo-root>/.claude/worktrees/<ID>-squashed -b cleanup/<ID>-squashed <TARGET>`. (Plain `git worktree add`, not `scripts/worktree.sh create`: nothing is built or run in this lane, so it needs no `node_modules`.) **Run this with the sandbox disabled** — the checkout materializes `.claude/` copies inside the worktree and sandboxed bash gets "Operation not permitted" on them (verified 2026-07-06). This is the one expected sandbox override in the flow; it needs an attended session.
 
 ## Dispatch
 

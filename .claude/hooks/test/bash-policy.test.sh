@@ -124,4 +124,11 @@ expect_decision "symlink into protected config stays denied" deny "" "ln -s payl
 expect_decision "protected source copy retains conservative decision" deny "" "cp $SIM_APP /tmp/Whim.app" "$ROOT"
 expect_decision "earlier hard deny still runs" deny "" "/usr/bin/xcrun simctl install $SIM_UUID $ROOT/ios/build/curl.app" "$ROOT"
 
+# The worktree provisioner runs `git worktree add` unhooked, like the fix-loop toolkit: orchestrator-only.
+expect_decision "subagent may not invoke the fix-loop toolkit" deny agent-a "scripts/fixloop.sh status" "$ROOT"
+expect_decision "subagent may not create a worktree via the provisioner" deny agent-a "scripts/worktree.sh create x HEAD" "$ROOT"
+expect_decision "subagent may not run the provisioner through bash" deny agent-a "bash scripts/worktree.sh provision $WT" "$ROOT"
+expect_decision "main thread's provisioner call is not denied" none "" "scripts/worktree.sh create x HEAD" "$ROOT"
+expect_decision "copy into the provisioner stays denied" deny "" "cp payload scripts/worktree.sh" "$ROOT"
+
 printf 'bash-policy tests: %d passed\n' "$PASS"
