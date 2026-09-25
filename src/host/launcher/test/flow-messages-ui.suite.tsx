@@ -127,7 +127,9 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await startBuild(tree, 'A tea timer');
       streams[0].push({ type: 'stage', stage: 'generate', status: 'start' });
       for (let i = 0; i < 12; i++) streams[0].push({ type: 'token', text: 'x'.repeat(100) });
-      const written = `${(1_200).toLocaleString()} characters`;
+      // en-CA, matching buildLivenessLine's own fixed locale (#89): the phone's locale must not
+      // change this comparison (see run-signals.suite.ts's LANG=fr_CA.UTF-8 red-check).
+      const written = `${(1_200).toLocaleString('en-CA')} characters`;
       await waitFor(() => textOf(tree.root).includes(written), 'the 1,200 characters written to show');
       streams[0].push({ type: 'restart' });
       await waitFor(() => build(tree).props.signals?.aggregates.chars === 0, 'the restart to reach the screen');
