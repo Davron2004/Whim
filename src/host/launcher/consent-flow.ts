@@ -30,8 +30,8 @@ import type { ClarifyScreen, ComposeScreen, PlanScreen } from './prompt-flow';
  * all open compose; Retry on a failed/interrupted build re-runs a pending record) collapse to the
  * first two shapes. `resume` is the third: a request the server refused `consent_required`
  * (request-envelope) goes back to the flow step that sent it, exactly as it was — the typed
- * prompt, the answers and the plan rows included. `settings` is Settings' "Turn on AI features"
- * without current terms: the flow grants through its own steps and ends back on Settings.
+ * prompt, the answers and the plan rows included. `settings` is Settings' "Turn on AI features":
+ * the flow grants through its own steps and ends back on Settings.
  */
 export type ConsentContinuation =
   | { kind: 'compose'; editing?: InstalledApp }

@@ -1148,23 +1148,19 @@ function LauncherShell({
     setScreen(declineTarget<Screen>(returnTo));
   };
 
-  /** Opens the consent screen in review mode, from Settings' AI features row. */
-  const onOpenAIFeaturesReview = () => {
-    setScreen({ kind: 'consent', mode: 'review' });
+  /** Turning AI features on from Settings (spec terms-acceptance "One pass through the legal flow
+   *  shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its first due
+   *  step, so the age check and the terms step when due, then the one consent screen. It ends back
+   *  on Settings, and declining any step returns there too. */
+  const onTurnOnAIFeatures = () => {
+    advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
   };
 
-  /** Review mode with consent off: the one action. When consent is the only step left, this screen
-   *  is that step: it grants and returns to Settings. When the terms (or anything ahead of them)
-   *  aren't current, it enters the legal flow instead, so no grant is stored without a terms
-   *  acceptance (spec terms-acceptance "Terms are accepted in their own step before the consent
-   *  screen"); the flow ends back on Settings, and declining any step returns there too. */
-  const onConsentReviewTurnOn = () => {
-    if (nextLegalStep(storedAgeGate(kv, new Date()), termsStatus(kv), consentStatus(kv), false) === 'consent') {
-      onGrantConsent();
-      setScreen({ kind: 'settings' });
-    } else {
-      advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
-    }
+  /** Settings' AI features row: with AI features on, the consent screen in review mode, to keep
+   *  them on or turn them off whatever the terms say; otherwise turning them on. */
+  const onOpenAIFeatures = () => {
+    if (consentStatus(kv).kind === 'granted') setScreen({ kind: 'consent', mode: 'review' });
+    else onTurnOnAIFeatures();
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -2044,7 +2040,7 @@ function LauncherShell({
           onHighlightingChange={onHighlightingChange}
           consentStatus={consentStatus(kv)}
           canProbe={clientOptions != null}
-          onOpenAIFeatures={onOpenAIFeaturesReview}
+          onOpenAIFeatures={onOpenAIFeatures}
           errorDetails={errorDetailsShown}
           onErrorDetailsChange={onErrorDetailsChange}
           deviceId={deviceId}
@@ -2069,7 +2065,7 @@ function LauncherShell({
           screen={screen}
           onAskAgree={onConsentAskAgree}
           onAskDecline={onLegalDecline}
-          onReviewTurnOn={onConsentReviewTurnOn}
+          onReviewTurnOn={onTurnOnAIFeatures}
           onReviewTurnOff={onConsentReviewTurnOff}
           onReviewClose={onConsentReviewClose}
           consentOn={consentStatus(kv).kind === 'granted'}
