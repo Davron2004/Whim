@@ -7,6 +7,7 @@
  */
 
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store/fs/kv-fs';
 import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
@@ -123,6 +124,37 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       } finally {
         await unmountScreen(tree);
       }
+    }
+  });
+
+  // ── polish: the orb draws no extra shape and its menu reaches the status bar (#105) ────────
+  await h.test('orb-menu: the orb button carries no elevation (the Android grey-disc regression)', async () => {
+    resetNativeStorage();
+    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    try {
+      const flat = StyleSheet.flatten(button(tree, COPY.orbMenuOpenLabel).props.style) as Record<string, unknown>;
+      h.ok(!('elevation' in flat), 'no elevation style on the orb button: it drew a solid grey disc on Android, not a shadow');
+      h.ok(typeof flat.shadowOpacity === 'number', 'the iOS shadow is still declared');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('orb-menu: opening the menu shows a transparent, status-bar-translucent Modal, so the dim layer reaches the top of the screen', async () => {
+    resetNativeStorage();
+    const tree = await renderScreen(React.createElement(Orb, { onExit: () => {}, onVersions: () => {}, onChangeIt: () => {}, onReport: () => {} }));
+    try {
+      h.eq(tree.root.findAll((n) => n.type === 'Modal').length, 0, 'no Modal before the menu opens');
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      const modals = tree.root.findAll((n) => n.type === 'Modal');
+      h.eq(modals.length, 1, 'the open menu renders inside exactly one Modal');
+      h.eq(
+        [modals[0].props.transparent, modals[0].props.statusBarTranslucent],
+        [true, true],
+        'transparent (the running app stays visible) and status-bar-translucent (Android draws the window behind the status bar instead of stopping short of it)',
+      );
+    } finally {
+      await unmountScreen(tree);
     }
   });
 }

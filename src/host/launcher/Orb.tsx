@@ -19,7 +19,7 @@
 // title. There is nothing left for Orb.tsx itself to show once an action fires, so the orb-local
 // "sheet" concept (and the fourth, undesigned `copy` action) is gone.
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_FAMILY, MOTION, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
@@ -102,41 +102,48 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
       </Pressable>
 
       {menuOpen && (
-        <Pressable
-          style={[styles.scrim, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
-          onPress={closeAll}
-          accessibilityRole="none"
-          accessibilityLabel={COPY.orbMenuDismissLabel}
-        >
-          <Animated.View
-            style={[
-              styles.menu,
-              {
-                opacity: riseAnim,
-                transform: [
-                  {
-                    translateY: riseAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [MENU_RISE_DISTANCE, 0],
-                    }),
-                  },
-                ],
-              },
-            ]}
-            onStartShouldSetResponder={() => true}
+        // A genuine Modal (SheetModal.tsx's rationale applies here too), not an absolutely-
+        // positioned sibling View: it mounts into its own native window, so the dim layer covers
+        // the WHOLE window including the status bar. `statusBarTranslucent` is what makes Android
+        // draw that window behind the (translucent) status bar rather than starting below it —
+        // without it the scrim stops short of the top of the screen (#105).
+        <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={closeAll}>
+          <Pressable
+            style={[styles.scrim, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
+            onPress={closeAll}
+            accessibilityRole="none"
+            accessibilityLabel={COPY.orbMenuDismissLabel}
           >
-            {ORB_ACTIONS.map((action) => (
-              <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
-                <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
-                  <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
-                    {ORB_ROW_GLYPH[action.id]}
-                  </Text>
-                </View>
-                <Text style={styles.rowLabel}>{action.label}</Text>
-              </Pressable>
-            ))}
-          </Animated.View>
-        </Pressable>
+            <Animated.View
+              style={[
+                styles.menu,
+                {
+                  opacity: riseAnim,
+                  transform: [
+                    {
+                      translateY: riseAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [MENU_RISE_DISTANCE, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+              onStartShouldSetResponder={() => true}
+            >
+              {ORB_ACTIONS.map((action) => (
+                <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
+                  <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
+                    <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
+                      {ORB_ROW_GLYPH[action.id]}
+                    </Text>
+                  </View>
+                  <Text style={styles.rowLabel}>{action.label}</Text>
+                </Pressable>
+              ))}
+            </Animated.View>
+          </Pressable>
+        </Modal>
       )}
     </>
   );
@@ -154,11 +161,13 @@ const styles = StyleSheet.create({
     backgroundColor: inkAlpha(0.58),
     alignItems: 'center',
     justifyContent: 'center',
+    // shadow* is iOS-only (rn-style-platform-gaps): an `elevation` counterpart used to sit here
+    // for Android, but combined with this button's translucent background it drew a solid grey
+    // disc instead of a shadow (#48/#105 polish) — dropped, not replaced.
     shadowColor: '#000',
     shadowOpacity: 0.32,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
   },
   btnMenuOpen: { backgroundColor: SHELL_COLORS.ink, transform: [{ scale: 0.92 }] },
   bar: { width: 12, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.92)' },
