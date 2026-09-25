@@ -37,7 +37,12 @@ set -uo pipefail
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd -P)" || exit 2
 
-die() { echo "worktree.sh: $*" >&2; exit 2; }
+die() {
+  local msg="$*"
+  echo "worktree.sh: $msg" >&2
+  exit 2
+}
+
 usage() {
   echo "usage: scripts/worktree.sh create <id> [<base-ref>] [--branch <name>]" >&2
   echo "       scripts/worktree.sh provision <checkout>" >&2
@@ -46,62 +51,74 @@ usage() {
 }
 
 # physical <dir> — absolute path with symlinks resolved (macOS: /tmp -> /private/tmp).
-physical() { (cd "$1" 2>/dev/null && pwd -P); }
+physical() {
+  local dir="$1"
+  (cd "$dir" 2>/dev/null && pwd -P)
+  return $?
+}
 
 # toplevel <dir> — physical top-level of the checkout containing <dir>, or nothing.
 toplevel() {
-  local top
-  top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  local dir="$1" top
+  top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
   physical "$top"
+  return $?
 }
 
 # primary_of <checkout> — the primary working tree of <checkout>'s repository (the directory
 # holding the common .git), or nothing for a bare/unusual layout.
 primary_of() {
-  local common
-  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
-  [ "$(basename "$common")" = ".git" ] || return 1
+  local dir="$1" common
+  common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [[ "$(basename "$common")" == ".git" ]] || return 1
   physical "$(dirname "$common")"
+  return $?
 }
 
 # source_checkout <checkout> — where node_modules is cloned from: $WHIM_MAIN, else the primary tree.
 source_checkout() {
-  if [ -n "${WHIM_MAIN:-}" ]; then
+  local checkout="$1"
+  if [[ -n "${WHIM_MAIN:-}" ]]; then
     physical "$WHIM_MAIN" || die "WHIM_MAIN=$WHIM_MAIN is not a directory"
     return 0
   fi
-  primary_of "$1" || die "cannot find the primary working tree of $1; set WHIM_MAIN to the checkout whose node_modules to clone"
+  primary_of "$checkout" || die "cannot find the primary working tree of $checkout; set WHIM_MAIN to the checkout whose node_modules to clone"
+  return 0
 }
 
 # nm_dirs <source> — the node_modules directories to provision, relative to the checkout root:
 # the root one plus one per workspace that has its own (npm nests a workspace's conflicting deps).
 nm_dirs() {
+  local src="$1"
   echo node_modules
   node -e '
     const fs = require("fs"), path = require("path");
     const [src] = process.argv.slice(1);
     for (const ws of require(path.join(src, "package.json")).workspaces ?? []) {
       if (fs.existsSync(path.join(src, ws, "node_modules"))) console.log(path.join(ws, "node_modules"));
-    }' "$1"
+    }' "$src"
+  return $?
 }
 
 # cow_clone <src> <dst> — copy-on-write clone of a directory tree. <dst> must not exist. Never
 # silently falls back to a full copy; on failure nothing is left at <dst>.
 cow_clone() {
-  local src="$1" dst="$2"
-  if [ "${WHIM_WORKTREE_COPY:-}" = full ]; then
+  local src="$1" dst="$2" os
+  if [[ "${WHIM_WORKTREE_COPY:-}" == full ]]; then
     cp -a "$src" "$dst" && return 0
-    rm -rf "$dst"; die "full copy of $src failed"
+    rm -rf "$dst"
+    die "full copy of $src failed"
   fi
-  case "$(uname -s)" in
+  os="$(uname -s)"
+  case "$os" in
     Darwin)
       # One clonefile(2) on the directory clones the whole tree (~1 s for ~60k entries); per-file
       # `cp -Rc` is the fallback (~8 s). Both need source and destination on one APFS volume.
-      if command -v python3 >/dev/null 2>&1 && python3 - "$src" "$dst" 2>/dev/null <<'PY'
+      if command -v python3 >/dev/null 2>&1 && python3 - "$src" "$dst" 2>/dev/null <<'PY2'
 import ctypes, sys
 libc = ctypes.CDLL('/usr/lib/libSystem.dylib', use_errno=True)
 sys.exit(0 if libc.clonefile(sys.argv[1].encode(), sys.argv[2].encode(), ctypes.c_uint32(0)) == 0 else 1)
-PY
+PY2
       then return 0; fi
       rm -rf "$dst"
       cp -Rc "$src" "$dst" 2>/dev/null && return 0
@@ -113,14 +130,17 @@ PY
       cp -a --reflink=always "$src" "$dst" 2>/dev/null && return 0
       rm -rf "$dst"
       die "no reflink support between $src and $dst ($(stat -f -c %T "$src" 2>/dev/null || echo unknown) filesystem). Set WHIM_WORKTREE_COPY=full to make a full copy instead (slow)." ;;
-    *) die "unsupported OS $(uname -s); set WHIM_WORKTREE_COPY=full to make a full copy" ;;
+    *)
+      die "unsupported OS $os; set WHIM_WORKTREE_COPY=full to make a full copy" ;;
   esac
+  return 0
 }
 
 # check_tree <checkout> — the tripwire. Prints what is wrong; exit 0 only when node_modules is
 # the checkout's own.
 check_tree() {
-  node - "$1" <<'JS'
+  local checkout="$1"
+  node - "$checkout" <<'JS'
 const fs = require('fs');
 const path = require('path');
 const root = fs.realpathSync(process.argv[2]);
@@ -188,39 +208,44 @@ else if (!st) console.error(`Fix: scripts/worktree.sh provision ${root}`);
 else console.error(`Fix: move ${nm} aside, then scripts/worktree.sh provision ${root}`);
 process.exit(1);
 JS
+  return $?
 }
 
 cmd_check() {
   local target="${1:-$SELF_DIR/..}" top
   top="$(toplevel "$target")" || die "$target is not inside a git checkout"
   check_tree "$top"
+  return $?
 }
 
 cmd_provision() {
   local target="${1:-}" top src d link_to started=$SECONDS
-  [ -n "$target" ] || usage
+  [[ -n "$target" ]] || usage
   top="$(toplevel "$target")" || die "$target is not inside a git checkout"
   src="$(source_checkout "$top")" || exit 2
-  [ "$top" != "$src" ] || \
+  [[ "$top" != "$src" ]] || \
     die "refusing: $top is the source checkout itself (the primary tree installs its own node_modules with npm ci)"
-  [ -d "$src/node_modules" ] && [ ! -L "$src/node_modules" ] || \
+  [[ -d "$src/node_modules" && ! -L "$src/node_modules" ]] || \
     die "the source checkout $src has no node_modules directory of its own to clone (run npm ci there first)"
 
   while IFS= read -r d; do
-    if [ -L "$top/$d" ]; then
+    if [[ -L "$top/$d" ]]; then
       link_to="$(readlink "$top/$d")"
       die "refusing: $top/$d is a symlink (-> $link_to). A symlinked node_modules resolves @whim/* and every build write into $link_to. Remove the link only (rm $top/$d, no -r, no trailing slash) and re-run."
     fi
-    [ -e "$top/$d" ] && die "refusing: $top/$d already exists. 'scripts/worktree.sh check $top' says whether it is usable; to re-provision, delete it first."
-    [ -d "$(dirname "$top/$d")" ] || continue   # a workspace this checkout does not have
+    [[ -e "$top/$d" ]] && die "refusing: $top/$d already exists. 'scripts/worktree.sh check $top' says whether it is usable; to re-provision, delete it first."
+    [[ -d "$(dirname "$top/$d")" ]] || continue   # a workspace this checkout does not have
     cow_clone "$src/$d" "$top/$d"
   done < <(nm_dirs "$src")
   echo "node_modules cloned from $src in $((SECONDS - started)) s"
 
   # The clone mirrors the source's install. A branch that changed the lockfile needs its own.
+  # --ignore-scripts: no dependency lifecycle script runs here (supply chain). The only packages
+  # with install scripts are esbuild (its binary ships in an optional platform package, so the
+  # postinstall check is not needed), fsevents (optional) and the openspec CLI.
   if ! cmp -s "$src/package-lock.json" "$top/package-lock.json"; then
     echo "package-lock.json differs from $src; running npm ci in $top"
-    (cd "$top" && npm ci --no-audit --no-fund) || die "npm ci failed in $top"
+    (cd "$top" && npm ci --ignore-scripts --no-audit --no-fund) || die "npm ci failed in $top"
   fi
 
   # Assert, don't assume (docs/harness.md §11).
@@ -228,29 +253,36 @@ cmd_provision() {
 
   (cd "$top" && npm run -s build) || die "node_modules is provisioned, but 'npm run build' failed in $top"
   echo "provisioned: $top"
+  return 0
 }
 
 cmd_create() {
   local id="${1:-}" base=HEAD branch="" main wt sha
-  [ -n "$id" ] || usage
+  [[ -n "$id" ]] || usage
   shift
-  while [ $# -gt 0 ]; do
+  while [[ $# -gt 0 ]]; do
     case "$1" in
-      --branch) branch="${2:-}"; [ -n "$branch" ] || usage; shift 2 ;;
+      --branch) branch="${2:-}"; [[ -n "$branch" ]] || usage; shift 2 ;;
       -*) usage ;;
       *) base="$1"; shift ;;
     esac
   done
-  case "$id" in */*|.*|*[[:space:]]*) die "invalid worktree id '$id' (one path segment, no leading dot)" ;; esac
+  case "$id" in
+    */*|.*|*[[:space:]]*) die "invalid worktree id '$id' (one path segment, no leading dot)" ;;
+    *) ;;
+  esac
 
-  if [ -n "${WHIM_MAIN:-}" ]; then main="$(physical "$WHIM_MAIN")" || die "WHIM_MAIN=$WHIM_MAIN is not a directory"
-  else main="$(primary_of "$SELF_DIR")" || die "cannot find the primary working tree; set WHIM_MAIN"; fi
+  if [[ -n "${WHIM_MAIN:-}" ]]; then
+    main="$(physical "$WHIM_MAIN")" || die "WHIM_MAIN=$WHIM_MAIN is not a directory"
+  else
+    main="$(primary_of "$SELF_DIR")" || die "cannot find the primary working tree; set WHIM_MAIN"
+  fi
   wt="$main/.claude/worktrees/$id"
-  if [ -e "$wt" ] || [ -L "$wt" ]; then die "$wt already exists"; fi
+  if [[ -e "$wt" || -L "$wt" ]]; then die "$wt already exists"; fi
   sha="$(git -C "$main" rev-parse --verify --quiet "$base^{commit}")" || die "no such commit: $base"
 
   mkdir -p "$main/.claude/worktrees" || die "cannot create $main/.claude/worktrees"
-  if [ -n "$branch" ]; then
+  if [[ -n "$branch" ]]; then
     git -C "$main" worktree add -b "$branch" "$wt" "$sha" || die "git worktree add failed"
   else
     git -C "$main" worktree add --detach "$wt" "$sha" || die "git worktree add failed"
@@ -259,9 +291,11 @@ cmd_create() {
   ( cmd_provision "$wt" ) || die "worktree $wt was created but NOT provisioned (see above). Fix the cause, then: scripts/worktree.sh provision $wt"
   echo "worktree ready: $wt"
   echo "BASE $sha"
+  return 0
 }
 
-sub="${1:-}"; shift 2>/dev/null || true
+sub="${1:-}"
+shift 2>/dev/null || true
 case "$sub" in
   create)    cmd_create "$@" ;;
   provision) cmd_provision "$@" ;;
