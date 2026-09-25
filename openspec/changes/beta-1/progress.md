@@ -42,3 +42,4 @@
 - 15:23 chain-3 agent STALLED (stream watchdog: no progress for 600 s) with nothing written (no commit, no diff, no resume file; no stray processes). ENV, not a gate failure. Redispatched fresh into the same worktree, same block, Sonnet.
 - 15:33 chain-3 redispatch STALLED again (600 s watchdog), nothing written. Paused until 17:00 (R9).
 - 15:52 R9 lifted by owner: chain-3 redispatched on Opus now, which also tests whether Opus subagents stall at low-priority capacity (chain-2's Opus resume ran 14:37–15:08 in this window without stalling; both Sonnet chain-3 runs stalled).
+- 16:05 stall test: the Opus chain-3 was progressing at 12 min (7 files, +229, no stall) in the same low-priority window where both Sonnet runs stalled with zero writes. R9 amended: at low-priority capacity, dispatch implementers on Opus, one at a time. Bug report drafted for the owner to send (/feedback).
