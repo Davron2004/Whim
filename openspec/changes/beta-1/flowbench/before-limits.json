@@ -1,0 +1,322 @@
+{
+  "setId": "beta-1-limits",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-25T17:28:15.244Z",
+  "finishedAt": "2026-09-25T17:32:07.689Z",
+  "cases": [
+    {
+      "caseId": "weather-p1",
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "70901c21-2fa4-4ef6-a0bf-adc28fb4335b",
+      "clarifications": [
+        {
+          "id": "q1",
+          "question": "How should the app decide between biking and taking the train?",
+          "answer": "Based on a simple yes/no threshold"
+        },
+        {
+          "id": "q2",
+          "question": "What factors should matter most for the recommendation?",
+          "answer": "Rain and temperature"
+        },
+        {
+          "id": "q3",
+          "question": "Should the app just give a final answer, or explain why?",
+          "answer": "Just tell me bike or train"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1343,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1271,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 17680,
+          "retries": 0,
+          "firstEventMs": 221,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 3796
+            },
+            {
+              "stage": "generate",
+              "durationMs": 9850
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2764
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1048,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 2445
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "6fa3b4f0-faea-4bff-81d4-cf89804bb189",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2976,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 34619,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 53823,
+          "retries": 0,
+          "firstEventMs": 1872,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 4892
+            },
+            {
+              "stage": "generate",
+              "durationMs": 42595
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3164
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1300,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14273
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "31685587-1f28-4a8d-9403-2cedfc399b5c",
+      "clarifications": [
+        {
+          "id": "ping_method",
+          "question": "How should the ping reach your roommates?",
+          "answer": "Text message"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2453,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2842,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 148765,
+          "retries": 0,
+          "firstEventMs": 865,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 7396
+            },
+            {
+              "stage": "generate",
+              "durationMs": 86196
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 14592
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 4842
+            },
+            {
+              "stage": "repair",
+              "attempt": 2,
+              "durationMs": 16219
+            },
+            {
+              "stage": "check",
+              "attempt": 2,
+              "durationMs": 0
+            },
+            {
+              "stage": "repair",
+              "attempt": 3,
+              "durationMs": 18655
+            },
+            {
+              "stage": "check",
+              "attempt": 3,
+              "durationMs": 0
+            }
+          ],
+          "repairs": 3,
+          "tailMs": 0,
+          "terminal": {
+            "type": "failure",
+            "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+            "attempts": 4
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "generate",
+        "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+        "attempts": 4
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "51333f7b-4ca8-4e63-bfd3-9139a60d67dd",
+      "clarifications": [
+        {
+          "id": "reminder_method",
+          "question": "How should each reminder be sent?",
+          "answer": "Text message"
+        },
+        {
+          "id": "chore_management",
+          "question": "How do you want to track chores?",
+          "answer": "Each person picks their own chores"
+        },
+        {
+          "id": "falling_behind_definition",
+          "question": "When should a roommate be considered 'falling behind'?",
+          "answer": "If a chore isn't done by its due date/time"
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2341,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 3547,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 135125,
+          "retries": 0,
+          "firstEventMs": 1093,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 4252
+            },
+            {
+              "stage": "generate",
+              "durationMs": 95602
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 8415
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 15708
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 8853
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1201,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 26313
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 2397,
+        "maxMs": 2976
+      },
+      "rewrite": {
+        "medianMs": 3194.5,
+        "maxMs": 34619
+      },
+      "generate": {
+        "medianMs": 94474,
+        "maxMs": 148765
+      }
+    },
+    "results": 3,
+    "failures": 1
+  }
+}

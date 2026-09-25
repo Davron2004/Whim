@@ -13,3 +13,4 @@
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
+- 10.3 flowbench BEFORE (production `0fb65d51`, parallel 2, no retries). Visible 20/22 results: `habit-tracker-p1` repair_exhausted; `tip-splitter-p2` clarify 503 `policy_unavailable` at 10385 ms (filed #119, follows closed #51). Medians: clarify 1320 ms, rewrite 2335 ms, generate 51373 ms (max 142830). Limits 3/4 results: `weather-p1` built a manual bike-or-train helper (reasonable); `weather-p2` built a fake "deterministic forecast derived from the city name"; `roommate-ping-p1` repair_exhausted; `roommate-ping-p2` built a reminder log with `sentAt`, as if reminders were sent. Clarify never answered "can't build" (no limit arm exists yet). Reports: `flowbench/before-{visible,limits}.json`.
