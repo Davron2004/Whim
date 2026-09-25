@@ -41,3 +41,4 @@
 - 15:12 chain-3 dispatched: BASE `74573b7b023c1543d2829bcbcab751ddeedfb6b0`, worktree `.claude/worktrees/beta-1-3`, branch `chain/beta-1-3`, block `dispatch/chain-3.md`, model Sonnet (R3).
 - 15:23 chain-3 agent STALLED (stream watchdog: no progress for 600 s) with nothing written (no commit, no diff, no resume file; no stray processes). ENV, not a gate failure. Redispatched fresh into the same worktree, same block, Sonnet.
 - 15:33 chain-3 redispatch STALLED again (600 s watchdog), nothing written. Paused until 17:00 (R9).
+- 15:52 R9 lifted by owner: chain-3 redispatched on Opus now, which also tests whether Opus subagents stall at low-priority capacity (chain-2's Opus resume ran 14:37–15:08 in this window without stalling; both Sonnet chain-3 runs stalled).
