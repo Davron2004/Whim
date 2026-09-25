@@ -13,13 +13,14 @@
  */
 
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
 import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
@@ -123,85 +124,86 @@ export default function PlanStep({
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
-      <FlowHeader step="plan" onBack={handleBack} />
+    <KeyboardShell
+      style={{ backgroundColor: p.bg }}
+      contentContainerStyle={styles.content}
+      header={<FlowHeader step="plan" onBack={handleBack} />}
+      footer={
+        <>
+          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
+              action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
+              element while loading. No validation gate of its own — the retry window is the only
+              thing that can disable it. */}
+          {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
+        </>
+      }
+    >
+      {editing && editingName != null && <EditingEyebrow name={editingName} />}
+      <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
+      <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {editing && editingName != null && <EditingEyebrow name={editingName} />}
-        <Text style={[TYPE_SCALE.stepTitle, { color: p.text }]}>{planHeadline(editing)}</Text>
-        <Text style={[TYPE_SCALE.caption, styles.subhead, { color: p.textMuted }]}>{COPY.planSubhead}</Text>
-
-        {loading ? (
-          <>
-            <PlanRowsSkeleton color={p.card} />
-            <WorkingLine phrase={workingPlanPhrase(editing)} startedAt={startedAt ?? Date.now()} />
-          </>
-        ) : (
-          rows.map((row, index) => {
-            const key = `${index}:${row.label}`;
-            if (editingIndex === index) {
-              return (
-                <View
-                  key={key}
-                  style={[styles.row, styles.rowEditing, { backgroundColor: p.card, borderColor: p.accent }]}
-                >
-                  {row.label.length > 0 && (
-                    <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
-                  )}
-                  <TextInput
-                    value={draft}
-                    onChangeText={setDraft}
-                    style={[TYPE_SCALE.body, styles.rowInput, { color: p.text }]}
-                    multiline
-                    autoFocus
-                    textAlignVertical="top"
-                  />
-                  <View style={styles.rowActions}>
-                    <TouchableOpacity onPress={cancelEditing} hitSlop={10}>
-                      <Text style={[TYPE_SCALE.controlLabel, { color: p.textMuted }]}>{COPY.cancel}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={saveEditing} disabled={!canSave} hitSlop={10}>
-                      <Text
-                        style={[TYPE_SCALE.controlLabel, { color: canSave ? p.accent : p.textMuted }]}
-                      >
-                        {COPY.planRowSave}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            }
+      {loading ? (
+        <>
+          <PlanRowsSkeleton color={p.card} />
+          <WorkingLine phrase={workingPlanPhrase(editing)} startedAt={startedAt ?? Date.now()} />
+        </>
+      ) : (
+        rows.map((row, index) => {
+          const key = `${index}:${row.label}`;
+          if (editingIndex === index) {
             return (
-              <TouchableOpacity
+              <View
                 key={key}
-                onPress={() => startEditing(index, row.text)}
-                style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+                style={[styles.row, styles.rowEditing, { backgroundColor: p.card, borderColor: p.accent }]}
               >
                 {row.label.length > 0 && (
                   <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
                 )}
-                <WhimProse text={row.text} style={[TYPE_SCALE.body, styles.rowText, { color: p.text }]} />
-              </TouchableOpacity>
+                <KeyboardTextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  style={[TYPE_SCALE.body, styles.rowInput, { color: p.text }]}
+                  multiline
+                  autoFocus
+                  textAlignVertical="top"
+                />
+                <View style={styles.rowActions}>
+                  <TouchableOpacity onPress={cancelEditing} hitSlop={10}>
+                    <Text style={[TYPE_SCALE.controlLabel, { color: p.textMuted }]}>{COPY.cancel}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={saveEditing} disabled={!canSave} hitSlop={10}>
+                    <Text
+                      style={[TYPE_SCALE.controlLabel, { color: canSave ? p.accent : p.textMuted }]}
+                    >
+                      {COPY.planRowSave}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             );
-          })
-        )}
+          }
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => startEditing(index, row.text)}
+              style={[styles.row, { backgroundColor: p.card, borderColor: p.cardBorder }]}
+            >
+              {row.label.length > 0 && (
+                <Text style={[TYPE_SCALE.eyebrow, { color: p.textMuted }]}>{row.label}</Text>
+              )}
+              <WhimProse text={row.text} style={[TYPE_SCALE.body, styles.rowText, { color: p.text }]} />
+            </TouchableOpacity>
+          );
+        })
+      )}
 
-        <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
-      </ScrollView>
-
-      {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
-
-      {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
-          action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
-          element while loading. No validation gate of its own — the retry window is the only
-          thing that can disable it. */}
-      {!loading && <PrimaryAction step="plan" enabled={!gated} editing={editing} onPress={onBuild} />}
-    </View>
+      <Text style={[TYPE_SCALE.caption, styles.footer, { color: p.textMuted }]}>{COPY.planFooter}</Text>
+    </KeyboardShell>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
   // paddingTop 26: design `Whim Mobile.dc.html:474` — no SPACING counterpart (ruling R9).
   content: { paddingHorizontal: SPACING.lg, paddingTop: 26, paddingBottom: SPACING.xl },
   subhead: { marginTop: SPACING.xs, marginBottom: SPACING.md },

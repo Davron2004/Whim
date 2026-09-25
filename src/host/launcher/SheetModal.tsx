@@ -20,6 +20,7 @@
  * (the report note's `TextInput`) clear of the keyboard on iOS; Android's `windowSoftInputMode=
  * "adjustResize"` (AndroidManifest.xml) already handles it there, so `behavior` is `undefined` on
  * Android — an explicit `behavior` there would fight the OS resize instead of complementing it.
+ * It is the sheet's only one: a `KeyboardShell` inside a sheet (`host="sheet"`) adds no avoidance.
  */
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';

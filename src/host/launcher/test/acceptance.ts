@@ -81,6 +81,7 @@ import { runAgeSignalUiTests } from './age-signal-ui.suite';
 import { runDiagnosticsUiTests } from './diagnostics-ui.suite';
 import { runWireFutureFramesTests } from './wire-future-frames.suite';
 import { runFlowMessagesUiTests } from './flow-messages-ui.suite';
+import { runKeyboardShellUiTests } from './keyboard-shell-ui.suite';
 
 const h = new Harness();
 
@@ -159,6 +160,7 @@ await runAgeSignalUiTests(h);
 await runDiagnosticsUiTests(h);
 await runWireFutureFramesTests(h);
 await runFlowMessagesUiTests(h);
+await runKeyboardShellUiTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {
