@@ -50,7 +50,7 @@ while IFS=$'\t' read -r ADDED DELETED FILE; do
     exit 7
   }
   case "$FILE" in
-    scripts/gate.sh|scripts/gate-full.sh|scripts/fixloop.sh|scripts/git-cleanup-check.sh|scripts/sync-codex.mjs|\
+    scripts/gate.sh|scripts/gate-full.sh|scripts/fixloop.sh|scripts/git-cleanup-check.sh|scripts/sync-codex.mjs|scripts/worktree.sh|\
     .claude/*|.codex/*|package.json|package-lock.json|tsconfig*.json|.eslintrc*|eslint.config.*|.eslintignore|\
     knip.json|babel.config.js|metro.config.js|invariants/*|build/*)
       ;;
