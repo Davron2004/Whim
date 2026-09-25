@@ -51,10 +51,10 @@
 
 ## 8. Diagnostics and polish (app)
 
-- [ ] 8.1 `thrownFields` reduces frames to file name + line:column on every platform (D7). Test with an iOS-shaped stack. A trimmed stack still symbolicates to the same lines.
-- [ ] 8.2 The orb scrim covers the status bar, and the Android grey disc is gone (D14).
-- [ ] 8.3 Re-check #48 and fix only if it reproduces. Examples get distinct declared tile colours, with a test that they're pairwise distinct.
-- [ ] 8.4 `toLocaleString('en-CA')`. `run-signals.suite.ts` passes under `LANG=fr_CA.UTF-8`.
+- [x] 8.1 `thrownFields` reduces frames to file name + line:column on every platform (D7). Test with an iOS-shaped stack. A trimmed stack still symbolicates to the same lines.
+- [x] 8.2 The orb scrim covers the status bar, and the Android grey disc is gone (D14).
+- [x] 8.3 Re-check #48 and fix only if it reproduces. Examples get distinct declared tile colours, with a test that they're pairwise distinct.
+- [x] 8.4 `toLocaleString('en-CA')`. `run-signals.suite.ts` passes under `LANG=fr_CA.UTF-8`.
 
 ## 9. Release upgrade check (tooling)
 
