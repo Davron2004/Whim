@@ -1,7 +1,8 @@
 /** Settings' privacy controls and build-dependent sections in the rendered launcher
  *  (legal-surface-v2 tasks 5.1–5.3; specs privacy-settings and app-launcher): the "Send error
  *  details" switch, this phone's ID and "Make a new ID", the server address only in internal
- *  builds, the section order, and "Turn on AI features" never granting without a terms record. */
+ *  builds, the section order, and "Turn on AI features" showing each legal screen at most once and
+ *  never granting without a terms record (beta-1 D6). */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
@@ -9,6 +10,7 @@ import HomeScreen from '../HomeScreen';
 import SettingsScreen from '../SettingsScreen';
 import ConsentScreen from '../ConsentScreen';
 import TermsScreen from '../TermsScreen';
+import AgeScreen from '../AgeScreen';
 import LauncherRoot from '../LauncherRoot';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { COPY } from '../copy';
@@ -16,11 +18,11 @@ import { consentStatus, grantConsent } from '../ai-consent';
 import { termsStatus } from '../terms-acceptance';
 import { getDeviceId } from '../device-id';
 import { errorDetailsEnabled } from '../error-details';
-import { RELEASE } from '../release-config';
+import { RELEASE, TERMS_VERSION } from '../release-config';
 import { saveServerUrl } from '../server-address';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
-import { composeAndContinue, json, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
+import { composeAndContinue, json, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Alert } from './native-host';
 import { testAppInfo } from './client-fixtures';
 
@@ -33,6 +35,23 @@ const clarifyServer = (r: SentRequest): Response | Promise<Response> =>
 
 const on = (tree: Tree, type: Parameters<Tree['root']['findAllByType']>[0]) => tree.root.findAllByType(type).length === 1;
 const settings = (tree: Tree) => tree.root.findByType(SettingsScreen);
+
+/** Which screen shows: Settings, a legal step, or the consent screen and its mode. */
+function shownScreen(tree: Tree): string {
+  if (on(tree, SettingsScreen)) return 'settings';
+  if (on(tree, AgeScreen)) return 'age';
+  if (on(tree, TermsScreen)) return 'terms';
+  if (on(tree, ConsentScreen)) return `consent:${tree.root.findByType(ConsentScreen).props.mode}`;
+  return 'another screen';
+}
+
+/** A terms acceptance for the version before the current one, as an earlier build left it. */
+const olderTerms = (kv: KVBackend) =>
+  kv.set('whim.terms:v1', JSON.stringify({ version: TERMS_VERSION - 1, acceptedAt: '2026-01-01T00:00:00.000Z' }));
+
+/** An allowed age check made just now, so no check is due. */
+const freshAgeCheck = (kv: KVBackend) =>
+  kv.set('whim.age-check:v1', JSON.stringify({ outcome: 'allowed', checkedAt: new Date().toISOString() }));
 
 async function openSettings(tree: Tree): Promise<void> {
   await TestRenderer.act(async () => tree.root.findByType(HomeScreen).props.onSettings());
@@ -217,20 +236,68 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('Settings: turning AI features on without a terms record opens the terms step and grants nothing until terms, then consent, are agreed', async () => {
-    await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv, sent }) => {
+  // terms-acceptance "One pass through the legal flow shows each legal screen at most once" (beta-1
+  // D6, #104): each journey is the screen shown after every step, from Settings back to Settings.
+
+  await h.test('Settings: turning AI features on with outdated terms shows the terms step, then one consent screen, and grants nothing before both', async () => {
+    const prepare = (kv: KVBackend) => { olderTerms(kv); freshAgeCheck(kv); };
+    await withLauncher({ consent: false, prepare, server: clarifyServer }, async ({ tree, kv, sent }) => {
+      await openSettings(tree);
+      const journey = [shownScreen(tree)];
+      await TestRenderer.act(async () => settings(tree).props.onOpenAIFeatures());
+      journey.push(shownScreen(tree));
+      await press(button(tree, COPY.termsAccept));
+      journey.push(shownScreen(tree));
+      h.eq(consentStatus(kv).kind, 'absent', 'accepting the terms alone grants nothing');
+      await press(button(tree, COPY.consentAgree));
+      journey.push(shownScreen(tree));
+      h.eq(journey, ['settings', 'terms', 'consent:ask', 'settings'], 'the terms step, then the consent screen once, then Settings');
+      h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'AI features are on after that one consent');
+      h.eq(sent.length, 0, 'no request was sent along the way');
+    });
+  });
+
+  await h.test('Settings: turning AI features on with current terms shows exactly one consent screen and no terms step', async () => {
+    await withLauncher({ consent: false, server: clarifyServer }, async ({ tree, kv }) => {
+      await openSettings(tree);
+      const journey = [shownScreen(tree)];
+      await TestRenderer.act(async () => settings(tree).props.onOpenAIFeatures());
+      journey.push(shownScreen(tree));
+      await press(button(tree, COPY.consentAgree));
+      journey.push(shownScreen(tree));
+      h.eq(journey, ['settings', 'consent:ask', 'settings'], 'one consent screen, then Settings');
+      h.eq(consentStatus(kv).kind, 'granted', 'AI features are on');
+    });
+  });
+
+  await h.test('Settings: one pass through "Turn on AI features" shows each legal screen at most once, the age check included', async () => {
+    let answer: (signal: string) => void = () => {};
+    const store = () => new Promise<unknown>((resolve) => { answer = resolve; });
+    await withLauncher({ terms: false, consent: false, ageSignal: store, server: clarifyServer }, async ({ tree, kv }) => {
+      await openSettings(tree);
+      const journey = [shownScreen(tree)];
+      await TestRenderer.act(async () => settings(tree).props.onOpenAIFeatures());
+      journey.push(shownScreen(tree));
+      await TestRenderer.act(async () => answer('adult'));
+      await waitFor(() => !on(tree, AgeScreen), 'the age check to finish');
+      journey.push(shownScreen(tree));
+      await press(button(tree, COPY.termsAccept));
+      journey.push(shownScreen(tree));
+      await press(button(tree, COPY.consentAgree));
+      journey.push(shownScreen(tree));
+      h.eq(journey, ['settings', 'age', 'terms', 'consent:ask', 'settings'], 'the age check, the terms step and the consent screen, once each');
+      h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'and AI features are on');
+    });
+  });
+
+  await h.test('Settings: with AI features on and the terms outdated, the row still opens review mode, so they can be turned off without the new terms', async () => {
+    await withLauncher({ prepare: olderTerms, server: clarifyServer }, async ({ tree, kv }) => {
       await openSettings(tree);
       await TestRenderer.act(async () => settings(tree).props.onOpenAIFeatures());
-      await press(button(tree, COPY.consentReviewTurnOn));
-      h.eq(consentStatus(kv).kind, 'absent', 'no consent grant is stored without a terms record');
-      h.ok(on(tree, TermsScreen), 'the terms step opens');
-      await press(button(tree, COPY.termsAccept));
-      h.eq(consentStatus(kv).kind, 'absent', 'accepting the terms alone grants nothing');
-      h.ok(on(tree, ConsentScreen) && tree.root.findByType(ConsentScreen).props.mode === 'ask', 'then the consent screen asks');
-      await press(button(tree, COPY.consentAgree));
-      h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['accepted', 'granted'], 'agreeing stores both records');
-      h.ok(on(tree, SettingsScreen), 'and returns to Settings');
-      h.eq(sent.length, 0, 'no request was sent along the way');
+      h.eq(shownScreen(tree), 'consent:review', 'the consent screen in review mode, not the terms step');
+      await press(button(tree, COPY.consentReviewTurnOff));
+      h.eq(shownScreen(tree), 'settings', 'turning off returns to Settings');
+      h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['outdated', 'absent'], 'the grant is gone and the terms are untouched');
     });
   });
 
@@ -238,7 +305,7 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
     await withLauncher({ terms: false, consent: false, server: clarifyServer }, async ({ tree, kv }) => {
       await openSettings(tree);
       await TestRenderer.act(async () => settings(tree).props.onOpenAIFeatures());
-      await press(button(tree, COPY.consentReviewTurnOn));
+      await waitFor(() => on(tree, TermsScreen), 'the terms step');
       await press(button(tree, COPY.termsDecline));
       h.ok(on(tree, SettingsScreen), 'back on Settings');
       h.eq([termsStatus(kv).kind, consentStatus(kv).kind], ['absent', 'absent'], 'no terms record and no grant');

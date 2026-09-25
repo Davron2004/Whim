@@ -51,7 +51,7 @@ import {
 } from './build-lifecycle';
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
-import { COPY } from './copy';
+import { COPY, LEGAL_COPY } from './copy';
 import HomeScreen, { HOME_GRID_COLUMNS, HOME_GRID_COLUMN_GAP } from './HomeScreen';
 import MiniAppView from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -125,8 +125,8 @@ import { installedAppInfo, installedInternalBuild } from './installed-app-info';
 import ReportSheet from './ReportSheet';
 import { consentStatus, grantConsent, outdatedGrantVersion, revokeConsent } from './ai-consent';
 import { acceptTerms, termsStatus } from './terms-acceptance';
-import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold } from './age-check';
-import { installedAgeSignal } from './installed-age-signal';
+import { runAgeCheck, storedAgeGate, type AgeGate, type AgeHold, type SignificantUpdateSheet } from './age-check';
+import { installedAgeSignal, installedSignificantUpdate } from './installed-age-signal';
 import { activeLegalLanguage, chooseLegalLanguage, type LegalLanguage } from './legal-language';
 import { deviceLocale as installedDeviceLocale } from './device-locale';
 import { declineTarget, nextLegalStep } from './consent-flow';
@@ -379,19 +379,22 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
  *  `internalBuild` says whether this is an internal build (only those show and honour a
  *  server-address override, legal-surface-v2 D10); `deviceLocale` reads the phone's preferred
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
- *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11). All
- *  default to the native seam. Only a suite passes another (the launcher runner has no native
- *  module), to give the shell a build or a phone of its choosing. */
+ *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11), and
+ *  `significantUpdate` asks a supervised minor's guardian to acknowledge a terms change (beta-1
+ *  D2; none on Android). All default to the native seam. Only a suite passes another (the
+ *  launcher runner has no native module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   internalBuild,
   deviceLocale = installedDeviceLocale,
   ageSignal = installedAgeSignal,
+  significantUpdate = installedSignificantUpdate,
 }: Readonly<{
   appInfo?: () => AppInfo;
   internalBuild?: boolean;
   deviceLocale?: () => string | undefined;
   ageSignal?: () => Promise<unknown>;
+  significantUpdate?: SignificantUpdateSheet;
 }>) {
   // Read once: the installed binary can't change what kind of build it is while the process lives.
   const [internal] = useState(() => internalBuild ?? installedInternalBuild());
@@ -425,6 +428,7 @@ export default function LauncherRoot({
       internalBuild={internal}
       deviceLocale={deviceLocale}
       ageSignal={ageSignal}
+      significantUpdate={significantUpdate}
     />
   );
 }
@@ -561,6 +565,7 @@ function LauncherShell({
   internalBuild,
   deviceLocale,
   ageSignal,
+  significantUpdate,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -571,6 +576,7 @@ function LauncherShell({
   internalBuild: boolean;
   deviceLocale: () => string | undefined;
   ageSignal: () => Promise<unknown>;
+  significantUpdate: SignificantUpdateSheet | undefined;
 }>) {
   const palette = SHELL_PALETTE;
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -1068,19 +1074,25 @@ function LauncherShell({
   // ask the store, store only the outcome, and move the same flow on with its result — to the
   // terms step, or to the held message for that result. Leaving the screen first (`Back`) drops the answer, so a
   // late one never pulls the user back into the flow.
+  // A guardian asked to acknowledge a terms change (beta-1 D2) is shown the updated-terms line in
+  // the legal language active when the check starts; a ref, so switching language on the
+  // checking screen doesn't start the check again.
   const checkingAge = screen.kind === 'age' && screen.held === undefined ? screen : undefined;
   const advanceLegalFlowRef = useRef(advanceLegalFlow);
   advanceLegalFlowRef.current = advanceLegalFlow;
+  const updateLineRef = useRef(LEGAL_COPY[legalLanguage].termsUpdatedLine);
+  updateLineRef.current = LEGAL_COPY[legalLanguage].termsUpdatedLine;
   useEffect(() => {
     if (checkingAge === undefined) return undefined;
     let current = true;
-    runAgeCheck(kv, ageSignal, () => new Date()).then((result) => {
+    const acknowledgment = significantUpdate === undefined ? undefined : { sheet: significantUpdate, description: updateLineRef.current };
+    runAgeCheck(kv, ageSignal, () => new Date(), { significantUpdate: acknowledgment }).then((result) => {
       if (current) advanceLegalFlowRef.current(checkingAge, result);
     });
     return () => {
       current = false;
     };
-  }, [checkingAge, kv, ageSignal]);
+  }, [checkingAge, kv, ageSignal, significantUpdate]);
 
   /** The one gate every data-sending entry point calls (spec ai-data-consent "The first action
    *  that would send data asks for consent at that moment"; spec terms-acceptance "Terms are
@@ -1136,23 +1148,19 @@ function LauncherShell({
     setScreen(declineTarget<Screen>(returnTo));
   };
 
-  /** Opens the consent screen in review mode, from Settings' AI features row. */
-  const onOpenAIFeaturesReview = () => {
-    setScreen({ kind: 'consent', mode: 'review' });
+  /** Turning AI features on from Settings (spec terms-acceptance "One pass through the legal flow
+   *  shows each legal screen at most once"; beta-1 D6, #104): the legal flow from its first due
+   *  step, so the age check and the terms step when due, then the one consent screen. It ends back
+   *  on Settings, and declining any step returns there too. */
+  const onTurnOnAIFeatures = () => {
+    advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
   };
 
-  /** Review mode with consent off: the one action. When consent is the only step left, this screen
-   *  is that step: it grants and returns to Settings. When the terms (or anything ahead of them)
-   *  aren't current, it enters the legal flow instead, so no grant is stored without a terms
-   *  acceptance (spec terms-acceptance "Terms are accepted in their own step before the consent
-   *  screen"); the flow ends back on Settings, and declining any step returns there too. */
-  const onConsentReviewTurnOn = () => {
-    if (nextLegalStep(storedAgeGate(kv, new Date()), termsStatus(kv), consentStatus(kv), false) === 'consent') {
-      onGrantConsent();
-      setScreen({ kind: 'settings' });
-    } else {
-      advanceLegalFlow({ continuation: { kind: 'settings' }, returnTo: { kind: 'settings' }, refused: false });
-    }
+  /** Settings' AI features row: with AI features on, the consent screen in review mode, to keep
+   *  them on or turn them off whatever the terms say; otherwise turning them on. */
+  const onOpenAIFeatures = () => {
+    if (consentStatus(kv).kind === 'granted') setScreen({ kind: 'consent', mode: 'review' });
+    else onTurnOnAIFeatures();
   };
 
   /** Review mode with consent on: the plain-text action deletes the grant and returns to
@@ -2032,7 +2040,7 @@ function LauncherShell({
           onHighlightingChange={onHighlightingChange}
           consentStatus={consentStatus(kv)}
           canProbe={clientOptions != null}
-          onOpenAIFeatures={onOpenAIFeaturesReview}
+          onOpenAIFeatures={onOpenAIFeatures}
           errorDetails={errorDetailsShown}
           onErrorDetailsChange={onErrorDetailsChange}
           deviceId={deviceId}
@@ -2057,7 +2065,7 @@ function LauncherShell({
           screen={screen}
           onAskAgree={onConsentAskAgree}
           onAskDecline={onLegalDecline}
-          onReviewTurnOn={onConsentReviewTurnOn}
+          onReviewTurnOn={onTurnOnAIFeatures}
           onReviewTurnOff={onConsentReviewTurnOff}
           onReviewClose={onConsentReviewClose}
           consentOn={consentStatus(kv).kind === 'granted'}
