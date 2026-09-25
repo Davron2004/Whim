@@ -161,8 +161,8 @@ type Screen =
   // The update screen (request-envelope D5; spec app-update-gate): an `update_required` refusal, or
   // the launch-time check finding this build below its platform's minimum. `heldPrompt` is the
   // prompt typed on the flow step it replaced: `Not now` goes Home (D5), so the next compose for
-  // the same app picks it back up rather than losing it. `updateNotice` is the plain-text notice of a
-  // message this build can't use whose fallback opened the screen (beta-1 D16).
+  // the same app picks it back up rather than losing it. `updateNotice` is the plain-text notice
+  // of a message this build can't use whose fallback opened the screen (beta-1 D16).
   | { kind: 'update-required'; heldPrompt?: HeldPrompt; updateNotice?: string }
   // The legal flow (legal-surface-v2 design D5; `consent-flow.ts`): the terms step, then the
   // ask-mode consent screen, each open in place of a data-sending action taken without a current
