@@ -333,7 +333,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const model = atStep('model', () => {
     if (overrides.model) return overrides.model;
     try {
-      const deps = buildModelDepsFromEnv(options.env, { providerSort: config.providerSort });
+      const deps = buildModelDepsFromEnv(options.env, { sort: config.providerSort, quantizations: config.providerQuantizations });
       return { client: deps.model, roster: deps.roster };
     } catch (err) {
       if (!useStub || (!(err instanceof ModelRosterEnvError) && !(err instanceof MissingApiKeyError))) throw err;
@@ -407,6 +407,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       maxConcurrentGenerations: config.maxConcurrentGenerations,
       maxConcurrentUnary: config.maxConcurrentUnary,
       maxConcurrentProbes: config.maxConcurrentProbes,
+      maxQueuedGenerations: config.queueMax,
     });
     const statsTransport = overrides.statsTransport ?? (apiKey ? openRouterUsageAndCostTransport(apiKey) : undefined);
     // With no stats transport there is nothing to re-resolve against, so no sweep is scheduled.

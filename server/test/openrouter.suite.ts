@@ -291,7 +291,7 @@ export async function runOpenRouterTests(): Promise<void> {
   // unset → no sort. Either way every request denies data collection.
   {
     let capturedCall: CapturedCall | undefined;
-    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }), 'throughput');
+    const client = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES, 200, (call) => { capturedCall = call; }), { sort: 'throughput' });
     const { deltas } = client.stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
     await drain(deltas);
     const body = JSON.parse((capturedCall?.init?.body as string) ?? '{}') as Record<string, unknown>;
