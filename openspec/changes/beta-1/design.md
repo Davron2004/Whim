@@ -78,8 +78,12 @@ thing that never returns. 3 s is #100's measured fix and sits inside the communi
 (R: Apple).
 
 **D2. Significant-change acknowledgment (#86) is asked in the age-check phase, for supervised minors only.**
-- A new `WhimAgeSignal` method calls `AgeRangeService.showSignificantUpdateAcknowledgment` (iOS 26.2+)
-  and resolves `acknowledged | declined | unavailable`.
+- A new `WhimAgeSignal` method calls `AgeRangeService.showSignificantUpdateAcknowledgment` (iOS 26.4+
+  per the Xcode 27 SDK's swiftinterface; research said 26.2) and resolves `acknowledged | declined |
+  unavailable`. Amended 2026-09-25 by the orchestrator (progress.md R7): it's asked only when
+  `requiredRegulatoryFeatures` includes `significantAppChangeRequiresAdultNotification`; a normal return is
+  `acknowledged`, a cancellation `declined`, any other error `unavailable`; and it gets its own 60 s deadline,
+  because it waits on a person.
 - JS calls it only when all three hold: iOS, this pass's signal is `minor-approved`, and the stored
   terms acceptance is for an older terms version. It's bounded by D1's deadline.
 - `declined` keeps AI features off (like `minor-not-approved`). `unavailable` proceeds (the documented

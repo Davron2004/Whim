@@ -12,7 +12,7 @@ The launcher SHALL resolve the store age check within 3 seconds of starting it, 
 - **THEN** that answer is reduced exactly as before and the deadline has no effect
 
 ### Requirement: A supervised minor's guardian acknowledges a significant terms change
-The launcher SHALL request the platform's significant-change acknowledgment on iOS when this pass's age signal is `minor-approved` and the stored terms acceptance is for an older terms version than the current one. It SHALL keep AI features off when the guardian declines, SHALL proceed when the acknowledgment is unavailable or exceeds the age-check deadline, and SHALL store only the outcome keyed by terms version, never the raw age signal.
+The launcher SHALL request the platform's significant-change acknowledgment on iOS when this pass's age signal is `minor-approved` and the stored terms acceptance is for an older terms version than the current one. It SHALL keep AI features off when the guardian declines, SHALL proceed when the acknowledgment is unavailable or does not settle within its own 60-second deadline (it waits on a person, so the 3-second age-check deadline does not apply to it), and SHALL store only the outcome keyed by terms version, never the raw age signal.
 
 #### Scenario: Guardian acknowledges
 - **WHEN** a `minor-approved` user whose accepted terms are older than the current terms reaches the age-check phase and the guardian acknowledges
@@ -27,5 +27,5 @@ The launcher SHALL request the platform's significant-change acknowledgment on i
 - **THEN** no acknowledgment is requested
 
 #### Scenario: Unavailable
-- **WHEN** the acknowledgment API is missing (older iOS), errors, or exceeds the deadline
+- **WHEN** the acknowledgment API is missing (older iOS), errors, or does not settle within 60 seconds
 - **THEN** the flow proceeds as if acknowledged for this pass only

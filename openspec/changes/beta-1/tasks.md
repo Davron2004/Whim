@@ -30,8 +30,8 @@
 ## 5. Age check and legal flow (app)
 
 - [ ] 5.1 Bound `runAgeCheck` with a 3 s deadline that resolves `unavailable` through the existing reduction (D1). Test with a never-settling `read` and a fake clock: the flow ends on the terms step. Red-check against the unbounded version.
-- [ ] 5.2 `WhimAgeSignal.acknowledgeSignificantUpdate(description)`: Swift via `AgeRangeService.showSignificantUpdateAcknowledgment` on iOS 26.2+, the `.mm` binding and the TS spec, resolving `acknowledged | declined | unavailable`. Older iOS and Android → `unavailable` (D2).
-- [ ] 5.3 Request it only for `minor-approved` with an older accepted terms version, bounded by D1. `declined` keeps AI off, `unavailable` proceeds, and only the outcome is stored, per terms version. Tests for every `store-age-signals` scenario.
+- [ ] 5.2 `WhimAgeSignal.acknowledgeSignificantUpdate(description)`: Swift via `AgeRangeService.showSignificantUpdateAcknowledgment` on iOS 26.4+ (R7), the `.mm` binding and the TS spec, resolving `acknowledged | declined | unavailable`. Older iOS and Android → `unavailable` (D2).
+- [ ] 5.3 Request it only for `minor-approved` with an older accepted terms version, bounded by its own 60 s deadline (R7). `declined` keeps AI off, `unavailable` proceeds, and only the outcome is stored, per terms version. Tests for every `store-age-signals` scenario.
 - [ ] 5.4 Route Settings "Turn on AI features" through `nextLegalStep` (D6). Tests: outdated terms → terms then one consent; current terms → one consent; no legal screen twice in a pass.
 - [ ] 5.5 Reword `openspec/changes/developer-observability/tasks.md` 8.2(a): an up-to-date grant isn't re-asked, and a grant older than `AI_CONSENT_VERSION` is.
 
