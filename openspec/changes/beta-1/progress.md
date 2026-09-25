@@ -72,3 +72,4 @@
   - Two #104-encoding tests replaced.
   Native: `WhimAgeSignal.swift` passes a standalone `swiftc -typecheck`, and codegen into scratch matches the `.mm`/`.kt` signatures; the `.mm` and `.kt` themselves are uncompiled until 10.4 (iOS needs `pod install`). Red-checks all fail by name (5.1 unbounded → 3; 5.3 no acknowledgment → 24, 3 s guardian → 3; 5.4 old #104 code → 4).
 - chain-5 merged (integrity OK, 13 files); tasks 5.1–5.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. Archive-order note on #69 (ai-data-consent's Settings-row text vs D6); filed #124 (acknowledgment skipped while the age outcome is fresh).
+- 17:58 chain-6 dispatched: BASE `56f19f58005a3fdd2b4b96e9c9ae9242d2bec522`, worktree `.claude/worktrees/beta-1-6`, branch `chain/beta-1-6`, block `dispatch/chain-6.md`, model Opus (R9).
