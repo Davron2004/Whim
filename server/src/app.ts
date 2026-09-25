@@ -31,7 +31,7 @@ import type { ApiError, DevLogSinkPath } from '@whim/contract';
 import type { Pipeline } from './pipeline';
 import type { UsageStore } from './usage-store';
 import type { ModelClient, ModelRoster } from './generation/model';
-import { InFlightGenerations, makeGenerateRoute } from './routes/generate';
+import { InFlightGenerations, makeGenerateRoute, type LineClock } from './routes/generate';
 import { makeRewriteRoute } from './routes/rewrite';
 import { makeClarifyRoute } from './routes/clarify';
 import { makeReportRoute } from './routes/report';
@@ -131,6 +131,9 @@ export interface AppOptions {
    *  (production: one second, matching the proxy-flush window the probe is checking). Tests inject
    *  a small value so the spacing assertion doesn't cost real wall clock. */
   probeFrameIntervalMs?: number;
+  /** The generation line's timers — its `queued` cadence and longest wait (beta-1 D8). Defaults to
+   *  the host's own; tests inject a manual clock so neither costs real wall clock. */
+  lineClock?: LineClock;
 }
 
 const PROBE_FRAME = ': whim-healthz-probe\n\n';
@@ -198,6 +201,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     maxConcurrentGenerations: config.maxConcurrentGenerations,
     maxConcurrentUnary: config.maxConcurrentUnary,
     maxConcurrentProbes: config.maxConcurrentProbes,
+    maxQueuedGenerations: config.queueMax,
   });
   const policy = options.policy ?? cachedPolicy(new StubContentPolicy());
   const reportStore = options.reportStore ?? new InMemoryReportStore();
@@ -351,6 +355,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       resolveTransport,
       resolveBounds,
       inFlight,
+      lineClock: options.lineClock,
     }),
   );
   app.route(

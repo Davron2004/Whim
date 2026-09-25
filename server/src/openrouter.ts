@@ -17,8 +17,18 @@ export { Usage };
 
 const routerLog = log.child({ scope: 'openrouter' });
 
-/** `WHIM_PROVIDER_SORT` (design D3) — global, not per role; `undefined` sends no `provider` field. */
+/** `WHIM_PROVIDER_SORT` (design D3) — global, not per role; `undefined` sends no `provider.sort`. */
 export type ProviderSort = 'price' | 'throughput' | 'latency';
+
+/** One of OpenRouter's `provider.quantizations` names (`WHIM_PROVIDER_QUANTIZATIONS`, beta-1 D12). */
+export type ProviderQuantization = 'int4' | 'int8' | 'fp4' | 'fp6' | 'fp8' | 'fp16' | 'bf16' | 'fp32' | 'unknown';
+
+/** The operator's provider routing preferences, global rather than per role. An absent field sends
+ *  nothing for it, so with neither set the `provider` object is exactly `{ data_collection: 'deny' }`. */
+export interface ProviderRouting {
+  readonly sort?: ProviderSort;
+  readonly quantizations?: readonly ProviderQuantization[];
+}
 
 // ─── Typed error classes ─────────────────────────────────────────────────────
 
@@ -156,7 +166,7 @@ function reasoningField(setting: ReasoningSetting | undefined): Record<string, u
   }
 }
 
-function requestBody(options: OpenRouterOptions, providerSort: ProviderSort | undefined): string {
+function requestBody(options: OpenRouterOptions, routing: ProviderRouting): string {
   return JSON.stringify({
     model: options.model,
     messages: options.messages,
@@ -167,7 +177,11 @@ function requestBody(options: OpenRouterOptions, providerSort: ProviderSort | un
     // `data_collection: 'deny'` keeps prompts away from providers that train on or keep them.
     // Measured 2026-09-23: 25 of 26 providers for the engineer model still qualify (only DeepSeek's
     // own API drops out), and the routed pick and price didn't change.
-    provider: { data_collection: 'deny', ...(providerSort ? { sort: providerSort } : {}) },
+    provider: {
+      data_collection: 'deny',
+      ...(routing.sort ? { sort: routing.sort } : {}),
+      ...(routing.quantizations ? { quantizations: routing.quantizations } : {}),
+    },
     stream_options: { include_usage: true },
   });
 }
@@ -317,11 +331,11 @@ function decodeChunk(decoder: TextDecoder, chunk: Uint8Array | ArrayBufferLike):
 
 export class OpenRouterClient {
   private readonly fetchFn: FetchFn;
-  private readonly providerSort: ProviderSort | undefined;
+  private readonly routing: ProviderRouting;
 
-  constructor(fetchFn: FetchFn = globalThis.fetch, providerSort?: ProviderSort) {
+  constructor(fetchFn: FetchFn = globalThis.fetch, routing: ProviderRouting = {}) {
     this.fetchFn = fetchFn;
-    this.providerSort = providerSort;
+    this.routing = routing;
   }
 
   /**
@@ -347,7 +361,7 @@ export class OpenRouterClient {
    * `ttftMs`/`durationMs`, prompt/completion tokens, `generationId`, `outcome`. No message content.
    */
   stream(options: OpenRouterOptions): StreamResult {
-    const { fetchFn, providerSort } = this;
+    const { fetchFn, routing } = this;
     const apiKey = process.env.OPENROUTER_API_KEY ?? '';
     // `options.logger`, when present, already carries `requestId` — rebinding `scope` on it keeps
     // this call's `model call` line identical to the module-logger shape in every other field.
@@ -412,7 +426,7 @@ export class OpenRouterClient {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
           },
-          body: requestBody(options, providerSort),
+          body: requestBody(options, routing),
           signal: options.signal,
         });
       } catch (err) {

@@ -103,6 +103,9 @@ class RecordingUsageStore implements UsageStore {
   admit(params: Parameters<UsageStore['admit']>[0]) {
     return this.inner.admit(params);
   }
+  unitAvailable(params: Parameters<UsageStore['unitAvailable']>[0]) {
+    return this.inner.unitAvailable(params);
+  }
   refund(requestId: string) {
     return this.inner.refund(requestId);
   }
@@ -169,6 +172,7 @@ function creditThrowingStore(): CreditThrowingStore {
       if (result.ok) admitted.push(result.requestId);
       return result;
     },
+    unitAvailable: (params) => inner.unitAvailable(params),
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
       settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });
@@ -201,6 +205,7 @@ function reportInsertFailureStore(): {
       if (result.ok) admitted.push(result.requestId);
       return result;
     },
+    unitAvailable: (params) => inner.unitAvailable(params),
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
       settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });
@@ -235,6 +240,7 @@ function reportOkSettlementFailureStore(): {
     credit: (deviceId, usage) => inner.credit(deviceId, usage),
     read: (deviceId) => inner.read(deviceId),
     admit: (params) => inner.admit(params),
+    unitAvailable: (params) => inner.unitAvailable(params),
     refund: (requestId) => inner.refund(requestId),
     settle: async (requestId, params) => {
       settles.push({ requestId, outcome: params.outcome, failureReason: params.failureReason });

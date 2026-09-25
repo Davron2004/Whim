@@ -23,7 +23,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { getRequestListener, type Http2Bindings, type HttpBindings } from '@hono/node-server';
 import { createApp } from './app';
-import { loadServerConfig, type ServerConfig } from './config';
+import { loadServerConfig, providerRouting, type ServerConfig } from './config';
 import { runPreflight } from './preflight';
 import { SELF_TEST_FIXTURE } from './runtime-assets';
 import { createStubPipeline, type Pipeline } from './pipeline';
@@ -333,7 +333,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const model = atStep('model', () => {
     if (overrides.model) return overrides.model;
     try {
-      const deps = buildModelDepsFromEnv(options.env, { providerSort: config.providerSort });
+      const deps = buildModelDepsFromEnv(options.env, providerRouting(config));
       return { client: deps.model, roster: deps.roster };
     } catch (err) {
       if (!useStub || (!(err instanceof ModelRosterEnvError) && !(err instanceof MissingApiKeyError))) throw err;
@@ -407,6 +407,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       maxConcurrentGenerations: config.maxConcurrentGenerations,
       maxConcurrentUnary: config.maxConcurrentUnary,
       maxConcurrentProbes: config.maxConcurrentProbes,
+      maxQueuedGenerations: config.queueMax,
     });
     const statsTransport = overrides.statsTransport ?? (apiKey ? openRouterUsageAndCostTransport(apiKey) : undefined);
     // With no stats transport there is nothing to re-resolve against, so no sweep is scheduled.

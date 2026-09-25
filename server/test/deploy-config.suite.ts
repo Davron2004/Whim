@@ -1203,6 +1203,17 @@ function deployPreflightTests(): void {
     });
   }
 
+  // The provider quantizations and the generation line are operator values too (beta-1 D8/D12).
+  for (const [variable, bad] of [['WHIM_PROVIDER_QUANTIZATIONS', 'fp9'], ['WHIM_QUEUE_MAX', '-1'], ['WHIM_QUEUE_MAX_WAIT_MS', '0']] as const) {
+    check(`setup: server boot refuses ${variable}=${bad}`, configRefuses({ [variable]: bad }, variable));
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox, { [variable]: bad });
+      const run = runScript(sandbox, 'deploy.sh', []);
+      check(`deploy.sh refuses ${variable}=${bad}, naming it, as server boot does`, run.status === 1 && run.stderr.includes(variable) && run.stderr.includes('would refuse these values at boot'), run.stderr);
+      eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+    });
+  }
+
   // A profile's server lines reach config.env too, so the same boot parse covers them: every
   // profile, since a resize can move the VM to any of them (legal-surface-v2 review L4).
   for (const variable of KEEP_PERIOD_VARIABLES) {
@@ -1387,7 +1398,15 @@ function headOf(sandbox: Sandbox): string {
 function deployFullTests(health: HealthBodies): void {
   section('Deploy scripts: deploy.sh full deploy and rollback');
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_MIN_BUILD_ANDROID: '382000', WHIM_USAGE_IDLE_DAYS: '180', WHIM_BETA_LIMIT_PER_CLIENT_HOUR: '200', WHIM_BETA_LIMIT_PER_DAY: '5000' });
+    writeOperatorFile(sandbox, {
+      WHIM_MIN_BUILD_ANDROID: '382000',
+      WHIM_USAGE_IDLE_DAYS: '180',
+      WHIM_BETA_LIMIT_PER_CLIENT_HOUR: '200',
+      WHIM_BETA_LIMIT_PER_DAY: '5000',
+      WHIM_PROVIDER_QUANTIZATIONS: 'fp8,bf16',
+      WHIM_QUEUE_MAX: '0',
+      WHIM_QUEUE_MAX_WAIT_MS: '60000',
+    });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
     const run = runScript(sandbox, 'deploy.sh', []);
@@ -1398,6 +1417,11 @@ function deployFullTests(health: HealthBodies): void {
     check('  ... and the operator\'s beta signup limits', config.includes('WHIM_BETA_LIMIT_PER_CLIENT_HOUR=200\n') && config.includes('WHIM_BETA_LIMIT_PER_DAY=5000\n'), config);
     const served = loadServerConfig(Object.fromEntries(envEntries(config)));
     eq('  ... which the server reads as its limits', [served.betaLimitPerClientHour, served.betaLimitPerDay], [200, 5000]);
+    eq(
+      '  ... and the operator\'s quantizations and line, WHIM_QUEUE_MAX=0 kept as the no-line lever',
+      [served.providerQuantizations, served.queueMax, served.queueMaxWaitMs],
+      [['fp8', 'bf16'], 0, 60_000],
+    );
   });
 
   withSandbox((sandbox) => {
@@ -1933,6 +1957,7 @@ while :; do
 done
 `, { mode: 0o755 });
     fs.writeFileSync(path.join(sandbox.bin, 'node'), `#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$STUB_DIR/driver-args"
 stats=''
 previous=''
 for arg in "$@"; do [ "$previous" = --stats ] && stats="$arg"; previous="$arg"; done
@@ -1955,7 +1980,7 @@ exit "\${STUB_DRIVER_STATUS:-0}"
 
       let samplerPid = 0;
       try {
-        const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2'], {
+        const run = runScript(sandbox, 'loadtest/run.sh', ['drive', '--devices', '2', '--cap', '2', '--queue-max', '0'], {
           STUB_DRIVER_STATUS: String(driverStatus),
         });
         samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
@@ -1973,7 +1998,8 @@ exit "\${STUB_DRIVER_STATUS:-0}"
           && stats !== ''
           && statsReceipt === stats
           && stubFile(sandbox, 'driver-stats-sample') === '1.5,2.5\n'
-          && !fs.existsSync(stats), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);
+          && !fs.existsSync(stats)
+          && stubFile(sandbox, 'driver-args').includes('--cap\n2\n--queue-max\n0\n'), `${run.stdout}\n${run.stderr}\nstatus=${run.status} sampler=${samplerPid} stopped=${samplerStopped} stats=${stats} receipt=${statsReceipt} exists=${stats !== '' && fs.existsSync(stats)}`);
       } finally {
         if (samplerPid === 0) samplerPid = Number(stubFile(sandbox, 'sampler-pid'));
         if (samplerPid > 0) stopTestProcess(samplerPid);

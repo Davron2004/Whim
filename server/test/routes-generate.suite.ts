@@ -28,10 +28,19 @@ import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createStubPipeline, type Pipeline } from '../src/pipeline';
 import { NodeSqliteUsageStore, type RequestOutcome } from '../src/usage-store';
 import { NodeSqliteReportStore } from '../src/reports/store';
-import { createSlotController, type AcquireResult, type SlotController, type SlotKind } from '../src/admission/slots';
+import {
+  createSlotController,
+  type AcquireResult,
+  type LineEntry,
+  type SlotController,
+  type SlotHandle,
+  type SlotKind,
+} from '../src/admission/slots';
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, ModelContentPolicy, type ContentPolicy } from '../src/policy';
-import { InFlightGenerations } from '../src/routes/generate';
+import { InFlightGenerations, type LineClock } from '../src/routes/generate';
+import { serverBusyCeilingRefusal, serverBusyRefusal } from '../src/admission/refusals';
+import { captureLogs, withMessage } from './log-capture';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import type { Clock, RunTrace } from '../src/generation/machine';
 import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
@@ -47,15 +56,17 @@ import {
 } from './route-doubles';
 import {
   ApiError,
+  GenerationEvent,
+  REQUEST_ID_HEADER,
   ServiceRefusalCode,
   type GenerateRequest,
-  type GenerationEvent,
   type Usage,
   type WireAppRecord,
 } from '@whim/contract';
 
 const DEVICE_A = 'a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0';
 const DEVICE_B = 'b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0';
+const DEVICE_C = 'c0c0c0c0-c0c0-40c0-80c0-c0c0c0c0c0c0';
 const ROSTER: ModelRoster = defaultModelRoster('vendor/rewrite-g', 'vendor/engineer-g');
 /** 22:00:00 UTC — two hours to the reset, so every knowable `Retry-After` is exactly 7200. */
 const AT_2200_UTC = Date.UTC(2026, 0, 15, 22, 0, 0);
@@ -75,6 +86,8 @@ const CREDIT_EXHAUSTED_REASON = 'Whim has used up its generation budget for now.
 
 // ─── Local doubles (route-specific, not shared) ─────────────────────────────
 
+/** Counts every acquire, and every release of each slot handed out at once. A place in the line
+ *  passes through unwrapped: the line tests read the controller's own counts instead. */
 class SlotSpy {
   acquires = 0;
   readonly releaseCalls: number[] = [];
@@ -83,6 +96,7 @@ class SlotSpy {
   constructor(private readonly inner: SlotController) {
     this.controller = {
       acquire: (kind, deviceId) => this.acquire(kind, deviceId),
+      acquireInLine: (deviceId) => this.acquireInLine(deviceId),
       startDraining: () => inner.startDraining(),
       isDraining: () => inner.isDraining(),
       counts: () => inner.counts(),
@@ -93,16 +107,29 @@ class SlotSpy {
     return this.inner.counts().generations;
   }
 
+  get queued(): number {
+    return this.inner.counts().queued;
+  }
+
   private acquire(kind: SlotKind, deviceId: string): AcquireResult {
     this.acquires++;
     const result = this.inner.acquire(kind, deviceId);
-    if (!result.ok) return result;
+    return result.ok ? { ok: true, handle: this.counted(result.handle) } : result;
+  }
+
+  private acquireInLine(deviceId: string): LineEntry {
+    this.acquires++;
+    const entry = this.inner.acquireInLine(deviceId);
+    return entry.kind === 'slot' ? { kind: 'slot', handle: this.counted(entry.handle) } : entry;
+  }
+
+  private counted(handle: SlotHandle): SlotHandle {
     const index = this.releaseCalls.push(0) - 1;
     const release = (): void => {
       this.releaseCalls[index]++;
-      result.handle.release();
+      handle.release();
     };
-    return { ok: true, handle: { kind: result.handle.kind, deviceId: result.handle.deviceId, release } };
+    return { kind: handle.kind, deviceId: handle.deviceId, release };
   }
 }
 
@@ -121,12 +148,15 @@ function immediatePipeline(): Pipeline {
  *  `generationId` is set, the run records it on the trace before holding, as a model call would. */
 class HeldPipeline implements Pipeline {
   runs = 0;
+  /** The prompt of every run, in the order the runs started. */
+  readonly started: string[] = [];
   private readonly waiting: Array<() => void> = [];
 
   constructor(private readonly generationId?: string) {}
 
-  async *run(_request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace): AsyncIterable<GenerationEvent> {
+  async *run(request: GenerateRequest, signal?: AbortSignal, trace?: RunTrace): AsyncIterable<GenerationEvent> {
     this.runs++;
+    this.started.push(request.prompt);
     if (this.generationId) trace?.generationIds.push(this.generationId);
     yield { type: 'stage', stage: 'plan', status: 'start' };
     await this.hold(signal);
@@ -227,6 +257,82 @@ class ManualTimerClock implements Clock {
   }
 }
 
+/** The generation line's clock: time moves only when the test advances it. */
+class ManualLineClock implements LineClock {
+  private at = 0;
+  private readonly timers = new Set<{ due: number; fire: () => void }>();
+
+  now(): number {
+    return this.at;
+  }
+
+  setTimer(delayMs: number, onFire: () => void): () => void {
+    const timer = { due: this.at + delayMs, fire: onFire };
+    this.timers.add(timer);
+    return () => {
+      this.timers.delete(timer);
+    };
+  }
+
+  /** Moves time on by `ms`, firing every timer that falls due, earliest first. */
+  advance(ms: number): void {
+    this.at += ms;
+    const due = [...this.timers].filter((t) => t.due <= this.at).sort((a, b) => a.due - b.due);
+    for (const timer of due) {
+      this.timers.delete(timer);
+      timer.fire();
+    }
+  }
+}
+
+/** Reads a generation stream one event at a time, every read bounded. */
+class StreamEvents {
+  private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  private readonly decoder = new TextDecoder();
+  private readonly ready: GenerationEvent[] = [];
+  private buffer = '';
+  private ended = false;
+
+  constructor(res: Response) {
+    this.reader = res.body!.getReader();
+  }
+
+  /** The next event, `undefined` once the stream has ended, or `TIMED_OUT`. */
+  async next(): Promise<GenerationEvent | undefined | typeof TIMED_OUT> {
+    while (this.ready.length === 0 && !this.ended) {
+      const chunk = await within(this.reader.read());
+      if (chunk === TIMED_OUT) return TIMED_OUT;
+      if (chunk.done) {
+        this.ended = true;
+        break;
+      }
+      this.buffer += this.decoder.decode(chunk.value, { stream: true });
+      const blocks = this.buffer.split('\n\n');
+      this.buffer = blocks.pop() ?? '';
+      for (const block of blocks) {
+        const data = block.split('\n').find((line) => line.startsWith('data: '));
+        if (data) this.ready.push(GenerationEvent.parse(JSON.parse(data.slice('data: '.length))));
+      }
+    }
+    return this.ready.shift();
+  }
+
+  /** Every event left, to the end of the stream (`TIMED_OUT` if it never ends). */
+  async rest(): Promise<GenerationEvent[] | typeof TIMED_OUT> {
+    const events: GenerationEvent[] = [];
+    for (;;) {
+      const event = await this.next();
+      if (event === TIMED_OUT) return TIMED_OUT;
+      if (event === undefined) return events;
+      events.push(event);
+    }
+  }
+
+  cancel(): Promise<void> {
+    return this.reader.cancel();
+  }
+}
+
 // ─── App harness ─────────────────────────────────────────────────────────────
 
 interface HarnessOpts {
@@ -237,6 +343,7 @@ interface HarnessOpts {
   creditTransport?: CreditTransport;
   resolveTransport?: UsageAndCostTransport;
   usageStore?: RecordingUsageStore;
+  lineClock?: LineClock;
 }
 
 interface Harness {
@@ -252,7 +359,11 @@ function harness(opts: HarnessOpts = {}): Harness {
   const usageStore = opts.usageStore ?? new RecordingUsageStore();
   const slots = new SlotSpy(
     opts.slots ??
-      createSlotController({ maxConcurrentGenerations: config.maxConcurrentGenerations, maxConcurrentUnary: config.maxConcurrentUnary }),
+      createSlotController({
+        maxConcurrentGenerations: config.maxConcurrentGenerations,
+        maxConcurrentUnary: config.maxConcurrentUnary,
+        maxQueuedGenerations: config.queueMax,
+      }),
   );
   const inFlight = new InFlightGenerations();
   const tracker = new ResolveTracker();
@@ -265,6 +376,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     creditTransport: opts.creditTransport,
     resolver: { transport: opts.resolveTransport, tracker, bounds: FAST_RESOLVE_BOUNDS },
     inFlight,
+    lineClock: opts.lineClock,
   });
   return { app, usageStore, slots, inFlight, tracker };
 }
@@ -436,10 +548,11 @@ async function testSlotAndUnitOrder(): Promise<void> {
     eq('the first stream still ends in its result', events.at(-1)?.type, 'result');
   }
 
-  // The global cap wins over an exhausted device allowance.
+  // With no line (`WHIM_QUEUE_MAX=0`, the rollback lever), the global cap wins over an exhausted
+  // device allowance.
   {
     const pipeline = new HeldPipeline();
-    const h = harness({ pipeline, config: { maxConcurrentGenerations: 1, limitGenerationsPerDeviceDay: 1 } });
+    const h = harness({ pipeline, config: { maxConcurrentGenerations: 1, limitGenerationsPerDeviceDay: 1, queueMax: 0 } });
     await h.usageStore.admit({ requestId: randomUUID(), deviceId: DEVICE_A, kind: 'generate', now: AT_2200_UTC, deviceLimit: 1 });
     eq('setup: device B holds the only generation slot', (await postGenerate(h.app, PROMPT, DEVICE_B)).status, 200);
     await expectRefusal('at the cap + daily limit exhausted', await postGenerate(h.app, PROMPT, DEVICE_A), 429, 'server_busy', null);
@@ -460,11 +573,11 @@ async function testSlotAndUnitOrder(): Promise<void> {
 // ─── Concurrency cap ─────────────────────────────────────────────────────────
 
 async function testGenerationCap(): Promise<void> {
-  section('Generate admission: the global generation cap (specs/server-admission-control "Global concurrency caps")');
+  section('Generate admission: the global generation cap with no line (specs/server-admission-control "Global concurrency caps", WHIM_QUEUE_MAX=0)');
 
   const cap = 3;
   const pipeline = new HeldPipeline();
-  const h = harness({ pipeline, config: { maxConcurrentGenerations: cap } });
+  const h = harness({ pipeline, config: { maxConcurrentGenerations: cap, queueMax: 0 } });
   const statuses: number[] = [];
   for (let i = 0; i < cap; i++) statuses.push((await postGenerate(h.app, PROMPT, randomUUID())).status);
   check(`cap ${cap}: ${cap} generations from ${cap} devices are admitted`, statuses.every((s) => s === 200), JSON.stringify(statuses));
@@ -479,6 +592,246 @@ async function testGenerationCap(): Promise<void> {
 
   h.inFlight.abortAll();
   check(`cap ${cap}: cleanup — every held generation ended`, await waitFor(() => h.slots.generations === 0));
+}
+
+// ─── The line (beta-1 D8) ────────────────────────────────────────────────────
+
+const QUEUED_FIRST: GenerationEvent = { type: 'queued', position: 1 };
+const PLAN_START: GenerationEvent = { type: 'stage', stage: 'plan', status: 'start' };
+
+function typesOf(events: GenerationEvent[] | typeof TIMED_OUT): string[] | typeof TIMED_OUT {
+  return events === TIMED_OUT ? events : events.map((e) => e.type);
+}
+
+function failureReasons(events: GenerationEvent[] | typeof TIMED_OUT): string[] {
+  return events === TIMED_OUT ? [] : events.flatMap((e) => (e.type === 'failure' ? [e.reason] : []));
+}
+
+async function endLine(label: string, h: Harness): Promise<void> {
+  h.inFlight.abortAll();
+  check(`${label}: cleanup — no slot, place in line or stream is left`, await waitFor(() => h.slots.generations === 0 && h.slots.queued === 0 && h.inFlight.size === 0));
+}
+
+async function testLineSlotFreesWhileWaiting(): Promise<void> {
+  section('The line: a generation that finds every slot busy waits on its stream, then runs (spec "Slot frees while waiting")');
+
+  const pipeline = new HeldPipeline();
+  const lineClock = new ManualLineClock();
+  const logs = captureLogs();
+  try {
+    const h = harness({ pipeline, lineClock, config: { maxConcurrentGenerations: 1 } });
+    const first = await postGenerate(h.app, PROMPT, DEVICE_A);
+    eq('setup: device A holds the only slot', first.status, 200);
+
+    const waiting = await postGenerate(h.app, { prompt: 'a habit tracker MARKER-LINE-7f3a' }, DEVICE_B);
+    eq('with every slot busy the stream still opens', [waiting.status, waiting.headers.get('content-type')], [200, 'text/event-stream']);
+    const events = new StreamEvents(waiting);
+    eq('its first event says it is first in line', await events.next(), QUEUED_FIRST);
+    eq('waiting spends no daily unit', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+    eq('and inserts no ledger row', h.usageStore.admitted.length, 1);
+
+    const heartbeats: unknown[] = [];
+    for (let second = 5; second <= 40; second += 5) {
+      lineClock.advance(5000);
+      heartbeats.push(await events.next());
+    }
+    eq('every 5 s of a 40 s wait brings another queued event', heartbeats, Array.from({ length: 8 }, () => QUEUED_FIRST));
+
+    pipeline.releaseOne();
+    eq('when the slot frees, the normal stage events follow', await events.next(), PLAN_START);
+    eq('the daily unit is spent once the slot is taken', await h.usageStore.generationUnits(AT_2200_UTC), 2);
+    const requestId = waiting.headers.get(REQUEST_ID_HEADER);
+    eq('the ledger row it inserts then takes the request id', h.usageStore.admitted[1], requestId);
+    pipeline.releaseOne();
+    eq('... through to its one result', typesOf(await events.rest()), ['usage', 'result']);
+    await readEvents('the first generation', first);
+    check('every slot came back', await waitFor(() => h.slots.generations === 0 && h.slots.queued === 0));
+    eq('the waiting generation settled as delivered', h.usageStore.settlesFor(requestId ?? undefined).map((r) => r.outcome), ['delivered']);
+
+    const lines = [...withMessage(logs, 'queue join'), ...withMessage(logs, 'queue leave')].filter((r) => r.requestId === requestId);
+    eq('the wait is logged under the request id: join, then leave', lines.map((r) => r.msg), ['queue join', 'queue leave']);
+    eq('join names the position and the line length', [lines[0]?.position, lines[0]?.lineLength], [1, 1]);
+    eq('leave names the outcome and the time waited', [lines[1]?.outcome, lines[1]?.waitedMs], ['slot', 40_000]);
+    const text = JSON.stringify(lines);
+    check('neither line carries the prompt or the device id', !text.includes('MARKER-LINE-7f3a') && !text.includes(DEVICE_B), text);
+  } finally {
+    logs.stop();
+  }
+}
+
+async function testLineOrder(): Promise<void> {
+  section('The line: first come, first served (spec "Order")');
+
+  const pipeline = new HeldPipeline();
+  const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1 } });
+  const first = await postGenerate(h.app, { prompt: 'first' }, DEVICE_A);
+  const second = new StreamEvents(await postGenerate(h.app, { prompt: 'second' }, DEVICE_B));
+  const third = new StreamEvents(await postGenerate(h.app, { prompt: 'third' }, DEVICE_C));
+  eq('two waiting generations are first and second in line', [await second.next(), await third.next()], [QUEUED_FIRST, { type: 'queued', position: 2 }]);
+
+  pipeline.releaseOne();
+  eq('when the one slot frees, the one that joined first starts', await second.next(), PLAN_START);
+  eq('the other hears that it moved up', await third.next(), QUEUED_FIRST);
+  pipeline.releaseOne();
+  eq('the next slot goes to the last one', await third.next(), PLAN_START);
+  eq('the runs started in arrival order', pipeline.started, ['first', 'second', 'third']);
+  pipeline.releaseOne();
+  await Promise.all([readEvents('first', first), second.rest(), third.rest()]);
+  await endLine('order', h);
+}
+
+async function testLineFull(): Promise<void> {
+  section('The line: a full line refuses before any stream opens (spec "Line full")');
+
+  const allow = { role: 'rewrite' as const, deltas: ['{"verdict":"allow"}'] };
+  const classifier = new ScriptedModelClient(ROSTER, [allow, allow]);
+  const h = harness({ pipeline: new HeldPipeline(), lineClock: new ManualLineClock(), policy: modelPolicy(classifier), config: { maxConcurrentGenerations: 1, queueMax: 1 } });
+  eq('setup: A runs', (await postGenerate(h.app, { prompt: 'a first app' }, DEVICE_A)).status, 200);
+  const waiting = new StreamEvents(await postGenerate(h.app, { prompt: 'a second app' }, DEVICE_B));
+  eq('setup: B waits in a line of one', await waiting.next(), QUEUED_FIRST);
+  await expectRefusal('a generation that finds the line full', await postGenerate(h.app, { prompt: 'a third app' }, DEVICE_C), 429, 'server_busy', null);
+  eq('the refused generation took no place in line', h.slots.queued, 1);
+  eq('it spent no daily unit', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+  eq('and reached no classifier', classifier.requests.length, 2);
+  await endLine('line full', h);
+}
+
+async function testLineTimeout(): Promise<void> {
+  section('The line: a generation that waits too long ends in one failure and spends nothing (spec "Waited too long")');
+
+  const logs = captureLogs();
+  try {
+    const lineClock = new ManualLineClock();
+    const h = harness({ pipeline: new HeldPipeline(), lineClock, config: { maxConcurrentGenerations: 1 } });
+    await postGenerate(h.app, PROMPT, DEVICE_A);
+    const res = await postGenerate(h.app, PROMPT, DEVICE_B);
+    const events = new StreamEvents(res);
+    eq('setup: B waits first in line', await events.next(), QUEUED_FIRST);
+    lineClock.advance(180_000);
+    const rest = await events.rest();
+    eq('after the default 180 s the stream ends with one failure and nothing else', typesOf(rest), ['failure']);
+    eq('its reason is the capacity refusal\'s hint', failureReasons(rest), [serverBusyRefusal().body.hint]);
+    eq('no daily unit was spent', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+    eq('no ledger row was inserted for it', h.usageStore.admitted.length, 1);
+    eq('it left the line and holds no slot', [h.slots.queued, h.slots.generations], [0, 1]);
+    const leave = withMessage(logs, 'queue leave').filter((r) => r.requestId === res.headers.get(REQUEST_ID_HEADER));
+    eq('its leave line says timeout, after 180 s', leave.map((r) => [r.outcome, r.waitedMs]), [['timeout', 180_000]]);
+    const again = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B));
+    eq('the device is free to join the line again', await again.next(), QUEUED_FIRST);
+    await endLine('timeout', h);
+  } finally {
+    logs.stop();
+  }
+
+  const lineClock = new ManualLineClock();
+  const h = harness({ pipeline: new HeldPipeline(), lineClock, config: { maxConcurrentGenerations: 1, queueMaxWaitMs: 12_000 } });
+  await postGenerate(h.app, PROMPT, DEVICE_A);
+  const events = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B));
+  const seen = [await events.next()];
+  lineClock.advance(5000);
+  seen.push(await events.next());
+  lineClock.advance(5000);
+  seen.push(await events.next());
+  lineClock.advance(2000);
+  seen.push(await events.next(), await events.next());
+  eq('a configured 12 s wait: queued on entry, at 5 s and 10 s, then the failure at 12 s', seen.map((e) => (typeof e === 'object' ? e.type : String(e))), ['queued', 'queued', 'queued', 'failure', 'undefined']);
+  await endLine('configured wait', h);
+}
+
+async function testLineLeave(): Promise<void> {
+  section('The line: a client that leaves, or a drain, takes the generation out and moves everyone up (spec "Client leaves the line")');
+
+  for (const how of ['disconnect', 'cancel'] as const) {
+    const pipeline = new HeldPipeline();
+    const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1 } });
+    await postGenerate(h.app, PROMPT, DEVICE_A);
+    const client = new AbortController();
+    const leaving = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B, client.signal));
+    const behind = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_C));
+    eq(`${how}: setup — first and second in line`, [await leaving.next(), await behind.next()], [QUEUED_FIRST, { type: 'queued', position: 2 }]);
+    if (how === 'disconnect') client.abort();
+    else await leaving.cancel();
+    eq(`${how}: the one behind moves up`, await behind.next(), QUEUED_FIRST);
+    if (how === 'disconnect') eq(`${how}: the stream that left closes with no terminal event`, await leaving.rest(), []);
+    eq(`${how}: the line holds only the one behind, and only the running one holds a slot`, [h.slots.queued, h.slots.generations], [1, 1]);
+    eq(`${how}: no daily unit was spent for it`, await h.usageStore.generationUnits(AT_2200_UTC), 1);
+    check(`${how}: its stream is no longer in flight`, await waitFor(() => h.inFlight.size === 2));
+    pipeline.releaseOne();
+    eq(`${how}: the next slot goes to the one behind`, await behind.next(), PLAN_START);
+    await endLine(how, h);
+  }
+
+  const logs = captureLogs();
+  try {
+    const pipeline = new HeldPipeline();
+    const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1 } });
+    const first = await postGenerate(h.app, PROMPT, DEVICE_A);
+    const waiting = [
+      new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B)),
+      new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_C)),
+    ];
+    await Promise.all(waiting.map((w) => w.next()));
+    h.slots.controller.startDraining();
+    const rests = await Promise.all(waiting.map((w) => w.rest()));
+    eq('drain: every waiting stream ends with one failure', rests.map(typesOf), [['failure'], ['failure']]);
+    eq('drain: each says Whim is busy', rests.flatMap(failureReasons), [serverBusyRefusal().body.hint, serverBusyRefusal().body.hint]);
+    eq('drain: the line is empty and the running generation keeps its slot', [h.slots.queued, h.slots.generations], [0, 1]);
+    eq('drain: no daily unit was spent for them', await h.usageStore.generationUnits(AT_2200_UTC), 1);
+    eq('drain: their leave lines say drain', withMessage(logs, 'queue leave').map((r) => r.outcome), ['drain', 'drain']);
+    await expectRefusal('drain: a new generation keeps the drain refusal', await postGenerate(h.app, PROMPT, randomUUID()), 429, 'server_busy', null);
+    pipeline.releaseOne();
+    eq('drain: the running generation still completes', (await readEvents('the running generation', first)).at(-1)?.type, 'result');
+    await endLine('drain', h);
+  } finally {
+    logs.stop();
+  }
+}
+
+async function testLinePolicyRefusal(): Promise<void> {
+  section('The line: a generation the content policy refuses, or cannot check, while every slot is busy takes no place in line');
+
+  const pipeline = new HeldPipeline();
+  const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1 } });
+  const first = await postGenerate(h.app, PROMPT, DEVICE_A);
+  const waiting = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B));
+  eq('setup: B waits first in line', await waiting.next(), QUEUED_FIRST);
+  await expectRefusal('a refused prompt while the server is busy', await postGenerate(h.app, { prompt: '[[refuse]] this' }, DEVICE_C), 422, 'content_policy', null);
+  await expectRefusal('an unchecked prompt while the server is busy', await postGenerate(h.app, { prompt: '[[policy-down]] please' }, randomUUID()), 503, 'policy_unavailable', null);
+  eq('neither took a place: only B waits, and only A holds a slot', [h.slots.queued, h.slots.generations], [1, 1]);
+  eq('neither spent a daily unit or inserted a ledger row', [await h.usageStore.generationUnits(AT_2200_UTC), h.usageStore.admitted.length], [1, 1]);
+  const again = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_C));
+  eq('the refused device is free to join the line, behind B', await again.next(), { type: 'queued', position: 2 });
+  pipeline.releaseOne();
+  eq('the freed slot still goes to B', await waiting.next(), PLAN_START);
+  await readEvents('the first generation', first);
+  await endLine('policy refusal', h);
+}
+
+async function testLineCeilingAtSlot(): Promise<void> {
+  section('The line: a global ceiling reached while waiting ends the stream when the slot comes, and keeps no slot');
+
+  const logs = captureLogs();
+  try {
+    const pipeline = new HeldPipeline();
+    const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1, limitGenerationsPerDay: 2 } });
+    const first = await postGenerate(h.app, PROMPT, DEVICE_A);
+    const res = await postGenerate(h.app, PROMPT, DEVICE_B);
+    const waiting = new StreamEvents(res);
+    eq('setup: B waits with one unit of the day still free', await waiting.next(), QUEUED_FIRST);
+    await h.usageStore.admit({ requestId: randomUUID(), deviceId: DEVICE_C, kind: 'generate', now: AT_2200_UTC, deviceLimit: 15, globalLimit: 2 });
+    pipeline.releaseOne();
+    const rest = await waiting.rest();
+    eq('its stream ends with one failure', typesOf(rest), ['failure']);
+    eq('whose reason is the ceiling refusal\'s hint', failureReasons(rest), [serverBusyCeilingRefusal(() => AT_2200_UTC).body.hint]);
+    check('the slot it was handed is not kept', await waitFor(() => h.slots.generations === 0 && h.slots.queued === 0));
+    eq('the pipeline never ran for it', pipeline.started.length, 1);
+    eq('no ledger row was inserted for it', h.usageStore.admitted.includes(res.headers.get(REQUEST_ID_HEADER) ?? ''), false);
+    const leave = withMessage(logs, 'queue leave').filter((r) => r.requestId === res.headers.get(REQUEST_ID_HEADER));
+    eq('its leave line says ceiling', leave.map((r) => r.outcome), ['ceiling']);
+    await readEvents('the first generation', first);
+  } finally {
+    logs.stop();
+  }
 }
 
 // ─── Daily limits and the global ceiling ─────────────────────────────────────
@@ -1077,6 +1430,13 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testSizeAndValidationComeFirst();
   await testSlotAndUnitOrder();
   await testGenerationCap();
+  await testLineSlotFreesWhileWaiting();
+  await testLineOrder();
+  await testLineFull();
+  await testLineTimeout();
+  await testLineLeave();
+  await testLinePolicyRefusal();
+  await testLineCeilingAtSlot();
   await testDailyLimitAndCeiling();
   await testPolicyOutcomes();
   await testTerminalAndCancel();

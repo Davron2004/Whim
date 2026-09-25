@@ -15,6 +15,8 @@ import {
   type RequestOutcome,
   type SettleParams,
   type SummaryParams,
+  type UnitAvailability,
+  type UnitQuery,
   type UsageStore,
   type UsageSummary,
 } from '../src/usage-store';
@@ -97,6 +99,10 @@ export class RecordingUsageStore implements UsageStore {
     const result = await this.inner.admit(params);
     if (result.ok) this.admitted.push(result.requestId);
     return result;
+  }
+
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return this.inner.unitAvailable(params);
   }
 
   refund(requestId: string): Promise<void> {

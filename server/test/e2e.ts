@@ -30,10 +30,11 @@ import type { CheckedManifest } from '../src/generation/machine';
 import { SynthRunSession } from '../../synthrun/session';
 import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunReport } from '../../synthrun/contract';
+import type { GenerationEvent } from '@whim/contract';
 import { containedDetail } from './run-stage-fixtures';
 import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
-import { leakProbe, runDevice, feedSseBuffer, isRealFrame, parseGenerationEvent } from '../src/loadtest/drive';
+import { buildReport, leakProbe, runDevice, runDevices, feedSseBuffer, isRealFrame, parseGenerationEvent, verdict } from '../src/loadtest/drive';
 
 const ROOT = process.cwd();
 
@@ -556,28 +557,54 @@ async function testRealPipelineSigtermDrain(): Promise<void> {
 //    fetch trap (design D26; specs/server-deployment "A load test measures capacity without
 //    spending provider credit") ──
 
-/** Reads an already-open `/v1/generate` SSE response to its terminal event type (or `undefined`
- *  if the stream ends without one), using the same frame parsing `runDevice` does. */
-async function drainToTerminal(response: Response): Promise<'result' | 'failure' | undefined> {
+/** Reads an already-open `/v1/generate` SSE response one real event at a time (`undefined` once
+ *  it ends), using the same frame parsing `runDevice` does. */
+function sseEvents(response: Response): () => Promise<GenerationEvent | undefined> {
   const reader = response.body?.getReader();
-  if (!reader) return undefined;
   const decoder = new TextDecoder();
+  const ready: GenerationEvent[] = [];
   let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return undefined;
-    const fed = feedSseBuffer(buffer, decoder.decode(value, { stream: true }));
-    buffer = fed.buffer;
-    for (const frame of fed.frames) {
-      if (!isRealFrame(frame)) continue;
-      const parsed = parseGenerationEvent(frame);
-      if (parsed?.type === 'result' || parsed?.type === 'failure') return parsed.type;
+  return async () => {
+    while (ready.length === 0) {
+      if (!reader) return undefined;
+      const { done, value } = await reader.read();
+      if (done) return undefined;
+      const fed = feedSseBuffer(buffer, decoder.decode(value, { stream: true }));
+      buffer = fed.buffer;
+      for (const frame of fed.frames) {
+        const parsed = isRealFrame(frame) ? parseGenerationEvent(frame) : undefined;
+        if (parsed) ready.push(parsed);
+      }
     }
+    return ready.shift();
+  };
+}
+
+/** Reads an open stream's remaining events to its terminal event type (or `undefined` if the
+ *  stream ends without one). */
+async function terminalOf(next: () => Promise<GenerationEvent | undefined>): Promise<'result' | 'failure' | undefined> {
+  for (let event = await next(); event !== undefined; event = await next()) {
+    if (event.type === 'result' || event.type === 'failure') return event.type;
   }
+  return undefined;
+}
+
+/** Reads an already-open `/v1/generate` SSE response to its terminal event type. */
+async function drainToTerminal(response: Response): Promise<'result' | 'failure' | undefined> {
+  return terminalOf(sseEvents(response));
+}
+
+/** Posts one generation for a fresh device straight to the load-test server. */
+function postLoadtestGenerate(url: string, prompt: string): Promise<Response> {
+  return testFetch(`${url}/v1/generate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS },
+    body: JSON.stringify({ prompt }),
+  });
 }
 
 async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
-  section('spec: the load-test server admits up to its cap, refuses past it, leaks no slot, and spends nothing');
+  section('spec: the load-test server admits up to its cap, lines up past it, refuses past a full line, leaks no slot, and spends nothing');
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-loadtest-'));
   const savedFetch = globalThis.fetch;
@@ -587,6 +614,7 @@ async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
       env: {
         WHIM_DATA_DIR: dataDir,
         WHIM_MAX_CONCURRENT_GENERATIONS: '3',
+        WHIM_QUEUE_MAX: '1',
         WHIM_SYNTHRUN_CONCURRENCY: '2',
         WHIM_LOADTEST_ENGINEER_TURN_MS: '300',
         WHIM_LOADTEST_REWRITE_TURN_MS: '50',
@@ -600,25 +628,29 @@ async function testLoadtestServerCapacityAndNoSpend(): Promise<void> {
     // Wait on a real signal that the three are holding their slots — each request's response
     // headers only arrive once the route has admitted it — instead of a fixed sleep guessing how
     // long admission takes.
-    const three = await Promise.all(
-      Array.from({ length: 3 }, (_, i) =>
-        testFetch(`${handle!.url}/v1/generate`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS },
-          body: JSON.stringify({ prompt: `whim e2e loadtest device ${i} ${randomUUID()}` }),
-        }),
-      ),
-    );
+    const url = handle.url;
+    const three = await Promise.all(Array.from({ length: 3 }, (_, i) => postLoadtestGenerate(url, `whim e2e loadtest device ${i} ${randomUUID()}`)));
     check('all three concurrent generations were admitted before the fourth is attempted', three.every((r) => r.status === 200), JSON.stringify(three.map((r) => r.status)));
 
-    const fourth = await runDevice({ baseUrl: handle.url, prompt: 'whim e2e loadtest device: the fourth, over cap' });
-    check('a fourth generation started while three are in flight is refused with server_busy', fourth.refusal?.error === 'server_busy', JSON.stringify(fourth));
+    const fourth = await postLoadtestGenerate(url, `whim e2e loadtest device: the fourth, over cap ${randomUUID()}`);
+    const fourthEvents = sseEvents(fourth);
+    eq('a fourth generation started while three are in flight opens its stream first in line', [fourth.status, await within(fourthEvents(), 30_000)], [200, { type: 'queued', position: 1 }]);
 
-    const threeResults = await Promise.all(three.map((response) => drainToTerminal(response)));
+    const fifth = await runDevice({ baseUrl: url, prompt: 'whim e2e loadtest device: the fifth, past the full line' });
+    check('a fifth, with the line of one full, is refused with server_busy', fifth.refusal?.error === 'server_busy', JSON.stringify(fifth));
+
+    const threeResults = await within(Promise.all(three.map((response) => drainToTerminal(response))), 60_000);
     eq('all three concurrent generations end in result', threeResults, ['result', 'result', 'result']);
+    eq('the fourth leaves the line and ends in result', await within(terminalOf(fourthEvents), 60_000), 'result');
 
-    const leak = await leakProbe(handle.url, 3);
-    check('the two-round leak probe passes: every slot the three runs held came back', leak.ok, JSON.stringify(leak));
+    // The driver's own measure of the line: four at once against a cap of three and a line of one.
+    const outcomes = await runDevices(url, 4);
+    const lined = buildReport(4, 3, 1, outcomes, { ok: true, rounds: [] });
+    eq('the driver sees one of four wait in line, and all four end in result', [lined.queued, lined.terminals], [1, { result: 4, failure: 0, none: 0 }]);
+    check('... which its verdict passes', verdict(lined).ok, JSON.stringify(verdict(lined)));
+
+    const leak = await leakProbe(url, 3);
+    check('the two-round leak probe passes: every slot came back and the line is empty', leak.ok, JSON.stringify(leak));
 
     eq('the fetch trap counted zero calls for the whole test', handle.fetchCallCount(), 0);
   } finally {

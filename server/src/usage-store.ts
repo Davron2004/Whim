@@ -48,6 +48,10 @@ export interface UsageStore {
    * A `requestId` already in the ledger rejects rather than replacing its row.
    */
   admit(params: AdmitParams): Promise<AdmitResult>;
+  /** `admit`'s two limit checks without the insert: whether a unit is free right now, and if not,
+   *  which limit refused, device first. Spends nothing and writes nothing (beta-1 D8: a generation
+   *  that waits in line confirms its unit before its stream opens and spends it on a slot). */
+  unitAvailable(params: UnitQuery): Promise<UnitAvailability>;
   /** Marks a previously admitted request as not counting toward its daily unit. Idempotent: a
    *  repeated refund of the same request id is a no-op. */
   refund(requestId: string): Promise<void>;
@@ -213,6 +217,11 @@ export interface CostSweepCandidate {
 export type AdmitResult =
   | { ok: true; requestId: string }
   | { ok: false; reason: 'device' | 'global'; retryAfterSec: number };
+
+/** `AdmitParams` without the row a real admission inserts. */
+export type UnitQuery = Omit<AdmitParams, 'requestId'>;
+
+export type UnitAvailability = { ok: true } | Extract<AdmitResult, { ok: false }>;
 
 export interface SummaryParams {
   /** Number of trailing UTC days to include, counting the day `now` falls in. */
@@ -449,7 +458,36 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const { requestId, deviceId, kind, now } = params;
+    const refused = this.unitRefusal(params);
+    if (refused) return refused;
+    // The SQLite store's primary key refuses a reused id at this same point, after the limits.
+    if (this.ledger.has(requestId)) throw new Error('UNIQUE constraint failed: requests.id');
+    this.ledger.set(requestId, {
+      id: requestId,
+      deviceId,
+      kind,
+      utcDay: utcDayString(now),
+      startedAt: now,
+      endedAt: null,
+      outcome: null,
+      failureReason: null,
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsd: null,
+      costState: 'pending',
+      generationIds: null,
+      refunded: false,
+    });
+    return { ok: true, requestId };
+  }
+
+  async unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return this.unitRefusal(params) ?? { ok: true };
+  }
+
+  private unitRefusal(params: UnitQuery): Extract<AdmitResult, { ok: false }> | undefined {
+    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
     const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
     const utcDay = utcDayString(now);
     let deviceCount = 0;
@@ -465,25 +503,7 @@ export class InMemoryUsageStore implements UsageStore, UsageRecordKeeping {
     if (globalLimit !== undefined && globalCount >= globalLimit) {
       return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
     }
-    // The SQLite store's primary key refuses a reused id at this same point, after the limits.
-    if (this.ledger.has(requestId)) throw new Error('UNIQUE constraint failed: requests.id');
-    this.ledger.set(requestId, {
-      id: requestId,
-      deviceId,
-      kind,
-      utcDay,
-      startedAt: now,
-      endedAt: null,
-      outcome: null,
-      failureReason: null,
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsd: null,
-      costState: 'pending',
-      generationIds: null,
-      refunded: false,
-    });
-    return { ok: true, requestId };
+    return undefined;
   }
 
   async refund(requestId: string): Promise<void> {
@@ -727,27 +747,14 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
   }
 
   async admit(params: AdmitParams): Promise<AdmitResult> {
-    const { requestId, deviceId, kind, now, deviceLimit, globalLimit } = params;
-    const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
+    const { requestId, deviceId, kind, now } = params;
     const utcDay = utcDayString(now);
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const deviceRow = this.db.prepare(
-        'SELECT COUNT(*) as c FROM requests WHERE kind = ? AND utc_day = ? AND device_id = ? AND refunded = 0'
-      ).get(kind, utcDay, deviceId) as { c: number };
-      if (deviceRow.c >= deviceLimit) {
+      const refused = this.unitRefusal(params);
+      if (refused) {
         this.db.exec('COMMIT');
-        return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
-      }
-      if (globalLimit !== undefined) {
-        const placeholders = globalKinds.map(() => '?').join(', ');
-        const globalRow = this.db.prepare(
-          `SELECT COUNT(*) as c FROM requests WHERE kind IN (${placeholders}) AND utc_day = ? AND refunded = 0`
-        ).get(...globalKinds, utcDay) as { c: number };
-        if (globalRow.c >= globalLimit) {
-          this.db.exec('COMMIT');
-          return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
-        }
+        return refused;
       }
       this.db.prepare(`
         INSERT INTO requests
@@ -760,6 +767,34 @@ export class NodeSqliteUsageStore implements UsageStore, UsageRecordKeeping {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  async unitAvailable(params: UnitQuery): Promise<UnitAvailability> {
+    return this.unitRefusal(params) ?? { ok: true };
+  }
+
+  /** The two counts `admit` runs inside its transaction; synchronous, so `admit` keeps no `await`
+   *  between them and its insert. */
+  private unitRefusal(params: UnitQuery): Extract<AdmitResult, { ok: false }> | undefined {
+    const { deviceId, kind, now, deviceLimit, globalLimit } = params;
+    const globalKinds = effectiveGlobalKinds(kind, params.globalKinds);
+    const utcDay = utcDayString(now);
+    const deviceRow = this.db.prepare(
+      'SELECT COUNT(*) as c FROM requests WHERE kind = ? AND utc_day = ? AND device_id = ? AND refunded = 0'
+    ).get(kind, utcDay, deviceId) as { c: number };
+    if (deviceRow.c >= deviceLimit) {
+      return { ok: false, reason: 'device', retryAfterSec: secondsUntilNextUtcMidnight(now) };
+    }
+    if (globalLimit !== undefined) {
+      const placeholders = globalKinds.map(() => '?').join(', ');
+      const globalRow = this.db.prepare(
+        `SELECT COUNT(*) as c FROM requests WHERE kind IN (${placeholders}) AND utc_day = ? AND refunded = 0`
+      ).get(...globalKinds, utcDay) as { c: number };
+      if (globalRow.c >= globalLimit) {
+        return { ok: false, reason: 'global', retryAfterSec: secondsUntilNextUtcMidnight(now) };
+      }
+    }
+    return undefined;
   }
 
   async refund(requestId: string): Promise<void> {

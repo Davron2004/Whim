@@ -11,11 +11,15 @@
  * the route suites.
  */
 import { ApiError, DeviceIdError, ServiceRefusalCode } from '@whim/contract';
-import { check, eq, section } from './harness';
+import { caught, check, eq, section } from './harness';
 import {
   createSlotController,
   DEFAULT_MAX_CONCURRENT_PROBES,
+  type LineEntry,
+  type LineOutcome,
+  type LineTicket,
   type SlotController,
+  type SlotHandle,
   type SlotKind,
   type SlotRefusalReason,
 } from '../src/admission/slots';
@@ -114,7 +118,7 @@ function runSlotBasics(): void {
 
   a?.release();
   eq('a finished generation frees the device', refusalOf(slots, 'generate', 'device-a'), 'admitted');
-  eq('all slots are free again', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: false });
+  eq('all slots are free again', slots.counts(), { generations: 0, queued: 0, unary: 0, probes: 0, draining: false });
 }
 
 function runGlobalCaps(): void {
@@ -206,8 +210,155 @@ function runDraining(): void {
   held?.release();
   held?.release();
   heldUnary?.release();
-  eq('held slots release safely, exactly once, after drain began', slots.counts(), { generations: 0, unary: 0, probes: 0, draining: true });
+  eq('held slots release safely, exactly once, after drain began', slots.counts(), { generations: 0, queued: 0, unary: 0, probes: 0, draining: true });
   eq('draining is one-way: an emptied controller still refuses', refusalOf(slots, 'generate', 'device-a'), 'draining');
+}
+
+// ---------------------------------------------------------------------------------------------
+// The generation line (beta-1 D8)
+// ---------------------------------------------------------------------------------------------
+
+function lineController(maxQueuedGenerations: number): SlotController {
+  return createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1, maxQueuedGenerations });
+}
+
+function slotOf(entry: LineEntry): SlotHandle | undefined {
+  return entry.kind === 'slot' ? entry.handle : undefined;
+}
+
+function ticketOf(entry: LineEntry): LineTicket | undefined {
+  return entry.kind === 'line' ? entry.ticket : undefined;
+}
+
+function entryKind(entry: LineEntry): string {
+  return entry.kind === 'refused' ? `refused ${entry.reason}` : entry.kind;
+}
+
+/** The ticket's outcome, bounded: `left`/`draining`/`slot`, or `unsettled`. */
+async function outcomeOf(name: string, ticket: LineTicket | undefined): Promise<LineOutcome | undefined> {
+  if (!ticket) return undefined;
+  return settledValue(name, ticket.outcome);
+}
+
+function outcomeKind(outcome: LineOutcome | undefined): string {
+  if (!outcome) return 'unsettled';
+  return outcome.ok ? 'slot' : outcome.reason;
+}
+
+async function runLineOrder(): Promise<void> {
+  const slots = lineController(3);
+  const a = slotOf(slots.acquireInLine('device-a'));
+  check('a free slot with nobody waiting is taken at once', a !== undefined);
+  const b = ticketOf(slots.acquireInLine('device-b'));
+  const c = ticketOf(slots.acquireInLine('device-c'));
+  eq('with every slot busy, two generations join the line in arrival order', [b?.position(), c?.position()], [1, 2]);
+  eq('the line holds two, the one slot is still held', [slots.counts().queued, slots.counts().generations], [2, 1]);
+  eq('a waiting device is busy: a second generation of its own is refused', entryKind(slots.acquireInLine('device-b')), 'refused device_busy');
+  eq('a waiting device is busy for the synchronous acquire too', refusalOf(slots, 'generate', 'device-c'), 'device_busy');
+  eq('the synchronous acquire does not jump the line', refusalOf(slots, 'generate', 'device-z'), 'at_capacity');
+
+  a?.release();
+  const bOutcome = await outcomeOf('the head of the line', b);
+  eq('releasing the slot hands it to the one that joined first', outcomeKind(bOutcome), 'slot');
+  eq('the other moves up to the head', c?.position(), 1);
+  eq('the handed slot counts as running', [slots.counts().generations, slots.counts().queued], [1, 1]);
+
+  a?.release();
+  eq('a second release of the same handle hands nothing over', [c?.position(), slots.counts().generations], [1, 1]);
+
+  if (bOutcome?.ok) bOutcome.handle.release();
+  const cOutcome = await outcomeOf('the second in line', c);
+  eq('the next release hands the slot to the next in line', outcomeKind(cOutcome), 'slot');
+  eq('the line is empty and one slot is held', [slots.counts().generations, slots.counts().queued], [1, 0]);
+  if (cOutcome?.ok) cOutcome.handle.release();
+  eq('everything is free again', [slots.counts().generations, slots.counts().queued], [0, 0]);
+}
+
+async function runLineLeave(): Promise<void> {
+  const slots = lineController(5);
+  const running = slotOf(slots.acquireInLine('device-a'));
+  const waiting = ['device-b', 'device-c', 'device-d', 'device-e'].map((device) => ticketOf(slots.acquireInLine(device)));
+  const heard: number[][] = waiting.map(() => []);
+  waiting.forEach((ticket, i) => ticket?.onMove((position) => heard[i].push(position)));
+
+  waiting[1]?.leave();
+  eq('the one that left settles as left', outcomeKind(await outcomeOf('the waiter that left', waiting[1])), 'left');
+  eq('it no longer has a place', waiting[1]?.position(), 0);
+  eq('everyone behind it moves up', waiting.map((t) => t?.position()), [1, 0, 2, 3]);
+  eq('each of them hears its new position once; the one ahead hears nothing', heard, [[], [], [2], [3]]);
+  eq('the line shrank by one', slots.counts().queued, 3);
+  eq('the device that left is free to generate again', entryKind(slots.acquireInLine('device-c')), 'line');
+
+  waiting[1]?.leave();
+  eq('leaving twice changes nothing', slots.counts().queued, 4);
+
+  running?.release();
+  eq('the head still gets the slot after the line changed', outcomeKind(await outcomeOf('the head', waiting[0])), 'slot');
+}
+
+async function runLineHandoffRace(): Promise<void> {
+  // The head gives up in the very turn the slot is handed to it: the slot must reach the next
+  // waiter, never sit with a ticket nobody will run.
+  {
+    const slots = lineController(3);
+    const running = slotOf(slots.acquireInLine('device-a'));
+    const b = ticketOf(slots.acquireInLine('device-b'));
+    const c = ticketOf(slots.acquireInLine('device-c'));
+    running?.release();
+    b?.leave();
+    eq('a head that leaves as the slot reaches it settles as left', outcomeKind(await outcomeOf('the head that left at handoff', b)), 'left');
+    eq('the slot passes on to the next waiter', outcomeKind(await outcomeOf('the next waiter', c)), 'slot');
+    eq('exactly one slot is held and nobody waits', [slots.counts().generations, slots.counts().queued], [1, 0]);
+  }
+
+  // Nobody else waits: the slot goes back to free.
+  {
+    const slots = lineController(3);
+    const running = slotOf(slots.acquireInLine('device-a'));
+    const b = ticketOf(slots.acquireInLine('device-b'));
+    running?.release();
+    b?.leave();
+    await outcomeOf('the lone head that left at handoff', b);
+    eq('with nobody behind it, the slot is free again', [slots.counts().generations, slots.counts().queued], [0, 0]);
+    eq('and a new device takes it at once', entryKind(slots.acquireInLine('device-c')), 'slot');
+  }
+
+  // The slot was already delivered, and the holder gives up before using it (a refusal that came
+  // after the handoff): leave() gives it back.
+  {
+    const slots = lineController(3);
+    const running = slotOf(slots.acquireInLine('device-a'));
+    const b = ticketOf(slots.acquireInLine('device-b'));
+    const c = ticketOf(slots.acquireInLine('device-c'));
+    running?.release();
+    eq('setup: the head was handed the slot', outcomeKind(await outcomeOf('the head', b)), 'slot');
+    b?.leave();
+    eq('leaving after delivery gives the slot to the next waiter', outcomeKind(await outcomeOf('the next waiter', c)), 'slot');
+    eq('still exactly one slot held', slots.counts().generations, 1);
+  }
+}
+
+async function runLineBoundsAndDrain(): Promise<void> {
+  const slots = lineController(2);
+  const running = slotOf(slots.acquireInLine('device-a'));
+  const waiting = [ticketOf(slots.acquireInLine('device-b')), ticketOf(slots.acquireInLine('device-c'))];
+  eq('a line of two is full with two waiting', entryKind(slots.acquireInLine('device-d')), 'refused at_capacity');
+  eq('the refused one takes no place', slots.counts().queued, 2);
+  eq('the refused device is not left busy', entryKind(slots.acquireInLine('device-d')), 'refused at_capacity');
+
+  slots.startDraining();
+  const outcomes = await Promise.all(waiting.map((ticket, i) => outcomeOf(`waiter ${i + 1} under drain`, ticket)));
+  eq('a drain sends every waiter away without a slot', outcomes.map(outcomeKind), ['draining', 'draining']);
+  eq('the line is empty; the running generation keeps its slot', [slots.counts().queued, slots.counts().generations], [0, 1]);
+  eq('new generations are refused as draining', entryKind(slots.acquireInLine('device-e')), 'refused draining');
+  running?.release();
+  eq('releasing after the drain hands nothing to anyone', [slots.counts().queued, slots.counts().generations], [0, 0]);
+
+  const noLine = lineController(0);
+  slotOf(noLine.acquireInLine('device-a'));
+  eq('with no line configured, a busy server refuses at once', entryKind(noLine.acquireInLine('device-b')), 'refused at_capacity');
+
+  check('a negative line length is refused', (await caught(() => { lineController(-1); })) instanceof RangeError);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -529,6 +680,12 @@ export async function runAdmissionTests(): Promise<void> {
   runGlobalCaps();
   runIdempotentRelease();
   runDraining();
+
+  section('  the generation line');
+  await runLineOrder();
+  await runLineLeave();
+  await runLineHandoffRace();
+  await runLineBoundsAndDrain();
 
   section('  refusals');
   runRefusals();
