@@ -6,8 +6,9 @@
  */
 
 import { Harness } from './harness';
+import { FakeTimers } from './fake-timers';
 import { MapKVBackend } from '../../version-store';
-import { runAgeCheck, storedAgeGate, type AgeCheckResult } from '../age-check';
+import { runAgeCheck, storedAgeGate, type AgeCheckOptions, type AgeCheckResult } from '../age-check';
 import { nextLegalStep } from '../consent-flow';
 import type { TermsStatus } from '../terms-acceptance';
 import type { ConsentStatus } from '../ai-consent';
@@ -15,6 +16,20 @@ import type { ConsentStatus } from '../ai-consent';
 const AGE_CHECK_KEY = 'whim.age-check:v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CHECKED = new Date('2026-09-24T09:30:00.000Z');
+
+/** A native call that neither resolves nor rejects. */
+const neverSettles = (): Promise<unknown> => new Promise<unknown>(() => {});
+
+/** Let every queued promise step run. */
+const flush = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+/** Starts a check on fake timers without awaiting it: `result` fills in when the check ends, so a
+ *  check that never ends fails its test by name instead of hanging the suite. */
+function started(kv: MapKVBackend, read: () => Promise<unknown>, options: AgeCheckOptions) {
+  const run: { result?: AgeCheckResult } = {};
+  runAgeCheck(kv, read, () => CHECKED, options).then((result) => { run.result = result; });
+  return run;
+}
 
 /** Runs one check against a fresh store with `answer` as the native module's reply. */
 async function checkWith(answer: () => Promise<unknown>): Promise<{ kv: MapKVBackend; outcome: AgeCheckResult }> {
@@ -69,6 +84,28 @@ export async function runAgeCheckTests(h: Harness): Promise<void> {
     for (const [name, answer] of Object.entries(answers)) {
       h.eq((await checkWith(answer)).outcome, 'allowed', `${name} counts as unavailable`);
     }
+  });
+
+  await h.test('age-check: a native call that never settles counts as unavailable after 3 seconds, so the user continues', async () => {
+    const kv = new MapKVBackend();
+    const timers = new FakeTimers();
+    const run = started(kv, neverSettles, { timers });
+    await flush();
+    h.eq(run.result, undefined, 'the check is still waiting before the deadline');
+    h.eq(timers.delays, [3000], 'bounded by one 3-second deadline');
+    timers.fireOnly();
+    await flush();
+    h.eq(run.result, 'allowed', 'the deadline reads as unavailable, which continues');
+    h.eq(storedRecord(kv), { outcome: 'allowed', checkedAt: CHECKED.toISOString() }, 'stored like any unavailable answer');
+  });
+
+  await h.test('age-check: an answer within 3 seconds is used unchanged and its deadline is cleared', async () => {
+    const kv = new MapKVBackend();
+    const timers = new FakeTimers();
+    const run = started(kv, () => Promise.resolve('minor-not-approved'), { timers });
+    await flush();
+    h.eq(run.result, 'minor-not-approved', 'the answer is reduced exactly as before');
+    h.eq(timers.pendingCount, 0, 'no deadline is left to fire');
   });
 
   await h.test('age-check: the store holds only the outcome and its date, never the signal', async () => {

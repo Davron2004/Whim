@@ -12,15 +12,19 @@
  * no outcome still holds: none stored, one older than 30 days, or a blocked one, so a parent's
  * approval through the store takes effect at the next attempt.
  *
+ * The store gets 3 seconds to answer (beta-1 D1, #100): a native call still unsettled by then
+ * counts as `unavailable`, through the same reduction as any other answer.
+ *
  * No React Native import — this module must load under the Node acceptance suite. The native
  * module is read by `installed-age-signal.ts` and passed in.
  */
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
+import type { TimerLike } from './connectivity';
 
 /** What the store says about the user, reduced to what Whim acts on. `under-13` is a store age
  *  range whose upper bound is below 13; `unavailable` covers an unsupported OS, a region without a
- *  signal, a user the store can't place, and any error. */
+ *  signal, a user the store can't place, any error, and no answer in time. */
 type AgeSignal = 'adult' | 'minor-approved' | 'minor-not-approved' | 'under-13' | 'unavailable';
 
 /** The only thing an age check keeps. */
@@ -41,6 +45,35 @@ const AGE_CHECK_KEY = 'whim.age-check:v1';
 
 /** How long an `allowed` outcome holds before the flow asks the store again. */
 const RECHECK_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long the store may take to answer before the check stops waiting for it. */
+const STORE_ANSWER_DEADLINE_MS = 3000;
+
+const REAL_TIMERS: TimerLike = {
+  setTimeout: (cb, ms) => setTimeout(cb, ms),
+  clearTimeout: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
+};
+
+export interface AgeCheckOptions {
+  /** The timers the deadline runs on (default: the real ones). */
+  timers?: TimerLike;
+}
+
+/** What `ask` answers, or `undefined` when it throws, rejects or hasn't settled within `ms`: what
+ *  a build without the native module answers, so the reductions treat all three the same. The
+ *  timer is cleared once `ask` settles; a late answer is dropped. */
+function answerWithin(ask: () => Promise<unknown>, ms: number, timers: TimerLike): Promise<unknown> {
+  return new Promise<unknown>((resolve) => {
+    const timer = timers.setTimeout(() => resolve(undefined), ms);
+    const settle = (answer: unknown) => {
+      timers.clearTimeout(timer);
+      resolve(answer);
+    };
+    Promise.resolve()
+      .then(ask)
+      .then(settle, () => settle(undefined));
+  });
+}
 
 const AGE_SIGNALS: ReadonlySet<string> = new Set(['adult', 'minor-approved', 'minor-not-approved', 'under-13', 'unavailable']);
 
@@ -91,13 +124,11 @@ export function storedAgeGate(kv: KVBackend, now: Date): AgeGate {
 
 /**
  * Asks the platform through `read`, reduces its answer, stores `{ outcome, checkedAt }` (a held
- * result as `blocked`) and returns the result. A `read` that throws or rejects counts as
- * `unavailable`, so it continues.
+ * result as `blocked`) and returns the result. A `read` that throws, rejects or hasn't settled
+ * within 3 seconds counts as `unavailable`, so it continues.
  */
-export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date): Promise<AgeCheckResult> {
-  const signal = await Promise.resolve()
-    .then(read)
-    .then(ageSignalFrom, (): AgeSignal => 'unavailable');
+export async function runAgeCheck(kv: KVBackend, read: () => Promise<unknown>, now: () => Date, options: AgeCheckOptions = {}): Promise<AgeCheckResult> {
+  const signal = ageSignalFrom(await answerWithin(read, STORE_ANSWER_DEADLINE_MS, options.timers ?? REAL_TIMERS));
   const result = ageResultOf(signal);
   const stored: StoredAgeCheck = { outcome: result === 'allowed' ? 'allowed' : 'blocked', checkedAt: now().toISOString() };
   kv.set(AGE_CHECK_KEY, JSON.stringify(stored));

@@ -190,6 +190,16 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('age signal: a store that never answers is given up on after 3 seconds, and the flow goes on to the terms step', async () => {
+    await withLauncher({ terms: false, consent: false, ageSignal: () => new Promise<unknown>(() => {}), server: clarifyServer }, async ({ tree, kv, clock }) => {
+      await describeAnApp(tree);
+      h.ok(on(tree, AgeScreen) && !blockedShown(tree), 'the check is running');
+      await TestRenderer.act(async () => clock.fire(3000));
+      await waitFor(() => on(tree, TermsScreen), 'the terms step');
+      h.eq(JSON.parse(kv.getString(AGE_CHECK_KEY) ?? 'null').outcome, 'allowed', 'the outcome stored is allowed, as for no signal');
+    });
+  });
+
   await h.test('age signal: leaving while the store is asked drops its late answer', async () => {
     let answer: (signal: string) => void = () => {};
     const pending = () => new Promise<unknown>((resolve) => { answer = resolve; });
