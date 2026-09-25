@@ -27,10 +27,10 @@
     server/test/scripted-model.ts). A helper a chain needs lives in its own suite file.
   - No chain edits scripts/gate*.sh, invariants/, build/, .claude/**, .codex/**, tsconfig*,
     eslint config, babel/metro config, or root package.json scripts (design.md D18).
-  - Worktree note (chains 11, 12 and 16): node_modules resolves from the primary tree. Symlink it
-    into the worktree before self-gating, because the production-build suite spawns node from
-    server/dist/app and chain-16's browser case boots a server in-process. guard:metro runs only
-    from the primary tree.
+  - Worktree note (chains 11, 12 and 16): the production-build suite spawns node from
+    server/dist/app and chain-16's browser case boots a server in-process, so the worktree needs its
+    own node_modules. The dispatcher creates it with `scripts/worktree.sh create`; never symlink
+    node_modules or @whim/* (through a symlink @whim/contract resolves to the primary tree).
   - Semantic-overlap watch: chain-4 appends the rating rule to the engineer and rewrite system
     messages. Any chain-8 or pre-existing assertion on exact system-message text surfaces at
     the post-merge regate. Fix the assertion to read the policy document; never drop the rule.

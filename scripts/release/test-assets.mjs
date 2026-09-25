@@ -7,9 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { tmpBundlePath } from '../lib/tmp-bundle.mjs';
 
 const root = process.cwd();
-const outfile = path.join(root, `.asset-generation.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('asset-generation', root);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-generate-assets-'));
 try {
   await build({ stdin: { contents: "export * from './scripts/release/lib/assets'; export { decodeRgba8 } from './scripts/release/lib/png';", resolveDir: root, loader: 'ts' }, outfile, bundle: true, platform: 'node', format: 'esm', tsconfigRaw: '{}', external: ['playwright'] });

@@ -41,8 +41,10 @@
   - No chain edits scripts/gate*.sh, invariants/, build/, .claude/**, .codex/**, tsconfig*,
     ESLint config, knip.json, babel/metro config, Gemfile or package-lock.json. package.json is
     chain-0 only.
-  - Worktrees: symlink the primary tree's node_modules before self-gating (memory
-    whim-worktree-module-resolution). The native build steps in 4.7, 5.7, 6.5, 8.5, 17.5 and 18.5 are
+  - Worktrees: the dispatcher creates each with `scripts/worktree.sh create`, which gives it its
+    own node_modules. Never symlink node_modules or @whim/* into a worktree: the chain's tests would
+    run the primary tree's code and Gradle would write into the primary tree's node_modules
+    (android/settings.gradle now refuses to). The native build steps in 4.7, 5.7, 6.5, 8.5, 17.5 and 18.5 are
     evidence, not the gate. Report "not run" when the toolchain or network isn't available;
     never claim a build ran. Run `bundle` with `BUNDLE_PATH=vendor/bundle`.
   - Every chain not marked HUMAN-BOOTSTRAP or attended is dispatchable.
