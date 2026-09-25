@@ -46,6 +46,7 @@ import { runStaticChecks as runStaticChecksRaw, scanStorageSurface, StorageSurfa
 import { AppliedSchema, diffSchemas } from '../../src/host/storage-engine/schema';
 import { SchemaArtifact, STORAGE_ERROR_KINDS } from '../../src/host/storage-engine/contract';
 import { UNDECLARED_CAPABILITY_KIND } from '../../src/host/bridge/contract';
+import { tileColor } from '../../src/host/launcher/tiles';
 
 /** Every diagnostic in the report is well-formed per harness-diagnostics req 1/2. */
 function assertAllWellFormed(r: CheckReport): void {
@@ -432,6 +433,22 @@ async function testManifestExtraction(): Promise<void> {
     assert(!!r.manifest, 'the manifest must be present even though the report is failing');
     assert(r.manifest?.name === 'Honest Name', `expected manifest.name "Honest Name", got ${String(r.manifest?.name)}`);
     assert(r.manifest?.initial === 'Home', `expected manifest.initial "Home", got ${String(r.manifest?.initial)}`);
+  });
+
+  await test('manifest: the built-in examples\' declared tile colours are valid and pairwise distinct (#48/#52)', () => {
+    // The real, on-disk sources of the three examples LauncherRoot.tsx#defaultSeeds() installs on
+    // first run — extracted with the real static pass, not a fixture built for this test.
+    const examples = ['tip-splitter.app.tsx', 'water-counter.app.tsx', 'style-gallery.app.tsx'];
+    const resolved = examples.map((file) => {
+      const r = runStaticChecks(readFixture(file));
+      const declared = r.manifest?.tileColor;
+      assert(typeof declared === 'string', `${file}: expected a declared tileColor, extraction found none`);
+      // Runs the declared value through the same tileColor() resolution every render surface
+      // uses, so a value that is malformed or collides with a reserved shell hue (and so falls
+      // back to appColor(name)) is caught here too, not just a bad literal.
+      return tileColor(r.manifest?.name ?? file, { tileColor: declared });
+    });
+    assert(new Set(resolved).size === resolved.length, `expected ${resolved.length} distinct example tile colours, got ${JSON.stringify(resolved)}`);
   });
 }
 

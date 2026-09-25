@@ -61,4 +61,8 @@ export default defineApp({
   initial: 'Home',
   screens: { Home },
   capabilities: [], // Tier-0: pure compute + rendering, zero syscalls
+  // Declared, with water-counter.app.tsx and style-gallery.app.tsx, so the built-in examples
+  // never collide on the deterministic appColor(name) fallback (#48/#52): "Water Counter" and
+  // "Style Gallery" hash to the same palette slot.
+  tileColor: '#2563eb',
 });

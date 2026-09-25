@@ -117,4 +117,7 @@ export default defineApp({
   screens: { Home },
   capabilities: ['storage'],
   schema: SCHEMA,
+  // Declared, with tip-splitter.app.tsx and style-gallery.app.tsx (#48/#52): "Water Counter" and
+  // "Style Gallery" hash to the same appColor(name) palette slot without this.
+  tileColor: '#0284c7',
 });

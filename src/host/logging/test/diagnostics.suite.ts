@@ -459,6 +459,33 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     h.eq(kept.length, 0, 'a non-fatal error is not kept for the next launch');
   });
 
+  await h.test('crash capture: an iOS-shaped stack loses its install path, an Android-shaped one is untouched', () => {
+    const seam = createSeam({ console: false });
+    const errorUtils = fakeErrorUtils(() => undefined);
+    installCrashCapture({ errorUtils, hermes: undefined, seam, keepFatal: () => undefined });
+
+    const ios = new TypeError('Alice owes 40');
+    ios.stack = [
+      'TypeError: Alice owes 40',
+      '    at redactObject (/private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:650735)',
+      '    at anonymous (/private/var/containers/Bundle/Application/1234ABCD-1234-ABCD-1234-ABCD12345678/Whim.app/main.jsbundle:1:668904)',
+    ].join('\n');
+    errorUtils.raise(ios, false);
+    h.eq(
+      lastRecord(seam).fields.stack,
+      'TypeError: Alice owes 40\n    at redactObject (main.jsbundle:1:650735)\n    at anonymous (main.jsbundle:1:668904)',
+      'every frame keeps only main.jsbundle:line:column, no install path',
+    );
+
+    const android = new TypeError('Alice owes 40');
+    android.stack = [
+      'TypeError: Alice owes 40',
+      '    at redactObject (address at index.android.bundle:1:650735)',
+    ].join('\n');
+    errorUtils.raise(android, false);
+    h.eq(lastRecord(seam).fields.stack, android.stack, 'an Android frame, already a bare file name, is unchanged');
+  });
+
   await h.test('crash capture: a fatal error keeps its projection, without the message, before the process ends', () => {
     const seam = createSeam({ console: false });
     const order: string[] = [];

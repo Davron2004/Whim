@@ -56,15 +56,53 @@ const UNHANDLED_REJECTION_MESSAGE = 'unhandled promise rejection';
 const NO_REJECTION_TRACKER_MESSAGE = 'promise rejection tracker unavailable';
 const RENDER_ERROR_MESSAGE = 'uncaught render error';
 
+/** A `:line:column` suffix, as Hermes/V8 print at the end of a frame's location. Deliberately
+ *  the ONLY regex here — a single small quantifier on either side of a literal `:`, so there is
+ *  no backtracking to simplify (sonarjs/super-linear-regex flags a broader `path:line:column`
+ *  pattern, since a path's character class overlaps the digits it must also match). The path
+ *  itself is found by a plain backward character scan below, not a regex. */
+const LINE_COL_SUFFIX = /:\d+:\d+/g;
+/** Characters that end a frame's location token (Hermes/V8 always wrap or space-separate one). */
+function endsLocationToken(ch: string): boolean {
+  return ch === ' ' || ch === '(' || ch === '\t' || ch === '\n';
+}
+
+/** Reduces every frame's location in a stack to its file name plus line:column, on every
+ *  platform (spec device-diagnostics "Diagnostic stacks carry file names, not install paths").
+ *  Android frames already have no path to strip, so this is a no-op there; an iOS frame's
+ *  `…/Whim.app/main.jsbundle:1:234567` becomes `main.jsbundle:1:234567`. Only the path is
+ *  dropped — line and column, which is all symbolication reads from a single flat map, are
+ *  untouched, so a trimmed stack still symbolicates to the same source lines. */
+export function trimFrameLocations(stack: string): string {
+  let result = '';
+  let cursor = 0;
+  for (const match of stack.matchAll(LINE_COL_SUFFIX)) {
+    const suffixStart = match.index;
+    let tokenStart = suffixStart;
+    let lastSlash = -1;
+    while (tokenStart > 0 && !endsLocationToken(stack[tokenStart - 1])) {
+      // The FIRST '/' found scanning backward from the suffix is the one closest to the
+      // basename — further ones (higher up the path) must not overwrite it.
+      if (lastSlash === -1 && stack[tokenStart - 1] === '/') lastSlash = tokenStart - 1;
+      tokenStart -= 1;
+    }
+    const basenameStart = lastSlash === -1 ? tokenStart : lastSlash + 1;
+    result += stack.slice(cursor, tokenStart) + stack.slice(basenameStart, suffixStart) + match[0];
+    cursor = suffixStart + match[0].length;
+  }
+  return result + stack.slice(cursor);
+}
+
 /** A thrown value as named fields: its class and stack go to the diagnostics projection (which
  *  drops the stack's message line); its message stays in `detail`, which never leaves the phone. */
 function thrownFields(where: string, thrown: unknown): Record<string, unknown> {
   const isErr = thrown instanceof Error;
+  const stack = isErr ? thrown.stack : undefined;
   return {
     where,
     errorClass: isErr ? thrown.name : typeof thrown,
     detail: isErr ? thrown.message : undefined,
-    stack: isErr ? thrown.stack : undefined,
+    stack: stack === undefined ? undefined : trimFrameLocations(stack),
   };
 }
 

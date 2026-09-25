@@ -709,7 +709,9 @@ export function buildLivenessLine(
   now: number,
 ): string {
   if (liveness === 'writing') {
-    return `Writing · ${s.aggregates.chars.toLocaleString()} characters`;
+    // en-CA, not the phone's locale (#89): this is English copy, and a French-locale phone would
+    // otherwise render the count with a non-breaking space and no comma (e.g. "1 204").
+    return `Writing · ${s.aggregates.chars.toLocaleString('en-CA')} characters`;
   }
   if (liveness === 'thinking') {
     return `Thinking it through · ${livenessElapsedLabel(s.startedAt, now)}`;
