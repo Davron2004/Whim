@@ -112,7 +112,11 @@ async function extractAppRecord(appId, entryRelPath) {
       record: {
         appId,
         name: typeof spec.name === 'string' ? spec.name : appId,
-        manifest: { capabilities: Array.isArray(spec.capabilities) ? spec.capabilities : [] },
+        manifest: {
+          capabilities: Array.isArray(spec.capabilities) ? spec.capabilities : [],
+          // The launcher validates the value (manifest-tile-color.ts), as it does on the wire path.
+          ...(typeof spec.tileColor === 'string' ? { tileColor: spec.tileColor } : {}),
+        },
         schemaArtifact: spec.schema,
       },
     };
