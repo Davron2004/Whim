@@ -92,3 +92,4 @@
 - Orchestrator bootstrap (build/ is CONFIG_SET, so it's a human-bootstrap class by construction; protected-file system retired): `build/build.mjs` forwards `spec.tileColor`. The generated records now carry `#2563eb`/`#0284c7`/`#c026d3`. Regate on the commit: see next line. A producer-side test is dispatched as fix-8b.
 - regate after the build bootstrap: FAST GATE PASSED
 - 19:44 fix-8b dispatched (producer-side test for the example tile colours): BASE `c1047184e89671fd5e17f957ef298e59c354491e`, worktree `.claude/worktrees/beta-1-fix8b`, model Sonnet.
+- fix-8b report: complete, GATE PASS, commit `cac698a5` (`tile-colour.suite.ts`: reads the generated `APP_RECORDS`, resolves each example through `tiles.ts#tileColor`, checks pairwise distinct). Red-check: reverting the build hunk fails 3 named checks plus the distinctness check. Merged (integrity OK); regate: FAST GATE PASSED.
