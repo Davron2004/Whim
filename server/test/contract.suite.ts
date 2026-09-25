@@ -5,18 +5,28 @@
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import * as contract from '@whim/contract';
 import {
   ApiError,
+  CLARIFICATION_OTHER_MAX_CHARS,
+  COMPAT_NOTICE_MAX_CHARS,
+  Clarification,
+  ClarifyResponse,
   ClientEnvelope,
+  Compat,
+  CompatFallback,
   Diagnostic,
   DiagnosticsBatch,
   DeviceIdError,
   GenerateRequest,
   GenerationEvent,
+  ReportResponse,
   RewriteRequest,
+  RewriteResponse,
   ServiceRefusalCode,
   Usage,
   WireAppRecord,
+  WireEnvelope,
 } from '@whim/contract';
 import { check, eq, section } from './harness';
 
@@ -83,6 +93,153 @@ function runDiagnosticsBatchTests(): void {
   check('a batch of 50 records parses', accepts(batch(Array.from({ length: 50 }, () => FULL_DIAGNOSTIC))));
   check('a batch of 51 records is rejected', !accepts(batch(Array.from({ length: 51 }, () => FULL_DIAGNOSTIC))));
   check('an empty batch is rejected', !accepts(batch([])));
+}
+
+/** One valid instance of every `GenerationEvent` arm. */
+const ONE_OF_EACH_EVENT: readonly GenerationEvent[] = [
+  { type: 'stage', stage: 'plan', status: 'start' },
+  { type: 'token', text: 'x' },
+  { type: 'thinking', chars: 1 },
+  { type: 'diagnostic', diagnostic: { kind: 'type-error', hint: 'declare a type' } },
+  { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+  { type: 'queued', position: 3 },
+  { type: 'restart' },
+  { type: 'result', app: tinyRecord },
+  { type: 'failure', reason: 'nope', attempts: 1, diagnostics: [] },
+];
+
+/** The two device→server diagnostics bodies refuse a field outside their allowlist rather than
+ *  drop it (device-diagnostics "Only an allowlisted projection of an error record leaves the
+ *  device"): request bodies the server reads, never a message a client decodes. */
+const REFUSING_SCHEMAS: ReadonlySet<string> = new Set(['DiagnosticRecord', 'DiagnosticsBatch']);
+
+interface ZodNode {
+  _zod: { def: Record<string, unknown> & { type: string } };
+}
+
+function isZodNode(value: unknown): value is ZodNode {
+  return typeof value === 'object' && value !== null && '_zod' in value;
+}
+
+/** Every object schema reachable from `root` that does not strip unknown keys (a `.strict()` or
+ *  `.passthrough()`/`.loose()` catchall), by the path that reaches it. */
+function nonStrippingObjects(root: ZodNode, rootName: string): string[] {
+  const found: string[] = [];
+  const seen = new Set<ZodNode>();
+  const visit = (node: unknown, at: string): void => {
+    if (!isZodNode(node) || seen.has(node)) return;
+    seen.add(node);
+    const def = node._zod.def;
+    const children: [string, unknown][] = [];
+    if (def.type === 'object') {
+      if (def.catchall !== undefined) found.push(at);
+      for (const [key, child] of Object.entries(def.shape as Record<string, unknown>)) children.push([`${at}.${key}`, child]);
+    }
+    for (const key of ['element', 'innerType', 'keyType', 'valueType', 'in', 'out', 'left', 'right']) {
+      if (key in def) children.push([at, def[key]]);
+    }
+    if (Array.isArray(def.options)) def.options.forEach((option, i) => children.push([`${at}|${i}`, option]));
+    for (const [childPath, child] of children) visit(child, childPath);
+  };
+  visit(root, rootName);
+  return found;
+}
+
+/** beta-1 design D16 and its `generation-contract` scenarios: the protocol level, the compat
+ *  envelope and its frozen vocabulary, the tolerant reader, and the new wire shapes. */
+function runForwardCompatibilityTests(): void {
+  section('Forward compatibility — the tolerant reader (D16 layer 1)');
+  const nonStripping = Object.entries(contract as Record<string, unknown>)
+    .filter((entry): entry is [string, ZodNode] => isZodNode(entry[1]) && !REFUSING_SCHEMAS.has(entry[0]))
+    .flatMap(([name, schema]) => nonStrippingObjects(schema, name));
+  eq('every object schema a client decodes strips unknown fields rather than rejecting them', nonStripping, []);
+  eq(
+    'the walker finds a planted .strict() and .passthrough(), so the check above is not vacuous',
+    [
+      ...nonStrippingObjects(ApiError.strict() as unknown as ZodNode, 'strict'),
+      ...nonStrippingObjects(GenerationEvent.options[1].passthrough() as unknown as ZodNode, 'loose'),
+    ],
+    ['strict', 'loose'],
+  );
+
+  const extra = { futureField: 'from a later level' };
+  const token = GenerationEvent.safeParse({ type: 'token', text: 'x', ...extra });
+  eq('a known event with an extra field is used and the field dropped', token.success ? token.data : token.error.issues, { type: 'token', text: 'x' });
+  const rewrite = RewriteResponse.safeParse({ rewrittenPrompt: 'r', ...extra });
+  eq('a known unary body with an extra field is used and the field dropped', rewrite.success ? rewrite.data : rewrite.error.issues, { rewrittenPrompt: 'r' });
+  const error = ApiError.safeParse({ error: 'server_busy', hint: 'h', ...extra });
+  eq('an ApiError with an extra field is used and the field dropped', error.success ? error.data : error.error.issues, { error: 'server_busy', hint: 'h' });
+
+  section('Forward compatibility — the compat envelope (D16 layer 3)');
+  const compat = { min: 2, fallback: 'skip', notice: 'Update Whim to see the new line.' } as const;
+  for (const event of ONE_OF_EACH_EVENT) {
+    check(`the "${event.type}" event accepts compat`, GenerationEvent.safeParse({ ...event, compat }).success);
+  }
+  check('an ApiError accepts compat', ApiError.safeParse({ error: 'eta_unavailable', hint: 'h', compat }).success);
+  check('a ClarifyResponse accepts compat', ClarifyResponse.safeParse({ questions: [], compat }).success);
+  check('a ReportResponse accepts compat', ReportResponse.safeParse({ reportId: 'r1', compat }).success);
+  check('a DeviceIdError is still assignable to ApiError', ApiError.safeParse(DeviceIdError.parse({ error: 'missing_device_id', hint: 'h' })).success);
+
+  for (const fallback of CompatFallback.options) check(`Compat accepts the frozen fallback "${fallback}"`, Compat.safeParse({ min: 2, fallback }).success);
+  check('Compat refuses a fallback outside the frozen set', !Compat.safeParse({ min: 2, fallback: 'retry' }).success);
+  check('Compat refuses a min below 1', !Compat.safeParse({ min: 0, fallback: 'skip' }).success);
+  check('Compat refuses a fractional min', !Compat.safeParse({ min: 1.5, fallback: 'skip' }).success);
+  const notice = (length: number): unknown => ({ min: 2, fallback: 'fail', notice: 'n'.repeat(length) });
+  check(`Compat accepts a ${COMPAT_NOTICE_MAX_CHARS}-character notice`, Compat.safeParse(notice(COMPAT_NOTICE_MAX_CHARS)).success);
+  check(`Compat refuses a ${COMPAT_NOTICE_MAX_CHARS + 1}-character notice`, !Compat.safeParse(notice(COMPAT_NOTICE_MAX_CHARS + 1)).success);
+
+  // Scenario "Unknown event type goes through the envelope": full parsing refuses it, the envelope
+  // reads it — its type, its compat, nothing else.
+  const future = { type: 'eta', seconds: 30, compat: { min: 2, fallback: 'skip' } };
+  check('GenerationEvent.parse refuses an unknown type', !GenerationEvent.safeParse(future).success);
+  const envelope = WireEnvelope.safeParse(future);
+  eq('WireEnvelope reads an unknown event as its type and compat only', envelope.success ? envelope.data : envelope.error.issues, { type: 'eta', compat: { min: 2, fallback: 'skip' } });
+  const odd = WireEnvelope.safeParse({ type: 'eta', compat: { min: 2, fallback: 'retry', notice: 'Try later.' } });
+  eq('WireEnvelope still reads a fallback outside the set, so a client can treat it as fail', odd.success ? odd.data.compat : odd.error.issues, { min: 2, fallback: 'retry', notice: 'Try later.' });
+  const unknownCode = WireEnvelope.safeParse({ error: 'eta_unavailable', hint: 'h', compat: { min: 2, fallback: 'fail' } });
+  eq('WireEnvelope reads an ApiError as its code and compat', unknownCode.success ? unknownCode.data : unknownCode.error.issues, { error: 'eta_unavailable', compat: { min: 2, fallback: 'fail' } });
+  check('WireEnvelope refuses an over-long notice', !WireEnvelope.safeParse({ type: 'eta', compat: notice(COMPAT_NOTICE_MAX_CHARS + 1) }).success);
+
+  section('Forward compatibility — queued and restart');
+  check('queued with position 3 validates', GenerationEvent.safeParse({ type: 'queued', position: 3 }).success);
+  check('restart validates', GenerationEvent.safeParse({ type: 'restart' }).success);
+  for (const position of [0, -1, 1.5, undefined]) {
+    check(`queued refuses position ${String(position)}`, !GenerationEvent.safeParse({ type: 'queued', position }).success);
+  }
+
+  section('Clarify: answer modes and limits');
+  const question = { id: 'q', question: 'Which days?', options: ['Mon', 'Tue'] };
+  check('a question with select many and a typed option validates', ClarifyResponse.safeParse({ questions: [{ ...question, select: 'many', other: true }] }).success);
+  check('a question without an answer mode is refused', !ClarifyResponse.safeParse({ questions: [question] }).success);
+  check('a select outside one|many is refused', !ClarifyResponse.safeParse({ questions: [{ ...question, select: 'some', other: false }] }).success);
+  const modeled = { ...question, select: 'one', other: false };
+  check('zero questions is a valid answer', ClarifyResponse.safeParse({ questions: [] }).success);
+  check('four questions are refused', !ClarifyResponse.safeParse({ questions: [modeled, modeled, modeled, modeled] }).success);
+  const limit = { reason: 'Mini-apps can’t fetch live weather.', alternative: 'a packing list you fill in yourself' };
+  check('a limit with no questions validates', ClarifyResponse.safeParse({ questions: [], limit }).success);
+  check('a limit carrying questions is refused', !ClarifyResponse.safeParse({ questions: [modeled], limit }).success);
+  check('a limit with an empty reason is refused', !ClarifyResponse.safeParse({ questions: [], limit: { ...limit, reason: '' } }).success);
+  const mentionsClarify = (text: string): boolean => /clarif/i.test(text);
+  const arms = GenerationEvent.options.map((arm) => arm.shape.type.value);
+  const stages = GenerationEvent.options[0].shape.stage.options;
+  check('no event arm and no stage mentions clarification', ![...arms, ...stages].some(mentionsClarify), [...arms, ...stages].join(','));
+
+  section('Clarifications: choices, other and decide');
+  const answer = { id: 'q', question: 'Which days?' };
+  const accepts = (clarification: unknown): boolean => GenerateRequest.safeParse({ prompt: 'p', clarifications: [clarification] }).success;
+  check('picked options validate', accepts({ ...answer, choices: ['Mon', 'Tue'] }));
+  check('a typed answer alone validates', accepts({ ...answer, choices: [], other: 'Every other day' }));
+  check('picked options with a typed answer validate', accepts({ ...answer, choices: ['Mon'], other: 'and holidays' }));
+  check('decide alone validates', accepts({ ...answer, choices: [], decide: true }));
+  check('decide with a choice is refused', !accepts({ ...answer, choices: ['Mon'], decide: true }));
+  check('decide with a typed answer is refused', !accepts({ ...answer, choices: [], other: 'Mon', decide: true }));
+  check('an entry answering nothing is refused', !accepts({ ...answer, choices: [] }));
+  check('the old single answer is refused', !accepts({ ...answer, answer: 'Mon' }));
+  check('an empty typed answer is refused', !accepts({ ...answer, choices: [], other: '' }));
+  check(`a ${CLARIFICATION_OTHER_MAX_CHARS}-character typed answer validates`, accepts({ ...answer, choices: [], other: 'x'.repeat(CLARIFICATION_OTHER_MAX_CHARS) }));
+  check(`a ${CLARIFICATION_OTHER_MAX_CHARS + 1}-character typed answer is refused`, !accepts({ ...answer, choices: [], other: 'x'.repeat(CLARIFICATION_OTHER_MAX_CHARS + 1) }));
+  check('decide: false with nothing picked answers nothing and is refused', !Clarification.safeParse({ ...answer, choices: [], decide: false }).success);
+  check('a rewrite carries the same clarification shape', RewriteRequest.safeParse({ prompt: 'p', clarifications: [{ ...answer, choices: [], decide: true }] }).success);
 }
 
 export function runContractTests(): void {
@@ -235,6 +392,7 @@ export function runContractTests(): void {
   check('a pre-release app version still parses', ClientEnvelope.safeParse({ ...envelopeHeaders, appVersion: '1.1.0-beta.2' }).success);
 
   runDiagnosticsBatchTests();
+  runForwardCompatibilityTests();
 
   // §2 — dependency budget (read package.json at test time; cwd is repo root under `npm run`).
   section('Dependency budget (SPEC §2)');

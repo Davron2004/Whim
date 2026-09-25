@@ -20,7 +20,7 @@ import { check, eq, section } from './harness';
 import { captureLogs } from './log-capture';
 import { runWebSiteTests } from './web-site.suite';
 import { runLoadTestTests } from './loadtest.suite';
-import { TIMED_OUT, machinePipeline, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, within } from './route-doubles';
 import { ScriptedModelClient } from './scripted-model';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
@@ -2275,7 +2275,7 @@ const CREDIT_TEST_DEVICE_ID = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
  *  logged by `generation/machine.ts`'s `endOnThrow`) — plus one `policy_unavailable` refusal, the
  *  filter's red case. */
 async function creditAlertSourceLines(): Promise<Record<string, unknown>[]> {
-  const headers = { 'content-type': 'application/json', 'x-whim-device': CREDIT_TEST_DEVICE_ID };
+  const headers = { 'content-type': 'application/json', 'x-whim-device': CREDIT_TEST_DEVICE_ID, ...PROTOCOL_HEADERS };
   const post = (app: ReturnType<typeof createApp>, route: string, body: unknown): Promise<Response | typeof TIMED_OUT> =>
     within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
 
@@ -2332,6 +2332,7 @@ async function realAlertSourceLines(): Promise<Record<string, unknown>[]> {
     [APP_VERSION_HEADER]: '1.2.0',
     [BUILD_HEADER]: '382000',
     [CONSENT_HEADER]: '2',
+    ...PROTOCOL_HEADERS,
   };
   const post = async (route: string, body: unknown): Promise<number> => {
     const res = await within(Promise.resolve(app.request(route, { method: 'POST', headers, body: JSON.stringify(body) })));
@@ -2362,7 +2363,7 @@ async function planFailureLines(): Promise<Record<string, unknown>[]> {
   try {
     const res = await within(Promise.resolve(app.request('/v1/generate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-whim-device': 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5' },
+      headers: { 'content-type': 'application/json', 'x-whim-device': 'f5f5f5f5-f5f5-4f5f-8f5f-f5f5f5f5f5f5', ...PROTOCOL_HEADERS },
       body: JSON.stringify({ prompt: 'split the Lisbon trip costs' }),
     })));
     if (res === TIMED_OUT) throw new Error('setup: /v1/generate did not answer in time');

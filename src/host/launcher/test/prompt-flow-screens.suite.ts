@@ -39,14 +39,15 @@ import {
 } from '../prompt-flow';
 import type { ClarifyScreen, ComposeScreen, FlowNotice, PlanScreen } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
+import type { ClarifyQuestion } from '@whim/contract';
 
 
 /** A stand-in installed app: the machine only ever carries it through, never reads into it. */
 const EDITED = { id: 'app-1', name: 'Pour Timer' } as unknown as InstalledApp;
 
-const QUESTIONS = [
-  { id: 'history', question: 'Should it remember past brews?', options: ['Keep a history', 'Just the last one'] },
-  { id: 'alert', question: 'How should it tell you a step is done?', options: ['Sound', 'Buzz', 'Both'] },
+const QUESTIONS: ClarifyQuestion[] = [
+  { id: 'history', question: 'Should it remember past brews?', options: ['Keep a history', 'Just the last one'], select: 'one', other: false },
+  { id: 'alert', question: 'How should it tell you a step is done?', options: ['Sound', 'Buzz', 'Both'], select: 'one', other: false },
 ];
 
 function composedFlow(text = 'a timer for my pour-over'): ComposeScreen {
@@ -135,14 +136,14 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
   });
 
   await h.test('flow: at most three questions reach the step, and an unpickable one is dropped', () => {
-    const many = [
-      { id: 'a', question: 'a?', options: ['1'] },
-      { id: 'b', question: 'b?', options: ['1'] },
-      { id: 'c', question: 'c?', options: ['1'] },
-      { id: 'd', question: 'd?', options: ['1'] },
+    const many: ClarifyQuestion[] = [
+      { id: 'a', question: 'a?', options: ['1'], select: 'one', other: false },
+      { id: 'b', question: 'b?', options: ['1'], select: 'one', other: false },
+      { id: 'c', question: 'c?', options: ['1'], select: 'one', other: false },
+      { id: 'd', question: 'd?', options: ['1'], select: 'one', other: false },
     ];
     h.eq(acceptClarifyQuestions(many).map((q) => q.id), ['a', 'b', 'c'], 'capped at three, in order');
-    h.eq(acceptClarifyQuestions([{ id: 'x', question: 'x?', options: [] }]), [], 'a question with nothing to pick is not a question');
+    h.eq(acceptClarifyQuestions([{ id: 'x', question: 'x?', options: [], select: 'one', other: false }]), [], 'a question with nothing to pick is not a question');
     h.eq(acceptClarifyQuestions(undefined), [], 'an absent list is an empty one');
   });
 
@@ -159,7 +160,7 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     const answered = withAnswer(clarifiedFlow(), 'alert', 'Both');
     h.eq(
       clarificationsFrom(answered.questions, answered.answers),
-      [{ id: 'alert', question: 'How should it tell you a step is done?', answer: 'Both' }],
+      [{ id: 'alert', question: 'How should it tell you a step is done?', choices: ['Both'] }],
       'the answered question travels with its own text',
     );
     h.eq(clarificationsFrom(answered.questions, {}), [], 'skipping answers nothing');

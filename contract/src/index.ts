@@ -19,6 +19,10 @@
  *     invariant applies only to streams the server runs to completion, and a truncated stream
  *     is not a conformance violation.
  *   - Schemas evolve additively under `/v1` (storage lane's additive-only discipline, #38).
+ *   - Forward compatibility (beta-1 design D16): every object schema here STRIPS unknown fields
+ *     rather than rejecting them (layer 1), except the two device→server diagnostics bodies whose
+ *     refusal is their own allowlist rule; a client declares the level it understands in
+ *     `PROTOCOL_HEADER` (layer 2); and every SSE event and unary body may carry `compat` (layer 3).
  */
 import { z } from 'zod';
 
@@ -32,6 +36,52 @@ export type { DevLogBatch, DevLogLevel, DevLogRecord, DevLogSinkPath } from './d
 /** The disclosure manifest's widening ids (legal-surface-v2 D4), type-only: the launcher's
  *  what's-new copy names them. The manifest's values are imported by path, never through here. */
 export type { WideningId } from './disclosure-manifest';
+
+/** The wire protocol level this contract describes (beta-1 design D16). It goes up by one whenever
+ *  the wire gains a message, field meaning or refusal code a client at the previous level would not
+ *  understand. Every `/v1` request declares the level its client understands in `PROTOCOL_HEADER`;
+ *  a server never sends a client anything introduced above that level. */
+export const PROTOCOL_LEVEL = 1;
+
+/** The closed vocabulary a client applies to a message it cannot use: `skip` ignores it and
+ *  carries on, `fail` ends the flow on the failure screen, `update` ends it on the update screen.
+ *  FROZEN: it never gains a member or changes meaning, because it is the one thing the oldest
+ *  installed build must understand forever. */
+export const CompatFallback = z.enum(['skip', 'fail', 'update']);
+export type CompatFallback = z.infer<typeof CompatFallback>;
+
+/** The longest `compat.notice` a message may carry, in characters. */
+export const COMPAT_NOTICE_MAX_CHARS = 200;
+
+const CompatMin = z.number().int().positive();
+const CompatNotice = z.string().max(COMPAT_NOTICE_MAX_CHARS);
+
+/** The forward-compatibility field a producer attaches to a message introduced above level 1:
+ *  `min` is the lowest protocol level that can use the message, `fallback` what a client below it
+ *  (or one that does not know the message at all) does instead, and `notice` the plain text the
+ *  failure or update screen shows. */
+export const Compat = z.object({
+  min: CompatMin,
+  fallback: CompatFallback,
+  notice: CompatNotice.optional(),
+});
+export type Compat = z.infer<typeof Compat>;
+
+/** Phase one of the two-phase decode every client applies to every SSE event and unary body: the
+ *  message's `type` (an event) or `error` (an `ApiError`) plus its optional `compat`, and nothing
+ *  else. Unknown fields are tolerated, and `compat.fallback` is read as an open string so a value
+ *  outside `CompatFallback` still parses — a client treats it as `fail`. A client decodes the full
+ *  schema only when it knows the type or code and `compat.min` (default 1) is at most its level;
+ *  otherwise it applies the fallback, and an unknown message with no `compat` means `fail`. */
+export const WireEnvelope = z.object({
+  type: z.string().optional(),
+  error: z.string().optional(),
+  compat: z.object({ min: CompatMin, fallback: z.string(), notice: CompatNotice.optional() }).optional(),
+});
+export type WireEnvelope = z.infer<typeof WireEnvelope>;
+
+/** The optional `compat` every SSE event and unary body accepts, spread into each shape. */
+const compatField = { compat: Compat.optional() };
 
 /** Integer token counts. ONE shape, used identically by the SSE `usage` event, `/v1/usage`, and
  *  the OpenRouter wrapper's captured usage — imported by reference, never re-declared. */
@@ -80,24 +130,50 @@ export const WireAppRecord = z.object({
 });
 export type WireAppRecord = z.infer<typeof WireAppRecord>;
 
+/** The longest typed `Clarification.other` answer, in characters. */
+export const CLARIFICATION_OTHER_MAX_CHARS = 200;
+
 /** One answered clarify question, carried BY VALUE into the generate/rewrite request: the server
  *  holds no per-device state between the clarify exchange and the request that follows it. The
- *  `question` text rides along so a server never has to look one up. */
-export const Clarification = z.object({
-  id: z.string(),
-  question: z.string(),
-  answer: z.string(),
-});
+ *  `question` text rides along so a server never has to look one up.
+ *
+ *  `choices` are the options the user picked, `other` the answer they typed, and `decide: true`
+ *  means they asked Whim to decide. An entry carries either `decide: true` alone (no choices, no
+ *  `other`) or at least one choice or an `other`. At most one choice for a `select: 'one'` question
+ *  is the device's and the server's rule, not this schema's: the entry does not carry the mode. */
+export const Clarification = z
+  .object({
+    id: z.string(),
+    question: z.string(),
+    choices: z.array(z.string()),
+    other: z.string().min(1).max(CLARIFICATION_OTHER_MAX_CHARS).optional(),
+    decide: z.boolean().optional(),
+  })
+  .refine(
+    (c) => (c.decide === true ? c.choices.length === 0 && c.other === undefined : c.choices.length > 0 || c.other !== undefined),
+    { message: 'A clarification carries decide: true alone, or at least one choice or an other answer.' },
+  );
 export type Clarification = z.infer<typeof Clarification>;
 
-/** One question the clarify exchange asks, with the answer options the device renders as
- *  single-select pills. `options` is non-empty: a question with nothing to pick is not a question. */
+/** One question the clarify exchange asks, with the answer options the device renders as pills.
+ *  `options` is non-empty: a question with nothing to pick is not a question. `select` says whether
+ *  one or several options may be picked, and `other` whether the user may type their own answer. */
 export const ClarifyQuestion = z.object({
   id: z.string(),
   question: z.string(),
   options: z.array(z.string()).min(1),
+  select: z.enum(['one', 'many']),
+  other: z.boolean(),
 });
 export type ClarifyQuestion = z.infer<typeof ClarifyQuestion>;
+
+/** What clarify answers when a request's core needs something mini-apps can't do (beta-1 D9):
+ *  plain words saying why, and the nearest thing that can be built instead. */
+export const ClarifyLimit = z.object({
+  reason: z.string().min(1),
+  alternative: z.string().min(1),
+});
+export type ClarifyLimit = z.infer<typeof ClarifyLimit>;
 
 /** The display-name-only context of an app a request CHANGES: its current name, the collections
  *  (and fields) it already keeps, and a plain-words `description` of what it currently is (the
@@ -125,8 +201,13 @@ export type ClarifyRequest = z.infer<typeof ClarifyRequest>;
 
 /** `POST /v1/clarify` response: an ORDERED list of AT MOST THREE questions. An empty list is valid
  *  and means "nothing needs clarifying" — the common case, a success, never a degraded mode. Four
- *  or more questions fails to parse. */
-export const ClarifyResponse = z.object({ questions: z.array(ClarifyQuestion).max(3) });
+ *  or more questions fails to parse. A response carrying `limit` says the request can't be built as
+ *  asked, and carries no questions. */
+export const ClarifyResponse = z
+  .object({ questions: z.array(ClarifyQuestion).max(3), limit: ClarifyLimit.optional(), ...compatField })
+  .refine((r) => r.limit === undefined || r.questions.length === 0, {
+    message: 'A clarify response carrying limit carries no questions.',
+  });
 export type ClarifyResponse = z.infer<typeof ClarifyResponse>;
 
 /** Generation request. The edit flow re-sends the FULL current source inside `app` (never a wire
@@ -190,6 +271,7 @@ export type PlanRow = z.infer<typeof PlanRow>;
 export const RewriteResponse = z.object({
   rewrittenPrompt: z.string(),
   plan: z.array(PlanRow).optional(),
+  ...compatField,
 });
 export type RewriteResponse = z.infer<typeof RewriteResponse>;
 
@@ -211,7 +293,7 @@ export const ReportRequest = z.object({
 export type ReportRequest = z.infer<typeof ReportRequest>;
 
 /** `POST /v1/report` response. */
-export const ReportResponse = z.object({ reportId: z.string().min(1) });
+export const ReportResponse = z.object({ reportId: z.string().min(1), ...compatField });
 export type ReportResponse = z.infer<typeof ReportResponse>;
 
 /** The closed set of change kinds the device groups history by. Closed on purpose: a history
@@ -246,35 +328,45 @@ export const RunSummary = z.object({
 });
 export type RunSummary = z.infer<typeof RunSummary>;
 
-/** The SSE payload — a discriminated union on `type`. Unknown `type` is rejected (clients can trust
- *  the union is closed at a given contract version). `usage` is emitted before the terminal event on
- *  BOTH success and failure. `result`/`failure` are the two terminal events.
+/** The SSE payload — a discriminated union on `type`. `GenerationEvent.parse` rejects an unknown
+ *  `type`; a CLIENT never gets that far with one, because it reads every frame through
+ *  `WireEnvelope` first and applies the frame's `compat` fallback instead (design D16). `usage` is
+ *  emitted before the terminal event on BOTH success and failure. `result`/`failure` are the two
+ *  terminal events. Every arm accepts the optional `compat` field.
  *
  *  `thinking`: the model is reasoning before or between writing; carries only a length. Some
  *  roster models emit a distinct reasoning stream ahead of (or interleaved with) their visible
  *  content, and without a signal for it the device sees total silence for minutes and then
  *  thousands of characters at once. `chars` is the length of ONE reasoning delta — the reasoning
  *  TEXT itself never crosses the wire: it is not user-facing, and the run journal must never carry
- *  raw model text it did not ask to keep. */
+ *  raw model text it did not ask to keep.
+ *
+ *  `queued`: the generation is waiting for a free slot; `position` is the number of generations
+ *  ahead of it plus one. `restart`: the current model turn is being sent again, so the tokens
+ *  streamed for that turn since its start are void. Neither is terminal. */
 export const GenerationEvent = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('stage'),
     stage: z.enum(['plan', 'generate', 'check', 'run', 'repair']),
     status: z.enum(['start', 'done']),
     attempt: z.number().optional(),
+    ...compatField,
   }),
-  z.object({ type: z.literal('token'), text: z.string() }),
-  z.object({ type: z.literal('thinking'), chars: z.number().int().positive() }),
-  z.object({ type: z.literal('diagnostic'), diagnostic: Diagnostic }),
-  z.object({ type: z.literal('usage'), usage: Usage }),
+  z.object({ type: z.literal('token'), text: z.string(), ...compatField }),
+  z.object({ type: z.literal('thinking'), chars: z.number().int().positive(), ...compatField }),
+  z.object({ type: z.literal('diagnostic'), diagnostic: Diagnostic, ...compatField }),
+  z.object({ type: z.literal('usage'), usage: Usage, ...compatField }),
+  z.object({ type: z.literal('queued'), position: z.number().int().min(1), ...compatField }),
+  z.object({ type: z.literal('restart'), ...compatField }),
   // `summary` is OPTIONAL so the stub pipeline, a server whose summariser failed, and an older
   // server all stay conforming — a device is never blocked on its presence.
-  z.object({ type: z.literal('result'), app: WireAppRecord, summary: RunSummary.optional() }),
+  z.object({ type: z.literal('result'), app: WireAppRecord, summary: RunSummary.optional(), ...compatField }),
   z.object({
     type: z.literal('failure'),
     reason: z.string(),
     attempts: z.number(),
     diagnostics: z.array(Diagnostic),
+    ...compatField,
   }),
 ]);
 export type GenerationEvent = z.infer<typeof GenerationEvent>;
@@ -283,10 +375,12 @@ export type GenerationEvent = z.infer<typeof GenerationEvent>;
  *  validates against — `error` is a machine-readable identifier, `hint` is mandatory non-empty
  *  guidance, mirroring the diagnostics discipline. No route invents an ad-hoc error shape.
  *  `DeviceIdError` below is this shape's narrower, closed-enum specialization for the
- *  device-identity middleware, and stays assignable to `ApiError`. */
+ *  device-identity middleware, and stays assignable to `ApiError`. Every `error` identifier
+ *  introduced above protocol level 1 carries `compat`. */
 export const ApiError = z.object({
   error: z.string(),
   hint: z.string().min(1),
+  ...compatField,
 });
 export type ApiError = z.infer<typeof ApiError>;
 
@@ -308,6 +402,8 @@ export const APP_VERSION_HEADER = 'x-whim-app-version';
 export const BUILD_HEADER = 'x-whim-build';
 export const CONSENT_HEADER = 'x-whim-consent';
 export const REQUEST_ID_HEADER = 'x-whim-request-id';
+/** Request: the highest protocol level the client understands (`PROTOCOL_LEVEL` in its build). */
+export const PROTOCOL_HEADER = 'x-whim-protocol';
 
 /** The platforms a client envelope can name. */
 export const ClientPlatform = z.enum(['ios', 'android']);
@@ -337,6 +433,10 @@ export const ClientEnvelope = z.object({
 });
 export type ClientEnvelope = z.infer<typeof ClientEnvelope>;
 export type ConsentVersion = ClientEnvelope['consent'];
+
+/** `PROTOCOL_HEADER` as the server reads it: a positive integer as header text, parsed to a
+ *  number. Anything else — including no header at all — is below every level the server supports. */
+export const ProtocolLevelHeader = PositiveIntegerText;
 
 /** The closed vocabulary of `error` identifiers a conforming server uses for size, admission,
  *  content-policy, and operator-budget refusals. Every value validates as `ApiError`, whose `error`

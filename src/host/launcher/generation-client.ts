@@ -6,11 +6,14 @@
  *
  * `generateApp` parses the same `event:`/`data:`/`id:`/blank-line SSE framing the server writes
  * (`server/src/sse.ts`) directly off the `Response.body` reader, incrementally — frames are
- * yielded as they arrive, not buffered to stream completion. Every frame is validated against
- * `GenerationEvent`'s shape (hand-rolled structural guards below, mirroring `@whim/contract`'s
- * zod schema field-for-field — see the guards' doc comment for why) before being yielded; a
- * frame that fails to parse as valid JSON or fails shape validation raises
- * `GenerationClientError{kind:'stream_parse'}` rather than silently passing bad data to the UI.
+ * yielded as they arrive, not buffered to stream completion. Every frame, and every unary body, is
+ * decoded in two phases (beta-1 D16, `wire-compat.ts`): its envelope first, then — only for a type
+ * this build knows at its protocol level — its full shape (hand-rolled structural guards below,
+ * mirroring `@whim/contract`'s zod schemas field-for-field — see the guards' doc comment for why).
+ * A frame whose fallback is `skip` is dropped; one whose fallback is `fail` or `update` raises
+ * `GenerationClientError{kind:'fallback'}`. A frame that fails to parse as JSON, is no envelope, or
+ * is a known event failing its shape raises `GenerationClientError{kind:'stream_parse'}` rather
+ * than silently passing bad data to the UI.
  * Keepalive comment lines (`: ...`) are recognized and skipped, never treated as malformed
  * frames — but they still fire `ClientOptions.onKeepalive` (build-liveness B2), since a keepalive
  * is real evidence the connection is alive even though it carries no `GenerationEvent`.
@@ -45,6 +48,7 @@ import {
   GenerationClientError,
   connectTimeoutOf,
   consentedClientOptions,
+  fallbackError,
   httpErrorFrom,
   isNonEmptyString,
   isRecord,
@@ -52,6 +56,7 @@ import {
   requestHeaders,
   requestIdOf,
 } from './transport-shared';
+import { gateMessage } from './wire-compat';
 import type { ClientOptions, ConsentedClientOptions } from './transport-shared';
 
 /** Re-exported for callers that historically imported these from this module (`LauncherRoot.tsx`,
@@ -99,12 +104,24 @@ function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
     typeof value.id === 'string' &&
     typeof value.question === 'string' &&
     Array.isArray(value.options) &&
-    value.options.every((option) => typeof option === 'string')
+    value.options.every((option) => typeof option === 'string') &&
+    (value.select === 'one' || value.select === 'many') &&
+    typeof value.other === 'boolean'
   );
 }
 
+function isClarifyLimit(value: unknown): boolean {
+  return isRecord(value) && isNonEmptyString(value.reason) && isNonEmptyString(value.alternative);
+}
+
+/** A `limit` answers with no questions, so a response carrying both is malformed. */
 function isClarifyResponse(value: unknown): value is ClarifyResponse {
-  return isRecord(value) && Array.isArray(value.questions) && value.questions.every(isClarifyQuestion);
+  return (
+    isRecord(value) &&
+    Array.isArray(value.questions) &&
+    value.questions.every(isClarifyQuestion) &&
+    (value.limit === undefined || (isClarifyLimit(value.limit) && value.questions.length === 0))
+  );
 }
 
 function isDiagnostic(value: unknown): value is Diagnostic {
@@ -146,44 +163,34 @@ function isWireAppRecord(value: unknown): value is WireAppRecord {
   );
 }
 
-/** Structural guard for `GenerationEvent`'s discriminated union — one arm per `type` literal,
- *  matching `contract/src/index.ts`'s zod union exactly. An unrecognized `type` (or a `type` that
- *  isn't a string at all) fails, same as the zod union rejecting an unknown discriminant. */
-function isGenerationEvent(value: unknown): value is GenerationEvent {
-  if (!isRecord(value) || typeof value.type !== 'string') {
-    return false;
-  }
-  switch (value.type) {
-    case 'stage':
-      return (
-        (value.stage === 'plan' ||
-          value.stage === 'generate' ||
-          value.stage === 'check' ||
-          value.stage === 'run' ||
-          value.stage === 'repair') &&
-        (value.status === 'start' || value.status === 'done') &&
-        isOptionalNumber(value.attempt)
-      );
-    case 'token':
-      return typeof value.text === 'string';
-    case 'thinking':
-      return typeof value.chars === 'number' && Number.isInteger(value.chars) && value.chars > 0;
-    case 'diagnostic':
-      return isDiagnostic(value.diagnostic);
-    case 'usage':
-      return isUsage(value.usage);
-    case 'result':
-      return isWireAppRecord(value.app);
-    case 'failure':
-      return (
-        typeof value.reason === 'string' &&
-        typeof value.attempts === 'number' &&
-        Array.isArray(value.diagnostics) &&
-        value.diagnostics.every(isDiagnostic)
-      );
-    default:
-      return false;
-  }
+/** One structural guard per `GenerationEvent` arm, matching `contract/src/index.ts`'s zod union
+ *  field-for-field. A mapped type over the contract's `type` union: an arm added to the contract
+ *  without a guard here fails the typecheck. Its keys are the event types this build knows. */
+const EVENT_GUARDS: { readonly [K in GenerationEvent['type']]: (value: Record<string, unknown>) => boolean } = {
+  stage: (value) =>
+    (value.stage === 'plan' ||
+      value.stage === 'generate' ||
+      value.stage === 'check' ||
+      value.stage === 'run' ||
+      value.stage === 'repair') &&
+    (value.status === 'start' || value.status === 'done') &&
+    isOptionalNumber(value.attempt),
+  token: (value) => typeof value.text === 'string',
+  thinking: (value) => typeof value.chars === 'number' && Number.isInteger(value.chars) && value.chars > 0,
+  diagnostic: (value) => isDiagnostic(value.diagnostic),
+  usage: (value) => isUsage(value.usage),
+  queued: (value) => typeof value.position === 'number' && Number.isInteger(value.position) && value.position >= 1,
+  restart: () => true,
+  result: (value) => isWireAppRecord(value.app),
+  failure: (value) =>
+    typeof value.reason === 'string' &&
+    typeof value.attempts === 'number' &&
+    Array.isArray(value.diagnostics) &&
+    value.diagnostics.every(isDiagnostic),
+};
+
+function isKnownEventType(type: string): type is GenerationEvent['type'] {
+  return Object.prototype.hasOwnProperty.call(EVENT_GUARDS, type);
 }
 
 function isAbortError(err: unknown): boolean {
@@ -192,6 +199,19 @@ function isAbortError(err: unknown): boolean {
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Phase one for a unary success body (beta-1 D16): the route's body is always a known message,
+ *  so only a `compat.min` above this build's level applies a fallback. `skip` still reads the body
+ *  with this build's own guard; `fail` and `update` end the call here with
+ *  `GenerationClientError{kind:'fallback'}`. */
+function gateUnaryBody(bodyJson: unknown, response: Response, path: string, baseUrl: string): void {
+  if (!isRecord(bodyJson)) return;
+  const gate = gateMessage(bodyJson, true);
+  if (gate.kind === 'decode' || gate.fallback.kind === 'skip') return;
+  const requestId = requestIdOf(response.headers);
+  logMappedError(path, baseUrl, 'fallback', { status: response.status, message: gate.fallback.kind, requestId });
+  throw fallbackError(gate.fallback, { status: response.status, requestId });
 }
 
 /**
@@ -235,6 +255,7 @@ export async function clarifyPrompt(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
+  gateUnaryBody(bodyJson, response, '/v1/clarify', opts.baseUrl);
   if (!isClarifyResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
@@ -282,6 +303,7 @@ export async function rewritePrompt(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
+  gateUnaryBody(bodyJson, response, '/v1/rewrite', opts.baseUrl);
   if (!isRewriteResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
@@ -322,6 +344,7 @@ export async function sendReport(
   }
 
   const bodyJson: unknown = await response.json().catch(() => null);
+  gateUnaryBody(bodyJson, response, '/v1/report', opts.baseUrl);
   if (!isReportResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected report response shape' });
   }
@@ -331,12 +354,14 @@ export async function sendReport(
 /** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
  *  build-liveness B2 — transport noise, never a `GenerationEvent`), or a truly empty block (an
  *  incidental extra blank line, distinct from a keepalive so only the real keepalive frame ever
- *  invokes `onKeepalive`). */
-type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' };
+ *  invokes `onKeepalive`), or `skipped`: a frame this build cannot use whose fallback is `skip`. */
+type SseBlockResult = { kind: 'event'; event: GenerationEvent } | { kind: 'keepalive' } | { kind: 'empty' } | { kind: 'skipped' };
 
-/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited). Raises
- *  `GenerationClientError{kind:'stream_parse'}` for anything that looks like a real frame but
- *  fails to parse. */
+/** Parse one SSE block (the text between blank-line separators, `\n\n`-delimited) in the two
+ *  phases of beta-1 D16: the envelope (`type` plus `compat`), then — for a type this build knows at
+ *  its level — the event's full shape. Raises `GenerationClientError{kind:'fallback'}` for a frame
+ *  whose fallback ends the flow, and `GenerationClientError{kind:'stream_parse'}` for anything that
+ *  looks like a real frame but fails to parse. */
 function parseSseBlock(block: string): SseBlockResult {
   const lines = block.split('\n').filter((l) => l.length > 0);
   if (lines.length === 0) {
@@ -358,10 +383,21 @@ function parseSseBlock(block: string): SseBlockResult {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame data is not valid JSON' });
   }
 
-  if (!isGenerationEvent(dataJson)) {
+  if (!isRecord(dataJson) || typeof dataJson.type !== 'string') {
+    throw new GenerationClientError('stream_parse', { hint: 'SSE frame data is not an event envelope' });
+  }
+  const { type } = dataJson;
+  const gate = gateMessage(dataJson, isKnownEventType(type));
+  if (gate.kind === 'fallback') {
+    if (gate.fallback.kind === 'skip') return { kind: 'skipped' };
+    throw fallbackError(gate.fallback);
+  }
+  // Phase two. `gateMessage` only lets a known type through, so the first test never fails here;
+  // it narrows `type` for the guard lookup.
+  if (!isKnownEventType(type) || !EVENT_GUARDS[type](dataJson)) {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame did not match GenerationEvent' });
   }
-  return { kind: 'event', event: dataJson };
+  return { kind: 'event', event: dataJson as GenerationEvent };
 }
 
 function connectTimeoutError(opts: ClientOptions): GenerationClientError {

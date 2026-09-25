@@ -352,7 +352,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   });
 
   // Parity test (build-liveness review finding): every arm of the CONTRACT'S union must have a
-  // matching arm in this client's hand-rolled `isGenerationEvent` guard, or the device throws
+  // matching arm in this client's hand-rolled `EVENT_GUARDS` table, or the device throws
   // `stream_parse` on a perfectly valid frame the moment the server starts sending it — exactly
   // what happened here for `thinking` before this change. One canned frame per union arm, fed
   // through the real SSE path, is what makes "the guard accepts everything the contract allows"
@@ -364,6 +364,8 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       { type: 'thinking', chars: 1 },
       { type: 'diagnostic', diagnostic: { kind: 'type-error', hint: 'declare a type' } },
       { type: 'usage', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } },
+      { type: 'queued', position: 2 },
+      { type: 'restart' },
       {
         type: 'result',
         app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
@@ -401,9 +403,10 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(keepalives, 2, 'and the caller hears about both keepalive frames');
   });
 
-  // generateApp: malformed frame — unrecognized discriminant
-  await h.test('generateApp: a malformed frame raises GenerationClientError{kind:"stream_parse"}', async () => {
-    const badFrame = 'event: stage\ndata: {"type":"not-a-real-type"}\nid: 1\n\n';
+  // generateApp: malformed frame — no event envelope at all. (An unrecognized `type` is not
+  // malformed: it goes through its fallback, `wire-future-frames.suite.ts`.)
+  await h.test('generateApp: a frame whose type is not a string raises GenerationClientError{kind:"stream_parse"}', async () => {
+    const badFrame = 'event: stage\ndata: {"type":42}\nid: 1\n\n';
     const fetchImpl = (async () => sseResponse([badFrame])) as typeof fetch;
     try {
       await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
@@ -615,7 +618,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     'clarifyPrompt: a non-2xx response still throws AND records a structured breadcrumb on the generation channel',
     async () => {
       const fetchImpl = (async () =>
-        new Response(JSON.stringify({ error: 'not_found' }), { status: 404 })) as typeof fetch;
+        new Response('404 Not Found', { status: 404 })) as typeof fetch;
 
       const before = log.buffer.snapshot().length;
       await h.throws(

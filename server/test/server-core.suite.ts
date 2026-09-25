@@ -12,7 +12,7 @@ import { InMemoryUsageStore } from '../src/usage-store';
 import { buildSseStream } from '../src/sse';
 import { createSlotController } from '../src/admission/slots';
 import { ScriptedModelClient } from './scripted-model';
-import { TIMED_OUT, waitFor, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, waitFor, within } from './route-doubles';
 import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
@@ -40,7 +40,7 @@ function scriptedRewriteApp() {
 }
 
 const DEVICE_ID = '11111111-1111-4111-8111-111111111111';
-const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID };
+const DEVICE_HEADER = { 'x-whim-device': DEVICE_ID, ...PROTOCOL_HEADERS };
 
 /** Build a test app with 0 delay and no keepalive (fast + deterministic). */
 function testApp() {

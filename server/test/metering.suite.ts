@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { check, eq, section } from './harness';
-import { TIMED_OUT, within } from './route-doubles';
+import { PROTOCOL_HEADERS, TIMED_OUT, within } from './route-doubles';
 import { createApp } from '../src/app';
 import { createStubPipeline } from '../src/pipeline';
 import { NodeSqliteUsageStore } from '../src/usage-store';
@@ -98,13 +98,13 @@ export async function runMeteringTests(): Promise<void> {
       app,
       '/v1/generate',
       { prompt: 'hello' },
-      { 'x-whim-device': DEVICE_A },
+      { 'x-whim-device': DEVICE_A, ...PROTOCOL_HEADERS },
     );
     await drainSse(genRes);
 
     // Read usage for device A
     const usageRes = await app.request('/v1/usage', {
-      headers: { 'x-whim-device': DEVICE_A },
+      headers: { 'x-whim-device': DEVICE_A, ...PROTOCOL_HEADERS },
     });
     eq('GET /v1/usage status 200', usageRes.status, 200);
     const usage = (await usageRes.json()) as { promptTokens: number; completionTokens: number; totalTokens: number };
@@ -115,7 +115,7 @@ export async function runMeteringTests(): Promise<void> {
 
     // Read usage for device B (should be zeros)
     const usageBRes = await app.request('/v1/usage', {
-      headers: { 'x-whim-device': DEVICE_B },
+      headers: { 'x-whim-device': DEVICE_B, ...PROTOCOL_HEADERS },
     });
     const usageB = (await usageBRes.json()) as { promptTokens: number; completionTokens: number; totalTokens: number };
     eq('readback: device B reads zeros', usageB.totalTokens, 0);
@@ -132,7 +132,7 @@ export async function runMeteringTests(): Promise<void> {
   // arrive, with the stream still open, never after `drainSse`/readSseResponse has consumed it.
   {
     const { app, usageStore } = testApp(':memory:');
-    const res = await post(app, '/v1/generate', { prompt: 'hello' }, { 'x-whim-device': DEVICE_A });
+    const res = await post(app, '/v1/generate', { prompt: 'hello' }, { 'x-whim-device': DEVICE_A, ...PROTOCOL_HEADERS });
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     const readUntilResult = (async (): Promise<string> => {
@@ -155,7 +155,7 @@ export async function runMeteringTests(): Promise<void> {
   {
     const { app } = testApp(':memory:');
     const res = await app.request('/v1/usage', {
-      headers: { 'x-whim-device': DEVICE_B },
+      headers: { 'x-whim-device': DEVICE_B, ...PROTOCOL_HEADERS },
     });
     eq('unknown id → 200', res.status, 200);
     const usage = (await res.json()) as { promptTokens: number; completionTokens: number; totalTokens: number };

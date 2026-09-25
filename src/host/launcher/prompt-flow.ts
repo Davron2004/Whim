@@ -187,7 +187,7 @@ export function stepAfterClarifyExchange(questions: readonly FlowQuestion[]): 'c
  * other failure is a real failure.
  */
 export function isClarifySkip(err: unknown): boolean {
-  return err instanceof GenerationClientError && err.status === 502;
+  return err instanceof GenerationClientError && err.kind === 'http' && err.status === 502;
 }
 
 /**
@@ -221,8 +221,9 @@ export function withAnswer(screen: ClarifyScreen, questionId: string, answer: st
   return { ...screen, answers: { ...screen.answers, [questionId]: answer } };
 }
 
-/** The answers as the wire carries them — by value, only for questions actually answered.
- *  An empty result and an absent field mean the same thing: the user answered nothing. */
+/** The answers as the wire carries them — by value, only for questions actually answered, each
+ *  as its one picked option. An empty result and an absent field mean the same thing: the user
+ *  answered nothing. */
 export function clarificationsFrom(
   questions: readonly FlowQuestion[],
   answers: FlowAnswers,
@@ -231,7 +232,7 @@ export function clarificationsFrom(
   for (const q of questions) {
     const answer = answers[q.id];
     if (typeof answer === 'string' && answer.length > 0) {
-      out.push({ id: q.id, question: q.question, answer });
+      out.push({ id: q.id, question: q.question, choices: [answer] });
     }
   }
   return out;

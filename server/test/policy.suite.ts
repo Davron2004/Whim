@@ -317,7 +317,7 @@ async function testInputCoverage(): Promise<void> {
 
   const rewriteRequest: RewriteRequest = {
     prompt: 'add a streak count',
-    clarifications: [{ id: 'q1', question: 'daily or weekly?', answer: 'daily, track drinking' }],
+    clarifications: [{ id: 'q1', question: 'daily or weekly?', choices: ['daily, track drinking'] }],
     app: { name: 'Habit Tracker', collections: [{ name: 'Completions', fields: ['Date', 'Note'] }] },
   };
   const rewriteInput = buildRewritePolicyInput(rewriteRequest);
@@ -329,7 +329,7 @@ async function testInputCoverage(): Promise<void> {
 
   const generateRequest: GenerateRequest = {
     prompt: 'a tip splitter',
-    clarifications: [{ id: 'q1', question: 'currency?', answer: 'USD, no gambling odds' }],
+    clarifications: [{ id: 'q1', question: 'currency?', choices: ['USD, no gambling odds'] }],
     app: { source: 'DO-NOT-SEND-THIS-SOURCE-TEXT', manifest: { capabilities: [] }, schema: {} },
   };
   const generateInput = buildGeneratePolicyInput(generateRequest);

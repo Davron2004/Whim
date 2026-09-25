@@ -79,6 +79,7 @@ import { runLegalLanguageUiTests } from './legal-language-ui.suite';
 import { runAgeCheckTests } from './age-check.suite';
 import { runAgeSignalUiTests } from './age-signal-ui.suite';
 import { runDiagnosticsUiTests } from './diagnostics-ui.suite';
+import { runWireFutureFramesTests } from './wire-future-frames.suite';
 
 const h = new Harness();
 
@@ -155,6 +156,7 @@ await runLegalLanguageUiTests(h);
 await runAgeCheckTests(h);
 await runAgeSignalUiTests(h);
 await runDiagnosticsUiTests(h);
+await runWireFutureFramesTests(h);
 
 console.log(`\n${h.passed} checks passed, ${h.failures.length} failed.`);
 if (h.failures.length) {

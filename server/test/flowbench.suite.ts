@@ -6,7 +6,8 @@ import path from 'node:path';
 import { check, caught, eq, section } from './harness';
 import { formatMarkdownReport, type EvalSet } from '../src/flowbench/report';
 import { parseArgs, runFlowBenchmark, writeJsonReport } from '../src/flowbench/drive';
-import { parseRequestEnvelope } from '../src/request-edge';
+import { PROTOCOL_LEVEL } from '@whim/contract';
+import { parseProtocolLevel, parseRequestEnvelope } from '../src/request-edge';
 
 interface SeenRequest {
   path: string;
@@ -122,8 +123,8 @@ async function testFlowAndReport(): Promise<void> {
     const item = report.cases[0]!;
     eq('the case delivered a result', item.outcome, { type: 'result' });
     eq('clarify selected both first options', item.clarifications, [
-      { id: 'layout', question: 'How should it look?', answer: 'Cards' },
-      { id: 'color', question: 'What color?', answer: 'Blue' },
+      { id: 'layout', question: 'How should it look?', choices: ['Cards'] },
+      { id: 'color', question: 'What color?', choices: ['Blue'] },
     ]);
     eq('rewrite received the original prompt and answers', fake.requests[1]?.body, { prompt: 'make one', clarifications: item.clarifications });
     eq('generate received the rewritten prompt and same answers', fake.requests[2]?.body, { prompt: 'rewritten make one', clarifications: item.clarifications });
@@ -134,6 +135,11 @@ async function testFlowAndReport(): Promise<void> {
       return envelope.ok ? envelope.envelope.platform : envelope.body.hint;
     });
     eq('every request carries a complete client envelope the server reads as the app', platforms, ['android', 'android', 'android']);
+    eq(
+      "every request declares the protocol level, read by the server's own parser",
+      fake.requests.map((request) => parseProtocolLevel(request.headers)),
+      [PROTOCOL_LEVEL, PROTOCOL_LEVEL, PROTOCOL_LEVEL],
+    );
     check('stage durations are non-negative and ordered', item.phases.generate?.stages.every((stage) => stage.durationMs >= 0) === true && item.phases.generate?.stages.map((stage) => stage.stage).join(',') === 'plan,generate,check,run');
     check('the report records a non-negative tail', (item.phases.generate?.tailMs ?? -1) >= 0);
     eq('the saved source is byte-for-byte', fs.readFileSync(path.join(saveDir, 'one.ts'), 'utf8'), SOURCE);

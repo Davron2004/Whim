@@ -648,6 +648,10 @@ async function testFailureReason(): Promise<void> {
     await store.settle(refused, { outcome: 'refused', failureReason: 'content_policy', now: AT_22_00_UTC });
     eq('a refused row holds its refusal code', readFailureReason(dbPath, refused), 'content_policy');
 
+    const waited = await admit();
+    await store.settle(waited, { outcome: 'failed', failureReason: 'queue_timeout', now: AT_22_00_UTC });
+    eq('a generation that timed out in the line holds queue_timeout (beta-1 D8)', readFailureReason(dbPath, waited), 'queue_timeout');
+
     const delivered = await admit();
     await store.settle(delivered, { outcome: 'delivered', now: AT_22_00_UTC });
     eq('a delivered row keeps a null reason', readFailureReason(dbPath, delivered), null);
@@ -665,7 +669,7 @@ async function testFailureReason(): Promise<void> {
     eq('  ... and that row keeps a null reason', readFailureReason(dbPath, beside), null);
 
     const summary = await store.summary({ days: 1, now: AT_22_00_UTC });
-    eq('the summary counts rows per failure reason', summary.failureReasonCounts, { repair_exhausted: 1, content_policy: 1 });
+    eq('the summary counts rows per failure reason', summary.failureReasonCounts, { repair_exhausted: 1, content_policy: 1, queue_timeout: 1 });
     store.close();
   } finally {
     fs.rmSync(dbPath, { force: true });

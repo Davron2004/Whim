@@ -74,16 +74,18 @@ const STUB_NO_QUESTIONS_MARKER = '[[noclarify]]';
  *  so LAN UI work can drive the clarify screen without spending tokens, not to be a clarifier. */
 const STUB_QUESTIONS: ClarifyResponse = {
   questions: [
-    { id: 'scope', question: 'How much should it hold?', options: ['Just today', 'A few weeks', 'Everything'] },
-    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'] },
-    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'] },
+    { id: 'scope', question: 'How much should it hold?', options: ['Just today', 'A few weeks', 'Everything'], select: 'one', other: false },
+    { id: 'entry', question: 'How do you add things?', options: ['Type it', 'Pick from a list'], select: 'one', other: false },
+    { id: 'done', question: 'What happens when something is done?', options: ['It disappears', 'It stays, ticked'], select: 'one', other: false },
   ],
 };
 
 /**
  * Model output → a conforming `ClarifyResponse`, or `undefined` when it is unusable. Defensive
  * normalization only, never fabrication: a question past the third is dropped, as is one with no
- * options — both are the model exceeding a bound the contract sets, not content to invent.
+ * options — both are the model exceeding a bound the contract sets, not content to invent. A
+ * question the model gives no answer mode is single-select with no typed answer (`select: 'one'`,
+ * `other: false`), the mode every question had before the model could choose one.
  */
 function shapeClarify(text: string): ClarifyResponse | undefined {
   const parsed = parseJsonBlock(text);
@@ -99,6 +101,8 @@ function shapeClarify(text: string): ClarifyResponse | undefined {
       options: Array.isArray(q.options)
         ? q.options.filter((o): o is string => typeof o === 'string' && o.trim().length > 0).map((o) => o.trim())
         : [],
+      select: q.select === 'many' ? ('many' as const) : ('one' as const),
+      other: q.other === true,
     }))
     .filter((q) => q.question.length > 0 && q.options.length > 0)
     .slice(0, 3);

@@ -180,9 +180,10 @@ check_health() {
   esac
 }
 
+# Sends the protocol level every /v1 request carries, so the one header missing is the device's.
 check_device_header_required() {
   local url="https://$WHIM_API_HOST/v1/generate"
-  probe "$url" -X POST -H 'content-type: application/json' --data '{}'
+  probe "$url" -X POST -H 'content-type: application/json' -H 'x-whim-protocol: 1' --data '{}'
   if [ "$PROBE_STATUS" = 400 ]; then
     pass "api $url without a device header -> 400"
   else
