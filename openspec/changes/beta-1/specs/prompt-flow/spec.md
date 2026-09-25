@@ -34,6 +34,37 @@ The prompt flow SHALL apply the forward-compatibility fallback of any stream eve
 
 ## MODIFIED Requirements
 
+### Requirement: Clarifying questions are a pre-stream exchange, never a generation stage
+
+Between compose and plan the device SHALL make one request/response call to the clarify endpoint and render the returned questions — at most three — each as a set of answer pills that allows one pick for a `select: 'one'` question and several for `select: 'many'`, plus a typed "Other" answer when the question allows it, plus a "Decide for me" choice on every question that clears any picks and delegates that question to Whim. The step SHALL be skippable with zero answers and SHALL carry the helper line `Skip these and Whim will pick sensible answers.`; there SHALL be no validation gate on the questions. For exactly two questions the headline SHALL read `Two quick things`, and the same counted construction SHALL be used for one or three.
+
+The user's submitted prompt SHALL be echoed on this step as the user's own words. Collected answers SHALL be threaded into the subsequent requests. This exchange SHALL NOT emit or consume any `GenerationEvent`, and no `clarify` member SHALL be added to the stage vocabulary.
+
+#### Scenario: Skipping answers nothing
+- **WHEN** the user taps the primary action on the clarify step with no answers selected
+- **THEN** the flow proceeds and the request carries no answers
+
+#### Scenario: Answers reach generation
+- **WHEN** the user answers a clarifying question and the app is later generated
+- **THEN** the generation request carries that question's identifier and the chosen answer
+
+#### Scenario: Several picks
+- **WHEN** the user picks two options on a `select: 'many'` question
+- **THEN** both are carried as that question's `choices`
+
+#### Scenario: Typed answer
+- **WHEN** the user types an answer into a question's "Other" field
+- **THEN** the request carries it as that question's `other`, and the field stays above the keyboard while typing
+
+#### Scenario: Decide for me
+- **WHEN** the user taps "Decide for me" on a question
+- **THEN** its picks and typed answer clear and the request carries `decide: true` for it
+
+#### Scenario: The stage vocabulary is untouched
+- **WHEN** the generation event stream for a run that began with clarifying questions is inspected
+- **THEN** every `stage` event's stage is one of the ratified members and none names clarification
+
+
 ### Requirement: A stall heartbeat visibly reports when the stream goes quiet
 
 The build screen SHALL track the time since the last `token`, `stage`, `queued` or `restart` event arrived. When that

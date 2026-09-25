@@ -15,6 +15,17 @@ The clarify and plan-writing prompts SHALL be built from one list of things a mi
 - **WHEN** the capability registry gains a capability that the list names as missing
 - **THEN** the server suite fails until the list is updated
 
+### Requirement: Clarify picks each question's answer mode, and delegated questions are decided in the open
+The clarify prompt SHALL instruct the model to mark a question `select: 'many'` only when several options can sensibly hold together, and `other: true` only when the options can't cover the likely answers; plan writing SHALL decide every question the user delegated with `decide: true`, and the plan SHALL state each such decision in plain words.
+
+#### Scenario: Delegated question
+- **WHEN** a rewrite request carries a clarification with `decide: true` for "Which units?"
+- **THEN** the returned plan names the units Whim chose
+
+#### Scenario: Several picks honoured
+- **WHEN** a clarification carries two `choices`
+- **THEN** the plan includes both
+
 ### Requirement: A model turn that loses its provider is retried once
 The pipeline SHALL retry a generate or repair turn once with the same messages when the provider fails with an upstream error (5xx, 429, network or stream error), emitting a `restart` event first when the turn had already yielded token events, and SHALL end with today's terminal failure if the retry also fails; the failed attempt's usage SHALL still be metered.
 

@@ -85,7 +85,7 @@ presence. The `stage` enum SHALL NOT be widened by this change.
 - **THEN** it validates, and the absence is a legitimate state rather than an emitter defect
 
 ### Requirement: Clarify request and response shapes
-The contract SHALL define `ClarifyRequest` (`prompt`) and `ClarifyResponse` carrying `questions`: an ordered list of **at most three** entries, each `{ id, question, options }` where `options` is a non-empty list of answer strings the device renders as single-select pills, and an optional `limit`: `{ reason, alternative }`, plain-words text saying why the request can't be built as asked and the nearest thing that can. An empty `questions` list SHALL be valid and SHALL mean "nothing needs clarifying". A response carrying `limit` SHALL carry an empty `questions` list.
+The contract SHALL define `ClarifyRequest` (`prompt`) and `ClarifyResponse` carrying `questions`: an ordered list of **at most three** entries, each `{ id, question, options, select, other }` where `options` is a non-empty list of answer strings the device renders as pills, `select` ∈ `one | many` says whether one or several options may be picked, and `other` (boolean) says whether the user may type their own answer, and an optional `limit`: `{ reason, alternative }`, plain-words text saying why the request can't be built as asked and the nearest thing that can. An empty `questions` list SHALL be valid and SHALL mean "nothing needs clarifying". A response carrying `limit` SHALL carry an empty `questions` list.
 
 The exchange SHALL be unary request/response. No clarify event, clarify stage member, or second stream SHALL be added to `GenerationEvent`.
 
@@ -97,6 +97,10 @@ The exchange SHALL be unary request/response. No clarify event, clarify stage me
 - **WHEN** a `ClarifyResponse` carrying four questions is parsed
 - **THEN** parsing fails
 
+#### Scenario: Multi-select question with a typed option
+- **WHEN** a question with `select: 'many'` and `other: true` is parsed
+- **THEN** it validates
+
 #### Scenario: A limit carries no questions
 - **WHEN** a `ClarifyResponse` carries both `limit` and a non-empty `questions` list
 - **THEN** parsing fails
@@ -104,6 +108,65 @@ The exchange SHALL be unary request/response. No clarify event, clarify stage me
 #### Scenario: The event union carries no clarification
 - **WHEN** `GenerationEvent`'s members and its `stage` enum are inspected
 - **THEN** neither mentions clarification
+
+### Requirement: Generation request and rewrite shapes
+The contract SHALL define `GenerateRequest` (`prompt`, optional `clarifications`, optional `app` carrying the current `source`, the
+`manifest`, the `schema`, and the `appliedSchema` for the edit flow — full re-send per Model 1, never wire
+diffs) and `RewriteRequest`/`RewriteResponse` (`prompt` plus optional `clarifications` and optional `app` in, `rewrittenPrompt` plus optional `plan` out).
+
+`clarifications` SHALL be an optional list of `{ id, question, choices, other?, decide? }` entries — the answers the user gave to the clarify exchange's questions, carried by value so the server holds no per-device state between calls. `choices` is the list of picked options (at most one for a `select: 'one'` question), `other` is the user's typed answer (1–200 characters), and `decide: true` means the user asked Whim to decide that question. An entry SHALL carry either `decide: true` with no choices and no `other`, or at least one choice or an `other`. Its absence and an empty list SHALL both mean "the user answered nothing", which is a legitimate, common state.
+
+`RewriteRequest.app` SHALL be an optional context object `{ name, collections? }`, where `name` is the app's current display name and `collections` is an optional list of `{ name, fields }` carrying collection and field **display names only**. Its presence means "this rewrite describes a change to an existing app"; its absence means a new app. It SHALL NOT carry source, bundle text, burned ids, applied schemas, record contents, or any device-side identity — the rewrite turn answers in the user's own words and needs no more than names, and the payload stays small enough to ride the unary request.
+
+`RewriteResponse.plan` SHALL be an optional ordered list of `{ label, text }` rows — the plan the device renders as its approval gate. When it is absent the device renders `rewrittenPrompt` as a single row, so a server that returns no rows stays conforming.
+
+Within `app`, `source` SHALL be **optional**: it carries the app's original TypeScript when the device has
+it, and is absent for a pre-existing install whose snapshots predate source tracking. Its absence means
+exactly "the device has no original source for this app", and a conforming server SHALL regenerate under
+the supplied `manifest`/`appliedSchema` rather than treat compiled output as source. `manifest` and
+`schema` remain required within `app`.
+
+`app.appliedSchema` SHALL be an optional record carrying the **accumulated** applied-schema union of the
+database the app writes to — the storage group's `_meta` union, not the app's own snapshot artifact
+(decision #52 D5). It is the diff baseline the harness's schema checks run against and the source of the
+burned-ID allocation floor; when it is absent the baseline is the empty applied schema.
+
+#### Scenario: Edit flow carries full source
+- **WHEN** a client builds a `GenerateRequest` for editing an existing app whose original source it holds
+- **THEN** the schema accepts the complete current source text (not a diff) inside `app`
+
+#### Scenario: Edit flow without tracked source still validates
+- **WHEN** a client builds a `GenerateRequest` for an app whose snapshots carry no original source
+- **THEN** the request validates with `app.source` absent, and `app.manifest` and `app.schema` still present
+
+#### Scenario: Applied schema is a distinct field from the app's own schema
+- **WHEN** `GenerateRequest` is inspected
+- **THEN** `app.schema` (the app's declared artifact) and `app.appliedSchema` (the database's accumulated
+  union) are separate optional-vs-required fields that can legitimately differ
+
+#### Scenario: A generation carries the answers the user gave
+- **WHEN** a client builds a `GenerateRequest` after a clarify exchange the user answered
+- **THEN** the request validates with each answered question's `id`, `question` and its `choices`, `other` or `decide` inside `clarifications`
+
+#### Scenario: A delegated question carries nothing else
+- **WHEN** a clarification carries `decide: true` together with a choice or an `other`
+- **THEN** parsing fails
+
+#### Scenario: A rewrite for an existing app validates with its context
+- **WHEN** a client builds a `RewriteRequest` for a re-prompt of an installed app
+- **THEN** the request validates with `app.name` and the app's collection and field display names inside `app.collections`
+
+#### Scenario: A rewrite context carries no source and no ids
+- **WHEN** a `RewriteRequest` carrying `app` is inspected
+- **THEN** it has no source, no bundle, no burned collection or field ids, and no record contents
+
+#### Scenario: A rewrite without app context still validates
+- **WHEN** a `RewriteRequest` carrying only `prompt` is parsed
+- **THEN** it validates, and the server treats it as a new-app rewrite
+
+#### Scenario: A rewrite without plan rows still validates
+- **WHEN** a `RewriteResponse` carrying only `rewrittenPrompt` is parsed
+- **THEN** it validates, and a client renders the single row
 
 ### Requirement: Structured API error body
 

@@ -16,7 +16,7 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
   server's request edge and emitter helper, and the device's two-phase decoder. It's one vocabulary
   (level, `compat`, fallback), and it has to be defined once before any producer or consumer.
 - reads: specs/generation-contract/spec.md (all ADDED and MODIFIED requirements); design.md D16, D8
-  (the `queued` shape), D9 (the `limit` shape), D10 (`restart`); research.md §Constraints (closed union
+  (the `queued` shape), D9 (the `limit` shape), D10 (`restart`), D18 (question and answer shapes); research.md §Constraints (closed union
   today, `generation-client.ts:149-152,540-543`); openspec/specs/generation-contract/spec.md for the
   live text; handoff: none
 - writes-contract: handoff/wire-protocol.md (the exported schemas and `PROTOCOL_LEVEL`, the emitter
@@ -38,24 +38,24 @@ so nothing is HUMAN-BOOTSTRAP. The owner runs chains one at a time (low-priority
 
 ## chain-3: server-generation-quality
 
-- tasks: 3.1–3.4
+- tasks: 3.1–3.5
 - rationale: the generation machine and its stages: prompts plus the clarify `limit`, the retry with
   `restart`, verdict logging, the no-change rule. Shared files: `machine.ts`, `prompts/index.ts`,
   `routes/clarify.ts`, `stages/run.ts`, `summarise.ts`.
-- reads: specs/generation-pipeline/spec.md (the limits, retry, verdict and no-change requirements);
-  design.md D9, D10, D11, D13; research.md §Current behavior (#57, #58, #106), §Constraints (closed
+- reads: specs/generation-pipeline/spec.md (the limits, answer-mode, retry, verdict and no-change
+  requirements); specs/content-policy/spec.md; design.md D9, D10, D11, D13, D18; research.md §Current behavior (#57, #58, #106), §Constraints (closed
   failure codes, the summariser is side-effect free); handoff: handoff/wire-protocol.md
 - writes-contract: none
 - after: chain-2 (both may touch `openrouter.ts` and the generate route)
 
 ## chain-4: app-flow-screens
 
-- tasks: 4.1–4.4
+- tasks: 4.1–4.5
 - rationale: the device screens that render the new messages: in-line build progress, restart
   handling, the clarify `limit` screen, and fallback outcomes. They share the prompt-flow state
   machine, BuildStep/ClarifyStep and the run-signal model.
 - reads: specs/prompt-flow/spec.md (all ADDED and MODIFIED requirements); design.md D8 (device side),
-  D9 (the limit screen), D10 (restart), D16 (layer 3 outcomes); openspec/specs/prompt-flow/spec.md
+  D9 (the limit screen), D10 (restart), D16 (layer 3 outcomes), D18 (clarify answer modes); openspec/specs/prompt-flow/spec.md
   §"A stall heartbeat…" and §"Failure is shown honestly…" for the live text;
   openspec/specs/app-update-gate/spec.md for the update screen; handoff: handoff/wire-protocol.md
 - writes-contract: none

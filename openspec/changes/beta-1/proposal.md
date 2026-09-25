@@ -51,6 +51,9 @@ gate.
   those things (#62).
 - **BREAKING** A model turn that loses its provider is retried once, including mid-stream. A new
   `restart` event tells the app to discard that turn's partial activity (#57).
+- **BREAKING** Clarify questions say how they're answered: pick one or pick several, optionally a
+  typed "Other", and every question offers "Decide for me", which delegates it to Whim. The plan
+  then states what Whim decided. Typed answers go through the content check like the prompt.
 - A containment/unverified verdict logs its kind and which check tripped, never content (#58).
 - An optional quantization floor for OpenRouter routing (#68).
 - "No changes" only when the source really didn't change (#106).
@@ -76,12 +79,16 @@ gate.
 
 ### Modified Capabilities
 - `generation-contract`: the protocol level header; the `compat` envelope and its frozen fallback
-  set; `queued` and `restart` events; the clarify `limit` arm; `compat` on `ApiError`.
-- `prompt-flow`: the in-line build screen; the "can't build this" answer; restart handling;
+  set; `queued` and `restart` events; the clarify `limit` arm and answer modes (`select`, `other`);
+  clarification answers as `choices`/`other`/`decide`; `compat` on `ApiError`.
+- `prompt-flow`: the in-line build screen; the "can't build this" answer; multi-select, "Other"
+  and "Decide for me" on clarify questions; restart handling;
   fallbacks for unusable messages; the stall heartbeat counts `queued`/`restart`.
 - `server-admission-control`: the line (queue) on the stream; caps from a load test.
-- `generation-pipeline`: capability limits in clarify/plan, including the `limit` arm; the single
+- `generation-pipeline`: capability limits in clarify/plan, including the `limit` arm; answer modes
+  chosen by clarify and delegated questions decided in the plan; the single
   retry with `restart`; verdict logging; the no-change rule; the quantization floor.
+- `content-policy`: typed clarify answers are classified with the prompt.
 - `store-age-signals`: the age-check deadline; the significant-change acknowledgment.
 - `terms-acceptance`: each legal screen at most once per pass.
 - `app-launcher`: shell keyboard handling; the orb footprint; orb scrim/disc; tiles; locale; post-paint
@@ -90,7 +97,7 @@ gate.
   focused inputs scroll into view.
 - `device-diagnostics`: stack frames reduced to file names.
 
-(`store-age-signals`, `terms-acceptance`, `device-diagnostics` and `server-admission-control`
+(`content-policy`, `store-age-signals`, `terms-acceptance`, `device-diagnostics` and `server-admission-control`
 still exist only as deltas in unarchived changes (#69); here they only get ADDED requirements.)
 
 ## Impact

@@ -1,6 +1,6 @@
 ## 1. Wire protocol that can grow (contract, request edge, device decoder)
 
-- [ ] 1.1 Contract: export `PROTOCOL_LEVEL = 1`, the `compat` envelope schema (`min`, `fallback` ∈ skip|fail|update, `notice` ≤ 200 chars), a permissive `WireEnvelope` (type/error string + optional compat, unknown fields tolerated), the `queued{position}` and `restart` events, the clarify `limit{reason, alternative}` arm (a `limit` with non-empty `questions` is rejected), `compat` on `ApiError`, and the `queue_timeout` terminal failure code. Every object schema strips unknown fields rather than rejecting them. Contract tests for every `generation-contract` scenario (design D16).
+- [ ] 1.1 Contract: export `PROTOCOL_LEVEL = 1`, the `compat` envelope schema (`min`, `fallback` ∈ skip|fail|update, `notice` ≤ 200 chars), a permissive `WireEnvelope` (type/error string + optional compat, unknown fields tolerated), the `queued{position}` and `restart` events, the clarify `limit{reason, alternative}` arm (a `limit` with non-empty `questions` is rejected), `select` ∈ one|many and `other` on `ClarifyQuestion`, `Clarification` as `{id, question, choices, other? (1–200 chars), decide?}` (decide alone, or at least one choice or `other`; at most one choice for `select: 'one'` is enforced by the device and server), `compat` on `ApiError`, and the `queue_timeout` terminal failure code. Every object schema strips unknown fields rather than rejecting them. Contract tests for every `generation-contract` scenario (design D16).
 - [ ] 1.2 Server request edge: parse `x-whim-protocol` beside the request envelope. Missing or non-integer → `426 update_required` through the existing update-gate response. Expose the level on the request context. Add a server-side registry of messages/codes with the level each was introduced at, plus an emitter helper that attaches `compat` to anything above level 1 and refuses to send above the client's level. Test: every registry entry above level 1 carries `compat`, and a level-N client never receives a level-N+1 message.
 - [ ] 1.3 Device: send `x-whim-protocol: PROTOCOL_LEVEL` on every `/v1` request. Decode every SSE frame and unary body in two phases (envelope first, full schema only for known types/codes with `min ≤ PROTOCOL_LEVEL`). Surface a typed fallback outcome (`skip` → continue, `fail{notice}`, `update{notice}`) to callers; the UI wiring is 4.4. Replace the "unknown type throws `stream_parse`" path and the closed-refusal-code lookup accordingly.
 - [ ] 1.4 "Future frames" fixture suite on the device decoder: an unknown event with each fallback, an unknown event with no `compat` (→ fail), an unknown fallback value (→ fail), `min` above the level (→ fallback), an extra field on a known event (used, field ignored), an unknown `ApiError` code with `compat`. Red-check against the pre-change strict decoder.
@@ -17,6 +17,7 @@
 - [ ] 3.2 Retry a generate/repair turn once on an upstream failure. If the turn already yielded `token` events, emit `restart` first (D10). Tests: a failure before the first token retries without `restart`; a failure mid-turn emits exactly one `restart` and can deliver; a second failure is terminal; the failed attempt's usage is metered.
 - [ ] 3.3 `stages/run.ts` passes a content-free `{kind, check}`. The machine logs it at info with `requestId` on `containment_failed`/`run_unverified` (D11). A test asserts the fields and that no source/DOM/console text appears.
 - [ ] 3.4 Reproduce #106 and locate the path. Enforce: no-change only for byte-identical source, and a neutral line otherwise (D13). Test with a generated-output-shaped fixture.
+- [ ] 3.5 Clarify prompt sets `select` and `other` per question (D18). Plan writing decides every `decide: true` question and names the decision in the plan, and honours several `choices`. `server/src/policy/input.ts` classifies `choices` and `other` with the prompt on rewrite and generate. Tests: a delegated question's decision appears in the plan (stub model); harmful `other` text is refused like a harmful prompt; the prompts suite pins the answer-mode instructions.
 
 ## 4. Prompt-flow screens for the new messages (app)
 
@@ -24,6 +25,7 @@
 - [ ] 4.2 On `restart`, discard the current turn's activity signals (characters written, etc.) and continue without a failure state. Test against a stream fixture that writes, restarts, then delivers.
 - [ ] 4.3 Clarify `limit`: a screen with the reason, "Build <alternative> instead" (the alternative becomes the prompt and re-enters clarify) and "Change my idea". No generation starts on its own.
 - [ ] 4.4 Wire the decoder's fallback outcomes (1.3) into the flow. `fail` → failure screen with the notice as plain text; `update` → the update screen with the notice. The pending record resolves as failed, and nothing is installed or updated. Tests for mid-build and unary (clarify/rewrite) cases.
+- [ ] 4.5 Clarify step: pills allow one or several picks per `select`, an "Other" text field when `other` is true, and "Decide for me" on every question (it clears picks and text). Answers are threaded as `choices`/`other`/`decide`. Tests for each prompt-flow clarify scenario. The "Other" field joins chain-6's keyboard wrapper list.
 
 ## 5. Age check and legal flow (app)
 
@@ -37,7 +39,7 @@
 
 - [ ] 6.1 Build the shared keyboard-safe wrapper from React Native built-ins (D3). Put pure logic in a non-RN sibling so a Node suite can test it.
 - [ ] 6.2 Compose: the wrapper, Continue pinned in the footer, no `autoFocus`, and Done on the description field.
-- [ ] 6.3 Adopt the wrapper on every other screen and sheet with a TextInput (plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s `KeyboardAvoidingView` is kept or folded in, not doubled.
+- [ ] 6.3 Adopt the wrapper on every other screen and sheet with a TextInput (clarify "Other", plan editing, "Change it", report sheet, settings/server fields). List each one in the chain report. `SheetModal`'s `KeyboardAvoidingView` is kept or folded in, not doubled.
 
 ## 7. Realm and host runtime (app runtime + SDK)
 

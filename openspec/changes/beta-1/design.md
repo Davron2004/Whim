@@ -154,6 +154,24 @@ builds working, and it gives the user no feedback.
 - The effect is measured with `server/flowbench.mjs` (visible set plus weather and roommate-ping cases)
   before and after.
 
+**D18. Clarify questions carry their answer mode, and the user can delegate any question.**
+- `ClarifyQuestion` gains `select: 'one' | 'many'` and `other: boolean`. The model sets both:
+  several picks only when options can hold together, and a typed answer only when the options can't
+  cover likely answers.
+- The device adds "Decide for me" to every question. It isn't model-controlled, so the option is always
+  there. It clears picks and typed text.
+- `Clarification` becomes `{id, question, choices, other?, decide?}`, with either `decide: true` alone
+  or at least one choice or `other`.
+- The plan writer decides delegated questions and names each decision in the plan, so the approval
+  gate shows what Whim picked. Skipped (unanswered) questions keep today's meaning.
+- The typed `other` text is user free text entering a model, so `server/src/policy/input.ts` classifies
+  it with the prompt (the content-policy delta).
+- The "Other" field uses the keyboard wrapper (D3).
+
+*Why now:* these are wire shapes. With D16 in place they could come later, but only as a level-2
+change with the server adapting questions for beta-1 apps forever after. In beta-1 they're part of
+the baseline for free.
+
 **D10. A model turn that loses its provider is retried once, at any point (#57).**
 - On an upstream failure (5xx, 429, network or stream error) in a generate/repair turn, the machine
   resends the same messages once.
