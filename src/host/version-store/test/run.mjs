@@ -12,11 +12,12 @@ import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { tmpBundlePath } from '../../../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'acceptance.ts');
 // Emit inside the project tree so the external deps resolve from node_modules.
-const outfile = path.join(process.cwd(), `.vstore-acceptance.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('vstore-acceptance');
 
 await build({
   entryPoints: [entry],

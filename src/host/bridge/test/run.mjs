@@ -12,10 +12,11 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { tmpBundlePath } from '../../../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'acceptance.ts');
-const outfile = path.join(process.cwd(), `.bridge-acceptance.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('bridge-acceptance');
 
 await build({
   entryPoints: [entry],

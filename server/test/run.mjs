@@ -14,6 +14,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -39,7 +40,7 @@ for (const project of ['contract/tsconfig.json', 'server/tsconfig.json']) {
 
 // --- Bundle + run the acceptance suite ---
 const entry = path.join(here, 'acceptance.ts');
-const outfile = path.join(process.cwd(), `.server-acceptance.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('server-acceptance');
 
 await build({
   entryPoints: [entry],

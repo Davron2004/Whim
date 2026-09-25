@@ -15,10 +15,11 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'e2e.ts');
-const outfile = path.join(process.cwd(), `.server-e2e.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('server-e2e');
 
 await build({
   entryPoints: [entry],

@@ -92,6 +92,9 @@ src/runtime/generated/
 .claude/fixloop/wip-*.md
 .claude/fixloop/grants/
 .claude/fixloop/owners/
+# esbuild bundles the Node runners import (scripts/lib/tmp-bundle.mjs); swept when their run is dead.
+/.tmp-bundles/
+# The same kind of bundle from the server/ CLIs, which still write next to themselves.
 *.tmp.mjs
 
 # Harness server: durable per-device token counter (the only server state) + local secrets

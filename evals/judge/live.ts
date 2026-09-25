@@ -27,6 +27,7 @@ import { existsSync, rmSync } from 'node:fs';
 import type { JudgeCriterionScore, JudgeVerdict } from '../contract';
 import { RUBRIC_CRITERIA, RUBRIC_VERSION } from '../rubric';
 import type { Judge, JudgeInput } from './judge';
+import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 
 export const LIVE_JUDGE_CREDENTIAL_ENV_VAR = 'OPENROUTER_API_KEY';
 
@@ -60,7 +61,7 @@ function loadOpenRouterModule(): Promise<OpenRouterModuleShape> {
   if (!cachedModule) {
     cachedModule = (async () => {
       const entry = join(process.cwd(), 'server', 'src', 'openrouter.ts');
-      const outfile = join(process.cwd(), `.evals-live-judge.${process.pid}.tmp.mjs`);
+      const outfile = tmpBundlePath('evals-live-judge');
       const esbuildBin = join(process.cwd(), 'node_modules', '.bin', 'esbuild');
       execFileSync(esbuildBin, [
         entry,
