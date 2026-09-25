@@ -165,10 +165,10 @@ argument into a measurement.
 
 Still true from previous runs:
 
-- **Worktree `@whim/*` walk-up gap**: a fresh worktree needs
-  `mkdir -p <wt>/node_modules/@whim && ln -s ../../contract … && ln -s ../../server …`, plus
-  `npm run build` (populates gitignored `src/runtime/generated/*`), or its gate validates stale
-  code.
+- **Worktree `@whim/*` walk-up gap**: a fresh worktree has no node_modules, so `@whim/*` resolves
+  to the primary tree's code. Create worktrees with `scripts/worktree.sh create`, which gives each
+  its own node_modules (an APFS clone) and runs `npm run build`. Never hand-make `@whim/*` or
+  node_modules symlinks (superseded 2026-09-25; `gate.sh` refuses such a checkout).
 - `evals/` (root RN tsconfig) can never statically import `server/src/*`. Pattern: esbuild
   subprocess + dynamic import.
 - zod can never enter the Metro graph.
