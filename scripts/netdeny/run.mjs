@@ -22,10 +22,11 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { tmpBundlePath } from '../lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'canary.ts');
-const outfile = path.join(process.cwd(), `.netdeny-canary.${process.pid}.tmp.mjs`);
+const outfile = tmpBundlePath('netdeny-canary');
 
 await build({
   entryPoints: [entry],

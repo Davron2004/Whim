@@ -10,6 +10,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { tmpBundlePath } from '../../../scripts/lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entries = fs
@@ -24,7 +25,7 @@ if (entries.length === 0) {
 for (const entryName of entries) {
   const entry = path.join(here, entryName);
   const suiteName = entryName.replace(/\.acceptance\.tsx?$/, '');
-  const outfile = path.join(process.cwd(), `.sdk-${suiteName}.${process.pid}.tmp.mjs`);
+  const outfile = tmpBundlePath(`sdk-${suiteName}`);
 
   await build({
     entryPoints: [entry],

@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
+import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 import { check, eq, report, section } from './harness';
 import { ScriptedModelClient } from './scripted-model';
 import { E2E_ROSTER, heldRunTurns, MOUNT_HANG } from './e2e-fixtures';
@@ -388,7 +389,7 @@ interface DrainServer {
 }
 
 async function spawnDrainServer(dataDir: string): Promise<DrainServer> {
-  const childFile = path.join(ROOT, `.server-e2e-drain.${process.pid}.tmp.mjs`);
+  const childFile = tmpBundlePath('server-e2e-drain', ROOT);
   await build({
     entryPoints: [path.join(ROOT, 'server', 'test', 'e2e-drain-server.ts')],
     outfile: childFile,

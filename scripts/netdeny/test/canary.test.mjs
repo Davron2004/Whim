@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import fs from 'node:fs';
 import { build } from 'esbuild';
+import { tmpBundlePath } from '../../lib/tmp-bundle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..');
@@ -32,7 +33,7 @@ const READY_LINE = 'netdeny canary: listening ';
 // it directly — never a hand-copy that can drift from the source it's supposed to mirror.
 async function loadVariants() {
   const entry = path.join(repoRoot, 'scripts', 'netdeny', 'variants.ts');
-  const outfile = path.join(repoRoot, `.netdeny-variants.${process.pid}.tmp.mjs`);
+  const outfile = tmpBundlePath('netdeny-variants', repoRoot);
   await build({
     entryPoints: [entry],
     outfile,
