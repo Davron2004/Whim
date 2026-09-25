@@ -21,11 +21,11 @@
 
 ## 4. Prompt-flow screens for the new messages (app)
 
-- [ ] 4.1 Build screen: while the latest event is `queued`, show "in line, N ahead" with Cancel and "Leave it running". Switch to progress at the first `stage`. The stall heartbeat counts `queued` and `restart` (modified `prompt-flow` requirement).
-- [ ] 4.2 On `restart`, discard the current turn's activity signals (characters written, etc.) and continue without a failure state. Test against a stream fixture that writes, restarts, then delivers.
-- [ ] 4.3 Clarify `limit`: a screen with the reason, "Build <alternative> instead" (the alternative becomes the prompt and re-enters clarify) and "Change my idea". No generation starts on its own.
-- [ ] 4.4 Wire the decoder's fallback outcomes (1.3) into the flow. `fail` → failure screen with the notice as plain text; `update` → the update screen with the notice. The pending record resolves as failed, and nothing is installed or updated. Tests for mid-build and unary (clarify/rewrite) cases.
-- [ ] 4.5 Clarify step: pills allow one or several picks per `select`, an "Other" text field when `other` is true, and "Decide for me" on every question (it clears picks and text). Answers are threaded as `choices`/`other`/`decide`. Tests for each prompt-flow clarify scenario. The "Other" field joins chain-6's keyboard wrapper list.
+- [x] 4.1 Build screen: while the latest event is `queued`, show "in line, N ahead" with Cancel and "Leave it running". Switch to progress at the first `stage`. The stall heartbeat counts `queued` and `restart` (modified `prompt-flow` requirement).
+- [x] 4.2 On `restart`, discard the current turn's activity signals (characters written, etc.) and continue without a failure state. Test against a stream fixture that writes, restarts, then delivers.
+- [x] 4.3 Clarify `limit`: a screen with the reason, "Build <alternative> instead" (the alternative becomes the prompt and re-enters clarify) and "Change my idea". No generation starts on its own.
+- [x] 4.4 Wire the decoder's fallback outcomes (1.3) into the flow. `fail` → failure screen with the notice as plain text; `update` → the update screen with the notice. The pending record resolves as failed, and nothing is installed or updated. Tests for mid-build and unary (clarify/rewrite) cases.
+- [x] 4.5 Clarify step: pills allow one or several picks per `select`, an "Other" text field when `other` is true, and "Decide for me" on every question (it clears picks and text). Answers are threaded as `choices`/`other`/`decide`. Tests for each prompt-flow clarify scenario. The "Other" field joins chain-6's keyboard wrapper list.
 
 ## 5. Age check and legal flow (app)
 

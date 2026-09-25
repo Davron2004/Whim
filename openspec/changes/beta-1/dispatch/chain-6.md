@@ -25,7 +25,9 @@ Decisions made for the implementer:
    open), and Done on the description field.
 4. **Every TextInput screen (6.3).** Grep `src/host/launcher` for every `TextInput` and adopt the wrapper on each
    screen or sheet. At least: plan editing, "Change it", the report sheet, the settings/server fields, and the
-   clarify "Other" field from chain-4 (the dispatcher fills in its component and file from chain-4's report).
+   clarify "Other" field (chain-4: the module-private `OtherAnswerField`, a `TextInput` with `maxLength` 200,
+   in `src/host/launcher/ClarifyStep.tsx`, rendered inside ClarifyStep's `ScrollView`, with no keyboard props
+   yet).
    List every one in the report with file:line. `SheetModal`'s `KeyboardAvoidingView` is folded into the
    wrapper or kept as the sheet's only avoidance, never doubled with the wrapper's.
 5. **Verification on devices** (iOS simulator + Android emulator, every input screen) is the orchestrator's task

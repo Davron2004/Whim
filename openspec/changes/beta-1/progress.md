@@ -54,3 +54,13 @@
   #106 root cause: `machine.ts:950-963` gave the summariser no source-change fact and passed its text straight through; the device save path is fine. Red-checks: a resend without `restart` → 4 checks fail; resending twice → 5; `other` left out of the policy input → 6; a failed attempt not recorded as uncredited → 4 + metering. Orchestrator check: the IDE's "sourceChange missing" was stale (`machine.ts:1077` sets it).
 - chain-3 merged (integrity OK, 20 files); tasks 3.1–3.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. chain-4's block gains decision 9 (stub markers `[[limit]]` and `[[future:*]]`, for 10.4), from chain-3's note that the stub can't produce `limit`.
 - 16:44 chain-4 dispatched: BASE `3b64066ee2f52ce2c6d6561bf098f9d0835f5746`, worktree `.claude/worktrees/beta-1-4`, branch `chain/beta-1-4`, block `dispatch/chain-4.md` (decisions 1–9), model Opus.
+- chain-4 (Opus) report: STATUS complete, GATE PASS (knip clean, `server:e2e` pass), commits `5acca0c5` `0a9d7ae3` `17c8502a` `3a5f622f`. Class A:
+  - `update` no longer goes through `serviceRefusalOf`; ReportSheet checks the fallback itself, without the notice;
+  - new `wire-fallback.ts` and `server/src/stub-markers.ts`; the stub rewrite passes `[[future:*]]` through;
+  - the stub clarify gains a `select:'many'` and an `other:true` question;
+  - while in line, no step is live and Cancel lands on Home;
+  - `restart` rewinds the counts to the current turn's `stage` start, not to zero, so a repair restart keeps the generate count;
+  - the update screen's field is `updateNotice`, because `notice` clashes with `useNoticeWindowClear`;
+  - LauncherRoot catch bodies were extracted into `clarifyThrewTo`/`settleServerEnding` for lint.
+  Red-checks: a "Decide for me" that keeps picks → 2 tests fail; `update` sent to the failure screen → 4 fail. The live heartbeat spec says ~8 s but the code checks 40 s (#123, not reconciled here).
+- chain-4 merged (integrity OK); tasks 4.1–4.5 ticked. Regate: FAST GATE PASSED. Worktree and branch removed. chain-6's block now names `OtherAnswerField` (`ClarifyStep.tsx`).
