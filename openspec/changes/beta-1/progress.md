@@ -36,6 +36,7 @@
   - EXAMPLE badge: top-left still overlaps the watermark (by 7–37dp), so it becomes a muted "Example" caption under the tile name.
   - Version history: design 4a (the owner-approved reference) quotes the user's prompt under "You said" and puts the summary in the expanded row, and it wins over the live spec's summary-headline wording (spec delta added in beta-1). 4a's teal/black accents stay; they are the design.
 - R17. Oldest-reader tolerance, finished. `compat.notice: null` reads as no notice, in device and contract `WireEnvelope` in lockstep (`fallback`/`min` null stay unreadable → fail). The device shape-checks `result.summary` and the rewrite `plan` and DROPS a malformed one (log, no crash). → fix-7b.
+- R18. Caps decision needs the p95 the rule names. At 5/2 the only CPU number is the peak (80 % of the machine at 5 devices), and the raw samples are deleted on exit (`run.sh` EXIT trap). fix-9 makes the report give a normalized p95 (÷ the VM's `nproc`). After it is deployed, rerun 5 devices at cap 5: keep 5 if normalized p95 < 70 %, else test 4 (then 3).
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -206,3 +207,7 @@
   - Visible set `--repeat 3`: **0 false limits in 66 runs** (56 questions, 8 empty); 2 clarify failures (1 `model_failure`, 1 `policy_unavailable`: #119 again, evidence added).
   - One real generation (tip-splitter-p1): result, generate 27.6 s.
   Reports: `flowbench/rate-{limits,visible}.json`. 10.3 ticked.
+- **10.2 load test, run 2** (production VM, `35704928`, replay model, caps 5/2):
+  - 5 devices at cap 5: 5/5 results, no refusals, TTFE p95 1153 ms, total p50 35529 / p95 42874 ms (cap 3 run: 41928), leak probe ok, **peak CPU 160.72 % per core = 80 % of the machine**.
+  - 7 devices at cap 5: 7/7 results, **queued 2, wait p50 32981 / p95 33078 ms**, total p95 67265 ms, peak 122.11 % (61 %).
+  - Latency didn't move from cap 3 to cap 5, but the rule is p95 < 70 % and only the peak is reported. `run.sh stop` restored production (rc 0). → R18, fix-9.

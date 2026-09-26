@@ -1,0 +1,4 @@
+upgrade check: ios, 20260926-040119
+server: http://127.0.0.1:8790 {"ok":true,"service":"whim-server"}
+device: 39767E44-D721-4B96-9700-FDE1C9A367D7 (new simulator, iPhone 17)
+from: /Users/davrondjabborov/.cache/whim-upgrade/382511/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app, build 382511, sha256 64aeba69d2002a567ef39ee7f621f9b90b2d01c3ca80cedf99d639581121e52c
