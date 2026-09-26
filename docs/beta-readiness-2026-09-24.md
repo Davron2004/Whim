@@ -120,8 +120,8 @@ Verified in code on 2026-09-24:
   concurrent generations peaked at about 34 % of 8 vCPU and about 0.5 GB of a 16 GB limit. CPU is the constraint,
   not memory.
 - **What actually happens at N users:** production runs the standard profile (`e2-standard-2`), whose defaults
-  are `WHIM_MAX_CONCURRENT_GENERATIONS=5` and `WHIM_SYNTHRUN_CONCURRENCY=2`. The 6th simultaneous generation
-  is **refused** with `429 server_busy`, not queued. At 100 simultaneous users, 95 get "busy". That's the
+  are `WHIM_MAX_CONCURRENT_GENERATIONS=3` and `WHIM_SYNTHRUN_CONCURRENCY=2`. The 4th simultaneous generation
+  is **refused** with `429 server_busy`, not queued. At 100 simultaneous users, 97 get "busy". That's the
   engineering problem to fix:
   queue short waits instead of refusing, and raise the caps to what a load test on the real box supports.
   Memory has plenty of headroom, so the caps are probably far too conservative for 2 vCPU as well.
