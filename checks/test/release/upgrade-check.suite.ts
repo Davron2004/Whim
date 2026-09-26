@@ -8,7 +8,9 @@
  * launcher's MMKV store pulled with `run-as`, from an emulator running an offline build from before
  * 382511 (build 382100, the same UI). Its state is an ordinary dev session, not a seed: the three
  * examples, a fork of Tip Splitter and a fork of Water Counter, no saved glasses, and a History dump
- * for Style Gallery only.
+ * for Style Gallery only. `fixtures/upgrade-check-ios/` is real too: the grid dumps and stores of a
+ * passing iOS check (382511 seeded on a new simulator, then beta-1 over it), and 382511's tile menu,
+ * where iOS reads a pressable and everything in it as one element with a joined label.
  */
 
 import fs from 'node:fs';
@@ -34,6 +36,11 @@ import { RELEASE } from '../../../src/host/launcher/release-config';
 
 const REPO_ROOT = process.cwd();
 const CAPTURE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check');
+// The captures of a passing iOS check: 382511 seeded on a new simulator, then beta-1 over it.
+const IOS_BEFORE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/before');
+const IOS_AFTER = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/after');
+// 382511's tile menu on iOS, open on the seed's generated app: one element, its rows joined.
+const IOS_TILE_MENU = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/tile-menu-382511.json');
 const STORE = path.join(CAPTURE, 'storage/whim.launcher');
 const FLOWS = path.join(REPO_ROOT, 'scripts/release/upgrade-check');
 const DEVICE_ID = 'dbc53eef-5ac9-46f0-b171-3b57cb3e4fab';
@@ -82,6 +89,48 @@ function flowSelectors(yaml: string): string[] {
   for (const match of yaml.matchAll(/\b(?:tapOn|longPressOn|visible|text):\s*"((?:[^"\\]|\\.)*)"/g)) {
     const value = match[1].replace(/\\(.)/g, '$1');
     if (!value.includes('${')) out.push(value);
+  }
+  return out;
+}
+
+/** The quoted selector of a flow's first `<command>:` line, `${…}` left in, YAML escapes undone. */
+function commandSelector(file: string, command: string): string {
+  const yaml = fs.readFileSync(path.join(FLOWS, file), 'utf8');
+  const match = new RegExp(`\\b${command}:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(yaml);
+  nodeAssert.ok(match, `${file} has a quoted ${command}`);
+  return match[1].replace(/\\(.)/g, '$1');
+}
+
+interface DumpNode {
+  readonly attributes?: Readonly<Record<string, unknown>>;
+  readonly children?: readonly DumpNode[];
+}
+
+/** Whether a Maestro text selector finds a node in a `maestro hierarchy` dump: its regex must match
+ *  the whole of a node's text, hint or accessibility label. Case-sensitive, so stricter than Maestro. */
+function selectorFinds(root: unknown, selector: string): boolean {
+  const pattern = new RegExp(`^(?:${selector})$`);
+  const visit = (node: DumpNode): boolean =>
+    ['text', 'hintText', 'accessibilityText'].some((key) => {
+      const value = node.attributes?.[key];
+      return typeof value === 'string' && pattern.test(value);
+    }) || (node.children ?? []).some(visit);
+  return visit(root as DumpNode);
+}
+
+/** A flow's `env:` block. `fallback` is set when the value defers to a `-e` value of the same name
+ *  (`${NAME || 'fallback'}`): Maestro lets a plain env value override `-e`. */
+function flowEnv(yaml: string): Map<string, { value: string; fallback?: string }> {
+  const out = new Map<string, { value: string; fallback?: string }>();
+  const config = yaml.split(/^---$/m)[0];
+  const block = /^env:\n((?: {2}.*\n)*)/m.exec(config);
+  for (const line of block?.[1].split('\n') ?? []) {
+    const entry = /^ {2}(\w+):(.*)$/.exec(line);
+    if (!entry) continue;
+    const name = entry[1];
+    const value = entry[2].trim();
+    const deferring = /^\$\{(\w+) \|\| '([^']*)'\}$/.exec(value);
+    out.set(name, deferring?.[1] === name ? { value, fallback: deferring[2] } : { value });
   }
   return out;
 }
@@ -282,6 +331,21 @@ async function runCases(): Promise<void> {
     nodeAssert.strictEqual(record.deviceId, DEVICE_ID);
   });
 
+  await test('upgrade-record: real iOS grids, where a tile reads as one joined label, show every app before and after the upgrade', () => {
+    const before = buildRecord(readCapture(IOS_BEFORE));
+    const after = buildRecord(readCapture(IOS_AFTER));
+    nodeAssert.deepStrictEqual(
+      after.tiles.map((tile) => [tile.name, tile.example, tile.onGrid]),
+      [
+        ['Tip Splitter', true, true],
+        ['Water Counter', true, true],
+        ['Style Gallery', true, true],
+        ['Hello App', false, true],
+      ],
+    );
+    nodeAssert.deepStrictEqual(diffRecords(before, after), []);
+  });
+
   await test('upgrade-record: on a screen that shows none of the names, no app has a tile and none gets its History read', () => {
     const capture = readCapture(CAPTURE);
     const notTheGrid = capture.histories['style-gallery'];
@@ -359,28 +423,61 @@ async function runCases(): Promise<void> {
     nodeAssert.match(result.stdout, /^seed: no generated app with at least two versions$/m);
   });
 
-  await test('flows: every literal selector in the upgrade-check flows matches something the current app shows', () => {
+  await test('flows: every literal selector in the upgrade-check flows matches something the app shows, as a string or as the joined label iOS reads', () => {
     const shown = appStrings();
+    const tileMenu = JSON.parse(fs.readFileSync(IOS_TILE_MENU, 'utf8')) as unknown;
     const misses: string[] = [];
     const files = fs.readdirSync(FLOWS).filter((file) => file.endsWith('.yaml'));
     nodeAssert.ok(files.includes('seed.yaml') && files.length >= 4, `flows found: ${files.join(', ')}`);
     for (const file of files) {
       for (const selector of flowSelectors(fs.readFileSync(path.join(FLOWS, file), 'utf8'))) {
         const pattern = new RegExp(`^(?:${selector})$`);
-        if (!shown.some((text) => pattern.test(text))) misses.push(`${file}: "${selector}"`);
+        if (!shown.some((text) => pattern.test(text)) && !selectorFinds(tileMenu, selector)) misses.push(`${file}: "${selector}"`);
       }
     }
     nodeAssert.deepStrictEqual(misses, []);
   });
 
+  await test('flows: the tile selectors find every installed app on real home grids of both platforms, before and after the upgrade', () => {
+    const history = commandSelector('read-history.yaml', 'longPressOn');
+    const generated = commandSelector('seed.yaml', 'longPressOn');
+    const waterCounter = commandSelector('read-water-counter.yaml', 'tapOn');
+    const misses: string[] = [];
+    for (const [label, dir] of [['android', CAPTURE], ['ios 382511', IOS_BEFORE], ['ios beta-1', IOS_AFTER]]) {
+      const capture = readCapture(dir);
+      const tiles = buildRecord(capture).tiles;
+      nodeAssert.ok(tiles.some((tile) => tile.name === SAVED_DATA_APP), `${label}: ${SAVED_DATA_APP} is installed`);
+      for (const tile of tiles) {
+        if (!selectorFinds(capture.grid, history.split('${TILE}').join(tile.name))) misses.push(`${label}: read-history.yaml, "${tile.name}"`);
+        if (!tile.example && !selectorFinds(capture.grid, generated.split('${GENERATED_APP}').join(tile.name))) {
+          misses.push(`${label}: seed.yaml, "${tile.name}"`);
+        }
+      }
+      if (!selectorFinds(capture.grid, waterCounter)) misses.push(`${label}: read-water-counter.yaml`);
+    }
+    nodeAssert.deepStrictEqual(misses, []);
+  });
+
   await test("flows: the seed's generated-app name is the one the stub pipeline gives every app", () => {
-    const declaration = fs
-      .readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8')
-      .split('\n')
-      .find((line) => line.trimStart().startsWith('GENERATED_APP:'));
-    const name = declaration?.slice(declaration.indexOf(':') + 1).trim();
-    nodeAssert.ok(name !== undefined, 'seed.yaml declares GENERATED_APP');
+    const name = flowEnv(fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8')).get('GENERATED_APP')?.fallback;
+    nodeAssert.ok(name !== undefined, 'seed.yaml declares GENERATED_APP with a default');
     nodeAssert.ok(fs.readFileSync(path.join(REPO_ROOT, 'server/src/pipeline.ts'), 'utf8').includes(`name: '${name}'`), `the stub names its app "${name}"`);
+  });
+
+  await test('flows: every -e value upgrade-check.sh passes reaches its flow, since a plain env default would override it', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'scripts/release/upgrade-check.sh'), 'utf8');
+    const passed = [...script.matchAll(/run_flow \S+ ([\w-]+)((?: -e "\w+=[^"]*")+)/g)].flatMap((call) =>
+      [...call[2].matchAll(/-e "(\w+)=/g)].map((param) => ({ flow: call[1], name: param[1] })),
+    );
+    nodeAssert.ok(
+      passed.some((param) => param.flow === 'seed' && param.name === 'SERVER_URL'),
+      `the script's -e parameters were found: ${JSON.stringify(passed)}`,
+    );
+    const blocking = passed.filter((param) => {
+      const entry = flowEnv(fs.readFileSync(path.join(FLOWS, `${param.flow}.yaml`), 'utf8')).get(param.name);
+      return entry !== undefined && entry.fallback === undefined;
+    });
+    nodeAssert.deepStrictEqual(blocking, []);
   });
 
   await test('upgrade-check.sh: a clean upgrade passes, records both builds, and stops its emulator', () => {

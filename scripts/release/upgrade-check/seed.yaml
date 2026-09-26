@@ -4,20 +4,30 @@
 #
 # Written against 382511's UI (tag release/1.0.0+382511). The legal steps later builds put in front
 # of the consent screen (age check, terms) are tolerated, so this flow also seeds the next release.
-# Idioms: Maestro sees inside the mini-app's iframe on Android. `hideKeyboard` navigates back when
-# no keyboard is up, so the keyboard is dropped by tapping the step's headline instead (a plain Text
-# in a ScrollView with keyboardShouldPersistTaps="handled").
+# Idioms: Maestro sees inside the mini-app's iframe on both platforms. `hideKeyboard` navigates back
+# on Android when no keyboard is up, so the keyboard is dropped by tapping the step's headline
+# instead (a plain Text in a ScrollView with keyboardShouldPersistTaps="handled"). On 382511's iOS
+# build that tap alone does nothing (#50): the compose field focuses before its ScrollView listens
+# for the keyboard, so the ScrollView never learns one is up. Switching to the emoji keyboard shows
+# it again, and after that the headline tap drops it. On iOS a tile is one accessibility element
+# whose label joins its texts ("EXAMPLE, Water Counter" on 382511, "Water Counter, Example" later),
+# so tile selectors allow the other texts around the name. The tile menu is one element there too
+# (HomeScreen's sheet is a Pressable around its rows), so a row is tapped by its position: the sheet
+# sits on the bottom edge with no safe-area inset, Cancel's centre 63pt up and each row 58pt above
+# the one below it (34pt padding under Cancel; a row is 16pt padding around a 25.5pt line).
 #
 #   -e SERVER_URL=http://127.0.0.1:8787  the stub server from the previous release's commit
 #   -e GENERATED_APP=Hello App           the name that server's stub pipeline gives every app
+#   -e SCREEN_HEIGHT=<points>            iOS only: the screen's height, for the tile menu's rows
+# A plain value under `env:` would override the -e one (Maestro 2.6), so each defaults with `||`.
 appId: com.anycognition.whim
 env:
-  SERVER_URL: http://127.0.0.1:8787
-  GENERATED_APP: Hello App
+  SERVER_URL: ${SERVER_URL || 'http://127.0.0.1:8787'}
+  GENERATED_APP: ${GENERATED_APP || 'Hello App'}
 ---
 - launchApp
 - extendedWaitUntil:
-    visible: "Water Counter"
+    visible: "(.*, )?Water Counter(, .*)?"
     timeout: 60000
 
 # 1. Settings → Advanced → Server address. The field saves as it is typed.
@@ -37,7 +47,7 @@ env:
 # 2. Saved data in an example: one "+2 glasses". The line under the title changes once the saved
 #    count has loaded, and reads "Saved." only once the count and both history records have been
 #    written. Earlier builds, 382511 among them, wrote "loaded from storage" and "saved" there.
-- tapOn: "Water Counter"
+- tapOn: "(.*, )?Water Counter(, .*)?"
 - extendedWaitUntil:
     visible: "Tap a button after each glass\\.|loaded from storage"
     timeout: 60000
@@ -45,8 +55,9 @@ env:
 - extendedWaitUntil:
     visible: "Saved\\.|saved"
     timeout: 30000
-- tapOn: "Open the app menu"
-- tapOn: "Home"
+# Back to the grid by a relaunch, not the orb menu: on 382511's iOS build the menu's actions sit
+# inside the dismiss layer's one accessibility element, so Maestro can't see "Home" there.
+- launchApp
 - extendedWaitUntil:
     visible: "YOUR APPS"
     timeout: 30000
@@ -73,6 +84,14 @@ env:
     visible: "What should it do\\?"
     timeout: 30000
 - inputText: "A page that says hello"
+- runFlow:
+    when:
+      platform: iOS
+      visible:
+        id: "emoji"
+    commands:
+      - tapOn:
+          id: "emoji"
 - tapOn: "What should it do\\?"
 - tapOn: "Continue"
 - extendedWaitUntil:
@@ -92,16 +111,40 @@ env:
     timeout: 300000
 - tapOn: "Back to your apps"
 - extendedWaitUntil:
-    visible: ${GENERATED_APP}
+    visible: "(.*, )?${GENERATED_APP}(, .*)?"
     timeout: 30000
 
-# 4. Its second version: Prompt again → compose → clarify → plan → build.
-- longPressOn: ${GENERATED_APP}
-- tapOn: "Prompt again"
+# 4. Its second version: Prompt again → compose → clarify → plan → build. On iOS the tile menu is
+#    one accessibility element ("Hello App, Open, Fork, History, Prompt again, …"), so Maestro
+#    can't find its rows: tap Prompt again where the menu draws it, three rows above Cancel.
+- longPressOn: "(.*, )?${GENERATED_APP}(, .*)?"
+- extendedWaitUntil:
+    visible: "Prompt again|.*, Prompt again, .*"
+    timeout: 15000
+- runFlow:
+    when:
+      visible: "Prompt again"
+    commands:
+      - tapOn: "Prompt again"
+- runFlow:
+    when:
+      platform: iOS
+      visible: ".*, Prompt again, .*"
+    commands:
+      - tapOn:
+          point: ${'50%,' + Math.round(100 * (SCREEN_HEIGHT - 63 - 58 * 3) / SCREEN_HEIGHT) + '%'}
 - extendedWaitUntil:
     visible: "What should change\\?"
     timeout: 30000
 - inputText: "Make the text bigger"
+- runFlow:
+    when:
+      platform: iOS
+      visible:
+        id: "emoji"
+    commands:
+      - tapOn:
+          id: "emoji"
 - tapOn: "What should change\\?"
 - tapOn: "Continue"
 - extendedWaitUntil:
