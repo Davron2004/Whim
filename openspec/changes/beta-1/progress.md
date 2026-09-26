@@ -246,3 +246,4 @@
   - The iOS re-verification left one screenshot; it gets re-dispatched on the final builds.
 - regate after fix-11: FAST GATE PASSED
 - 08:16 gate-full on the final tip (all fixes in, incl. fix-8b/fix-11): **FULL GATE PASSED**. Restored `upgrade-check/ios/.gitignore` (raw/) and added the same for android.
+- 08:19 Final candidate built: **386656** (Android offline APK + iOS Release sim app, the tip `63b10764`). Running: both upgrade checks on 386656 (Android on Whim_Upgrade :5580, iOS on a fresh simulator; old server :8790); the final Android device pass (agent, emulator-5560); the final scoped reviewer on `35704928..63b10764`. Next: the final iOS device pass (after the iOS upgrade check frees Maestro).
