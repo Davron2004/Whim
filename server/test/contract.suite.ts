@@ -188,6 +188,19 @@ function runForwardCompatibilityTests(): void {
   check(`Compat accepts a ${COMPAT_NOTICE_MAX_CHARS}-character notice`, Compat.safeParse(notice(COMPAT_NOTICE_MAX_CHARS)).success);
   check(`Compat refuses a ${COMPAT_NOTICE_MAX_CHARS + 1}-character notice`, !Compat.safeParse(notice(COMPAT_NOTICE_MAX_CHARS + 1)).success);
 
+  // `null` is no notice (the oldest installed build reads it so), and never reaches a reader as null.
+  const nullNotice = { min: 2, fallback: 'fail', notice: null };
+  const readCompat = Compat.safeParse(nullNotice);
+  eq('Compat reads a null notice as no notice', readCompat.success ? JSON.stringify(readCompat.data) : readCompat.error.issues, '{"min":2,"fallback":"fail"}');
+  const readEnvelope = WireEnvelope.safeParse({ type: 'eta', compat: nullNotice });
+  eq('WireEnvelope reads a null notice as no notice', readEnvelope.success ? readEnvelope.data.compat?.notice : readEnvelope.error.issues, undefined);
+  const readEvent = GenerationEvent.safeParse({ type: 'token', text: 'x', compat: nullNotice });
+  eq('a known event carrying a null notice is used, with no notice', readEvent.success ? readEvent.data.compat?.notice : readEvent.error.issues, undefined);
+  for (const unreadable of [{ min: null, fallback: 'skip' }, { min: 2, fallback: null }]) {
+    check(`Compat refuses ${JSON.stringify(unreadable)}`, !Compat.safeParse(unreadable).success);
+    check(`WireEnvelope refuses ${JSON.stringify(unreadable)}`, !WireEnvelope.safeParse({ type: 'eta', compat: unreadable }).success);
+  }
+
   // Scenario "Unknown event type goes through the envelope": full parsing refuses it, the envelope
   // reads it — its type, its compat, nothing else.
   const future = { type: 'eta', seconds: 30, compat: { min: 2, fallback: 'skip' } };

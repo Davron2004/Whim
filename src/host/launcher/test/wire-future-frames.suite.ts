@@ -263,6 +263,9 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS) },
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS + 1) },
       { min: 2, fallback: 'skip', notice: 7 },
+      { min: 2, fallback: 'skip', notice: null },
+      { min: null, fallback: 'skip' },
+      { min: 2, fallback: null },
       { min: 2, fallback: 'skip', extra: true },
       { min: Number.MAX_SAFE_INTEGER, fallback: 'skip' },
       { min: 2 ** 53, fallback: 'skip' },
@@ -484,8 +487,23 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     h.eq([outcomeOf(rewrite), (rewrite as GenerationClientError | undefined)?.hint], ['http', 'Unexpected rewrite response shape'], 'a null rewritten prompt is a malformed rewrite reply');
   });
 
+  await h.test('oldest reader: a compat notice of null is no notice, so the fallback it names still applies', async () => {
+    const skipped = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'skip', notice: null } }, TOKEN, RESULT]));
+    h.eq([outcomeOf(skipped.error), skipped.events], ['none', [STAGE, TOKEN, RESULT]], 'an unknown event marked skip is ignored, and the stream runs on to its result');
+    const remeant = await drain(sseFromServer([STAGE, { ...TOKEN, compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, RESULT]));
+    h.eq([outcomeOf(remeant.error), remeant.events], ['none', [STAGE, RESULT]], 'a known event above this build’s level is dropped the same way');
+    const failed = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'fail', notice: null } }, RESULT]));
+    h.eq([outcomeOf(failed.error), errorReason(failed.error).reason], ['fail', GENERIC_STREAM_ERROR], 'fail ends the flow with the generic reason, as a fail with no notice does');
+    const updated = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'update', notice: null } }, RESULT]));
+    h.eq(terminalFallbackOf(updated.error), { kind: 'update' }, 'update opens the update path, with no notice');
+    const body = await unaryError('clarify', json({ questions: [], compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, 200));
+    h.eq(outcomeOf(body), 'none', 'a success body marked skip is read the way this build reads it');
+    const code = await unaryError('rewrite', json({ ...QUOTA, compat: { min: 2, fallback: 'fail', notice: null } }, 429));
+    h.eq([outcomeOf(code), errorReason(code).reason], ['fail', GENERIC_STREAM_ERROR], 'an unknown error code marked fail shows the generic reason');
+  });
+
   await h.test('oldest reader: only null is an absent compat; any other compat this build cannot read still fails a known event', async () => {
-    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }]) {
+    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }, { min: null, fallback: 'skip' }, { min: 2, fallback: null }, { min: null, fallback: null, notice: null }]) {
       const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat }, RESULT]));
       h.eq([outcomeOf(error), events], ['fail', [STAGE]], `compat ${JSON.stringify(compat)} on a known event is unreadable, so fail`);
     }

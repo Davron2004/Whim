@@ -54,7 +54,16 @@ export type CompatFallback = z.infer<typeof CompatFallback>;
 export const COMPAT_NOTICE_MAX_CHARS = 200;
 
 const CompatMin = z.number().int().positive();
-const CompatNotice = z.string().max(COMPAT_NOTICE_MAX_CHARS);
+
+/** `compat.notice`, optional, with `null` read as no notice: the oldest installed build reads it
+ *  that way, so a producer writing "none" as `null` still has its fallback applied. `min` and
+ *  `fallback` get no such reading: a `null` there is a `compat` no client can read. */
+const CompatNotice = z
+  .string()
+  .max(COMPAT_NOTICE_MAX_CHARS)
+  .nullish()
+  .transform((notice) => notice ?? undefined)
+  .optional();
 
 /** The forward-compatibility field a producer attaches to a message introduced above level 1:
  *  `min` is the lowest protocol level that can use the message, `fallback` what a client below it
@@ -63,7 +72,7 @@ const CompatNotice = z.string().max(COMPAT_NOTICE_MAX_CHARS);
 export const Compat = z.object({
   min: CompatMin,
   fallback: CompatFallback,
-  notice: CompatNotice.optional(),
+  notice: CompatNotice,
 });
 export type Compat = z.infer<typeof Compat>;
 
@@ -76,7 +85,7 @@ export type Compat = z.infer<typeof Compat>;
 export const WireEnvelope = z.object({
   type: z.string().optional(),
   error: z.string().optional(),
-  compat: z.object({ min: CompatMin, fallback: z.string(), notice: CompatNotice.optional() }).optional(),
+  compat: z.object({ min: CompatMin, fallback: z.string(), notice: CompatNotice }).optional(),
 });
 export type WireEnvelope = z.infer<typeof WireEnvelope>;
 
