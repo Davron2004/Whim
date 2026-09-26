@@ -3,10 +3,12 @@
  * whose actions are instrumented"; design D12).
  *
  * The action set and its persisted tap counts are pure and exercised directly; the rendered `Orb`
- * is driven at the end, for which callback each action reaches and what gets counted.
+ * is driven at the end, for which callback each action reaches, what gets counted, and that its
+ * rows take taps only once the menu has risen into place.
  */
 
 import React from 'react';
+import TestRenderer from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store/fs/kv-fs';
@@ -21,7 +23,11 @@ import {
 } from '../orb-actions';
 import { chromeInsetBottom } from '../orb-geometry';
 import { resetNativeStorage } from './native-storage';
+import { finishAnimations } from './native-host';
 import { button, press, renderScreen, unmountScreen } from './react-screen';
+
+/** The menu's rise runs its course. */
+const risen = () => TestRenderer.act(async () => { finishAnimations(); });
 
 export async function runOrbMenuTests(h: Harness): Promise<void> {
   // ── the action set ─────────────────────────────────────────────────────────
@@ -116,6 +122,7 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
         await press(dismiss()[0]);
         h.eq(Object.values(counts()).reduce((a, b) => a + b, 0), 0, 'opening, closing and dismissing the menu count nothing');
         await press(button(tree, COPY.orbMenuOpenLabel));
+        await risen();
         await press(button(tree, action.label));
         const expected = Object.fromEntries(Object.keys(calls).map((name) => [name, name === callbackOf[action.id] ? 1 : 0]));
         h.eq(calls, expected, `"${action.label}" calls ${callbackOf[action.id]} once and nothing else`);
@@ -124,6 +131,29 @@ export async function runOrbMenuTests(h: Harness): Promise<void> {
       } finally {
         await unmountScreen(tree);
       }
+    }
+  });
+
+  await h.test('orb-menu: while the menu is still rising its actions refuse a tap; once it has risen, a tap acts', async () => {
+    resetNativeStorage();
+    const calls = { versions: 0, report: 0 };
+    const tree = await renderScreen(React.createElement(Orb, {
+      onExit: () => {}, onVersions: () => { calls.versions++; }, onChangeIt: () => {}, onReport: () => { calls.report++; },
+    }));
+    try {
+      const counted = () => Object.values(loadOrbActionCounts(createMmkvBackend('whim.launcher'))).reduce((a, b) => a + b, 0);
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      for (const action of ORB_ACTIONS) {
+        await h.throws(() => press(button(tree, action.label)), 'Cannot press a disabled control', `"${action.label}" refuses a tap while the menu rises`);
+      }
+      h.eq([calls, counted()], [{ versions: 0, report: 0 }, 0], 'nothing acts and nothing is counted during the rise');
+      await risen();
+      await press(button(tree, COPY.orbActionVersions));
+      h.eq(calls, { versions: 1, report: 0 }, 'once risen, a tap on Versions opens Versions, and only that');
+      await press(button(tree, COPY.orbMenuOpenLabel));
+      await h.throws(() => press(button(tree, COPY.orbActionReport)), 'Cannot press a disabled control', 'reopened, the menu refuses taps again until its new rise completes');
+    } finally {
+      await unmountScreen(tree);
     }
   });
 

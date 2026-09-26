@@ -16,7 +16,7 @@ import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { hardwareBack, StyleSheet } from './native-host';
+import { finishAnimations, hardwareBack, StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -174,6 +174,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         await tap(() => home().props.onOpen(app));
         await waitFor(() => showing(MiniAppView), `${app.name} to open`);
         await press(button(tree, COPY.orbMenuOpenLabel));
+        await TestRenderer.act(async () => { finishAnimations(); });
         await press(button(tree, COPY.orbActionVersions));
         await waitFor(() => showing(HistoryScreen), 'its history');
         await leave();

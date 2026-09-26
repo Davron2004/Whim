@@ -17,7 +17,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { injectedScripts, StyleSheet } from './native-host';
+import { finishAnimations, injectedScripts, StyleSheet } from './native-host';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen } from './react-screen';
@@ -338,6 +338,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     await withMiniApp(TIP, async ({ loadEnd, clock, tree, exits }) => {
       await loadEnd();
       await press(button(tree, COPY.orbMenuOpenLabel));
+      await TestRenderer.act(async () => { finishAnimations(); });
       const home = tree.root.findAll((n) => n.type === 'Pressable' && textOf(n).endsWith(COPY.orbActionHome));
       await press(home[0]);
       h.eq(exits(), 1, 'Home leaves the app');
