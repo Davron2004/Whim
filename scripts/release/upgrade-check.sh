@@ -25,7 +25,7 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 PLATFORM="" FROM="" TO="" EVIDENCE="" PORT=8787 AVD="" EMU_PORT=5580
 SIM_TYPE="com.apple.CoreSimulator.SimDeviceType.iPhone-15-Plus" SIM_RUNTIME=""
 MANUAL_SEED=0 KEEP_DEVICE=0
-DEVICE="" EMU_PID="" CREATED_SIM=0 STEP="arguments"
+DEVICE="" EMU_PID="" CREATED_SIM=0 SCREEN_HEIGHT="" STEP="arguments"
 
 usage() {
   sed -n '5,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
@@ -127,10 +127,12 @@ EOF
 }
 
 # run_flow <name> <flow> [maestro test args...]: one Maestro flow, its log and debug output in raw/maestro.
+# On iOS every flow also gets SCREEN_HEIGHT, for the tile menu rows it taps by position.
 run_flow() {
   local name=$1 flow=$2 limit=300
   shift 2
   if [[ $flow == seed ]]; then limit=1800; fi
+  if [[ -n $SCREEN_HEIGHT ]]; then set -- "$@" -e "SCREEN_HEIGHT=$SCREEN_HEIGHT"; fi
   if ! with_deadline "$limit" maestro --device "$DEVICE" test --debug-output "$RAW/maestro/$name" "$@" "$FLOWS/$flow.yaml" \
     </dev/null >"$RAW/maestro/$name.log" 2>&1; then
     tail -n 25 "$RAW/maestro/$name.log" >&2
@@ -299,6 +301,12 @@ step install-from
 install_app "$FROM"
 FROM_BUILD="$(build_of "$FROM")"
 record_artifact from "$FROM" "$FROM_BUILD"
+if [[ $PLATFORM == ios ]]; then
+  # The screen's height in points: the first element in a hierarchy dump with a size is the screen.
+  dump "$RAW/screen"
+  SCREEN_HEIGHT="$(sed -n 's/.*"bounds" : "\[0,0\]\[[0-9]*,\([1-9][0-9]*\)\]".*/\1/p' "$RAW/screen.json" | head -n 1)"
+  [[ -n $SCREEN_HEIGHT ]] || fail "no screen size in $RAW/screen.json"
+fi
 
 step seed
 if ((MANUAL_SEED)); then

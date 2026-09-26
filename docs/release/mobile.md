@@ -194,11 +194,14 @@ commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives
 
 The seed flow (`scripts/release/upgrade-check/seed.yaml`) is written against 382511's screens. When
 the check fails, the script names the step and keeps Maestro's log and screenshots under `raw/maestro`.
-On iOS, Maestro has crashed SpringBoard on this machine before, and on 382511 the compose keyboard
-can't be dismissed and covers Continue (#49/#50). If the seed step fails there, rerun with
-`--manual-seed`: the script waits while you seed by hand, then reads and diffs as usual. From beta-1
-on, a Release iOS build ignores the server-address override (legal-surface-v2 D10), so the iOS seed
-for the release after beta-1 needs a previous-release build that honours the override.
+On iOS a pressable reads as one element whose label joins its texts, so the flows match a tile's name
+inside that label and tap the tile menu's rows by position (the script measures the screen first).
+The seed gets past 382511's undismissable compose keyboard (#50) by switching to the emoji keyboard,
+after which a tap on the headline drops it. Maestro has crashed SpringBoard on this machine before;
+if the seed step fails there, rerun with `--manual-seed`: the script waits while you seed by hand,
+then reads and diffs as usual. From beta-1 on, a Release iOS build ignores the server-address
+override (legal-surface-v2 D10), so the iOS seed for the release after beta-1 needs a
+previous-release build that honours the override.
 
 ## Per-release commands
 

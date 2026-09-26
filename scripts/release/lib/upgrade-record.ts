@@ -81,10 +81,11 @@ function hierarchyTexts(root: unknown): string[] {
   return out;
 }
 
-/** Whether a screen text shows this tile name: the name's own Text, or a tile label that ends with
- *  it (a pressable tile's label joins its texts, "EXAMPLE, Tip Splitter"). */
+/** Whether a screen text shows this tile name: the name's own Text, or a tile label that holds it
+ *  (a pressable tile's label joins its texts: "EXAMPLE, Tip Splitter" on 382511, "Tip Splitter,
+ *  Example" once the badge moved under the name). */
 function showsName(text: string, name: string): boolean {
-  return text === name || text.endsWith(`, ${name}`) || text.endsWith(` ${name}`);
+  return text === name || text.endsWith(`, ${name}`) || text.endsWith(` ${name}`) || text.startsWith(`${name}, `) || text.includes(`, ${name}, `);
 }
 
 const VERSIONS_LINE = /^(\d+) versions? · /;

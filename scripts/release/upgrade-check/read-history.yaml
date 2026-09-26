@@ -2,14 +2,31 @@
 # `upgrade-check.sh` dumps the view hierarchy right after this flow; `upgrade-record` reads the
 # version count from the subtitle ("2 versions · started …", copy.ts#historySubtitle).
 #   -e TILE=<the app's name as its tile shows it>
+#   -e SCREEN_HEIGHT=<points>  iOS only: the screen's height, for the tile menu's rows
 appId: com.anycognition.whim
 ---
 - launchApp
 - extendedWaitUntil:
     visible: "YOUR APPS"
     timeout: 60000
-- longPressOn: ${TILE}
-- tapOn: "History"
+- longPressOn: "(.*, )?${TILE}(, .*)?"
+- extendedWaitUntil:
+    visible: "History|.*, History, .*"
+    timeout: 15000
+- runFlow:
+    when:
+      visible: "History"
+    commands:
+      - tapOn: "History"
+# On iOS the tile menu is one accessibility element: tap History where it is, four rows above Cancel
+# (geometry in seed.yaml's header).
+- runFlow:
+    when:
+      platform: iOS
+      visible: ".*, History, .*"
+    commands:
+      - tapOn:
+          point: ${'50%,' + Math.round(100 * (SCREEN_HEIGHT - 63 - 58 * 4) / SCREEN_HEIGHT) + '%'}
 - extendedWaitUntil:
     visible: "[0-9]+ versions? · .*"
     timeout: 30000
