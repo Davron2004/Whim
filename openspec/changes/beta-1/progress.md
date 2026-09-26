@@ -245,3 +245,4 @@
   - No harness feedback from fix-11 (it died before reporting).
   - The iOS re-verification left one screenshot; it gets re-dispatched on the final builds.
 - regate after fix-11: FAST GATE PASSED
+- 08:16 gate-full on the final tip (all fixes in, incl. fix-8b/fix-11): **FULL GATE PASSED**. Restored `upgrade-check/ios/.gitignore` (raw/) and added the same for android.
