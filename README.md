@@ -149,7 +149,7 @@ npm run launcher:test      # launcher acceptance (Node); vstore:test, storage:te
 npm run android:release    # debug-signed offline build onto a device or emulator; the store AAB comes only from `fastlane android closed`
 ```
 
-Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline. Opening apps you already have does not.
+Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline (`WHIM_STUB_DELAY_MS` sets its wait before each event, 200 by default). Opening apps you already have does not.
 
 Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
 Deploying the server publicly is attended-only too — see `docs/deploy.md`.

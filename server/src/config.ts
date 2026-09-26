@@ -26,6 +26,10 @@ export interface ServerConfig {
   readonly dataDir: string;
   /** `'stub'` selects the no-spend UI pipeline; anything else (including unset) is the real one. */
   readonly pipeline: 'real' | 'stub';
+  /** `WHIM_STUB_DELAY_MS`: how long the stub pipeline waits before each event it emits (default
+   *  200), so a device test can make a stub build slow enough to line others up behind it.
+   *  Stub-only: set without `WHIM_PIPELINE=stub`, which production refuses, it refuses to load. */
+  readonly stubDelayMs: number;
   readonly devLogSink: boolean;
   readonly devLogFile: string;
   readonly logLevel: string;
@@ -205,6 +209,15 @@ function readCommit(env: NodeJS.ProcessEnv, name: string): string {
   return raw;
 }
 
+/** `WHIM_STUB_DELAY_MS`, 200 when unset. Only the stub pipeline reads it, so it refuses to load
+ *  without `WHIM_PIPELINE=stub`, which production refuses in turn. */
+function readStubDelay(env: NodeJS.ProcessEnv, pipeline: ServerConfig['pipeline']): number {
+  if (env.WHIM_STUB_DELAY_MS !== undefined && pipeline !== 'stub') {
+    throw new ServerConfigError('WHIM_STUB_DELAY_MS', 'WHIM_STUB_DELAY_MS only applies with WHIM_PIPELINE=stub.');
+  }
+  return readNonNegativeInt(env, 'WHIM_STUB_DELAY_MS', 200);
+}
+
 function readFlag(env: NodeJS.ProcessEnv, name: string): boolean {
   return env[name] === '1';
 }
@@ -274,6 +287,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     serverPort: readPositiveInt(env, 'WHIM_SERVER_PORT', 8787),
     dataDir: readString(env, 'WHIM_DATA_DIR', 'server/.data'),
     pipeline,
+    stubDelayMs: readStubDelay(env, pipeline),
     devLogSink,
     devLogFile: readString(env, 'WHIM_DEV_LOG_FILE', 'server/.logs/device.jsonl'),
     logLevel: readString(env, 'WHIM_LOG_LEVEL', 'info'),

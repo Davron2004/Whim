@@ -380,7 +380,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
     let pipeline: Pipeline;
     let basePolicy: ContentPolicy;
     if (useStub || !model) {
-      pipeline = createStubPipeline(200);
+      pipeline = createStubPipeline(config.stubDelayMs);
       basePolicy = new StubContentPolicy();
     } else {
       opened.session = await SynthRunSession.launch({ concurrency: config.synthrunConcurrency }).catch((err: unknown) => {
