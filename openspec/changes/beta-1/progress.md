@@ -24,6 +24,11 @@
   - iOS: `automaticallyAdjustKeyboardInsets` is computed once from the pre-avoider frame (`RCTScrollViewComponentView.mm:187-266`), so with the footer `KeyboardAvoidingView` a low focused field can be clipped by the footer's height (~76pt). Check plan row 4+ and clarify "Other" on question 2–3.
   - Android: targetSdk 36 with `edgeToEdgeEnabled=false`, so Android 15+ enforces edge-to-edge and `adjustResize` may stop resizing, leaving nothing to lift Continue. Check on the API 36 emulator.
   - A confirmed risk becomes a fix chain.
+- R12. Section 10 order and targets, refining R6.
+  - The reviewer passed (10.1), so the staging tip is deployed to production first.
+  - 10.4 iOS then uses a newly created simulator with a **Release** build against production (what testers get). A Release iOS build ignores the server override (legal-surface-v2 D10), and the alternative, a Debug build with an embedded bundle, isn't representative. On production the limit screen comes from a real weather prompt, and the line from cap + 2 concurrent generations.
+  - 10.4 Android uses the fresh emulator (Whim_Verify, API 37, wiped) with the offline APK, first against a local stub server at the staging tip. That covers the stub-marker scenarios (`[[limit]]`, `[[future:skip|fail|update]]`) and the line at cap 1. Then it runs against production.
+  - The fallback screens are the same JS on both platforms and are covered by the rendered suites plus Android. On iOS: tier-0 native behaviour (age deadline, guardian acknowledgment compile, keyboard R10), the line, the limit screen and a real generation.
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -122,3 +127,4 @@
   Open: a busy-slot `policy_unavailable` writes no row (noted on #120).
 - fix-1 merged (integrity OK). Worktree and branch removed.
 - 21:55 gate-full after fix-1: FULL GATE PASSED. Scoped reviewer re-check dispatched on the fix-1 merge (Sonnet).
+- Scoped reviewer (Sonnet) on fix-1: MERGE-READY. Every finding FIXED, confirmed by re-running server:test 4180/0, launcher:test 13011/0, server:e2e 56/0 and the gate, and by an independent M1 revert (10 fail, matching the claim). **10.1 done** (gate-full green + reviewer clean); ticked.

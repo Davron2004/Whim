@@ -64,7 +64,7 @@
 
 ## 10. Acceptance and rollout (orchestrator, attended)
 
-- [ ] 10.1 `gate-full.sh` green on the staging tip, then the reviewer pass.
+- [x] 10.1 `gate-full.sh` green on the staging tip, then the reviewer pass.
 - [ ] 10.2 Load-test `e2-standard-2` (`deploy/loadtest/run.sh drive`). Put the highest caps with p95 CPU < 70 % and no failed runs into the `server/src/config.ts` defaults (R8; the standard profile sets no server limit), and record the run in `docs/deploy.md`.
 - [ ] 10.3 Flowbench before and after 3.1 (visible set plus weather and roommate-ping cases), recorded in `progress.md`.
 - [ ] 10.4 iOS and Android builds → a newly created simulator and a fresh emulator against a local server at the staging tip: every tier-0 scenario, the line (cap + 2), the `limit` screen, and a fallback smoke (a dev-only injected future frame).
