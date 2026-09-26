@@ -1,0 +1,15 @@
+# Upgrade check, read step: open the Water Counter example and wait until it has loaded its saved
+# count (fixtures/water-counter.app.tsx shows "loaded from storage" once both reads return).
+# `upgrade-check.sh` dumps the view hierarchy right after this flow; `upgrade-record` reads the
+# numbers next to "Glasses" and "History entries".
+appId: com.anycognition.whim
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 60000
+- tapOn: "Water Counter"
+- extendedWaitUntil:
+    visible: "loaded from storage"
+    timeout: 60000
+- waitForAnimationToEnd

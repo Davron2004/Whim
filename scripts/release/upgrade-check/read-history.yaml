@@ -1,0 +1,16 @@
+# Upgrade check, read step: open one app's History from the home grid (long-press → History).
+# `upgrade-check.sh` dumps the view hierarchy right after this flow; `upgrade-record` reads the
+# version count from the subtitle ("2 versions · started …", copy.ts#historySubtitle).
+#   -e TILE=<the app's name as its tile shows it>
+appId: com.anycognition.whim
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 60000
+- longPressOn: ${TILE}
+- tapOn: "History"
+- extendedWaitUntil:
+    visible: "[0-9]+ versions? · .*"
+    timeout: 30000
+- waitForAnimationToEnd
