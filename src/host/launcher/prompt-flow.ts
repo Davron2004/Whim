@@ -272,19 +272,22 @@ const NO_ANSWER: FlowAnswer = { choices: [], other: '', decide: false };
  * One question's answer after one change (beta-1 D18). A pick on a `select: 'one'` question MOVES
  * the pick (radio-like: tapping the picked option again keeps it), which is where "at most one
  * choice" is enforced; on `'many'` it toggles. Typing sets the "Other" text, capped like the field
- * itself. "Decide for me" clears every pick and the typed text; picking or typing afterwards clears
- * it again. A change the question cannot take (an option it doesn't list, typing where it has no
- * "Other" field) leaves the answer as it was.
+ * itself. A `select: 'one'` question holds one answer, so typing a real answer clears its pick and
+ * picking clears its typed text; on `'many'` both can stand. "Decide for me" clears every pick and
+ * the typed text; picking or typing afterwards clears it again. A change the question cannot take
+ * (an option it doesn't list, typing where it has no "Other" field) leaves the answer as it was.
  */
 export function answerAfter(question: FlowQuestion, prev: FlowAnswer | undefined, change: AnswerChange): FlowAnswer {
   const current = prev ?? NO_ANSWER;
+  const one = question.select === 'one';
   if (change.kind === 'decide') return { choices: [], other: '', decide: true };
   if (change.kind === 'type') {
     if (!question.other) return current;
-    return { choices: current.choices, other: change.text.slice(0, OTHER_ANSWER_MAX_CHARS), decide: false };
+    const choices = one && change.text.trim().length > 0 ? [] : current.choices;
+    return { choices, other: change.text.slice(0, OTHER_ANSWER_MAX_CHARS), decide: false };
   }
   if (!question.options.includes(change.option)) return current;
-  if (question.select === 'one') return { choices: [change.option], other: current.other, decide: false };
+  if (one) return { choices: [change.option], other: '', decide: false };
   const picked = current.choices.includes(change.option)
     ? current.choices.filter((choice) => choice !== change.option)
     : [...current.choices, change.option];

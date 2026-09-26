@@ -18,6 +18,13 @@ import { SHELL_PALETTE } from './theme';
 /** The gated steps, in order — the step indicator's three bars. */
 const INDICATOR_STEPS: readonly FlowStep[] = ['compose', 'clarify', 'plan'];
 
+/**
+ * The header's own space below its back link, so content scrolled beneath it never touches the
+ * link. A screen's content starts that much less far down, keeping the design's gap above its
+ * headline (the `content.paddingTop` each step cites) the same.
+ */
+export const FLOW_HEADER_GAP = SPACING.sm;
+
 export interface FlowHeaderProps {
   step: FlowStep;
   /** Immediate, never busy: backward movement has no in-flight state. */
@@ -27,10 +34,7 @@ export interface FlowHeaderProps {
 export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
   const reached = INDICATOR_STEPS.indexOf(step);
   return (
-    <View style={styles.header}>
-      <TouchableOpacity onPress={onBack} hitSlop={16}>
-        <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
-      </TouchableOpacity>
+    <BackHeader onBack={onBack}>
       <View style={styles.bars}>
         {INDICATOR_STEPS.map((s, i) => (
           <View
@@ -39,6 +43,19 @@ export function FlowHeader({ step, onBack }: Readonly<FlowHeaderProps>) {
           />
         ))}
       </View>
+    </BackHeader>
+  );
+}
+
+/** The flow's header row: the back link, and whatever sits at its right (the step bars). Settings
+ *  shares it, so every screen with a back link has the same one in the same place. */
+export function BackHeader({ onBack, children }: Readonly<{ onBack: () => void; children?: React.ReactNode }>) {
+  return (
+    <View style={styles.header}>
+      <TouchableOpacity onPress={onBack} hitSlop={16}>
+        <Text style={[TYPE_SCALE.controlLabel, { color: SHELL_PALETTE.textMuted }]}>{COPY.backLabel}</Text>
+      </TouchableOpacity>
+      {children}
     </View>
   );
 }
@@ -101,10 +118,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.lg,
-    // design `Whim Mobile.dc.html:412,438,470` is `padding:16px 22px 0` — the bottom is ZERO, so the
-    // whole gap above each headline is the step's own `content.paddingTop` (34/28/26), not a stack.
+    // design `Whim Mobile.dc.html:412,438,470` is `padding:16px 22px 0`, with the whole gap above
+    // each headline the step's own `content.paddingTop` (34/28/26). `FLOW_HEADER_GAP` of that gap
+    // moves into the header, so scrolled content stops short of the back link.
     paddingTop: SPACING.md,
-    paddingBottom: 0,
+    paddingBottom: FLOW_HEADER_GAP,
   },
   bars: { flexDirection: 'row', gap: 5 },
   bar: { width: 18, height: 3, borderRadius: 2 },
