@@ -1,0 +1,2429 @@
+{
+  "setId": "visible-dev-v1",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-26T08:06:33.695Z",
+  "finishedAt": "2026-09-26T08:07:22.774Z",
+  "cases": [
+    {
+      "caseId": "tip-splitter-p1",
+      "run": 1,
+      "appSlug": "tip-splitter",
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "deviceId": "a01e6963-847a-471b-80ea-0bfed9493371",
+      "clarifications": [
+        {
+          "id": "split_method",
+          "question": "How should the bill be split?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_percent",
+          "question": "How do you want to set the tip?",
+          "choices": [
+            "Choose from common percentages"
+          ]
+        },
+        {
+          "id": "rounding",
+          "question": "How should each person's total be rounded?",
+          "choices": [
+            "To the nearest cent"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1614,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p1",
+      "run": 2,
+      "appSlug": "tip-splitter",
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "deviceId": "8725a7ea-5b3e-418f-ac10-58c78f1d6e67",
+      "clarifications": [
+        {
+          "id": "split_method",
+          "question": "How should the bill be split?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_percent",
+          "question": "How do you want to set the tip?",
+          "choices": [
+            "Choose from common percentages"
+          ]
+        },
+        {
+          "id": "rounding",
+          "question": "How should each person's total be rounded?",
+          "choices": [
+            "To the nearest cent"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 971,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p1",
+      "run": 3,
+      "appSlug": "tip-splitter",
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "deviceId": "5788603d-e82e-4a8d-ac93-d75352d17085",
+      "clarifications": [
+        {
+          "id": "split_method",
+          "question": "How should the bill be split?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_percent",
+          "question": "How do you want to set the tip?",
+          "choices": [
+            "Choose from common percentages"
+          ]
+        },
+        {
+          "id": "rounding",
+          "question": "How should each person's share be rounded?",
+          "choices": [
+            "To the nearest cent"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 904,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p2",
+      "run": 1,
+      "appSlug": "tip-splitter",
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "deviceId": "4a56cd63-a5ff-4525-a441-afe0d5922e8c",
+      "clarifications": [
+        {
+          "id": "split_type",
+          "question": "How do you want to split the bill?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_choice",
+          "question": "How do you want to pick the tip percent?",
+          "choices": [
+            "Preset buttons"
+          ]
+        },
+        {
+          "id": "rounding",
+          "question": "How should each person's amount be rounded?",
+          "choices": [
+            "To the cent"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 3885,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p2",
+      "run": 2,
+      "appSlug": "tip-splitter",
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "deviceId": "527429e7-d617-4616-87fd-f43e4cf1e33b",
+      "clarifications": [
+        {
+          "id": "split_type",
+          "question": "How do you want to split the bill?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_choice",
+          "question": "How do you want to pick the tip percent?",
+          "choices": [
+            "Preset buttons"
+          ]
+        },
+        {
+          "id": "rounding",
+          "question": "How should each person's amount be rounded?",
+          "choices": [
+            "To the cent"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1216,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p2",
+      "run": 3,
+      "appSlug": "tip-splitter",
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "deviceId": "920c39d8-a188-49d8-9ee9-339abecf419b",
+      "clarifications": [
+        {
+          "id": "split_type",
+          "question": "How do you want to split the bill?",
+          "choices": [
+            "Evenly"
+          ]
+        },
+        {
+          "id": "tip_rounding",
+          "question": "How should the tip be calculated?",
+          "choices": [
+            "On the total bill"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 606,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p1",
+      "run": 1,
+      "appSlug": "spending-tracker",
+      "prompt": "track my spending and show me a weekly graph",
+      "deviceId": "025ca78d-529d-40ca-9b95-2ce64ff9f94d",
+      "clarifications": [
+        {
+          "id": "expense_categories",
+          "question": "Which spending categories do you want to track?",
+          "choices": [
+            "All expenses"
+          ]
+        },
+        {
+          "id": "graph_type",
+          "question": "What kind of weekly graph do you prefer?",
+          "choices": [
+            "Bar chart"
+          ]
+        },
+        {
+          "id": "entry_method",
+          "question": "How do you want to enter your spending?",
+          "choices": [
+            "Quick add with amount"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2220,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p1",
+      "run": 2,
+      "appSlug": "spending-tracker",
+      "prompt": "track my spending and show me a weekly graph",
+      "deviceId": "c4ee88e4-a66f-4bfd-825b-e4b218d6be9e",
+      "clarifications": [
+        {
+          "id": "expense_type",
+          "question": "What do you want to track?",
+          "choices": [
+            "All spending"
+          ]
+        },
+        {
+          "id": "graph_style",
+          "question": "How should the weekly graph look?",
+          "choices": [
+            "Bar chart"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2313,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p1",
+      "run": 3,
+      "appSlug": "spending-tracker",
+      "prompt": "track my spending and show me a weekly graph",
+      "deviceId": "e54c9754-d590-4c1c-9236-046ba1c66fb0",
+      "clarifications": [
+        {
+          "id": "expense_type",
+          "question": "What types of spending do you want to track?",
+          "choices": [
+            "All expenses"
+          ]
+        },
+        {
+          "id": "graph_style",
+          "question": "How should the weekly graph look?",
+          "choices": [
+            "Bar chart"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1118,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p2",
+      "run": 1,
+      "appSlug": "spending-tracker",
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "deviceId": "f7a075f9-9e81-44bc-bb88-e689cf409169",
+      "clarifications": [
+        {
+          "id": "chart_type",
+          "question": "How should the monthly chart show your spending?",
+          "choices": [
+            "Pie chart"
+          ]
+        },
+        {
+          "id": "categories",
+          "question": "Which categories do you want to start with?",
+          "choices": [
+            "Food, Transport, Bills, Fun"
+          ]
+        },
+        {
+          "id": "data_entry",
+          "question": "How do you want to add expenses?",
+          "choices": [
+            "Quick add with amount and category"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1050,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p2",
+      "run": 2,
+      "appSlug": "spending-tracker",
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "deviceId": "40ecf14d-6c18-49da-8581-1044b3a080b5",
+      "clarifications": [
+        {
+          "id": "chart_type",
+          "question": "How should the monthly chart show your spending?",
+          "choices": [
+            "Pie chart by category"
+          ]
+        },
+        {
+          "id": "categories",
+          "question": "Which categories do you want to start with?",
+          "choices": [
+            "Food, Transport, Housing, Fun"
+          ]
+        },
+        {
+          "id": "recurring",
+          "question": "Should recurring expenses (like rent) be added automatically each month?",
+          "choices": [
+            "Yes, set them once"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1028,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p2",
+      "run": 3,
+      "appSlug": "spending-tracker",
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "deviceId": "f57db3d9-db7d-4399-a31b-a6e329dbebbb",
+      "clarifications": [
+        {
+          "id": "chart_type",
+          "question": "How should the monthly chart show your spending?",
+          "choices": [
+            "Pie chart by category"
+          ]
+        },
+        {
+          "id": "categories",
+          "question": "Which categories do you want to start with?",
+          "choices": [
+            "Food, Transport, Housing, Fun"
+          ]
+        },
+        {
+          "id": "entry_method",
+          "question": "How do you want to add expenses?",
+          "choices": [
+            "Quick tap to add amount"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1909,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p1",
+      "run": 1,
+      "appSlug": "habit-tracker",
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "deviceId": "1c08b5e8-101c-4180-8a7d-76325948d90c",
+      "clarifications": [
+        {
+          "id": "habit_type",
+          "question": "What habit do you want to track?",
+          "choices": [
+            "Exercise"
+          ]
+        },
+        {
+          "id": "streak_reset",
+          "question": "What should happen if you miss a day?",
+          "choices": [
+            "Streak resets to zero"
+          ]
+        },
+        {
+          "id": "calendar_view",
+          "question": "How should the calendar show your days?",
+          "choices": [
+            "Month view with dots"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 3140,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p1",
+      "run": 2,
+      "appSlug": "habit-tracker",
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "deviceId": "1489022d-bb48-40a9-a20e-b8bd9bab6e9f",
+      "clarifications": [
+        {
+          "id": "habit_type",
+          "question": "What kind of habit are you tracking?",
+          "choices": [
+            "Daily"
+          ]
+        },
+        {
+          "id": "calendar_view",
+          "question": "How should the calendar display your streaks?",
+          "choices": [
+            "Month view"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 652,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p1",
+      "run": 3,
+      "appSlug": "habit-tracker",
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "deviceId": "41b25216-83ef-4b28-8801-0ec6156933a2",
+      "clarifications": [
+        {
+          "id": "habit_type",
+          "question": "What habit do you want to track?",
+          "choices": [
+            "Exercise"
+          ]
+        },
+        {
+          "id": "streak_reset",
+          "question": "What should happen if you miss a day?",
+          "choices": [
+            "Streak resets to zero"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 640,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p2",
+      "run": 1,
+      "appSlug": "habit-tracker",
+      "prompt": "track a few daily habits and show my current streak for each",
+      "deviceId": "fc45a26c-1383-43b5-9c80-d2a5db9dade8",
+      "clarifications": [
+        {
+          "id": "habits",
+          "question": "Which habits do you want to track?",
+          "choices": [
+            "Exercise"
+          ]
+        },
+        {
+          "id": "streak_reset",
+          "question": "What should happen if you miss a day?",
+          "choices": [
+            "Streak resets to zero"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 790,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p2",
+      "run": 2,
+      "appSlug": "habit-tracker",
+      "prompt": "track a few daily habits and show my current streak for each",
+      "deviceId": "4f5f96b0-e05f-4cf6-b802-3d149f71145a",
+      "clarifications": [
+        {
+          "id": "habit_count",
+          "question": "How many habits do you want to track?",
+          "choices": [
+            "1-3"
+          ]
+        },
+        {
+          "id": "streak_definition",
+          "question": "What counts as a streak?",
+          "choices": [
+            "Consecutive days"
+          ]
+        },
+        {
+          "id": "reminder",
+          "question": "Do you want a reminder to log habits?",
+          "choices": [
+            "Yes, daily"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 925,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p2",
+      "run": 3,
+      "appSlug": "habit-tracker",
+      "prompt": "track a few daily habits and show my current streak for each",
+      "deviceId": "2f06546b-600d-40fd-979c-b597638214db",
+      "clarifications": [
+        {
+          "id": "habit_count",
+          "question": "How many habits do you want to track?",
+          "choices": [
+            "1-3"
+          ]
+        },
+        {
+          "id": "streak_definition",
+          "question": "What counts as a streak?",
+          "choices": [
+            "Consecutive days"
+          ]
+        },
+        {
+          "id": "reminder",
+          "question": "Do you want a reminder to log your habits?",
+          "choices": [
+            "Yes, daily"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 690,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p1",
+      "run": 1,
+      "appSlug": "water-counter",
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "deviceId": "65e4dc24-fd84-48a6-985c-9eaa753d7fed",
+      "clarifications": [
+        {
+          "id": "goal",
+          "question": "What is your daily water goal?",
+          "choices": [
+            "8 glasses"
+          ]
+        },
+        {
+          "id": "reset",
+          "question": "When should the daily total reset?",
+          "choices": [
+            "Midnight"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 747,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p1",
+      "run": 2,
+      "appSlug": "water-counter",
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "deviceId": "1b4d092c-eacd-4957-a106-fa2c56c0220a",
+      "clarifications": [
+        {
+          "id": "goal",
+          "question": "What is your daily water goal?",
+          "choices": [
+            "8 glasses"
+          ]
+        },
+        {
+          "id": "reset",
+          "question": "When should the daily total reset?",
+          "choices": [
+            "Midnight"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 571,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p1",
+      "run": 3,
+      "appSlug": "water-counter",
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "deviceId": "4f07674a-2fbd-4873-8eb3-13c178feaa7a",
+      "clarifications": [
+        {
+          "id": "goal",
+          "question": "What is your daily water goal?",
+          "choices": [
+            "8 glasses"
+          ]
+        },
+        {
+          "id": "reset",
+          "question": "When should the daily total reset?",
+          "choices": [
+            "Midnight"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 496,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p2",
+      "run": 1,
+      "appSlug": "water-counter",
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "deviceId": "35d125e9-9c46-43e2-bebe-bd3c726524b9",
+      "clarifications": [
+        {
+          "id": "daily_limit",
+          "question": "What is your daily calorie limit?",
+          "choices": [
+            "1500"
+          ]
+        },
+        {
+          "id": "history_scope",
+          "question": "How far back should the history go?",
+          "choices": [
+            "Last 7 days"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1464,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p2",
+      "run": 2,
+      "appSlug": "water-counter",
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "deviceId": "eeec927f-3348-4558-b88f-1e986a57211d",
+      "clarifications": [
+        {
+          "id": "daily_limit",
+          "question": "What is your daily calorie limit?",
+          "choices": [
+            "1500"
+          ]
+        },
+        {
+          "id": "history_scope",
+          "question": "How much history do you want to keep?",
+          "choices": [
+            "Last 7 days"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 4422,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "water-counter-p2",
+      "run": 3,
+      "appSlug": "water-counter",
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "deviceId": "18440a8f-d491-404c-8135-7bf3fab4da98",
+      "clarifications": [
+        {
+          "id": "daily_limit",
+          "question": "What is your daily calorie limit?",
+          "choices": [
+            "1500"
+          ]
+        },
+        {
+          "id": "history_scope",
+          "question": "How far back should the history go?",
+          "choices": [
+            "Last 7 days"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 702,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p1",
+      "run": 1,
+      "appSlug": "workout-log",
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "deviceId": "e90749ba-eeec-41ac-b707-a90d94be4544",
+      "clarifications": [
+        {
+          "id": "tracking_detail",
+          "question": "How detailed should each exercise entry be?",
+          "choices": [
+            "Just sets, reps, weight"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to see past sessions?",
+          "choices": [
+            "Simple list by date"
+          ]
+        },
+        {
+          "id": "session_start",
+          "question": "How do you start a new session?",
+          "choices": [
+            "Pick from saved exercises"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1169,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p1",
+      "run": 2,
+      "appSlug": "workout-log",
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "deviceId": "667eeef3-768f-4570-b4f0-34ec57c4a142",
+      "clarifications": [
+        {
+          "id": "log_scope",
+          "question": "What should the log track for each session?",
+          "choices": [
+            "Exercises, sets, reps, and weight"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to see past sessions?",
+          "choices": [
+            "List by date"
+          ]
+        },
+        {
+          "id": "progress_tracking",
+          "question": "Do you want any progress tracking?",
+          "choices": [
+            "Show weight changes over time"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 879,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p1",
+      "run": 3,
+      "appSlug": "workout-log",
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "deviceId": "4e4187be-0f8c-43d2-bddc-faaa753e5514",
+      "clarifications": [
+        {
+          "id": "tracking_detail",
+          "question": "How detailed should each exercise entry be?",
+          "choices": [
+            "Just sets, reps, weight"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to review past workouts?",
+          "choices": [
+            "By date"
+          ]
+        },
+        {
+          "id": "progress_tracking",
+          "question": "Do you want automatic progress tracking?",
+          "choices": [
+            "Yes, show trends"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 742,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p2",
+      "run": 1,
+      "appSlug": "workout-log",
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "deviceId": "2a5c27e0-cbb4-4c19-b918-cc0bc3b79236",
+      "clarifications": [
+        {
+          "id": "tracking_detail",
+          "question": "How detailed should each workout entry be?",
+          "choices": [
+            "Exercise, sets, reps, and weight"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to review past workouts?",
+          "choices": [
+            "By date"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2909,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p2",
+      "run": 2,
+      "appSlug": "workout-log",
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "deviceId": "4292710e-e4fd-42d7-872a-d5a9e587ba73",
+      "clarifications": [
+        {
+          "id": "workout_focus",
+          "question": "What do you want to track most?",
+          "choices": [
+            "Weight and reps"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to see past workouts?",
+          "choices": [
+            "By exercise"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1163,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "workout-log-p2",
+      "run": 3,
+      "appSlug": "workout-log",
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "deviceId": "b6987a7a-b848-49cb-8ef2-7fe51618c517",
+      "clarifications": [
+        {
+          "id": "tracking_focus",
+          "question": "What do you want to track for each exercise?",
+          "choices": [
+            "Weight and reps"
+          ]
+        },
+        {
+          "id": "history_view",
+          "question": "How do you want to see your past workouts?",
+          "choices": [
+            "By date"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 11973,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p1",
+      "run": 1,
+      "appSlug": "flashcards",
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "deviceId": "18468c2c-1432-43b7-9795-8637f19a8dd1",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 591,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p1",
+      "run": 2,
+      "appSlug": "flashcards",
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "deviceId": "bb582147-f248-4764-bdc6-783b79564c9f",
+      "clarifications": [
+        {
+          "id": "card_source",
+          "question": "How do you want to add your flashcards?",
+          "choices": [
+            "Type them in the app"
+          ]
+        },
+        {
+          "id": "review_flow",
+          "question": "When you review a card, how should the app decide when to show it again?",
+          "choices": [
+            "Simple: again today, tomorrow, or later"
+          ]
+        },
+        {
+          "id": "card_content",
+          "question": "What should each card contain?",
+          "choices": [
+            "Front and back text"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1127,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p1",
+      "run": 3,
+      "appSlug": "flashcards",
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "deviceId": "839a9b8b-e627-48d0-91f7-94e6f6a825c8",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2162,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p2",
+      "run": 1,
+      "appSlug": "flashcards",
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "deviceId": "4c366c6c-232f-468a-aafb-11761ff57d7b",
+      "clarifications": [
+        {
+          "id": "review_interval",
+          "question": "How soon should wrong cards come back?",
+          "choices": [
+            "Same day"
+          ]
+        },
+        {
+          "id": "wrong_tracking",
+          "question": "How do you mark a card wrong?",
+          "choices": [
+            "Tap a wrong button"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1006,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p2",
+      "run": 2,
+      "appSlug": "flashcards",
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "deviceId": "40374585-5150-403d-bba6-9a3dd2662e22",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1416,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "flashcards-p2",
+      "run": 3,
+      "appSlug": "flashcards",
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "deviceId": "d58467e3-0422-4332-abab-bb4c6f1a680c",
+      "clarifications": [
+        {
+          "id": "review_interval",
+          "question": "How soon should wrong cards come back?",
+          "choices": [
+            "Same day"
+          ]
+        },
+        {
+          "id": "wrong_count",
+          "question": "How many times must a card be wrong before it repeats sooner?",
+          "choices": [
+            "Once"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 636,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p1",
+      "run": 1,
+      "appSlug": "score-keeper",
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "deviceId": "249eabc9-86d6-4c3f-8bac-e8f398e796f2",
+      "clarifications": [
+        {
+          "id": "score_type",
+          "question": "How do you want to track scores?",
+          "choices": [
+            "Points only"
+          ]
+        },
+        {
+          "id": "undo",
+          "question": "Do you need to undo a score change?",
+          "choices": [
+            "Yes, undo last change"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 5544,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p1",
+      "run": 2,
+      "appSlug": "score-keeper",
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "deviceId": "51ef6990-341a-48a7-9340-4ba04d7a924b",
+      "clarifications": [
+        {
+          "id": "score_type",
+          "question": "How do you want to track scores?",
+          "choices": [
+            "Points only"
+          ]
+        },
+        {
+          "id": "undo",
+          "question": "Do you need to undo a score change?",
+          "choices": [
+            "Yes, undo last change"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 789,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p1",
+      "run": 3,
+      "appSlug": "score-keeper",
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "deviceId": "e1168417-6234-4ac6-96b9-119416f5768b",
+      "clarifications": [
+        {
+          "id": "score_type",
+          "question": "How do you want to track scores?",
+          "choices": [
+            "Points only"
+          ]
+        },
+        {
+          "id": "undo",
+          "question": "Should you be able to undo a score change?",
+          "choices": [
+            "Yes, undo last change"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1068,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p2",
+      "run": 1,
+      "appSlug": "score-keeper",
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "deviceId": "3c4e8709-cfaf-4182-961a-6f79fda3e599",
+      "clarifications": [
+        {
+          "id": "players",
+          "question": "How many players do you usually score for?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "score_type",
+          "question": "What kind of scores are you tracking?",
+          "choices": [
+            "Points that go up"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1064,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p2",
+      "run": 2,
+      "appSlug": "score-keeper",
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "deviceId": "2574d06b-c64b-4ba9-8626-2323276ba3aa",
+      "clarifications": [
+        {
+          "id": "players",
+          "question": "How many players do you usually score for?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "score_type",
+          "question": "What kind of scores are you tracking?",
+          "choices": [
+            "Points that go up and down"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 589,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "score-keeper-p2",
+      "run": 3,
+      "appSlug": "score-keeper",
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "deviceId": "e33a090a-04d6-4e78-b3c9-92fe26aa6700",
+      "clarifications": [
+        {
+          "id": "players",
+          "question": "How many players do you usually score for?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "score_type",
+          "question": "What kind of scores are you tracking?",
+          "choices": [
+            "Points that go up"
+          ]
+        },
+        {
+          "id": "reset",
+          "question": "Do you need to reset scores between games?",
+          "choices": [
+            "Yes, a reset button"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 827,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p1",
+      "run": 1,
+      "appSlug": "packing-checklist",
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "deviceId": "45f4ac59-20fc-423e-9923-df3645f51a70",
+      "clarifications": [
+        {
+          "id": "template_editing",
+          "question": "Can you edit a template after creating it?",
+          "choices": [
+            "Yes, edit anytime"
+          ]
+        },
+        {
+          "id": "checklist_items",
+          "question": "How do you want to add items to a template?",
+          "choices": [
+            "From a preset list"
+          ]
+        },
+        {
+          "id": "trip_usage",
+          "question": "When you reuse a template, what happens to the checklist?",
+          "choices": [
+            "Start fresh each time"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1166,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p1",
+      "run": 2,
+      "appSlug": "packing-checklist",
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "deviceId": "e262207e-e91d-49c3-b88b-2e2411b84d84",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 502,
+          "durationMs": 14886,
+          "retries": 0,
+          "error": {
+            "error": "model_failure",
+            "hint": "The clarify model call failed. Try again in a moment."
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "clarify",
+        "reason": "model_failure",
+        "attempts": 1
+      }
+    },
+    {
+      "caseId": "packing-checklist-p1",
+      "run": 3,
+      "appSlug": "packing-checklist",
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "deviceId": "1db4c3a7-4720-405b-8fb1-e1f5a165403b",
+      "clarifications": [
+        {
+          "id": "template_editing",
+          "question": "Can you edit a template after creating it?",
+          "choices": [
+            "Yes, edit anytime"
+          ]
+        },
+        {
+          "id": "checklist_items",
+          "question": "How do you want to add items to a template?",
+          "choices": [
+            "From a preset list"
+          ]
+        },
+        {
+          "id": "trip_usage",
+          "question": "When you reuse a template, what happens to the checklist?",
+          "choices": [
+            "Start fresh each time"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1014,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p2",
+      "run": 1,
+      "appSlug": "packing-checklist",
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "deviceId": "c1e65f33-b2c5-4790-b0e7-5dc0526412eb",
+      "clarifications": [
+        {
+          "id": "template_edit",
+          "question": "When you start a new trip from a template, should the template stay unchanged?",
+          "choices": [
+            "Yes, keep template as is"
+          ]
+        },
+        {
+          "id": "check_off",
+          "question": "How do you want to mark items as done during the trip?",
+          "choices": [
+            "Tap to check off"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 4066,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p2",
+      "run": 2,
+      "appSlug": "packing-checklist",
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "deviceId": "cb46c890-ae22-4adf-b1a6-0dcd24d164c5",
+      "clarifications": [
+        {
+          "id": "template_edit",
+          "question": "When you start a new trip from a template, should the template stay unchanged?",
+          "choices": [
+            "Yes, keep template as is"
+          ]
+        },
+        {
+          "id": "trip_progress",
+          "question": "How do you want to track progress on the trip checklist?",
+          "choices": [
+            "Check off items manually"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 783,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p2",
+      "run": 3,
+      "appSlug": "packing-checklist",
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "deviceId": "96e2a990-5cb9-45b1-bcdf-67d0d0aa7cb7",
+      "clarifications": [
+        {
+          "id": "template_edit",
+          "question": "When you start a new trip from a template, should the template stay unchanged?",
+          "choices": [
+            "Yes, keep template as is"
+          ]
+        },
+        {
+          "id": "check_off",
+          "question": "How do you want to mark items as done during the trip?",
+          "choices": [
+            "Tap to check off"
+          ]
+        },
+        {
+          "id": "trip_name",
+          "question": "Do you need to name each trip separately?",
+          "choices": [
+            "Yes, name it"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1684,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p1",
+      "run": 1,
+      "appSlug": "recipe-box",
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "deviceId": "e62e1b23-73b7-4b66-a4c1-7948c0b2fc5c",
+      "clarifications": [
+        {
+          "id": "recipe_fields",
+          "question": "What extra details should each recipe have?",
+          "choices": [
+            "Prep time and servings"
+          ]
+        },
+        {
+          "id": "search_scope",
+          "question": "How should search work?",
+          "choices": [
+            "By name only"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 848,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p1",
+      "run": 2,
+      "appSlug": "recipe-box",
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "deviceId": "7110fff1-0a8d-4598-b622-fb90fab96272",
+      "clarifications": [
+        {
+          "id": "recipe_import",
+          "question": "How do you want to add recipes?",
+          "choices": [
+            "Type them manually"
+          ]
+        },
+        {
+          "id": "search_scope",
+          "question": "What should search match?",
+          "choices": [
+            "Recipe name only"
+          ]
+        },
+        {
+          "id": "extra_fields",
+          "question": "Any extra details to store per recipe?",
+          "choices": [
+            "Cooking time"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 10758,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p1",
+      "run": 3,
+      "appSlug": "recipe-box",
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "deviceId": "cdf9d735-2116-4a1b-8804-633c376b67a7",
+      "clarifications": [
+        {
+          "id": "recipe_fields",
+          "question": "Besides ingredients and steps, what else should each recipe include?",
+          "choices": [
+            "Prep time and servings"
+          ]
+        },
+        {
+          "id": "search_scope",
+          "question": "How should search work?",
+          "choices": [
+            "By recipe name only"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 732,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p2",
+      "run": 1,
+      "appSlug": "recipe-box",
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "deviceId": "af78cb24-3be6-4112-97cb-92cc7ef10748",
+      "clarifications": [
+        {
+          "id": "recipe_fields",
+          "question": "What details do you want to store for each recipe?",
+          "choices": [
+            "Name and ingredients only"
+          ]
+        },
+        {
+          "id": "tag_management",
+          "question": "How do you want to manage tags?",
+          "choices": [
+            "Pick from a fixed list"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1265,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p2",
+      "run": 2,
+      "appSlug": "recipe-box",
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "deviceId": "6b3a61fe-bc94-4a35-a95e-6779138ffc0b",
+      "clarifications": [
+        {
+          "id": "tag_count",
+          "question": "How many tags do you want per recipe?",
+          "choices": [
+            "One tag"
+          ]
+        },
+        {
+          "id": "tag_examples",
+          "question": "Which tags matter most to you?",
+          "choices": [
+            "Quick, vegetarian, dessert"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 658,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "recipe-box-p2",
+      "run": 3,
+      "appSlug": "recipe-box",
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "deviceId": "a15e5f4a-5bdc-4b33-a269-e82a4124687b",
+      "clarifications": [
+        {
+          "id": "tag_count",
+          "question": "How many tags do you want per recipe?",
+          "choices": [
+            "One tag"
+          ]
+        },
+        {
+          "id": "tag_examples",
+          "question": "What kind of tags do you usually use?",
+          "choices": [
+            "Meal type (breakfast, dinner)"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1497,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p1",
+      "run": 1,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe for two people on one phone",
+      "deviceId": "ab4ae82c-af64-4514-a211-b58c724ef1dc",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 3789,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p1",
+      "run": 2,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe for two people on one phone",
+      "deviceId": "0d97c715-9a3c-4650-84d9-b2bd9acf7c3d",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 418,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p1",
+      "run": 3,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe for two people on one phone",
+      "deviceId": "c01a906f-d4bc-42c5-8992-491b9eeb49e5",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 474,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p2",
+      "run": 1,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "deviceId": "915d29a4-3409-4544-b88d-1bd25e3cb684",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2861,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p2",
+      "run": 2,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "deviceId": "5c1cc65d-0b46-4d3d-a82a-7a48b9b42644",
+      "clarifications": [
+        {
+          "id": "tally_scope",
+          "question": "Should the win tally reset when you close the app?",
+          "choices": [
+            "Keep tally until I reset it"
+          ]
+        },
+        {
+          "id": "draws_count",
+          "question": "Should draws (ties) be counted in the tally?",
+          "choices": [
+            "Yes, count draws"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1171,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p2",
+      "run": 3,
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "deviceId": "1d180c11-2cf6-42b9-a18b-4e97fad30fc6",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 982,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p1",
+      "run": 1,
+      "appSlug": "chore-rotation",
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "deviceId": "2732491a-7430-4638-948c-596c86df85fb",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 503,
+          "durationMs": 10034,
+          "retries": 0,
+          "error": {
+            "error": "policy_unavailable",
+            "hint": "We couldn't check this request right now. Please try again in a moment."
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "clarify",
+        "reason": "policy_unavailable",
+        "attempts": 1
+      }
+    },
+    {
+      "caseId": "chore-rotation-p1",
+      "run": 2,
+      "appSlug": "chore-rotation",
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "deviceId": "033734d5-4608-489d-80fb-16036612dc84",
+      "clarifications": [
+        {
+          "id": "rotation_scope",
+          "question": "How many people are in the rotation?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "rotation_cycle",
+          "question": "How often should the turn rotate?",
+          "choices": [
+            "Daily"
+          ]
+        },
+        {
+          "id": "fairness_rule",
+          "question": "How should fairness be handled?",
+          "choices": [
+            "Strictly equal turns"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1234,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p1",
+      "run": 3,
+      "appSlug": "chore-rotation",
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "deviceId": "d86e6184-7bfd-492a-b115-8bd558c9327d",
+      "clarifications": [
+        {
+          "id": "people",
+          "question": "How many people are in the rotation?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "skip",
+          "question": "Should people be able to skip a turn?",
+          "choices": [
+            "Yes, with a skip limit"
+          ]
+        },
+        {
+          "id": "reminder",
+          "question": "Do you want a reminder when it's someone's turn?",
+          "choices": [
+            "Yes, daily"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 814,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p2",
+      "run": 1,
+      "appSlug": "chore-rotation",
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "deviceId": "c292e3e6-5b08-4d5d-a26c-39e8f2fd6c59",
+      "clarifications": [
+        {
+          "id": "chore_frequency",
+          "question": "How often do you want to rotate chores?",
+          "choices": [
+            "Weekly"
+          ]
+        },
+        {
+          "id": "chore_list",
+          "question": "Which chores should be included?",
+          "choices": [
+            "Cleaning"
+          ]
+        },
+        {
+          "id": "reminder_style",
+          "question": "How should the app remind you of your turn?",
+          "choices": [
+            "When I open the app"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1048,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p2",
+      "run": 2,
+      "appSlug": "chore-rotation",
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "deviceId": "2c18d211-5331-4201-ba62-fe5812e4703a",
+      "clarifications": [
+        {
+          "id": "chore_frequency",
+          "question": "How often do chores rotate?",
+          "choices": [
+            "Weekly"
+          ]
+        },
+        {
+          "id": "chore_list",
+          "question": "How many chores are there to rotate?",
+          "choices": [
+            "2-3"
+          ]
+        },
+        {
+          "id": "reminder_style",
+          "question": "How should the app show who's next?",
+          "choices": [
+            "Just a list"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1094,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p2",
+      "run": 3,
+      "appSlug": "chore-rotation",
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "deviceId": "14214cd6-3335-4a3c-b9a4-79023acf77e3",
+      "clarifications": [
+        {
+          "id": "chore_cycle",
+          "question": "How should chores rotate?",
+          "choices": [
+            "Weekly"
+          ]
+        },
+        {
+          "id": "chore_list",
+          "question": "How many chores are there?",
+          "choices": [
+            "A few (2-5)"
+          ]
+        },
+        {
+          "id": "tracking",
+          "question": "What should the app track?",
+          "choices": [
+            "Who did each chore last"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 831,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "clarified"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 1057,
+        "maxMs": 14886
+      },
+      "rewrite": {
+        "medianMs": 0,
+        "maxMs": 0
+      },
+      "generate": {
+        "medianMs": 0,
+        "maxMs": 0
+      }
+    },
+    "results": 0,
+    "failures": 2,
+    "limits": 0,
+    "tallies": [
+      {
+        "caseId": "tip-splitter-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "tip-splitter-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "spending-tracker-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "spending-tracker-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "habit-tracker-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "habit-tracker-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "water-counter-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "water-counter-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "workout-log-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "workout-log-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "flashcards-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 1,
+        "empty": 2,
+        "failure": 0
+      },
+      {
+        "caseId": "flashcards-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 2,
+        "empty": 1,
+        "failure": 0
+      },
+      {
+        "caseId": "score-keeper-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "score-keeper-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "packing-checklist-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 2,
+        "empty": 0,
+        "failure": 1
+      },
+      {
+        "caseId": "packing-checklist-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "recipe-box-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "recipe-box-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "tic-tac-toe-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 0,
+        "empty": 3,
+        "failure": 0
+      },
+      {
+        "caseId": "tic-tac-toe-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 1,
+        "empty": 2,
+        "failure": 0
+      },
+      {
+        "caseId": "chore-rotation-p1",
+        "runs": 3,
+        "limit": 0,
+        "questions": 2,
+        "empty": 0,
+        "failure": 1
+      },
+      {
+        "caseId": "chore-rotation-p2",
+        "runs": 3,
+        "limit": 0,
+        "questions": 3,
+        "empty": 0,
+        "failure": 0
+      }
+    ]
+  }
+}

@@ -1,0 +1,861 @@
+{
+  "setId": "beta-1-limits",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-26T08:06:18.605Z",
+  "finishedAt": "2026-09-26T08:06:33.551Z",
+  "cases": [
+    {
+      "caseId": "weather-p1",
+      "run": 1,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "09957a1d-73dd-488f-bdde-60becc5f264b",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1050,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 2,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "3faecd17-4de6-43ec-b45a-0f7a1e485390",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1020,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 3,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "bf00fb9b-08b3-4635-82f4-377619808f95",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 998,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 4,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "ce49a086-0c92-474c-83de-337a117f583b",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 916,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 5,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "c94a9f21-e236-41d5-b196-c76d1cdfd554",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 449,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 6,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "696d06ed-cb2e-4e79-90cf-590da44d5751",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1079,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 7,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "492455a2-f86a-4d83-89d5-63dc7b9d44f0",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 569,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 8,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "62c95cbe-72e4-4205-a7fa-84d0e3b36195",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 11845,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 9,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "7b4bf57a-4773-43b1-a0e0-2b7a84f977d5",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 828,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a manual bike-or-train decision log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p1",
+      "run": 10,
+      "appSlug": "habit-tracker",
+      "prompt": "a weather app that tells me whether to bike or take the train today",
+      "deviceId": "d8f09207-4061-4fc6-ac94-9e5ff590ba80",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 931,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data from outside the phone.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 1,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "4a91b461-21ba-4056-9c19-f3d37d022568",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1580,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 2,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "d80deeec-ab1c-4209-a8c6-5793804a7865",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 414,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 3,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "3c5d0bb6-d92e-4778-9827-66c5025b3a9b",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 404,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 4,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "88b69cb3-256f-4d1f-adb1-f5626dc36c0f",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 593,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 5,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "8a213ed6-2077-497d-a031-5bdba74e9440",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 475,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 6,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "14552948-fd42-460a-ba85-d154f0eda478",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 4610,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 7,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "3aaec63f-b7f9-4df4-bf6f-acdbbb42ff59",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 413,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 8,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "b5e30fea-e464-47f0-bc88-2b89eefca57d",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 692,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 9,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "83fb16aa-f51a-4940-bc65-bf9375ead43f",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 369,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "weather-p2",
+      "run": 10,
+      "appSlug": "habit-tracker",
+      "prompt": "show me today's weather forecast for my city",
+      "deviceId": "9f270459-917e-4e3e-8810-da93e46fefa3",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 325,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot fetch live weather data for your city.",
+        "alternative": "a weather log you fill in yourself"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 1,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "85f554d8-80a4-41ee-9ae1-616b6fdf4fee",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 650,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or pings to other people's phones.",
+        "alternative": "a chore rotation tracker you all check on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 2,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "78b743e4-58de-41da-a36c-56bafcb3b681",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 484,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or reach other people's phones.",
+        "alternative": "a shared chore rotation list you all check on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 3,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "1ed2315a-da6e-45da-acb0-cd42b7962f93",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 431,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or reach other people's phones.",
+        "alternative": "a shared chore rotation list you all check on one phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 4,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "68b1c6ba-538d-4374-a5ac-863c28e03201",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2220,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or pings to other people's phones.",
+        "alternative": "a shared chore rotation tracker you all update together"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 5,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "0c52c20b-c8fb-4e42-b883-44a2a7b6bf39",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 414,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or reach other people's phones.",
+        "alternative": "a shared chore rotation tracker you all update together"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 6,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "1d8747dc-22cf-41f8-afbc-5740b70bd40d",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 539,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or reach other people's phones.",
+        "alternative": "a shared chore list you each check on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 7,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "141058dd-8cae-43cc-8ed9-d5f742d12018",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 500,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or pings to other people's phones.",
+        "alternative": "a shared chore rotation tracker you all update together"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 8,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "782d24bb-7b5d-47d9-b933-0f0cd72363f1",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 427,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or pings to other people's phones.",
+        "alternative": "a shared chore list you each check on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 9,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "0ee158a7-2ae8-4b43-82f3-b99b2aedbabf",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 440,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or pings to other people's phones.",
+        "alternative": "a shared chore rotation list you all check on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p1",
+      "run": 10,
+      "appSlug": "chore-rotation",
+      "prompt": "a chore rotation for my roommates that pings whoever's turn it is on their phone",
+      "deviceId": "d54fb7d8-3df0-4d59-ac3e-b6ced4a555aa",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 577,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications or reach other people's phones.",
+        "alternative": "a chore rotation tracker you all check on one shared phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 1,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "e2e28dd4-2a13-43aa-9961-aae75eb86290",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 696,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a chore tracker you all fill in together on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 2,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "b9a97fc6-1c40-4932-b2ad-dbd4de6c43db",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 428,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all fill in on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 3,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "f48d6d7a-79d9-433f-8cb4-d8de43aaa598",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 853,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a chore tracker you fill in yourself"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 4,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "8568995d-e15b-4b81-ba47-3f6819bb0a72",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2472,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all update together on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 5,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "d09d3554-7db5-4fa6-ae47-f946bd71f448",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 481,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all update together on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 6,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "270cbfba-b70e-4d64-9363-79ef36aa9191",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 466,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all fill in on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 7,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "0bc74580-fa03-4f22-9a97-32021eb98aa1",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 754,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all fill in on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 8,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "216aac2a-6075-4ae6-a155-5313854bf480",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 433,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all fill in on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 9,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "07536a21-1223-4afd-bf2b-4d3df2d73457",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 601,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a shared chore tracker you all update together on this phone"
+      }
+    },
+    {
+      "caseId": "roommate-ping-p2",
+      "run": 10,
+      "appSlug": "chore-rotation",
+      "prompt": "split chores with my roommates and send each of them a reminder notification when they fall behind",
+      "deviceId": "1e55bd5f-ceb2-4f70-a282-09b776acc079",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 720,
+          "retries": 0
+        }
+      },
+      "outcome": {
+        "type": "limit",
+        "reason": "A mini-app cannot send notifications to other people's phones or share anything between people.",
+        "alternative": "a chore tracker you all fill in on this phone"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 585,
+        "maxMs": 11845
+      },
+      "rewrite": {
+        "medianMs": 0,
+        "maxMs": 0
+      },
+      "generate": {
+        "medianMs": 0,
+        "maxMs": 0
+      }
+    },
+    "results": 0,
+    "failures": 0,
+    "limits": 40,
+    "tallies": [
+      {
+        "caseId": "weather-p1",
+        "runs": 10,
+        "limit": 10,
+        "questions": 0,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "weather-p2",
+        "runs": 10,
+        "limit": 10,
+        "questions": 0,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "roommate-ping-p1",
+        "runs": 10,
+        "limit": 10,
+        "questions": 0,
+        "empty": 0,
+        "failure": 0
+      },
+      {
+        "caseId": "roommate-ping-p2",
+        "runs": 10,
+        "limit": 10,
+        "questions": 0,
+        "empty": 0,
+        "failure": 0
+      }
+    ]
+  }
+}
