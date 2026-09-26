@@ -238,3 +238,4 @@
   - `docs/release/mobile.md` recipe fixed (vendor/bundle).
   - Filed the tile long-press menu a11y issue.
 - fix-8 merge: an add/add conflict on `upgrade-check/ios/result.txt`. My own sweep (`git add -A openspec/changes/beta-1` in `964c31e2`) had committed the FAILED run's untracked result file. Resolved to fix-8's passing version (bookkeeping, not a chain partition problem; the failed run is recorded above and kept in scratch). A `| tail` pipe had masked the merge failure, so a gate ran on the conflicted tree; that result was discarded and the regate on the resolved tree passed.
+- 05:10 10.5 Android upgrade check FAILED at seed: after typing the server URL, the first `Tap on "Back"` only dismissed 382511's keyboard, so "YOUR APPS" never showed (flow bug, not an upgrade defect; the failed run was moved to scratch). fix-8b dispatched (`dispatch/fix-8b.md`). BASE=2b90cca72d00244c765832e5fc21e38bc34b18db
