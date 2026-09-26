@@ -4,14 +4,17 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY } from '../copy';
-import { primaryActionLabel } from '../prompt-flow';
+import { COPY, clarifyBuildInstead } from '../copy';
+import { primaryActionLabel, type FlowNotice } from '../prompt-flow';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
 import PlanStep from '../PlanStep';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
+import ServiceNotice from '../ServiceNotice';
 import type { InstalledApp } from '../app-index';
+import { SPACING } from '../../../sdk/theme';
+import { StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -36,6 +39,30 @@ async function rendered(element: React.ReactElement, body: (tree: Tree) => Promi
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
 const QUESTION = { id: 'alert', question: 'How should it tell you?', options: ['Sound', 'Buzz'], select: 'one', other: false };
 const ROWS = [{ label: 'Timer', text: 'Counts down' }, { label: 'Alert', text: 'Buzzes at zero' }];
+const BUSY: FlowNotice = { hint: 'This device is already building an app. Try again when it finishes.', tone: 'neutral' };
+
+type Node = TestRenderer.ReactTestInstance;
+const marginOf = (node: Node, side: 'marginTop' | 'marginBottom'): number => {
+  const style = StyleSheet.flatten(node.props.style) as Record<string, number | undefined>;
+  return style[side] ?? style.marginVertical ?? style.margin ?? 0;
+};
+const contains = (outer: Node, inner: Node): boolean => {
+  for (let at: Node | null = inner; at; at = at.parent) if (at === outer) return true;
+  return false;
+};
+
+/** The space between the notice's card and `action` below it: every bottom margin from the card up
+ *  to the view the two share, and the action's top margin. */
+function gapBetween(notice: Node, action: Node): number {
+  let gap = marginOf(action, 'marginTop');
+  for (let at: Node | null = notice; at && !contains(at, action); at = at.parent) {
+    if (typeof at.type === 'string') gap += marginOf(at, 'marginBottom');
+  }
+  return gap;
+}
+
+/** The card `ServiceNotice` draws. */
+const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof n.type === 'string');
 
 export async function runFlowScreensUiTests(h: Harness): Promise<void> {
   await h.test('compose: a starter chip fills the field and does not continue; editing an app shows no chips', async () => {
@@ -73,6 +100,23 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
       await press(button(tree, primaryActionLabel('plan', false)));
       h.eq(s.count('build'), 1, 'the loaded plan builds');
     });
+  });
+
+  await h.test('a refusal notice stands at least a sibling gap above the action beneath it, on every step that shows one', async () => {
+    const noop = () => {};
+    const limit = { reason: 'That needs a camera.', alternative: 'a notes app' };
+    const steps: [string, React.ReactElement, string][] = [
+      ['compose', <ComposeStep text="A tea timer" notice={BUSY} editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('compose', false)],
+      ['clarify', <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{}} loading={false} notice={BUSY} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('clarify', false)],
+      ['clarify limit', <ClarifyStep prompt="A tea timer" questions={[]} answers={{}} loading={false} notice={BUSY} limit={limit} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, clarifyBuildInstead(limit.alternative)],
+      ['plan', <PlanStep rows={ROWS} loading={false} notice={BUSY} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, primaryActionLabel('plan', false)],
+    ];
+    for (const [name, element, action] of steps) {
+      await rendered(element, async (tree) => {
+        const gap = gapBetween(noticeCard(tree), button(tree, action));
+        h.ok(gap >= SPACING.sm, `${name}: the notice stands ${gap} clear of “${action}”, at least the ${SPACING.sm} between siblings`);
+      });
+    }
   });
 
   await h.test('plan: tapping a row edits it in place; Save commits that row, Cancel commits nothing', async () => {

@@ -18,11 +18,11 @@ import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
-import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction, StepNotice } from './flow-chrome';
 import { WorkingLine } from './flow-working';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
-import ServiceNotice, { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -132,7 +132,7 @@ export default function PlanStep({
       header={<FlowHeader step="plan" onBack={handleBack} />}
       footer={
         <>
-          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          <StepNotice notice={notice} />
           {/* A disabled button under a skeleton is noise — there is nothing to approve yet. The
               action mounts once the rewrite response has landed; `WorkingLine` is the only liveness
               element while loading. No validation gate of its own — the retry window is the only

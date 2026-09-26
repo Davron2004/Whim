@@ -13,10 +13,10 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
-import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction, StepNotice } from './flow-chrome';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import type { FlowNotice } from './prompt-flow';
-import ServiceNotice, { useRetryGate } from './ServiceNotice';
+import { useRetryGate } from './ServiceNotice';
 import { SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
@@ -68,7 +68,7 @@ export default function ComposeStep({
       header={<FlowHeader step="compose" onBack={onBack} />}
       footer={
         <>
-          {notice && <ServiceNotice hint={notice.hint} retryAt={notice.retryAt} tone={notice.tone} />}
+          <StepNotice notice={notice} />
           {/* Compose has no busy state of its own: tapping Continue moves synchronously to the
               clarify step's own loading screen (C2), so this action is never anything but live. */}
           <PrimaryAction step="compose" enabled={trimmed.length > 0 && !gated} onPress={onContinue} />
