@@ -41,6 +41,10 @@ const IOS_BEFORE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-ch
 const IOS_AFTER = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/after');
 // 382511's tile menu on iOS, open on the seed's generated app: one element, its rows joined.
 const IOS_TILE_MENU = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/tile-menu-382511.json');
+// 382511's Settings on Android with the keyboard up, as Maestro saw it when a seed tap failed there:
+// the app's window (its root view below) and the keyboard's, whose back key is labelled "Back" too.
+const ANDROID_SETTINGS_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-android/settings-keyboard-382511.json');
+const ANDROID_APP_WINDOW = 'com.anycognition.whim:id/action_bar_root';
 const STORE = path.join(CAPTURE, 'storage/whim.launcher');
 const FLOWS = path.join(REPO_ROOT, 'scripts/release/upgrade-check');
 const DEVICE_ID = 'dbc53eef-5ac9-46f0-b171-3b57cb3e4fab';
@@ -106,16 +110,47 @@ interface DumpNode {
   readonly children?: readonly DumpNode[];
 }
 
+/** Whether a selector's whole-string pattern matches a node's text, hint or accessibility label. */
+function labelMatches(node: DumpNode, pattern: RegExp): boolean {
+  return ['text', 'hintText', 'accessibilityText'].some((key) => {
+    const value = node.attributes?.[key];
+    return typeof value === 'string' && pattern.test(value);
+  });
+}
+
 /** Whether a Maestro text selector finds a node in a `maestro hierarchy` dump: its regex must match
  *  the whole of a node's text, hint or accessibility label. Case-sensitive, so stricter than Maestro. */
 function selectorFinds(root: unknown, selector: string): boolean {
   const pattern = new RegExp(`^(?:${selector})$`);
-  const visit = (node: DumpNode): boolean =>
-    ['text', 'hintText', 'accessibilityText'].some((key) => {
-      const value = node.attributes?.[key];
-      return typeof value === 'string' && pattern.test(value);
-    }) || (node.children ?? []).some(visit);
+  const visit = (node: DumpNode): boolean => labelMatches(node, pattern) || (node.children ?? []).some(visit);
   return visit(root as DumpNode);
+}
+
+interface PlacedNode {
+  readonly node: DumpNode;
+  /** Inside the app's window, rather than a system bar or the keyboard. */
+  readonly inApp: boolean;
+  /** It or a node around it is clickable, so a tap on it presses something. */
+  readonly pressable: boolean;
+  /** It sits in a scrollable node, which in React Native drops the keyboard on a tap nothing presses. */
+  readonly inScrollView: boolean;
+}
+
+/** Every node of an Android `maestro hierarchy` dump, with where it sits. */
+function placeNodes(root: unknown): PlacedNode[] {
+  const out: PlacedNode[] = [];
+  const visit = (node: DumpNode, around: Omit<PlacedNode, 'node'>) => {
+    const attributes = node.attributes ?? {};
+    const here = {
+      inApp: around.inApp || attributes['resource-id'] === ANDROID_APP_WINDOW,
+      pressable: around.pressable || attributes.clickable === 'true',
+      inScrollView: around.inScrollView || attributes.scrollable === 'true',
+    };
+    out.push({ node, ...here });
+    for (const child of node.children ?? []) visit(child, here);
+  };
+  visit(root as DumpNode, { inApp: false, pressable: false, inScrollView: false });
+  return out;
 }
 
 /** A flow's `env:` block. `fallback` is set when the value defers to a `-e` value of the same name
@@ -456,6 +491,26 @@ async function runCases(): Promise<void> {
       if (!selectorFinds(capture.grid, waterCounter)) misses.push(`${label}: read-water-counter.yaml`);
     }
     nodeAssert.deepStrictEqual(misses, []);
+  });
+
+  await test("flows: on Android's keyboard, which has a Back key of its own, the seed drops the keyboard with a plain label on screen and waits that key out before tapping Back", () => {
+    const seed = fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8');
+    const steps =
+      /- inputText: \$\{SERVER_URL\}\n- tapOn: "((?:[^"\\]|\\.)*)"\n- extendedWaitUntil:\n +notVisible:\n +id: "([^"]+)"\n +timeout: \d+\n- tapOn: "((?:[^"\\]|\\.)*)"/.exec(seed);
+    nodeAssert.ok(steps, 'seed.yaml types the server address, taps a label, waits for an id to go, then taps Back');
+    const [drop, keyboardKey, back] = steps.slice(1).map((value) => new RegExp(`^(?:${value.replace(/\\(.)/g, '$1')})$`));
+    const placed = placeNodes(JSON.parse(fs.readFileSync(ANDROID_SETTINGS_KEYBOARD, 'utf8')));
+    const describe = (entry: PlacedNode) => JSON.stringify({ ...entry, node: entry.node.attributes });
+    const drops = placed.filter((entry) => labelMatches(entry.node, drop));
+    nodeAssert.ok(drops.length > 0, `${drop} finds nothing on the screen the keyboard leaves`);
+    for (const entry of drops) {
+      nodeAssert.ok(entry.inApp && entry.inScrollView && !entry.pressable, `${drop} finds more than a plain label in the app's ScrollView: ${describe(entry)}`);
+    }
+    const backs = placed.filter((entry) => labelMatches(entry.node, back));
+    nodeAssert.ok(backs.some((entry) => entry.inApp && entry.pressable), `${back} finds the header's back button`);
+    const keys = backs.filter((entry) => !entry.inApp).map((entry) => String(entry.node.attributes?.['resource-id']));
+    nodeAssert.ok(keys.length > 0, `${back} finds a key of the keyboard`);
+    for (const key of keys) nodeAssert.match(key, keyboardKey, `the seed waits out every key ${back} finds on the keyboard`);
   });
 
   await test("flows: the seed's generated-app name is the one the stub pipeline gives every app", () => {
