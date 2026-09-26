@@ -440,16 +440,17 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await press(button(tree, 'Milk'));
       await press(button(tree, 'Large'));
       await TestRenderer.act(async () => otherField(tree).props.onChangeText('  a travel mug  '));
+      h.ok(!picked(button(tree, 'Large')), 'on a one-pick question, typing an answer takes the pick back');
       await press(button(tree, 'Sound'));
       await press(decidePills(tree)[2]);
       await tap(() => button(tree, primaryActionLabel('clarify', false)).props.onPress());
       await waitFor(() => planLoaded(tree), 'the plan');
       const expected = [
         { id: 'extras', question: 'What goes in it?', choices: ['Honey', 'Milk'] },
-        { id: 'cup', question: 'What size is the cup?', choices: ['Large'], other: 'a travel mug' },
+        { id: 'cup', question: 'What size is the cup?', choices: [], other: 'a travel mug' },
         { id: 'alert', question: 'How should it tell you?', choices: [], decide: true },
       ];
-      h.eq(sent.find((r) => r.path === '/v1/rewrite')?.body?.clarifications, expected, 'the rewrite carries choices, the trimmed other, and decide alone');
+      h.eq(sent.find((r) => r.path === '/v1/rewrite')?.body?.clarifications, expected, 'the rewrite carries choices, the trimmed other alone for the one-pick question, and decide alone');
       for (const clarification of expected) h.ok(Clarification.safeParse(clarification).success, `${clarification.id} is a contract Clarification`);
       await buildIt(tree);
       await waitFor(() => streams.length === 1, 'the generation request');

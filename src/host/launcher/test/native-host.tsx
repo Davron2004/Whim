@@ -13,9 +13,40 @@ export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
-/** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting. */
-export const Keyboard = { dismissed: 0, dismiss: () => { Keyboard.dismissed += 1; } };
+type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
+interface KeyboardEvent { endCoordinates: { screenX: number; screenY: number; width: number; height: number }; duration: number; easing: string }
+type KeyboardListener = (event: KeyboardEvent) => void;
+const keyboardListeners = new Map<KeyboardEventName, Set<KeyboardListener>>();
+/** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
+ *  `emit` plays a keyboard event to every listener, as the native module would, with the keyboard's
+ *  top edge at `screenY` in window coordinates (a hidden keyboard reports the window's bottom). */
+export const Keyboard = {
+  dismissed: 0,
+  visible: false,
+  last: null as KeyboardEvent['endCoordinates'] | null,
+  dismiss: () => { Keyboard.dismissed += 1; },
+  isVisible: () => Keyboard.visible,
+  metrics: () => (Keyboard.visible ? Keyboard.last : undefined),
+  addListener: (event: KeyboardEventName, listener: KeyboardListener) => {
+    const listeners = keyboardListeners.get(event) ?? new Set<KeyboardListener>();
+    keyboardListeners.set(event, listeners);
+    listeners.add(listener);
+    return { remove: () => listeners.delete(listener) };
+  },
+  emit: (event: KeyboardEventName, screenY: number) => {
+    Keyboard.visible = !event.endsWith('Hide') && screenY < 844;
+    Keyboard.last = { screenX: 0, screenY, width: 390, height: Math.max(0, 844 - screenY) };
+    for (const listener of keyboardListeners.get(event) ?? []) listener({ endCoordinates: Keyboard.last, duration: 250, easing: 'keyboard' });
+  },
+};
+/** Records every layout animation configured, so a test can see a change was set to move. */
+export const LayoutAnimation = {
+  configured: 0,
+  configureNext: () => { LayoutAnimation.configured += 1; },
+  Types: { spring: 'spring', linear: 'linear', easeInEaseOut: 'easeInEaseOut', easeIn: 'easeIn', easeOut: 'easeOut', keyboard: 'keyboard' },
+};
 export const SafeAreaView = host('SafeAreaView');
+export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');
 /** Every script the host injected into a rendered WebView, oldest first. */
 export const injectedScripts: string[] = [];
@@ -29,7 +60,7 @@ export const Modal = (props: HostProps) => props.visible ? React.createElement('
 export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
   return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
 }
-export const Platform = { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default };
+export const Platform = { OS: 'ios', Version: '26.0' as string | number, select: (options: Record<string, unknown>) => options.ios ?? options.default };
 export const StyleSheet = { create: <T,>(styles: T): T => styles, hairlineWidth: 1, absoluteFillObject: {}, flatten: (styles: unknown) => Object.assign({}, ...([styles].flat(Infinity))) };
 export const useSafeAreaInsets = () => ({ top: 20, bottom: 30, left: 0, right: 0 });
 export const useWindowDimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: 1 });

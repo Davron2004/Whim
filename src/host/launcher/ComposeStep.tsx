@@ -13,7 +13,7 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, composeHeadline, composePlaceholder } from './copy';
-import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import type { FlowNotice } from './prompt-flow';
 import ServiceNotice, { useRetryGate } from './ServiceNotice';
@@ -122,7 +122,9 @@ export default function ComposeStep({
 }
 
 const styles = StyleSheet.create({
-  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:416` is `padding:34px 22px 0`: the gap below the suggestions is the
+  // shell footer's 16, above Continue.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.xl - FLOW_HEADER_GAP, paddingBottom: 0 },
   notice: { borderWidth: 1, borderRadius: RADIUS.card, padding: SPACING.md, marginTop: SPACING.md },
   field: {
     minHeight: 96,

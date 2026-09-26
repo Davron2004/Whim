@@ -241,7 +241,9 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
             placeholderTextColor={p.textMuted}
             maxLength={1000}
             multiline
-            style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder }]}
+            // Its own background, as every launcher field has: without one Android draws its default
+            // field underline inside the border.
+            style={[TYPE_SCALE.body, styles.noteInput, { color: p.text, borderColor: p.cardBorder, backgroundColor: p.card }]}
           />
 
           {draft.prompt !== undefined && (
@@ -310,7 +312,7 @@ function SwitchRow({ label, value, onChange }: Readonly<{ label: string; value: 
   return (
     <View style={styles.switchRow}>
       <Text style={[TYPE_SCALE.body, { color: p.text }]}>{label}</Text>
-      <Switch value={value} onValueChange={onChange} />
+      <Switch value={value} onValueChange={onChange} trackColor={{ false: p.cardBorder, true: p.accent }} thumbColor={p.onAccent} />
     </View>
   );
 }

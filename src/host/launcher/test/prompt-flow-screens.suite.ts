@@ -195,6 +195,22 @@ export async function runPromptFlowScreensTests(h: Harness): Promise<void> {
     h.eq(clarificationsFrom(noField.questions, noField.answers), [], 'a question with no Other field takes no typed answer');
   });
 
+  await h.test('flow: a select-one question holds one answer — typing clears its pick, picking clears the typed text; select-many keeps both', () => {
+    const cup: ClarifyQuestion = { id: 'cup', question: 'What size is the cup?', options: ['Small', 'Large'], select: 'one', other: true };
+    const one = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([cup, EXTRAS]));
+    const picked = withAnswer(one, 'cup', pick('Large'));
+    const typed = withAnswer(picked, 'cup', type('a travel mug'));
+    h.eq(typed.answers.cup, { choices: [], other: 'a travel mug', decide: false }, 'typing an answer clears the pick');
+    h.eq(clarificationsFrom(typed.questions, typed.answers), [{ id: 'cup', question: cup.question, choices: [], other: 'a travel mug' }],
+      'only the typed answer is sent');
+    const repicked = withAnswer(typed, 'cup', pick('Small'));
+    h.eq(repicked.answers.cup, { choices: ['Small'], other: '', decide: false }, 'picking clears the typed answer');
+    h.eq(withAnswer(repicked, 'cup', type('  ')).answers.cup?.choices, ['Small'], 'spaces are no answer, so they leave the pick');
+    const both = withAnswer(withAnswer(one, 'extras', pick('Milk')), 'extras', type('cinnamon'));
+    h.eq(clarificationsFrom(both.questions, both.answers), [{ id: 'extras', question: EXTRAS.question, choices: ['Milk'], other: 'cinnamon' }],
+      'on select-many the pick and the typed answer are both sent');
+  });
+
   await h.test('flow: Decide for me clears the picks and the typed answer, and picking or typing clears it again', () => {
     const many = withQuestions(clarifyStep(composedFlow()), acceptClarifyQuestions([EXTRAS]));
     const answered = withAnswer(withAnswer(many, 'extras', pick('Milk')), 'extras', type('cinnamon'));

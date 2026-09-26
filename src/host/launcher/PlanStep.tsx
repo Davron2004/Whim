@@ -12,13 +12,13 @@
  * through the shared Whim Syntax renderer when not being edited.
  */
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import WhimProse from '../ui/whim-prose/WhimProse';
 import { COPY, planHeadline, workingPlanPhrase } from './copy';
 import { BreathingView } from './flow-skeletons';
-import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
 import { WorkingLine } from './flow-working';
 import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import { planBackAction, type FlowNotice, type FlowPlanRow } from './prompt-flow';
@@ -96,6 +96,8 @@ export default function PlanStep({
   // the row's position is the one identity that survives that (`updatePlanRow` uses the same key).
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  // The open row, field and Save/Cancel together: what the shell keeps in view while typing.
+  const editingRow = useRef<View>(null);
 
   /** One decision (`planBackAction`, design D4) for both the header `Back` and system back: mid-edit
    *  it cancels the open row instead of leaving the step. */
@@ -155,6 +157,7 @@ export default function PlanStep({
             return (
               <View
                 key={key}
+                ref={editingRow}
                 style={[styles.row, styles.rowEditing, { backgroundColor: p.card, borderColor: p.accent }]}
               >
                 {row.label.length > 0 && (
@@ -163,10 +166,11 @@ export default function PlanStep({
                 <KeyboardTextInput
                   value={draft}
                   onChangeText={setDraft}
-                  style={[TYPE_SCALE.body, styles.rowInput, { color: p.text }]}
+                  style={[TYPE_SCALE.body, styles.rowInput, { color: p.text, backgroundColor: p.card }]}
                   multiline
                   autoFocus
                   textAlignVertical="top"
+                  revealTarget={editingRow}
                 />
                 <View style={styles.rowActions}>
                   <TouchableOpacity onPress={cancelEditing} hitSlop={10}>
@@ -204,8 +208,9 @@ export default function PlanStep({
 }
 
 const styles = StyleSheet.create({
-  // paddingTop 26: design `Whim Mobile.dc.html:474` — no SPACING counterpart (ruling R9).
-  content: { paddingHorizontal: SPACING.lg, paddingTop: 26, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:474` is `padding:26px 22px 0` — 26 has no SPACING counterpart
+  // (ruling R9); the gap below the footer note is the shell footer's 16, above Build it.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 26 - FLOW_HEADER_GAP, paddingBottom: 0 },
   subhead: { marginTop: SPACING.xs, marginBottom: SPACING.md },
   row: {
     minHeight: PLAN_ROW_MIN_HEIGHT,

@@ -16,13 +16,13 @@
  */
 
 import React from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { FONT_FAMILY, RADIUS, SHELL_COLORS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, clarifyBuildInstead, clarifyHeadline } from './copy';
-import { EditingEyebrow, FlowHeader, PrimaryAction } from './flow-chrome';
+import { EditingEyebrow, FLOW_HEADER_GAP, FlowHeader, PrimaryAction } from './flow-chrome';
 import { ClarifyQuestionsSkeleton } from './flow-skeletons';
 import { WorkingLine } from './flow-working';
-import KeyboardShell from './KeyboardShell';
+import KeyboardShell, { KeyboardTextInput } from './KeyboardShell';
 import {
   OTHER_ANSWER_MAX_CHARS,
   type AnswerChange,
@@ -247,7 +247,7 @@ function AnswerPill({
 function OtherAnswerField({ value, onChangeText }: Readonly<{ value: string; onChangeText: (text: string) => void }>) {
   const p = SHELL_PALETTE;
   return (
-    <TextInput
+    <KeyboardTextInput
       value={value}
       onChangeText={onChangeText}
       placeholder={COPY.clarifyOtherPlaceholder}
@@ -288,8 +288,9 @@ function LimitActions({
 }
 
 const styles = StyleSheet.create({
-  // paddingTop 28: design `Whim Mobile.dc.html:442` — no SPACING counterpart (ruling R9).
-  content: { paddingHorizontal: SPACING.lg, paddingTop: 28, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:442` is `padding:28px 22px 0` — 28 has no SPACING counterpart
+  // (ruling R9); the gap below the helper line is the shell footer's 16, above Continue.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 28 - FLOW_HEADER_GAP, paddingBottom: 0 },
   echo: { marginTop: SPACING.sm },
   reason: { marginTop: SPACING.lg },
   question: { marginTop: SPACING.lg },
