@@ -4,7 +4,7 @@
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
-import { COPY, clarifyBuildInstead } from '../copy';
+import { COPY, LEGAL_COPY, clarifyBuildInstead } from '../copy';
 import { primaryActionLabel, type FlowNotice } from '../prompt-flow';
 import ComposeStep from '../ComposeStep';
 import ClarifyStep from '../ClarifyStep';
@@ -12,7 +12,12 @@ import PlanStep from '../PlanStep';
 import BuildStep from '../BuildStep';
 import DoneStep from '../DoneStep';
 import ServiceNotice from '../ServiceNotice';
+import TermsScreen from '../TermsScreen';
+import ReportSheet from '../ReportSheet';
 import type { InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
+import { reportClientOptions } from '../transport-shared';
+import { testAppInfo } from './client-fixtures';
 import { SPACING } from '../../../sdk/theme';
 import { StyleSheet } from './native-host';
 import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
@@ -60,6 +65,15 @@ function gapBetween(notice: Node, action: Node): number {
   }
   return gap;
 }
+
+/** A control's fill, and the colour its outer edge shows: its border's where it draws one. */
+function fillAndEdge(node: Node): [unknown, unknown] {
+  const style = StyleSheet.flatten(node.props.style) as { backgroundColor?: string; borderColor?: string; borderWidth?: number };
+  return [style.backgroundColor, (style.borderWidth ?? 0) > 0 ? style.borderColor : style.backgroundColor];
+}
+
+/** Lets a sheet's asynchronous first load land. */
+const loaded = () => TestRenderer.act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
 
 /** The card `ServiceNotice` draws. */
 const noticeCard = (tree: Tree): Node => tree.root.findByType(ServiceNotice).find((n) => typeof n.type === 'string');
@@ -117,6 +131,50 @@ export async function runFlowScreensUiTests(h: Harness): Promise<void> {
         h.ok(gap >= SPACING.sm, `${name}: the notice stands ${gap} clear of “${action}”, at least the ${SPACING.sm} between siblings`);
       });
     }
+  });
+
+  await h.test('every primary action that can be taken is filled edge to edge like the terms step’s Accept, with no ring of another colour', async () => {
+    const noop = () => {};
+    let accept: [unknown, unknown] = [undefined, undefined];
+    await rendered(<TermsScreen language="en" onLanguageChange={noop} onAccept={noop} onClose={noop} />, async (tree) => {
+      accept = fillAndEdge(button(tree, LEGAL_COPY.en.termsAccept));
+    });
+    h.ok(accept[0] !== undefined && accept[0] === accept[1], 'the reference: Accept’s edge is its fill');
+    const limit = { reason: 'That needs a camera.', alternative: 'a notes app' };
+    const primaries: [string, React.ReactElement, string][] = [
+      ['compose', <ComposeStep text="A tea timer" editing={false} onChangeText={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('compose', false)],
+      ['clarify', <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{}} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, primaryActionLabel('clarify', false)],
+      ['clarify limit', <ClarifyStep prompt="A tea timer" questions={[]} answers={{}} loading={false} limit={limit} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />, clarifyBuildInstead(limit.alternative)],
+      ['plan', <PlanStep rows={ROWS} loading={false} editing={false} onChangeRow={noop} onBuild={noop} onBack={noop} />, primaryActionLabel('plan', false)],
+      ['done', <DoneStep app={APP} onOpen={noop} onBackToApps={noop} onReport={noop} />, COPY.doneOpen],
+    ];
+    for (const [name, element, label] of primaries) {
+      await rendered(element, async (tree) => {
+        h.eq(fillAndEdge(button(tree, label)), accept, `${name}: “${label}” is filled and edged like Accept`);
+      });
+    }
+  });
+
+  await h.test('a report reason is picked the way a clarify answer is: the accent, fill and edge, with its label on it', async () => {
+    const noop = () => {};
+    const labelColour = (node: Node) => (StyleSheet.flatten(node.find((n) => n.type === 'Text').props.style) as { color?: string }).color;
+    let answer: unknown[] = [];
+    await rendered(
+      <ClarifyStep prompt="A tea timer" questions={[QUESTION]} answers={{ alert: { choices: ['Buzz'], other: '', decide: false } }} loading={false} editing={false} onAnswer={noop} onContinue={noop} onBack={noop} />,
+      async (tree) => {
+        const picked = button(tree, 'Buzz');
+        answer = [...fillAndEdge(picked), labelColour(picked)];
+      },
+    );
+    const access = { activeDescription: async () => 'A tea timer', activeSource: async () => undefined } as unknown as StoreAccess;
+    const options = reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo);
+    await rendered(<ReportSheet app={APP} access={access} options={options} onClose={noop} onUpdateRequired={noop} legalLanguage="en" />, async (tree) => {
+      await loaded();
+      await press(button(tree, COPY.reportReasonBroken));
+      const picked = button(tree, COPY.reportReasonBroken);
+      h.eq([...fillAndEdge(picked), labelColour(picked)], answer, 'the picked reason looks like a picked answer');
+      h.ok(fillAndEdge(button(tree, COPY.reportReasonOther))[0] !== answer[0], 'and an unpicked reason does not');
+    });
   });
 
   await h.test('plan: tapping a row edits it in place; Save commits that row, Cancel commits nothing', async () => {

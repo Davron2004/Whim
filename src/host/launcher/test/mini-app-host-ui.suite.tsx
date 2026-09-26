@@ -143,6 +143,8 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.ok(shown().includes(COPY.appErrorTitle), 'the recovery screen replaces the app');
       h.ok(!shown().includes('SENTINEL'), 'without the raw error text');
       h.ok(webView() == null, 'the failed realm’s WebView is gone');
+      const retry = StyleSheet.flatten(button(tree, COPY.appErrorRetry).props.style) as { backgroundColor?: string; borderColor?: string };
+      h.eq(retry.borderColor, retry.backgroundColor, 'Retry is its primary action, filled edge to edge with no ring of another colour');
       await press(button(tree, COPY.appErrorRetry));
       h.ok(webView() != null && webView() !== first, 'Retry mounts a new WebView');
       h.ok(!shown().includes(COPY.appErrorTitle), 'the recovery screen is gone');

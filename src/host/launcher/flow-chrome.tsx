@@ -15,7 +15,7 @@ import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY, editingEyebrow } from './copy';
 import { primaryActionLabel, type FlowNotice, type FlowStep } from './prompt-flow';
 import ServiceNotice from './ServiceNotice';
-import { SHELL_PALETTE } from './theme';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 
 /** The gated steps, in order — the step indicator's three bars. */
 const INDICATOR_STEPS: readonly FlowStep[] = ['compose', 'clarify', 'plan'];
@@ -80,10 +80,7 @@ export function PrimaryAction({ step, enabled, editing = false, onPress }: Reado
       disabled={!enabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[
-        styles.primary,
-        { backgroundColor: enabled ? SHELL_PALETTE.accent : SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder },
-      ]}
+      style={[styles.primary, primaryButtonColors(enabled)]}
     >
       <Text style={[TYPE_SCALE.bodyEmphatic, { color: enabled ? SHELL_PALETTE.onAccent : SHELL_PALETTE.textMuted }]}>
         {label}

@@ -19,7 +19,7 @@ import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
-import { SHELL_PALETTE } from './theme';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
 import { BreathingView } from './flow-skeletons';
@@ -124,7 +124,7 @@ export default function MiniAppView({
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.launchFailedBody}</Text>
         <Pressable
           accessibilityRole="button"
-          style={[styles.errorAction, { backgroundColor: p.accent, borderColor: p.cardBorder }]}
+          style={[styles.errorAction, primaryButtonColors(true)]}
           onPress={onExit}
         >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.launchFailedBack}</Text>
@@ -150,7 +150,7 @@ export default function MiniAppView({
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.errorBody, { color: p.textMuted }]}>{COPY.appErrorBody}</Text>
         <Pressable
           accessibilityRole="button"
-          style={[styles.errorAction, { backgroundColor: p.accent, borderColor: p.cardBorder }]}
+          style={[styles.errorAction, primaryButtonColors(true)]}
           onPress={retry}
         >
           <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.appErrorRetry}</Text>

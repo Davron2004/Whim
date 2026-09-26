@@ -33,7 +33,7 @@ import {
   type FlowQuestion,
 } from './prompt-flow';
 import { useRetryGate } from './ServiceNotice';
-import { SHELL_PALETTE } from './theme';
+import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { useSystemBack } from './use-system-back';
 
 export interface ClarifyStepProps {
@@ -276,7 +276,7 @@ function LimitActions({
         disabled={!enabled}
         accessibilityRole="button"
         accessibilityLabel={label}
-        style={[styles.buildInstead, { backgroundColor: enabled ? p.accent : p.card, borderColor: p.cardBorder }]}
+        style={[styles.buildInstead, primaryButtonColors(enabled)]}
       >
         <Text style={[TYPE_SCALE.bodyEmphatic, styles.buildInsteadLabel, { color: enabled ? p.onAccent : p.textMuted }]}>{label}</Text>
       </TouchableOpacity>

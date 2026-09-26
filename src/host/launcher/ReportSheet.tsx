@@ -224,7 +224,9 @@ export default function ReportSheet({ app, access, options, onClose, onUpdateReq
                 <TouchableOpacity
                   key={reason}
                   onPress={() => setDraft({ ...draft, reason })}
-                  style={[styles.pill, { borderColor: p.cardBorder, backgroundColor: selected ? p.text : p.bg }]}
+                  // An answer pill, picked the way the clarify step's are (design 2a,
+                  // `Whim Mobile.dc.html:889`): the accent, fill and edge.
+                  style={[styles.pill, { borderColor: selected ? p.accent : p.cardBorder, backgroundColor: selected ? p.accent : p.bg }]}
                 >
                   <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.textMuted }]}>
                     {REASON_LABEL[reason]}
