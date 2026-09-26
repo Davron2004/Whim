@@ -45,6 +45,7 @@ import type { PromptInputs } from '../src/generation/prompts/inputs';
 import {
   ClarifyResponse,
   GenerationEvent,
+  REQUEST_ID_HEADER,
   RewriteResponse,
   type GenerateRequest as GenerateRequestType,
   type RunSummary,
@@ -249,17 +250,37 @@ async function testClarifyEndpoint(): Promise<void> {
 }
 
 /** One clarify call answered with `reply`, read back as a validated `ClarifyResponse`. */
-async function clarifyWith(reply: unknown): Promise<{ status: number; body: ClarifyResponse | undefined; logs: Record<string, unknown>[] }> {
+interface ClarifyRead {
+  status: number;
+  /** The 200 body as sent, before any schema reads it. */
+  wire: unknown;
+  body: ClarifyResponse | undefined;
+  requestId: string | null;
+  /** "clarify limit kept, questions dropped" lines. */
+  logs: Record<string, unknown>[];
+  /** "clarify limit dropped, unusable" lines. */
+  droppedLimits: Record<string, unknown>[];
+}
+
+async function clarifyWith(reply: unknown): Promise<ClarifyRead> {
   const { app } = appWithModel([{ role: 'clarify', deltas: ['```json\n', JSON.stringify(reply), '\n```'], usage: TURN_USAGE }]);
   const capture = captureLogs();
   let res: Response;
   try {
-    res = await post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER);
+    res = await withinDeadline('clarify', post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER));
   } finally {
     capture.stop();
   }
-  const parsed = res.status === 200 ? ClarifyResponse.safeParse(await res.json()) : undefined;
-  return { status: res.status, body: parsed?.success ? parsed.data : undefined, logs: withMessage(capture, 'clarify limit kept, questions dropped') };
+  const wire: unknown = res.status === 200 ? await res.json() : undefined;
+  const parsed = res.status === 200 ? ClarifyResponse.safeParse(wire) : undefined;
+  return {
+    status: res.status,
+    wire,
+    body: parsed?.success ? parsed.data : undefined,
+    requestId: res.headers.get(REQUEST_ID_HEADER),
+    logs: withMessage(capture, 'clarify limit kept, questions dropped'),
+    droppedLimits: withMessage(capture, 'clarify limit dropped, unusable'),
+  };
 }
 
 async function testClarifyLimit(): Promise<void> {
@@ -280,31 +301,44 @@ async function testClarifyLimit(): Promise<void> {
   const noQuestionsKey = await clarifyWith({ limit });
   eq('a limit with no questions key at all is still a limit', noQuestionsKey.body, { questions: [], limit });
 
+  eq('a usable limit logs no dropped limit', [...alone.droppedLimits, ...both.droppedLimits, ...noQuestionsKey.droppedLimits], []);
+
   // The prompt asks for `"limit": null` whenever a mini-app can build the request (beta-1 fix-6).
   // That is no limit, and the raw body carries no `limit` key: the device's reader refuses `null`.
   for (const questions of [[question], []]) {
-    const { app } = appWithModel([{ role: 'clarify', deltas: [JSON.stringify({ limit: null, questions })], usage: TURN_USAGE }]);
-    const res = await post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER);
-    eq(`"limit": null beside ${questions.length} question(s) → 200`, res.status, 200);
+    const read = await clarifyWith({ limit: null, questions });
+    eq(`"limit": null beside ${questions.length} question(s) → 200`, read.status, 200);
     eq(
       `"limit": null beside ${questions.length} question(s): the wire body is the questions alone, with no "limit" key`,
-      JSON.parse(await res.text()) as unknown,
+      read.wire,
       { questions: questions.map((q) => ({ ...q, select: 'one', other: false })) },
     );
+    eq(`"limit": null beside ${questions.length} question(s) is no limit, so nothing is logged as dropped`, read.droppedLimits, []);
   }
 
+  // A limit the model wrote but that is unusable is dropped, and logged by its field lengths after
+  // trimming (null when not a string) with the request id, never its text.
   const malformed = [
-    { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative } },
-    { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) } },
-    { label: 'a missing alternative', limit: { reason: limit.reason } },
-    { label: 'a string instead of an object', limit: 'no weather' },
+    { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative }, lengths: [0, limit.alternative.length] },
+    { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) }, lengths: [limit.reason.length, 201] },
+    { label: 'a missing alternative', limit: { reason: limit.reason }, lengths: [limit.reason.length, null] },
+    { label: 'a string instead of an object', limit: 'no weather', lengths: [null, null] },
   ];
   for (const entry of malformed) {
     const read = await clarifyWith({ questions: [question], limit: entry.limit });
     eq(`${entry.label}: the reply is read as its questions, with no limit`, read.body, { questions: [{ ...question, select: 'one', other: false }] });
+    check(`${entry.label}: setup: the response names its request id`, read.requestId !== null);
+    eq(
+      `${entry.label}: the dropped limit is logged once, at info, with the request id and its field lengths`,
+      read.droppedLimits.map((r) => [r.severity, r.requestId, r.reasonLength, r.alternativeLength]),
+      [['INFO', read.requestId, ...entry.lengths]],
+    );
+    const logged = JSON.stringify(read.droppedLimits);
+    check(`${entry.label}: the log line carries no limit text`, !logged.includes('weather') && !logged.includes('checklist') && !logged.includes('xxxxxxxx'), logged);
   }
   const malformedAlone = await clarifyWith({ limit: { reason: '', alternative: '' } });
   eq('a malformed limit with no questions is an unusable reply → 502, as without a limit', malformedAlone.status, 502);
+  eq('a malformed limit with no questions is still logged as dropped', malformedAlone.droppedLimits.map((r) => [r.reasonLength, r.alternativeLength]), [[0, 0]]);
 
   const boundary = await clarifyWith({ questions: [], limit: { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) } });
   eq('200 characters after trimming is still a limit', boundary.body?.limit, { reason: 'r'.repeat(200), alternative: 'a'.repeat(200) });
