@@ -61,17 +61,16 @@ export function errorForLevel(body: ApiError, clientLevel: number, registry?: Wi
 
 **Call-site rule.** Any producer of an event type or error code whose entry is above level 1 MUST send it through
 `eventForLevel`/`errorForLevel` with `c.get('protocolLevel')`. Everything in beta-1 is level 1 (`queued`, `restart`,
-the `limit` arm, `select`/`other`, the new `Clarification`, `queue_timeout`), so no beta-1 call site is required to;
+the `limit` arm, `select`/`other`, the new `Clarification`), so no beta-1 call site is required to;
 routing a level-1 message through the helper returns it unchanged. A NEW `/v1` error code must be added to
 `ERROR_LEVELS` (`RouteErrorCode` for route-local ones) AND the device's `KNOWN_ERROR_CODES`; the device reads an
 unregistered code as unknown → `fail` (lockstep: `wire-future-frames.suite.ts`). A unary success-body FIELD above
 level 1 has no helper: its route adapts it. Raising the level: bump `PROTOCOL_LEVEL` in the contract and in
 `src/host/launcher/wire-headers.ts` together (`header-lockstep.suite.ts`).
 
-**Failure code.** `'queue_timeout'` is in `TERMINAL_FAILURE_CODES` (`generation/failure-codes.ts`). Corrected after chain-2: a waiter has no ledger row, because the daily unit IS the row (`usage-store.ts#admit`), so the ledger never stores it; it labels the terminal log line.
-No reason constant exists yet (no consumer): the `failure.reason` for it is the `server_busy` capacity hint,
-`serverBusyRefusal().body.hint` = "Whim is busy right now. Please try again in a few minutes." (same pattern as
-`CREDIT_EXHAUSTED_REASON` reusing the `budget_exhausted` hint).
+**Timed-out waiter.** No failure code (fix-1 removed `queue_timeout`): a waiter has no ledger row, because the
+daily unit IS the row (`usage-store.ts#admit`). Its terminal `failure.reason` is the `server_busy` hint,
+`serverBusyRefusal().body.hint` = "Whim is busy right now. Please try again in a few minutes."
 
 **Clarify interim (chain 3 replaces).** `shapeClarify` keeps a model's `select: 'many'` / `other: true`, else
 `'one'` / `false`; stub questions are `'one'`/`false`; `limit` is never produced. Prompt turns render
@@ -110,7 +109,8 @@ error body: `httpErrorFrom`), and the generate open on either transport (`httpEr
 2. `fail` → `errorReason`: the notice as the failure reason (`server_refused`), else `GENERIC_STREAM_ERROR` (`unexpected_error`); the report sheet shows its generic failure notice.
 3. `queued`/`restart` → accepted by the guards; `journalStreamEvent` treats them as liveness only (moves `lastFrameAt`); no line UI; `restart` voids nothing.
 4. `limit` → accepted by `isClarifyResponse`, then ignored: zero questions → the plan step.
-5. `select`/`other` → required by the guard, ignored by ClarifyStep (single pick); `clarificationsFrom` sends `choices: [picked]`, never `other`/`decide`.
+5. `select`/`other` → ignored by ClarifyStep (single pick); `clarificationsFrom` sends `choices: [picked]`, never `other`/`decide`.
+   Since fix-1 M2 the guard reads a missing `select`/`other` as `'one'`/`false`; a wrongly typed one still fails it.
 6. A skipped frame is neither an event nor a keepalive: it moves no liveness clock.
 
 ## Invariants and error surface

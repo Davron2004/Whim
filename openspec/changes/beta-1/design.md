@@ -132,8 +132,8 @@ Android already sends base names and symbolication works from them. This makes i
   activity.
 - **Leaving the line:** a slot → the normal pipeline starts. Line full (`WHIM_QUEUE_MAX`, default 50)
   → pre-stream `429 server_busy`. Waited `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → terminal
-  `failure` with the new code `queue_timeout`. Client abort or drain → the waiter leaves, holds
-  nothing, spends nothing.
+  `failure` whose reason is the `server_busy` hint (a waiter has no ledger row, so no failure code).
+  Client abort or drain → the waiter leaves, holds nothing, spends nothing.
 - `release()` stays idempotent and hands the slot to the head of the line.
 - **Caps:** a load test (`deploy/loadtest/run.sh drive`) on `e2-standard-2` picks them (the highest
   pair with p95 CPU < 70 % and no failed runs), set in `deploy/profiles/standard.env`, with the
