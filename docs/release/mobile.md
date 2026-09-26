@@ -157,9 +157,13 @@ commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives
    cd ~/.cache/whim-upgrade/382511 && npm ci && npm run build
    (cd android && ./gradlew :app:assembleOffline -PwhimBuildNumber=382511)
    cp android/app/build/outputs/apk/offline/app-offline.apk ~/.cache/whim-upgrade/from.apk
+   mkdir -p vendor && ln -s <repo>/vendor/bundle vendor/bundle
    (cd ios && bundle exec pod install && xcodebuild -workspace Whim.xcworkspace -scheme Whim \
      -configuration Release -sdk iphonesimulator -derivedDataPath build/sim WHIM_BUILD_NUMBER=382511 build)
    ```
+   A fresh worktree has no `vendor/bundle` (gems are never committed), so `bundle exec pod install`
+   fails there until it borrows the repo's gems. The symlink is safe while both checkouts have the
+   same `Gemfile.lock`; if they differ, run `bundle install` in the worktree instead.
    The simulator app is `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app`. Android
    takes the `offline` build: it's debug-signed (so the upgrade installs) and debuggable (so the
    script can read the app's store with `run-as`).
