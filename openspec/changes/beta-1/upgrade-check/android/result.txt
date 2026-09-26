@@ -1,8 +1,8 @@
-upgrade check: android, 20260926-051801
+upgrade check: android, 20260926-082902
 server: http://127.0.0.1:8790 {"ok":true,"service":"whim-server"}
-device: emulator-5580 (AVD Whim_Upgrade, wiped)
+device: emulator-5582 (AVD Whim_Upgrade, wiped)
 from: /Users/davrondjabborov/.cache/whim-upgrade/from.apk, build 382511, sha256 9acf325c3771931fd5a8495438c38d833938f96a7a7dbe1880f98b14469c3622
 seed: scripts/release/upgrade-check/seed.yaml
-to: /Users/davrondjabborov/Work/other/Whim/android/app/build/outputs/apk/offline/app-offline.apk, build 386398, sha256 4e504346f46ad076211310b0b15a83bf8385329f1d059298ad43068e0eac0d86
+to: /Users/davrondjabborov/Work/other/Whim/android/app/build/outputs/apk/offline/app-offline.apk, build 386656, sha256 8da20c02488e99cd5c438633f08000b7e5293da76a0ddca5d1df889ec04b7f99
 upgrade-diff: PASS: 4 apps, 5 versions, 2 saved values, the consent grant and the device id are unchanged
 RESULT: PASS

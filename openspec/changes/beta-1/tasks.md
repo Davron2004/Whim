@@ -68,7 +68,7 @@
 - [x] 10.2 Load-test `e2-standard-2` (`deploy/loadtest/run.sh drive`). Put the highest caps with p95 CPU < 70 % and no failed runs into the `server/src/config.ts` defaults (R8; the standard profile sets no server limit), and record the run in `docs/deploy.md`.
 - [x] 10.3 Flowbench before and after 3.1 (visible set plus weather and roommate-ping cases), recorded in `progress.md`.
 - [ ] 10.4 iOS and Android builds → a newly created simulator and a fresh emulator against a local server at the staging tip: every tier-0 scenario, the line (cap + 2), the `limit` screen, and a fallback smoke (a dev-only injected future frame).
-- [ ] 10.5 Upgrade check 382511 → beta-1 on both platforms, with evidence recorded.
+- [x] 10.5 Upgrade check 382511 → beta-1 on both platforms, with evidence recorded.
 - [ ] 10.6 After merge: server deploy from `../Whim-deploy`, smoke, one real generation, and a line check. Confirm 381237/382511 now get 426. Roll back by `--tag` on failure.
 - [ ] 10.7 Upload to TestFlight `Public beta` and the Play closed track. Owner's demo-phone check (real-device age signals, keyboard, a generation).
 - [ ] 10.8 Raise `WHIM_MIN_BUILD_IOS`/`_ANDROID` to beta-1's builds (D17), and close the issues this change fixes, with evidence.
