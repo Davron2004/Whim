@@ -24,6 +24,7 @@ import { auditApp } from './lib/privacy-audit';
 import { buildAssociationFiles, UPLOAD_FINGERPRINT_PATH } from './lib/association-files';
 import { ensureReleaseTag, realGitRunner } from './lib/release-tag';
 import { checkDisclosureRelease } from './lib/disclosure-check';
+import { buildRecord, diffRecords, readCapture, seedFindings, tilesOnGrid, type UpgradeRecord } from './lib/upgrade-record';
 import {
   fetchSourceMap,
   makeScratchDir,
@@ -289,6 +290,52 @@ function runSymbolicate(args: string[]): number {
   }
 }
 
+function runUpgradeRecord(args: string[]): number {
+  const captureDir = readFlag(args, '--capture');
+  const out = readFlag(args, '--out');
+  if (!captureDir || (hasFlag(args, '--out') && !out)) {
+    process.stderr.write('upgrade-record: usage: upgrade-record --capture <dir> [--out <file> | --list-tiles]\n');
+    return 2;
+  }
+  try {
+    const capture = readCapture(captureDir);
+    if (hasFlag(args, '--list-tiles')) {
+      for (const app of tilesOnGrid(capture.store, capture.grid)) process.stdout.write(`${app.id}\t${app.name}\n`);
+      return 0;
+    }
+    const text = `${JSON.stringify(buildRecord(capture), null, 2)}\n`;
+    if (out) fs.writeFileSync(out, text, 'utf8');
+    else process.stdout.write(text);
+    return 0;
+  } catch (err) {
+    return reportError('upgrade-record', err);
+  }
+}
+
+function runUpgradeDiff(args: string[]): number {
+  const files = args.filter((a) => !a.startsWith('--'));
+  if (files.length !== 2) {
+    process.stderr.write('upgrade-diff: usage: upgrade-diff <seed-record.json> <after-record.json>\n');
+    return 2;
+  }
+  try {
+    const [before, after] = files.map((file) => JSON.parse(fs.readFileSync(file, 'utf8')) as UpgradeRecord);
+    const lines = [...seedFindings(before), ...diffRecords(before, after)];
+    for (const line of lines) process.stdout.write(`${line}\n`);
+    if (lines.length > 0) {
+      process.stdout.write(`upgrade-diff: FAIL (${lines.length} finding${lines.length === 1 ? '' : 's'})\n`);
+      return 1;
+    }
+    const versions = before.tiles.reduce((sum, tile) => sum + (tile.versions ?? 0), 0);
+    process.stdout.write(
+      `upgrade-diff: PASS: ${before.tiles.length} apps, ${versions} versions, ${Object.keys(before.savedData).length} saved values, the consent grant and the device id are unchanged\n`,
+    );
+    return 0;
+  } catch (err) {
+    return reportError('upgrade-diff', err);
+  }
+}
+
 export const COMMANDS: Record<string, CliCommand> = {
   'build-number': {
     summary: 'build-number [--at <iso>] — prints the release build number for an instant (default: now).',
@@ -337,6 +384,14 @@ export const COMMANDS: Record<string, CliCommand> = {
   symbolicate: {
     summary: 'symbolicate ios|android <version> <build> [--maps-dir <dir>] < stack — prints the stack with source frames from that build\'s map (scripts/symbolicate.mjs).',
     run: runSymbolicate,
+  },
+  'upgrade-record': {
+    summary: 'upgrade-record --capture <dir> [--out <file> | --list-tiles] — turns an upgrade-check capture into its record (or lists the apps with a tile on the grid).',
+    run: runUpgradeRecord,
+  },
+  'upgrade-diff': {
+    summary: 'upgrade-diff <seed-record.json> <after-record.json> — the upgrade check verdict: every gap in the seed and every difference after the upgrade.',
+    run: runUpgradeDiff,
   },
 };
 

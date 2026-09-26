@@ -11,6 +11,7 @@ import { run as runDomainLockstep } from './domain-lockstep.suite';
 import { run as runNativeNetworkDeny } from './native-network-deny.suite';
 import { run as runDisclosure } from './disclosure.suite';
 import { run as runSourceMaps } from './source-maps.suite';
+import { run as runUpgradeCheck } from './upgrade-check.suite';
 
 export async function runReleaseSuites(): Promise<void> {
   await runNativeConfig();
@@ -24,4 +25,5 @@ export async function runReleaseSuites(): Promise<void> {
   await runNativeNetworkDeny();
   await runDisclosure();
   await runSourceMaps();
+  await runUpgradeCheck();
 }
