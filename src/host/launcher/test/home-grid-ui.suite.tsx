@@ -15,7 +15,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { STATUS_COLORS } from '../../../sdk/theme';
 import { resetNativeStorage } from './native-storage';
 import { StyleSheet } from './native-host';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Style = Record<string, unknown>;
@@ -72,6 +72,12 @@ async function withHome(pending: PendingBuildRecord[], body: (tree: Tree, calls:
   try { await body(tree, calls); } finally { await unmountScreen(tree); }
 }
 
+const touchable = (n: TestRenderer.ReactTestInstance) => ['Pressable', 'TouchableOpacity'].includes(String(n.type));
+
+/** Every touchable under `root` that holds no other touchable, in render order. */
+const innermostTouchables = (root: TestRenderer.ReactTestInstance) =>
+  root.findAll((n) => touchable(n) && n.findAll((m) => m !== n && touchable(m)).length === 0);
+
 /** The grid cell (tap + long-press target) whose tile is labelled `name`. */
 function cell(tree: Tree, name: string): TestRenderer.ReactTestInstance {
   const cells = tree.root.findAll((n) => n.type === 'TouchableOpacity' && typeof n.props.onLongPress === 'function' && textOf(n).includes(name));
@@ -103,6 +109,57 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(calls.dismiss.map((r) => (r as PendingBuildRecord).id), ['ghost-failed'], 'Dismiss dismisses that attempt');
       h.eq(calls.cancel.length, 1, 'and never cancels');
     });
+  });
+
+  await h.test('home grid: to VoiceOver the tile, fork and ghost sheets are rows of labelled buttons, activating a row runs that row rather than closing the sheet, and a tap on the dim still closes it', async () => {
+    const records = pendingRecords();
+    const ran: string[] = [];
+    const noop = () => {};
+    const tree = await renderScreen(
+      <HomeScreen
+        apps={[APP]}
+        pending={records}
+        onOpen={noop} onDelete={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop}
+        onFork={(a, opts) => { ran.push(`fork ${a.id}, shareData ${opts.shareData}`); }}
+        onHistory={(a) => { ran.push(`history ${a.id}`); }}
+        onCancelPending={(r) => { ran.push(`cancel ${r.id}`); }}
+        onDismissPending={(r) => { ran.push(`dismiss ${r.id}`); }}
+      />,
+    );
+    try {
+      const sheets = () => tree.root.findAll((n) => String(n.type) === 'Modal');
+      const controls = () => innermostTouchables(sheets()[0]);
+      const row = (label: string) => controls().find((n) => textOf(n) === label)!;
+      const readAsButtons = (sheet: string, labels: string[]) => {
+        h.eq(controls().map(textOf), ['', ...labels], `${sheet}: the dim first, behind the card, with no words of its own, then the card's rows`);
+        for (const label of labels) {
+          h.ok(screenReaderElement(row(label)) === row(label), `${sheet}: "${label}" is an element of its own, not read as part of one around it`);
+          h.eq([row(label).props.accessibilityRole, row(label).props.accessibilityLabel], ['button', label], `${sheet}: "${label}" is announced as a button, in its own words`);
+        }
+      };
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      readAsButtons('the tile sheet', [COPY.actionOpen, COPY.actionFork, COPY.actionHistory, COPY.actionPromptAgain, COPY.actionAppLink, COPY.actionDelete, COPY.actionCancelBuild, COPY.cancel]);
+      await activate(row(COPY.actionHistory));
+      h.eq([ran, sheets().length], [[`history ${APP.id}`], 0], 'activating History opens History and closes the sheet');
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      await activate(row(COPY.actionFork));
+      readAsButtons('the fork question', [COPY.forkShareData, COPY.forkStartFresh, COPY.cancel]);
+      await activate(row(COPY.forkStartFresh));
+      h.eq(ran.slice(1), [`fork ${APP.id}, shareData false`], 'activating Fork asks the fork question, and activating Start fresh forks without the data');
+
+      await TestRenderer.act(async () => cell(tree, 'A dice roller').props.onLongPress());
+      readAsButtons('the ghost sheet', [COPY.actionDismissBuild, COPY.cancel]);
+      await activate(row(COPY.actionDismissBuild));
+      h.eq(ran.slice(2), ['dismiss ghost-failed'], 'activating Dismiss dismisses that attempt');
+
+      await TestRenderer.act(async () => cell(tree, APP.name).props.onLongPress());
+      await press(row(''));
+      h.eq([ran.length, sheets().length], [3, 0], 'a tap on the dim closes the sheet and runs nothing');
+    } finally {
+      await unmountScreen(tree);
+    }
   });
 
   await h.test('home grid: a failed rebuild’s pill on the installed tile opens the attempt; a building one is a passive badge', async () => {

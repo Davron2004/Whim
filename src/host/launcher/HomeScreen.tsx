@@ -222,62 +222,50 @@ export default function HomeScreen({
       </TouchableOpacity>
 
       {/* Action sheet (long-press): Open / Fork / History / Prompt again / Delete. */}
-      <Modal visible={selected != null} transparent animationType="fade" onRequestClose={() => setSelected(null)}>
-        <Pressable style={styles.sheetScrim} onPress={() => setSelected(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
-            <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
-            <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
-            <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
-            <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
-            <SheetRow label={COPY.actionAppLink} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setAppLinkTarget(a); }} />
-            <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
-            {selectedRebuild && (
-              <GhostActionRow
-                rec={selectedRebuild}
-                onCancelPending={onCancelPending}
-                onDismissPending={onDismissPending}
-                onDone={() => setSelected(null)}
-              />
-            )}
-            <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <ActionSheet visible={selected != null} onClose={() => setSelected(null)}>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selected?.name}</Text>
+        <SheetRow label={COPY.actionOpen} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onOpen(a); }} />
+        <SheetRow label={selectedBusy === 'fork' ? COPY.actionForkBusy : COPY.actionFork} color={p.accent} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => { const a = selected!; setSelected(null); setForkTarget(a); }} />
+        <SheetRow label={COPY.actionHistory} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onHistory(a); }} />
+        <SheetRow label={COPY.actionPromptAgain} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); onPromptAgain(a); }} />
+        <SheetRow label={COPY.actionAppLink} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = selected!; setSelected(null); setAppLinkTarget(a); }} />
+        <SheetRow label={selectedBusy === 'delete' ? COPY.actionDeleteBusy : COPY.actionDelete} color={p.danger} borderColor={p.cardBorder} disabled={selectedBusy != null} onPress={() => confirmDelete(selected!)} />
+        {selectedRebuild && (
+          <GhostActionRow
+            rec={selectedRebuild}
+            onCancelPending={onCancelPending}
+            onDismissPending={onDismissPending}
+            onDone={() => setSelected(null)}
+          />
+        )}
+        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelected(null)} />
+      </ActionSheet>
 
       {/* Fork question sheet (design D4): asked only for an explicit Fork tap, never for rewind
           continuations, which thread shareData: true straight into access.fork. */}
-      <Modal visible={forkTarget != null} transparent animationType="fade" onRequestClose={() => setForkTarget(null)}>
-        <Pressable style={styles.sheetScrim} onPress={() => setForkTarget(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
-            <SheetRow label={COPY.forkShareData} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: true }); }} />
-            <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: false }); }} />
-            <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <ActionSheet visible={forkTarget != null} onClose={() => setForkTarget(null)}>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{forkTarget?.name}</Text>
+        <SheetRow label={COPY.forkShareData} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: true }); }} />
+        <SheetRow label={COPY.forkStartFresh} color={p.accent} borderColor={p.cardBorder} onPress={() => { const a = forkTarget!; setForkTarget(null); onFork(a, { shareData: false }); }} />
+        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setForkTarget(null)} />
+      </ActionSheet>
 
       {/* Ghost tile's own long-press sheet (spec "Long-press on a ghost tile offers Cancel or
           Dismiss, never both"): a ghost has no installed-app rows (Open/Fork/History/Prompt
           again/Delete don't apply — nothing is installed yet), just the one state-appropriate
           quick action plus the sheet's own close row. */}
-      <Modal visible={selectedGhost != null} transparent animationType="fade" onRequestClose={() => setSelectedGhost(null)}>
-        <Pressable style={styles.sheetScrim} onPress={() => setSelectedGhost(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selectedGhost?.workingTitle}</Text>
-            {selectedGhost && (
-              <GhostActionRow
-                rec={selectedGhost}
-                onCancelPending={onCancelPending}
-                onDismissPending={onDismissPending}
-                onDone={() => setSelectedGhost(null)}
-              />
-            )}
-            <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelectedGhost(null)} />
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <ActionSheet visible={selectedGhost != null} onClose={() => setSelectedGhost(null)}>
+        <Text style={[TYPE_SCALE.bodyEmphatic, styles.sheetTitle, { color: p.textMuted }]} numberOfLines={1}>{selectedGhost?.workingTitle}</Text>
+        {selectedGhost && (
+          <GhostActionRow
+            rec={selectedGhost}
+            onCancelPending={onCancelPending}
+            onDismissPending={onDismissPending}
+            onDone={() => setSelectedGhost(null)}
+          />
+        )}
+        <SheetRow label={COPY.cancel} color={p.textMuted} borderColor={p.cardBorder} onPress={() => setSelectedGhost(null)} />
+      </ActionSheet>
 
       <AppLinkSheet app={appLinkTarget} onClose={() => setAppLinkTarget(null)} />
     </View>
@@ -347,6 +335,21 @@ function GhostActionRow({
   );
 }
 
+/** A long-press sheet: its rows on a card at the bottom, over a dim that closes it on a tap, as
+ *  system back does. The dim is a SIBLING behind the card, never its parent: a touchable is one
+ *  accessibility element, so with the card inside it iOS read the whole sheet as one element with a
+ *  joined label (#135) and a VoiceOver double-tap only closed it (`SheetModal.tsx`, `Orb.tsx`). */
+function ActionSheet({ visible, onClose, children }: Readonly<{ visible: boolean; onClose: () => void; children: React.ReactNode }>) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.sheetFrame}>
+        <Pressable style={styles.sheetScrim} onPress={onClose} accessibilityRole="none" />
+        <View style={[styles.sheet, { backgroundColor: SHELL_PALETTE.card }]}>{children}</View>
+      </View>
+    </Modal>
+  );
+}
+
 /** `disabled` is the row's wait affordance: an operation is already running for this app, so the
  *  row neither fires nor reads as tappable. Dimming is opacity-only — `shadow*` props are
  *  iOS-only, so a raised/flattened treatment would be invisible on Android. */
@@ -354,6 +357,8 @@ function SheetRow({ label, onPress, color, borderColor, disabled }: Readonly<{ l
   return (
     <TouchableOpacity
       style={[styles.sheetRow, { borderTopColor: borderColor }, disabled ? styles.sheetRowDisabled : null]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       accessibilityState={{ disabled: disabled === true }}
       disabled={disabled}
       onPress={onPress}
@@ -418,7 +423,9 @@ const styles = StyleSheet.create({
   composerPlusIcon: { width: 14, height: 14 },
   composerPlusBarH: { position: 'absolute', top: 6, left: 0, width: 14, height: 2 },
   composerPlusBarV: { position: 'absolute', top: 0, left: 6, width: 2, height: 14 },
-  sheetScrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  sheetFrame: { flex: 1, justifyContent: 'flex-end' },
+  // Its insets define it, so it spans the whole frame behind the card.
+  sheetScrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, paddingTop: SPACING.xs, paddingBottom: SPACING.xl },
   sheetTitle: { textAlign: 'center', paddingVertical: SPACING.sm },
   sheetRow: { paddingVertical: SPACING.md, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },

@@ -136,6 +136,12 @@ interface PlacedNode {
   readonly inScrollView: boolean;
 }
 
+/** A node's vertical extent from the `bounds` of a `maestro hierarchy` dump ("[left,top][right,bottom]"). */
+function verticalBounds(node: DumpNode): { top: number; bottom: number } | undefined {
+  const match = /^\[\d+,(\d+)\]\[\d+,(\d+)\]$/.exec(String(node.attributes?.bounds ?? ''));
+  return match ? { top: Number(match[1]), bottom: Number(match[2]) } : undefined;
+}
+
 /** Every node of an Android `maestro hierarchy` dump, with where it sits. */
 function placeNodes(root: unknown): PlacedNode[] {
   const out: PlacedNode[] = [];
@@ -493,7 +499,7 @@ async function runCases(): Promise<void> {
     nodeAssert.deepStrictEqual(misses, []);
   });
 
-  await test("flows: on Android's keyboard, which has a Back key of its own, the seed drops the keyboard with a plain label on screen and waits that key out before tapping Back", () => {
+  await test("flows: on Android's keyboard, which has a Back key of its own, the seed drops the keyboard with a plain label above it and waits that key out before tapping Back", () => {
     const seed = fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8');
     const steps =
       /- inputText: \$\{SERVER_URL\}\n- tapOn: "((?:[^"\\]|\\.)*)"\n- extendedWaitUntil:\n +notVisible:\n +id: "([^"]+)"\n +timeout: \d+\n- tapOn: "((?:[^"\\]|\\.)*)"/.exec(seed);
@@ -503,8 +509,13 @@ async function runCases(): Promise<void> {
     const describe = (entry: PlacedNode) => JSON.stringify({ ...entry, node: entry.node.attributes });
     const drops = placed.filter((entry) => labelMatches(entry.node, drop));
     nodeAssert.ok(drops.length > 0, `${drop} finds nothing on the screen the keyboard leaves`);
+    // The keyboard's top: its highest key, a pressable node outside the app's window (the status bar has none).
+    const keyboardTop = Math.min(...placed.filter((entry) => !entry.inApp && entry.pressable).map((entry) => verticalBounds(entry.node)?.top ?? Infinity));
+    nodeAssert.ok(Number.isFinite(keyboardTop), 'the dump shows the keyboard');
     for (const entry of drops) {
       nodeAssert.ok(entry.inApp && entry.inScrollView && !entry.pressable, `${drop} finds more than a plain label in the app's ScrollView: ${describe(entry)}`);
+      const bounds = verticalBounds(entry.node);
+      nodeAssert.ok(bounds !== undefined && bounds.bottom <= keyboardTop, `${drop} finds a label that does not end above the keyboard's top (y=${keyboardTop}), so the tap would land on a key: ${describe(entry)}`);
     }
     const backs = placed.filter((entry) => labelMatches(entry.node, back));
     nodeAssert.ok(backs.some((entry) => entry.inApp && entry.pressable), `${back} finds the header's back button`);

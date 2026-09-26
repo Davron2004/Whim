@@ -22,7 +22,7 @@ import { errorDetailsEnabled } from '../error-details';
 import { RELEASE, TERMS_VERSION } from '../release-config';
 import { saveServerUrl } from '../server-address';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
-import { button, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 import { composeAndContinue, json, waitFor, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Alert } from './native-host';
 import { testAppInfo } from './client-fixtures';
@@ -81,7 +81,7 @@ async function openMakeNewId(tree: Tree) {
   if (Alert.shown.length !== alerts) throw new Error('"Make a new ID" raised a system alert');
   const sheet = tree.root.find((node) => String(node.type) === 'Modal');
   const control = (label: string) => sheet.find((node) => String(node.type) === 'TouchableOpacity' && textOf(node) === label);
-  return { text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
+  return { modal: sheet, text: textOf(sheet), cancel: control(COPY.cancel), confirm: control(COPY.settingsDeviceIdReset) };
 }
 
 const flatStyle = (node: TestRenderer.ReactTestInstance) => Object.assign({}, ...[node.props.style].flat(Infinity)) as { height?: number; backgroundColor?: string };
@@ -173,6 +173,26 @@ export async function runPrivacySettingsUiTests(h: Harness): Promise<void> {
       h.eq(getDeviceId(kv), before, 'the stored ID is unchanged');
       h.eq(shownDeviceId(tree), before, 'and Settings shows the same ID');
       h.eq(tree.root.findAll((node) => String(node.type) === 'Modal').length, 0, 'and the sheet is gone');
+    });
+  });
+
+  await h.test('phone ID: to VoiceOver the confirm step is two labelled buttons, activating "Make a new ID" makes one rather than cancelling, and a tap on the dim still cancels', async () => {
+    await withLauncher({ server: clarifyServer }, async ({ tree, kv }) => {
+      await openSettings(tree);
+      const before = shownDeviceId(tree);
+      let sheet = await openMakeNewId(tree);
+      for (const [label, control] of [[COPY.cancel, sheet.cancel], [COPY.settingsDeviceIdReset, sheet.confirm]] as const) {
+        h.ok(screenReaderElement(control) === control, `"${label}" is an element of its own, not read as part of one around it`);
+        h.eq([control.props.accessibilityRole, control.props.accessibilityLabel], ['button', label], `"${label}" is announced as a button, in its own words`);
+      }
+      await activate(sheet.confirm);
+      const made = shownDeviceId(tree);
+      h.ok(made !== before && getDeviceId(kv) === made, 'activating "Make a new ID" makes and stores a new ID');
+      sheet = await openMakeNewId(tree);
+      const dim = sheet.modal.findAll((node) => ['Pressable', 'TouchableOpacity'].includes(String(node.type)) && textOf(node) === '');
+      h.eq(dim.length, 1, 'behind the card, the dim is one touchable with no words of its own');
+      await press(dim[0]);
+      h.eq([tree.root.findAll((node) => String(node.type) === 'Modal').length, getDeviceId(kv)], [0, made], 'a tap on the dim closes the sheet and keeps the ID');
     });
   });
 

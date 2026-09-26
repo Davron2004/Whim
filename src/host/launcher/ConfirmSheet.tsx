@@ -7,9 +7,13 @@
  * A bottom sheet over a dim: the title, the body, whatever the caller adds beneath the body, then
  * `Cancel` as the large button and the consequential action as plain text under it. A tap on the
  * dim, and system back, cancel.
+ *
+ * The dim is a SIBLING behind the card, never its parent: a touchable is one accessibility element,
+ * so with the card inside it iOS read the whole sheet as one element and a VoiceOver double-tap ran
+ * the dim's Cancel. Each action is its own labelled button (`SheetModal.tsx`, `Orb.tsx`).
  */
 import React from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 import { COPY } from './copy';
 import { SHELL_PALETTE } from './theme';
@@ -34,39 +38,46 @@ export interface ConfirmSheetProps {
   children?: React.ReactNode;
 }
 
+/** The consequential action's words: its busy label while it runs. */
+const actionLabel = (confirm: ConfirmSheetContent, busy: boolean) => (busy ? (confirm.busyLabel ?? confirm.confirmLabel) : confirm.confirmLabel);
+
 export default function ConfirmSheet({ confirm, busy = false, onCancel, onConfirm, children }: Readonly<ConfirmSheetProps>) {
   const p = SHELL_PALETTE;
   return (
     <Modal visible={confirm != null} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.scrim} onPress={onCancel}>
-        <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
+      <View style={styles.frame}>
+        <Pressable style={styles.scrim} onPress={onCancel} accessibilityRole="none" />
+        <View style={[styles.sheet, { backgroundColor: p.card }]}>
           {confirm && (
             <>
               <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{confirm.title}</Text>
               <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{confirm.body}</Text>
               {children}
-              <TouchableOpacity onPress={onCancel} accessibilityRole="button" style={[styles.safe, { backgroundColor: p.text }]}>
+              <TouchableOpacity onPress={onCancel} accessibilityRole="button" accessibilityLabel={COPY.cancel} style={[styles.safe, { backgroundColor: p.text }]}>
                 <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.cancel}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={onConfirm}
                 disabled={busy}
                 accessibilityRole="button"
+                accessibilityLabel={actionLabel(confirm, busy)}
                 accessibilityState={{ disabled: busy, busy }}
                 style={[styles.consequential, busy ? styles.consequentialBusy : null]}
               >
-                <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{busy ? (confirm.busyLabel ?? confirm.confirmLabel) : confirm.confirmLabel}</Text>
+                <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{actionLabel(confirm, busy)}</Text>
               </TouchableOpacity>
             </>
           )}
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, backgroundColor: 'rgba(24,22,20,0.5)', justifyContent: 'flex-end' },
+  frame: { flex: 1, justifyContent: 'flex-end' },
+  // Its insets define it, so it spans the whole frame behind the card.
+  scrim: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(24,22,20,0.5)' },
   sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 24 },
   safe: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
   consequential: { height: 46, alignItems: 'center', justifyContent: 'center' },

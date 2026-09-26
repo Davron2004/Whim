@@ -50,3 +50,20 @@ The launcher SHALL format counts inside English copy with an explicit English lo
 #### Scenario: French phone
 - **WHEN** the phone's locale is fr-CA and a run signal shows 1204 characters
 - **THEN** the copy reads "1,204 characters"
+
+## MODIFIED Requirements
+
+### Requirement: History entry point in the app action sheet
+The app long-press action sheet SHALL include a History action alongside Open/Fork/Delete, opening the app's full-screen history surface. The history screen SHALL follow the launcher's full-screen sibling pattern: its own back binding (its Back control and hardware back) returning to where it was opened from, which is Home when opened from the home grid and the running app, reopened at its current version, when opened from that app's orb, falling back to Home when that app cannot be reopened; theme colors via the shell palette; and all strings via the centralized copy table (product-verbs guard applies).
+
+#### Scenario: Opening history
+- **WHEN** the user long-presses an app tile and chooses History
+- **THEN** the app's history screen opens full-screen, and hardware back returns to Home
+
+#### Scenario: Opened from the orb
+- **WHEN** the user opens History from a running app's orb and goes back
+- **THEN** that app opens again, not Home
+
+#### Scenario: The app cannot be reopened
+- **WHEN** the user goes back from History opened over a running app and that app fails to open
+- **THEN** the failure is shown and the user lands on Home, not on History
