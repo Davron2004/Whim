@@ -1093,8 +1093,12 @@ const HEALTH_COMMIT = '0123456789abcdef0123456789abcdef01234567';
 /** The default-configuration `/healthz` body of an image built at HEALTH_COMMIT; `smokeTests` checks
  *  it against the real server's. */
 const DEFAULT_HEALTH = `{"ok":true,"service":"whim-server","commit":"${HEALTH_COMMIT}","minBuild":{"ios":0,"android":0}}`;
+/** The 426 body a pre-protocol build's /v1/generate probe gets: matched by the `x-whim-build:
+ *  382511` header the check sends, ahead of the generic 400 rule below (first glob wins). */
+const PRE_PROTOCOL_GENERATE: StubRule = [`*x-whim-build: 382511*`, 0, '426|application/json|', '{"error":"update_required","hint":"stub"}'];
 const API_UP: readonly StubRule[] = [
   [`*https://${API_HOST}/healthz`, 0, '200|application/json|', DEFAULT_HEALTH],
+  PRE_PROTOCOL_GENERATE,
   [`*https://${API_HOST}/v1/generate`, 0, '400|application/json|', '{}'],
   [`*https://${API_HOST}/healthz/sse`, 0, ': whim-healthz-probe\\n\\n'],
   [`*https://${API_HOST}/beta/signup`, 0, `303|text/plain|https://${WEB_HOST}/beta/thanks`, ''],
@@ -1571,6 +1575,31 @@ function smokeTests(health: HealthBodies): void {
   };
   const defaultRun = smokeAgainst({}, health.defaults);
   eq("smoke passes against the real server's /healthz under the default configuration, run standalone", defaultRun.status, 0);
+  check(
+    '  ... refusing a pre-protocol build (build 382511, no x-whim-protocol) with 426 update_required',
+    defaultRun.stdout.includes('pre-protocol build (no x-whim-protocol) -> 426 update_required'),
+    defaultRun.stdout,
+  );
+
+  // request-envelope beta-1 D16 layer 2: the protocol-level gate, not the minimum-build gate, must
+  // retire a pre-D16 build. A server that answers anything but 426 to this probe fails smoke.
+  withSandbox((sandbox) => {
+    writeOperatorFile(sandbox);
+    writeRules(sandbox, 'gcloud', VM_ANSWERS);
+    writeRules(sandbox, 'dig', DNS_READY);
+    writeRules(sandbox, 'curl', [
+      healthRule(health.defaults),
+      [`*x-whim-build: 382511*`, 0, '400|application/json|', '{}'],
+      ...API_UP.filter((rule) => rule !== PRE_PROTOCOL_GENERATE),
+      ...PAGES_UP,
+    ]);
+    const run = runScript(sandbox, 'smoke.sh', []);
+    check(
+      'red: smoke fails when a pre-protocol build is answered 400 instead of 426, naming it',
+      run.status === 1 && run.stderr.includes("from a pre-protocol build answered 400 '{}', expected 426 update_required"),
+      run.stderr,
+    );
+  });
 
   // specs/server-observability "The server reports which commit it is running".
   const unbuiltRun = smokeAgainst({}, health.unbuilt);
