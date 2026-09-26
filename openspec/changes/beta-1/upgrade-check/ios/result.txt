@@ -1,0 +1,8 @@
+upgrade check: ios, 20260926-044128
+server: http://127.0.0.1:8790 {"ok":true,"service":"whim-server"}
+device: 621DA3FE-91F2-4AE7-9225-8DC406AF68AA (new simulator, iPhone 17)
+from: /Users/davrondjabborov/.cache/whim-upgrade/382511/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app, build 382511, sha256 64aeba69d2002a567ef39ee7f621f9b90b2d01c3ca80cedf99d639581121e52c
+seed: scripts/release/upgrade-check/seed.yaml
+to: /Users/davrondjabborov/Work/other/Whim/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app, build 386398, sha256 bd6ddc1050ad3aefa2f617ff55c56568241430a913d36e9107ef6b3810cab2ec
+upgrade-diff: PASS: 4 apps, 5 versions, 2 saved values, the consent grant and the device id are unchanged
+RESULT: PASS
