@@ -277,7 +277,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
   });
 
   await h.test('clarifyPrompt: a select or other of the wrong kind is still a malformed reply', async () => {
-    for (const wrong of [{ select: 'several' }, { select: 1 }, { other: 'yes' }, { other: null }]) {
+    for (const wrong of [{ select: 'several' }, { select: 1 }, { other: 'yes' }]) {
       const reply = { questions: [{ id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'], ...wrong }] };
       const err = await clarifyPrompt(clarifyAnswering(reply), 'a running log').then(() => undefined, (e: unknown) => e);
       h.ok(err instanceof GenerationClientError && err.kind === 'http' && err.hint === 'Unexpected clarify response shape', `${JSON.stringify(wrong)} is refused`);

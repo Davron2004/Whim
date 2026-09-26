@@ -80,7 +80,9 @@ function withRequestId<T extends object>(body: T, response: Response): WithReque
  * TYPE-ONLY import at the top of this file — importing the zod schema VALUES here would pull
  * zod into the Metro bundle graph, and zod's dist uses `export * from` namespace syntax that RN's
  * babel config doesn't transform (`guard:metro`). These guards mirror each schema's shape
- * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes.
+ * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes. One deliberate
+ * difference: they judge a message after `withoutNullOptionals`, so `null` on an optional field
+ * passes as absent where the zod schema would refuse it.
  */
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
@@ -88,6 +90,72 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || typeof value === 'number';
+}
+
+/** The keys a message of type `T` may leave out. */
+type OptionalKey<T> = { [K in keyof T]-?: Record<never, never> extends Pick<T, K> ? K : never }[keyof T];
+
+/** A message's optional fields, as a set: exactly the contract's optional keys, so a field the
+ *  contract makes optional fails the typecheck until it is listed, and a required one can't be. */
+type OptionalFields<T> = { readonly [K in OptionalKey<T>]: true };
+
+/**
+ * `null` on an OPTIONAL field reads as the field left out (beta-1 D16 layer 1): this build is the
+ * oldest reader every later server must serve, and "none" written as `null` is a likely shape for
+ * one. `value` without each field in `optional` that holds `null`; a non-record is returned as it
+ * is. Runs before the guards, so a REQUIRED field holding `null` is still there for its guard to
+ * refuse. Unknown fields are kept, as the tolerant reader keeps them.
+ */
+function withoutNullOptionals<T>(value: T, optional: Readonly<Record<string, true>>): T {
+  if (!isRecord(value) || !Object.keys(optional).some((key) => value[key] === null)) return value;
+  const isOptional = (key: string): boolean => Object.prototype.hasOwnProperty.call(optional, key);
+  return Object.fromEntries(Object.entries(value).filter(([key, field]) => field !== null || !isOptional(key))) as T;
+}
+
+const DIAGNOSTIC_OPTIONAL: OptionalFields<Diagnostic> = { severity: true, message: true, symbol: true, line: true };
+const APP_RECORD_OPTIONAL: OptionalFields<WireAppRecord> = { sourceMap: true };
+const REWRITE_OPTIONAL: OptionalFields<RewriteResponse> = { plan: true, compat: true };
+const REPORT_OPTIONAL: OptionalFields<ReportResponse> = { compat: true };
+const CLARIFY_OPTIONAL: OptionalFields<ClarifyResponse> = { limit: true, compat: true };
+const QUESTION_OPTIONAL: OptionalFields<WireClarifyQuestion> = { select: true, other: true };
+
+/** Each event arm's optional fields. A mapped type over the contract's `type` union, like
+ *  `EVENT_GUARDS`: an arm added to the contract fails the typecheck until it is listed here. */
+const EVENT_OPTIONAL: { readonly [K in GenerationEvent['type']]: OptionalFields<Extract<GenerationEvent, { type: K }>> } = {
+  stage: { attempt: true, compat: true },
+  token: { compat: true },
+  thinking: { compat: true },
+  diagnostic: { compat: true },
+  usage: { compat: true },
+  queued: { compat: true },
+  restart: { compat: true },
+  result: { summary: true, compat: true },
+  failure: { compat: true },
+};
+
+/** A clarify body with `null` read as absent on its optional fields and on its questions'. */
+function clarifyWithoutNullOptionals(value: unknown): unknown {
+  const body = withoutNullOptionals(value, CLARIFY_OPTIONAL);
+  if (!isRecord(body) || !Array.isArray(body.questions)) return body;
+  return { ...body, questions: body.questions.map((question: unknown) => withoutNullOptionals(question, QUESTION_OPTIONAL)) };
+}
+
+/** A frame of a known type with `null` read as absent on its optional fields and on those of the
+ *  records it carries: a `Diagnostic` (one, or a failure's list) and a result's `WireAppRecord`. */
+function eventWithoutNullOptionals(type: GenerationEvent['type'], frame: Record<string, unknown>): Record<string, unknown> {
+  const event = withoutNullOptionals(frame, EVENT_OPTIONAL[type]);
+  switch (type) {
+    case 'diagnostic':
+      return { ...event, diagnostic: withoutNullOptionals(event.diagnostic, DIAGNOSTIC_OPTIONAL) };
+    case 'failure':
+      return Array.isArray(event.diagnostics)
+        ? { ...event, diagnostics: event.diagnostics.map((diagnostic: unknown) => withoutNullOptionals(diagnostic, DIAGNOSTIC_OPTIONAL)) }
+        : event;
+    case 'result':
+      return { ...event, app: withoutNullOptionals(event.app, APP_RECORD_OPTIONAL) };
+    default:
+      return event;
+  }
 }
 
 function isRewriteResponse(value: unknown): value is RewriteResponse {
@@ -104,8 +172,8 @@ type WireClarifyQuestion = Omit<ClarifyQuestion, 'select' | 'other'> & Partial<P
 type WireClarifyResponse = Omit<ClarifyResponse, 'questions'> & { questions: WireClarifyQuestion[] };
 
 /** A missing `select` or `other` is read as the server's own default (tolerant reader, beta-1 D16
- *  layer 1), so an older server's questions still work; a present value of the wrong kind still
- *  fails the guard. */
+ *  layer 1), so an older server's questions still work; a `null` one is missing by the time this
+ *  runs (`withoutNullOptionals`), and a present value of the wrong kind still fails the guard. */
 function isClarifyQuestion(value: unknown): value is WireClarifyQuestion {
   return (
     isRecord(value) &&
@@ -207,6 +275,13 @@ function isKnownEventType(type: string): type is GenerationEvent['type'] {
   return Object.prototype.hasOwnProperty.call(EVENT_GUARDS, type);
 }
 
+/** A frame of a known type as this build reads it (`null` on an optional field read as absent), or
+ *  `undefined` when it fails its arm's guard. */
+function knownEventOf(type: GenerationEvent['type'], frame: Record<string, unknown>): GenerationEvent | undefined {
+  const event = eventWithoutNullOptionals(type, frame);
+  return EVENT_GUARDS[type](event) ? (event as GenerationEvent) : undefined;
+}
+
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
@@ -270,10 +345,11 @@ export async function clarifyPrompt(
 
   const bodyJson: unknown = await response.json().catch(() => null);
   gateUnaryBody(bodyJson, response, '/v1/clarify', opts.baseUrl);
-  if (!isClarifyResponse(bodyJson)) {
+  const reply = clarifyWithoutNullOptionals(bodyJson);
+  if (!isClarifyResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
-  return withRequestId({ ...bodyJson, questions: bodyJson.questions.map(withAnswerModeDefaults) }, response);
+  return withRequestId({ ...reply, questions: reply.questions.map(withAnswerModeDefaults) }, response);
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
@@ -318,10 +394,11 @@ export async function rewritePrompt(
 
   const bodyJson: unknown = await response.json().catch(() => null);
   gateUnaryBody(bodyJson, response, '/v1/rewrite', opts.baseUrl);
-  if (!isRewriteResponse(bodyJson)) {
+  const reply = withoutNullOptionals(bodyJson, REWRITE_OPTIONAL);
+  if (!isRewriteResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId(reply, response);
 }
 
 /** `POST /v1/report` (design D14) — the ONE call that does NOT require AI-data consent (design
@@ -359,10 +436,11 @@ export async function sendReport(
 
   const bodyJson: unknown = await response.json().catch(() => null);
   gateUnaryBody(bodyJson, response, '/v1/report', opts.baseUrl);
-  if (!isReportResponse(bodyJson)) {
+  const reply = withoutNullOptionals(bodyJson, REPORT_OPTIONAL);
+  if (!isReportResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected report response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId(reply, response);
 }
 
 /** One parsed SSE block: a validated event, the server's keepalive comment (`: keepalive\n\n`,
@@ -406,12 +484,13 @@ function parseSseBlock(block: string): SseBlockResult {
     if (gate.fallback.kind === 'skip') return { kind: 'skipped' };
     throw fallbackError(gate.fallback);
   }
-  // Phase two. `gateMessage` only lets a known type through, so the first test never fails here;
+  // Phase two. `gateMessage` only lets a known type through, so the type test never fails here;
   // it narrows `type` for the guard lookup.
-  if (!isKnownEventType(type) || !EVENT_GUARDS[type](dataJson)) {
+  const event = isKnownEventType(type) ? knownEventOf(type, dataJson) : undefined;
+  if (event === undefined) {
     throw new GenerationClientError('stream_parse', { hint: 'SSE frame did not match GenerationEvent' });
   }
-  return { kind: 'event', event: dataJson as GenerationEvent };
+  return { kind: 'event', event };
 }
 
 function connectTimeoutError(opts: ClientOptions): GenerationClientError {

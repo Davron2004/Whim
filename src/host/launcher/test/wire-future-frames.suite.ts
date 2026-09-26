@@ -17,12 +17,12 @@ import type { Compat, GenerationEvent } from '@whim/contract';
 import { CompatFallback, COMPAT_NOTICE_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_LEVEL as CONTRACT_LEVEL, ProtocolLevelHeader, WireEnvelope } from '@whim/contract';
 import { Harness } from './harness';
 import { grantedOptions } from './client-fixtures';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, type ConsentedClientOptions } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, sendReport, type ConsentedClientOptions } from '../generation-client';
 import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
-import { acceptClarifyQuestions, clarifyLimitOf } from '../prompt-flow';
+import { acceptClarifyQuestions, clarifyLimitOf, stepAfterClarifyExchange } from '../prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from '../wire-fallback';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { COMPAT_NOTICE_MAX_CHARS as COMPAT_NOTICE_MAX_CHARS_DEVICE, KNOWN_ERROR_CODES } from '../wire-compat';
@@ -69,6 +69,11 @@ function sseFromServer(events: readonly unknown[]): Response {
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+/** Options whose `fetch` answers with `body` at `status`. */
+function answering(body: unknown, status = 200): ConsentedClientOptions {
+  return { ...OPTS, fetchImpl: (async () => json(body, status)) as typeof fetch };
 }
 
 /** `promise`, or a thrown error naming `what` once `WAIT_MS` has passed. */
@@ -393,5 +398,96 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     const forged = new GenerationClientError('fallback', { fallback: { kind: 'fail', notice: 'n'.repeat(COMPAT_NOTICE_MAX_CHARS + 40) } });
     h.eq(errorReason(forged).reason.length, COMPAT_NOTICE_MAX_CHARS, 'a notice longer than the decoder lets through is still cut to the cap');
     h.eq(fallbackNotice({ kind: 'update', notice: 'Update Whim.' }), 'Update Whim.', 'a notice inside the cap is shown as sent');
+  });
+
+  // ── null on an optional field is the field left out (this build is the oldest reader) ─────────
+  // No conforming server sends null there today; a later one may write "none" that way, and this
+  // build can't be patched to meet it.
+
+  await h.test('oldest reader: a clarify limit of null is no limit, so the flow takes the zero-question path', async () => {
+    const response = await bounded(clarifyPrompt(answering({ questions: [], limit: null }), 'a packing list'), 'clarify');
+    h.eq(response, { questions: [] }, 'the reply is read, with no limit on it');
+    h.eq(clarifyLimitOf(response), undefined, 'the flow finds no limit to show');
+    h.eq(stepAfterClarifyExchange(acceptClarifyQuestions(response.questions)), 'plan', 'and goes straight to the plan step');
+  });
+
+  await h.test('oldest reader: compat null on a known event is no compat, so the event is used', async () => {
+    const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat: null }, RESULT]));
+    h.eq(outcomeOf(error), 'none', 'nothing is thrown');
+    h.eq(events, [STAGE, TOKEN, RESULT], 'the event arrives without the null, and the stream runs on to its result');
+  });
+
+  await h.test('oldest reader: compat null on a unary body is no compat, on success and error bodies alike', async () => {
+    h.eq(await bounded(clarifyPrompt(answering({ questions: [], compat: null }), 'p'), 'clarify'), { questions: [] }, 'a clarify reply is read');
+    h.eq(
+      await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', compat: null }), 'p'), 'rewrite'),
+      { rewrittenPrompt: 'A tip splitter.' },
+      'a rewrite reply is read',
+    );
+    h.eq(await bounded(sendReport(answering({ reportId: 'r-1', compat: null }, 202), { reason: 'broken' }), 'report'), { reportId: 'r-1' }, 'a report receipt is read');
+    const refused = await unaryError('rewrite', json({ error: 'daily_limit', hint: 'Come back tomorrow.', compat: null }, 429));
+    h.eq([outcomeOf(refused), serviceRefusalOf(refused)?.code], ['http', 'daily_limit'], 'a known error code is still the refusal it names');
+    const unknown = await unaryError('rewrite', json({ ...QUOTA, compat: null }, 429));
+    h.eq([outcomeOf(unknown), errorReason(unknown).reason], ['fail', GENERIC_STREAM_ERROR], 'an unknown code with a null compat is one with none: fail, with the generic reason');
+  });
+
+  await h.test('oldest reader: null on every other optional field of a known message is the field left out', async () => {
+    const app = { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} };
+    const diagnostic = { kind: 'type', hint: 'Lay it out with Stack.' };
+    const nullDetails = { severity: null, message: null, symbol: null, line: null };
+    const built = await drain(sseFromServer([
+      { ...STAGE, attempt: null },
+      { type: 'diagnostic', diagnostic: { ...diagnostic, ...nullDetails } },
+      { type: 'result', app: { ...app, sourceMap: null }, summary: null },
+    ]));
+    h.eq(outcomeOf(built.error), 'none', 'setup: nothing is thrown');
+    h.eq(built.events, [STAGE, { type: 'diagnostic', diagnostic }, { type: 'result', app }], 'stage attempt, diagnostic details, source map and summary arrive absent');
+    const failed = await drain(sseFromServer([{ type: 'failure', reason: 'It did not build.', attempts: 2, diagnostics: [{ ...diagnostic, ...nullDetails }] }]));
+    h.eq(failed.events, [{ type: 'failure', reason: 'It did not build.', attempts: 2, diagnostics: [diagnostic] }], 'and so do a failure’s diagnostic details');
+
+    h.eq(
+      await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', plan: null }), 'p'), 'rewrite'),
+      { rewrittenPrompt: 'A tip splitter.' },
+      'a rewrite plan of null is no plan',
+    );
+    const question = { id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'] };
+    const asked = await bounded(clarifyPrompt(answering({ questions: [{ ...question, select: null, other: null }] }), 'p'), 'clarify');
+    h.eq(asked.questions, [{ ...question, select: 'one', other: false }], 'a question’s null select and other take the server’s defaults');
+  });
+
+  await h.test('oldest reader: null on a required field still fails its guard', async () => {
+    const frames: readonly unknown[] = [
+      { type: 'token', text: null },
+      { type: 'stage', stage: null, status: 'start' },
+      { type: 'queued', position: null },
+      { type: 'diagnostic', diagnostic: { kind: 'type', hint: null } },
+      { type: 'result', app: null },
+      { type: 'failure', reason: 'It did not build.', attempts: 2, diagnostics: [null] },
+    ];
+    for (const frame of frames) {
+      const { events, error } = await drain(sseFromServer([STAGE, frame, RESULT]));
+      h.eq([outcomeOf(error), events], ['stream_parse', [STAGE]], `${JSON.stringify(frame)} is a frame that fails to parse`);
+    }
+    const clarifyBodies: readonly unknown[] = [
+      { questions: null },
+      { questions: [null] },
+      { questions: [], limit: { reason: null, alternative: 'a packing list you fill in yourself' } },
+      { questions: [{ id: 'units', question: null, options: ['Kilometres'] }] },
+      { questions: [{ id: 'units', question: 'Which units?', options: null }] },
+      { questions: [{ id: 'units', question: 'Which units?', options: ['Kilometres', null] }] },
+    ];
+    for (const body of clarifyBodies) {
+      const error = await unaryError('clarify', json(body, 200));
+      h.eq([outcomeOf(error), (error as GenerationClientError | undefined)?.hint], ['http', 'Unexpected clarify response shape'], `${JSON.stringify(body)} is a malformed clarify reply`);
+    }
+    const rewrite = await unaryError('rewrite', json({ rewrittenPrompt: null }, 200));
+    h.eq([outcomeOf(rewrite), (rewrite as GenerationClientError | undefined)?.hint], ['http', 'Unexpected rewrite response shape'], 'a null rewritten prompt is a malformed rewrite reply');
+  });
+
+  await h.test('oldest reader: only null is an absent compat; any other compat this build cannot read still fails a known event', async () => {
+    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }]) {
+      const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat }, RESULT]));
+      h.eq([outcomeOf(error), events], ['fail', [STAGE]], `compat ${JSON.stringify(compat)} on a known event is unreadable, so fail`);
+    }
   });
 }
