@@ -1,0 +1,289 @@
+# Stub server (UTC; device clock = UTC-4) generate/queue lines for the line test.
+# Run 1 (08b/08c/08d): A 08:27:25, B queued pos 1 at 08:28:10, C queued pos 1 at 08:29:00 (A done). 08d = C's screen right after Build it: shows 'Checking it runs safely 0:51' = B's state, not C's queue state.
+# Run 2 (08i/08j/08k/08m): A 08:31:49, B pos 1 at 08:32:02, C pos 2 at 08:32:15; slots handed over in order.
+[08:15:19.495] INFO (19325): content policy check
+    durationMs: 0
+[08:15:19.496] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 3
+[08:15:30.142] INFO (19325): content policy check
+    durationMs: 0
+[08:15:30.143] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:15:35.080] INFO (19325): request
+    path: "/v1/generate"
+    status: 429
+    durationMs: 2
+    error: "device_busy"
+[08:15:39.027] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 56046
+[08:16:05.133] ERROR (19325): transport failed
+    status: 429
+[08:16:05.134] INFO (19325): request
+    path: "/v1/diagnostics"
+    status: 204
+    durationMs: 4
+[08:22:03.369] INFO (19325): request
+    path: "/healthz"
+    status: 200
+    durationMs: 2
+[08:22:18.609] INFO (19325): request
+    path: "/v1/clarify"
+    status: 426
+    durationMs: 6
+    error: "update_required"
+[08:27:20.736] INFO (19325): content policy check
+    durationMs: 0
+[08:27:20.738] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 5
+[08:27:22.894] INFO (19325): content policy check
+    durationMs: 0
+[08:27:22.895] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 3
+[08:27:25.178] INFO (19325): content policy check
+    durationMs: 0
+[08:27:49.776] INFO (19325): request
+    path: "/healthz"
+    status: 200
+    durationMs: 0
+[08:28:05.426] INFO (19325): content policy check
+    durationMs: 0
+[08:28:05.427] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 1
+[08:28:08.408] INFO (19325): content policy check
+    durationMs: 0
+[08:28:08.409] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:28:10.630] INFO (19325): content policy check
+    durationMs: 0
+[08:28:10.631] INFO (19325): queue join
+    position: 1
+[08:28:21.206] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 56029
+[08:28:21.207] INFO (19325): queue leave
+    outcome: "slot"
+[08:28:40.883] INFO (19325): request
+    path: "/healthz"
+    status: 200
+    durationMs: 0
+[08:28:55.882] INFO (19325): content policy check
+    durationMs: 0
+[08:28:55.884] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 5
+[08:28:58.013] INFO (19325): content policy check
+    durationMs: 0
+[08:28:58.014] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:29:00.225] INFO (19325): content policy check
+    durationMs: 1
+[08:29:00.225] INFO (19325): queue join
+    position: 1
+[08:29:17.232] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 66603
+[08:29:17.233] INFO (19325): queue leave
+    outcome: "slot"
+[08:30:13.261] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 73037
+[08:31:44.941] INFO (19325): content policy check
+    durationMs: 0
+[08:31:44.941] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 4
+[08:31:46.968] INFO (19325): content policy check
+    durationMs: 0
+[08:31:46.969] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:31:49.001] INFO (19325): content policy check
+    durationMs: 0
+[08:31:54.185] INFO (19325): request
+    path: "/healthz"
+    status: 200
+    durationMs: 0
+[08:31:57.981] INFO (19325): content policy check
+    durationMs: 0
+[08:31:57.982] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 3
+[08:32:00.033] INFO (19325): content policy check
+    durationMs: 0
+[08:32:00.035] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 4
+[08:32:02.084] INFO (19325): content policy check
+    durationMs: 0
+[08:32:02.085] INFO (19325): queue join
+    position: 1
+[08:32:07.319] INFO (19325): request
+    path: "/healthz"
+    status: 200
+    durationMs: 0
+[08:32:11.119] INFO (19325): content policy check
+    durationMs: 0
+[08:32:11.120] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 2
+[08:32:13.150] INFO (19325): content policy check
+    durationMs: 0
+[08:32:13.151] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:32:15.212] INFO (19325): content policy check
+    durationMs: 0
+[08:32:15.213] INFO (19325): queue join
+    position: 2
+[08:32:45.021] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 56021
+[08:32:45.025] INFO (19325): queue leave
+    outcome: "slot"
+[08:33:41.061] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 98977
+[08:33:41.064] INFO (19325): queue leave
+    outcome: "slot"
+[08:34:37.132] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 141920
+[08:39:05.567] INFO (19325): content policy check
+    durationMs: 0
+[08:39:05.580] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 18
+[08:39:23.398] INFO (19325): content policy check
+    durationMs: 0
+[08:39:23.399] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 6
+[08:39:32.381] INFO (19325): content policy check
+    durationMs: 0
+[08:40:28.413] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 56035
+[08:45:10.290] INFO (19325): content policy check
+    durationMs: 0
+[08:45:10.291] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 4
+[08:45:29.650] INFO (19325): content policy check
+    durationMs: 0
+[08:45:29.653] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 6
+[08:46:08.006] INFO (19325): content policy check
+    durationMs: 0
+[08:46:08.008] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 4
+[08:46:19.415] INFO (19325): content policy check
+    durationMs: 0
+[08:46:19.416] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 3
+[08:47:08.306] INFO (19325): content policy check
+    durationMs: 0
+[08:47:08.308] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 5
+[08:47:54.773] INFO (19325): content policy check
+    durationMs: 0
+[08:47:54.774] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 3
+[08:48:04.246] INFO (19325): content policy check
+    durationMs: 0
+[08:48:04.249] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 6
+[08:48:12.624] INFO (19325): content policy check
+    durationMs: 0
+[08:48:24.651] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 12028
+[08:48:54.679] ERROR (19325): generation step failed
+    errorClass: "GenerationClientError"
+[08:48:54.681] ERROR (19325): failure screen shown
+    errorClass: "GenerationClientError"
+[08:48:54.682] INFO (19325): request
+    path: "/v1/diagnostics"
+    status: 204
+    durationMs: 5
+[08:49:33.139] INFO (19325): content policy check
+    durationMs: 0
+[08:49:33.142] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 5
+[08:49:35.665] INFO (19325): content policy check
+    durationMs: 0
+[08:49:35.666] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 1
+[08:49:43.322] INFO (19325): content policy check
+    durationMs: 0
+[08:49:55.361] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 12039
+[08:51:28.189] INFO (19325): content policy check
+    durationMs: 1
+[08:51:28.189] INFO (19325): request
+    path: "/v1/clarify"
+    status: 200
+    durationMs: 4
+[08:51:30.715] INFO (19325): content policy check
+    durationMs: 0
+[08:51:30.716] INFO (19325): request
+    path: "/v1/rewrite"
+    status: 200
+    durationMs: 2
+[08:51:39.374] INFO (19325): content policy check
+    durationMs: 0
+[08:52:39.417] INFO (19325): request
+    path: "/v1/generate"
+    status: 200
+    durationMs: 60044
