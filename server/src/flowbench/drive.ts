@@ -8,14 +8,30 @@ import { buildReport, type CaseOutcome, type CaseReport, type EvalCase, type Eva
 export { formatMarkdownReport } from './report';
 
 const DEFAULT_TIMEOUT_MS = 900_000;
+
+/** The one phase a run can stop after: a clarify rate check never pays for a build. */
+export type StopAfter = 'clarify';
+
 export interface FlowbenchArgs {
   url: string;
   evalSet: string;
   cases?: string[];
   parallel: number;
   retries: number;
+  /** How many times each case runs (`--repeat`, default 1), each run from a fresh device. */
+  repeat: number;
+  /** `--stop-after clarify` ends every run once clarify has answered. */
+  stopAfter?: StopAfter;
   saveSources?: string;
   jsonPath?: string;
+}
+
+/** What one run needs beyond its case, shared by every run of a benchmark. */
+interface RunOptions {
+  retries: number;
+  saveSources?: string;
+  stopAfter?: StopAfter;
+  timeoutMs: number;
 }
 
 interface RawResponse {
@@ -49,7 +65,7 @@ function positiveInt(name: string, raw: string | undefined, allowZero = false): 
 
 function valueForFlag(argv: readonly string[]): Map<string, string> {
   const values = new Map<string, string>();
-  const known = new Set(['url', 'eval-set', 'cases', 'parallel', 'retries', 'save-sources', 'json']);
+  const known = new Set(['url', 'eval-set', 'cases', 'parallel', 'retries', 'repeat', 'stop-after', 'save-sources', 'json']);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (!flag?.startsWith('--')) throw new Error(`unexpected argument: ${flag ?? ''}`);
@@ -78,15 +94,28 @@ export function parseArgs(argv: readonly string[]): FlowbenchArgs {
   if (!evalSet) throw new Error('--eval-set <dir> is required');
   const cases = values.get('cases')?.split(',').map((value) => value.trim()).filter((value) => value.length > 0);
   if (values.has('cases') && (!cases || cases.length === 0)) throw new Error('--cases must contain at least one case id');
+  const repeat = positiveInt('repeat', values.get('repeat') ?? '1');
+  const stopAfter = stopAfterValue(values.get('stop-after'));
+  const saveSources = values.get('save-sources');
+  if (saveSources !== undefined && repeat > 1) throw new Error('--save-sources keeps one source per case, so it cannot be combined with --repeat above 1');
+  if (saveSources !== undefined && stopAfter !== undefined) throw new Error('--save-sources has nothing to save with --stop-after clarify: no run builds an app');
   return {
     url: url.replace(/\/$/, ''),
     evalSet,
     cases,
     parallel: positiveInt('parallel', values.get('parallel') ?? '1'),
     retries: positiveInt('retries', values.get('retries') ?? '0', true),
-    saveSources: values.get('save-sources'),
+    repeat,
+    ...(stopAfter === undefined ? {} : { stopAfter }),
+    saveSources,
     jsonPath: values.get('json'),
   };
+}
+
+function stopAfterValue(raw: string | undefined): StopAfter | undefined {
+  if (raw === undefined) return undefined;
+  if (raw !== 'clarify') throw new Error(`--stop-after must be "clarify", got ${JSON.stringify(raw)}`);
+  return raw;
 }
 
 function invalidUrl(url: string, error: unknown): never {
@@ -308,10 +337,11 @@ function notRun(): PhaseReport {
   return { status: 0, durationMs: 0, retries: 0, error: { error: 'not_run', hint: 'The previous phase did not complete.' } };
 }
 
-function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseReport, clarifications: Clarification[], caseInfo: EvalCase, deviceId: string): CaseReport {
+function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseReport, clarifications: Clarification[], caseInfo: EvalCase, run: number, deviceId: string): CaseReport {
   const outcome: CaseOutcome = { type: 'failure', phase, reason: report.error?.error ?? 'phase_failed', attempts: report.retries + 1 };
   return {
     caseId: caseInfo.caseId,
+    run,
     appSlug: caseInfo.appSlug,
     prompt: caseInfo.prompt,
     deviceId,
@@ -322,8 +352,10 @@ function phaseFailure(phase: 'clarify' | 'rewrite' | 'generate', report: PhaseRe
 }
 
 // eslint-disable-next-line sonarjs/cognitive-complexity -- this function follows the product's three sequential phases
-async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, saveSources: string | undefined, timeoutMs: number): Promise<CaseReport> {
+async function runCase(baseUrl: string, caseInfo: EvalCase, run: number, options: RunOptions): Promise<CaseReport> {
+  const { retries, saveSources, timeoutMs } = options;
   const deviceId = randomUUID();
+  const identity = { caseId: caseInfo.caseId, run, appSlug: caseInfo.appSlug, prompt: caseInfo.prompt, deviceId };
   const clarifyResponse = await postWithRetries(`${baseUrl}/v1/clarify`, { prompt: caseInfo.prompt }, deviceId, retries, timeoutMs);
   const clarifyBody = clarifyResponse.status === 200 ? parseClarify(clarifyResponse.body) : undefined;
   const clarify: PhaseReport = {
@@ -332,12 +364,13 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, sav
     retries: clarifyResponse.retries,
     ...(clarifyResponse.status !== 200 || clarifyBody === undefined ? { error: clarifyResponse.status === 200 ? { error: 'invalid_response', hint: 'The clarify response did not match the contract.' } : apiErrorFrom(clarifyResponse.body, clarifyResponse.status) } : {}),
   };
-  if (clarifyBody === undefined) return phaseFailure('clarify', clarify, [], caseInfo, deviceId);
+  if (clarifyBody === undefined) return phaseFailure('clarify', clarify, [], caseInfo, run, deviceId);
   if (clarifyBody.limit !== undefined) {
     const { reason, alternative } = clarifyBody.limit;
-    return { caseId: caseInfo.caseId, appSlug: caseInfo.appSlug, prompt: caseInfo.prompt, deviceId, clarifications: [], phases: { clarify }, outcome: { type: 'limit', reason, alternative } };
+    return { ...identity, clarifications: [], phases: { clarify }, outcome: { type: 'limit', reason, alternative } };
   }
   const clarifications = clarifyBody.questions.map((question) => ({ id: question.id, question: question.question, choices: [question.options[0]!] }));
+  if (options.stopAfter === 'clarify') return { ...identity, clarifications, phases: { clarify }, outcome: { type: 'clarified' } };
 
   const rewriteBody = { prompt: caseInfo.prompt, ...(clarifications.length > 0 ? { clarifications } : {}) };
   const rewriteResponse = await postWithRetries(`${baseUrl}/v1/rewrite`, rewriteBody, deviceId, retries, timeoutMs);
@@ -349,7 +382,7 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, sav
     ...(rewriteResponse.status !== 200 || rewriteBodyParsed === undefined ? { error: rewriteResponse.status === 200 ? { error: 'invalid_response', hint: 'The rewrite response did not match the contract.' } : apiErrorFrom(rewriteResponse.body, rewriteResponse.status) } : {}),
   };
   if (rewriteBodyParsed === undefined) {
-    const failed = phaseFailure('rewrite', rewrite, clarifications, caseInfo, deviceId);
+    const failed = phaseFailure('rewrite', rewrite, clarifications, caseInfo, run, deviceId);
     return { ...failed, phases: { clarify, rewrite } };
   }
 
@@ -361,11 +394,11 @@ async function runCase(baseUrl: string, caseInfo: EvalCase, retries: number, sav
       fs.mkdirSync(saveSources, { recursive: true });
       fs.writeFileSync(path.join(saveSources, `${caseInfo.caseId}.ts`), source);
     }
-    return { caseId: caseInfo.caseId, appSlug: caseInfo.appSlug, prompt: caseInfo.prompt, deviceId, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'result' } };
+    return { ...identity, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'result' } };
   }
   const reason = generate.terminal?.type === 'failure' ? generate.terminal.reason : generate.error?.error ?? 'no_terminal_event';
   const attempts = generate.terminal?.type === 'failure' ? generate.terminal.attempts : generate.retries + 1;
-  return { caseId: caseInfo.caseId, appSlug: caseInfo.appSlug, prompt: caseInfo.prompt, deviceId, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'failure', phase: 'generate', reason, attempts } };
+  return { ...identity, clarifications, phases: { clarify, rewrite, generate }, outcome: { type: 'failure', phase: 'generate', reason, attempts } };
 }
 
 function readManifest(evalSetDir: string): EvalSet {
@@ -395,19 +428,21 @@ function selectedCases(evalSet: EvalSet, wanted: readonly string[] | undefined):
   return selected as EvalCase[];
 }
 
-async function runCases(baseUrl: string, cases: readonly EvalCase[], parallel: number, retries: number, saveSources: string | undefined, timeoutMs: number): Promise<CaseReport[]> {
+/** Every case `repeat` times, its runs together and numbered from 1, shared out to `parallel` workers. */
+async function runCases(baseUrl: string, cases: readonly EvalCase[], repeat: number, parallel: number, options: RunOptions): Promise<CaseReport[]> {
+  const runs = cases.flatMap((caseInfo) => Array.from({ length: repeat }, (_, index) => ({ caseInfo, run: index + 1 })));
   const output: CaseReport[] = [];
   let next = 0;
   async function worker(): Promise<void> {
     for (;;) {
       const index = next;
       next += 1;
-      const item = cases[index];
+      const item = runs[index];
       if (item === undefined) return;
-      output[index] = await runCase(baseUrl, item, retries, saveSources, timeoutMs);
+      output[index] = await runCase(baseUrl, item.caseInfo, item.run, options);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(parallel, Math.max(1, cases.length)) }, () => worker()));
+  await Promise.all(Array.from({ length: Math.min(parallel, Math.max(1, runs.length)) }, () => worker()));
   return output;
 }
 
@@ -416,7 +451,7 @@ export async function runFlowBenchmark(args: FlowbenchArgs, timeoutMs = DEFAULT_
   const cases = selectedCases(evalSet, args.cases);
   if (cases.length === 0) throw new Error('the eval set has no cases to run');
   const startedAt = new Date().toISOString();
-  const reports = await runCases(args.url, cases, args.parallel, args.retries, args.saveSources, timeoutMs);
+  const reports = await runCases(args.url, cases, args.repeat, args.parallel, { retries: args.retries, saveSources: args.saveSources, stopAfter: args.stopAfter, timeoutMs });
   return buildReport(evalSet.setId, args.url, startedAt, reports);
 }
 
