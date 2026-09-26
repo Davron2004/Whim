@@ -7,11 +7,11 @@ export const PROTOCOL_LEVEL = 1;
 export const PROTOCOL_HEADER = 'x-whim-protocol';
 export const ProtocolLevelHeader = PositiveIntegerText;       // header text → number; same rule as the build header
 export const CompatFallback = z.enum(['skip', 'fail', 'update']); // FROZEN: never gains a member or changes meaning
-export const COMPAT_NOTICE_MAX_CHARS = 200;
-export const Compat = z.object({ min: z.number().int().positive(), fallback: CompatFallback, notice: z.string().max(200).optional() });
+export const COMPAT_NOTICE_MAX_CHARS = 200;  // CompatNotice = z.string().max(200).nullish().transform((n) => n ?? undefined).optional()
+export const Compat = z.object({ min: z.number().int().positive(), fallback: CompatFallback, notice: CompatNotice });
 export const WireEnvelope = z.object({                       // reader side: fallback is an OPEN string
   type: z.string().optional(), error: z.string().optional(),
-  compat: z.object({ min: int ≥ 1, fallback: z.string(), notice: z.string().max(200).optional() }).optional(),
+  compat: z.object({ min: int ≥ 1, fallback: z.string(), notice: CompatNotice }).optional(),
 });
 // Every GenerationEvent arm, ApiError, ClarifyResponse, RewriteResponse and ReportResponse gains `compat?: Compat`.
 { type: 'queued'; position: number /* int ≥ 1: generations ahead + 1 */ }   // non-terminal
@@ -79,7 +79,6 @@ daily unit IS the row (`usage-store.ts#admit`). Its terminal `failure.reason` is
 `other` and `decide` reach no prompt and no policy input: whoever renders them must add them to `policy/input.ts` too.
 
 ## Device (`src/host/launcher`)
-
 `wire-headers.ts`: `PROTOCOL_HEADER`, `PROTOCOL_LEVEL = 1`; `transport-shared.ts#requestHeaders` sends it on every `/v1` request.
 `wire-compat.ts` (no runtime contract import), verbatim:
 ```ts
@@ -93,10 +92,11 @@ export function gateMessage(message: Record<string, unknown>, known: boolean): W
 export const KNOWN_ERROR_CODES: readonly string[];            // == server registry codes at level ≤ PROTOCOL_LEVEL
 export function isKnownErrorCode(code: string): boolean;
 ```
-Decode: known && (no compat || compat.min ≤ PROTOCOL_LEVEL) → full guard. Otherwise: no compat → `fail`; unreadable
-compat (not a record; min not a safe int ≥ 1; fallback not a string; notice not a string ≤ 200) → `fail`; fallback
-outside the set → `fail` (notice kept); empty notice = none. Known event types = keys of `generation-client.ts#EVENT_GUARDS`
-(mapped over `GenerationEvent['type']`).
+Decode: known && (no compat || compat.min ≤ PROTOCOL_LEVEL) → full guard. Otherwise: no compat → `fail`; unreadable compat (not a record;
+min not a safe int ≥ 1; fallback not a string; notice not a string ≤ 200) → `fail`; fallback outside the set → `fail` (notice kept); empty
+notice = none. Known event types = keys of `generation-client.ts#EVENT_GUARDS` (mapped over `GenerationEvent['type']`).
+- Null (oldest reader): `null` on an optional field = absent, before any guard, so `compat: null` = no compat and `compat.notice: null` = no notice (the contract reads a null notice the same); `null` on a required field, `compat.min`/`compat.fallback` included, still fails (in `compat` → `fail`; in a message → its guard's error).
+- A result's `summary` or a rewrite's `plan` failing its contract shape (`RunSummary`, `PlanRow[]`) is dropped, never the message (warn on `whim:gen`, route + field only, no content): the app installs with no summary; the plan step shows its one `rewrittenPrompt` row.
 
 **Where callers receive it.** `skip` never leaves the client: an SSE frame is dropped; a success body is read with
 this build's guard; an `ApiError` becomes the ordinary `http` error. `fail`/`update` are THROWN as

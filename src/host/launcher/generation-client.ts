@@ -34,14 +34,20 @@ import type {
   Diagnostic,
   GenerateRequest,
   GenerationEvent,
+  PlanRow,
   ReportRequest,
   ReportResponse,
   RewriteRequest,
   RewriteResponse,
+  RunSummary,
+  SummaryKind,
+  SummaryMark,
   Usage,
   WireAppRecord,
 } from '@whim/contract';
 
+import { log } from '../logging';
+import { CHANNELS } from '../logging/channels';
 import { openXhrGenerateStream } from './xhr-transport';
 import {
   CONNECT_TIMEOUT_HINT,
@@ -80,9 +86,11 @@ function withRequestId<T extends object>(body: T, response: Response): WithReque
  * TYPE-ONLY import at the top of this file — importing the zod schema VALUES here would pull
  * zod into the Metro bundle graph, and zod's dist uses `export * from` namespace syntax that RN's
  * babel config doesn't transform (`guard:metro`). These guards mirror each schema's shape
- * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes. One deliberate
- * difference: they judge a message after `withoutNullOptionals`, so `null` on an optional field
- * passes as absent where the zod schema would refuse it.
+ * field-for-field; keep them in sync by hand if `contract/src/index.ts` changes. Two deliberate
+ * differences: they judge a message after `withoutNullOptionals`, so `null` on an optional field
+ * passes as absent where the zod schema would refuse it; and a result's `summary` and a rewrite's
+ * `plan` are judged apart (`withoutMalformedOptional`), so a malformed one is dropped where the zod
+ * schema would refuse the whole message.
  */
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
@@ -158,6 +166,52 @@ function eventWithoutNullOptionals(type: GenerationEvent['type'], frame: Record<
   }
 }
 
+/**
+ * `message` without its optional `field` when that field holds a value `isReadable` refuses: a
+ * result's `summary` and a rewrite's `plan` are extras on the message they ride on, so a malformed
+ * one reads as left out (beta-1 D16 layer 1) rather than failing the message or reaching a screen.
+ * The drop is recorded at warn on the generation channel by route and field name only, never the
+ * value. Runs after the message's own guard, so only a message that is otherwise used records one.
+ */
+function withoutMalformedOptional<T extends Record<string, unknown>>(
+  message: T,
+  field: string,
+  isReadable: (value: unknown) => boolean,
+  route: string,
+): T {
+  if (message[field] === undefined || isReadable(message[field])) return message;
+  log.warn(CHANNELS.gen, 'malformed optional field dropped', { route, field });
+  return Object.fromEntries(Object.entries(message).filter(([key]) => key !== field)) as T;
+}
+
+/** The contract's `SummaryKind` values, as a set: a kind added there fails the typecheck until it
+ *  is listed here. */
+const SUMMARY_KINDS: Readonly<Record<SummaryKind, true>> = { Start: true, Added: true, Changed: true, Removed: true, Look: true, Fixed: true };
+
+function isSummaryMark(value: unknown): value is SummaryMark {
+  return isRecord(value) && (value.cls === 'chg' || value.cls === 'hedge') && Number.isInteger(value.start) && Number.isInteger(value.end);
+}
+
+/** The contract's `RunSummary`, field for field. */
+function isRunSummary(value: unknown): value is RunSummary {
+  return (
+    isRecord(value) &&
+    typeof value.text === 'string' &&
+    typeof value.kind === 'string' &&
+    Object.prototype.hasOwnProperty.call(SUMMARY_KINDS, value.kind) &&
+    Array.isArray(value.touched) &&
+    value.touched.every((area) => typeof area === 'string') &&
+    Array.isArray(value.marks) &&
+    value.marks.every(isSummaryMark)
+  );
+}
+
+/** The contract's `RewriteResponse.plan`: a list of `PlanRow`s. */
+function isPlan(value: unknown): value is PlanRow[] {
+  return Array.isArray(value) && value.every((row) => isRecord(row) && typeof row.label === 'string' && typeof row.text === 'string');
+}
+
+/** Its `plan` is judged apart: a malformed one is dropped, never the reply. */
 function isRewriteResponse(value: unknown): value is RewriteResponse {
   return isRecord(value) && typeof value.rewrittenPrompt === 'string';
 }
@@ -263,6 +317,7 @@ const EVENT_GUARDS: { readonly [K in GenerationEvent['type']]: (value: Record<st
   usage: (value) => isUsage(value.usage),
   queued: (value) => typeof value.position === 'number' && Number.isInteger(value.position) && value.position >= 1,
   restart: () => true,
+  // Its `summary` is judged apart: a malformed one is dropped, never the result.
   result: (value) => isWireAppRecord(value.app),
   failure: (value) =>
     typeof value.reason === 'string' &&
@@ -275,11 +330,12 @@ function isKnownEventType(type: string): type is GenerationEvent['type'] {
   return Object.prototype.hasOwnProperty.call(EVENT_GUARDS, type);
 }
 
-/** A frame of a known type as this build reads it (`null` on an optional field read as absent), or
- *  `undefined` when it fails its arm's guard. */
+/** A frame of a known type as this build reads it (`null` on an optional field read as absent, a
+ *  result's malformed `summary` dropped), or `undefined` when it fails its arm's guard. */
 function knownEventOf(type: GenerationEvent['type'], frame: Record<string, unknown>): GenerationEvent | undefined {
   const event = eventWithoutNullOptionals(type, frame);
-  return EVENT_GUARDS[type](event) ? (event as GenerationEvent) : undefined;
+  if (!EVENT_GUARDS[type](event)) return undefined;
+  return (type === 'result' ? withoutMalformedOptional(event, 'summary', isRunSummary, '/v1/generate') : event) as GenerationEvent;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -398,7 +454,7 @@ export async function rewritePrompt(
   if (!isRewriteResponse(reply)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected rewrite response shape' });
   }
-  return withRequestId(reply, response);
+  return withRequestId(withoutMalformedOptional(reply, 'plan', isPlan, '/v1/rewrite'), response);
 }
 
 /** `POST /v1/report` (design D14) — the ONE call that does NOT require AI-data consent (design

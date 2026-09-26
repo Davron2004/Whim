@@ -14,7 +14,16 @@
  * `WireEnvelope`), and the error codes it knows (against the server's registry).
  */
 import type { Compat, GenerationEvent } from '@whim/contract';
-import { CompatFallback, COMPAT_NOTICE_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_LEVEL as CONTRACT_LEVEL, ProtocolLevelHeader, WireEnvelope } from '@whim/contract';
+import {
+  CompatFallback,
+  COMPAT_NOTICE_MAX_CHARS,
+  PROTOCOL_HEADER,
+  PROTOCOL_LEVEL as CONTRACT_LEVEL,
+  ProtocolLevelHeader,
+  RewriteResponse,
+  RunSummary,
+  WireEnvelope,
+} from '@whim/contract';
 import { Harness } from './harness';
 import { grantedOptions } from './client-fixtures';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, sendReport, type ConsentedClientOptions } from '../generation-client';
@@ -22,12 +31,18 @@ import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
-import { acceptClarifyQuestions, clarifyLimitOf, stepAfterClarifyExchange } from '../prompt-flow';
+import { acceptClarifyQuestions, clarifyLimitOf, planRowsFrom, stepAfterClarifyExchange } from '../prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from '../wire-fallback';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { COMPAT_NOTICE_MAX_CHARS as COMPAT_NOTICE_MAX_CHARS_DEVICE, KNOWN_ERROR_CODES } from '../wire-compat';
+import { deliverResult } from '../build-lifecycle';
+import type { InstalledApp } from '../app-index';
+import type { InstallSpec, StoreAccess } from '../store-access';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 import { buildSseStream } from '../../../../server/src/sse';
 import { WIRE_REGISTRY, errorForLevel, eventForLevel, type WireEvent, type WireRegistry } from '../../../../server/src/wire-level';
+import { shapeSummary } from '../../../../server/src/generation/summarise';
 
 const OPTS = grantedOptions('https://example.invalid', 'device-1');
 const WAIT_MS = 2000;
@@ -263,6 +278,9 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS) },
       { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS + 1) },
       { min: 2, fallback: 'skip', notice: 7 },
+      { min: 2, fallback: 'skip', notice: null },
+      { min: null, fallback: 'skip' },
+      { min: 2, fallback: null },
       { min: 2, fallback: 'skip', extra: true },
       { min: Number.MAX_SAFE_INTEGER, fallback: 'skip' },
       { min: 2 ** 53, fallback: 'skip' },
@@ -484,10 +502,103 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
     h.eq([outcomeOf(rewrite), (rewrite as GenerationClientError | undefined)?.hint], ['http', 'Unexpected rewrite response shape'], 'a null rewritten prompt is a malformed rewrite reply');
   });
 
+  await h.test('oldest reader: a compat notice of null is no notice, so the fallback it names still applies', async () => {
+    const skipped = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'skip', notice: null } }, TOKEN, RESULT]));
+    h.eq([outcomeOf(skipped.error), skipped.events], ['none', [STAGE, TOKEN, RESULT]], 'an unknown event marked skip is ignored, and the stream runs on to its result');
+    const remeant = await drain(sseFromServer([STAGE, { ...TOKEN, compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, RESULT]));
+    h.eq([outcomeOf(remeant.error), remeant.events], ['none', [STAGE, RESULT]], 'a known event above this build’s level is dropped the same way');
+    const failed = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'fail', notice: null } }, RESULT]));
+    h.eq([outcomeOf(failed.error), errorReason(failed.error).reason], ['fail', GENERIC_STREAM_ERROR], 'fail ends the flow with the generic reason, as a fail with no notice does');
+    const updated = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'update', notice: null } }, RESULT]));
+    h.eq(terminalFallbackOf(updated.error), { kind: 'update' }, 'update opens the update path, with no notice');
+    const body = await unaryError('clarify', json({ questions: [], compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, 200));
+    h.eq(outcomeOf(body), 'none', 'a success body marked skip is read the way this build reads it');
+    const code = await unaryError('rewrite', json({ ...QUOTA, compat: { min: 2, fallback: 'fail', notice: null } }, 429));
+    h.eq([outcomeOf(code), errorReason(code).reason], ['fail', GENERIC_STREAM_ERROR], 'an unknown error code marked fail shows the generic reason');
+  });
+
   await h.test('oldest reader: only null is an absent compat; any other compat this build cannot read still fails a known event', async () => {
-    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }]) {
+    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }, { min: null, fallback: 'skip' }, { min: 2, fallback: null }, { min: null, fallback: null, notice: null }]) {
       const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat }, RESULT]));
       h.eq([outcomeOf(error), events], ['fail', [STAGE]], `compat ${JSON.stringify(compat)} on a known event is unreadable, so fail`);
     }
+  });
+
+  // ── A malformed optional record is dropped, never the message it rides on ────────────────────
+
+  await h.test('oldest reader: a result keeps its summary exactly when the contract reads it, and a malformed one is installed as none', async () => {
+    const app = RESULT.type === 'result' ? RESULT.app : undefined;
+    const summary = shapeSummary({ text: 'Splits a bill between friends.', kind: 'Start', touched: ['the bill'], chg: 'Splits a bill', hedge: 'friends' }, 'Start');
+    h.eq(summary?.marks.length, 2, 'setup: the server’s own summariser produced a summary with both marks');
+    const summaries: readonly unknown[] = [
+      summary,
+      { ...summary, extra: true },
+      'Splits a bill between friends.',
+      [],
+      { ...summary, text: 7 },
+      { ...summary, kind: 'Renamed' },
+      { ...summary, touched: undefined },
+      { ...summary, touched: ['the bill', 3] },
+      { ...summary, marks: null },
+      { ...summary, marks: [{ cls: 'chg', start: 0.5, end: 6 }] },
+      { ...summary, marks: [{ cls: 'bold', start: 0, end: 6 }] },
+      { ...summary, marks: [{ cls: 'chg', start: 0 }] },
+    ];
+    for (const sent of summaries) {
+      const what = `summary ${JSON.stringify(sent)}`;
+      const read = RunSummary.safeParse(sent).success;
+      const { events, error } = await drain(sseFromServer([STAGE, { type: 'result', app, summary: sent }]));
+      const result = events.at(-1);
+      h.eq([outcomeOf(error), result?.type], ['none', 'result'], `${what}: the result arrives`);
+      if (result?.type !== 'result') continue;
+      h.eq(result.summary !== undefined, read, `${what}: carried exactly when the contract reads it`);
+      const installs: InstallSpec[] = [];
+      const access = { install: async (spec: InstallSpec): Promise<InstalledApp> => { installs.push(spec); return { id: spec.id, name: spec.name, createdAt: 0, record: spec.record, lineageId: 'main' }; } } as unknown as StoreAccess;
+      await deliverResult({ access, appId: 'app-1', text: 'a tip splitter', wire: result.app, summary: result.summary });
+      h.eq(installs.length, 1, `${what}: the app is installed`);
+      h.eq((JSON.parse(installs[0]?.prompt ?? '{}') as { summary?: unknown }).summary !== undefined, read, `${what}: its version stores a summary exactly when the contract reads it`);
+    }
+  });
+
+  await h.test('oldest reader: a rewrite keeps its plan exactly when the contract reads it, and a malformed one shows the one-row plan', async () => {
+    const rewrittenPrompt = 'A tip splitter for camping trips.';
+    const rows = [{ label: 'What it is', text: 'A tip splitter.' }, { label: 'Main screen', text: 'The bill and each share.' }];
+    const plans: readonly unknown[] = [
+      rows,
+      [{ ...rows[0], extra: true }],
+      'What it is: a tip splitter.',
+      rows[0],
+      [{ label: 'What it is', text: 7 }],
+      [{ label: 'What it is' }],
+      [rows[0], null],
+      [rows[0], 'Main screen'],
+    ];
+    for (const plan of plans) {
+      const what = `plan ${JSON.stringify(plan)}`;
+      const read = RewriteResponse.safeParse({ rewrittenPrompt, plan }).success;
+      const reply = await bounded(rewritePrompt(answering({ rewrittenPrompt, plan }), 'p'), 'rewrite');
+      h.eq(reply.rewrittenPrompt, rewrittenPrompt, `${what}: the reply is read`);
+      h.eq(reply.plan !== undefined, read, `${what}: carried exactly when the contract reads it`);
+      if (!read) h.eq(planRowsFrom(reply), [{ label: '', text: rewrittenPrompt }], `${what}: the plan step shows the rewritten prompt as its one row`);
+    }
+    const valid = await bounded(rewritePrompt(answering({ rewrittenPrompt, plan: rows }), 'p'), 'rewrite');
+    h.eq(planRowsFrom(valid), rows, 'a well-formed plan is shown row for row');
+  });
+
+  await h.test('oldest reader: a dropped summary or plan is logged at warn on the generation channel by route and field, with none of its content', async () => {
+    const app = RESULT.type === 'result' ? RESULT.app : undefined;
+    const secret = 'Private words from the plan.';
+    log.buffer.clear();
+    await drain(sseFromServer([{ type: 'result', app, summary: { text: secret, kind: 'Renamed', touched: [], marks: [] } }]));
+    await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', plan: [{ label: secret, text: 7 }] }), 'p'), 'rewrite');
+    await drain(sseFromServer([{ type: 'result', app, summary: { text: secret, kind: 'Start', touched: [], marks: [] } }]));
+    await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', plan: [{ label: secret, text: 'A tip splitter.' }] }), 'p'), 'rewrite');
+    const warnings = log.buffer.snapshot().filter((record) => record.channel === CHANNELS.gen && record.level === 'warn');
+    h.eq(
+      warnings.map((record) => record.fields),
+      [{ route: '/v1/generate', field: 'summary' }, { route: '/v1/rewrite', field: 'plan' }],
+      'one warning per dropped field, naming its route and field only; well-formed ones log nothing',
+    );
+    h.ok(!JSON.stringify(warnings).includes(secret), 'no dropped content reaches the log');
   });
 }

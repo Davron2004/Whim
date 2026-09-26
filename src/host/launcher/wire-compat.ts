@@ -7,7 +7,7 @@
  * and its `compat.min` (default 1) is at most `PROTOCOL_LEVEL`. Otherwise its fallback applies:
  * `skip`, `fail` or `update`, each with the message's `notice`. An unknown message with no
  * `compat`, a `fallback` outside the frozen set, and a `compat` this build cannot read all mean
- * `fail`. `compat: null` is no `compat`.
+ * `fail`. `compat: null` is no `compat`, and `notice: null` no notice.
  *
  * A hand-written mirror of `@whim/contract`'s `WireEnvelope`: no contract value may enter the Metro
  * bundle (zod). `wire-future-frames.suite.ts` holds it to the contract and to the server's own
@@ -77,13 +77,15 @@ interface ReadableCompat {
 
 /** `message.compat`: absent, readable, or `'unreadable'` — present but not a record with a
  *  positive-integer `min`, a string `fallback`, and a `notice` that, when present, is a string of at
- *  most `COMPAT_NOTICE_MAX_CHARS` characters. `null` is absent: `compat` is optional on every
- *  message, and this build reads `null` on an optional field as the field left out. */
+ *  most `COMPAT_NOTICE_MAX_CHARS` characters. `null` is absent on the two optional fields, `compat`
+ *  itself and its `notice`: this build reads `null` on an optional field as the field left out.
+ *  `null` on `min` or `fallback` is unreadable, as the contract's envelope reads it. */
 function compatOf(message: Record<string, unknown>): ReadableCompat | undefined | 'unreadable' {
   const compat = message.compat;
   if (compat === undefined || compat === null) return undefined;
   if (!isRecord(compat)) return 'unreadable';
-  const { min, fallback, notice } = compat;
+  const { min, fallback } = compat;
+  const notice = compat.notice ?? undefined;
   if (typeof min !== 'number' || !Number.isSafeInteger(min) || min < 1) return 'unreadable';
   if (typeof fallback !== 'string') return 'unreadable';
   if (notice !== undefined && (typeof notice !== 'string' || notice.length > COMPAT_NOTICE_MAX_CHARS)) return 'unreadable';
