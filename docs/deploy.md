@@ -402,12 +402,27 @@ Two committed profiles tie the VM's machine type to the server's concurrency lim
 |---|---|---|
 | Machine type | `e2-standard-2` | `e2-standard-8` |
 | Server memory / shm | 6g / 1gb | 16g / 3gb |
-| Concurrent generations | 5 (default) | 15 |
+| Concurrent generations | 3 (default) | 15 |
 | Synthetic-run contexts | 2 (default) | 6 |
 | Concurrent unary calls | 16 (default) | 32 |
 
 The `event` numbers are **estimates** pending task 15.4's recorded load test; treat them as
 provisional until `progress.md`'s "Event profile load test" entry replaces this note.
+
+**`standard` caps, load-tested 2026-09-26** (beta-1, replay model, `e2-standard-2`; details in
+`openspec/changes/beta-1/progress.md` under 10.2). The rule is the highest pair with a normalized CPU p95
+under 70 % and no failed runs. CPU is normalized to the whole machine, so 100 % means both vCPUs are busy.
+
+| Caps (generations / synthetic runs) | Devices | Normalized CPU | Result |
+|---|---|---|---|
+| 3 / 2 | 3 | peak 42 % | all results, no refusals |
+| 3 / 2 | 5 (2 queued) | peak 35 % | all results |
+| 5 / 2 | 5 | peak 80 %; next run p95 68 % | all results |
+| 5 / 2 | 7 (2 queued) | p95 98 % | all results |
+
+Cap 5 crossed 70 % in two of three runs, so the default stays at **3 / 2**. With 2-second sampling a run
+yields about 16 samples, which makes the p95 close to the maximum; measure cap 4 with denser sampling and
+repeated runs before raising it. The synthetic-run concurrency is capped at the machine's vCPU count (D25).
 
 **Demo-night checklist:** resize up the day of the event, run the load test once, resize back down
 after.

@@ -299,7 +299,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     providerQuantizations: readProviderQuantizations(env, 'WHIM_PROVIDER_QUANTIZATIONS'),
     limitGenerationsPerDeviceDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DEVICE_DAY', 15),
     limitGenerationsPerDay: readPositiveInt(env, 'WHIM_LIMIT_GENERATIONS_PER_DAY', 400),
-    maxConcurrentGenerations: readPositiveInt(env, 'WHIM_MAX_CONCURRENT_GENERATIONS', 5),
+    maxConcurrentGenerations: readPositiveInt(env, 'WHIM_MAX_CONCURRENT_GENERATIONS', 3),
     queueMax: readNonNegativeInt(env, 'WHIM_QUEUE_MAX', 50),
     queueMaxWaitMs: readPositiveInt(env, 'WHIM_QUEUE_MAX_WAIT_MS', 180_000),
     synthrunConcurrency: readPositiveInt(env, 'WHIM_SYNTHRUN_CONCURRENCY', 2),
