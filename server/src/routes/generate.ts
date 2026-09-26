@@ -56,7 +56,7 @@ import {
   type UsageAndCostTransport,
 } from '../usage/resolve';
 import { buildSseStream } from '../sse';
-import { eventForLevel, type WireEvent } from '../wire-level';
+import { eventForLevel, type WireEvent, type WireRegistry } from '../wire-level';
 import type { ServerLogger } from '../logger';
 import { envelopeLogFields, type V1Env } from '../request-edge';
 import { consentPractice } from '../consent-practices';
@@ -127,6 +127,8 @@ export interface GenerateRouteOptions {
   inFlight: InFlightGenerations;
   /** The line's timers; the host's own when omitted. */
   lineClock?: LineClock;
+  /** What every event this route sends is adapted against for the client's level (beta-1 D16). */
+  wireRegistry: WireRegistry;
 }
 
 interface AdmissionDeps extends GenerateRouteOptions {
@@ -517,7 +519,14 @@ function runGeneration(deps: StreamDeps, running: RunningGeneration, signal: Abo
   };
 
   const run = (): AsyncIterable<GenerationEvent> => (pipeline.run as PipelineRun)(request, signal, trace);
-  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown, deps.protocolLevel);
+  return forwardEvents(run, signal, ending, (usage) => usageStore.credit(deviceId, usage), teardown, (event) => forClient(deps, event));
+}
+
+/** `event` as this request's client may receive it: every event the route sends goes through here,
+ *  at the level the client declared (beta-1 D16 layer 2), so a message above that level reaches it
+ *  only as its lower form or its envelope. */
+function forClient(deps: StreamDeps, event: WireEvent): WireEvent {
+  return eventForLevel(event, deps.protocolLevel, deps.wireRegistry);
 }
 
 /** A generation admitted into the line: its wait, then, once it holds a slot and its daily unit,
@@ -543,9 +552,9 @@ function lineEnd(outcome: LineOutcome): LineEnd {
 }
 
 /** The one terminal event of a generation that leaves the line without running. */
-function lineFailure(reason: string, protocolLevel: number): WireEvent {
+function lineFailure(reason: string, deps: StreamDeps): WireEvent {
   const failure: GenerationEvent = { type: 'failure', reason, attempts: 0, diagnostics: [] };
-  return eventForLevel(failure, protocolLevel);
+  return forClient(deps, failure);
 }
 
 /**
@@ -570,7 +579,7 @@ async function* takeSlot(deps: StreamDeps, waiting: WaitingGeneration, signal: A
     waitedMs = Math.round(lineClock.now() - joinedAt);
     if (end.kind !== 'slot') {
       left = end.kind;
-      if (end.kind !== 'abort') yield lineFailure(serverBusyRefusal().body.hint, deps.protocolLevel);
+      if (end.kind !== 'abort') yield lineFailure(serverBusyRefusal().body.hint, deps);
       return undefined;
     }
     if (signal.aborted) {
@@ -596,7 +605,7 @@ async function* takeSlot(deps: StreamDeps, waiting: WaitingGeneration, signal: A
     if (!unit.ok) {
       end.handle.release();
       left = 'ceiling';
-      yield lineFailure(unitRefusal(unit.reason, deps.clock).body.hint, deps.protocolLevel);
+      yield lineFailure(unitRefusal(unit.reason, deps.clock).body.hint, deps);
       return undefined;
     }
     left = 'slot';
@@ -673,7 +682,7 @@ async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: L
         stopTick();
         stopTick = lineClock.setTimer(QUEUED_HEARTBEAT_MS, () => wakes.raise('tick'));
         const queued: GenerationEvent = { type: 'queued', position };
-        yield eventForLevel(queued, deps.protocolLevel);
+        yield forClient(deps, queued);
       }
       await wakes.next();
       end = await lineEndAfterWake(ticket, wakes);
@@ -692,8 +701,8 @@ async function* waitInLine(ticket: LineTicket, signal: AbortSignal, lineClock: L
  * Forwards the pipeline's events and runs `teardown` exactly once, when iteration ends for any
  * reason. Nothing is forwarded once the request was aborted, and nothing after the first terminal
  * event, so a stream carries at most one terminal and none after an abort. A `usage` event is
- * credited before it is forwarded, which is before the terminal event. A `restart` (beta-1 D10)
- * goes out through `eventForLevel` at the client's level, like every event this route makes.
+ * credited before it is forwarded, which is before the terminal event. Every event goes out through
+ * `toClient`, at the client's level, like every event this route makes.
  */
 async function* forwardEvents(
   run: () => AsyncIterable<GenerationEvent>,
@@ -701,7 +710,7 @@ async function* forwardEvents(
   ending: StreamEnding,
   credit: (usage: Usage) => Promise<void>,
   teardown: () => Promise<void>,
-  protocolLevel: number,
+  toClient: (event: WireEvent) => WireEvent,
 ): AsyncGenerator<WireEvent> {
   try {
     for await (const event of run()) {
@@ -712,7 +721,7 @@ async function* forwardEvents(
       }
       if (signal.aborted) return;
       if (event.type === 'result' || event.type === 'failure') ending.terminal = event.type;
-      yield event.type === 'restart' ? eventForLevel(event, protocolLevel) : event;
+      yield toClient(event);
       if (ending.terminal) return;
     }
   } finally {

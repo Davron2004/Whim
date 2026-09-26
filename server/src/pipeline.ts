@@ -4,7 +4,7 @@
  */
 import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
 import { buildCandidateSource } from '../../synthrun/builder';
-import { stubFutureFallback, stubFutureFrame } from './stub-markers';
+import { stubFutureEvent, stubFutureFallback } from './stub-markers';
 
 const STUB_APP_SOURCE =
   "import { defineApp, Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hello</Text></Screen> });";
@@ -147,11 +147,12 @@ async function* stubRun(
     if (aborted) return;
     if (stage === 'plan' && future !== undefined) {
       // A `[[future:*]]` marker (`stub-markers.ts`): after the plan stage, one event of a type the
-      // app can't know, then the stream carries on as the stub always does — the app follows the
-      // event's fallback. Outside `GenerationEvent` on purpose, so it is cast rather than typed.
+      // app can't know, which the route sends as its envelope; then the stream carries on as the
+      // stub always does — the app follows the event's fallback. Outside `GenerationEvent` on
+      // purpose, so it is cast rather than typed.
       await delay(delayMs, signal);
       if (signal?.aborted) return;
-      yield stubFutureFrame(future) as unknown as GenerationEvent;
+      yield stubFutureEvent(future) as unknown as GenerationEvent;
     }
   }
 

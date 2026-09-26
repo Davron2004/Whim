@@ -31,9 +31,10 @@ export const Clarification = z.object({ id, question, choices: z.array(z.string(
 ## Server
 **Request edge** (`request-edge.ts`, mounted in `app.ts`), `/v1/*` order:
 `assignRequestId` → device gate (400) → `readEnvelope` (400 `invalid_envelope`) → `readProtocolLevel` → `minimumBuildGate` → routes.
-`readProtocolLevel`: header missing, empty or not a positive integer → `updateRequiredRefusal()` (426, the gate's exact body),
-before any admission, ledger row or model call; otherwise `c.set('protocolLevel', n)`. Routes read
-`c.get('protocolLevel'): number` (`RequestVariables.protocolLevel`, always set on `/v1`). `parseProtocolLevel(headers): number | undefined` is exported.
+`readProtocolLevel(registry = WIRE_REGISTRY)` (a factory since fix-1): header missing, empty or not a positive integer →
+`updateRequiredRefusal()` (426, the gate's exact body), before any admission, ledger row or model call; otherwise
+`c.set('protocolLevel', n)` and `c.json` is wrapped so every later `ApiError` body goes through `errorForLevel(body, n, registry)`.
+Routes read `c.get('protocolLevel'): number` (always set on `/v1`). `parseProtocolLevel(headers): number | undefined` is exported.
 
 **Registry and emitter** (`wire-level.ts`), verbatim:
 ```ts
@@ -59,10 +60,10 @@ export function errorForLevel(body: ApiError, clientLevel: number, registry?: Wi
 - `EVENT_LEVELS` is a mapped type over `GenerationEvent['type']` and `ERROR_LEVELS` over
   `ServiceRefusalCode | DeviceIdError['error'] | RouteErrorCode`: a new arm or refusal code fails typecheck until registered.
 
-**Call-site rule.** Any producer of an event type or error code whose entry is above level 1 MUST send it through
-`eventForLevel`/`errorForLevel` with `c.get('protocolLevel')`. Everything in beta-1 is level 1 (`queued`, `restart`,
-the `limit` arm, `select`/`other`, the new `Clarification`), so no beta-1 call site is required to;
-routing a level-1 message through the helper returns it unchanged. A NEW `/v1` error code must be added to
+**Call-site rule (structural since fix-1).** Every `/v1` error body after the level is read goes through `errorForLevel`
+(the `c.json` wrap), and every event `routes/generate.ts` sends goes through `eventForLevel` (`forClient`), against
+`AppOptions.wireRegistry` (default `WIRE_REGISTRY`; `STUB_WIRE_REGISTRY` under `stub`, which registers the stub's
+`stub-future-<fallback>` types one level up). A new SSE route must do the same. A NEW `/v1` error code must be added to
 `ERROR_LEVELS` (`RouteErrorCode` for route-local ones) AND the device's `KNOWN_ERROR_CODES`; the device reads an
 unregistered code as unknown → `fail` (lockstep: `wire-future-frames.suite.ts`). A unary success-body FIELD above
 level 1 has no helper: its route adapts it. Raising the level: bump `PROTOCOL_LEVEL` in the contract and in
@@ -109,8 +110,7 @@ error body: `httpErrorFrom`), and the generate open on either transport (`httpEr
 2. `fail` → `errorReason`: the notice as the failure reason (`server_refused`), else `GENERIC_STREAM_ERROR` (`unexpected_error`); the report sheet shows its generic failure notice.
 3. `queued`/`restart` → accepted by the guards; `journalStreamEvent` treats them as liveness only (moves `lastFrameAt`); no line UI; `restart` voids nothing.
 4. `limit` → accepted by `isClarifyResponse`, then ignored: zero questions → the plan step.
-5. `select`/`other` → ignored by ClarifyStep (single pick); `clarificationsFrom` sends `choices: [picked]`, never `other`/`decide`.
-   Since fix-1 M2 the guard reads a missing `select`/`other` as `'one'`/`false`; a wrongly typed one still fails it.
+5. `select`/`other` → a missing one reads as `'one'`/`false` (fix-1), a wrongly typed one fails the guard; ignored by ClarifyStep.
 6. A skipped frame is neither an event nor a keepalive: it moves no liveness clock.
 
 ## Invariants and error surface

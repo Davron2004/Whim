@@ -39,7 +39,9 @@ import { makeUsageRoute } from './routes/usage';
 import { makeDiagnosticsRoute } from './routes/diagnostics';
 import { makeDevLogsRoute, type DevLogSinkOptions } from './routes/dev-logs';
 import { log } from './logger';
-import { assignRequestId, envelopeLogFields, readEnvelope, readProtocolLevel, type EdgeEnv } from './request-edge';
+import { assignRequestId, envelopeLogFields, isApiErrorBody, readEnvelope, readProtocolLevel, type EdgeEnv } from './request-edge';
+import { WIRE_REGISTRY, type WireRegistry } from './wire-level';
+import { STUB_WIRE_REGISTRY } from './stub-markers';
 import { minimumBuildGate, type MinimumBuilds } from './min-build';
 import { shapeOnlyVerifier, type DeviceVerifier } from './device-identity';
 import { loadServerConfig, type ServerConfig } from './config';
@@ -83,9 +85,13 @@ export interface AppOptions {
   /** The stub selector (`WHIM_PIPELINE=stub`), forwarded from `main.ts`. It makes `/v1/clarify`
    *  deterministic and model-free, and makes `/v1/rewrite` pass a prompt carrying a stub pipeline
    *  marker (`[[fail]]`, `[[future:*]]`) through raw (no model call) so the marker survives into
-   *  `/v1/generate`; the pipeline's own stub is selected by passing `createStubPipeline()` above,
-   *  not by this flag. */
+   *  `/v1/generate`, where `STUB_WIRE_REGISTRY` adapts the stub's `[[future:*]]` event for the app;
+   *  the pipeline's own stub is selected by passing `createStubPipeline()` above, not by this flag. */
   stub?: boolean;
+  /** The registry every `/v1` error body and generation event is adapted against for the client's
+   *  protocol level (beta-1 D16 layer 2). Defaults to `STUB_WIRE_REGISTRY` under `stub`, else
+   *  `WIRE_REGISTRY`; tests inject one holding a message above level 1. */
+  wireRegistry?: WireRegistry;
 
   /** Verifies `x-whim-device` and resolves a device id (design D15). Defaults to
    *  `shapeOnlyVerifier` — today's UUID shape check. */
@@ -141,20 +147,6 @@ const PROBE_FRAME = ': whim-healthz-probe\n\n';
 const PROBE_FRAME_COUNT = 3;
 const PROBE_FRAME_INTERVAL_MS = 1000;
 const probeEncoder = new TextEncoder();
-
-/** Whether a `c.json` body is shaped like `ApiError` (developer-observability 6.1/6b): an `error`
- *  code and a `hint`, both strings — the same shape check `ApiError.safeParse` would make, done
- *  inline so the per-request logging middleware need not depend on zod. Used only to pick the
- *  `error` field off; `hint` is never read (design D8: no message, no user-provided text on the
- *  per-request log line). */
-function isApiErrorBody(body: unknown): body is ApiError {
-  return (
-    typeof body === 'object' &&
-    body !== null &&
-    typeof (body as { error?: unknown }).error === 'string' &&
-    typeof (body as { hint?: unknown }).hint === 'string'
-  );
-}
 
 /** `GET /healthz/sse` (specs/server-deployment "An anonymous stream probe verifies proxy
  *  flushing"): three SSE comment frames `intervalMs` apart, then close — no model call, no stored
@@ -215,6 +207,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const { creditTransport } = options;
   const inFlight = options.inFlight ?? new InFlightGenerations();
   const minBuild: MinimumBuilds = Object.freeze({ ios: config.minBuildIos, android: config.minBuildAndroid });
+  const wireRegistry = options.wireRegistry ?? (options.stub ? STUB_WIRE_REGISTRY : WIRE_REGISTRY);
 
   const app = new Hono<AppEnv>();
 
@@ -238,6 +231,8 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     let apiErrorCode: string | undefined;
     const originalJson = c.json.bind(c) as (...args: unknown[]) => Response;
     c.json = ((body: unknown, ...rest: unknown[]) => {
+      // Only the `error` field is picked off; `hint` is never read (design D8: no message, no
+      // user-provided text on the per-request log line).
       if (isApiErrorBody(body)) apiErrorCode = body.error;
       return originalJson(body, ...rest);
     }) as unknown as typeof c.json;
@@ -336,8 +331,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // The client envelope, after identity and before any route admission (design D3).
   app.use('/v1/*', readEnvelope);
 
-  // The protocol level beside it (beta-1 D16): no level is a pre-protocol build, refused 426.
-  app.use('/v1/*', readProtocolLevel);
+  // The protocol level beside it (beta-1 D16): no level is a pre-protocol build, refused 426; from
+  // here on every error body goes out at the request's level.
+  app.use('/v1/*', readProtocolLevel(wireRegistry));
 
   // The minimum-build gate (app-update-gate): after the envelope, before the routes.
   app.use('/v1/*', minimumBuildGate(minBuild));
@@ -357,6 +353,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       resolveBounds,
       inFlight,
       lineClock: options.lineClock,
+      wireRegistry,
     }),
   );
   app.route(
