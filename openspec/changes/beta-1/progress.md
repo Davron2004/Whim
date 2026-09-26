@@ -101,3 +101,4 @@
   - `upgrade-record`/`upgrade-diff` in the release CLI; fixtures are real captures from emulator-5554 (build 382100), read-only.
   Red-check caught its own vacuous test (a length-ignoring MMKV parser passed), which was then fixed. Not yet run on a device: the seed flow (10.5 is its first run; `--manual-seed` fallback for iOS). A Release iOS build from beta-1 on ignores the server-address override (matters for the next upgrade check). The exact 10.5 command sequence is in `docs/release/mobile.md` → "Upgrade check". Devices in use by others: emulator-5554 (Pixel_10_Pro_XL) and 4 booted simulators incl. Whim-Upgrade-15Plus. Section 10 creates its own.
 - chain-9 merged (integrity OK); tasks 9.1–9.3 ticked (37/45; section 10 remains). Regate: FAST GATE PASSED. Worktree and branch removed. All nine chains merged.
+- 20:50 10.1 gate-full on the staging tip `957e28c5`: FULL GATE PASSED (openspec 48/48). Reviewer dispatched on `f847b1cd..integration/beta-1` (Opus).
