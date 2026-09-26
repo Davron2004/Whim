@@ -1,0 +1,124 @@
+# Upgrade check, seed step (beta-1 task 9.1). On a fresh install of the PREVIOUS release: point Whim
+# at the local stub server, save data in the Water Counter example, and make one app with two
+# versions. `upgrade-check.sh` then reads what was seeded into the seed record (`before.json`).
+#
+# Written against 382511's UI (tag release/1.0.0+382511). The legal steps later builds put in front
+# of the consent screen (age check, terms) are tolerated, so this flow also seeds the next release.
+# Idioms: Maestro sees inside the mini-app's iframe on Android. `hideKeyboard` navigates back when
+# no keyboard is up, so the keyboard is dropped by tapping the step's headline instead (a plain Text
+# in a ScrollView with keyboardShouldPersistTaps="handled").
+#
+#   -e SERVER_URL=http://127.0.0.1:8787  the stub server from the previous release's commit
+#   -e GENERATED_APP=Hello App           the name that server's stub pipeline gives every app
+appId: com.anycognition.whim
+env:
+  SERVER_URL: http://127.0.0.1:8787
+  GENERATED_APP: Hello App
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Water Counter"
+    timeout: 60000
+
+# 1. Settings → Advanced → Server address. The field saves as it is typed.
+- tapOn: "Settings"
+- scrollUntilVisible:
+    element:
+      text: "ADVANCED|Advanced"
+    timeout: 15000
+- tapOn: "ADVANCED|Advanced"
+- tapOn: "api\\.whim\\..*"
+- inputText: ${SERVER_URL}
+- tapOn: "Back"
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 15000
+
+# 2. Saved data in an example: one "+2 glasses". The status line reads "saved" only once the count
+#    and both history records have been written.
+- tapOn: "Water Counter"
+- extendedWaitUntil:
+    visible: "loaded from storage"
+    timeout: 60000
+- tapOn: "\\+2 glasses"
+- extendedWaitUntil:
+    visible: "saved"
+    timeout: 30000
+- tapOn: "Open the app menu"
+- tapOn: "Home"
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 30000
+
+# 3. A generated app: the legal steps and consent, then compose → clarify → plan → build.
+- tapOn: "Describe an app…"
+- extendedWaitUntil:
+    visible: "Accept|Agree and continue|What should it do\\?"
+    timeout: 60000
+- runFlow:
+    when:
+      visible: "Accept"
+    commands:
+      - tapOn: "Accept"
+      - extendedWaitUntil:
+          visible: "Agree and continue|What should it do\\?"
+          timeout: 60000
+- runFlow:
+    when:
+      visible: "Agree and continue"
+    commands:
+      - tapOn: "Agree and continue"
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 30000
+- inputText: "A page that says hello"
+- tapOn: "What should it do\\?"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: ".*quick thing.*|Build it"
+    timeout: 180000
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Build it"
+    timeout: 180000
+- tapOn: "Build it"
+- extendedWaitUntil:
+    visible: "Back to your apps"
+    timeout: 300000
+- tapOn: "Back to your apps"
+- extendedWaitUntil:
+    visible: ${GENERATED_APP}
+    timeout: 30000
+
+# 4. Its second version: Prompt again → compose → clarify → plan → build.
+- longPressOn: ${GENERATED_APP}
+- tapOn: "Prompt again"
+- extendedWaitUntil:
+    visible: "What should change\\?"
+    timeout: 30000
+- inputText: "Make the text bigger"
+- tapOn: "What should change\\?"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: ".*quick thing.*|Make the change"
+    timeout: 180000
+- runFlow:
+    when:
+      visible: ".*quick thing.*"
+    commands:
+      - tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Make the change"
+    timeout: 180000
+- tapOn: "Make the change"
+- extendedWaitUntil:
+    visible: "Back to your apps"
+    timeout: 300000
+- tapOn: "Back to your apps"
+- extendedWaitUntil:
+    visible: "YOUR APPS"
+    timeout: 30000
