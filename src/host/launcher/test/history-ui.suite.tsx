@@ -17,7 +17,7 @@ import DoneStep from '../DoneStep';
 import MiniAppView from '../MiniAppView';
 import WhimProse from '../../ui/whim-prose/WhimProse';
 import { SHELL_COLORS } from '../../../sdk/theme';
-import { finishAnimations, hardwareBack, StyleSheet } from './native-host';
+import { Alert, finishAnimations, hardwareBack, StyleSheet } from './native-host';
 import { activate, button, press, renderScreen, screenReaderElement, textOf, unmountScreen } from './react-screen';
 import { buildIt, planLoaded, resultEvent, sseStream, tap, waitFor, withLauncher } from './rendered-launcher';
 import { startBuild, streamingServer } from './prompt-flow-ui.suite';
@@ -222,6 +222,40 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
         h.ok(showing(HomeScreen), `${name} from the history opened from Home returns Home`);
       }
     });
+  });
+
+  await h.test('history screen: opened from a running app’s orb, when the store cannot read that app back, Back and system back land on Home with the alert instead of staying on History', async () => {
+    const never = () => new Promise<Response>(() => {});
+    const { activeBundle } = StoreAccess.prototype;
+    try {
+      await withLauncher({ examples: true, server: never }, async ({ tree }) => {
+        const home = () => tree.root.findByType(HomeScreen);
+        const showing = (type: React.ElementType) => tree.root.findAllByType(type).length === 1;
+        await waitFor(() => showing(HomeScreen) && home().props.apps.length > 0, 'the example apps');
+        const app: InstalledApp = home().props.apps[0];
+        const leaves: [string, () => Promise<void>][] = [
+          ['Back', () => press(button(tree, COPY.backLabel))],
+          ['system back', systemBack],
+        ];
+        for (const [name, leave] of leaves) {
+          StoreAccess.prototype.activeBundle = activeBundle;
+          await tap(() => home().props.onOpen(app));
+          await waitFor(() => showing(MiniAppView), `${app.name} to open`);
+          await press(button(tree, COPY.orbMenuOpenLabel));
+          await TestRenderer.act(async () => { finishAnimations(); });
+          await press(button(tree, COPY.orbActionVersions));
+          await waitFor(() => showing(HistoryScreen), 'its history');
+          StoreAccess.prototype.activeBundle = async () => { throw new Error('bundle read failed'); };
+          const alerts = Alert.shown.length;
+          await leave();
+          await waitFor(() => Alert.shown.length > alerts, `${name}: the reopen to fail`);
+          h.eq(Alert.shown.at(-1)?.message, 'bundle read failed', `${name}: the failed read is still told to the user`);
+          h.ok(showing(HomeScreen) && !showing(HistoryScreen), `${name}: and the user lands on Home, not back on History`);
+        }
+      });
+    } finally {
+      StoreAccess.prototype.activeBundle = activeBundle;
+    }
   });
 
   await h.test('history screen: Home’s long-press sheet opens History for that app', async () => {

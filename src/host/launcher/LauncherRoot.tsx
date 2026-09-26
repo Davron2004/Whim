@@ -889,8 +889,9 @@ function LauncherShell({
 
   /** The tile's tap: busy from the tap until the mini-app screen replaces the grid or the open
    *  fails (`app-launcher` "Opening an app shows an immediate busy affordance" — a tap MUST NOT
-   *  read as unregistered while the active bundle is being read). */
-  const onOpen = (app: InstalledApp) =>
+   *  read as unregistered while the active bundle is being read). `onFailed` runs after a failed
+   *  open's alert, for a caller that must not stay where it is. */
+  const onOpen = (app: InstalledApp, onFailed?: () => void) =>
     runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       try {
         const source = await access.activeBundle(app);
@@ -900,6 +901,7 @@ function LauncherShell({
         // recoverable from the seam (host-observability "The alert paths now log").
         log.error(CHANNELS.app, 'installed-app action failed', { operation: 'open', ...errorFields(e) });
         Alert.alert('Could not open this app', (e as Error)?.message ?? String(e));
+        onFailed?.();
       }
     });
 
@@ -919,9 +921,10 @@ function LauncherShell({
   };
 
   /** Leaving History: back into the app it was opened over, reopened at whatever version is now
-   *  current (a restore there may have moved it), or Home. */
+   *  current (a restore there may have moved it), or Home. Home too when that app fails to open, so
+   *  Back never strands the user on History repeating the failing open. */
   const leaveHistory = (app: InstalledApp, from: 'home' | 'app') => {
-    if (from === 'app') onOpen(index.get(app.id) ?? app);
+    if (from === 'app') onOpen(index.get(app.id) ?? app, goHome);
     else goHome();
   };
 
