@@ -132,8 +132,8 @@ Android already sends base names and symbolication works from them. This makes i
   activity.
 - **Leaving the line:** a slot → the normal pipeline starts. Line full (`WHIM_QUEUE_MAX`, default 50)
   → pre-stream `429 server_busy`. Waited `WHIM_QUEUE_MAX_WAIT_MS` (default 180000) → terminal
-  `failure` with the new code `queue_timeout`. Client abort or drain → the waiter leaves, holds
-  nothing, spends nothing.
+  `failure` whose reason is the `server_busy` hint (a waiter has no ledger row, so no failure code).
+  Client abort or drain → the waiter leaves, holds nothing, spends nothing.
 - `release()` stays idempotent and hands the slot to the head of the line.
 - **Caps:** a load test (`deploy/loadtest/run.sh drive`) on `e2-standard-2` picks them (the highest
   pair with p95 CPU < 70 % and no failed runs), set in `deploy/profiles/standard.env`, with the
@@ -248,9 +248,13 @@ it that way for any future pre-D16 build too.
    mom's phones. Demo-phone check.
 4. Raise the minimum builds to beta-1 (D17). Invites follow once the owner has looked at the build.
 
-Rollback: the server rolls back by `--tag`. With the old server, the beta-1 app gets no `x-whim-protocol`
-support, which is harmless: the old server ignores the header, and the app decodes old-shape messages
-as level 1.
+Rollback: the server rolls back by `--tag`, but never below the beta-1 server image once beta-1 builds
+are installed (`docs/deploy.md` "Rolling back and rotating the key"). A pre-beta-1 server rejects
+beta-1's `Clarification` shape (it requires `answer`), so every rewrite and generation carrying an
+answer fails, and no later build can change what beta-1 sends. A bad server release rolls back to an
+earlier beta-1-or-later image, or rolls forward. The rest survives an older server: it ignores the
+`x-whim-protocol` header it doesn't know, and beta-1 reads a clarify question with no `select`/`other`
+as one pick with no typed answer.
 
 ## Open Questions
 

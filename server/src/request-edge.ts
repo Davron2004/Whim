@@ -14,7 +14,8 @@
  *
  * Beside the envelope, `PROTOCOL_HEADER` declares the protocol level the client understands (beta-1
  * D16). A request without a positive-integer level predates the protocol, so it is below every
- * level this server supports and gets the minimum-build gate's own `426 update_required`.
+ * level this server supports and gets the minimum-build gate's own `426 update_required`. Once the
+ * level is known, every `ApiError` body the request answers with goes out at that level.
  */
 import { randomUUID } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
@@ -31,6 +32,7 @@ import {
 } from '@whim/contract';
 import { log, type ServerLogger } from './logger';
 import { updateRequiredRefusal } from './admission/refusals';
+import { WIRE_REGISTRY, errorForLevel, type WireRegistry } from './wire-level';
 
 /** What a request with none of the four envelope headers is treated as (design D3). A client
  *  envelope always names `ios` or `android` and a positive build, so `platform: 'unknown'` (and
@@ -52,7 +54,8 @@ export interface RequestVariables {
   /** Set by the envelope middleware. */
   envelope: RequestEnvelope;
   /** The protocol level the client declared in `PROTOCOL_HEADER` (a positive integer), set by
-   *  `readProtocolLevel`. Anything a route sends above level 1 goes through `wire-level.ts` with it. */
+   *  `readProtocolLevel`, which also adapts every error body to it. The events a route makes go
+   *  through `wire-level.ts#eventForLevel` with it. */
   protocolLevel: number;
 }
 
@@ -131,18 +134,40 @@ export function parseProtocolLevel(headers: Headers): number | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+/** Whether a `c.json` body is shaped like `ApiError`: an `error` code and a `hint`, both strings —
+ *  the check `ApiError.safeParse` would make, done inline so the edge need not run zod on every
+ *  response. */
+export function isApiErrorBody(body: unknown): body is ApiError {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { error?: unknown }).error === 'string' &&
+    typeof (body as { hint?: unknown }).hint === 'string'
+  );
+}
+
 /** Mounted on `/v1/*` right AFTER `readEnvelope` and before the minimum-build gate: a request with
  *  no level ends here with the gate's own `426 update_required`, before any admission, ledger row
- *  or model call. */
-export const readProtocolLevel: MiddlewareHandler<EdgeEnv> = async (c, next) => {
-  const level = parseProtocolLevel(c.req.raw.headers);
-  if (level === undefined) {
-    const r = updateRequiredRefusal();
-    return c.json(r.body, r.status, r.headers);
-  }
-  c.set('protocolLevel', level);
-  await next();
-};
+ *  or model call.
+ *
+ *  From the moment the level is known, every `ApiError` body the request answers with — a later
+ *  gate's, a route's own, the unhandled-error handler's — goes out through `errorForLevel` at that
+ *  level against `registry` (beta-1 D16 layer 2). `c.json` is wrapped for the rest of the request,
+ *  so no producer of an error code has to remember to. */
+export function readProtocolLevel(registry: WireRegistry = WIRE_REGISTRY): MiddlewareHandler<EdgeEnv> {
+  return async (c, next) => {
+    const level = parseProtocolLevel(c.req.raw.headers);
+    if (level === undefined) {
+      const r = updateRequiredRefusal();
+      return c.json(r.body, r.status, r.headers);
+    }
+    c.set('protocolLevel', level);
+    const json = c.json.bind(c) as (...args: unknown[]) => Response;
+    c.json = ((body: unknown, ...rest: unknown[]) =>
+      json(isApiErrorBody(body) ? errorForLevel(body, level, registry) : body, ...rest)) as unknown as typeof c.json;
+    await next();
+  };
+}
 
 /** The envelope's fields on the per-request log line (design D9) — never the device id. Empty for
  *  a request that ended before its envelope was read (outside `/v1`, or refused at the edge). */

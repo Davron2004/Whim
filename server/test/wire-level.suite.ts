@@ -6,11 +6,13 @@
  * `errorForLevel` never hand a client a message above the level it declared.
  *
  * Nothing is above level 1 in beta-1, so the helper's adaptation is driven through a synthetic
- * registry: a level-2 event with a lower-level form, one without, and a level-2 error code.
+ * registry: a level-2 event with a lower-level form, one without, and a level-2 error code. The app
+ * is driven through the same registry, to show its routes send nothing past the helper.
  */
 import {
   DeviceIdError,
   GenerationEvent,
+  PROTOCOL_HEADER,
   PROTOCOL_LEVEL,
   ServiceRefusalCode,
   type ApiError,
@@ -18,6 +20,9 @@ import {
 } from '@whim/contract';
 import { caught, check, eq, section } from './harness';
 import { WIRE_REGISTRY, errorForLevel, eventForLevel, type WireEntry, type WireEvent, type WireRegistry } from '../src/wire-level';
+import { createApp } from '../src/app';
+import { InMemoryUsageStore } from '../src/usage-store';
+import type { Pipeline } from '../src/pipeline';
 
 const ETA_COMPAT: Compat = { min: 2, fallback: 'skip', notice: 'Update Whim to see how long the wait is.' };
 const LANE_COMPAT: Compat = { min: 3, fallback: 'fail', notice: 'Update Whim to use priority building.' };
@@ -121,7 +126,63 @@ async function testAdaptation(): Promise<void> {
   check('an entry above the client with no compat is refused rather than sent bare', bare instanceof Error && bare.message.includes('lane'));
 }
 
+const DEVICE_ID = '33333333-3333-4333-8333-333333333333';
+
+/** A pipeline whose run yields `events` as they are, level-2 ones included. */
+function pipelineOf(events: readonly WireEvent[]): Pipeline {
+  return {
+    async *run() {
+      for (const event of events) yield event as GenerationEvent;
+    },
+  };
+}
+
+/** A `/v1` POST from a client that declares `level`. */
+async function postAt(app: ReturnType<typeof createApp>, path: string, body: unknown, level: number): Promise<Response> {
+  return app.request(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-whim-device': DEVICE_ID, [PROTOCOL_HEADER]: String(level) },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Every `data:` payload of an SSE response, parsed as plain JSON, frames outside `GenerationEvent`
+ *  included. */
+async function sseData(response: Response): Promise<Record<string, unknown>[]> {
+  const text = await response.text();
+  return text
+    .split(/\n\n+/)
+    .flatMap((block) => block.split('\n').filter((line) => line.startsWith('data: ')))
+    .map((line) => JSON.parse(line.slice('data: '.length)) as Record<string, unknown>);
+}
+
+async function testRoutesSendAtTheClientsLevel(): Promise<void> {
+  section('Wire level — the generate route’s events and every /v1 error body go out at the request’s level');
+  const stage: GenerationEvent = { type: 'stage', stage: 'plan', status: 'start' };
+  const result: GenerationEvent = { type: 'result', app: { name: 'demo', source: 's', bundle: 'b', manifest: {}, schema: {} } };
+  const invalidCompat: Compat = { min: 2, fallback: 'update', notice: 'Update Whim to send this.' };
+  const synthetic = syntheticRegistry();
+  // `invalid_request` re-registered at level 2, to watch a route's own error body go out.
+  const wireRegistry: WireRegistry = { events: synthetic.events, errors: { ...synthetic.errors, invalid_request: { level: 2, compat: invalidCompat } } };
+  const app = createApp({ pipeline: pipelineOf([stage, ETA, PULSE, result]), usageStore: new InMemoryUsageStore(), wireRegistry });
+
+  const levelOne = await sseData(await postAt(app, '/v1/generate', { prompt: 'a tip splitter' }, 1));
+  eq(
+    'a level-1 client gets a level-2 pipeline event as its lower form, and one with none as its envelope',
+    levelOne.slice(1, 3),
+    [{ type: 'queued', position: 2 }, { type: 'pulse', compat: { min: 2, fallback: 'skip' } }],
+  );
+  eq('  ... and the level-1 events around them as they are', [levelOne[0], levelOne.at(-1)?.type], [stage, 'result']);
+  const levelTwo = await sseData(await postAt(app, '/v1/generate', { prompt: 'a tip splitter' }, 2));
+  eq('a level-2 client gets both in full, with their compat', levelTwo.slice(1, 3), [{ ...ETA, compat: ETA_COMPAT }, { ...PULSE, compat: { min: 2, fallback: 'skip' } }]);
+
+  const refused = await postAt(app, '/v1/generate', { notAPrompt: true }, 1);
+  const body = (await refused.json()) as Record<string, unknown>;
+  eq('a route’s own error body reaches a level-1 client with its level-2 entry’s compat', [refused.status, body.error, body.compat], [400, 'invalid_request', invalidCompat]);
+}
+
 export async function runWireLevelTests(): Promise<void> {
   testProductionRegistry();
   await testAdaptation();
+  await testRoutesSendAtTheClientsLevel();
 }

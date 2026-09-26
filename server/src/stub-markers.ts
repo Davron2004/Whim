@@ -8,8 +8,8 @@
  * Kept apart from `pipeline.ts` (which bundles the stub app with esbuild) so the device's suites can
  * take their frames from here.
  */
-import { PROTOCOL_LEVEL, type ClarifyResponse, type CompatFallback } from '@whim/contract';
-import type { WireEvent } from './wire-level';
+import { PROTOCOL_LEVEL, type ClarifyResponse, type Compat, type CompatFallback } from '@whim/contract';
+import { WIRE_REGISTRY, eventForLevel, type WireEntry, type WireEvent, type WireRegistry } from './wire-level';
 
 /** A prompt carrying it makes the stub clarify answer with a `limit` and no questions. */
 export const STUB_LIMIT_MARKER = '[[limit]]';
@@ -48,12 +48,42 @@ export function stubFutureFallback(prompt: string): CompatFallback | undefined {
   return FUTURE_MARKERS.find(([marker]) => prompt.includes(marker))?.[1];
 }
 
+/** The event type a `[[future:*]]` marker adds — one per fallback, since a registry entry carries
+ *  one `compat`. */
+function futureType(fallback: CompatFallback): string {
+  return `stub-future-${fallback}`;
+}
+
+/** A future event's `compat`: the level above this one, the fallback, and a notice for `fail` and
+ *  `update`. */
+function futureCompat(fallback: CompatFallback): Compat {
+  const notice = fallback === 'skip' ? {} : { notice: FUTURE_NOTICES[fallback] };
+  return { min: PROTOCOL_LEVEL + 1, fallback, ...notice };
+}
+
+/** The production registry plus the stub's future event types, one level above this one, so the
+ *  stub server's generate route adapts them for the app like any later event (beta-1 D16 layer 2).
+ *  `createApp` uses it under `stub`. */
+export const STUB_WIRE_REGISTRY: WireRegistry = Object.freeze({
+  events: {
+    ...WIRE_REGISTRY.events,
+    ...Object.fromEntries(
+      FUTURE_MARKERS.map(([, fallback]): [string, WireEntry<WireEvent>] => [futureType(fallback), { level: PROTOCOL_LEVEL + 1, compat: futureCompat(fallback) }]),
+    ),
+  },
+  errors: WIRE_REGISTRY.errors,
+});
+
+/** The event a `[[future:*]]` marker makes the stub pipeline emit: a type from the protocol level
+ *  above this one, as a later pipeline would emit it, before the route adapts it. */
+export function stubFutureEvent(fallback: CompatFallback): WireEvent {
+  return { type: futureType(fallback) };
+}
+
 /**
- * The event a `[[future:*]]` marker adds to the stub stream: a type from a protocol level above
- * this one, as the server sends it to an app that predates it (`wire-level.ts#eventForLevel` —
- * only its envelope): `compat` with that fallback, and a notice for `fail` and `update`.
+ * The same event as the server sends it to an app that predates it (`wire-level.ts#eventForLevel`
+ * — only its envelope): `compat` with that fallback, and a notice for `fail` and `update`.
  */
 export function stubFutureFrame(fallback: CompatFallback): WireEvent {
-  const notice = fallback === 'skip' ? {} : { notice: FUTURE_NOTICES[fallback] };
-  return { type: 'stub-future', compat: { min: PROTOCOL_LEVEL + 1, fallback, ...notice } };
+  return eventForLevel(stubFutureEvent(fallback), PROTOCOL_LEVEL, STUB_WIRE_REGISTRY);
 }

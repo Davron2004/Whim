@@ -13,8 +13,6 @@ export const TERMINAL_FAILURE_CODES = [
   'expired',
   'credit_exhausted',
   'internal_error',
-  // The generation waited in the line for a free slot longer than the server allows (beta-1 D8).
-  'queue_timeout',
 ] as const;
 export type TerminalFailureCode = (typeof TERMINAL_FAILURE_CODES)[number];
 

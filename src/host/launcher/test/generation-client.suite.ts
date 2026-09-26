@@ -262,6 +262,28 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
     h.eq(bodies[2], { prompt: 'a dice roller' }, 'and an omitted app argument sends the same shape');
   });
 
+  // clarifyPrompt against a server from before answer modes (beta-1 D18): its questions carry no
+  // `select` and no `other`, and a rolled-back server must not strand this build on them.
+  const clarifyAnswering = (body: unknown) => ({ ...BASE, fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch });
+
+  await h.test('clarifyPrompt: a question with no answer mode is one pick with no typed answer; a mode that is sent is kept', async () => {
+    const result = await clarifyPrompt(clarifyAnswering({
+      questions: [
+        { id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'] },
+        { id: 'days', question: 'Which days?', options: ['Monday', 'Wednesday'], select: 'many', other: true },
+      ],
+    }), 'a running log');
+    h.eq(result.questions.map((q) => [q.id, q.select, q.other]), [['units', 'one', false], ['days', 'many', true]], 'the missing modes take the server’s defaults');
+  });
+
+  await h.test('clarifyPrompt: a select or other of the wrong kind is still a malformed reply', async () => {
+    for (const wrong of [{ select: 'several' }, { select: 1 }, { other: 'yes' }, { other: null }]) {
+      const reply = { questions: [{ id: 'units', question: 'Which units?', options: ['Kilometres', 'Miles'], ...wrong }] };
+      const err = await clarifyPrompt(clarifyAnswering(reply), 'a running log').then(() => undefined, (e: unknown) => e);
+      h.ok(err instanceof GenerationClientError && err.kind === 'http' && err.hint === 'Unexpected clarify response shape', `${JSON.stringify(wrong)} is refused`);
+    }
+  });
+
   // rewritePrompt: generic HTTP error
   await h.test('rewritePrompt: a non-2xx response raises GenerationClientError{kind:"http"}', async () => {
     const fetchImpl = (async () =>
@@ -571,7 +593,7 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const classified = new GenerationClientError('http', { status: 503, hint: 'The service is warming up' });
       const opts = {
         ...BASE,
-        streamTransport: async () => ({ read: async () => { throw classified; } }),
+        streamTransport: async () => ({ read: async () => { throw classified; }, cancel: () => undefined }),
       } as ConsentedClientOptions;
       const err = await settledOrHung(collect(generateApp(opts, { prompt: 'p' })), 1000);
       h.ok(err === classified, 'the transport’s own error instance is what surfaces');

@@ -98,16 +98,30 @@ function isReportResponse(value: unknown): value is ReportResponse {
   return isRecord(value) && isNonEmptyString(value.reportId);
 }
 
-function isClarifyQuestion(value: unknown): value is ClarifyQuestion {
+/** A clarify question as it may arrive: a server from before answer modes (beta-1 D18) sends no
+ *  `select` and no `other`. */
+type WireClarifyQuestion = Omit<ClarifyQuestion, 'select' | 'other'> & Partial<Pick<ClarifyQuestion, 'select' | 'other'>>;
+type WireClarifyResponse = Omit<ClarifyResponse, 'questions'> & { questions: WireClarifyQuestion[] };
+
+/** A missing `select` or `other` is read as the server's own default (tolerant reader, beta-1 D16
+ *  layer 1), so an older server's questions still work; a present value of the wrong kind still
+ *  fails the guard. */
+function isClarifyQuestion(value: unknown): value is WireClarifyQuestion {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
     typeof value.question === 'string' &&
     Array.isArray(value.options) &&
     value.options.every((option) => typeof option === 'string') &&
-    (value.select === 'one' || value.select === 'many') &&
-    typeof value.other === 'boolean'
+    (value.select === undefined || value.select === 'one' || value.select === 'many') &&
+    (value.other === undefined || typeof value.other === 'boolean')
   );
+}
+
+/** The question with the server's defaults for an answer mode it didn't send: one pick, no typed
+ *  answer (`server/src/routes/clarify.ts#shapeClarify`). */
+function withAnswerModeDefaults(question: WireClarifyQuestion): ClarifyQuestion {
+  return { ...question, select: question.select ?? 'one', other: question.other ?? false };
 }
 
 function isClarifyLimit(value: unknown): boolean {
@@ -115,7 +129,7 @@ function isClarifyLimit(value: unknown): boolean {
 }
 
 /** A `limit` answers with no questions, so a response carrying both is malformed. */
-function isClarifyResponse(value: unknown): value is ClarifyResponse {
+function isClarifyResponse(value: unknown): value is WireClarifyResponse {
   return (
     isRecord(value) &&
     Array.isArray(value.questions) &&
@@ -259,7 +273,7 @@ export async function clarifyPrompt(
   if (!isClarifyResponse(bodyJson)) {
     throw new GenerationClientError('http', { status: response.status, hint: 'Unexpected clarify response shape' });
   }
-  return withRequestId(bodyJson, response);
+  return withRequestId({ ...bodyJson, questions: bodyJson.questions.map(withAnswerModeDefaults) }, response);
 }
 
 /** `POST /v1/rewrite` — fast and unary, plain JSON, no stream. `clarifications` carries the
@@ -492,6 +506,10 @@ async function openFetchGenerateStream(
   const inner = response.body.getReader();
   return {
     requestId: requestIdOf(response.headers),
+    cancel() {
+      cleanup();
+      controller.abort();
+    },
     async read() {
       try {
         const chunk = await inner.read();
@@ -626,6 +644,7 @@ function concatBytes(chunks: Uint8Array[]): Uint8Array {
  *
  * An aborted stream (via `signal`) ends the iteration silently — no terminal event, no throw.
  * Any other stream failure (network error mid-read) raises `GenerationClientError{kind:'network'}`.
+ * Whatever ends the stream on the client's side also aborts its request (`streamEvents`).
  *
  * Hermes ships a TextDecoder polyfill whose streaming-decode option is unverified (this
  * project's own ambient TextDecoder type — `src/host/version-store/env.d.ts` — declares only the
@@ -665,7 +684,13 @@ export function generateApp(
  *  before that and when the response had none. */
 export type GenerationStream = AsyncGenerator<GenerationEvent, void, undefined> & { readonly requestId?: string };
 
-/** `generateApp`'s event loop; records the opened stream's request id on `opened`. */
+/** `generateApp`'s event loop; records the opened stream's request id on `opened`.
+ *
+ *  A stream the client ends — a fallback that ends the flow, a frame that fails to parse, a read
+ *  that fails, or a consumer that stops iterating — is cancelled here, on every one of those paths,
+ *  so the transport aborts the request. Otherwise the server would build on for nobody: holding the
+ *  slot, spending, recording a delivery, and refusing the device's retry `device_busy`. A stream
+ *  the server ended, or the caller's signal aborted, has nothing left to cancel. */
 async function* streamEvents(
   opts: ConsentedClientOptions,
   request: GenerateRequest,
@@ -678,6 +703,18 @@ async function* streamEvents(
   }
   opened.requestId = reader.requestId;
 
+  let ended = false;
+  try {
+    yield* eventsOn(reader, opts.onKeepalive);
+    ended = true;
+  } finally {
+    if (!ended) reader.cancel();
+  }
+}
+
+/** The events on an opened stream's SSE body, until the body ends or the caller's signal aborts
+ *  it (see `generateApp` for why each byte is decoded exactly once). */
+async function* eventsOn(reader: ResponseBodyReader, onKeepalive: (() => void) | undefined): AsyncGenerator<GenerationEvent, void, undefined> {
   const decoder = new TextDecoder();
   // The bytes that have arrived and are NOT yet part of a completed block: at most one partial
   // frame, never the accumulated body.
@@ -700,7 +737,7 @@ async function* streamEvents(
       // Nothing follows, so the trailing block (if any) is final too — the one case where a block
       // with no separator after it is still complete.
       if (pending.length > 0) {
-        yield* framesIn(decoder.decode(pending).split('\n\n'), opts.onKeepalive);
+        yield* framesIn(decoder.decode(pending).split('\n\n'), onKeepalive);
       }
       break;
     }
@@ -712,7 +749,7 @@ async function* streamEvents(
       // few bytes of the next partial frame.
       pending = concatBytes([pending.subarray(separator + SEPARATOR_LENGTH)]);
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
-      yield* framesIn(completed.split('\n\n'), opts.onKeepalive);
+      yield* framesIn(completed.split('\n\n'), onKeepalive);
     } else {
       searchedThrough = Math.max(0, pending.length - SEPARATOR_LENGTH + 1);
     }

@@ -563,7 +563,7 @@ async function testProtocolLevelRequired(): Promise<void> {
   }
 
   const probe = new Hono<EdgeEnv>();
-  probe.use('*', readProtocolLevel);
+  probe.use('*', readProtocolLevel());
   probe.get('/level', (c) => c.json({ level: c.get('protocolLevel') }));
   const read = await within(Promise.resolve(probe.request('/level', { headers: { [PROTOCOL_HEADER]: '7' } })));
   eq('a route reads the level the client declared, as a number', read === TIMED_OUT ? 'timed out' : await read.json(), { level: 7 });

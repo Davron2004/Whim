@@ -34,6 +34,7 @@ const build = (tree: Tree) => tree.root.findByType(BuildStep);
 const clarify = (tree: Tree) => tree.root.findByType(ClarifyStep);
 const ghosts = (tree: Tree): PendingBuildRecord[] => home(tree).props.pending;
 const records = (kv: KVBackend) => new PendingBuildStore(kv).list().map((record) => [record.state, record.failure?.reason]);
+const generateSignal = (sent: readonly SentRequest[]) => sent.find((r) => r.path === '/v1/generate')?.signal;
 
 const STAGE = { type: 'stage', stage: 'plan', status: 'start' };
 
@@ -192,12 +193,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   await h.test('fallback: an update fallback mid-build fails the record, installs nothing, and the update screen shows the notice', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('update').compat?.notice ?? '';
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('update'));
       streams[0].push(resultEvent('Tip Splitter'));
       await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
       h.ok(notice.length > 0 && textOf(tree.root).includes(notice), 'showing the notice');
       h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
@@ -212,12 +214,13 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
   await h.test('fallback: a fail fallback mid-build ends on the failure screen with the notice as its reason, and installs nothing', async () => {
     const streams: Stream[] = [];
     const notice = stubFutureFrame('fail').compat?.notice ?? '';
-    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
       await startBuild(tree, 'A tip splitter');
       streams[0].push(STAGE);
       streams[0].push(stubFutureFrame('fail'));
       streams[0].push(resultEvent('Tip Splitter'));
       await waitFor(() => on(tree, FailureScreen), 'the failure screen');
+      h.eq(generateSignal(sent)?.aborted, true, 'the generation request is aborted, so the server stops building');
       h.eq(tree.root.findByType(FailureScreen).props.reason, notice, 'the notice is the reason, as plain text');
       h.eq(records(kv), [['failed', notice]], 'the pending record resolves as failed');
       h.eq(new AppIndex(kv).list(), [], 'and nothing is installed');
@@ -282,6 +285,25 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   }
 
+  await h.test('fallback: an update fallback on a report opens the update screen with the notice', async () => {
+    const streams: Stream[] = [];
+    const deliver = streamingServer(streams);
+    await withLauncher({ server: (r) => (r.path === '/v1/report' ? futureBody({ reportId: 'report-1' }, 'update') : deliver(r)) }, async ({ tree, paths }) => {
+      await startBuild(tree, 'A tea timer');
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => on(tree, DoneStep), 'the done step');
+      await TestRenderer.act(async () => tree.root.findByType(DoneStep).props.onReport());
+      await waitFor(() => textOf(tree.root).includes(COPY.reportReasonBroken), 'the report draft');
+      await press(button(tree, COPY.reportReasonBroken));
+      await press(button(tree, COPY.reportSend));
+      await waitFor(() => on(tree, UpdateRequiredScreen), 'the update screen');
+      h.ok(paths().includes('/v1/report'), 'after the report was sent');
+      h.ok(textOf(tree.root).includes(UNARY_NOTICE), 'showing the notice');
+      h.ok(!textOf(tree.root).includes(COPY.updateBody), 'in place of the standard body');
+    });
+  });
+
   // ── answer modes (4.5) ───────────────────────────────────────────────────────────────────────
 
   await h.test('answers: one pick moves, several picks toggle, and Decide for me clears the picks and the typed answer', async () => {
@@ -330,6 +352,18 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       await waitFor(() => streams.length === 1, 'the generation request');
       h.eq(sent.find((r) => r.path === '/v1/generate')?.body?.clarifications, expected, 'and so does the generation');
       streams[0].end();
+    });
+  });
+
+  await h.test('answers: questions from a server that sends no answer modes are one pick each, with no Other field', async () => {
+    const older = ANSWER_QUESTIONS.map(({ id, question, options }) => ({ id, question, options }));
+    await withLauncher({ server: (r) => (r.path === '/v1/clarify' ? json({ questions: older }) : streamingServer([])(r)) }, async ({ tree }) => {
+      await composeAndContinue(tree, 'A tea timer');
+      await waitFor(() => on(tree, ClarifyStep) && !clarify(tree).props.loading, 'the questions');
+      await press(button(tree, 'Honey'));
+      await press(button(tree, 'Lemon'));
+      h.eq([picked(button(tree, 'Honey')), picked(button(tree, 'Lemon'))], [false, true], 'a second pick moves the first, as on a one-pick question');
+      h.eq(tree.root.findAll((n) => String(n.type) === 'TextInput').length, 0, 'and no question offers an Other field');
     });
   });
 

@@ -792,16 +792,25 @@ async function testLinePolicyRefusal(): Promise<void> {
   section('The line: a generation the content policy refuses, or cannot check, while every slot is busy takes no place in line');
 
   const pipeline = new HeldPipeline();
-  const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1 } });
+  // One generation a day per device, so a refusal that spent C's unit would refuse C's retry.
+  const h = harness({ pipeline, lineClock: new ManualLineClock(), config: { maxConcurrentGenerations: 1, limitGenerationsPerDeviceDay: 1 } });
   const first = await postGenerate(h.app, PROMPT, DEVICE_A);
   const waiting = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_B));
   eq('setup: B waits first in line', await waiting.next(), QUEUED_FIRST);
-  await expectRefusal('a refused prompt while the server is busy', await postGenerate(h.app, { prompt: '[[refuse]] this' }, DEVICE_C), 422, 'content_policy', null);
-  await expectRefusal('an unchecked prompt while the server is busy', await postGenerate(h.app, { prompt: '[[policy-down]] please' }, randomUUID()), 503, 'policy_unavailable', null);
+  const refused = await postGenerate(h.app, { prompt: '[[refuse]] this' }, DEVICE_C);
+  await expectRefusal('a refused prompt while the server is busy', refused, 422, 'content_policy', null);
+  const unchecked = await postGenerate(h.app, { prompt: '[[policy-down]] please' }, randomUUID());
+  await expectRefusal('an unchecked prompt while the server is busy', unchecked, 503, 'policy_unavailable', null);
   eq('neither took a place: only B waits, and only A holds a slot', [h.slots.queued, h.slots.generations], [1, 1]);
-  eq('neither spent a daily unit or inserted a ledger row', [await h.usageStore.generationUnits(AT_2200_UTC), h.usageStore.admitted.length], [1, 1]);
+  eq(
+    'the refused prompt has a ledger row settled as refused for content_policy, as it would with a free slot',
+    h.usageStore.settlesFor(refused.headers.get(REQUEST_ID_HEADER) ?? '').map((s) => [s.outcome, s.failureReason]),
+    [['refused', 'content_policy']],
+  );
+  eq('the unchecked prompt inserted no ledger row', h.usageStore.admitted.includes(unchecked.headers.get(REQUEST_ID_HEADER) ?? ''), false);
+  eq('neither spent a daily unit: only A’s counts', await h.usageStore.generationUnits(AT_2200_UTC), 1);
   const again = new StreamEvents(await postGenerate(h.app, PROMPT, DEVICE_C));
-  eq('the refused device is free to join the line, behind B', await again.next(), { type: 'queued', position: 2 });
+  eq('the refused device is free to join the line, behind B, its one unit of the day unspent', await again.next(), { type: 'queued', position: 2 });
   pipeline.releaseOne();
   eq('the freed slot still goes to B', await waiting.next(), PLAN_START);
   await readEvents('the first generation', first);

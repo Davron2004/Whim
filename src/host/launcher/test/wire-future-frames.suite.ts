@@ -17,7 +17,9 @@ import type { Compat, GenerationEvent } from '@whim/contract';
 import { CompatFallback, COMPAT_NOTICE_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_LEVEL as CONTRACT_LEVEL, ProtocolLevelHeader, WireEnvelope } from '@whim/contract';
 import { Harness } from './harness';
 import { grantedOptions } from './client-fixtures';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, type ConsentedClientOptions } from '../generation-client';
+import { openXhrGenerateStream } from '../xhr-transport';
+import { FakeXMLHttpRequest } from './fake-xhr';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
 import { acceptClarifyQuestions, clarifyLimitOf } from '../prompt-flow';
@@ -82,19 +84,67 @@ async function bounded<T>(promise: Promise<T>, what: string): Promise<T> {
   }
 }
 
-/** What `generateApp` made of the stream `fetchImpl` answered: the events it yielded, and what it
- *  threw, if anything. */
-async function drainWith(fetchImpl: typeof fetch): Promise<{ events: GenerationEvent[]; error?: unknown }> {
+type Drained = { events: GenerationEvent[]; error?: unknown };
+
+/** What `generateApp` made of the stream `opts` opens: the events it yielded, and what it threw, if
+ *  anything. The request is sent before this returns its promise; `stopAfterFirst` stops iterating
+ *  after the first event, as a consumer that leaves the loop does. */
+function drainOpts(opts: ConsentedClientOptions, what: string, stopAfterFirst = false): Promise<Drained> {
   const events: GenerationEvent[] = [];
-  const run = async (): Promise<{ events: GenerationEvent[]; error?: unknown }> => {
+  const run = async (): Promise<Drained> => {
     try {
-      for await (const event of generateApp({ ...OPTS, fetchImpl }, { prompt: 'p' })) events.push(event);
+      for await (const event of generateApp(opts, { prompt: 'p' })) {
+        events.push(event);
+        if (stopAfterFirst) break;
+      }
       return { events };
     } catch (error) {
       return { events, error };
     }
   };
-  return bounded(run(), 'the generation stream');
+  return bounded(run(), what);
+}
+
+/** What `generateApp` made of the stream `fetchImpl` answered. */
+async function drainWith(fetchImpl: typeof fetch): Promise<Drained> {
+  return drainOpts({ ...OPTS, fetchImpl }, 'the generation stream');
+}
+
+/** How a generation stream is carried: the streaming `fetch` path, or the XHR path the device takes. */
+type Transport = 'fetch' | 'xhr';
+
+/** A generate stream that delivered the server-framed `events` and is still open, as a server
+ *  mid-build leaves it (`complete` ends it after them instead, as a server that finished does): what
+ *  `generateApp` made of it over `transport`, and how many times that transport aborted the request.
+ *  An aborted fetch errors its body, as a real one does. */
+async function midBuild(transport: Transport, events: readonly unknown[], how: { complete?: boolean; stopAfterFirst?: boolean } = {}): Promise<Drained & { aborts: number }> {
+  const text = await sseFromServer(events).text();
+  if (transport === 'xhr') {
+    const xhr = new FakeXMLHttpRequest();
+    const opts = {
+      ...OPTS,
+      streamTransport: (o, r, s) => openXhrGenerateStream(o, r, s, () => xhr as unknown as XMLHttpRequest),
+    } as ConsentedClientOptions;
+    const drained = drainOpts(opts, 'the XHR generation stream', how.stopAfterFirst);
+    xhr.respondHeaders(200);
+    xhr.respondIncremental(text);
+    if (how.complete) xhr.respondComplete();
+    return { ...(await drained), aborts: xhr.abortCount };
+  }
+  let aborts = 0;
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    const signal = init?.signal ?? undefined;
+    signal?.addEventListener('abort', () => { aborts += 1; });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        if (how.complete) controller.close();
+        else signal?.addEventListener('abort', () => controller.error(new DOMException('The operation was aborted.', 'AbortError')));
+      },
+    }) as unknown as ConstructorParameters<typeof Response>[0];
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }) as typeof fetch;
+  return { ...(await drainOpts({ ...OPTS, fetchImpl }, 'the fetch generation stream', how.stopAfterFirst)), aborts };
 }
 
 function drain(response: Response): Promise<{ events: GenerationEvent[]; error?: unknown }> {
@@ -228,6 +278,35 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       h.eq(outcomeOf(error) === 'none', read, `compat ${JSON.stringify(compat)}: read by this build exactly when the contract reads it (else fail)`);
     }
   });
+
+  // ── A stream the client ends releases the server's build ─────────────────────────────────────
+
+  const clientEndings = [
+    { name: 'a fail fallback', frame: adapted(ETA, levelTwo({ min: 2, fallback: 'fail', notice: NOTICE })), outcome: 'fail' },
+    { name: 'an update fallback', frame: adapted(ETA, levelTwo({ min: 2, fallback: 'update', notice: NOTICE })), outcome: 'update' },
+    { name: 'a frame that fails to parse', frame: { type: 'token' }, outcome: 'stream_parse' },
+  ];
+  for (const transport of ['fetch', 'xhr'] as const) {
+    for (const ending of clientEndings) {
+      await h.test(`client ending (${transport}): ${ending.name} mid-build aborts the request, so the server stops building`, async () => {
+        const { events, error, aborts } = await midBuild(transport, [STAGE, ending.frame, TOKEN]);
+        h.eq([outcomeOf(error), events], [ending.outcome, [STAGE]], 'setup: the stream ends on the client, after the first event');
+        h.eq(aborts, 1, 'the transport aborted the request');
+      });
+    }
+
+    await h.test(`client ending (${transport}): a consumer that stops iterating mid-build aborts the request`, async () => {
+      const { events, aborts } = await midBuild(transport, [STAGE, TOKEN], { stopAfterFirst: true });
+      h.eq(events, [STAGE], 'setup: the consumer left after the first event');
+      h.eq(aborts, 1, 'the transport aborted the request');
+    });
+
+    await h.test(`client ending (${transport}): a stream the server ended is not aborted`, async () => {
+      const { events, error, aborts } = await midBuild(transport, [STAGE, RESULT], { complete: true });
+      h.eq([outcomeOf(error), events], ['none', [STAGE, RESULT]], 'setup: the stream runs to its result');
+      h.eq(aborts, 0, 'nothing aborts a request the server finished');
+    });
+  }
 
   // ── Error bodies and unary success bodies ────────────────────────────────────────────────────
 
