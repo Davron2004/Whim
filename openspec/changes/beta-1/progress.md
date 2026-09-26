@@ -233,3 +233,8 @@
   - cap 5, 5 devices: 5/5 results, cpu `{cores 2, samples 16, p50 0.08 %, p95 68.07 %}`, total p95 43.8 s.
   - cap 5, 7 devices: 7/7 results, queued 2, cpu p95 97.61 % (18 samples), total p95 67.8 s.
   → R19: default back to 3 (commit "keep the standard generation cap at 3"), regate FAST GATE PASSED. **10.2 ticked.**
+- fix-8 (Opus) report: complete, GATE PASS; commits `c28edeb9` `e467a5fd` `c73e9e7e`. **The iOS upgrade check PASSES end to end: 382511 → 386398 on a fresh iPhone 17 simulator, "4 apps, 5 versions, 2 saved values, the consent grant and the device id are unchanged"** (evidence `upgrade-check/ios/{before,after}.json`, `result.txt`).
+  - Six blockers fixed: iOS joined tile labels (selectors and `upgrade-record#showsName`); the 382511 orb menu unreachable on iOS (#103), so the seed relaunches; the stuck keyboard (#50) dismissed via emoji keyboard + headline tap; the tile long-press menu tapped by position (`SCREEN_HEIGHT` passed in); **`--port` ignored because a Maestro 2.6 flow `env:` value overrides `-e`** (would have broken Android too; defaults now `${X || default}`); the upgraded example keeps 382511's copy ("loaded from storage").
+  - `docs/release/mobile.md` recipe fixed (vendor/bundle).
+  - Filed the tile long-press menu a11y issue.
+- fix-8 merge: an add/add conflict on `upgrade-check/ios/result.txt`. My own sweep (`git add -A openspec/changes/beta-1` in `964c31e2`) had committed the FAILED run's untracked result file. Resolved to fix-8's passing version (bookkeeping, not a chain partition problem; the failed run is recorded above and kept in scratch). A `| tail` pipe had masked the merge failure, so a gate ran on the conflicted tree; that result was discarded and the regate on the resolved tree passed.
