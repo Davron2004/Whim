@@ -417,12 +417,14 @@ under 70 % and no failed runs. CPU is normalized to the whole machine, so 100 % 
 |---|---|---|---|
 | 3 / 2 | 3 | peak 42 % | all results, no refusals |
 | 3 / 2 | 5 (2 queued) | peak 35 % | all results |
-| 5 / 2 | 5 | peak 80 %; next run p95 68 % | all results |
-| 5 / 2 | 7 (2 queued) | p95 98 % | all results |
+| 5 / 2 | 5 | peak 80 % (run 2); p95 68 % (run 3) | all results |
+| 5 / 2 | 7 (2 queued) | peak 61 % (run 2); p95 98 % (run 3) | all results |
 
-Cap 5 crossed 70 % in two of three runs, so the default stays at **3 / 2**. With 2-second sampling a run
-yields about 16 samples, which makes the p95 close to the maximum; measure cap 4 with denser sampling and
-repeated runs before raising it. The synthetic-run concurrency is capped at the machine's vCPU count (D25).
+Only run 3 measured a p95 (runs 1 and 2 reported peaks, which are informative only). In run 3, cap 5 had a
+p95 of 68 % at 5 devices and **98 % at 7 devices**, over the rule, so the default stays at **3 / 2**. The p95 is
+nearest-rank, so with 2-second sampling (16–18 samples) it equals the run's maximum. Measure cap 4 with denser
+sampling and repeated runs before raising it (#134). The synthetic-run concurrency is capped at the machine's
+vCPU count (D25).
 
 **Demo-night checklist:** resize up the day of the event, run the load test once, resize back down
 after.
