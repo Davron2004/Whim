@@ -1,0 +1,1452 @@
+{
+  "setId": "visible-dev-v1",
+  "url": "https://api.whim.anycognition.ca",
+  "startedAt": "2026-09-26T02:13:46.277Z",
+  "finishedAt": "2026-09-26T02:28:36.271Z",
+  "cases": [
+    {
+      "caseId": "tip-splitter-p1",
+      "appSlug": "tip-splitter",
+      "prompt": "make a tip calculator that splits the bill between friends",
+      "deviceId": "cc17b132-63ca-4f7a-af1f-ac6b6657ff51",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1184,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1848,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 53557,
+          "retries": 0,
+          "firstEventMs": 1226,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1399
+            },
+            {
+              "stage": "generate",
+              "durationMs": 43267
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3232
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 4433,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 12175
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tip-splitter-p2",
+      "appSlug": "tip-splitter",
+      "prompt": "I enter the bill, pick a tip percent, and see what each person owes",
+      "deviceId": "de14a9f2-0aaa-4851-88dd-2e62fe40d688",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2047,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2142,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 15810,
+          "retries": 0,
+          "firstEventMs": 927,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2026
+            },
+            {
+              "stage": "generate",
+              "durationMs": 7421
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3871
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1564,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 5932
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p1",
+      "appSlug": "spending-tracker",
+      "prompt": "track my spending and show me a weekly graph",
+      "deviceId": "7eb8ffe5-7147-4c2a-be9e-7c9548c9bd8d",
+      "clarifications": [
+        {
+          "id": "expense_type",
+          "question": "What do you want to track?",
+          "choices": [
+            "Cash payments"
+          ]
+        },
+        {
+          "id": "graph_style",
+          "question": "How should the weekly graph look?",
+          "choices": [
+            "Line chart"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1735,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2622,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 36958,
+          "retries": 0,
+          "firstEventMs": 816,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 921
+            },
+            {
+              "stage": "generate",
+              "durationMs": 31276
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2746
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1199,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 13939
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "spending-tracker-p2",
+      "appSlug": "spending-tracker",
+      "prompt": "an expense tracker with categories and a chart of where my money goes each month",
+      "deviceId": "ecdf73b3-aa13-46ec-9da3-2ae08f1cc70b",
+      "clarifications": [
+        {
+          "id": "month_change",
+          "question": "What should happen when a new month starts?",
+          "choices": [
+            "Keep all months in one list"
+          ]
+        },
+        {
+          "id": "chart_type",
+          "question": "How do you want to see where your money goes?",
+          "choices": [
+            "Pie chart"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2394,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2742,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 59413,
+          "retries": 0,
+          "firstEventMs": 728,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1634
+            },
+            {
+              "stage": "generate",
+              "durationMs": 50425
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 5508
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1118,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 17376
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p1",
+      "appSlug": "habit-tracker",
+      "prompt": "habit tracker with streaks — show a calendar of the days I did it",
+      "deviceId": "f4391ddf-710c-4b36-96e1-bd82154b39d2",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1081,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 4480,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 51393,
+          "retries": 0,
+          "firstEventMs": 823,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1986
+            },
+            {
+              "stage": "generate",
+              "durationMs": 37428
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 8952
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 2203,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14144
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "habit-tracker-p2",
+      "appSlug": "habit-tracker",
+      "prompt": "track a few daily habits and show my current streak for each",
+      "deviceId": "940c2539-1641-4d8c-ae75-f1ce0b9ffd4a",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1844,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2380,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 53083,
+          "retries": 0,
+          "firstEventMs": 944,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1124
+            },
+            {
+              "stage": "generate",
+              "durationMs": 47714
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 1816
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1485,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 15248
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "water-counter-p1",
+      "appSlug": "water-counter",
+      "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "deviceId": "e3994109-95a5-4d39-8cd5-74b4734bad9c",
+      "clarifications": [
+        {
+          "id": "goal",
+          "question": "What should your daily goal be?",
+          "choices": [
+            "8 glasses"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1949,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2973,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 20141,
+          "retries": 0,
+          "firstEventMs": 1193,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2129
+            },
+            {
+              "stage": "generate",
+              "durationMs": 12899
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2685
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1235,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 6843
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "water-counter-p2",
+      "appSlug": "water-counter",
+      "prompt": "count my calories today with a progress bar toward my daily limit, keep history",
+      "deviceId": "a53f4301-63d5-453e-8d37-8c0e02ec45fa",
+      "clarifications": [
+        {
+          "id": "limit",
+          "question": "What's your daily calorie limit?",
+          "choices": [
+            "1500"
+          ]
+        },
+        {
+          "id": "history",
+          "question": "How should history be kept?",
+          "choices": [
+            "Just today's meals in a list"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 10292,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 3282,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 21708,
+          "retries": 0,
+          "firstEventMs": 762,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2785
+            },
+            {
+              "stage": "generate",
+              "durationMs": 13731
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2224
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 2206,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 5968
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "workout-log-p1",
+      "appSlug": "workout-log",
+      "prompt": "a workout log — each session has exercises with sets, reps and weight",
+      "deviceId": "4823fce0-ca04-40f1-856f-d3a5faacc23b",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1068,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2358,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 61113,
+          "retries": 0,
+          "firstEventMs": 690,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1724
+            },
+            {
+              "stage": "generate",
+              "durationMs": 42973
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2634
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 9161
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2535
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1396,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 18448
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "workout-log-p2",
+      "appSlug": "workout-log",
+      "prompt": "log my gym workouts and let me look back at what I lifted last time",
+      "deviceId": "b091aa4b-62fc-4c13-a2e6-dff984c3eaf7",
+      "clarifications": [
+        {
+          "id": "tracking_detail",
+          "question": "What do you want to track for each exercise?",
+          "choices": [
+            "Weight and reps"
+          ]
+        },
+        {
+          "id": "view_preference",
+          "question": "How do you want to see past workouts?",
+          "choices": [
+            "By date"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 3790,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 4964,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 31566,
+          "retries": 0,
+          "firstEventMs": 778,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2435
+            },
+            {
+              "stage": "generate",
+              "durationMs": 23998
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3066
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1289,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 12661
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "flashcards-p1",
+      "appSlug": "flashcards",
+      "prompt": "flashcards with spaced repetition — show me the cards due today",
+      "deviceId": "a6fce534-a92c-4150-a42d-0c981d45a8c9",
+      "clarifications": [
+        {
+          "id": "deck_source",
+          "question": "How do you want to get your flashcard decks?",
+          "choices": [
+            "Create new decks yourself"
+          ]
+        },
+        {
+          "id": "due_filter",
+          "question": "How should 'due today' work?",
+          "choices": [
+            "All cards due today, regardless of deck"
+          ]
+        },
+        {
+          "id": "review_mode",
+          "question": "What should happen when you answer a card?",
+          "choices": [
+            "Rate: Again / Good / Easy"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2166,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 3500,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 140025,
+          "retries": 0,
+          "firstEventMs": 23,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1507
+            },
+            {
+              "stage": "generate",
+              "durationMs": 102419
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 3228
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 28821
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2623
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1404,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 23756
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "flashcards-p2",
+      "appSlug": "flashcards",
+      "prompt": "I make flashcards and review them; ones I get wrong come back sooner",
+      "deviceId": "e18b1ce1-396d-4eea-8733-76e9d9e8c662",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1102,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2694,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 118900,
+          "retries": 0,
+          "firstEventMs": 6784,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1951
+            },
+            {
+              "stage": "generate",
+              "durationMs": 78879
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2739
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 25830
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2030
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 687,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 16530
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "score-keeper-p1",
+      "appSlug": "score-keeper",
+      "prompt": "score keeper for board game night — add players and bump their scores",
+      "deviceId": "90f38bc8-d7fe-42a2-a50a-8708a23825d7",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1590,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1553,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 144092,
+          "retries": 0,
+          "firstEventMs": 728,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 3274
+            },
+            {
+              "stage": "generate",
+              "durationMs": 126127
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 12615
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1348,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 13877
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "score-keeper-p2",
+      "appSlug": "score-keeper",
+      "prompt": "keep score for games, plus and minus buttons per player",
+      "deviceId": "f7a390d4-83c3-4d4e-b8cb-2fce31c14d6d",
+      "clarifications": [
+        {
+          "id": "player_count",
+          "question": "How many players are usually playing?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "score_limit",
+          "question": "Does the game have a winning score?",
+          "choices": [
+            "Yes, fixed score"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1962,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1584,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 52879,
+          "retries": 0,
+          "firstEventMs": 450,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 4229
+            },
+            {
+              "stage": "generate",
+              "durationMs": 42610
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 4431
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1158,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 7141
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p1",
+      "appSlug": "packing-checklist",
+      "prompt": "packing checklist with templates — I make a 'beach trip' template and reuse it",
+      "deviceId": "db26d44f-9aed-471d-b7d7-891cfbc757c2",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1837,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1913,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 209583,
+          "retries": 0,
+          "firstEventMs": 957,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2686
+            },
+            {
+              "stage": "generate",
+              "durationMs": 189480
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 2172
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 11015
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 2682
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 591,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 20687
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "packing-checklist-p2",
+      "appSlug": "packing-checklist",
+      "prompt": "checklist app where I save a list as a template and start a new trip from it",
+      "deviceId": "84cd5dee-fdb0-4626-856d-d1469999d779",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1410,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 907,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 225318,
+          "retries": 0,
+          "firstEventMs": 455,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 2676
+            },
+            {
+              "stage": "generate",
+              "durationMs": 219402
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 1477
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1308,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14132
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "recipe-box-p1",
+      "appSlug": "recipe-box",
+      "prompt": "a recipe box — save recipes with ingredients and steps, search by name",
+      "deviceId": "f5078c36-56c3-42f3-a720-dd93dbfeca20",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1493,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2087,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 143744,
+          "retries": 0,
+          "firstEventMs": 656,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1112
+            },
+            {
+              "stage": "generate",
+              "durationMs": 47072
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 8638
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 16284
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 19253
+            },
+            {
+              "stage": "repair",
+              "attempt": 2,
+              "durationMs": 6860
+            },
+            {
+              "stage": "check",
+              "attempt": 2,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 2,
+              "durationMs": 19170
+            },
+            {
+              "stage": "repair",
+              "attempt": 3,
+              "durationMs": 5943
+            },
+            {
+              "stage": "check",
+              "attempt": 3,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 3,
+              "durationMs": 18755
+            }
+          ],
+          "repairs": 3,
+          "tailMs": 0,
+          "terminal": {
+            "type": "failure",
+            "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+            "attempts": 4
+          }
+        }
+      },
+      "outcome": {
+        "type": "failure",
+        "phase": "generate",
+        "reason": "Could not produce a working app after several attempts. Try describing it differently or more specifically.",
+        "attempts": 4
+      }
+    },
+    {
+      "caseId": "recipe-box-p2",
+      "appSlug": "recipe-box",
+      "prompt": "store my recipes and filter them by a tag like 'quick'",
+      "deviceId": "5220b007-86e3-47f2-8786-87b5967a6715",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1755,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1164,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 51726,
+          "retries": 0,
+          "firstEventMs": 639,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1824
+            },
+            {
+              "stage": "generate",
+              "durationMs": 37546
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 1596
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 6773
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 1481
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1866,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14023
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p1",
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe for two people on one phone",
+      "deviceId": "1b973d1e-2779-4ac2-8584-91765644d643",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2218,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2089,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 29721,
+          "retries": 0,
+          "firstEventMs": 693,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1507
+            },
+            {
+              "stage": "generate",
+              "durationMs": 16934
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 9172
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1415,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 6727
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "tic-tac-toe-p2",
+      "appSlug": "tic-tac-toe",
+      "prompt": "tic-tac-toe that keeps a running tally of wins",
+      "deviceId": "5745e9bf-a3cd-49cd-83ee-a8249006e8a2",
+      "clarifications": [],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 1169,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 1938,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 24574,
+          "retries": 0,
+          "firstEventMs": 383,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 925
+            },
+            {
+              "stage": "generate",
+              "durationMs": 14955
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 6404
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1907,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 7259
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p1",
+      "appSlug": "chore-rotation",
+      "prompt": "chore rotation — it tells us whose turn it is to do dishes and rotates fairly",
+      "deviceId": "24c2c4eb-0b65-4c08-8434-ad319212b536",
+      "clarifications": [
+        {
+          "id": "household_size",
+          "question": "How many people are in your household?",
+          "choices": [
+            "2"
+          ]
+        },
+        {
+          "id": "rotation_rule",
+          "question": "How should the rotation order be decided?",
+          "choices": [
+            "Random each time"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 3238,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2196,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 65947,
+          "retries": 0,
+          "firstEventMs": 582,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 1142
+            },
+            {
+              "stage": "generate",
+              "durationMs": 47733
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 4052
+            },
+            {
+              "stage": "repair",
+              "attempt": 1,
+              "durationMs": 7303
+            },
+            {
+              "stage": "check",
+              "attempt": 1,
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "attempt": 1,
+              "durationMs": 3969
+            }
+          ],
+          "repairs": 1,
+          "tailMs": 1166,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 14005
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    },
+    {
+      "caseId": "chore-rotation-p2",
+      "appSlug": "chore-rotation",
+      "prompt": "rotate chores between roommates and remember who did what last",
+      "deviceId": "033163e0-004a-4e2c-88ec-9fa047d0c997",
+      "clarifications": [
+        {
+          "id": "chore_list",
+          "question": "Which chores should we rotate?",
+          "choices": [
+            "Kitchen cleaning"
+          ]
+        },
+        {
+          "id": "rotation_style",
+          "question": "How should the rotation work?",
+          "choices": [
+            "Weekly swap"
+          ]
+        },
+        {
+          "id": "tracking",
+          "question": "How should past chores be tracked?",
+          "choices": [
+            "Just show who did what last"
+          ]
+        }
+      ],
+      "phases": {
+        "clarify": {
+          "status": 200,
+          "durationMs": 2670,
+          "retries": 0
+        },
+        "rewrite": {
+          "status": 200,
+          "durationMs": 2405,
+          "retries": 0
+        },
+        "generate": {
+          "status": 200,
+          "durationMs": 33859,
+          "retries": 0,
+          "firstEventMs": 826,
+          "stages": [
+            {
+              "stage": "plan",
+              "durationMs": 3849
+            },
+            {
+              "stage": "generate",
+              "durationMs": 26255
+            },
+            {
+              "stage": "check",
+              "durationMs": 0
+            },
+            {
+              "stage": "run",
+              "durationMs": 1883
+            }
+          ],
+          "repairs": 0,
+          "tailMs": 1045,
+          "terminal": {
+            "type": "result",
+            "sourceBytes": 11815
+          }
+        }
+      },
+      "outcome": {
+        "type": "result"
+      }
+    }
+  ],
+  "summary": {
+    "phases": {
+      "clarify": {
+        "medianMs": 1840.5,
+        "maxMs": 10292
+      },
+      "rewrite": {
+        "medianMs": 2277,
+        "maxMs": 4964
+      },
+      "generate": {
+        "medianMs": 52981,
+        "maxMs": 225318
+      }
+    },
+    "results": 21,
+    "failures": 1,
+    "limits": 0
+  }
+}
