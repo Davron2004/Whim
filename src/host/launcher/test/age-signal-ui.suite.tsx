@@ -206,6 +206,21 @@ export async function runAgeSignalUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('age signal: while the store is asked the screen says it is working, in the phone’s language, and the line goes once the store holds the user', async () => {
+    for (const [locale, copy] of [['en-CA', LEGAL_COPY.en], ['fr-CA', LEGAL_COPY.fr]] as const) {
+      await withLauncher({ locale, terms: false, consent: false, ageSignal: () => new Promise<unknown>(() => {}), server: clarifyServer }, async ({ tree }) => {
+        await describeAnApp(tree);
+        h.ok(on(tree, AgeScreen) && !blockedShown(tree), `${locale}: the check is running`);
+        h.ok(copy.ageChecking.length > 0 && textOf(tree.root).includes(copy.ageChecking), `${locale}: the screen is not blank while it runs`);
+      });
+    }
+    await withLauncher({ terms: false, consent: false, ageSignal: () => Promise.resolve('under-13'), server: clarifyServer }, async ({ tree }) => {
+      await describeAnApp(tree);
+      await waitFor(() => blockedShown(tree), 'the 13-and-over message');
+      h.ok(!textOf(tree.root).includes(LEGAL_COPY.en.ageChecking), 'the working line does not linger under the answer');
+    });
+  });
+
   await h.test('age signal: a store that never answers is given up on after 3 seconds, and the flow goes on to the terms step', async () => {
     await withLauncher({ terms: false, consent: false, ageSignal: () => new Promise<unknown>(() => {}), server: clarifyServer }, async ({ tree, kv, clock }) => {
       await describeAnApp(tree);
