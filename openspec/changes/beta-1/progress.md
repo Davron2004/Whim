@@ -111,3 +111,4 @@
   - L4: "Build Make me a … instead";
   - L5: the report-sheet notice, and a busy-slot policy refusal writes no ledger row.
 - R11. Every finding goes into one fix chain (`dispatch/fix-1.md`), lows included, because most touch the reader that can never be updated and each is small. Then gate-full again and a scoped reviewer re-check of the fix diff before 10.1 is ticked.
+- 21:08 fix-1 dispatched: BASE `4132bdfe57c2962f28cd88c35952141b0bcf2d02`, worktree `.claude/worktrees/beta-1-fix1`, block `dispatch/fix-1.md`, model Opus.
