@@ -32,6 +32,9 @@
 - R13. Caps (10.2). `docker stats` CPU% is per core, so 200% is the whole e2-standard-2. The driver reports only the peak, which bounds the p95. At the default caps (3 generations / 2 synthetic runs) the peak was 83.3% at 3 devices and 70.7% at 5 devices, about 42% of the machine. Candidate: 5 generations / 3 synthetic runs, set as the `config.ts` defaults in the next fix batch, load-tested after that deploy, and kept only if its normalized peak (peak / 2) stays under 70% with no failed runs. Otherwise fall back to 4/3, then 3/2.
 - R14. Capacity is normal again (owner, 2026-09-25 late: "not low usage anymore, be braver with subagents"). R3/R9 are superseded: chains whose file scopes don't overlap may run in parallel (up to ~4 agents), still merged one at a time. The owner asked for harness feedback at the end of the run (`docs/harness-feedback/2026-09-25-beta-1/orchestrator.md` plus a summary in chat).
 - R15. Tile watermark: the intentional bleed off the tile edge (`app-tile.tsx` `right:-8, top:-13`), clipped by the rounded tile shape with no ellipsis, meets "stays inside the rounded corners without truncation" (#48 was truncation and escaping the corners). Checked by eye on `acceptance/android/01b`. Not a defect.
+- R16. fix-5's class-B stops:
+  - EXAMPLE badge: top-left still overlaps the watermark (by 7–37dp), so it becomes a muted "Example" caption under the tile name.
+  - Version history: design 4a (the owner-approved reference) quotes the user's prompt under "You said" and puts the summary in the expanded row, and it wins over the live spec's summary-headline wording (spec delta added in beta-1). 4a's teal/black accents stay; they are the design.
 
 ## Ledger
 - 13:09 chain-1 dispatched: BASE `9a7a69d9a628be58e2877c0bde41de11d1892eaa`, worktree `.claude/worktrees/beta-1-1`, branch `chain/beta-1-1`, @whim symlinks pre-created, model Opus.
@@ -166,3 +169,14 @@
 - **Correction to 10.3 (limit investigation, Opus).** The app and flowbench send identical clarify requests (body `{prompt}`; headers differ only in platform/build, which nothing reads). The simulator's network log shows the app received `{"questions":[]}` (16 B bodies), so the device drops nothing. Over 11 samples, weather-p1 gets `limit` only ~27% of the time (95% CI ~10–57%). flowbench's "4/4" was one lucky sample per prompt, so the 10.3 conclusion above overstated the effect.
   Root cause: stochastic clarify (deepseek v4 flash, reasoning off, provider-default temperature, throughput routing). `limit` is a different reply shape placed last in `CLARIFY_SYSTEM`, after "an empty list is a good answer" (`prompts/index.ts:285-309`). Also, `shapeClarify` (`clarify.ts:126-131`) silently drops an unusable limit.
   10.3 is re-opened; fix-6 dispatched (`dispatch/fix-6.md`). Acceptance becomes a rate: ≥ 9/10 limits per impossible prompt, and 0 false limits on the visible set.
+- fix-5 (Opus) report: 10/12 items, GATE PASS (`sdk:test`, `invariants`, `bridge:invariants` also pass), 12 commits to `487d44eb`.
+  - Failure screen: the card fits its content, the notice shows once, and rephrase advice is dropped where rephrasing can't help; a new optional `PendingBuildFailure.remedy` field.
+  - The update ghost reopens the update screen while the build is still at the recorded level.
+  - Android accent is indigo (`colors.xml`/`styles.xml`, pinned by `android-accent.suite.ts`).
+  - The mini-app error screen has matched buttons; the consent screen gets a hairline.
+  - Example tiles are green `#15803d` / sky `#0369a1` / fuchsia `#a21caf`, outside the fallback palette, with a ≥45° hue-distance test.
+  - Water Counter copy is user-facing (upgrade-check flows updated); SDK chart labels ellipsize (measured at 320/390/900px, no committed layout test: no Chromium lane).
+  - Orb menu actions are accessible buttons; the age check shows "One moment…".
+  - Class B: the badge (6a) and "You said" (O). Decided in R16 → fix-5b.
+  - Note: fixtures are few-shot examples in the generation prompt, so fixture changes change what the model sees.
+- fix-5 merged (integrity OK; regate FAST GATE PASSED). Filed: version history ordering by second; generated apps can still declare an example colour. fix-5b dispatched.
