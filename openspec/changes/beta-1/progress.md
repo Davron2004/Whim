@@ -156,3 +156,4 @@
   - `WHIM_STUB_DELAY_MS` (default 200) is refused outside stub mode.
   - Item 4 was a **class B stop**: synthrun 3 breaks `deploy-config.suite.ts:869` (D25/D6: synthrun ≤ the machine's vCPUs; e2-standard-2 has 2).
 - fix-3 merged (integrity OK; regate FAST GATE PASSED). R13 amended: keep the D25 rule and test **5 generations / 2 synthetic runs** (only the generation cap moves; generations mostly wait on the model, and synthruns queue internally). fix-3b dispatched for the one default.
+- fix-3b merged (integrity OK): `WHIM_MAX_CONCURRENT_GENERATIONS` default 3 → 5, plus the docs/deploy.md table; synthrun stays 2. Revert = `config.ts:302` + `docs/deploy.md:405`. Its edit to the dated `docs/beta-readiness-2026-09-24.md` was reverted: a dated record stays as written. The cap is load-tested after the next deploy.
