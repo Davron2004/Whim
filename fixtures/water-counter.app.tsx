@@ -42,18 +42,16 @@ function Home() {
   useEffect(() => {
     let live = true;
     (async () => {
-      try {
-        const saved = await storage.kv.get('total');
-        const drinks = await storage.records.list('Drinks');
-        if (!live) return;
-        setTotal(typeof saved === 'number' ? saved : 0);
-        setHistory(drinks.length);
-        setStatus('Tap a button after each glass.');
-        // eslint-disable-next-line no-restricted-syntax -- intentional: a mini-app has no logger; the user is told on the status line, and the host records the rejected syscall's error kind (useMiniAppHost `lastSyscall`)
-      } catch {
-        if (live) setStatus('Couldn’t load your saved glasses.');
-      }
-    })();
+      const saved = await storage.kv.get('total');
+      const drinks = await storage.records.list('Drinks');
+      if (!live) return;
+      setTotal(typeof saved === 'number' ? saved : 0);
+      setHistory(drinks.length);
+      setStatus('Tap a button after each glass.');
+    })().catch(() => {
+      // A read that fails is told to the person on the status line.
+      if (live) setStatus('Couldn’t load your saved glasses.');
+    });
     return () => {
       live = false;
     };
@@ -65,24 +63,28 @@ function Home() {
     setTotal(next); // optimistic; the syscall persists it
     let kvSaved = false;
     let landed = 0;
-    try {
+    const save = async () => {
       await storage.kv.set('total', next);
       kvSaved = true;
       for (let i = 0; i < count; i++) {
         await storage.records.append('Drinks', { at: Date.now() });
         landed++;
       }
-      setHistory((h) => h + landed);
-      setStatus('Saved.');
-      // eslint-disable-next-line no-restricted-syntax -- intentional: a mini-app has no logger; the user is told on the status line, and the host records the rejected syscall's error kind (useMiniAppHost `lastSyscall`)
-    } catch {
-      // kv.set already landed → `next` is the durable truth, so keep it displayed (reverting
-      // here would diverge from what a reload shows). Only undo the optimistic bump if the kv
-      // write itself never made it to storage.
-      if (!kvSaved) setTotal(previous);
-      if (landed > 0) setHistory((h) => h + landed);
-      setStatus('Couldn’t save that. Try again.');
-    }
+    };
+    await save()
+      .then(() => {
+        setHistory((h) => h + landed);
+        setStatus('Saved.');
+      })
+      .catch(() => {
+        // A write that fails is told to the person on the status line. If kv.set already
+        // landed, `next` is the durable truth, so keep it displayed (reverting here would diverge
+        // from what a reload shows). Only undo the optimistic bump if the kv write itself never
+        // made it to storage.
+        if (!kvSaved) setTotal(previous);
+        if (landed > 0) setHistory((h) => h + landed);
+        setStatus('Couldn’t save that. Try again.');
+      });
   };
 
   return (
