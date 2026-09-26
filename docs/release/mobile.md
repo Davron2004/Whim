@@ -133,7 +133,72 @@ environment, the same as the deploy scripts.
    ```
    From here on, `fastlane android closed` (without `upload:false`) uploads through the API.
 
+## Upgrade check (required before any beta build ships)
+
+No beta build goes to TestFlight or the Play closed track until the upgrade check has passed on a
+fresh emulator and on a newly created simulator (specs/release-upgrade-check). The check installs
+the previous release, seeds it, installs the candidate over it, and fails unless every app tile,
+version count, saved datum, the consent grant and the device id are unchanged. A failure blocks the
+release.
+
+**Evidence** goes to the releasing change's folder: pass
+`--evidence openspec/changes/<id>/upgrade-check/<platform>` and commit `before.json` (the seed
+record), `after.json` and `result.txt`. The raw captures under `raw/` stay local (the script writes
+a `.gitignore` for them). Then add one line per platform to that change's `progress.md`, for
+example `upgrade check android 382511 → <candidate build>: PASS (upgrade-check/android/result.txt)`.
+
+Both sides are built from source on the same machine, because a store artifact can't go on a
+simulator and Android only installs an upgrade signed with the same key. The previous release's
+commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives `a9b03c47`.
+
+1. Check out the previous release next to the repo and build it with its own build number:
+   ```sh
+   git worktree add ~/.cache/whim-upgrade/382511 release/1.0.0+382511
+   cd ~/.cache/whim-upgrade/382511 && npm ci && npm run build
+   (cd android && ./gradlew :app:assembleOffline -PwhimBuildNumber=382511)
+   cp android/app/build/outputs/apk/offline/app-offline.apk ~/.cache/whim-upgrade/from.apk
+   (cd ios && bundle exec pod install && xcodebuild -workspace Whim.xcworkspace -scheme Whim \
+     -configuration Release -sdk iphonesimulator -derivedDataPath build/sim WHIM_BUILD_NUMBER=382511 build)
+   ```
+   The simulator app is `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app`. Android
+   takes the `offline` build: it's debug-signed (so the upgrade installs) and debuggable (so the
+   script can read the app's store with `run-as`).
+2. Build the candidate the same way from its own checkout, with a higher build number
+   (`node scripts/release/run.mjs build-number`). In this repo, restore `ios/Podfile.lock` after the
+   build if `pod install` changed it.
+3. Start the previous release's server in stub mode, from its checkout. The candidate's server
+   answers 426 to a build that doesn't send `x-whim-protocol`. Up to 382511, the plan step
+   (`/v1/rewrite`) has no stub, so the server needs the model key and roster from `.env`. Generation
+   stays stubbed, and every generated app is named "Hello App":
+   ```sh
+   cd ~/.cache/whim-upgrade/382511
+   WHIM_PIPELINE=stub WHIM_DATA_DIR="$(mktemp -d)" node --env-file=<repo>/.env server/dev.mjs
+   ```
+4. From the candidate's checkout, run the check for each platform:
+   ```sh
+   scripts/release/upgrade-check.sh --platform android --avd Whim_Verify \
+     --from ~/.cache/whim-upgrade/from.apk --to android/app/build/outputs/apk/offline/app-offline.apk \
+     --evidence openspec/changes/<id>/upgrade-check/android
+   scripts/release/upgrade-check.sh --platform ios \
+     --from ~/.cache/whim-upgrade/382511/ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app \
+     --to ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app \
+     --evidence openspec/changes/<id>/upgrade-check/ios
+   ```
+   Android boots the AVD with `-wipe-data` on port 5580 (`--emulator-port`) and forwards the server
+   port with `adb reverse`. iOS creates and deletes its own iPhone 15 Plus simulator (`--sim-type`).
+   `--keep-device` leaves the device up for a look after a failure.
+
+The seed flow (`scripts/release/upgrade-check/seed.yaml`) is written against 382511's screens. When
+the check fails, the script names the step and keeps Maestro's log and screenshots under `raw/maestro`.
+On iOS, Maestro has crashed SpringBoard on this machine before, and on 382511 the compose keyboard
+can't be dismissed and covers Continue (#49/#50). If the seed step fails there, rerun with
+`--manual-seed`: the script waits while you seed by hand, then reads and diffs as usual. From beta-1
+on, a Release iOS build ignores the server-address override (legal-surface-v2 D10), so the iOS seed
+for the release after beta-1 needs a previous-release build that honours the override.
+
 ## Per-release commands
+
+Run the [upgrade check](#upgrade-check-required-before-any-beta-build-ships) first.
 
 ```sh
 fastlane ios testflight
