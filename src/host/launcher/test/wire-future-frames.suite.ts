@@ -14,7 +14,16 @@
  * `WireEnvelope`), and the error codes it knows (against the server's registry).
  */
 import type { Compat, GenerationEvent } from '@whim/contract';
-import { CompatFallback, COMPAT_NOTICE_MAX_CHARS, PROTOCOL_HEADER, PROTOCOL_LEVEL as CONTRACT_LEVEL, ProtocolLevelHeader, WireEnvelope } from '@whim/contract';
+import {
+  CompatFallback,
+  COMPAT_NOTICE_MAX_CHARS,
+  PROTOCOL_HEADER,
+  PROTOCOL_LEVEL as CONTRACT_LEVEL,
+  ProtocolLevelHeader,
+  RewriteResponse,
+  RunSummary,
+  WireEnvelope,
+} from '@whim/contract';
 import { Harness } from './harness';
 import { grantedOptions } from './client-fixtures';
 import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, sendReport, type ConsentedClientOptions } from '../generation-client';
@@ -22,12 +31,18 @@ import { openXhrGenerateStream } from '../xhr-transport';
 import { FakeXMLHttpRequest } from './fake-xhr';
 import { serviceRefusalOf } from '../service-refusal';
 import { GENERIC_STREAM_ERROR, errorReason } from '../error-reason';
-import { acceptClarifyQuestions, clarifyLimitOf, stepAfterClarifyExchange } from '../prompt-flow';
+import { acceptClarifyQuestions, clarifyLimitOf, planRowsFrom, stepAfterClarifyExchange } from '../prompt-flow';
 import { fallbackNotice, terminalFallbackOf } from '../wire-fallback';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { COMPAT_NOTICE_MAX_CHARS as COMPAT_NOTICE_MAX_CHARS_DEVICE, KNOWN_ERROR_CODES } from '../wire-compat';
+import { deliverResult } from '../build-lifecycle';
+import type { InstalledApp } from '../app-index';
+import type { InstallSpec, StoreAccess } from '../store-access';
+import { log } from '../../logging';
+import { CHANNELS } from '../../logging/channels';
 import { buildSseStream } from '../../../../server/src/sse';
 import { WIRE_REGISTRY, errorForLevel, eventForLevel, type WireEvent, type WireRegistry } from '../../../../server/src/wire-level';
+import { shapeSummary } from '../../../../server/src/generation/summarise';
 
 const OPTS = grantedOptions('https://example.invalid', 'device-1');
 const WAIT_MS = 2000;
@@ -507,5 +522,83 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat }, RESULT]));
       h.eq([outcomeOf(error), events], ['fail', [STAGE]], `compat ${JSON.stringify(compat)} on a known event is unreadable, so fail`);
     }
+  });
+
+  // ── A malformed optional record is dropped, never the message it rides on ────────────────────
+
+  await h.test('oldest reader: a result keeps its summary exactly when the contract reads it, and a malformed one is installed as none', async () => {
+    const app = RESULT.type === 'result' ? RESULT.app : undefined;
+    const summary = shapeSummary({ text: 'Splits a bill between friends.', kind: 'Start', touched: ['the bill'], chg: 'Splits a bill', hedge: 'friends' }, 'Start');
+    h.eq(summary?.marks.length, 2, 'setup: the server’s own summariser produced a summary with both marks');
+    const summaries: readonly unknown[] = [
+      summary,
+      { ...summary, extra: true },
+      'Splits a bill between friends.',
+      [],
+      { ...summary, text: 7 },
+      { ...summary, kind: 'Renamed' },
+      { ...summary, touched: undefined },
+      { ...summary, touched: ['the bill', 3] },
+      { ...summary, marks: null },
+      { ...summary, marks: [{ cls: 'chg', start: 0.5, end: 6 }] },
+      { ...summary, marks: [{ cls: 'bold', start: 0, end: 6 }] },
+      { ...summary, marks: [{ cls: 'chg', start: 0 }] },
+    ];
+    for (const sent of summaries) {
+      const what = `summary ${JSON.stringify(sent)}`;
+      const read = RunSummary.safeParse(sent).success;
+      const { events, error } = await drain(sseFromServer([STAGE, { type: 'result', app, summary: sent }]));
+      const result = events.at(-1);
+      h.eq([outcomeOf(error), result?.type], ['none', 'result'], `${what}: the result arrives`);
+      if (result?.type !== 'result') continue;
+      h.eq(result.summary !== undefined, read, `${what}: carried exactly when the contract reads it`);
+      const installs: InstallSpec[] = [];
+      const access = { install: async (spec: InstallSpec): Promise<InstalledApp> => { installs.push(spec); return { id: spec.id, name: spec.name, createdAt: 0, record: spec.record, lineageId: 'main' }; } } as unknown as StoreAccess;
+      await deliverResult({ access, appId: 'app-1', text: 'a tip splitter', wire: result.app, summary: result.summary });
+      h.eq(installs.length, 1, `${what}: the app is installed`);
+      h.eq((JSON.parse(installs[0]?.prompt ?? '{}') as { summary?: unknown }).summary !== undefined, read, `${what}: its version stores a summary exactly when the contract reads it`);
+    }
+  });
+
+  await h.test('oldest reader: a rewrite keeps its plan exactly when the contract reads it, and a malformed one shows the one-row plan', async () => {
+    const rewrittenPrompt = 'A tip splitter for camping trips.';
+    const rows = [{ label: 'What it is', text: 'A tip splitter.' }, { label: 'Main screen', text: 'The bill and each share.' }];
+    const plans: readonly unknown[] = [
+      rows,
+      [{ ...rows[0], extra: true }],
+      'What it is: a tip splitter.',
+      rows[0],
+      [{ label: 'What it is', text: 7 }],
+      [{ label: 'What it is' }],
+      [rows[0], null],
+      [rows[0], 'Main screen'],
+    ];
+    for (const plan of plans) {
+      const what = `plan ${JSON.stringify(plan)}`;
+      const read = RewriteResponse.safeParse({ rewrittenPrompt, plan }).success;
+      const reply = await bounded(rewritePrompt(answering({ rewrittenPrompt, plan }), 'p'), 'rewrite');
+      h.eq(reply.rewrittenPrompt, rewrittenPrompt, `${what}: the reply is read`);
+      h.eq(reply.plan !== undefined, read, `${what}: carried exactly when the contract reads it`);
+      if (!read) h.eq(planRowsFrom(reply), [{ label: '', text: rewrittenPrompt }], `${what}: the plan step shows the rewritten prompt as its one row`);
+    }
+    const valid = await bounded(rewritePrompt(answering({ rewrittenPrompt, plan: rows }), 'p'), 'rewrite');
+    h.eq(planRowsFrom(valid), rows, 'a well-formed plan is shown row for row');
+  });
+
+  await h.test('oldest reader: a dropped summary or plan is logged at warn on the generation channel by route and field, with none of its content', async () => {
+    const app = RESULT.type === 'result' ? RESULT.app : undefined;
+    const secret = 'Private words from the plan.';
+    log.buffer.clear();
+    await drain(sseFromServer([{ type: 'result', app, summary: { text: secret, kind: 'Renamed', touched: [], marks: [] } }]));
+    await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', plan: [{ label: secret, text: 7 }] }), 'p'), 'rewrite');
+    await drain(sseFromServer([{ type: 'result', app, summary: { text: secret, kind: 'Start', touched: [], marks: [] } }]));
+    await bounded(rewritePrompt(answering({ rewrittenPrompt: 'A tip splitter.', plan: [{ label: secret, text: 'A tip splitter.' }] }), 'p'), 'rewrite');
+    const warnings = log.buffer.snapshot().filter((record) => record.channel === CHANNELS.gen && record.level === 'warn');
+    h.eq(
+      warnings.map((record) => record.fields),
+      [{ route: '/v1/generate', field: 'summary' }, { route: '/v1/rewrite', field: 'plan' }],
+      'one warning per dropped field, naming its route and field only; well-formed ones log nothing',
+    );
+    h.ok(!JSON.stringify(warnings).includes(secret), 'no dropped content reaches the log');
   });
 }
