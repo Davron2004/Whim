@@ -115,8 +115,10 @@ function shapeLimit(raw: unknown): ClarifyLimit | undefined {
  * `other: false`), the mode every question had before the model could choose one.
  *
  * A usable `limit` wins: it is returned with no questions, and questions the model sent beside it
- * are dropped and logged, since the contract refuses the pair. A malformed `limit` is ignored, so
- * the reply is read as questions exactly as it would be without one.
+ * are dropped and logged, since the contract refuses the pair. `limit: null` is the model saying a
+ * mini-app can build the request, so it is no limit, and the body carries no `limit` key (the
+ * device's reader refuses `null` there). A malformed `limit` is ignored, so the reply is read as
+ * questions exactly as it would be without one.
  */
 function shapeClarify(text: string, log: ServerLogger): ClarifyResponse | undefined {
   const parsed = parseJsonBlock(text);

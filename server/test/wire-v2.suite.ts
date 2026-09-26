@@ -280,6 +280,19 @@ async function testClarifyLimit(): Promise<void> {
   const noQuestionsKey = await clarifyWith({ limit });
   eq('a limit with no questions key at all is still a limit', noQuestionsKey.body, { questions: [], limit });
 
+  // The prompt asks for `"limit": null` whenever a mini-app can build the request (beta-1 fix-6).
+  // That is no limit, and the raw body carries no `limit` key: the device's reader refuses `null`.
+  for (const questions of [[question], []]) {
+    const { app } = appWithModel([{ role: 'clarify', deltas: [JSON.stringify({ limit: null, questions })], usage: TURN_USAGE }]);
+    const res = await post(app, '/v1/clarify', { prompt: 'a weather app' }, DEVICE_HEADER);
+    eq(`"limit": null beside ${questions.length} question(s) → 200`, res.status, 200);
+    eq(
+      `"limit": null beside ${questions.length} question(s): the wire body is the questions alone, with no "limit" key`,
+      JSON.parse(await res.text()) as unknown,
+      { questions: questions.map((q) => ({ ...q, select: 'one', other: false })) },
+    );
+  }
+
   const malformed = [
     { label: 'an empty reason', limit: { reason: '   ', alternative: limit.alternative } },
     { label: 'a 201-character alternative', limit: { reason: limit.reason, alternative: 'x'.repeat(201) } },

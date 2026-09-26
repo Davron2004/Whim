@@ -282,11 +282,25 @@ export interface ClarifyTurnContext {
   request: ClarifyRequest;
 }
 
+/** The limit decision comes first: in the reply shape (`"limit"` is always present, `null` when a
+ *  mini-app can build the request, and precedes `"questions"`) and in the instructions (the limits
+ *  and the decision before any question rule), so the model settles it before writing a question. */
 const CLARIFY_SYSTEM = [
-  'A user asked for a tiny app. Ask ONLY for what you genuinely cannot guess and what would change',
-  'the app if answered differently. Reply with ONLY a JSON object (optionally inside a ```json',
-  'fenced block) shaped exactly like:',
-  '{ "questions": [{ "id": string, "question": string, "options": [string, ...], "select": "one" | "many", "other": boolean }] }.',
+  'A user asked for a tiny app. Reply with ONLY a JSON object (optionally inside a ```json fenced',
+  'block) shaped exactly like:',
+  '{ "limit": null | { "reason": string, "alternative": string }, "questions": [{ "id": string, "question": string, "options": [string, ...], "select": "one" | "many", "other": boolean }] }.',
+  'Decide "limit" first, before you think about any question.',
+  MINI_APP_LIMITS_TEXT,
+  'If the core of the request needs any of that (the app would be pointless without it), set "limit"',
+  'and leave "questions" empty: "reason" says in one short sentence what a mini-app cannot do here,',
+  'and "alternative" is the nearest app that CAN be built, as a short noun phrase that reads right on',
+  'the app\'s button "Build <alternative> instead" (for example "a weather log you fill in yourself"),',
+  'never a sentence or a request. Each is at most 200 characters.',
+  'Otherwise "limit" is null. When only an extra needs something a mini-app cannot do, "limit" is',
+  'null too: ask about the rest and never offer the extra as an option; the plan will say it is left out.',
+  'Only when "limit" is null, write the questions. Ask ONLY for what you genuinely cannot guess and',
+  'what would change the app if answered differently. Never ask about anything a mini-app cannot do,',
+  'and never offer it as an option: never an option like "Current weather".',
   'Set "select" to "many" only when several of the options can sensibly hold together, else "one".',
   'Set "other" to true only when the options cannot cover the answers the user is likely to give,',
   'so they may type their own; else false.',
@@ -297,15 +311,6 @@ const CLARIFY_SYSTEM = [
   'what the app is, what kind of app it is, or who it is for: that is settled. Ask only about the',
   'change itself, and only if the answer would change what gets built. If the change is clear,',
   'return an empty list.',
-  MINI_APP_LIMITS_TEXT,
-  'Never ask about any of that and never offer it as an option. When only an extra needs it, ask',
-  'about the rest and leave the extra out. When the core of the request needs it (the app would be',
-  'pointless without it), ask nothing and reply instead with',
-  '{ "questions": [], "limit": { "reason": string, "alternative": string } }: "reason" says in one',
-  'short sentence what a mini-app cannot do here, and "alternative" is the nearest app that CAN be',
-  'built, as a short noun phrase that reads right on the app\'s button "Build <alternative> instead"',
-  '(for example "a weather log you fill in yourself"), never a sentence or a request. Each is at most',
-  '200 characters.',
 ].join(' ');
 
 export function buildClarifyMessages(ctx: ClarifyTurnContext): ModelMessage[] {
