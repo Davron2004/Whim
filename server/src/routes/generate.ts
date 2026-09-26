@@ -279,8 +279,8 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
     try {
       return await admitIntoLine(entry.ticket, deps);
     } catch (err) {
-      // No ledger row exists yet, so leaving the line (which also gives back a slot handed over
-      // meanwhile) is all there is to undo.
+      // No ledger row counts yet (a refusal's row is refunded before any throw gets here), so
+      // leaving the line (which also gives back a slot handed over meanwhile) is all there is to undo.
       entry.ticket.leave();
       throw err;
     }
@@ -383,8 +383,9 @@ async function admitWithSlot(
  * `admitWithSlot` for a generation in line: the daily unit is confirmed without being spent, then
  * the content policy runs, all with no ledger row — the row, and the unit with it, come only once
  * the generation gets a slot. Every refusal leaves the line, which also gives back a slot handed
- * over meanwhile. The classifier's tokens are the device's either way; with no row, its cost has
- * nowhere to land.
+ * over meanwhile. The classifier's tokens are the device's either way. A content-policy refusal
+ * still gets its `refused` row (`recordLineRefusal`), which spends no unit; an unavailable check
+ * gets none, so its cost has nowhere to land.
  */
 async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<Admission> {
   const { usageStore, config, clock, deviceId } = deps;
@@ -414,9 +415,37 @@ async function admitIntoLine(ticket: LineTicket, deps: AdmissionDeps): Promise<A
   if (checked.usage) await usageStore.credit(deviceId, checked.usage);
   if (checked.verdict !== 'allow') {
     ticket.leave();
+    await recordLineRefusal(deps, checked);
     return { ok: false, refusal: contentPolicyRefusal() };
   }
   return { ok: true, admitted: { kind: 'waiting', waiting: { ticket, policyGenerationId: checked.generationId } } };
+}
+
+/**
+ * The ledger row of a generation the content policy refused while every slot was busy: `refused`
+ * for `content_policy`, as a free slot's refusal writes it, with the classifier's cost resolved onto
+ * it. The row goes in through `admit` (whose unit the check before the policy confirmed) and is then
+ * refunded, even when the settle throws, because a generation spends no daily unit until it gets a
+ * slot (beta-1 D8). A ceiling reached since the check leaves no row.
+ */
+async function recordLineRefusal(deps: AdmissionDeps, checked: PolicyCheckResult): Promise<void> {
+  const { usageStore, config, clock, deviceId } = deps;
+  const unit = await usageStore.admit({
+    requestId: deps.requestId,
+    deviceId,
+    kind: 'generate',
+    now: clock(),
+    deviceLimit: config.limitGenerationsPerDeviceDay,
+    globalLimit: config.limitGenerationsPerDay,
+  });
+  if (!unit.ok) return;
+  try {
+    await usageStore.settle(unit.requestId, { outcome: 'refused', failureReason: 'content_policy', usage: checked.usage, now: clock() });
+  } finally {
+    await usageStore.refund(unit.requestId);
+  }
+  const ids = checked.generationId ? [checked.generationId] : [];
+  deps.resolveTracker.track(resolveRequestUsage(unit.requestId, deviceId, ids, true, resolveDeps(deps)));
 }
 
 /** The content policy's verdict, or `checked: undefined` when there is none. Any failure to produce
