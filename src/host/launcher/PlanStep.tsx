@@ -208,8 +208,9 @@ export default function PlanStep({
 }
 
 const styles = StyleSheet.create({
-  // paddingTop 26: design `Whim Mobile.dc.html:474` — no SPACING counterpart (ruling R9).
-  content: { paddingHorizontal: SPACING.lg, paddingTop: 26 - FLOW_HEADER_GAP, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:474` is `padding:26px 22px 0` — 26 has no SPACING counterpart
+  // (ruling R9); the gap below the footer note is the shell footer's 16, above Build it.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 26 - FLOW_HEADER_GAP, paddingBottom: 0 },
   subhead: { marginTop: SPACING.xs, marginBottom: SPACING.md },
   row: {
     minHeight: PLAN_ROW_MIN_HEIGHT,

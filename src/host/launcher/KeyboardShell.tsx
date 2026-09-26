@@ -253,7 +253,7 @@ export default function KeyboardShell({
         {pinsFooter(footer) && (
           <>
             <EdgeLine shown={edges.below} />
-            <View style={styles.footer}>{footer}</View>
+            <View style={inSheet ? undefined : styles.footer}>{footer}</View>
           </>
         )}
       </Pressable>
@@ -335,8 +335,10 @@ const styles = StyleSheet.create({
   fill: { flex: 1 },
   shrink: { flexShrink: 1 },
   edge: { height: StyleSheet.hairlineWidth },
-  // The gap between the scrolling content's cut edge and the pinned action.
-  footer: { paddingTop: SPACING.sm },
+  // A screen's gap between the scrolling content's cut edge and its pinned action: the design's
+  // footer is `padding:16px 22px 24px` (`Whim Mobile.dc.html:427,459,487`), whose sides and bottom
+  // `PrimaryAction` carries. A sheet spaces its own actions (`ReportSheet`'s Send keeps its margin).
+  footer: { paddingTop: SPACING.md },
   naturalLineHeight: { lineHeight: undefined },
   // 44: the iOS keyboard toolbar's height — no SPACING counterpart.
   doneBar: {

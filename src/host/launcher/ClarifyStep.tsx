@@ -288,8 +288,9 @@ function LimitActions({
 }
 
 const styles = StyleSheet.create({
-  // paddingTop 28: design `Whim Mobile.dc.html:442` — no SPACING counterpart (ruling R9).
-  content: { paddingHorizontal: SPACING.lg, paddingTop: 28 - FLOW_HEADER_GAP, paddingBottom: SPACING.xl },
+  // design `Whim Mobile.dc.html:442` is `padding:28px 22px 0` — 28 has no SPACING counterpart
+  // (ruling R9); the gap below the helper line is the shell footer's 16, above Continue.
+  content: { paddingHorizontal: SPACING.lg, paddingTop: 28 - FLOW_HEADER_GAP, paddingBottom: 0 },
   echo: { marginTop: SPACING.sm },
   reason: { marginTop: SPACING.lg },
   question: { marginTop: SPACING.lg },
