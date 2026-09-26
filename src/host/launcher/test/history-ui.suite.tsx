@@ -7,6 +7,7 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY } from '../copy';
 import HistoryScreen from '../HistoryScreen';
+import ConfirmSheet from '../ConfirmSheet';
 import HomeScreen from '../HomeScreen';
 import { AppIndex, type InstalledApp } from '../app-index';
 import { StoreAccess, storeIdOf } from '../store-access';
@@ -90,6 +91,7 @@ export async function runHistoryUiTests(h: Harness): Promise<void> {
       h.eq(rollbacks, [], 'expanding a row restores nothing');
       await press(button(tree, COPY.historyGoBackToThis));
       h.eq(rollbacks, [], 'Go back only asks first');
+      h.ok(tree.root.findByType(ConfirmSheet).props.confirm != null, 'in the launcher’s confirm sheet, the one Settings asks in too');
       // Two taps inside one frame both see the enabled button: only the handler’s own guard can refuse the second.
       await TestRenderer.act(async () => { const confirm = button(tree, COPY.historyRestoreConfirm); confirm.props.onPress(); confirm.props.onPress(); });
       h.eq(rollbacks, [middle.id], "confirming restores that row’s own version, once for two taps in one frame");

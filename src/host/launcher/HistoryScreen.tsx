@@ -16,7 +16,7 @@
 // summary) and render through the one shared `WhimProse` renderer; everything else on this
 // screen is product copy and is never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
 import type { SummaryKind } from '@whim/contract';
 import { InstalledApp } from './app-index';
@@ -53,6 +53,7 @@ import {
   type HistoryLoadState,
   type RestoreDiffState,
 } from './history-wait';
+import ConfirmSheet, { type ConfirmSheetContent } from './ConfirmSheet';
 import { BreathingView } from './flow-skeletons';
 import { SHELL_PALETTE } from './theme';
 import { tileColor } from './tiles';
@@ -304,23 +305,16 @@ export default function HistoryScreen({ app, access, onBack, onChangeIt, onRepor
         </View>
       )}
 
-      <Modal visible={confirm != null} transparent animationType="slide" onRequestClose={() => setConfirm(null)}>
-        <Pressable style={styles.scrim} onPress={() => setConfirm(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: p.card }]}>
-            {confirm && (
-              <ConfirmBody
-                confirm={confirm}
-                appName={app.name}
-                diff={restoreDiff}
-                busy={confirmBusy}
-                onCancel={() => setConfirm(null)}
-                onConfirmRestore={confirmRestore}
-                onConfirmCopy={confirmCopy}
-              />
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
+          consequential action is demoted to plain text beneath it — never the other way around. */}
+      <ConfirmSheet
+        confirm={confirm && confirmContent(confirm, app.name)}
+        busy={confirmBusy}
+        onCancel={() => setConfirm(null)}
+        onConfirm={confirm?.kind === 'restore' ? confirmRestore : confirmCopy}
+      >
+        {confirm?.kind === 'restore' && <RestoreReassurance diff={restoreDiff} />}
+      </ConfirmSheet>
     </View>
   );
 }
@@ -500,67 +494,35 @@ function ActionButton({
   );
 }
 
-/**
- * The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
- * consequential action is demoted to plain text beneath it — never the other way around.
- */
-function ConfirmBody({
-  confirm,
-  appName,
-  diff,
-  busy,
-  onCancel,
-  onConfirmRestore,
-  onConfirmCopy,
-}: Readonly<{
-  confirm: ConfirmState;
-  appName: string;
-  diff: RestoreDiffState;
-  /** A restore/fork is running for this confirmation: the consequential control says so and stops
-   *  accepting taps until it settles. */
-  busy: boolean;
-  onCancel: () => void;
-  onConfirmRestore: () => void;
-  onConfirmCopy: () => void;
-}>) {
-  const p = SHELL_PALETTE;
-  const isRestore = confirm.kind === 'restore';
-  const title = isRestore ? restoreSheetTitle(confirm.row.version) : copySheetTitle(confirm.row.version);
-  const body = isRestore ? restoreSheetBody(confirm.row.version) : copySheetBody(appName);
-  const idleLabel = isRestore ? COPY.historyRestoreConfirm : COPY.historyCopyConfirm;
-  const busyLabel = isRestore ? COPY.historyRestoreConfirmBusy : COPY.historyCopyConfirmBusy;
-  // The reassurance line resolves IN PLACE: while the diff is being computed a muted placeholder
-  // holds its space, so the sheet does not reflow when the sentence arrives (D6 — a placeholder,
-  // deliberately not a skeleton: one sentence has no row shape to mimic).
-  const line = isRestore ? restoreDiffLine(diff) : 'none';
+/** What the restore or copy confirm says about `confirm`'s row. */
+function confirmContent(confirm: ConfirmState, appName: string): ConfirmSheetContent {
+  const version = confirm.row.version;
+  return confirm.kind === 'restore'
+    ? { title: restoreSheetTitle(version), body: restoreSheetBody(version), confirmLabel: COPY.historyRestoreConfirm, busyLabel: COPY.historyRestoreConfirmBusy }
+    : { title: copySheetTitle(version), body: copySheetBody(appName), confirmLabel: COPY.historyCopyConfirm, busyLabel: COPY.historyCopyConfirmBusy };
+}
 
-  return (
-    <>
-      <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{title}</Text>
-      <Text style={[TYPE_SCALE.body, { color: p.textMuted, marginTop: SPACING.xs }]}>{body}</Text>
-      {line === 'pending' && (
-        <View
-          accessibilityRole="progressbar"
-          accessibilityLabel={COPY.historyReassurancePending}
-          style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
-        />
-      )}
-      {line === 'reassurance' && (
-        <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>
-      )}
-      <TouchableOpacity onPress={onCancel} style={[styles.sheetSafeBtn, { backgroundColor: p.text }]}>
-        <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{COPY.cancel}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        onPress={isRestore ? onConfirmRestore : onConfirmCopy}
-        disabled={busy}
-        accessibilityState={{ disabled: busy, busy }}
-        style={[styles.sheetConsequentialBtn, busy ? styles.sheetConsequentialBtnBusy : null]}
-      >
-        <Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{busy ? busyLabel : idleLabel}</Text>
-      </TouchableOpacity>
-    </>
-  );
+/**
+ * The restore confirm's reassurance line, which resolves IN PLACE: while the diff is being computed
+ * a muted placeholder holds its space, so the sheet does not reflow when the sentence arrives (D6 —
+ * a placeholder, deliberately not a skeleton: one sentence has no row shape to mimic).
+ */
+function RestoreReassurance({ diff }: Readonly<{ diff: RestoreDiffState }>) {
+  const p = SHELL_PALETTE;
+  const line = restoreDiffLine(diff);
+  if (line === 'pending') {
+    return (
+      <View
+        accessibilityRole="progressbar"
+        accessibilityLabel={COPY.historyReassurancePending}
+        style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
+      />
+    );
+  }
+  if (line === 'reassurance') {
+    return <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>;
+  }
+  return null;
 }
 
 /**
@@ -684,12 +646,6 @@ const styles = StyleSheet.create({
   // Design :73 — dark ink face, white text, no border. `16` is deliberate and has no RADIUS step
   // between `field` (14) and `card` (18); do not "correct" it to a token.
   toast: { position: 'absolute', left: 24, right: 24, bottom: 34, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16 },
-  scrim: { flex: 1, backgroundColor: 'rgba(24,22,20,0.5)', justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: RADIUS.sheet, borderTopRightRadius: RADIUS.sheet, padding: 24 },
-  sheetSafeBtn: { borderRadius: RADIUS.card, height: 56, alignItems: 'center', justifyContent: 'center', marginTop: SPACING.lg },
-  sheetConsequentialBtn: { height: 46, alignItems: 'center', justifyContent: 'center' },
-  // Opacity, not a shadow or an elevation: `shadow*` renders as nothing on Android.
-  sheetConsequentialBtnBusy: { opacity: 0.5 },
   // The reassurance line's placeholder holds exactly the height that one caption line will take.
   reassurancePending: { height: TYPE_SCALE.caption.lineHeight, width: '76%', borderRadius: RADIUS.chip, marginTop: SPACING.xs, opacity: 0.6 },
   skeletonMeta: { height: TYPE_SCALE.metaPlain.lineHeight, width: '46%', borderRadius: RADIUS.chip },
