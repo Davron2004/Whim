@@ -344,7 +344,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
           WHIM_ENGINEER_MODEL: options.env.WHIM_ENGINEER_MODEL || 'stub/unconfigured',
         });
       }
-      bootLog.warn({ detail: messageOf(err), hint: '/v1/rewrite will respond 502 until configured.' }, 'starting in WHIM_PIPELINE=stub mode without a usable model client');
+      bootLog.warn({ detail: messageOf(err) }, 'starting in WHIM_PIPELINE=stub mode without a usable model client');
       return undefined;
     }
   });

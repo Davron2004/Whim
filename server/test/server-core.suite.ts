@@ -16,8 +16,8 @@ import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, waitFor, within } from '.
 import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
-import { COMPAT_NOTICE_MAX_CHARS, ClarifyResponse, GenerationEvent, PROTOCOL_LEVEL, WireEnvelope } from '@whim/contract';
-import type { GenerateRequest, Usage, WireAppRecord } from '@whim/contract';
+import { COMPAT_NOTICE_MAX_CHARS, ClarifyResponse, GenerationEvent, PROTOCOL_LEVEL, RewriteResponse, WireEnvelope } from '@whim/contract';
+import type { Clarification, GenerateRequest, Usage, WireAppRecord } from '@whim/contract';
 
 // Rewrite is now real-model-backed (task 7.2) — a scripted client stands in for OpenRouter so
 // §5.5's "same input → same output" assertion stays meaningful: two freshly-scripted apps, each
@@ -562,6 +562,65 @@ async function testStubRewritePreservesFailMarker(): Promise<void> {
   eq('F5: terminal event for the rewritten prompt is failure', lastType, 'failure');
 }
 
+/**
+ * beta-1 fix-3 — under the stub, `/v1/rewrite` answers a prompt with no pipeline marker with a
+ * canned plan and no model call, so the device's plan step (editing its fourth and later rows
+ * included) runs without a key. Each clarify answer is named in a row, and reaches the rewritten
+ * prompt a build is asked for. The answers are made from the stub clarify's own questions. RED
+ * before fix-3: a plain prompt went to the model, or to a 502 `rewrite_not_configured` without one.
+ */
+async function testStubRewriteCannedPlan(): Promise<void> {
+  section('Stub rewrite answers a plain prompt with a canned plan (fix-3)');
+
+  // A model that would answer, so a call to it is recorded (an exhausted script throws unrecorded).
+  const modelPlan = { rewrittenPrompt: 'A packing list.', plan: [{ label: 'List', text: 'Things to pack.' }] };
+  const model = new ScriptedModelClient(REWRITE_TEST_ROSTER, [{ role: 'rewrite', deltas: [JSON.stringify(modelPlan)] }]);
+  const withModel = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), model, roster: REWRITE_TEST_ROSTER, stub: true });
+  const withoutModel = createApp({ pipeline: createStubPipeline(0), usageStore: new InMemoryUsageStore(), stub: true });
+
+  const rewrite = async (app: ReturnType<typeof createApp>, body: unknown): Promise<RewriteResponse | undefined> => {
+    const res = await within(post(app, '/v1/rewrite', body, DEVICE_HEADER));
+    if (res === TIMED_OUT || res.status !== 200) return undefined;
+    const parsed = RewriteResponse.safeParse(await res.json());
+    return parsed.success ? parsed.data : undefined;
+  };
+
+  for (const [what, app] of [['with a model configured', withModel], ['with no model', withoutModel]] as const) {
+    const plan = await rewrite(app, { prompt: 'a packing list' });
+    check(`${what}: a plain prompt gets a 200 contract RewriteResponse`, plan !== undefined);
+    check(`${what}: with at least five plan rows`, (plan?.plan?.length ?? 0) >= 5, JSON.stringify(plan));
+    check(`${what}: every row has a label and a text`, (plan?.plan ?? []).every((row) => row.label.trim() !== '' && row.text.trim() !== ''));
+    check(`${what}: and a rewritten prompt to build`, (plan?.rewrittenPrompt.trim() ?? '') !== '');
+  }
+  eq('the stub rewrite makes no model call', model.requests.length, 0);
+
+  const asked = await within(post(withoutModel, '/v1/clarify', { prompt: 'a packing list' }, DEVICE_HEADER));
+  const questions = asked === TIMED_OUT ? [] : ((await asked.json()) as ClarifyResponse).questions;
+  const [delegated, several, typed] = questions;
+  if (delegated === undefined || several === undefined || typed === undefined) {
+    check('setup: the stub clarify asks three questions to answer', false, JSON.stringify(questions));
+    return;
+  }
+  check('setup: the second question takes several picks and the third a typed answer', several.select === 'many' && several.options.length >= 2 && typed.other);
+  const ownWords = 'Keeps a crossed-out copy';
+  const typedPick = typed.options[0];
+  const clarifications: Clarification[] = [
+    { id: delegated.id, question: delegated.question, choices: [], decide: true },
+    { id: several.id, question: several.question, choices: several.options.slice(0, 2) },
+    { id: typed.id, question: typed.question, choices: [typedPick], other: ownWords },
+  ];
+  const answered = await rewrite(withoutModel, { prompt: 'a packing list', clarifications });
+  const rows = answered?.plan ?? [];
+  const rowNaming = (question: string) => rows.find((row) => `${row.label} ${row.text}`.includes(question));
+  check('a delegated question is named in a row', rowNaming(delegated.question) !== undefined, JSON.stringify(rows));
+  const severalRow = rowNaming(several.question);
+  check('a question with several picks is named in a row carrying every pick', several.options.slice(0, 2).every((pick) => severalRow?.text.includes(pick)), JSON.stringify(severalRow));
+  const typedRow = rowNaming(typed.question);
+  check('a typed answer is named in a row with its pick and the user’s own words', typedRow !== undefined && typedRow.text.includes(typedPick) && typedRow.text.includes(ownWords), JSON.stringify(typedRow));
+  check('the answers reach the rewritten prompt a build is asked for', [...several.options.slice(0, 2), ownWords].every((part) => answered?.rewrittenPrompt.includes(part)), answered?.rewrittenPrompt);
+  check('the canned rows are all still there', rows.length >= 5 + clarifications.length, JSON.stringify(rows));
+}
+
 /** Every `data:` payload of an SSE response, read to its end and parsed as plain JSON — unlike
  *  `readSseResponse`, it keeps frames outside `GenerationEvent`, which is the point below. */
 async function sseData(response: Response): Promise<Record<string, unknown>[]> {
@@ -655,5 +714,6 @@ export async function runServerCoreTests(): Promise<void> {
   await testRequestLogging();
   await testStubBundleDefinesAppModule();
   await testStubRewritePreservesFailMarker();
+  await testStubRewriteCannedPlan();
   await testStubFlowMarkers();
 }
