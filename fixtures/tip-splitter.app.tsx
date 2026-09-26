@@ -63,7 +63,8 @@ export default defineApp({
   capabilities: [], // Tier-0: pure compute + rendering, zero syscalls
   // Declared, with water-counter.app.tsx and style-gallery.app.tsx, so the built-in examples
   // never collide on the deterministic appColor(name) fallback (#48/#52): "Water Counter" and
-  // "Style Gallery" hash to the same palette slot. Green, not the palette's blue: beside Water
-  // Counter's sky the two read as one colour (tile-colour.suite.ts holds them a hue family apart).
-  tileColor: '#16a34a',
+  // "Style Gallery" hash to the same palette slot. Green, a hue family away from Water Counter's
+  // sky, and a shade the appColor palette doesn't hold, so a generated app's fallback colour is
+  // never an example's (tile-colour.suite.ts holds both).
+  tileColor: '#15803d',
 });

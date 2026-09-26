@@ -157,6 +157,22 @@ export async function runTileColourTests(h: Harness): Promise<void> {
     h.eq(['#ff0000', '#ffff00', '#00ff00', '#0000ff', '#ff00ff'].map(hueOf), [0, 60, 120, 240, 300], 'the hue reading itself is the standard HSL hue');
   });
 
+  await h.test('tileColor: no generated app\'s fallback colour can be a seeded example\'s', async () => {
+    // A generated app that declares no colour gets `appColor` of its launcher id (the ghost's hue,
+    // kept at delivery) or of its name. Sample both across thousands of inputs shaped like the real
+    // ones and collect every colour the fallback ever lands on.
+    const reachable = new Set<string>();
+    for (let i = 0; i < 5000; i++) {
+      reachable.add(appColor(`app-${(1_790_000_000_000 + i * 7919).toString(36)}-${((i * 2654435761) % 4294967296).toString(36)}`));
+      reachable.add(appColor(`My App ${i}`));
+    }
+    h.ok(reachable.size >= 5, `the sample reaches the palette (${reachable.size} colours)`);
+    for (const id of ['tip-splitter', 'water-counter', 'style-gallery']) {
+      const shipped = APP_RECORDS[id]?.manifest.tileColor ?? '';
+      h.ok(shipped !== '' && !reachable.has(shipped.toLowerCase()), `${id}'s ${shipped} is never a generated app's fallback colour`);
+    }
+  });
+
   // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────
   const FALLBACK = 88; // stands in for APP_TILE_SIZE, which lives in an RN module Node cannot load
 
