@@ -20,6 +20,21 @@ import { lexProse } from '../../ui/whim-prose/lex';
 import type { AppManifest } from '../../bridge/contract';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 
+/** How far apart (degrees of hue) any two seeded example tiles must be: an eighth of the wheel. */
+const MIN_SEEDED_HUE_DISTANCE = 45;
+
+/** A `#rrggbb` colour's HSL hue in degrees, [0, 360). */
+function hueOf(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const delta = max - Math.min(r, g, b);
+  if (delta === 0) return 0;
+  let sector: number;
+  if (max === r) sector = ((g - b) / delta + 6) % 6;
+  else if (max === g) sector = (b - r) / delta + 2;
+  else sector = (r - g) / delta + 4;
+  return sector * 60;
+}
 
 export async function runTileColourTests(h: Harness): Promise<void> {
   const VALID = '#2f6feb'; // a legible hex outside the reserved set, arbitrary for these checks
@@ -124,6 +139,22 @@ export async function runTileColourTests(h: Harness): Promise<void> {
       h.eq(resolved[i], APP_RECORDS[id]?.manifest.tileColor, `${id}: the shipped declared colour is not rejected by tileColor()`);
     }
     h.eq(new Set(resolved).size, resolved.length, `expected ${resolved.length} pairwise-distinct seeded tile colours, got ${JSON.stringify(resolved)}`);
+  });
+
+  await h.test('tileColor: the seeded examples\' shipped colours sit in clearly different hue families', async () => {
+    // Distinct hex is not distinct to the eye: #2563eb and #0284c7 are both "blue" side by side on
+    // Home. Each pair of seeded tiles must be at least an eighth of the colour wheel apart.
+    const seeded = ['tip-splitter', 'water-counter', 'style-gallery'].map((id) => {
+      const record = APP_RECORDS[id];
+      return { id, hue: hueOf(tileColor(record?.name ?? id, record?.manifest)) };
+    });
+    for (const [i, a] of seeded.entries()) {
+      for (const b of seeded.slice(i + 1)) {
+        const apart = Math.min(Math.abs(a.hue - b.hue), 360 - Math.abs(a.hue - b.hue));
+        h.ok(apart >= MIN_SEEDED_HUE_DISTANCE, `${a.id} and ${b.id} are ${apart.toFixed(0)}° apart in hue, under ${MIN_SEEDED_HUE_DISTANCE}°`);
+      }
+    }
+    h.eq(['#ff0000', '#ffff00', '#00ff00', '#0000ff', '#ff00ff'].map(hueOf), [0, 60, 120, 240, 300], 'the hue reading itself is the standard HSL hue');
   });
 
   // ── homeGridCellWidth — the fluid 3-up grid (finding V3, design html:388) ──────
