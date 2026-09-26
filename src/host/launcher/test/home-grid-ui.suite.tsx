@@ -1,12 +1,13 @@
 /** The rendered home grid: what a ghost tile does when tapped and long-pressed, the rebuild pill on
- *  an installed tile, and how a tile's colour and status are painted. */
+ *  an installed tile, how an example is labelled, and how a tile's colour and status are painted. */
 import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { COPY, ghostStateCaption } from '../copy';
 import HomeScreen from '../HomeScreen';
-import AppTile from '../app-tile';
-import { tileColor } from '../tiles';
+import AppTile, { APP_TILE_SIZE } from '../app-tile';
+import { homeGridCellWidth } from '../home-grid';
+import { monogram, tileColor } from '../tiles';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
 import { ghostTileColorFor } from '../prompt-flow';
 import type { InstalledApp } from '../app-index';
@@ -21,6 +22,25 @@ type Style = Record<string, unknown>;
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
 const APP: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+const EXAMPLE: InstalledApp = { id: 'tip-splitter', name: 'Tip Splitter', example: true, createdAt: 1, lineageId: 'main', record: { appId: 'tip-splitter', name: 'Tip Splitter', manifest: { capabilities: [], tileColor: '#15803d' } } };
+
+/** The tile's art: the one square filled with the app's own colour. */
+function art(root: TestRenderer.ReactTestInstance, app: Pick<InstalledApp, 'name' | 'record'>): TestRenderer.ReactTestInstance {
+  const fill = tileColor(app.name, app.record.manifest);
+  const squares = root.findAll((n) => n.type === 'View' && flat(n).backgroundColor === fill);
+  if (squares.length !== 1) throw new Error(`expected one tile filled ${fill} for "${app.name}", got ${squares.length}`);
+  return squares[0];
+}
+
+function isInside(node: TestRenderer.ReactTestInstance, ancestor: TestRenderer.ReactTestInstance): boolean {
+  for (let up = node.parent; up; up = up.parent) if (up === ancestor) return true;
+  return false;
+}
+
+const lines = (root: TestRenderer.ReactTestInstance) => root.findAll((n) => n.type === 'Text');
+/** What is written on the tile's art, and the lines written around it, in reading order. */
+const onArt = (square: TestRenderer.ReactTestInstance) => lines(square).map(textOf);
+const offArt = (root: TestRenderer.ReactTestInstance, square: TestRenderer.ReactTestInstance) => lines(root).filter((n) => !isInside(n, square));
 
 /** Pending records as the store writes them: a building ghost, a failed one, and a failed rebuild of APP. */
 function pendingRecords(): PendingBuildRecord[] {
@@ -98,6 +118,44 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(calls.openPending.map((r) => (r as PendingBuildRecord).id), [rebuild.id], 'the failed pill opens the rebuild attempt');
       h.eq(calls.open.length, 0, 'not the app');
     });
+  });
+
+  await h.test('home grid: an example tile says “Example” under its name, in a ghost caption’s style, with nothing on its art; a generated app’s tile has neither', async () => {
+    const noop = () => {};
+    const home = await renderScreen(<HomeScreen apps={[EXAMPLE, APP]} onOpen={noop} onFork={noop} onDelete={noop} onHistory={noop} onPromptAgain={noop} onCreate={noop} onSettings={noop} />);
+    const ghost = await renderScreen(<AppTile name="A tea timer" ghost="building" />);
+    try {
+      const example = cell(home, EXAMPLE.name);
+      const exampleArt = art(example, EXAMPLE);
+      const mono = monogram(EXAMPLE.name);
+      h.eq(onArt(exampleArt), [mono, mono], 'the example’s art carries only its monogram: no pill over it');
+      const around = offArt(example, exampleArt);
+      h.eq(around.map(textOf), [EXAMPLE.name, COPY.exampleBadge], 'it says “Example” on the line under its name');
+      const ghostCaption = lines(ghost.root).find((n) => textOf(n) === ghostStateCaption('building'));
+      h.eq(around[1] && flat(around[1]), ghostCaption && flat(ghostCaption), 'in the muted caption style a ghost tile uses for its state');
+
+      const generatedArt = art(cell(home, APP.name), APP);
+      h.eq(onArt(generatedArt), [monogram(APP.name), monogram(APP.name)], 'a generated app’s art carries only its monogram');
+      h.eq(offArt(cell(home, APP.name), generatedArt).map(textOf), [APP.name], 'and its name alone: no “Example” caption');
+    } finally {
+      await unmountScreen(home);
+      await unmountScreen(ghost);
+    }
+  });
+
+  await h.test('tile: the “Example” caption sits in the column below the art at every grid width, never on it', async () => {
+    for (const frame of [320, 390, 430, 900]) {
+      const width = homeGridCellWidth(frame, APP_TILE_SIZE);
+      const tree = await renderScreen(<AppTile name={EXAMPLE.name} manifest={EXAMPLE.record.manifest} example width={width} />);
+      try {
+        const square = art(tree.root, EXAMPLE);
+        const caption = offArt(tree.root, square).filter((n) => textOf(n) === COPY.exampleBadge);
+        h.eq(caption.length, 1, `on a ${frame}pt screen (${width}pt tiles) the caption is drawn outside the art`);
+        h.ok(caption.every((n) => flat(n).position !== 'absolute'), `on a ${frame}pt screen it is laid out below the art, not floated onto it`);
+      } finally {
+        await unmountScreen(tree);
+      }
+    }
   });
 
   await h.test('tile: the done tile is filled and glows in the app’s own colour; a grid tile has no glow', async () => {

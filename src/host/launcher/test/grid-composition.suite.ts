@@ -152,28 +152,15 @@ export async function runGridCompositionTests(h: Harness): Promise<void> {
     for (const c of captions) h.ok(c.length > 0, `"${c}" is non-empty`);
   });
 
-  // ── tilePillFor precedence ───────────────────────────────────────────────────
-  await h.test('tilePillFor: an example app with no rebuild shows the example pill', () => {
-    h.eq(tilePillFor({ example: true }, null), 'example', 'no rebuild in flight — the example pill is the only candidate');
+  // ── tilePillFor ──────────────────────────────────────────────────────────────
+  await h.test('tilePillFor: a rebuild in flight shows its own state', () => {
+    for (const state of ['building', 'failed', 'interrupted'] as const) {
+      h.eq(tilePillFor(pendingRecord('p1', { state, editingAppId: 'a1' })), state, `a ${state} rebuild pills its tile as ${state}`);
+    }
   });
 
-  await h.test('tilePillFor: an example app with an interrupted rebuild shows interrupted, not example', () => {
-    const rec = pendingRecord('p1', { state: 'interrupted', editingAppId: 'a1' });
-    h.eq(tilePillFor({ example: true }, rec), 'interrupted', 'a rebuild record’s state wins over `example`');
-  });
-
-  await h.test('tilePillFor: an example app with a building rebuild shows building, not example', () => {
-    const rec = pendingRecord('p1', { state: 'building', editingAppId: 'a1' });
-    h.eq(tilePillFor({ example: true }, rec), 'building', 'a rebuild record’s state wins over `example`');
-  });
-
-  await h.test('tilePillFor: a plain app with no rebuild shows no pill', () => {
-    h.eq(tilePillFor({ example: false }, null), null, 'nothing to show');
-    h.eq(tilePillFor({}, undefined), null, 'nothing to show, `example` omitted entirely');
-  });
-
-  await h.test('tilePillFor: a plain app with a failed rebuild shows failed', () => {
-    const rec = pendingRecord('p1', { state: 'failed', editingAppId: 'a1' });
-    h.eq(tilePillFor({ example: false }, rec), 'failed', 'the rebuild record’s state, not the plain app’s lack of one');
+  await h.test('tilePillFor: with no rebuild in flight a tile has no pill', () => {
+    h.eq(tilePillFor(null), null, 'nothing to show');
+    h.eq(tilePillFor(undefined), null, 'nothing to show, no rebuild looked up at all');
   });
 }

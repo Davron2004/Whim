@@ -180,7 +180,7 @@ export default function HomeScreen({
               );
             }
             const { app, rebuild } = tile;
-            const pillKind = tilePillFor(app, rebuild);
+            const pillKind = tilePillFor(rebuild);
             const onPressPill = rebuild && pillKind && TILE_PILL[pillKind].tappable ? () => onOpenPending?.(rebuild) : undefined;
             return (
               <View key={app.id} style={{ width: cellWidth }}>
@@ -189,7 +189,7 @@ export default function HomeScreen({
                   onPress={() => onOpen(app)}
                   onLongPress={() => setSelected(app)}
                 >
-                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, onPress: onPressPill } : null} />
+                  <AppTile name={app.name} manifest={app.record.manifest} width={cellWidth} busy={isAppBusy(appBusy, app.id)} pill={pillKind ? { kind: pillKind, onPress: onPressPill } : null} example={app.example} />
                 </TouchableOpacity>
                 {app.forkedFrom && (
                   <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]} numberOfLines={1}>
