@@ -201,6 +201,27 @@ function runForwardCompatibilityTests(): void {
     check(`WireEnvelope refuses ${JSON.stringify(unreadable)}`, !WireEnvelope.safeParse({ type: 'eta', compat: unreadable }).success);
   }
 
+  // `compat: null` is no compat (the oldest installed build reads it so): on the envelope and on
+  // every message that accepts compat, it parses to exactly what the message without it parses to.
+  type Reader = { safeParse: (value: unknown) => { success: boolean; data?: unknown; error?: { issues: unknown } } };
+  const readAs = (schema: Reader, message: object): unknown => {
+    const parsed = schema.safeParse(message);
+    return parsed.success ? JSON.stringify(parsed.data) : parsed.error?.issues;
+  };
+  const withoutCompat: readonly (readonly [string, Reader, object])[] = [
+    ['WireEnvelope', WireEnvelope, { type: 'eta' }],
+    ...ONE_OF_EACH_EVENT.map((event) => [`the "${event.type}" event`, GenerationEvent, event] as const),
+    ['an ApiError', ApiError, { error: 'server_busy', hint: 'h' }],
+    ['a ClarifyResponse', ClarifyResponse, { questions: [] }],
+    ['a RewriteResponse', RewriteResponse, { rewrittenPrompt: 'r' }],
+    ['a ReportResponse', ReportResponse, { reportId: 'r1' }],
+  ];
+  for (const [name, schema, message] of withoutCompat) {
+    const plain = readAs(schema, message);
+    check(`setup: ${name} with no compat parses`, typeof plain === 'string');
+    eq(`${name} reads compat null as no compat`, readAs(schema, { ...message, compat: null }), plain);
+  }
+
   // Scenario "Unknown event type goes through the envelope": full parsing refuses it, the envelope
   // reads it — its type, its compat, nothing else.
   const future = { type: 'eta', seconds: 30, compat: { min: 2, fallback: 'skip' } };
