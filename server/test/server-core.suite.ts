@@ -16,6 +16,7 @@ import { PROTOCOL_HEADERS, TIMED_OUT, machinePipeline, waitFor, within } from '.
 import { defaultModelRoster, type ModelRoster } from '../src/generation/model';
 import type { RunTrace } from '../src/generation/machine';
 import { ResolveTracker, type UsageAndCostTransport } from '../src/usage/resolve';
+import { createCheckStage } from '../src/generation/stages/check';
 import { COMPAT_NOTICE_MAX_CHARS, ClarifyResponse, GenerationEvent, PROTOCOL_LEVEL, RewriteResponse, WireEnvelope } from '@whim/contract';
 import type { Clarification, GenerateRequest, Usage, WireAppRecord } from '@whim/contract';
 
@@ -511,6 +512,30 @@ async function testStubBundleDefinesAppModule(): Promise<void> {
 }
 
 /**
+ * beta-1 fix-3 — the app the stub delivers is one the real check stage passes, and its record
+ * says what its source declares: the stub writes `name`/`manifest`/`schema` by hand where the real
+ * pipeline takes them from the check stage (`record.ts`). RED on the old `defineApp({ render })`
+ * source, which declares no name and no screens. That it also mounts and runs is `e2e.ts`'s
+ * `testStubAppRuns` (a real synthetic run, which needs Chromium).
+ */
+async function testStubAppPassesTheCheckStage(): Promise<void> {
+  section('The stub app passes the real check stage, and its record matches its source (fix-3)');
+
+  const res = await within(post(testApp(), '/v1/generate', { prompt: 'a day checklist' }, DEVICE_HEADER));
+  const terminal = res === TIMED_OUT ? undefined : (await readSseResponse(res)).events.at(-1)?.data;
+  if (terminal?.type !== 'result' || terminal.app.source === undefined) {
+    check('setup: the stub delivered an app with its source', false, JSON.stringify(terminal));
+    return;
+  }
+  const { app } = terminal;
+  const report = await createCheckStage().check(terminal.app.source, {});
+  eq('the check stage reports nothing', report.diagnostics.map((d) => `${d.kind}: ${d.message}`), []);
+  eq('the record carries the declared name', app.name, report.manifest?.name);
+  eq('the record carries the declared capabilities', app.manifest.capabilities, report.manifest?.manifest.capabilities);
+  eq('the record carries the declared schema', app.schema, report.manifest?.schema);
+}
+
+/**
  * F5 — `/v1/rewrite` under WHIM_PIPELINE=stub must pass a `[[fail]]`-marked prompt through raw,
  * with no model call, so the marker survives into the `/v1/generate` request that follows (the
  * plan→rewrite→generate flow otherwise loses it: the pipeline only ever sees the REWRITTEN
@@ -713,6 +738,7 @@ export async function runServerCoreTests(): Promise<void> {
   await testAbortDoubleCreditRace();
   await testRequestLogging();
   await testStubBundleDefinesAppModule();
+  await testStubAppPassesTheCheckStage();
   await testStubRewritePreservesFailMarker();
   await testStubRewriteCannedPlan();
   await testStubFlowMarkers();

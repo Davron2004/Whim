@@ -30,7 +30,8 @@ import type { CheckedManifest } from '../src/generation/machine';
 import { SynthRunSession } from '../../synthrun/session';
 import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunReport } from '../../synthrun/contract';
-import type { GenerationEvent } from '@whim/contract';
+import type { GenerationEvent, WireAppRecord } from '@whim/contract';
+import { createStubPipeline } from '../src/pipeline';
 import { containedDetail } from './run-stage-fixtures';
 import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
@@ -122,6 +123,41 @@ async function testHonestCandidateReachesResult(session: SynthRunSession): Promi
     'red-check: normalization does not launder an actual content difference',
     normalizeBuildIdentity(perturbed) !== normalizeBuildIdentity(productionArtifact),
   );
+}
+
+// ── The app the stub pipeline delivers runs (beta-1 fix-3) ──
+
+/** The record in the stub pipeline's terminal `result` event. */
+async function stubPipelineApp(): Promise<WireAppRecord | undefined> {
+  let app: WireAppRecord | undefined;
+  for await (const event of createStubPipeline(0).run({ prompt: 'a day checklist' })) {
+    if (event.type === 'result') app = event.app;
+  }
+  return app;
+}
+
+/**
+ * A dev-server build (`WHIM_PIPELINE=stub`) must hand the device an app that runs. The harness
+ * builds the delivered source with the builder the stub pipeline uses (`buildCandidateSource`),
+ * mounts it in the production runtime page and sweeps it. RED on the old `defineApp({ render })`
+ * source, whose spec has no screens to mount.
+ */
+async function testStubAppRuns(session: SynthRunSession): Promise<void> {
+  section('spec: the app the stub pipeline delivers mounts and runs in the real synthetic run (beta-1 fix-3)');
+
+  const app = await within(stubPipelineApp(), 60_000);
+  if (app === TIMED_OUT || app?.source === undefined) {
+    check('setup: the stub pipeline delivered an app with its source', false, String(app));
+    return;
+  }
+  const report = await within(createRunCandidate(session)(app.source), 120_000);
+  if (report === TIMED_OUT) {
+    check('the synthetic run of the stub app finished', false);
+    return;
+  }
+  check('the stub app runs contained', report.contained === true, containedDetail(report.contained, report));
+  eq('it mounts and survives the sweep with no diagnostic', report.diagnostics, []);
+  eq('its screen is declared and visited', report.screens, { declared: ['Today'], visited: ['Today'] });
 }
 
 // ── A real escape-attempting candidate stays contained (non-vacuity for the stub test above) ──
@@ -726,6 +762,7 @@ async function main(): Promise<void> {
   const session = await SynthRunSession.launch({ concurrency: 2 });
   try {
     await testHonestCandidateReachesResult(session);
+    await testStubAppRuns(session);
     await testHostileCandidateStaysContained(session);
     await testBootSelfTest(session);
   } finally {

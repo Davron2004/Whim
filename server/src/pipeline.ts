@@ -6,8 +6,70 @@ import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/cont
 import { buildCandidateSource } from '../../synthrun/builder';
 import { stubFutureEvent, stubFutureFallback } from './stub-markers';
 
-const STUB_APP_SOURCE =
-  "import { defineApp, Screen, Text } from 'vc-sdk'; export default defineApp({ render: () => <Screen><Text>Hello</Text></Screen> });";
+/** The app every stub build delivers: a day checklist (the stub rewrite's canned plan describes it).
+ *  Its one screen is taller than a phone, so the last element, the Clear done button, has to scroll
+ *  clear of the host's orb. Local state only: no capability, no schema. */
+const STUB_APP_SOURCE = `import { defineApp, Screen, Stack, Row, Heading, Text, TextInput, Button, Checkbox, ProgressBar, useState } from 'vc-sdk';
+
+const STARTERS = [
+  'Drink a glass of water',
+  'Stretch for five minutes',
+  'Make the bed',
+  'Reply to one message',
+  'Plan lunch',
+  'Take a short walk',
+  'Tidy the desk',
+  'Water the plants',
+  'Read ten pages',
+  'Call someone you like',
+  'Put the laundry on',
+  'Check the calendar for tomorrow',
+  'Take out the recycling',
+  'Write down one good thing',
+  'Charge your phone',
+  'Lay out clothes for tomorrow',
+];
+
+function Today() {
+  const [tasks, setTasks] = useState(STARTERS.map((title, id) => ({ id, title, done: false })));
+  const [draft, setDraft] = useState('');
+  const [nextId, setNextId] = useState(STARTERS.length);
+  const done = tasks.filter((task) => task.done).length;
+
+  const add = () => {
+    const title = draft.trim();
+    if (title === '') return;
+    setTasks([...tasks, { id: nextId, title, done: false }]);
+    setNextId(nextId + 1);
+    setDraft('');
+  };
+  const tick = (id: number, checked: boolean) => {
+    setTasks(tasks.map((task) => (task.id === id ? { ...task, done: checked } : task)));
+  };
+
+  return (
+    <Screen padding="lg">
+      <Stack gap="lg">
+        <Heading size="title">Today</Heading>
+        <Text color="text-muted">{done + ' of ' + tasks.length + ' done'}</Text>
+        <ProgressBar value={tasks.length === 0 ? 0 : done / tasks.length} tone="positive" />
+        <Row gap="sm" align="center">
+          <TextInput value={draft} placeholder="Add a task" onChange={setDraft} />
+          <Button label="Add" disabled={draft.trim() === ''} onPress={add} />
+        </Row>
+        <Stack gap="sm">
+          {tasks.map((task) => (
+            <Checkbox key={task.id} label={task.title} checked={task.done} onChange={(checked) => tick(task.id, checked)} />
+          ))}
+        </Stack>
+        <Button label="Clear done" variant="secondary" disabled={done === 0} onPress={() => setTasks(tasks.filter((task) => !task.done))} />
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({ name: 'Hello App', initial: 'Today', screens: { Today }, capabilities: [] });
+`;
 
 export interface Pipeline {
   /**
