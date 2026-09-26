@@ -107,13 +107,20 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
         // the WHOLE window including the status bar. `statusBarTranslucent` is what makes Android
         // draw that window behind the (translucent) status bar rather than starting below it —
         // without it the scrim stops short of the top of the screen (#105).
+        //
+        // The dismiss layer is a SIBLING behind the actions, never their parent: a touchable is one
+        // accessibility element, and a screen reader reads everything inside it as that element —
+        // with the actions nested in it, VoiceOver and TalkBack could reach only "Dismiss".
         <Modal visible transparent animationType="none" statusBarTranslucent onRequestClose={closeAll}>
-          <Pressable
-            style={[styles.scrim, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
-            onPress={closeAll}
-            accessibilityRole="none"
-            accessibilityLabel={COPY.orbMenuDismissLabel}
+          <View
+            style={[styles.overlay, { paddingBottom: insets.bottom + ORB_BOTTOM_MARGIN + ORB_SIZE + SPACING.sm }]}
           >
+            <Pressable
+              style={styles.scrim}
+              onPress={closeAll}
+              accessibilityRole="button"
+              accessibilityLabel={COPY.orbMenuDismissLabel}
+            />
             <Animated.View
               style={[
                 styles.menu,
@@ -132,7 +139,13 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
               onStartShouldSetResponder={() => true}
             >
               {ORB_ACTIONS.map((action) => (
-                <Pressable key={action.id} style={styles.row} onPress={() => onAction(action.id)}>
+                <Pressable
+                  key={action.id}
+                  style={styles.row}
+                  onPress={() => onAction(action.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={action.label}
+                >
                   <View style={[styles.rowIcon, { backgroundColor: ORB_ROW_TINT[action.id] }]}>
                     <Text style={[styles.rowIconGlyph, { color: orbRowGlyphColor(action.id) }]}>
                       {ORB_ROW_GLYPH[action.id]}
@@ -142,7 +155,7 @@ export default function Orb({ onExit, onVersions, onChangeIt, onReport }: Readon
                 </Pressable>
               ))}
             </Animated.View>
-          </Pressable>
+          </View>
         </Modal>
       )}
     </>
@@ -173,6 +186,16 @@ const styles = StyleSheet.create({
   bar: { width: 12, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.92)' },
   barMenuOpen: { width: 20, backgroundColor: 'rgba(255,255,255,1)' },
   barGap: { marginVertical: 3 },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-end',
+    paddingRight: SPACING.lg,
+  },
   scrim: {
     position: 'absolute',
     top: 0,
@@ -180,9 +203,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: 'rgba(24,22,20,0.5)',
-    justifyContent: 'flex-end',
-    alignItems: 'flex-end',
-    paddingRight: SPACING.lg,
   },
   menu: { gap: SPACING.xs, alignItems: 'stretch', minWidth: 212 },
   row: {
