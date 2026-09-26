@@ -13,7 +13,7 @@ export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
-type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
+type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
 interface KeyboardEvent { endCoordinates: { screenX: number; screenY: number; width: number; height: number }; duration: number; easing: string }
 type KeyboardListener = (event: KeyboardEvent) => void;
 const keyboardListeners = new Map<KeyboardEventName, Set<KeyboardListener>>();
@@ -34,7 +34,7 @@ export const Keyboard = {
     return { remove: () => listeners.delete(listener) };
   },
   emit: (event: KeyboardEventName, screenY: number) => {
-    Keyboard.visible = event.endsWith('Show');
+    Keyboard.visible = !event.endsWith('Hide') && screenY < 844;
     Keyboard.last = { screenX: 0, screenY, width: 390, height: Math.max(0, 844 - screenY) };
     for (const listener of keyboardListeners.get(event) ?? []) listener({ endCoordinates: Keyboard.last, duration: 250, easing: 'keyboard' });
   },

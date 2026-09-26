@@ -117,8 +117,8 @@ export function useKeyboardInset(frame: React.RefObject<View | null>, active: bo
     if (Keyboard.isVisible() && shown) place(shown.screenY);
     const events = keyboardEvents(Platform.OS);
     const subscriptions = [
-      Keyboard.addListener(events.show, (event) => place(event.endCoordinates.screenY, event)),
-      Keyboard.addListener(events.hide, (event) => {
+      Keyboard.addListener(events.moved, (event) => place(event.endCoordinates.screenY, event)),
+      Keyboard.addListener(events.hidden, (event) => {
         moveWithKeyboard(event);
         setInset(0);
       }),

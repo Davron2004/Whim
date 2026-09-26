@@ -104,10 +104,15 @@ async function on(device: Device, element: React.ReactElement, body: (m: Mounted
   }
 }
 
-/** Plays the keyboard coming up (top edge at `KEYBOARD_TOP`) or going away, as the platform reports it. */
+/** Plays the keyboard coming up (top edge at `KEYBOARD_TOP`) or going away with every event the
+ *  platform sends for it: iOS announces the show or hide and the frame change, before the keyboard
+ *  moves; Android only the show or hide, after. */
 async function keyboard(device: Device, shown: boolean): Promise<void> {
-  const [hide, show] = device.os === 'ios' ? ['keyboardWillHide', 'keyboardWillShow'] as const : ['keyboardDidHide', 'keyboardDidShow'] as const;
-  await TestRenderer.act(async () => { Keyboard.emit(shown ? show : hide, shown ? KEYBOARD_TOP : 844); });
+  const top = shown ? KEYBOARD_TOP : 844;
+  const events = device.os === 'ios'
+    ? [shown ? 'keyboardWillShow' : 'keyboardWillHide', 'keyboardWillChangeFrame'] as const
+    : [shown ? 'keyboardDidShow' : 'keyboardDidHide'] as const;
+  await TestRenderer.act(async () => { for (const event of events) Keyboard.emit(event, top); });
 }
 
 /** Plays the scroll view's own reports: the height it shows, its content's height, an offset. */
@@ -222,6 +227,17 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
         });
       }
     }
+  });
+
+  await h.test('iOS: a keyboard that grows or shrinks while up (another keyboard, a suggestion bar) moves the footer with it', async () => {
+    const taller = KEYBOARD_TOP - 60;
+    await on(IOS, compose(), async ({ tree }) => {
+      await keyboard(IOS, true);
+      await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', taller); });
+      h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - taller, 'the frame ends at the taller keyboard’s top edge');
+      await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', KEYBOARD_TOP); });
+      h.eq(framePadding(tree), SCREEN_FRAME[0] + SCREEN_FRAME[1] - KEYBOARD_TOP, 'and follows it back down');
+    });
   });
 
   await h.test('compose on iOS: Done, empty space and a drag put the keyboard away without continuing', async () => {

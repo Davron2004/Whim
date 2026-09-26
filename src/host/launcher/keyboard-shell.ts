@@ -29,13 +29,16 @@ export interface KeyboardPlatform {
 /** Android 15: from this API level an app targeting it draws edge to edge. */
 const ANDROID_EDGE_TO_EDGE_API = 35;
 
-/** The keyboard events each platform reports: iOS before the keyboard moves, Android after. */
-export function keyboardEvents(os: string): { readonly show: KeyboardEventName; readonly hide: KeyboardEventName } {
+/** The keyboard events a frame places itself by (`moved`, carrying the keyboard's frame) and resets
+ *  on (`hidden`). iOS reports every change of the keyboard's frame before it happens: showing,
+ *  hiding, and a keyboard that grows or shrinks while up (another keyboard, the Done bar arriving).
+ *  Android reports only showing and hiding, after the keyboard has moved. */
+export function keyboardEvents(os: string): { readonly moved: KeyboardEventName; readonly hidden: KeyboardEventName } {
   return os === 'ios'
-    ? { show: 'keyboardWillShow', hide: 'keyboardWillHide' }
-    : { show: 'keyboardDidShow', hide: 'keyboardDidHide' };
+    ? { moved: 'keyboardWillChangeFrame', hidden: 'keyboardWillHide' }
+    : { moved: 'keyboardDidShow', hidden: 'keyboardDidHide' };
 }
-export type KeyboardEventName = 'keyboardWillShow' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
+export type KeyboardEventName = 'keyboardWillChangeFrame' | 'keyboardWillHide' | 'keyboardDidShow' | 'keyboardDidHide';
 
 /** Whether a footer slot holds anything to pin: React renders nothing for these values. */
 export function pinsFooter(footer: unknown): boolean {
